@@ -1,16 +1,10 @@
 /**
  * `sessionSkillCatalog` domain (L3) — `ISessionSkillCatalog` sink implementation.
  *
- * Dumb ordered-merge table: pulls the six eager `ISkillSource`s (builtin /
- * user / explicit / extra / workspace / plugin) and folds their contributions into an in-memory
- * catalog by priority, so higher-priority sources win name collisions; load
- * diagnostics (`skipped`, `scannedRoots`) carried by file-backed sources are
- * folded into the catalog as well. `ready`
- * resolves once all six have completed their first `load()`+merge; a source's
- * `onDidChange` (e.g. plugin reload) re-pulls just that source and re-merges,
- * firing `onDidChange`. `set`/`remove` (`ISkillCatalogSink`) let ad-hoc sources
- * push contributions. Bound at Session scope; the same instance is the
- * `ISessionSkillCatalog` read view.
+ * Merges builtin, user, explicit, extra, workspace, and plugin skill sources
+ * by priority, serializing refreshes for each source. Exposes the merged read
+ * view and accepts ad-hoc contributions through `ISkillCatalogSink`. Bound at
+ * Session scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -40,10 +34,11 @@ export class SessionSkillCatalogService
     string,
     { readonly c: SkillContribution; readonly priority: number }
   >();
+  private readonly sourceLoadTails = new Map<ISkillSource, Promise<void>>();
   private merged = new InMemorySkillCatalog();
   readonly ready: Promise<void>;
-  private readonly onDidChangeEmitter = this._register(new Emitter<void>());
-  readonly onDidChange: Event<void> = this.onDidChangeEmitter.event;
+  private readonly onDidChangeEmitter = this._register(new Emitter<string>());
+  readonly onDidChange: Event<string> = this.onDidChangeEmitter.event;
 
   constructor(
     @IBuiltinSkillSource builtin: IBuiltinSkillSource,
@@ -71,25 +66,24 @@ export class SessionSkillCatalogService
 
   async reload(): Promise<void> {
     await this.loadAll();
-    this.onDidChangeEmitter.fire();
+    this.onDidChangeEmitter.fire('catalog');
   }
 
   set(id: string, c: SkillContribution, { priority }: { readonly priority: number }): void {
     this.contributions.set(id, { c, priority });
     this.remerge();
-    this.onDidChangeEmitter.fire();
+    this.onDidChangeEmitter.fire(id);
   }
 
   remove(id: string): void {
     this.contributions.delete(id);
     this.remerge();
-    this.onDidChangeEmitter.fire();
+    this.onDidChangeEmitter.fire(id);
   }
 
   private async loadAll(): Promise<void> {
     for (const s of this.sources) {
-      const c = await s.load();
-      this.contributions.set(s.id, { c, priority: s.priority });
+      await this.loadSource(s);
     }
     this.remerge();
   }
@@ -97,10 +91,27 @@ export class SessionSkillCatalogService
   private async reloadSource(id: string): Promise<void> {
     const s = this.sources.find((x) => x.id === id);
     if (!s) return;
-    const c = await s.load();
-    this.contributions.set(s.id, { c, priority: s.priority });
-    this.remerge();
-    this.onDidChangeEmitter.fire();
+    await this.loadSource(s, true);
+  }
+
+  private loadSource(source: ISkillSource, fireChange = false): Promise<void> {
+    const previous = this.sourceLoadTails.get(source) ?? Promise.resolve();
+    const current = previous.catch(() => undefined).then(async () => {
+      const contribution = await source.load();
+      this.contributions.set(source.id, { c: contribution, priority: source.priority });
+      if (fireChange) {
+        this.remerge();
+        this.onDidChangeEmitter.fire(source.id);
+      }
+    });
+    this.sourceLoadTails.set(source, current);
+    const clear = () => {
+      if (this.sourceLoadTails.get(source) === current) {
+        this.sourceLoadTails.delete(source);
+      }
+    };
+    void current.then(clear, clear);
+    return current;
   }
 
   private remerge(): void {

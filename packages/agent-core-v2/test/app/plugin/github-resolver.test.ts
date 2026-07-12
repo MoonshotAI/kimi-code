@@ -1,6 +1,14 @@
+/**
+ * Scenario: GitHub plugin source resolution without the GitHub REST API.
+ *
+ * Verifies release, branch, tag, SHA, timeout, and commit-feed behavior at the
+ * network boundary; `fetch` is stubbed and no real requests are made.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/app/plugin/github-resolver.test.ts
+ */
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { resolveGithubSource } from '#/app/plugin/github-resolver';
+import { resolveGithubCommitSha, resolveGithubSource } from '#/app/plugin/github-resolver';
 
 describe('resolveGithubSource', () => {
   afterEach(() => {
@@ -19,6 +27,25 @@ describe('resolveGithubSource', () => {
       ref: { kind: 'tag', value: 'release#1' },
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('resolves a branch head from the GitHub commit feed', async () => {
+    const sha = '1111111111111111111111111111111111111111';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        new Response(`<entry><id>tag:github.com,2008:Grit::Commit/${sha}</id></entry>`),
+      ),
+    );
+
+    await expect(resolveGithubCommitSha('owner', 'repo', 'feature/demo')).resolves.toBe(sha);
+    expect(fetch).toHaveBeenCalledWith(
+      'https://github.com/owner/repo/commits/feature/demo.atom',
+      expect.objectContaining({
+        headers: expect.objectContaining({ accept: 'application/atom+xml' }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
   });
 
   it('uses latest release redirect for bare github urls', async () => {

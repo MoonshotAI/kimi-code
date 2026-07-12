@@ -90,6 +90,7 @@ export interface ProvidersChangedEvent {
 export interface IProviderService {
   readonly _serviceBrand: undefined;
 
+  readonly ready: Promise<void>;
   readonly onDidChangeProviders: Event<ProvidersChangedEvent>;
   get(name: string): ProviderConfig | undefined;
   list(): Readonly<Record<string, ProviderConfig>>;

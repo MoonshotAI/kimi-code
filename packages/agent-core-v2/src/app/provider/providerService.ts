@@ -26,11 +26,13 @@ const DEFAULT_PROVIDER_SECTION = 'defaultProvider';
 
 export class ProviderService extends Disposable implements IProviderService {
   declare readonly _serviceBrand: undefined;
+  readonly ready: Promise<void>;
   private readonly _onDidChangeProviders = this._register(new Emitter<ProvidersChangedEvent>());
   readonly onDidChangeProviders: Event<ProvidersChangedEvent> = this._onDidChangeProviders.event;
 
   constructor(@IConfigService private readonly config: IConfigService) {
     super();
+    this.ready = config.ready;
     this._register(
       config.onDidChangeConfiguration((e) => {
         if (e.domain === PROVIDERS_SECTION) {

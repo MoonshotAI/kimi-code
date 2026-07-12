@@ -1,18 +1,16 @@
 /**
  * `skillCatalog` domain (L3) — filesystem `ISkillDiscovery` backend.
  *
- * Discovers skill bundles by walking the caller-supplied skill roots on the
- * local filesystem and parsing each SKILL.md through `parser`. This is the only
- * file in the skill domain that imports `node:fs`; the rest of the domain
- * depends on the `ISkillDiscovery` interface and stays filesystem-agnostic.
- * Bound at App scope by the composition root (tests register the in-memory
- * backend instead).
+ * Discovers skill bundles by walking caller-supplied roots and parsing each
+ * SKILL.md through `parser`. Provides the App-scoped filesystem backend for
+ * `ISkillDiscovery` and the same stateless path for `PluginManager`'s standalone
+ * API; other consumers stay filesystem-agnostic through the interface.
  */
 
 import { promises as fs } from 'node:fs';
 import path from 'pathe';
 
-import { ILogService } from '#/_base/log/log';
+import { ILogService, type LogPayload } from '#/_base/log/log';
 
 import { SkillParseError, UnsupportedSkillTypeError, parseSkillText } from './parser';
 import type { SkillDiscoveryResult, ISkillDiscovery } from './skillDiscovery';
@@ -29,15 +27,17 @@ export class FileSkillDiscovery implements ISkillDiscovery {
   constructor(@ILogService private readonly log: ILogService) {}
 
   async discover(roots: readonly SkillRoot[]): Promise<SkillDiscoveryResult> {
-    return scanRoots(roots, this.log);
+    return discoverFileSkills(roots, (message, payload) => {
+      this.log.warn(message, payload);
+    });
   }
 }
 
-async function scanRoots(
+export async function discoverFileSkills(
   roots: readonly SkillRoot[],
-  log: ILogService,
+  warn?: (message: string, payload?: LogPayload) => void,
 ): Promise<SkillDiscoveryResult> {
-  const byName = new Map<string, SkillDefinition>();
+  const byDiscoveryKey = new Map<string, SkillDefinition>();
   const skipped: SkippedSkill[] = [];
 
   async function walkSkillDir(
@@ -74,9 +74,9 @@ async function scanRoots(
     const allowedSubSkillBundles = new Map<string, string>();
     for (const entry of directorySkills) {
       const skill = await parseAndRegister({
-        byName,
+        byDiscoveryKey,
         skipped,
-        log,
+        warn,
         skillMdPath: path.join(dirPath, entry, 'SKILL.md'),
         skillDirName: entry,
         root,
@@ -97,9 +97,9 @@ async function scanRoots(
         const rootSkillMd = path.join(dirPath, 'SKILL.md');
         if (await isFile(rootSkillMd)) {
           await parseAndRegister({
-            byName,
+            byDiscoveryKey,
             skipped,
-            log,
+            warn,
             skillMdPath: rootSkillMd,
             skillDirName: path.basename(dirPath),
             root,
@@ -115,9 +115,9 @@ async function scanRoots(
         const skillMdPath = path.join(dirPath, entry);
         if (!(await isFile(skillMdPath))) continue;
         await parseAndRegister({
-          byName,
+          byDiscoveryKey,
           skipped,
-          log,
+          warn,
           skillMdPath,
           skillDirName: skillName,
           root,
@@ -143,16 +143,16 @@ async function scanRoots(
   }
 
   return {
-    skills: sortSkills([...byName.values()]),
+    skills: sortSkills([...byDiscoveryKey.values()]),
     skipped,
     scannedRoots: roots.map((root) => root.path),
   };
 }
 
 async function parseAndRegister(input: {
-  readonly byName: Map<string, SkillDefinition>;
+  readonly byDiscoveryKey: Map<string, SkillDefinition>;
   readonly skipped: SkippedSkill[];
-  readonly log: ILogService;
+  readonly warn?: (message: string, payload?: LogPayload) => void;
   readonly skillMdPath: string;
   readonly skillDirName: string;
   readonly root: SkillRoot;
@@ -180,9 +180,9 @@ async function parseAndRegister(input: {
         : parsed;
     const discovered =
       input.root.plugin === undefined ? skill : { ...skill, plugin: input.root.plugin };
-    const key = normalizeSkillName(discovered.name);
-    if (!input.byName.has(key)) {
-      input.byName.set(key, discovered);
+    const key = skillDiscoveryKey(input.root, discovered.name);
+    if (!input.byDiscoveryKey.has(key)) {
+      input.byDiscoveryKey.set(key, discovered);
     }
     return discovered;
   } catch (error) {
@@ -193,12 +193,17 @@ async function parseAndRegister(input: {
         reason: `unsupported skill type "${error.skillType}"`,
       });
     } else if (error instanceof SkillParseError) {
-      input.log.warn(`Skipping invalid skill at ${input.skillMdPath}: ${error.message}`, error);
+      input.warn?.(`Skipping invalid skill at ${input.skillMdPath}: ${error.message}`, error);
     } else {
-      input.log.warn(`Skipping skill at ${input.skillMdPath} due to unexpected error`, error);
+      input.warn?.(`Skipping skill at ${input.skillMdPath} due to unexpected error`, error);
     }
     return undefined;
   }
+}
+
+function skillDiscoveryKey(root: SkillRoot, name: string): string {
+  const normalizedName = normalizeSkillName(name);
+  return root.plugin === undefined ? normalizedName : `${root.plugin.id}\0${normalizedName}`;
 }
 
 function sortSkills(skills: readonly SkillDefinition[]): readonly SkillDefinition[] {

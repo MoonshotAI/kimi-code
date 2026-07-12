@@ -1,12 +1,8 @@
 /**
- * `sessionSkillCatalog` domain (L3) — session skill catalog sink contract.
+ * `sessionSkillCatalog` domain (L3) — Session-scoped skill catalog contract.
  *
- * `ISessionSkillCatalog` is the read view of one session's active skill set:
- * the ordered, keyed merge of every `ISkillSource` (builtin / user / workspace
- * / plugin) folded into the sink by priority. `ready` resolves once the four
- * eager sources have each completed their first `load()`+merge; `onDidChange`
- * fires after every merge. `ISkillCatalogSink` is the push side for ad-hoc
- * (e.g. server) sources to `set`/`remove` a contribution. Session-scoped.
+ * Defines the merged session read view, source-specific change events, and the
+ * sink used by ad-hoc skill contributors. Bound at Session scope.
  */
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -20,7 +16,7 @@ export interface ISessionSkillCatalog {
 
   readonly catalog: SkillCatalog;
   readonly ready: Promise<void>;
-  readonly onDidChange: Event<void>;
+  readonly onDidChange: Event<string>;
   load(): Promise<void>;
   reload(): Promise<void>;
 }

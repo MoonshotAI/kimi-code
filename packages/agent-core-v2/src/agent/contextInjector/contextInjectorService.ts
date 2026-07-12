@@ -1,3 +1,11 @@
+/**
+ * `contextInjector` domain (L4) — `IAgentContextInjectorService` implementation.
+ *
+ * Injects registered context providers through `loop` and `systemReminder`,
+ * tracks their positions in `contextMemory` through `eventBus`, and reconciles
+ * those positions after `wire` restoration. Bound at Agent scope.
+ */
+
 import { Disposable, toDisposable } from "#/_base/di/lifecycle";
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -7,6 +15,8 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentWireService } from '#/wire/tokens';
+import type { IWireService } from '#/wire/wireService';
 import {
   IAgentContextInjectorService,
   type ContextInjectionProvider,
@@ -29,6 +39,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     @IAgentLoopService loopService: IAgentLoopService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
+    @IAgentWireService wire: IWireService,
   ) {
     super();
     this._register(
@@ -42,7 +53,12 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
         this.isNewTurn = true;
       }),
     );
-    this.eventBus.subscribe('context.spliced', (e) => this.handleSplice(e));
+    this._register(this.eventBus.subscribe('context.spliced', (e) => {
+      this.handleSplice(e);
+    }));
+    this._register(wire.onRestored(() => {
+      this.resyncPositions();
+    }));
   }
 
   register(
@@ -91,6 +107,15 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
         toolCalls: [],
         origin,
       });
+    }
+  }
+
+  private resyncPositions(): void {
+    const history = this.context.get();
+    for (const entry of this.entries) {
+      const found = findInjections(history, entry.name);
+      entry.positions.length = 0;
+      entry.positions.push(...found);
     }
   }
 

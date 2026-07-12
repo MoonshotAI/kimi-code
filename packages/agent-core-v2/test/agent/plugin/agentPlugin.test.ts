@@ -1,3 +1,12 @@
+/**
+ * Scenario: main-agent plugin session-start reminder wiring.
+ *
+ * Exercises initial injection and source-specific refresh behavior through the
+ * real `AgentPluginService`, with plugin and session catalog boundaries stubbed.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/agent/plugin/agentPlugin.test.ts`.
+ */
+
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -44,7 +53,9 @@ function pluginServiceStub(options: PluginServiceStubOptions): IPluginService {
     setPluginMcpServerEnabled: async () => {},
     removePlugin: async () => {},
     reloadPlugins: async (): Promise<ReloadSummary> => ({ added: [], removed: [], errors: [] }),
-    getPluginInfo: async () => undefined,
+    getPluginInfo: async () => {
+      throw new Error('getPluginInfo is not used by these tests');
+    },
     listPluginCommands: async () => [],
     checkUpdates: async () => [],
     pluginSkillRoots: async () => [],
@@ -59,6 +70,23 @@ function findPluginSessionStartMessages(ctx: TestAgentContext) {
     (message) =>
       message.origin?.kind === 'injection' && message.origin.variant === 'plugin_session_start',
   );
+}
+
+function waitForPluginSessionStartMessage(ctx: TestAgentContext): Promise<void> {
+  return new Promise((resolve) => {
+    const subscription = ctx.get(IEventBus).subscribe('context.spliced', (event) => {
+      if (
+        event.messages.some(
+          (message) =>
+            message.origin?.kind === 'injection' &&
+            message.origin.variant === 'plugin_session_start',
+        )
+      ) {
+        subscription.dispose();
+        resolve();
+      }
+    });
+  });
 }
 
 function messageText(message: { readonly content: readonly { readonly type: string; readonly text?: string }[] }): string {
@@ -158,10 +186,10 @@ describe('AgentPluginService plugin session-start wiring', () => {
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(0);
   });
 
-  it('re-appends a fresh reminder when the skill catalog sink changes', async () => {
+  it('re-appends a fresh reminder when the plugin skill source finishes refreshing', async () => {
     const catalog = new InMemorySkillCatalog();
     catalog.register(pluginSkill());
-    const sinkChange = new Emitter<void>();
+    const sinkChange = new Emitter<string>();
     const skillCatalog: ISessionSkillCatalog = {
       _serviceBrand: undefined,
       catalog,
@@ -192,17 +220,57 @@ describe('AgentPluginService plugin session-start wiring', () => {
 
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
 
-    // Simulate the skill-catalog sink firing onDidChange (e.g. after a plugin
-    // reload re-pulls the plugin source). appendFreshSessionStartReminder is async
-    // (awaits skillCatalog.ready); let it settle.
-    sinkChange.fire();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    const appended = waitForPluginSessionStartMessage(ctx);
+    sinkChange.fire('plugin');
+    await appended;
 
     const messages = findPluginSessionStartMessages(ctx);
     expect(messages.length).toBeGreaterThanOrEqual(2);
     const latest = messageText(messages.at(-1)!);
     expect(latest).toContain('<plugin_session_start plugin="demo" skill="demo-skill">');
     expect(latest).toContain('supersedes any earlier plugin_session_start reminder');
+    sinkChange.dispose();
+  });
+
+  it('appends only for the plugin source when unrelated and plugin changes arrive together', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(pluginSkill());
+    const sinkChange = new Emitter<string>();
+    const skillCatalog: ISessionSkillCatalog = {
+      _serviceBrand: undefined,
+      catalog,
+      ready: Promise.resolve(),
+      onDidChange: sinkChange.event,
+      load: async () => {},
+      reload: async () => {},
+    };
+
+    ctx = createTestAgent(
+      { autoConfigure: true },
+      appService(
+        IPluginService,
+        pluginServiceStub({
+          sessionStarts: [{ pluginId: 'demo', skillName: 'demo-skill' }],
+        }),
+      ),
+      skillServices(skillCatalog),
+      agentService(
+        IAgentPluginService,
+        new SyncDescriptor(AgentPluginService),
+      ),
+    );
+
+    ctx.get(IAgentPluginService);
+
+    await injectRegistered(ctx);
+    expect(findPluginSessionStartMessages(ctx)).toHaveLength(1);
+
+    const appended = waitForPluginSessionStartMessage(ctx);
+    sinkChange.fire('user');
+    sinkChange.fire('plugin');
+    await appended;
+
+    expect(findPluginSessionStartMessages(ctx)).toHaveLength(2);
     sinkChange.dispose();
   });
 });

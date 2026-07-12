@@ -1,10 +1,11 @@
 /**
  * `agentPlugin` domain (L4) — `IAgentPluginService` implementation.
  *
- * Renders enabled plugins' `sessionStart` skills into the main agent's context.
- * The normal injection path mirrors v1: add one reminder while no live
- * `plugin_session_start` injection exists. Reload paths force-append a fresh
- * reminder, or neutralize stale guidance when no session start is active.
+ * Renders session-start skills from `plugin` and `sessionSkillCatalog`, injects
+ * them through `contextInjector` and `systemReminder`, and uses `contextMemory`
+ * to neutralize stale guidance. Resolves session prompt context through
+ * `sessionContext` and reports missing skills through `log`. Bound at Agent
+ * scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -20,6 +21,7 @@ import type { EnabledPluginSessionStart } from '#/app/plugin/types';
 import type { SkillCatalog, SkillDefinition } from '#/app/skillCatalog/types';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { PLUGIN_SKILL_SOURCE_ID } from '#/session/sessionSkillCatalog/pluginSkillSource';
 
 import { IAgentPluginService } from './agentPlugin';
 
@@ -48,8 +50,10 @@ export class AgentPluginService extends Disposable implements IAgentPluginServic
       ),
     );
     this._register(
-      this.skillCatalog.onDidChange(() => {
-        void this.appendFreshSessionStartReminder();
+      this.skillCatalog.onDidChange((sourceId) => {
+        if (sourceId === PLUGIN_SKILL_SOURCE_ID) {
+          void this.appendFreshSessionStartReminder();
+        }
       }),
     );
   }

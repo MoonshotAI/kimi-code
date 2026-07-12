@@ -24,13 +24,19 @@ export interface IPluginSkillSource extends ISkillSource {
 export const IPluginSkillSource: ServiceIdentifier<IPluginSkillSource> =
   createDecorator<IPluginSkillSource>('pluginSkillSource');
 
+export const PLUGIN_SKILL_SOURCE_ID = 'plugin';
+
 export class PluginSkillSource implements IPluginSkillSource {
   declare readonly _serviceBrand: undefined;
 
-  readonly id = 'plugin';
+  readonly id = PLUGIN_SKILL_SOURCE_ID;
   readonly priority = SKILL_SOURCE_PRIORITY.plugin;
   readonly onDidChange: Event<void> = (listener, thisArg, disposables) =>
-    this.plugins.onDidReload(() => listener(undefined as void), thisArg, disposables);
+    this.plugins.onDidReload(
+      () => listener.call(thisArg, undefined as void),
+      undefined,
+      disposables,
+    );
 
   constructor(
     @ISkillDiscovery private readonly discovery: ISkillDiscovery,

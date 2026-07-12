@@ -1,3 +1,12 @@
+/**
+ * Scenario: session-owned agent creation, persistence, and MCP readiness.
+ *
+ * Exercises `AgentLifecycleService` through its DI contract with controlled
+ * persistence and MCP boundaries, including completion ordering.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/session/agentLifecycle/agentLifecycle.test.ts`.
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -53,7 +62,9 @@ const pluginServiceStub = {
   setPluginMcpServerEnabled: async () => {},
   removePlugin: async () => {},
   reloadPlugins: async () => ({ added: [], removed: [], errors: [] }),
-  getPluginInfo: async () => undefined,
+  getPluginInfo: async () => {
+    throw new Error('getPluginInfo is not used by these tests');
+  },
   listPluginCommands: async () => [],
   checkUpdates: async () => [],
   pluginSkillRoots: async () => [],
@@ -61,10 +72,6 @@ const pluginServiceStub = {
   enabledMcpServers: async () => ({}),
   enabledHooks: async () => [],
 } as unknown as IPluginService;
-
-function tick(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
 
 function recordingAppendLog(initial: readonly PersistedWireRecord[] = []): {
   readonly appended: PersistedWireRecord[];
@@ -219,7 +226,10 @@ describe('AgentLifecycleService', () => {
     } as unknown as IAgentPermissionModeService);
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
-  afterEach(() => disposables.dispose());
+  afterEach(() => {
+    disposables.dispose();
+    vi.restoreAllMocks();
+  });
 
   it('create / getHandle / list / remove', async () => {
     const svc = ix.get(IAgentLifecycleService);
@@ -355,6 +365,10 @@ describe('AgentLifecycleService', () => {
   });
 
   it('waits for MCP config resolution and initial connect before returning an agent', async () => {
+    let resolvePluginServersRequested!: () => void;
+    const pluginServersRequested = new Promise<void>((resolve) => {
+      resolvePluginServersRequested = resolve;
+    });
     let resolvePluginServers:
       | ((servers: Record<string, McpServerConfig>) => void)
       | undefined;
@@ -363,16 +377,26 @@ describe('AgentLifecycleService', () => {
     });
     ix.stub(IPluginService, {
       ...pluginServiceStub,
-      enabledMcpServers: () => pluginServers,
+      enabledMcpServers: () => {
+        resolvePluginServersRequested();
+        return pluginServers;
+      },
     } as unknown as IPluginService);
 
+    let resolveConnectStarted!: () => void;
+    const connectStarted = new Promise<void>((resolve) => {
+      resolveConnectStarted = resolve;
+    });
     let resolveConnect: (() => void) | undefined;
     const connected = new Promise<void>((resolve) => {
       resolveConnect = resolve;
     });
     const connectAll = vi
       .spyOn(McpConnectionManager.prototype, 'connectAll')
-      .mockReturnValue(connected);
+      .mockImplementation(() => {
+        resolveConnectStarted();
+        return connected;
+      });
 
     const svc = ix.get(IAgentLifecycleService);
     let settled = false;
@@ -380,18 +404,15 @@ describe('AgentLifecycleService', () => {
       settled = true;
     });
 
-    await tick();
+    await pluginServersRequested;
     expect(settled).toBe(false);
     expect(connectAll).not.toHaveBeenCalled();
 
     resolvePluginServers?.({
       delayed: { transport: 'stdio', command: process.execPath },
     });
-    // `connectAll` is gated on `Promise.all([resolveSessionMcpConfig(...),
-    // enabledMcpServers()])`; the session-config side walks the real filesystem
-    // (project-root search + mcp.json reads), which does not settle within a
-    // single macrotask under CI load. Wait for the call instead of a fixed tick.
-    await vi.waitFor(() => expect(connectAll).toHaveBeenCalledTimes(1));
+    await connectStarted;
+    expect(connectAll).toHaveBeenCalledTimes(1);
     expect(settled).toBe(false);
 
     resolveConnect?.();

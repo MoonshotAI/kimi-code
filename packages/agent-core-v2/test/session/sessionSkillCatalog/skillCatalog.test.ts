@@ -1,4 +1,13 @@
-import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
+/**
+ * Scenario: session skill-source discovery, merge, and plugin refresh.
+ *
+ * Exercises the real scoped catalog and source services with filesystem or
+ * in-memory discovery boundaries, including controlled concurrent refreshes.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/session/sessionSkillCatalog/skillCatalog.test.ts`.
+ */
+
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
 import { join } from 'pathe';
@@ -6,9 +15,11 @@ import { describe, expect, it } from 'vitest';
 
 import { createScopedTestHost, stubPair } from '#/_base/di/test';
 import { LifecycleScope } from '#/_base/di/scope';
-import type { Event } from '#/_base/event';
+import { Emitter, type Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IPluginService } from '#/app/plugin/plugin';
+import type { ReloadSummary } from '#/app/plugin/types';
+import { IProviderService } from '#/app/provider/provider';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import {
@@ -18,17 +29,17 @@ import {
 import { ISkillCatalogRuntimeOptions } from '#/app/skillCatalog/skillCatalogRuntimeOptions';
 import '#/index';
 import { InMemorySkillDiscovery } from '#/app/skillCatalog/inMemorySkillDiscovery';
+import type { SkillContribution } from '#/app/skillCatalog/skillSource';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { IPluginSkillSource } from '#/session/sessionSkillCatalog/pluginSkillSource';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
 import type { SkillRoot } from '#/app/skillCatalog/types';
 
+import { stubBootstrap } from '../../app/bootstrap/stubs';
 import { stubSkill } from '../../app/skillCatalog/stubs';
+import { stubProviderService } from '../../app/provider/stubs';
 
-const bootstrapStub = {
-  _serviceBrand: undefined,
-  homeDir: '/home',
-  osHomeDir: '/home',
-} as unknown as IBootstrapService;
+const bootstrapStub = stubBootstrap('/home');
 
 function configStub(): IConfigService & {
   setExtraSkillDirs(dirs: readonly string[]): void;
@@ -75,17 +86,22 @@ function configStub(): IConfigService & {
   };
 }
 
-function pluginStub(skillRoots: readonly SkillRoot[] = []): IPluginService {
+function pluginStub(
+  skillRoots: readonly SkillRoot[] = [],
+  reloadEmitter?: Emitter<ReloadSummary>,
+): IPluginService {
   return {
     _serviceBrand: undefined,
-    onDidReload: () => ({ dispose: () => {} }),
+    onDidReload: reloadEmitter !== undefined ? reloadEmitter.event : () => ({ dispose: () => {} }),
     listPlugins: async () => [],
     installPlugin: async () => ({ id: '' }) as never,
     setPluginEnabled: async () => {},
     setPluginMcpServerEnabled: async () => {},
     removePlugin: async () => {},
     reloadPlugins: async () => ({ added: [], removed: [], errors: [] }),
-    getPluginInfo: async () => undefined,
+    getPluginInfo: async () => {
+      throw new Error('getPluginInfo is not used by these tests');
+    },
     listPluginCommands: async () => [],
     checkUpdates: async () => [],
     pluginSkillRoots: async () => skillRoots,
@@ -124,6 +140,7 @@ function makeHost(
   ws: ISessionWorkspaceContext,
   pluginRoots: readonly SkillRoot[] = [],
   explicitDirs?: readonly string[],
+  pluginReloadEmitter?: Emitter<ReloadSummary>,
 ) {
   const config = configStub();
   const runtimeOptions = {
@@ -135,13 +152,13 @@ function makeHost(
     stubPair(IBootstrapService, bootstrapStub),
     stubPair(IConfigService, config),
     stubPair(ISkillCatalogRuntimeOptions, runtimeOptions),
-    stubPair(IPluginService, pluginStub(pluginRoots)),
+    stubPair(IPluginService, pluginStub(pluginRoots, pluginReloadEmitter)),
   ]);
   const session = host.child(LifecycleScope.Session, 's1', [stubPair(ISessionWorkspaceContext, ws)]);
   return { host, session, config };
 }
 
-function waitForEvents(event: Event<void>, count: number): Promise<void> {
+function waitForEvents(event: Event<unknown>, count: number): Promise<void> {
   return new Promise((resolve) => {
     let received = 0;
     const disposable = event(() => {
@@ -152,6 +169,17 @@ function waitForEvents(event: Event<void>, count: number): Promise<void> {
       }
     });
   });
+}
+
+function deferred<T>(): {
+  readonly promise: Promise<T>;
+  readonly resolve: (value: T) => void;
+} {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }
 
 async function withSkillCatalogWorkspace(
@@ -367,11 +395,15 @@ describe('SessionSkillCatalogService', () => {
 
     setWorkDir('/work2');
     store.setProjectSkills([stubSkill('second')]);
+    const changes: string[] = [];
+    const subscription = catalog.onDidChange((sourceId) => changes.push(sourceId));
     await catalog.reload();
 
     expect(catalog.catalog.getSkill('first')).toBeUndefined();
     expect(catalog.catalog.getSkill('second')).toBeDefined();
     expect(catalog.catalog.getSkill('global-only')).toBeDefined();
+    expect(changes).toEqual(['catalog']);
+    subscription.dispose();
     host.dispose();
   });
 
@@ -482,5 +514,237 @@ describe('SessionSkillCatalogService', () => {
         host.dispose();
       }
     });
+  });
+
+  it('fires onDidChange with the plugin source id after a plugin reload re-pulls plugin skills', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setPluginSkills([
+      stubSkill('demo-skill', { source: 'extra', plugin: { id: 'demo' } }),
+    ]);
+    const reloadEmitter = new Emitter<ReloadSummary>();
+    const pluginRoot: SkillRoot = {
+      path: '/plugins/demo/skills',
+      source: 'extra',
+      plugin: { id: 'demo' },
+    };
+    const { stub: ws } = workspaceStub('/work');
+    const { host, session } = makeHost(store, ws, [pluginRoot], undefined, reloadEmitter);
+
+    try {
+      const catalog = session.accessor.get(ISessionSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeDefined();
+
+      const refreshed = new Promise<string>((resolve) => {
+        const d = catalog.onDidChange((sourceId) => {
+          d.dispose();
+          resolve(sourceId);
+        });
+      });
+      reloadEmitter.fire({ added: [], removed: [], errors: [] });
+
+      await expect(refreshed).resolves.toBe('plugin');
+    } finally {
+      host.dispose();
+      reloadEmitter.dispose();
+    }
+  });
+
+  it('queues a plugin refresh during initial load so the refreshed contribution remains active', async () => {
+    const initialLoad = deferred<SkillContribution>();
+    const refreshedLoad = deferred<SkillContribution>();
+    const initialStarted = deferred<void>();
+    const refreshedStarted = deferred<void>();
+    const sourceChanges = new Emitter<void>();
+    let loadCount = 0;
+    const pluginSource: IPluginSkillSource = {
+      _serviceBrand: undefined,
+      id: 'plugin',
+      priority: 5,
+      onDidChange: sourceChanges.event,
+      load: () => {
+        loadCount += 1;
+        if (loadCount === 1) {
+          initialStarted.resolve(undefined);
+          return initialLoad.promise;
+        }
+        if (loadCount === 2) {
+          refreshedStarted.resolve(undefined);
+          return refreshedLoad.promise;
+        }
+        throw new Error('unexpected plugin source load');
+      },
+    };
+    const { stub: ws } = workspaceStub('/work');
+    const host = createScopedTestHost([
+      stubPair(ISkillDiscovery, new InMemorySkillDiscovery()),
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, configStub()),
+      stubPair(ISkillCatalogRuntimeOptions, {
+        _serviceBrand: undefined,
+      } as unknown as ISkillCatalogRuntimeOptions),
+      stubPair(IPluginService, pluginStub()),
+    ]);
+    const session = host.child(LifecycleScope.Session, 's1', [
+      stubPair(ISessionWorkspaceContext, ws),
+      stubPair(IPluginSkillSource, pluginSource),
+    ]);
+
+    try {
+      const catalog = session.accessor.get(ISessionSkillCatalog);
+      const loading = catalog.load();
+      await initialStarted.promise;
+      const sourceIds: string[] = [];
+      const refreshed = new Promise<void>((resolve) => {
+        const subscription = catalog.onDidChange((sourceId) => {
+          sourceIds.push(sourceId);
+          if (sourceId === 'plugin') {
+            subscription.dispose();
+            resolve();
+          }
+        });
+      });
+
+      sourceChanges.fire();
+
+      expect(loadCount).toBe(1);
+
+      initialLoad.resolve({
+        skills: [
+          stubSkill('stale-skill', { source: 'extra', plugin: { id: 'demo' } }),
+        ],
+      });
+      await refreshedStarted.promise;
+      refreshedLoad.resolve({
+        skills: [
+          stubSkill('fresh-skill', { source: 'extra', plugin: { id: 'demo' } }),
+        ],
+      });
+      await Promise.all([loading, refreshed]);
+
+      expect(sourceIds).toEqual(['plugin']);
+      expect(catalog.catalog.getPluginSkill('demo', 'stale-skill')).toBeUndefined();
+      expect(catalog.catalog.getPluginSkill('demo', 'fresh-skill')).toBeDefined();
+    } finally {
+      host.dispose();
+      sourceChanges.dispose();
+    }
+  });
+
+  it('binds thisArg when forwarding plugin reloads through the plugin skill source', async () => {
+    const reloadEmitter = new Emitter<ReloadSummary>();
+    const pluginService = pluginStub([], reloadEmitter);
+    const { stub: ws } = workspaceStub('/work');
+    const host = createScopedTestHost([
+      stubPair(ISkillDiscovery, new InMemorySkillDiscovery()),
+      stubPair(IBootstrapService, bootstrapStub),
+      stubPair(IConfigService, configStub()),
+      stubPair(ISkillCatalogRuntimeOptions, {
+        _serviceBrand: undefined,
+      } as unknown as ISkillCatalogRuntimeOptions),
+      stubPair(IPluginService, pluginService),
+    ]);
+    const session = host.child(LifecycleScope.Session, 's1', [
+      stubPair(ISessionWorkspaceContext, ws),
+    ]);
+
+    try {
+      const source = session.accessor.get(IPluginSkillSource);
+      void source.id;
+      const receiver = { tag: 'receiver' };
+      const seen: unknown[] = [];
+      const subscription = source.onDidChange?.(
+        function (this: unknown) {
+          seen.push(this);
+        },
+        receiver,
+      );
+
+      reloadEmitter.fire({ added: [], removed: [], errors: [] });
+
+      expect(seen).toEqual([receiver]);
+      subscription?.dispose();
+    } finally {
+      host.dispose();
+      reloadEmitter.dispose();
+    }
+  });
+
+  it('keeps non-plugin skills working and recovers plugin skills after a corrupt installed.json is fixed and reloaded', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'plugin-home-'));
+    await mkdir(join(homeDir, 'plugins'), { recursive: true });
+    await writeFile(join(homeDir, 'plugins', 'installed.json'), '{ not json', 'utf8');
+
+    const managedRoot = join(homeDir, 'plugins', 'managed', 'demo');
+    await mkdir(join(managedRoot, 'skills', 'demo-skill'), { recursive: true });
+    await writeFile(
+      join(managedRoot, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'demo', skills: './skills/' }),
+      'utf8',
+    );
+    await writeFile(
+      join(managedRoot, 'skills', 'demo-skill', 'SKILL.md'),
+      '---\nname: demo-skill\ndescription: demo\n---\nbody',
+      'utf8',
+    );
+
+    const store = new InMemorySkillDiscovery();
+    store.setUserSkills([stubSkill('global-only')]);
+    store.setPluginSkills([
+      stubSkill('demo-skill', { source: 'extra', plugin: { id: 'demo' } }),
+    ]);
+    const host = createScopedTestHost([
+      stubPair(ISkillDiscovery, store),
+      stubPair(IBootstrapService, stubBootstrap(homeDir)),
+      stubPair(IConfigService, configStub()),
+      stubPair(ISkillCatalogRuntimeOptions, {
+        _serviceBrand: undefined,
+      } as unknown as ISkillCatalogRuntimeOptions),
+      stubPair(IProviderService, stubProviderService()),
+    ]);
+    const { stub: ws } = workspaceStub('/work');
+    const session = host.child(LifecycleScope.Session, 's1', [
+      stubPair(ISessionWorkspaceContext, ws),
+    ]);
+
+    try {
+      const catalog = session.accessor.get(ISessionSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.getSkill('global-only')).toBeDefined();
+      expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeUndefined();
+
+      await writeFile(
+        join(homeDir, 'plugins', 'installed.json'),
+        JSON.stringify({
+          version: 1,
+          plugins: [
+            {
+              id: 'demo',
+              root: managedRoot,
+              source: 'local-path',
+              enabled: true,
+              installedAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            },
+          ],
+        }),
+        'utf8',
+      );
+      const refreshed = new Promise<void>((resolve) => {
+        const d = catalog.onDidChange((sourceId) => {
+          if (sourceId === 'plugin') {
+            d.dispose();
+            resolve();
+          }
+        });
+      });
+      await host.app.accessor.get(IPluginService).reloadPlugins();
+      await refreshed;
+
+      expect(catalog.catalog.getPluginSkill('demo', 'demo-skill')).toBeDefined();
+    } finally {
+      host.dispose();
+      await rm(homeDir, { recursive: true, force: true });
+    }
   });
 });

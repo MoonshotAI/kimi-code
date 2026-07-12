@@ -1,3 +1,12 @@
+/**
+ * Scenario: filesystem-backed skill discovery across ordered roots.
+ *
+ * Verifies real SKILL.md parsing, collision handling, nested bundles, and
+ * diagnostics through the ISkillDiscovery contract with only logging stubbed.
+ * Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/app/skillCatalog/fileSkillDiscovery.test.ts`.
+ */
+
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
@@ -67,6 +76,14 @@ describe('FileSkillDiscovery', () => {
     return { path: join(root, rel), source };
   }
 
+  function pluginSkillRoot(rel: string, pluginId: string): SkillRoot {
+    return {
+      path: join(root, rel),
+      source: 'extra',
+      plugin: { id: pluginId },
+    };
+  }
+
   it('discovers a directory skill under a root', async () => {
     await writeSkill('skills/commit/SKILL.md', 'name: commit\ndescription: commit changes');
 
@@ -99,6 +116,49 @@ describe('FileSkillDiscovery', () => {
 
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0]?.description).toBe('from brand');
+  });
+
+  it('dedupes same-named skills across roots from the same plugin', async () => {
+    await writeSkill('plugin-a-first/dup/SKILL.md', 'name: DUP\ndescription: from first root');
+    await writeSkill('plugin-a-second/dup/SKILL.md', 'name: dup\ndescription: from second root');
+
+    const result = await discover([
+      pluginSkillRoot('plugin-a-first', 'plugin-a'),
+      pluginSkillRoot('plugin-a-second', 'plugin-a'),
+    ]);
+
+    expect(result.skills).toHaveLength(1);
+    expect(result.skills[0]).toEqual(
+      expect.objectContaining({
+        name: 'DUP',
+        description: 'from first root',
+        plugin: { id: 'plugin-a' },
+      }),
+    );
+  });
+
+  it('preserves same-named skills from different plugins', async () => {
+    await writeSkill('plugin-a/dup/SKILL.md', 'name: DUP\ndescription: from plugin A');
+    await writeSkill('plugin-b/dup/SKILL.md', 'name: dup\ndescription: from plugin B');
+
+    const result = await discover([
+      pluginSkillRoot('plugin-a', 'plugin-a'),
+      pluginSkillRoot('plugin-b', 'plugin-b'),
+    ]);
+
+    expect(result.skills).toHaveLength(2);
+    expect(
+      result.skills
+        .map((skill) => ({
+          name: skill.name,
+          description: skill.description,
+          pluginId: skill.plugin?.id,
+        }))
+        .toSorted((a, b) => (a.pluginId ?? '').localeCompare(b.pluginId ?? '')),
+    ).toEqual([
+      { name: 'DUP', description: 'from plugin A', pluginId: 'plugin-a' },
+      { name: 'dup', description: 'from plugin B', pluginId: 'plugin-b' },
+    ]);
   });
 
   it('discovers sub-skills of a parent that opts in', async () => {

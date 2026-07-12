@@ -1,6 +1,15 @@
+/**
+ * Scenario: plugin installation and consumption metadata through `PluginManager`.
+ *
+ * Verifies persisted plugin capabilities and skill counts against the real
+ * filesystem discovery path. Network download boundaries are stubbed locally.
+ * Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/app/plugin/manager-consumption.test.ts`.
+ */
+
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -8,12 +17,26 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { PluginManager } from '#/app/plugin/manager';
 
+import { stubSkill } from '../skillCatalog/stubs';
+
+async function isolatedTmpdir(): Promise<string> {
+  const dir = await mkdtemp(path.join(tmpdir(), 'kimi-isolated-tmp-'));
+  vi.stubEnv('TMPDIR', dir);
+  return dir;
+}
+
+async function zipTempLeftovers(dir: string): Promise<readonly string[]> {
+  return (await readdir(dir)).filter((entry) => entry.startsWith('kimi-plugin-zip-'));
+}
+
 async function makeKimiHome(): Promise<string> {
   return mkdtemp(path.join(tmpdir(), 'kimi-home-'));
 }
 
-async function managedPluginRoot(home: string, id: string): Promise<string> {
-  return realpath(path.join(home, 'plugins', 'managed', id));
+async function managedPluginRoot(manager: PluginManager, id: string): Promise<string> {
+  const root = manager.get(id)?.root;
+  if (root === undefined) throw new Error(`Plugin "${id}" is not installed`);
+  return realpath(root);
 }
 
 async function makePlugin(
@@ -95,6 +118,7 @@ interface MockGithubFetchOptions {
 }
 
 function mockGithubFetch(options: MockGithubFetchOptions): void {
+  const commitSha = '1111111111111111111111111111111111111111';
   vi.stubGlobal(
     'fetch',
     vi.fn(async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
@@ -108,6 +132,11 @@ function mockGithubFetch(options: MockGithubFetchOptions): void {
         const tagUrl = url.replace(/\/releases\/latest$/, `/releases/tag/${options.releaseTag}`);
         return new Response(null, { status: 302, headers: { location: tagUrl } });
       }
+      if (/^https:\/\/github\.com\/[^/]+\/[^/]+\/commits\/.+\.atom$/.test(url)) {
+        return new Response(
+          `<entry><id>tag:github.com,2008:Grit::Commit/${commitSha}</id></entry>`,
+        );
+      }
       if (url.startsWith('https://codeload.github.com/')) {
         if (init?.method === 'HEAD') return new Response(null, { status: 200 });
         return new Response(options.tarball, { status: 200 });
@@ -120,6 +149,7 @@ function mockGithubFetch(options: MockGithubFetchOptions): void {
 describe('PluginManager consumption plane', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it('pluginSkillRoots() returns only enabled plugins skills paths', async () => {
@@ -131,8 +161,8 @@ describe('PluginManager consumption plane', () => {
     await manager.install(a);
     await manager.install(b);
     await manager.setEnabled('b', false);
-    const managedA = await managedPluginRoot(home, 'a');
-    const managedB = await managedPluginRoot(home, 'b');
+    const managedA = await managedPluginRoot(manager, 'a');
+    const managedB = await managedPluginRoot(manager, 'b');
     expect(manager.pluginSkillRoots()).toContainEqual({
       path: path.join(managedA, 'skills'),
       source: 'extra',
@@ -152,7 +182,7 @@ describe('PluginManager consumption plane', () => {
     await manager.load();
     await manager.install(root);
     await writeFile(
-      path.join(await managedPluginRoot(home, 'demo'), 'kimi.plugin.json'),
+      path.join(await managedPluginRoot(manager, 'demo'), 'kimi.plugin.json'),
       '{ not json',
       'utf8',
     );
@@ -173,6 +203,198 @@ describe('PluginManager consumption plane', () => {
       expect.objectContaining({ id: 'superpowers', skillCount: 3 }),
     );
     expect(manager.info('superpowers')?.skillCount).toBe(3);
+  });
+
+  it('reports the provided discovery result when skill counting is overridden', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('custom-discovery', {
+      skillNames: ['first', 'second'],
+    });
+    const manager = new PluginManager({
+      kimiHomeDir: home,
+      discoverSkills: async () => ({
+        skills: [stubSkill('provided')],
+        skipped: [],
+        scannedRoots: [],
+      }),
+    });
+    await manager.load();
+    await manager.install(root);
+    expect(manager.info('custom-discovery')?.skillCount).toBe(1);
+  });
+
+  it('counts a SKILL.md at the plugin root fallback', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('root-skill-plugin');
+    await writeFile(
+      path.join(root, 'SKILL.md'),
+      '---\nname: root-skill\ndescription: at root\n---\nbody',
+      'utf8',
+    );
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    expect(manager.info('root-skill-plugin')?.skillCount).toBe(1);
+  });
+
+  it('counts nested sub-skills discovered through has-sub-skill bundles', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('nested', { skillNames: ['parent'] });
+    await writeFile(
+      path.join(root, 'skills', 'parent', 'SKILL.md'),
+      '---\nname: parent\ndescription: p\nhas-sub-skill: true\n---\nbody',
+      'utf8',
+    );
+    await mkdir(path.join(root, 'skills', 'parent', 'child'), { recursive: true });
+    await writeFile(
+      path.join(root, 'skills', 'parent', 'child', 'SKILL.md'),
+      '---\nname: child\ndescription: c\n---\nbody',
+      'utf8',
+    );
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    expect(manager.info('nested')?.skillCount).toBe(2);
+  });
+
+  it('does not count skills whose SKILL.md has invalid frontmatter', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('invalid-fm', { skillNames: ['good'] });
+    await mkdir(path.join(root, 'skills', 'bad'), { recursive: true });
+    await writeFile(path.join(root, 'skills', 'bad', 'SKILL.md'), 'no frontmatter at all', 'utf8');
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    expect(manager.info('invalid-fm')?.skillCount).toBe(1);
+  });
+
+  it('dedupes same-named skills across multiple plugin skill roots', async () => {
+    const home = await makeKimiHome();
+    const root = await mkdtemp(path.join(tmpdir(), 'plugin-multiroot-'));
+    await writeFile(
+      path.join(root, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'multiroot', skills: ['./a/', './b/'] }),
+      'utf8',
+    );
+    for (const dir of ['a', 'b']) {
+      await mkdir(path.join(root, dir, 'dup'), { recursive: true });
+      await writeFile(
+        path.join(root, dir, 'dup', 'SKILL.md'),
+        '---\nname: dup\ndescription: d\n---\nbody',
+        'utf8',
+      );
+    }
+    await mkdir(path.join(root, 'b', 'unique'), { recursive: true });
+    await writeFile(
+      path.join(root, 'b', 'unique', 'SKILL.md'),
+      '---\nname: unique\ndescription: u\n---\nbody',
+      'utf8',
+    );
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(await realpath(root));
+    expect(manager.info('multiroot')?.skillCount).toBe(2);
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it('removes the zip temp dir when extraction of a corrupt zip fails', async () => {
+    const home = await makeKimiHome();
+    const isolated = await isolatedTmpdir();
+    const url = await serveOnce(Buffer.from('this is not a zip archive'));
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await expect(manager.install(url)).rejects.toThrow();
+    expect(await zipTempLeftovers(isolated)).toEqual([]);
+    await rm(isolated, { recursive: true, force: true });
+  });
+
+  it('removes the zip temp dir and reports the original source when a zip plugin has no manifest', async () => {
+    const home = await makeKimiHome();
+    const sourceRoot = await mkdtemp(path.join(tmpdir(), 'plugin-no-manifest-'));
+    await writeFile(path.join(sourceRoot, 'README.md'), 'no manifest here', 'utf8');
+    const isolated = await isolatedTmpdir();
+    const url = await serveOnce(await zipDir(sourceRoot));
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+
+    let message = '';
+    await manager.install(url).catch((error: Error) => {
+      message = error.message;
+    });
+
+    expect(message).toContain(url);
+    expect(message).not.toContain('kimi-plugin-zip');
+    expect(await zipTempLeftovers(isolated)).toEqual([]);
+    await rm(sourceRoot, { recursive: true, force: true });
+    await rm(isolated, { recursive: true, force: true });
+  });
+
+  it('reports the GitHub URL when a GitHub plugin tarball has no manifest', async () => {
+    const home = await makeKimiHome();
+    const sourceRoot = await mkdtemp(path.join(tmpdir(), 'plugin-gh-no-manifest-'));
+    await writeFile(path.join(sourceRoot, 'README.md'), 'no manifest here', 'utf8');
+    const isolated = await isolatedTmpdir();
+    const source = 'https://github.com/example/no-manifest-plugin';
+    mockGithubFetch({ releaseTag: 'v1.0.0', tarball: await zipDir(sourceRoot) });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+
+    let message = '';
+    await manager.install(source).catch((error: Error) => {
+      message = error.message;
+    });
+
+    expect(message).toContain(`Cannot install plugin from ${source}:`);
+    expect(message).not.toContain('kimi-plugin-zip');
+    await rm(home, { recursive: true, force: true });
+    await rm(sourceRoot, { recursive: true, force: true });
+    await rm(isolated, { recursive: true, force: true });
+  });
+
+  it('removes the zip temp dir when a GitHub plugin tarball has no manifest', async () => {
+    const home = await makeKimiHome();
+    const sourceRoot = await mkdtemp(path.join(tmpdir(), 'plugin-gh-no-manifest-'));
+    await writeFile(path.join(sourceRoot, 'README.md'), 'no manifest here', 'utf8');
+    const isolated = await isolatedTmpdir();
+    const source = 'https://github.com/example/no-manifest-plugin';
+    mockGithubFetch({ releaseTag: 'v1.0.0', tarball: await zipDir(sourceRoot) });
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+
+    await expect(manager.install(source)).rejects.toThrow();
+
+    expect(await zipTempLeftovers(isolated)).toEqual([]);
+    await rm(home, { recursive: true, force: true });
+    await rm(sourceRoot, { recursive: true, force: true });
+    await rm(isolated, { recursive: true, force: true });
+  });
+
+  it('reports the real local path when a local-path plugin has no manifest', async () => {
+    const home = await makeKimiHome();
+    const sourceRoot = await mkdtemp(path.join(tmpdir(), 'plugin-no-manifest-'));
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+
+    let message = '';
+    await manager.install(sourceRoot).catch((error: Error) => {
+      message = error.message;
+    });
+
+    expect(message).toContain(`Cannot install plugin at ${await realpath(sourceRoot)}`);
+    await rm(sourceRoot, { recursive: true, force: true });
+  });
+
+  it('removes the zip temp dir after a successful zip install', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('zip-demo');
+    const isolated = await isolatedTmpdir();
+    const url = await serveOnce(await zipDir(root));
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(url);
+    expect(manager.get('zip-demo')?.state).toBe('ok');
+    expect(await zipTempLeftovers(isolated)).toEqual([]);
+    await rm(isolated, { recursive: true, force: true });
   });
 
   it('enabledSessionStarts() returns only enabled plugin sessionStart declarations', async () => {
@@ -198,7 +420,7 @@ describe('PluginManager consumption plane', () => {
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
     await manager.install(root);
-    const managedRoot = await managedPluginRoot(home, 'demo');
+    const managedRoot = await managedPluginRoot(manager, 'demo');
 
     expect(manager.info('demo')?.mcpServers).toContainEqual(
       expect.objectContaining({
@@ -331,7 +553,7 @@ describe('PluginManager consumption plane', () => {
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
     await manager.install(root);
-    const managedRoot = await managedPluginRoot(home, 'demo');
+    const managedRoot = await managedPluginRoot(manager, 'demo');
     await writeFile(
       path.join(managedRoot, 'kimi.plugin.json'),
       JSON.stringify({ name: 'demo', version: '2.0.0' }),
@@ -361,7 +583,7 @@ describe('PluginManager consumption plane', () => {
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
     await manager.install(root);
-    const installedRoot = await managedPluginRoot(home, 'demo');
+    const installedRoot = await managedPluginRoot(manager, 'demo');
     expect(manager.enabledHooks()).toEqual([
       {
         event: 'PreToolUse',
@@ -383,7 +605,7 @@ describe('PluginManager consumption plane', () => {
     expect(manager.enabledHooks()).toEqual([]);
   });
 
-  it('install() from /tree/<tag-shaped-ref> downloads via short form, not refs/heads/', async () => {
+  it('install() from /tree/<tag-shaped-ref> pins the resolved commit', async () => {
     const home = await makeKimiHome();
     const sourceRoot = await mkdtemp(path.join(tmpdir(), 'plugin-gh-tag-'));
     await writeFile(
@@ -392,6 +614,7 @@ describe('PluginManager consumption plane', () => {
       'utf8',
     );
     const zipBuffer = await zipDir(sourceRoot);
+    const commitSha = '1111111111111111111111111111111111111111';
 
     let codeloadPath = '';
     vi.stubGlobal(
@@ -399,6 +622,11 @@ describe('PluginManager consumption plane', () => {
       vi.fn(async (input: Parameters<typeof fetch>[0]) => {
         const url =
           typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.endsWith('/commits/v5.1.0.atom')) {
+          return new Response(
+            `<entry><id>tag:github.com,2008:Grit::Commit/${commitSha}</id></entry>`,
+          );
+        }
         if (url.startsWith('https://codeload.github.com/')) {
           codeloadPath = new URL(url).pathname;
           return new Response(zipBuffer, { status: 200 });
@@ -410,12 +638,13 @@ describe('PluginManager consumption plane', () => {
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
     const record = await manager.install('https://github.com/obra/superpowers/tree/v5.1.0');
-    expect(codeloadPath).toBe('/obra/superpowers/zip/v5.1.0');
+    expect(codeloadPath).toBe(`/obra/superpowers/zip/${commitSha}`);
     expect(record.github?.ref).toEqual({ kind: 'branch', value: 'v5.1.0' });
+    expect(record.github?.installedSha).toBe(commitSha);
     await rm(sourceRoot, { recursive: true, force: true });
   });
 
-  it('install() from /releases/tag/<tag> resolves precisely via refs/tags/', async () => {
+  it('install() from /releases/tag/<tag> pins the tag commit', async () => {
     const home = await makeKimiHome();
     const sourceRoot = await mkdtemp(path.join(tmpdir(), 'plugin-gh-release-'));
     await writeFile(
@@ -424,6 +653,7 @@ describe('PluginManager consumption plane', () => {
       'utf8',
     );
     const zipBuffer = await zipDir(sourceRoot);
+    const commitSha = '1111111111111111111111111111111111111111';
 
     let codeloadPath = '';
     vi.stubGlobal(
@@ -431,6 +661,11 @@ describe('PluginManager consumption plane', () => {
       vi.fn(async (input: Parameters<typeof fetch>[0]) => {
         const url =
           typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.endsWith('/commits/v5.1.0.atom')) {
+          return new Response(
+            `<entry><id>tag:github.com,2008:Grit::Commit/${commitSha}</id></entry>`,
+          );
+        }
         if (url.startsWith('https://codeload.github.com/')) {
           codeloadPath = new URL(url).pathname;
           return new Response(zipBuffer, { status: 200 });
@@ -442,8 +677,9 @@ describe('PluginManager consumption plane', () => {
     const manager = new PluginManager({ kimiHomeDir: home });
     await manager.load();
     const record = await manager.install('https://github.com/obra/superpowers/releases/tag/v5.1.0');
-    expect(codeloadPath).toBe('/obra/superpowers/zip/refs/tags/v5.1.0');
+    expect(codeloadPath).toBe(`/obra/superpowers/zip/${commitSha}`);
     expect(record.github?.ref).toEqual({ kind: 'tag', value: 'v5.1.0' });
+    expect(record.github?.installedSha).toBe(commitSha);
     await rm(sourceRoot, { recursive: true, force: true });
   });
 

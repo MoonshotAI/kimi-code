@@ -1,3 +1,11 @@
+/**
+ * Scenario: core `PluginManager` installation and management behavior.
+ *
+ * Exercises the real filesystem store and managed copies; local HTTP and
+ * stubbed `fetch` boundaries cover zip and GitHub sources.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/app/plugin/manager.test.ts
+ */
+
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -125,7 +133,17 @@ describe('PluginManager', () => {
       await writeFile(join(sourceRoot, 'kimi.plugin.json'), JSON.stringify({ name: 'github-plugin' }), 'utf8');
       execFileSync('zip', ['-qr', zipPath, '.'], { cwd: sourceRoot });
       const zip = await readFile(zipPath);
-      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(zip)));
+      const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.endsWith('/commits/v1.atom')) {
+          return new Response(
+            '<entry><id>tag:github.com,2008:Grit::Commit/1111111111111111111111111111111111111111</id></entry>',
+          );
+        }
+        return new Response(zip);
+      });
+      vi.stubGlobal('fetch', fetchMock as typeof fetch);
       const manager = new PluginManager({ kimiHomeDir: home });
 
       const record = await manager.install('https://github.com/owner/repo/tree/v1');
@@ -136,7 +154,17 @@ describe('PluginManager', () => {
         owner: 'owner',
         repo: 'repo',
         ref: { kind: 'branch', value: 'v1' },
+        installedSha: '1111111111111111111111111111111111111111',
       });
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://codeload.github.com/owner/repo/zip/1111111111111111111111111111111111111111',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+      const stored = JSON.parse(
+        await readFile(join(home, 'plugins', 'installed.json'), 'utf8'),
+      ) as { plugins: Array<{ id: string; github?: { installedSha?: string } }> };
+      expect(stored.plugins.find((plugin) => plugin.id === 'github-plugin')?.github?.installedSha)
+        .toBe('1111111111111111111111111111111111111111');
       expect(manager.get('github-plugin')?.manifest?.name).toBe('github-plugin');
     } finally {
       await rm(sourceRoot, { recursive: true, force: true });
@@ -156,6 +184,7 @@ describe('PluginManager', () => {
             source: 'github',
             enabled: true,
             installedAt: '2026-01-01T00:00:00.000Z',
+            originalSource: 'https://github.com/owner/repo',
             github: { owner: 'owner', repo: 'repo', ref: { kind: 'branch', value: 'v1' } },
           },
         ],
@@ -182,6 +211,135 @@ describe('PluginManager', () => {
         displayVersion: 'v2',
         updateAvailable: true,
       },
+    ]);
+  });
+
+  it('reports a pinned branch update only when its commit advances', async () => {
+    await writeFile(
+      join(home, 'plugins', 'installed.json'),
+      JSON.stringify({
+        version: 1,
+        plugins: [
+          {
+            id: 'demo',
+            root,
+            source: 'github',
+            enabled: true,
+            installedAt: '2026-01-01T00:00:00.000Z',
+            originalSource: 'https://github.com/owner/repo/tree/main',
+            github: {
+              owner: 'owner',
+              repo: 'repo',
+              ref: { kind: 'branch', value: 'main' },
+              installedSha: '1111111111111111111111111111111111111111',
+            },
+          },
+        ],
+      }),
+      'utf8',
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            '<entry><id>tag:github.com,2008:Grit::Commit/1111111111111111111111111111111111111111</id></entry>',
+          ),
+        )
+        .mockResolvedValueOnce(
+          new Response(
+            '<entry><id>tag:github.com,2008:Grit::Commit/2222222222222222222222222222222222222222</id></entry>',
+          ),
+        ),
+    );
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+
+    await expect(manager.checkUpdates()).resolves.toEqual([
+      expect.objectContaining({ id: 'demo', updateAvailable: false }),
+    ]);
+    await expect(manager.checkUpdates()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'demo',
+        current: { kind: 'branch', value: 'main' },
+        latest: { kind: 'branch', value: 'main' },
+        updateAvailable: true,
+      }),
+    ]);
+  });
+
+  it('treats legacy commit metadata without originalSource as pinned', async () => {
+    const sha = '1111111111111111111111111111111111111111';
+    await writeFile(
+      join(home, 'plugins', 'installed.json'),
+      JSON.stringify({
+        version: 1,
+        plugins: [
+          {
+            id: 'demo',
+            root,
+            source: 'github',
+            enabled: true,
+            installedAt: '2026-01-01T00:00:00.000Z',
+            github: { owner: 'owner', repo: 'repo', ref: { kind: 'sha', value: sha } },
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+
+    await expect(manager.checkUpdates()).resolves.toEqual([
+      expect.objectContaining({
+        id: 'demo',
+        latest: { kind: 'sha', value: sha },
+        updateAvailable: false,
+      }),
+    ]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps successful update results when another repository lookup fails', async () => {
+    await writeFile(
+      join(home, 'plugins', 'installed.json'),
+      JSON.stringify({
+        version: 1,
+        plugins: ['good', 'offline'].map((id) => ({
+          id,
+          root,
+          source: 'github',
+          enabled: true,
+          installedAt: '2026-01-01T00:00:00.000Z',
+          github: {
+            owner: 'owner',
+            repo: id,
+            ref: { kind: 'tag', value: 'v1' },
+          },
+        })),
+      }),
+      'utf8',
+    );
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('/offline/')) throw new Error('network offline');
+        return new Response(null, {
+          status: 302,
+          headers: { location: 'https://github.com/owner/good/releases/tag/v2' },
+        });
+      }) as typeof fetch,
+    );
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+
+    await expect(manager.checkUpdates()).resolves.toEqual([
+      expect.objectContaining({ id: 'good', updateAvailable: true }),
     ]);
   });
 

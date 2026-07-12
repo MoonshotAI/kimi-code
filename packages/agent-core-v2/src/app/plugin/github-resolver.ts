@@ -1,3 +1,10 @@
+/**
+ * `plugin` domain (L3) — resolves GitHub plugin sources without the REST API.
+ *
+ * Selects release or ref tarballs and resolves movable refs to commit SHAs
+ * through GitHub's Atom feed so installs and update checks use exact content.
+ */
+
 import type { GithubRef } from './source';
 import type { PluginGithubRef } from './types';
 
@@ -14,13 +21,30 @@ export interface GithubSourceResolution {
   readonly ref: PluginGithubRef;
 }
 
-/**
- * Resolve a `github` source descriptor to a downloadable zip URL.
- *
- * Hot path is the bare-URL case (no explicit ref). We deliberately avoid
- * `api.github.com` because its anonymous quota is shared with the user's
- * browser, gh CLI, IDE integrations, etc.
- */
+export async function resolveGithubCommitSha(
+  owner: string,
+  repo: string,
+  ref: string,
+): Promise<string> {
+  const encodedRef = encodeCodeloadRefPath(ref);
+  const url = `https://github.com/${owner}/${repo}/commits/${encodedRef}.atom`;
+  const resp = await fetch(url, {
+    headers: { accept: 'application/atom+xml', range: 'bytes=0-4095' },
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!resp.ok) {
+    throw new Error(
+      `Could not resolve ${owner}/${repo}@${ref}: HTTP ${resp.status} ${resp.statusText}.`,
+    );
+  }
+  const feed = await resp.text();
+  const sha = /Grit::Commit\/([0-9a-f]{40})/i.exec(feed)?.[1];
+  if (sha === undefined) {
+    throw new Error(`Could not resolve ${owner}/${repo}@${ref} to a commit SHA.`);
+  }
+  return sha.toLowerCase();
+}
+
 export async function resolveGithubSource(
   input: GithubSourceInput,
 ): Promise<GithubSourceResolution> {
@@ -45,6 +69,7 @@ export async function resolveGithubSource(
 
   const headProbe = await fetch(`https://codeload.github.com/${owner}/${repo}/zip/HEAD`, {
     method: 'HEAD',
+    signal: AbortSignal.timeout(10_000),
   });
   if (headProbe.status === 404) {
     throw new Error(`Repository \`${owner}/${repo}\` not found or not accessible.`);
@@ -63,7 +88,10 @@ export async function resolveGithubSource(
 
 async function tryResolveLatestReleaseTag(owner: string, repo: string): Promise<string | undefined> {
   const url = `https://github.com/${owner}/${repo}/releases/latest`;
-  const resp = await fetch(url, { redirect: 'manual' });
+  const resp = await fetch(url, {
+    redirect: 'manual',
+    signal: AbortSignal.timeout(10_000),
+  });
 
   if (resp.status === 404) return undefined;
 

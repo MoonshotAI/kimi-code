@@ -1,3 +1,12 @@
+/**
+ * Scenario: agent context injection position tracking and wire restoration.
+ *
+ * Exercises the real injector through its service contract with in-memory
+ * context, loop, reminder, event-bus, and wire collaborators.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/agent/contextInjector/contextInjector.test.ts`.
+ */
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -14,8 +23,9 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IEventBus } from '#/app/event/eventBus';
+import { IAgentWireService } from '#/wire/tokens';
 import { registerContextMemoryServices, type StubContextMemory } from '../contextMemory/stubs';
-import { stubLoopWithHooks } from '../loop/stubs';
+import { stubLoopWithHooks, stubWire } from '../loop/stubs';
 
 type InjectableContextInjector = IAgentContextInjectorService & {
   inject(): Promise<void>;
@@ -61,6 +71,7 @@ describe('AgentContextInjectorService', () => {
       strict: true,
       additionalServices: (reg) => {
         reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
+        reg.defineInstance(IAgentWireService, stubWire());
         reg.define(IAgentSystemReminderService, AgentSystemReminderService);
         reg.define(IAgentContextInjectorService, AgentContextInjectorService);
       },
@@ -68,7 +79,9 @@ describe('AgentContextInjectorService', () => {
     context = ix.get(IAgentContextMemoryService);
   });
 
-  afterEach(() => disposables.dispose());
+  afterEach(() => {
+    disposables.dispose();
+  });
 
   /**
    * Splice the stub's backing history directly and publish `context.spliced`,

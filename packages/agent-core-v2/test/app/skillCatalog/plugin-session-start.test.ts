@@ -1,7 +1,17 @@
+/**
+ * Scenario: plugin session-start rendering and restored-history deduplication.
+ *
+ * Exercises the real agent injection and wire replay path through the shared
+ * test-agent harness, with plugin contributions supplied in memory.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/app/skillCatalog/plugin-session-start.test.ts`.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentWireService } from '#/wire/tokens';
 import type { LogContext, LogPayload } from '#/_base/log/log';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
@@ -149,7 +159,7 @@ describe('plugin session-start dynamic injection', () => {
     expect(pluginSessionStartMessages(ctx)).toHaveLength(1);
   });
 
-  it('does not re-inject when a replayed history already contains plugin sessionStart', async () => {
+  it('does not re-inject when a live-spliced history already contains plugin sessionStart', async () => {
     const { ctx } = sessionStartRuntime({
       sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
@@ -161,6 +171,28 @@ describe('plugin session-start dynamic injection', () => {
           origin: { kind: 'injection', variant: 'plugin_session_start' },
         },
       ],
+    });
+
+    await injectDynamic(ctx);
+
+    expect(pluginSessionStartMessages(ctx)).toHaveLength(1);
+  });
+
+  it('does not re-inject after a silent wire replay restored a plugin sessionStart (cold resume)', async () => {
+    const { ctx } = sessionStartRuntime({
+      sessionStarts: [{ pluginId: 'superpowers', skillName: 'using-superpowers' }],
+      skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
+    });
+
+    await ctx.get(IAgentWireService).replay({
+      type: 'context.append_message',
+      time: 1,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: '<system-reminder>old</system-reminder>' }],
+        toolCalls: [],
+        origin: { kind: 'injection', variant: 'plugin_session_start' },
+      },
     });
 
     await injectDynamic(ctx);

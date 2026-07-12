@@ -638,7 +638,7 @@ function createSessionSkillCatalog(catalog: SkillCatalog): ISessionSkillCatalog 
     _serviceBrand: undefined,
     catalog,
     ready: Promise.resolve(),
-    onDidChange: Event.None as Event<void>,
+    onDidChange: Event.None as Event<string>,
     load: async () => { },
     reload: async () => { },
   };

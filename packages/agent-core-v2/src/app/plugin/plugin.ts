@@ -1,3 +1,11 @@
+/**
+ * `plugin` domain (L3) — App-scoped plugin management and consumption contract.
+ *
+ * Defines `IPluginService`, which manages installed plugins and exposes their
+ * enabled commands, skills, session-start content, MCP servers, and hooks.
+ * Successful reloads are announced through `onDidReload`. Bound at App scope.
+ */
+
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
 import type { HookDef } from '#/agent/externalHooks/types';
@@ -45,20 +53,13 @@ export interface IPluginService {
   setPluginMcpServerEnabled(input: SetPluginMcpServerEnabledInput): Promise<void>;
   removePlugin(input: RemovePluginInput): Promise<void>;
   reloadPlugins(): Promise<ReloadSummary>;
-  getPluginInfo(input: GetPluginInfoInput): Promise<PluginInfo | undefined>;
+  getPluginInfo(input: GetPluginInfoInput): Promise<PluginInfo>;
   listPluginCommands(): Promise<readonly PluginCommandDef[]>;
   checkUpdates(): Promise<readonly PluginUpdateStatus[]>;
-  // --- consumption plane (loaded from enabled, error-free plugins) ---------
-
-  /** Skill roots contributed by enabled plugins (fed into skill discovery). */
   pluginSkillRoots(): Promise<readonly SkillRoot[]>;
-  /** Session-start reminders declared by enabled plugins. */
   enabledSessionStarts(): Promise<readonly EnabledPluginSessionStart[]>;
-  /** MCP servers contributed by enabled plugins, keyed by runtime name. */
   enabledMcpServers(): Promise<Record<string, McpServerConfig>>;
-  /** Hooks contributed by enabled plugins (cwd + env already resolved). */
   enabledHooks(): Promise<readonly HookDef[]>;
-  /** Fires after a successful `reloadPlugins()` with the reload summary. */
   readonly onDidReload: Event<ReloadSummary>;
 }
 
