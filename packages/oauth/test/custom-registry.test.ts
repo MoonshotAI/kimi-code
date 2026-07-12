@@ -405,6 +405,34 @@ describe('applyCustomRegistryProvider', () => {
     expect(alias['defaultEffort']).toBe('high');
   });
 
+  it('treats support_efforts as a thinking capability hint without reasoning: true', () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    const entry: CustomRegistryProviderEntry = {
+      id: 'rich',
+      name: 'Rich Provider',
+      api: 'https://rich.example/v1',
+      type: 'openai',
+      models: {
+        'rich-effort-only': {
+          id: 'rich-effort-only',
+          name: 'Rich Effort Only',
+          support_efforts: ['low', 'high', 'max'],
+          default_effort: 'high',
+        },
+      },
+    };
+
+    applyCustomRegistryProvider(config, entry, {
+      kind: 'apiJson',
+      url: 'https://rich.example/api.json',
+      apiKey: 'sk-rich',
+    });
+
+    const alias = config.models?.['rich/rich-effort-only'] as Record<string, unknown>;
+    expect(alias['capabilities']).toContain('thinking');
+    expect(alias['supportEfforts']).toEqual(['low', 'high', 'max']);
+  });
+
   it('drops stale effort fields when a refresh no longer declares them', () => {
     const config: ManagedKimiConfigShape = {
       providers: {},

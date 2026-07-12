@@ -249,7 +249,11 @@ export async function fetchCustomRegistry(
 export function capabilitiesFromCustomEntry(model: CustomRegistryModelEntry): string[] {
   const caps = new Set<string>();
   if (model.tool_call === true) caps.add('tool_use');
-  if (model.reasoning === true) caps.add('thinking');
+  // Declaring concrete effort levels implies thinking support even when the
+  // legacy `reasoning` boolean is absent.
+  if (model.reasoning === true || (model.support_efforts?.length ?? 0) > 0) {
+    caps.add('thinking');
+  }
   if (model.modalities?.input?.includes('image') === true) caps.add('image_in');
   if (model.modalities?.input?.includes('video') === true) caps.add('video_in');
   if (model.modalities?.output?.includes('image') === true) caps.add('image_out');
@@ -261,7 +265,8 @@ function hasRichCapabilityHints(model: CustomRegistryModelEntry): boolean {
   return (
     typeof model.tool_call === 'boolean' ||
     typeof model.reasoning === 'boolean' ||
-    model.modalities !== undefined
+    model.modalities !== undefined ||
+    model.support_efforts !== undefined
   );
 }
 
