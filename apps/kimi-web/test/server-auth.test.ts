@@ -218,6 +218,23 @@ describe('credential persistence', () => {
     expect(readStoredCredential()?.credential).toBe('tok-2');
   });
 
+  it('removes the legacy sessionStorage copy even when localStorage is blocked', async () => {
+    const blockedLocal = createMemoryStorage();
+    blockedLocal.setItem = () => {
+      throw new Error('denied');
+    };
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: blockedLocal });
+    sessionStore.setItem(STORAGE_KEY, 'legacy-tok');
+
+    const auth = await loadAuth();
+    auth.setCredential('tok-new');
+
+    // The credential lives in memory only, but the stale session copy must
+    // not survive to be re-migrated on the next reload.
+    expect(auth.getCredential()).toBe('tok-new');
+    expect(sessionStore.getItem(STORAGE_KEY)).toBeNull();
+  });
+
   it('keeps working in memory when storage throws', async () => {
     const throwing = createMemoryStorage();
     throwing.setItem = () => {

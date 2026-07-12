@@ -219,10 +219,17 @@ export function setCredential(value: string): void {
   memory = stored;
   try {
     persistCredential(stored);
-    // Drop any legacy sessionStorage copy so the two stores cannot diverge.
-    globalThis.sessionStorage?.removeItem(STORAGE_KEY);
   } catch {
     // Storage may be unavailable (private mode) — memory still works.
+  }
+  try {
+    // Drop any legacy sessionStorage copy so the two stores cannot diverge.
+    // Best-effort even when localStorage is blocked — otherwise a stale
+    // session-scoped value left behind gets re-migrated (and 401s) on the
+    // next reload.
+    globalThis.sessionStorage?.removeItem(STORAGE_KEY);
+  } catch {
+    // ignore
   }
 }
 
