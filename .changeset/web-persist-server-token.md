@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-web: Keep the server access token across tab close and browser restarts, so it only needs to be entered once per device instead of after every new tab.
+web: Keep the server access token for up to 7 days across tab close and browser restarts, instead of asking for it again with every new tab.
