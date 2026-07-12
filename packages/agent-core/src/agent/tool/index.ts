@@ -14,6 +14,7 @@ import { mcpResultToExecutableOutput } from '../../mcp/output';
 import { isMcpToolName, qualifyMcpToolName } from '../../mcp/tool-naming';
 import type { MCPClient, MCPToolDefinition } from '../../mcp/types';
 import { DEFAULT_AGENT_PROFILES } from '../../profile';
+import { resolveSubagentTimeoutMs } from '../../session/subagent-host';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
 import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
@@ -742,10 +743,15 @@ export class ToolManager {
             {
               allowBackground,
               log: this.agent.log,
+              subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
             },
           ),
         this.agent.subagentHost &&
-          new b.AgentSwarmTool(this.agent.subagentHost, this.agent.swarmMode),
+          new b.AgentSwarmTool(
+            this.agent.subagentHost,
+            this.agent.swarmMode,
+            resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+          ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
       ]

@@ -217,6 +217,14 @@ display_name = "Kimi for Coding (custom)"
 
 在 print 模式（`kimi -p "<prompt>"`）下，Kimi Code 默认只跑一个非交互的单轮 turn，主 agent 一结束就退出（`print_background_mode = "exit"`）。如果你启动了后台任务（例如通过 `Agent(run_in_background=true)` 并发子代理，或 `Bash(run_in_background=true)` 的长命令）并希望它们跑完，可将 `print_background_mode` 设为 `"drain"`（等任务结束再退出，结果不回馈）或 `"steer"`（任务结束后把结果 steer 给主 agent，触发新 turn 继续处理）。`"steer"` 适合让主 agent 依据后台长任务（如训练、评测）的结果继续做后续步骤；其总耗时受 `print_wait_ceiling_s` 限制、额外 turn 数受 `print_max_turns` 限制。
 
+## `subagent`
+
+| 字段 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `timeout_ms` | `integer` | `7200000`（2 小时） | 单个子代理（`Agent` / `AgentSwarm`）允许运行的最长时间（毫秒）。超时后子代理以 `timed_out` 收尾。设为很大的值（例如 `259200000`，即 3 天）可近似取消上限。该值是后台任务管理器对每个子代理任务的 per-task timeout，因此对前台与后台子代理同时生效。注意：超过 `2147483647`（约 24.8 天）会被运行时钳成 1ms |
+
+`timeout_ms` 可被环境变量 `KIMI_SUBAGENT_TIMEOUT_MS` 覆盖，优先级高于配置文件。
+
 ## `image`
 
 `image` 控制图片发送给模型前的压缩行为，对所有图片入口生效（粘贴图片、`ReadMediaFile` 读图、MCP 工具结果里的图片等）。

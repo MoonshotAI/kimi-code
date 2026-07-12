@@ -217,6 +217,14 @@ You can also switch models temporarily without touching the config file — by s
 
 In print mode (`kimi -p "<prompt>"`), Kimi Code by default runs a single non-interactive turn and exits as soon as the main agent finishes (`print_background_mode = "exit"`). If you launch background tasks (for example, concurrent subagents via `Agent(run_in_background=true)`, or a long command via `Bash(run_in_background=true)`) and need them to run to completion, set `print_background_mode` to `"drain"` (wait for them to finish, without feeding results back) or `"steer"` (feed each completion back to the main agent, starting a new turn so it can act on the result). `"steer"` is useful when the main agent should keep working based on the outcome of a long background task (e.g. training or evaluation); its total wall-clock is bounded by `print_wait_ceiling_s` and the number of extra turns by `print_max_turns`.
 
+## `subagent`
+
+| Field | Type | Default | Description |
+| --- | --- | --- | --- |
+| `timeout_ms` | `integer` | `7200000` (2 hours) | Maximum wall-clock time (milliseconds) a single subagent (`Agent` / `AgentSwarm`) is allowed to run before it is settled as `timed_out`. Set a very large value (e.g. `259200000`, i.e. 3 days) to effectively lift the cap. This is the background-task manager's per-task timeout for each subagent task, so it applies to both foreground and background subagents. Note: any value above `2147483647` (about 24.8 days) is clamped to 1ms by the runtime. |
+
+`timeout_ms` can be overridden by the `KIMI_SUBAGENT_TIMEOUT_MS` environment variable, which takes higher priority than `config.toml`.
+
 ## `image`
 
 `image` controls how images are compressed before being sent to the model, across every ingestion point (pasted images, `ReadMediaFile` reads, images in MCP tool results, and so on).
