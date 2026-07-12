@@ -407,7 +407,7 @@ function updateActiveTocQuery(): void {
 
 // --- TOC occlusion by wide tables -------------------------------------------
 // Wide markdown tables (up to --p-table-max) can extend past the TOC rail,
-// which stays anchored to the --p-content-wide edge. While a table actually
+// which stays anchored to the reading-column edge. While a table actually
 // covers the rail we hide the TOC temporarily so the table stays fully
 // interactive (clicks, text selection, horizontal scroll). The user's TOC
 // setting is untouched and the rail returns as soon as the table scrolls away.
@@ -428,23 +428,31 @@ function updateTocTableOcclusion(): void {
     !props.mobile && props.conversationToc && pane
       ? pane.closest('.con')?.querySelector<HTMLElement>('.conversation-toc')
       : null;
-  // The hit point is the centre of the fixed rail bar: `.toc-bar` keeps a
-  // stable x even when hover expands the labels rightward, so hovering the TOC
-  // itself never flips the state (the nav centre would).
+  // The hit x is the centre of the fixed rail bar: `.toc-bar` keeps a stable x
+  // even when hover expands the labels rightward, so hovering the TOC itself
+  // never flips the state (the nav centre would).
   const bar = toc?.querySelector<HTMLElement>('.toc-bar');
   let covered = false;
   if (pane && toc && bar) {
     const barRect = bar.getBoundingClientRect();
     const tocRect = toc.getBoundingClientRect();
     const x = barRect.left + barRect.width / 2;
-    const y = tocRect.top + tocRect.height / 2;
-    // The rail paints above the table, so look THROUGH it at the full element
-    // stack; only a table wrapper inside THIS pane counts (other panes, e.g.
-    // the side chat or a preview, must not occlude this rail).
-    covered = document.elementsFromPoint(x, y).some((element) => {
-      const wrapper = element.closest('.table-node-wrapper');
-      return wrapper instanceof HTMLElement && pane.contains(wrapper);
-    });
+    // Sample down the whole rail, not just its midpoint: a short wide table
+    // can pass under the top or bottom rows without ever covering the centre,
+    // and the rows there would still intercept the table's pointer events.
+    // 40px steps are smaller than any real table's height, so none can slip
+    // between samples; stop at the first hit.
+    const step = 40;
+    const startY = tocRect.top + Math.min(step / 2, tocRect.height / 2);
+    for (let y = startY; y < tocRect.bottom && !covered; y += step) {
+      // The rail paints above the table, so look THROUGH it at the full
+      // element stack; only a table wrapper inside THIS pane counts (other
+      // panes, e.g. the side chat or a preview, must not occlude this rail).
+      covered = document.elementsFromPoint(x, y).some((element) => {
+        const wrapper = element.closest('.table-node-wrapper');
+        return wrapper instanceof HTMLElement && pane.contains(wrapper);
+      });
+    }
   }
   if (tocOccludedByTable.value !== covered) {
     tocOccludedByTable.value = covered;
