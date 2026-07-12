@@ -606,14 +606,10 @@ const ctxTooltip = computed(() => {
 const showCompact = computed(() => pct.value >= 80);
 
 // Thinking toggle
-const currentModel = computed(() => {
-  const raw = props.status?.modelId ?? props.status?.model ?? '';
-  return props.models?.find((m) =>
-    m.id === raw ||
-    m.model === raw ||
-    m.displayName === props.status?.model,
-  );
-});
+// Identity is the model id — display/model names can collide across providers.
+const currentModel = computed(() =>
+  props.models?.find((m) => m.id === props.status?.modelId),
+);
 const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const thinkingSegments = computed(() => segmentsFor(currentModel.value));
 // The persisted level can be stale relative to the active model (e.g. a
@@ -1160,7 +1156,7 @@ function selectModel(modelId: string): void {
             role="menuitem"
             @click="selectModel(m.id)"
           >
-            <span class="md-check"><Icon v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" name="check" size="sm" /></span>
+            <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" /></span>
             <span class="md-name">{{ m.displayName ?? m.model }}</span>
             <span class="md-provider">{{ m.provider }}</span>
             <Icon class="md-star" name="star" size="sm" />
@@ -1178,7 +1174,7 @@ function selectModel(modelId: string): void {
             role="menuitem"
             @click="selectModel(m.id)"
           >
-            <span class="md-check"><Icon v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" name="check" size="sm" /></span>
+            <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" /></span>
             <span class="md-name">{{ m.displayName ?? m.model }}</span>
             <Icon v-if="isStarred(m.id)" class="md-star" name="star" size="sm" />
           </button>
