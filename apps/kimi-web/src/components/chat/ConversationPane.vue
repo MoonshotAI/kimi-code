@@ -436,23 +436,24 @@ function updateTocTableOcclusion(): void {
   if (pane && toc && bar) {
     const barRect = bar.getBoundingClientRect();
     const tocRect = toc.getBoundingClientRect();
-    const x = barRect.left + barRect.width / 2;
-    // Sample down the whole rail, not just its midpoint: a short wide table
-    // can pass under the top or bottom rows without ever covering the centre,
-    // and the rows there would still intercept the table's pointer events.
-    // 40px steps are smaller than any real table's height, so none can slip
-    // between samples; stop at the first hit.
-    const step = 40;
-    const startY = tocRect.top + Math.min(step / 2, tocRect.height / 2);
-    for (let y = startY; y < tocRect.bottom && !covered; y += step) {
-      // The rail paints above the table, so look THROUGH it at the full
-      // element stack; only a table wrapper inside THIS pane counts (other
-      // panes, e.g. the side chat or a preview, must not occlude this rail).
-      covered = document.elementsFromPoint(x, y).some((element) => {
-        const wrapper = element.closest('.table-node-wrapper');
-        return wrapper instanceof HTMLElement && pane.contains(wrapper);
-      });
-    }
+    const railX = barRect.left + barRect.width / 2;
+    // Plain geometric overlap: the rail paints above the content, so any table
+    // wrapper that covers the bar's x AND overlaps the rail vertically would
+    // have its pointer events intercepted by the rail — hide the TOC until the
+    // table scrolls away. Rect overlap is exact (no sampling gap) and ignores
+    // paint-order quirks. Only wrappers inside THIS pane count; other panes
+    // (side chat, preview) are outside `pane`.
+    covered = Array.from(
+      pane.querySelectorAll<HTMLElement>('.table-node-wrapper'),
+    ).some((wrapper) => {
+      const rect = wrapper.getBoundingClientRect();
+      return (
+        rect.left <= railX &&
+        railX <= rect.right &&
+        rect.top < tocRect.bottom &&
+        rect.bottom > tocRect.top
+      );
+    });
   }
   if (tocOccludedByTable.value !== covered) {
     tocOccludedByTable.value = covered;
