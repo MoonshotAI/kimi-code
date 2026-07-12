@@ -1150,6 +1150,22 @@ export default {
       shellNothingToMigrate: '  没有需要从 ~/.kimi/ 迁移的内容。',
       shellBye: '再见！',
       shellResumeHint: '恢复此会话：kimi -r {{sessionId}}',
+      // goal-prompt.ts
+      goalNoGoalFound: '目标：未找到目标。',
+      // run-prompt.ts
+      sessionNotFound: '会话 "{{sessionId}}" 未找到。',
+      noModelPrompt: '未配置模型。请运行 `kimi` 并使用 /login 登录后重试；或在 config.toml 中设置 default_model。',
+      // sub/server/run.ts
+      serverNetworkOff: '关闭',
+      serverNetworkUseHost: '使用 --host 开启',
+      serverLogsOff: '关闭',
+      serverLogsUseLevel: '使用 --log-level info 开启',
+      serverStopCmd: 'kimi server kill',
+      // sub/plugin-run-node.ts
+      pluginRootRequired: '运行插件节点入口需要设置 KIMI_PLUGIN_ROOT。',
+      pluginEntryOutsideRoot: '插件节点入口必须在 KIMI_PLUGIN_ROOT 内：{{entry}}',
+      // sub/acp.ts
+      acpFatalError: 'acp 服务器：致命错误：{{error}}',
       // main.ts
       mainError: '错误：{{message}}',
     },

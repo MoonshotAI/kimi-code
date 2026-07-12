@@ -202,7 +202,7 @@ export async function runShell(
       hints.push(`${gutter}${t('tui.statusMessages.shellResumeHint', { sessionId })}`);
     }
     if (tui.exitOpenUrl !== undefined) {
-      hints.push(`${gutter}open ${toTerminalHyperlink(tui.exitOpenUrl, tui.exitOpenUrl)}`);
+      hints.push(`${gutter}${t("tui.statusMessages.webOpenUrl", { url: toTerminalHyperlink(tui.exitOpenUrl, tui.exitOpenUrl) })}`);
     }
     if (hints.length > 0) {
       process.stderr.write(`\n${hints.join('\n')}\n`);

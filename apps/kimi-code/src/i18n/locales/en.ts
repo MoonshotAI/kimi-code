@@ -1155,6 +1155,22 @@ export default {
       shellNothingToMigrate: '  Nothing to migrate from ~/.kimi/.',
       shellBye: 'Bye!',
       shellResumeHint: 'To resume this session: kimi -r {{sessionId}}',
+      // goal-prompt.ts
+      goalNoGoalFound: 'Goal: no goal found.',
+      // run-prompt.ts
+      sessionNotFound: 'Session "{{sessionId}}" not found.',
+      noModelPrompt: 'No model configured. Run `kimi` and use /login to sign in, then retry; or set default_model in config.toml.',
+      // sub/server/run.ts
+      serverNetworkOff: 'off',
+      serverNetworkUseHost: 'use --host to enable',
+      serverLogsOff: 'off',
+      serverLogsUseLevel: 'use --log-level info to enable',
+      serverStopCmd: 'kimi server kill',
+      // sub/plugin-run-node.ts
+      pluginRootRequired: 'KIMI_PLUGIN_ROOT is required to run a plugin node entry.',
+      pluginEntryOutsideRoot: 'Plugin node entry must be inside KIMI_PLUGIN_ROOT: {{entry}}',
+      // sub/acp.ts
+      acpFatalError: 'acp server: fatal error: {{error}}',
       // main.ts
       mainError: 'error: {{message}}',
     },

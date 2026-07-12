@@ -528,7 +528,7 @@ function formatReadyBanner(
   }
   // On a loopback bind there is no network URL; show how to enable one.
   if (isLoopbackHost(host)) {
-    lines.push(`  ${label('Network:  ')}${muted('off')}${dim('  use --host to enable')}`);
+    lines.push(`  ${label(t('tui.statusMessages.serverAccessNetwork'))}${muted(t('tui.statusMessages.serverNetworkOff'))}${dim('  ' + t('tui.statusMessages.serverNetworkUseHost'))}`);
   }
   if (opts.token !== undefined) {
     // Set the token off with surrounding whitespace rather than color, so it is
@@ -539,8 +539,8 @@ function formatReadyBanner(
   }
 
   // Auxiliary controls last.
-  lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
-  lines.push(`  ${label('Stop:     ')}${muted('kimi server kill')}`);
+  lines.push(`  ${label('Logs:     ')}${muted(t('tui.statusMessages.serverLogsOff'))}${dim('  ' + t('tui.statusMessages.serverLogsUseLevel'))}`);
+  lines.push(`  ${label('Stop:     ')}${muted(t('tui.statusMessages.serverStopCmd'))}`);
   lines.push('');
   return lines.join('\n');
 }

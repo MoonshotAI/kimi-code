@@ -273,7 +273,7 @@ async function resolvePromptSession(
     const sessions = await harness.listSessions({ sessionId: opts.session, workDir });
     const target = sessions[0];
     if (target === undefined) {
-      throw new Error(`Session "${opts.session}" not found.`);
+      throw new Error(t("tui.statusMessages.sessionNotFound", { sessionId: opts.session ?? "" }));
     }
     if (resolve(target.workDir) !== resolve(workDir)) {
       stderr.write(
@@ -380,7 +380,7 @@ function requireConfiguredModel(...models: readonly (string | undefined)[]): str
   const model = configuredModel(...models);
   if (model === undefined) {
     throw new Error(
-      'No model configured. Run `kimi` and use /login to sign in, then retry; or set default_model in config.toml.',
+      t('tui.statusMessages.noModelPrompt'),
     );
   }
   return model;
