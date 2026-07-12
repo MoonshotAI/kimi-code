@@ -942,3 +942,94 @@ describe('useWorkspaceState — startSessionAndOpenSideChat', () => {
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
   });
 });
+
+// Regression coverage for wake/reconnect snapshot recovery.
+describe('useWorkspaceState — snapshot prompt recovery', () => {
+  function promptDeps(overrides: Partial<UseWorkspaceStateDeps> = {}): UseWorkspaceStateDeps {
+    return {
+      ...createDeps(),
+      modelProvider: { models: ref([]) } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    apiMock.submitPrompt.mockReset();
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'prompt_new' });
+  });
+
+  it('clears a finished prompt from a terminal snapshot so the next send is immediate', async () => {
+    const state = createState();
+    const inFlight = new Set(['sess_1']);
+    state.sendingBySession = { sess_1: true };
+    const ws = useWorkspaceState(
+      state,
+      promptDeps({ inFlightPromptSessions: inFlight, activity: computed(() => 'idle') }),
+    );
+
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, status: 'idle' });
+
+    expect(inFlight.has('sess_1')).toBe(false);
+    expect(state.sendingBySession.sess_1).toBe(false);
+    expect(state.promptIdBySession.sess_1).toBeUndefined();
+
+    await ws.sendPrompt('next');
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toBeUndefined();
+  });
+
+  it('keeps a genuinely running prompt in flight and queues the next send', async () => {
+    const state = createState();
+    const inFlight = new Set(['sess_1']);
+    state.sendingBySession = { sess_1: true };
+    const ws = useWorkspaceState(state, promptDeps({ inFlightPromptSessions: inFlight }));
+
+    ws.handleSessionSnapshot('sess_1', {
+      inFlightTurn: { turnId: 1, assistantText: '', thinkingText: '', runningTools: [] },
+      status: 'running',
+    });
+    await ws.sendPrompt('next');
+
+    expect(inFlight.has('sess_1')).toBe(true);
+    expect(state.sendingBySession.sess_1).toBe(true);
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(state.queuedBySession.sess_1).toEqual([{ text: 'next', attachments: undefined }]);
+  });
+
+  it('rejects a snapshot when a new local prompt started during the request', async () => {
+    const state = createState();
+    const inFlight = new Set<string>();
+    const ws = useWorkspaceState(state, promptDeps({ inFlightPromptSessions: inFlight }));
+    const atRequest = ws.localTurnStartState('sess_1');
+
+    await ws.submitPromptInternal('sess_1', 'fresh prompt');
+
+    expect(ws.isLocalTurnSnapshotCurrent('sess_1', atRequest)).toBe(false);
+    expect(inFlight.has('sess_1')).toBe(true);
+    expect(state.sendingBySession.sess_1).toBe(true);
+  });
+
+  it('rejects a snapshot requested while the local submit is still pending', async () => {
+    let resolveSubmit!: (value: { promptId: string }) => void;
+    apiMock.submitPrompt.mockImplementation(
+      () =>
+        new Promise<{ promptId: string }>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    const ws = useWorkspaceState(createState(), promptDeps());
+    const pendingSubmit = ws.submitPromptInternal('sess_1', 'fresh prompt');
+    const atRequest = ws.localTurnStartState('sess_1');
+    const retrySnapshot = vi.fn();
+
+    expect(atRequest.pending).toBe(true);
+    expect(ws.isLocalTurnSnapshotCurrent('sess_1', atRequest)).toBe(false);
+    ws.afterLocalTurnStartsSettle('sess_1', retrySnapshot);
+    expect(retrySnapshot).not.toHaveBeenCalled();
+
+    resolveSubmit({ promptId: 'prompt_new' });
+    await pendingSubmit;
+    expect(ws.localTurnStartState('sess_1').pending).toBe(false);
+    expect(retrySnapshot).toHaveBeenCalledOnce();
+  });
+});

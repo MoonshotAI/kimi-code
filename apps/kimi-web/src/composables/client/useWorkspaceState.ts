@@ -14,8 +14,10 @@ import { useConfirmDialog } from '../useConfirmDialog';
 import { isDaemonApiError } from '../../api/errors';
 import type {
   AppConfig,
+  AppInFlightTurn,
   AppMessage,
   AppSession,
+  AppSessionStatus,
   AppWorkspace,
   ApprovalDecision,
   ApprovalResponse,
@@ -93,6 +95,82 @@ const pendingTaskCancellations = reactive<Record<string, true>>({});
  * `pending*Actions` guards above.
  */
 const startingFirstPromptWorkspaces = reactive(new Set<string>());
+
+/**
+ * Per-session local-turn-start lifecycle, shared by EVERY entry point that
+ * starts a turn locally (prompt submit/steer in this module, skill activation
+ * in useModelProviderState). Two pieces of state:
+ *  - generation: bumped synchronously at every local turn start, so a
+ *    snapshot requested BEFORE the start can tell it predates the turn;
+ *  - pending: set while the start request (POST /prompts or skill
+ *    activation) has not been acknowledged by the daemon — a snapshot
+ *    requested in that window cannot reflect the turn server-side either.
+ * Module-level singleton — matches `inFlightPromptSessions` in the facade.
+ */
+const promptGenerationBySession = new Map<string, number>();
+const pendingLocalTurnStarts = new Map<string, Set<number>>();
+const afterLocalTurnsSettled = new Map<string, () => void>();
+let nextLocalTurnToken = 0;
+
+export interface LocalTurnStartState {
+  generation: number;
+  pending: boolean;
+}
+
+/** Snapshot of the local-turn-start state, captured BEFORE an async snapshot
+ *  fetch so the caller can reject a snapshot that predates a local turn. */
+export function localTurnStartState(sid: string): LocalTurnStartState {
+  return {
+    generation: promptGenerationBySession.get(sid) ?? 0,
+    pending: (pendingLocalTurnStarts.get(sid)?.size ?? 0) > 0,
+  };
+}
+
+/** Shared "a local turn just started" lifecycle: bumps the generation and
+ *  marks the start request pending. Call synchronously before the first
+ *  await of every local turn entry point. */
+export function beginLocalTurn(sid: string): number {
+  const token = ++nextLocalTurnToken;
+  promptGenerationBySession.set(sid, token);
+  const pending = pendingLocalTurnStarts.get(sid) ?? new Set<number>();
+  pending.add(token);
+  pendingLocalTurnStarts.set(sid, pending);
+  return token;
+}
+
+/** The daemon acknowledged (or rejected) the turn-start request. */
+export function settleLocalTurn(sid: string, token: number): void {
+  const pending = pendingLocalTurnStarts.get(sid);
+  if (pending === undefined) return;
+  pending.delete(token);
+  if (pending.size > 0) return;
+  pendingLocalTurnStarts.delete(sid);
+  const callback = afterLocalTurnsSettled.get(sid);
+  afterLocalTurnsSettled.delete(sid);
+  callback?.();
+}
+
+/** Drop lifecycle state with the rest of a forgotten session. */
+export function forgetLocalTurnState(sid: string): void {
+  promptGenerationBySession.delete(sid);
+  pendingLocalTurnStarts.delete(sid);
+  afterLocalTurnsSettled.delete(sid);
+}
+
+/** Whether a snapshot request can still be applied without overwriting a
+ *  local turn that started before or during the request. */
+export function isLocalTurnSnapshotCurrent(sid: string, atRequest: LocalTurnStartState): boolean {
+  return !atRequest.pending && atRequest.generation === (promptGenerationBySession.get(sid) ?? 0);
+}
+
+/** Coalesce a skipped snapshot into one retry after local turn-start requests settle. */
+export function afterLocalTurnStartsSettle(sid: string, callback: () => void): void {
+  if ((pendingLocalTurnStarts.get(sid)?.size ?? 0) === 0) {
+    callback();
+    return;
+  }
+  afterLocalTurnsSettled.set(sid, callback);
+}
 
 type SyncSessionResult = 'ok' | 'not-found' | 'failed';
 
@@ -1133,6 +1211,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   async function submitPromptInternal(sid: string, text: string, attachments?: PromptAttachment[]): Promise<boolean> {
     // Mark this session as having a prompt in flight BEFORE any await, so a racing
     // sendPrompt sees it and enqueues. Cleared when activity returns to idle.
+    // beginLocalTurn also bumps the snapshot generation and marks the submit
+    // pending, so a racing terminal snapshot can't clear this prompt (see
+    // handleSessionSnapshot).
+    const localTurnToken = beginLocalTurn(sid);
     inFlightPromptSessions.add(sid);
     rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: true };
     const tempId = nextOptimisticMsgId();
@@ -1249,6 +1331,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       );
       pushOperationFailure('sendPrompt', err, { sessionId: sid });
       return false;
+    } finally {
+      // The daemon answered the submit (accepted or rejected) — the pending
+      // window in which a snapshot can't reflect this turn is over.
+      settleLocalTurn(sid, localTurnToken);
     }
   }
 
@@ -1321,6 +1407,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     };
     updateSessionMessages(sid, (msgs) => [...msgs, optimisticMsg]);
 
+    const localTurnToken = beginLocalTurn(sid);
     try {
       const api = getKimiWebApi();
       const promptSession = rawState.sessions.find((s) => s.id === sid);
@@ -1368,6 +1455,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // a delivered-looking message the daemon never received.
       updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
       pushOperationFailure('steer', err, { sessionId: sid });
+    } finally {
+      settleLocalTurn(sid, localTurnToken);
     }
   }
 
@@ -1395,6 +1484,74 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       ...rawState.queuedBySession,
       [sid]: [...current, { text, attachments }],
     };
+  }
+
+  /**
+   * Shared prompt-finish cleanup, used by BOTH the WS idle/aborted event path
+   * (facade `onSessionIdle`) and the authoritative-snapshot path
+   * (handleSessionSnapshot below). Returns whether this call actually flipped
+   * an in-flight prompt to finished.
+   *
+   * Clears the local in-flight/sending/prompt-id state and drains exactly ONE
+   * queued message — the resubmitted prompt re-arms the in-flight flag, and
+   * its own finish drains the following one. Repeat calls (e.g. a late
+   * duplicate idle event) therefore cannot drain more than one message per
+   * real turn end. Callers layer their own side effects (notify, sound,
+   * unread) on top; the snapshot path deliberately adds none.
+   */
+  function finishPromptLocal(sid: string): boolean {
+    const wasInFlight = inFlightPromptSessions.delete(sid);
+    rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
+    // Drop any cached prompt_id so a later skill activation (which has no
+    // prompt_id) doesn't accidentally reuse this stale id for :abort.
+    if (rawState.promptIdBySession[sid] !== undefined) {
+      const nextPromptIds = { ...rawState.promptIdBySession };
+      delete nextPromptIds[sid];
+      rawState.promptIdBySession = nextPromptIds;
+    }
+    if (sid === rawState.activeSessionId) {
+      resetFastMoon();
+    }
+
+    const queue = rawState.queuedBySession[sid] ?? [];
+    if (queue.length > 0) {
+      const [next, ...rest] = queue;
+      rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: rest };
+      // Flush the first queued message; on failure put it back at the head so
+      // a transient error doesn't silently drop the prompt.
+      if (next !== undefined) {
+        void submitPromptInternal(sid, next.text, next.attachments).then((ok) => {
+          if (!ok) {
+            const current = rawState.queuedBySession[sid] ?? [];
+            rawState.queuedBySession = {
+              ...rawState.queuedBySession,
+              [sid]: [next, ...current],
+            };
+          }
+        });
+      }
+    }
+
+    return wasInFlight;
+  }
+
+  /**
+   * Snapshot-driven finish. An authoritative snapshot replaces the event
+   * stream on resync (buffer overflow / epoch change / delta gap): no
+   * sessionStatusChanged event arrives in that case, so without this the
+   * local in-flight flag would stick forever — the moon keeps spinning and
+   * the next prompt queues behind a turn that already ended.
+   *
+   * Unlike the WS path this adds NO completion side effects (no notification,
+   * sound, or unread): opening a historical session must not cry wolf.
+   */
+  function handleSessionSnapshot(
+    sid: string,
+    snapshot: { inFlightTurn: AppInFlightTurn | null; status: AppSessionStatus },
+  ): void {
+    if (snapshot.inFlightTurn !== null) return;
+    if (snapshot.status !== 'idle' && snapshot.status !== 'aborted') return;
+    finishPromptLocal(sid);
   }
 
   async function abortCurrentPrompt(): Promise<void> {
@@ -2178,6 +2335,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     bindSessionRoute,
     selectSession,
     submitPromptInternal,
+    finishPromptLocal,
+    localTurnStartState,
+    isLocalTurnSnapshotCurrent,
+    afterLocalTurnStartsSettle,
+    handleSessionSnapshot,
     sendPrompt,
     steerPrompt,
     uploadImage,
