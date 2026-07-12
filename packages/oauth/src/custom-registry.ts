@@ -39,6 +39,8 @@ export interface CustomRegistryModelEntry {
     input?: readonly string[];
     output?: readonly string[];
   };
+  readonly support_efforts?: readonly string[];
+  readonly default_effort?: string;
 }
 
 export interface CustomRegistryProviderEntry {
@@ -102,6 +104,8 @@ function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
     tool_call?: boolean;
     reasoning?: boolean;
     modalities?: { input?: readonly string[]; output?: readonly string[] };
+    support_efforts?: readonly string[];
+    default_effort?: string;
   } = { id };
 
   const name = value['name'];
@@ -125,6 +129,13 @@ function toModelEntry(value: unknown): CustomRegistryModelEntry | undefined {
 
   if (typeof value['tool_call'] === 'boolean') entry.tool_call = value['tool_call'];
   if (typeof value['reasoning'] === 'boolean') entry.reasoning = value['reasoning'];
+
+  const supportEfforts = toStringArrayOrUndefined(value['support_efforts']);
+  if (supportEfforts !== undefined) entry.support_efforts = supportEfforts;
+  const defaultEffort = value['default_effort'];
+  if (typeof defaultEffort === 'string' && defaultEffort.length > 0) {
+    entry.default_effort = defaultEffort;
+  }
 
   const modalities = value['modalities'];
   if (isRecord(modalities)) {
@@ -323,6 +334,8 @@ export function applyCustomRegistryProvider(
       maxContextSize,
       capabilities,
       displayName,
+      ...(model.support_efforts !== undefined ? { supportEfforts: model.support_efforts } : {}),
+      ...(model.default_effort !== undefined ? { defaultEffort: model.default_effort } : {}),
     };
     existingModels[aliasKey] = mergeRefreshedModelAlias(
       existing,
