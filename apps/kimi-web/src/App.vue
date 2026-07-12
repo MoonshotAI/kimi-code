@@ -110,10 +110,8 @@ usePageTitle({ running, showAuthGate });
 // segment for the active model (effort models cycle through their declared
 // levels; boolean models flip on/off; unsupported stays off).
 function nextThinkingLevel(current: ThinkingLevel): ThinkingLevel {
-  const raw = client.status.value.modelId ?? client.status.value.model ?? '';
-  const model = client.models.value.find(
-    (m) => m.id === raw || m.model === raw || m.displayName === client.status.value.model,
-  );
+  // Identity is the model id — display/model names can collide across providers.
+  const model = client.models.value.find((m) => m.id === client.status.value.modelId);
   const segs = segmentsFor(model);
   // Coerce the stored level against the active model before indexing, so a
   // stale value (e.g. 'on' from a boolean model) doesn't resolve to index -1

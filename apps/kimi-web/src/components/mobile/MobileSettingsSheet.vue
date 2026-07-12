@@ -72,12 +72,10 @@ function onColorScheme(v: string): void {
 
 const PERM_MODES: PermissionMode[] = ['manual', 'auto', 'yolo'];
 
-const currentModel = computed<AppModel | undefined>(() => {
-  const raw = props.status?.modelId ?? props.status?.model ?? '';
-  return props.models?.find(
-    (m) => m.id === raw || m.model === raw || m.displayName === props.status?.model,
-  );
-});
+// Identity is the model id — display/model names can collide across providers.
+const currentModel = computed<AppModel | undefined>(() =>
+  props.models?.find((m) => m.id === props.status?.modelId),
+);
 const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const thinkingSegments = computed(() => segmentsFor(currentModel.value));
 // The persisted level can be stale relative to the active model (e.g. 'on'

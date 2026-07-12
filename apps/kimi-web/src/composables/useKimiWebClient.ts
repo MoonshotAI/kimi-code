@@ -1950,7 +1950,11 @@ const status = computed<ConversationStatus>(() => {
 
   // Use the friendly displayName from the models list; fall back to stripping
   // the provider prefix (e.g. "moonshot/moonshot-v1-128k" → "moonshot-v1-128k").
-  const matched = modelProvider.models.value.find((m) => m.id === rawModel || m.model === rawModel);
+  // Prefer the exact id — model names can collide across providers, so a
+  // name-only match may resolve to the wrong provider's entry.
+  const matched =
+    modelProvider.models.value.find((m) => m.id === rawModel) ??
+    modelProvider.models.value.find((m) => m.model === rawModel);
   const displayModel =
     matched?.displayName ||
     matched?.model ||
