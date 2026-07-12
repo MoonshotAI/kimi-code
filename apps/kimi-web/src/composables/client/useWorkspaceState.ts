@@ -61,7 +61,7 @@ const ALREADY_RESOLVED_CODE = 40902;
 // First load polls /auth until it gives a definitive answer (see load()).
 const FIRST_LOAD_AUTH_RETRY_MS = 2000;
 
-type AuthCheckResult = 'answered' | 'retry' | 'server-auth-required';
+type AuthCheckResult = 'proceed' | 'retry' | 'server-auth-required';
 
 function isAlreadyResolvedError(err: unknown): boolean {
   return isDaemonApiError(err) && err.code === ALREADY_RESOLVED_CODE;
@@ -309,8 +309,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /** Fetch auth readiness from GET /api/v1/auth. Defensive — never throws.
-   *  Returns whether the daemon gave a definitive answer:
-   *  - 'answered'             — response received; rawState reflects it (ready or not)
+   *  - 'proceed'              — definitive outcome: either a response (rawState
+   *                             reflects it, ready or not) or a deterministic
+   *                             4xx that retrying can never fix (e.g. 404 from
+   *                             an older daemon without this endpoint) — the
+   *                             caller proceeds with the defaults, exactly like
+   *                             the pre-gate fallback did
    *  - 'server-auth-required' — the daemon rejected our server credential
    *                             (401/40101); the ServerAuthDialog owns recovery
    *                             (it reloads once the token is entered)
@@ -324,15 +328,28 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       rawState.authReady = result.ready;
       rawState.defaultModel = result.defaultModel;
       rawState.managedProviderStatus = result.managedProvider?.status ?? null;
-      return 'answered';
+      return 'proceed';
     } catch (err) {
-      if (
-        isDaemonApiError(err) &&
-        (err.code === 401 || err.code === SERVER_AUTH_UNAUTHORIZED_CODE)
-      ) {
-        return 'server-auth-required';
+      if (isDaemonApiError(err)) {
+        if (err.code === 401 || err.code === SERVER_AUTH_UNAUTHORIZED_CODE) {
+          return 'server-auth-required';
+        }
+        if (err.code >= 400 && err.code < 500) return 'proceed';
       }
       return 'retry';
+    }
+  }
+
+  /** Poll /auth until the daemon gives a definitive outcome, waiting
+   *  FIRST_LOAD_AUTH_RETRY_MS between transient failures. Never resolves with
+   *  'retry'. Used only by the first load. */
+  async function waitForFirstAuth(): Promise<AuthCheckResult> {
+    for (;;) {
+      const result = await checkAuth();
+      if (result !== 'retry') return result;
+      await new Promise((resolve) => {
+        setTimeout(resolve, FIRST_LOAD_AUTH_RETRY_MS);
+      });
     }
   }
 
@@ -570,24 +587,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // The very first load gates on /auth before anything else: a transient
     // failure there (daemon still booting, network blip, 5xx) must NOT be read
     // as "not signed in" — that bounced users to /login until a manual refresh.
-    // Keep the connecting splash up and poll /auth until it gives a definitive
-    // answer. A 401/40101 means the server wants a token: stop and let the
+    // Keep the connecting splash up and poll /auth until a definitive outcome.
+    // A 401/40101 means the server wants a token: stop and let the
     // ServerAuthDialog take over (it reloads once the token is entered).
     const firstLoad = !initialized.value;
-    let authAnswered = true;
+    let authResolved = true;
     try {
-      if (firstLoad) {
-        for (;;) {
-          const result = await checkAuth();
-          if (result === 'answered') break;
-          if (result === 'server-auth-required') {
-            authAnswered = false;
-            return;
-          }
-          await new Promise((resolve) => {
-            setTimeout(resolve, FIRST_LOAD_AUTH_RETRY_MS);
-          });
-        }
+      if (firstLoad && (await waitForFirstAuth()) === 'server-auth-required') {
+        authResolved = false;
+        return;
       }
       const api = getKimiWebApi();
       // Parallel: health + meta + models
@@ -648,9 +656,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Do not re-throw — app stays mounted with empty sessions
     } finally {
       rawState.loading = false;
-      // Without a definitive /auth answer the splash stays up (retry loop or
+      // Without a definitive /auth outcome the splash stays up (retry loop or
       // ServerAuthDialog is handling it) — never expose the half-loaded app.
-      if (authAnswered) initialized.value = true;
+      if (authResolved) initialized.value = true;
     }
   }
 

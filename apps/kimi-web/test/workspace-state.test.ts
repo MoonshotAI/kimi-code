@@ -1044,4 +1044,29 @@ describe('useWorkspaceState — first-load auth gate', () => {
       }
     },
   );
+
+  it('proceeds with the defaults when /auth returns a deterministic 4xx (older daemon)', async () => {
+    vi.useFakeTimers();
+    try {
+      const initialized = ref(false);
+      const state = createState();
+      state.authReady = false;
+      // e.g. an older daemon without /api/v1/auth answers 404 — retrying can
+      // never fix that, so the pre-gate fallback (defaults → login gate) runs.
+      apiMock.getAuth.mockRejectedValue(
+        new DaemonApiError({ code: 404, msg: 'Not Found', requestId: 'req_1' }),
+      );
+      const ws = useWorkspaceState(state, createLoadDeps(initialized));
+
+      await ws.load();
+      expect(apiMock.getAuth).toHaveBeenCalledTimes(1);
+      expect(initialized.value).toBe(true);
+      expect(state.authReady).toBe(false);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(apiMock.getAuth).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
