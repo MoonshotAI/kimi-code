@@ -1,5 +1,11 @@
 # @moonshot-ai/kosong
 
+## 0.5.4
+
+### Patch Changes
+
+- [#1488](https://github.com/MoonshotAI/kimi-code/pull/1488) [`7bd29ab`](https://github.com/MoonshotAI/kimi-code/commit/7bd29ab0117a1c15691404f411fd67f511bbb897) Thanks [@starquakee](https://github.com/starquakee)! - Rename the dynamic tool loading model capability from `select_tools` to `dynamically_loaded_tools`.
+
 ## 0.5.3
 
 ### Patch Changes
