@@ -96,12 +96,16 @@ export function tryNativeQualifyMcpToolName(
   return callNativeSync<string>('nativeQualifyMcpToolName', serverName, toolName);
 }
 
-// ── Image compression (async; reused by image-compress.ts) ──────────
-// Wired into `image-compress.ts` as the preferred path. The Rust codec in
-// `kimi-native-tools` (`image_compress.rs`) applies EXIF orientation on decode
-// (see `decode_with_orientation`), so its reported dimensions and crop regions
-// live in the same display (EXIF-rotated) space as jimp — behaviour matches
-// the TS fallback, just faster.
+// ── Image compression (async; available, NOT wired) ─────────────────
+// The Rust codec in `kimi-native-tools` (`image_compress.rs`) now applies EXIF
+// orientation on decode (see `decode_with_orientation`), so its reported
+// dimensions and crop regions live in the same display (EXIF-rotated) space as
+// jimp. However it is intentionally NOT wired into `image-compress.ts`: the
+// `image` crate's JPEG encoder emits different bytes than jimp's mozjpeg, and it
+// does not mirror jimp's PNG-ladder / alpha-drop-as-last-resort strategy, so
+// swapping encoders would change the actual quality/bytes sent to the model.
+// These wrappers are kept available for callers that do not need jimp parity.
+// See rust-migration-analysis.md §6.5.
 export interface NativeCompressImageConfig {
   readonly maxEdge: number;
   readonly byteBudget: number;
@@ -158,6 +162,69 @@ export function tryNativeGlobMatchesAny(
   path: string,
 ): boolean | undefined {
   return callNativeSync<boolean>('nativeGlobMatchesAny', [...globs], path);
+}
+
+// ── Compaction (sync; wired into strategy.ts) ───────────────────────
+// The Rust `compaction.rs` is a line-for-line port of the TS
+// `DefaultCompactionStrategy.computeCompactCount` /
+// `reduceCompactOnOverflow`. Both sides use the same token estimator
+// (`nativeEstimateTokens`, wired above), and the split-safety guards
+// (`canSplitAfter` / `prefixEndsWithOpenToolExchange`) are identical.
+//
+// napi-rs serialises Rust struct fields as camelCase (e.g.
+// `tool_calls_count` → `toolCallsCount`, `max_size` → `maxSize`).
+
+/** Lightweight projection of a Message for the compaction algorithm. */
+export interface NativeCompactionMessageMeta {
+  readonly role: string;
+  /** napi-rs: `tool_calls_count` → camelCase */
+  readonly toolCallsCount: number;
+  readonly tokens: number;
+}
+
+/** Knobs for the compaction algorithm (mirrors CompactionConfig). */
+export interface NativeCompactionConfigMeta {
+  /** napi-rs: `max_size` → camelCase */
+  readonly maxSize: number;
+  /** napi-rs: `max_recent_messages` → camelCase */
+  readonly maxRecentMessages: number;
+  /** napi-rs: `max_recent_user_messages` → camelCase */
+  readonly maxRecentUserMessages: number;
+  /** napi-rs: `max_recent_size_ratio` */
+  readonly maxRecentSizeRatio: number;
+  /** napi-rs: `min_overflow_reduction_ratio` */
+  readonly minOverflowReductionRatio: number;
+}
+
+/**
+ * Try the Rust native compaction count. Returns `undefined` when the
+ * native module is unavailable or the call fails; the caller falls back
+ * to the TS implementation.
+ *
+ * Returns N where `messages[0..N]` is compacted and `messages[N..]` is
+ * preserved. 0 means no compaction possible (no valid split point).
+ */
+export function tryNativeComputeCompactCount(
+  messages: readonly NativeCompactionMessageMeta[],
+  config: NativeCompactionConfigMeta,
+  isManual: boolean,
+): number | undefined {
+  return callNativeSync<number>('nativeComputeCompactCount', [...messages], config, isManual);
+}
+
+/**
+ * Try the Rust native overflow reduction. Returns `undefined` when the
+ * native module is unavailable or the call fails; the caller falls back
+ * to the TS implementation.
+ *
+ * Returns a split index — the number of messages to keep in the tail
+ * after reducing the compacted prefix.
+ */
+export function tryNativeReduceCompactOnOverflow(
+  messages: readonly NativeCompactionMessageMeta[],
+  config: NativeCompactionConfigMeta,
+): number | undefined {
+  return callNativeSync<number>('nativeReduceCompactOnOverflow', [...messages], config);
 }
 
 // ── Image cropping (async; reused by image-compress.ts) ─────────────

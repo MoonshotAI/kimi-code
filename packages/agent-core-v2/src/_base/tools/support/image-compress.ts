@@ -29,10 +29,6 @@
 import type { ContentPart } from '#/app/llmProtocol/message';
 
 import { sniffImageDimensions } from './file-type';
-import {
-  tryNativeCompressImage,
-  tryNativeCropImage,
-} from '#/_base/native-tools';
 
 /**
  * Built-in longest-edge ceiling (px). Larger images are scaled down to fit.
@@ -653,46 +649,10 @@ export async function cropImageForModel(
     return fail('too_large', 'The image is too large to decode for cropping.');
   }
 
-  // Preferred path: the Rust native crop codec (when the module is built). It
-  // applies EXIF orientation on decode, so the crop region — which is in the
-  // display (EXIF-rotated) coordinate space — lands in the same place jimp
-  // would crop. A successful outcome is returned directly; an explicit failure
-  // is surfaced to the caller. When native is absent the wrapper returns
-  // `undefined` and we fall back to the jimp pipeline below.
-  const nativeCrop = await tryNativeCropImage(bytes, mimeType, region, {
-    maxEdge,
-    byteBudget,
-    skipResize: options.skipResize === true,
-    fallbackEdges: FALLBACK_EDGES_PX,
-    jpegQualitySteps: JPEG_QUALITY_STEPS,
-  });
-  if (nativeCrop !== undefined) {
-    if (nativeCrop.ok) {
-      return succeed({
-        ok: true,
-        data: nativeCrop.data,
-        mimeType: nativeCrop.mimeType,
-        width: nativeCrop.width,
-        height: nativeCrop.height,
-        originalWidth: nativeCrop.originalWidth,
-        originalHeight: nativeCrop.originalHeight,
-        region: {
-          x: nativeCrop.regionX,
-          y: nativeCrop.regionY,
-          width: nativeCrop.regionWidth,
-          height: nativeCrop.regionHeight,
-        },
-        resized: nativeCrop.resized,
-        originalByteLength: nativeCrop.originalByteLength,
-        finalByteLength: nativeCrop.finalByteLength,
-      });
-    }
-    return fail(
-      nativeCrop.errorKind as CropErrorKind,
-      nativeCrop.error.length > 0 ? nativeCrop.error : 'The image could not be cropped.',
-    );
-  }
-
+  // NOTE: cropping stays on jimp for the same reason as compression (see the
+  // note in compressImageForModel and rust-migration-analysis.md §6.5): the
+  // native crop codec is EXIF-correct but its JPEG re-encode does not match
+  // jimp byte-for-byte, so the two paths must not be mixed for a single caller.
   try {
     const { Jimp } = await import('jimp');
     const image = await Jimp.fromBuffer(Buffer.from(bytes));

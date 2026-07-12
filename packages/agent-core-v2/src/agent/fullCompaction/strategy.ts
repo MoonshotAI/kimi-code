@@ -2,6 +2,51 @@ import type { Message } from '#/app/llmProtocol/message';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { CompactionSource } from './types';
 import { estimateTokensForMessage } from '#/_base/utils/tokens';
+import {
+  tryNativeComputeCompactCount,
+  tryNativeReduceCompactOnOverflow,
+} from '#/_base/native-tools';
+import type {
+  NativeCompactionMessageMeta,
+  NativeCompactionConfigMeta,
+} from '#/_base/native-tools';
+
+/**
+ * Build the lightweight message projection that the Rust compaction
+ * algorithm needs (role, tool_calls_count, tokens). The same projection
+ * is built for both `computeCompactCount` and `reduceCompactOnOverflow`.
+ *
+ * Token values come from `estimateTokensForMessage`, which is already
+ * native-backed (`nativeEstimateTokens` wired in tokens.ts).  This means
+ * the Rust compaction functions see the exact same token numbers that
+ * the TS fallback computes — the two paths cannot diverge on the input
+ * data, only on the algorithm (which was audited line-for-line in
+ * rust-migration-analysis.md §6.5).
+ */
+function buildCompactionMeta(
+  messages: readonly Message[],
+): NativeCompactionMessageMeta[] {
+  return messages.map((m) => ({
+    role: m.role,
+    toolCallsCount: 'toolCalls' in m ? m.toolCalls.length : 0,
+    tokens: estimateTokensForMessage(m),
+  }));
+}
+
+function buildCompactionConfigMeta(
+  maxSize: number,
+  config: CompactionConfig,
+): NativeCompactionConfigMeta {
+  return {
+    maxSize,
+    maxRecentMessages: config.maxRecentMessages,
+    maxRecentUserMessages: config.maxRecentUserMessages === Infinity
+      ? 0xFFFFFFFF // u32::MAX, matches Rust CompactionConfigMeta's stand-in for Infinity
+      : config.maxRecentUserMessages,
+    maxRecentSizeRatio: config.maxRecentSizeRatio,
+    minOverflowReductionRatio: config.minOverflowReductionRatio,
+  };
+}
 
 export interface CompactionConfig {
   triggerRatio: number;
@@ -133,6 +178,15 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
     // LLM Input: messages.slice(0, N) + [user:instruction]
     // Preserved recent messages: messages.slice(N)
 
+    // Preferred path: Rust native compaction (line-for-line port of the TS
+    // algorithm, audited in rust-migration-analysis.md §6.5). Both sides use
+    // the same token estimator (nativeEstimateTokens), so input data is
+    // identical. Falls through to TS when native is absent or fails.
+    const meta = buildCompactionMeta(messages);
+    const nativeConfig = buildCompactionConfigMeta(this.maxSize, this.config);
+    const nativeResult = tryNativeComputeCompactCount(meta, nativeConfig, source === 'manual');
+    if (nativeResult !== undefined) return nativeResult;
+
     // Manual compaction
     if (source === 'manual') {
       for (let i = messages.length - 1; i > 0; i--) {
@@ -183,6 +237,12 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 
   reduceCompactOnOverflow(messages: readonly Message[]): number {
+    // Preferred path: Rust native (audited, same token estimator).
+    const meta = buildCompactionMeta(messages);
+    const nativeConfig = buildCompactionConfigMeta(this.maxSize, this.config);
+    const nativeResult = tryNativeReduceCompactOnOverflow(meta, nativeConfig);
+    if (nativeResult !== undefined) return nativeResult;
+
     const minReducedSize = Math.max(
       1,
       Math.ceil(this.maxSize * this.config.minOverflowReductionRatio),
