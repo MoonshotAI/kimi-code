@@ -96,9 +96,21 @@ export function setCredential(value: string): void {
 
 /** Drop the credential (memory + localStorage). */
 export function clearCredential(): void {
+  const rejected = memory;
   memory = undefined;
   try {
-    globalThis.localStorage?.removeItem(STORAGE_KEY);
+    // Only clear the persisted copy when it still holds the credential this
+    // tab was using. localStorage is shared across tabs, so an unconditional
+    // removal would let a stale tab erase a newer token another tab stored
+    // (e.g. right after `kimi server rotate-token`).
+    if (
+      rejected !== undefined &&
+      globalThis.localStorage?.getItem(STORAGE_KEY) === rejected
+    ) {
+      globalThis.localStorage?.removeItem(STORAGE_KEY);
+    }
+    // sessionStorage is tab-scoped (legacy store) — clearing it cannot
+    // affect other tabs.
     globalThis.sessionStorage?.removeItem(STORAGE_KEY);
   } catch {
     // ignore

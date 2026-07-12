@@ -161,3 +161,33 @@ describe('markAuthRequired', () => {
     expect(listener).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('cross-tab credential clearing', () => {
+  it('keeps a newer token another tab persisted when this tab is stale', async () => {
+    const auth = await loadAuth();
+    auth.setCredential('stale-tok');
+    // Another tab stores a fresh token (e.g. after rotation + `kimi web`).
+    localStore.setItem(STORAGE_KEY, 'fresh-tok');
+
+    auth.markAuthRequired();
+
+    // This tab forgets its rejected credential and prompts…
+    expect(auth.getCredential()).toBeUndefined();
+    // …but the fresh shared token survives for reloads and other tabs.
+    expect(localStore.getItem(STORAGE_KEY)).toBe('fresh-tok');
+  });
+
+  it('clears the persisted copy when it still matches the rejected credential', async () => {
+    const auth = await loadAuth();
+    auth.setCredential('tok-1');
+    auth.markAuthRequired();
+    expect(localStore.getItem(STORAGE_KEY)).toBeNull();
+  });
+
+  it('does not clear another tab’s token when this tab had no credential', async () => {
+    localStore.setItem(STORAGE_KEY, 'fresh-tok');
+    const auth = await loadAuth();
+    auth.markAuthRequired();
+    expect(localStore.getItem(STORAGE_KEY)).toBe('fresh-tok');
+  });
+});
