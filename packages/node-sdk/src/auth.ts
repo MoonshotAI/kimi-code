@@ -119,7 +119,26 @@ export class KimiAuthFacade {
   }
 
   async status(providerName?: string | undefined): Promise<AuthStatus> {
-    return this.toolkit.status(providerName, this.resolveRuntimeManagedAuth(providerName).oauthRef);
+    const status = await this.toolkit.status(
+      providerName,
+      this.resolveRuntimeManagedAuth(providerName).oauthRef,
+    );
+    const config = loadRuntimeConfigSafe(this.options.configPath).config;
+    const apiKeyProviderNames = new Set(
+      Object.entries(config.providers)
+        .filter(([, provider]) => provider.apiKey?.trim().length)
+        .map(([name]) => name),
+    );
+    const providers = status.providers.map((entry) => {
+      const hasApiKey = apiKeyProviderNames.delete(entry.providerName);
+      return { ...entry, hasToken: entry.hasToken || hasApiKey };
+    });
+    if (providerName !== undefined || apiKeyProviderNames.size === 0) return { providers };
+
+    for (const providerName of apiKeyProviderNames) {
+      providers.push({ providerName, hasToken: true });
+    }
+    return { providers };
   }
 
   async login(

@@ -4,9 +4,9 @@ Kimi Code CLI supports integration into IDEs via the [Agent Client Protocol (ACP
 
 ## Prerequisites
 
-Before configuring your IDE, make sure Kimi Code CLI is installed and you have completed the login setup.
+Before configuring your IDE, make sure Kimi Code CLI is installed and has usable authentication: complete the OAuth login flow or configure a provider with an API key.
 
-The ACP adapter is exposed as the `kimi acp` subcommand. The IDE launches it as a child process and communicates over stdin/stdout using JSON-RPC. Each time the IDE creates a session, the CLI reuses its existing authentication state — no need to log in again.
+The ACP adapter is exposed as the `kimi acp` subcommand. The IDE launches it as a child process and communicates over stdin/stdout using JSON-RPC. Each time the IDE creates a session, the CLI reuses its existing OAuth login or configured API key — no need to authenticate again.
 
 ::: tip Path note
 Child processes launched from an IDE GUI on macOS typically do **not** inherit the terminal shell's `PATH`. If `kimi` is not in a system directory like `/usr/local/bin`, use the absolute path in your IDE configuration. Run `which kimi` in a terminal to find the active path.
@@ -82,12 +82,12 @@ Pick **Kimi Code CLI** from Paseo's built-in ACP provider catalog, or add a cust
 }
 ```
 
-Paseo's generic ACP adapter does not drive the login flow, so complete the terminal login first (see [Prerequisites](#prerequisites)) — otherwise session creation fails with `Authentication required`.
+Paseo's generic ACP adapter does not drive the login flow. Complete the terminal OAuth login or configure a provider with an API key first (see [Prerequisites](#prerequisites)) — otherwise session creation fails with `Authentication required`.
 
 ## Troubleshooting
 
-- **Session disconnects immediately / IDE shows "agent exited"**: usually a wrong `command` path or a missing login. Run `kimi acp` in a terminal first to verify — if it blocks waiting for stdin, the CLI itself is fine and the problem is in the IDE configuration; if it exits immediately with an error, follow the error message (most commonly you need to run `/login`).
-- **IDE shows "auth required"**: the CLI has no usable authentication token. Exit the IDE, run `kimi` in a terminal to complete login, then restart the IDE.
+- **Session disconnects immediately / IDE shows "agent exited"**: usually a wrong `command` path or missing authentication. Run `kimi acp` in a terminal first to verify — if it blocks waiting for stdin, the CLI itself is fine and the problem is in the IDE configuration; if it exits immediately with an error, follow the error message (most commonly you need to run `/login` or configure a provider with an API key).
+- **IDE shows "auth required"**: the CLI has no usable OAuth login or configured API key. Exit the IDE, complete login or configure a provider in a terminal, then restart the IDE.
 - **MCP tools not visible**: check the [`kimi acp` reference](../reference/kimi-acp.md) capability table to confirm that the MCP transport type configured in your IDE is supported. The Kimi Code CLI ACP adapter currently supports `http`, `stdio`, and `sse` transports; `acp` transport MCP servers are silently dropped and a warning is written to the log.
 
 ## Next steps
