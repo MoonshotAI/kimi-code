@@ -1166,6 +1166,25 @@ export default {
       pluginEntryOutsideRoot: '插件节点入口必须在 KIMI_PLUGIN_ROOT 内：{{entry}}',
       // sub/acp.ts
       acpFatalError: 'acp 服务器：致命错误：{{error}}',
+      // tool-renderers/chip.ts — 工具头部标签
+      chipNoMatches: '无匹配',
+      chipMatches: '{{count}} {{label}}',
+      chipNoFiles: '无文件',
+      chipNoResults: '无结果',
+      chipWebResult: '网页结果',
+      // tool-renderers/truncated.ts — 截断输出提示
+      truncatedEarlierLines: '...（上方省略 {{remaining}} 行）',
+      truncatedMoreLines: '...（下方省略 {{remaining}} 行）',
+      truncatedMoreLinesExpandable: '...（下方省略 {{remaining}} 行，ctrl+o 展开）',
+      // controllers/btw-panel.ts
+      btwBusyNotice: '请等待 /btw 完成后再发送其他问题。',
+      btwInterrupted: '用户中断',
+      btwFiltered: '提供商安全策略拦截了响应。',
+      // subagent-event-handler.ts
+      subagentRun: '运行 {{name}} 智能体',
+      // config.ts
+      invalidTuiConfig: '无效的 TUI 配置（~/.kimi-code/tui.toml），已使用默认值。',
+
       // main.ts
       mainError: '错误：{{message}}',
     },

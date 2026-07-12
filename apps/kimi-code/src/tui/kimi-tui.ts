@@ -709,7 +709,7 @@ export class KimiTUI {
           });
           const target = sessions[0];
           if (target === undefined) {
-            throw new Error(`Session "${startup.sessionFlag}" not found.`);
+            throw new Error(t('tui.statusMessages.sessionNotFound', { sessionId: startup.sessionFlag ?? '' }));
           }
           if (resolve(target.workDir) !== resolve(workDir)) {
             this.state.ui.stop();

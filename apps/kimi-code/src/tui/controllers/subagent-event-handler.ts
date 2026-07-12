@@ -10,6 +10,7 @@ import {
   agentSwarmGridHeightForTerminalRows,
 } from '../components/messages/agent-swarm-progress';
 import { MAIN_AGENT_ID } from '../constant/kimi-tui';
+import { t } from '#/i18n';
 import type {
   BackgroundAgentMetadata,
   ToolCallBlockData,
@@ -599,7 +600,7 @@ export class SubAgentEventHandler {
   private createStandaloneSubagentToolCall(
     event: SubagentLifecycleEventOf<'subagent.spawned'>,
   ) {
-    const description = event.description ?? `Run ${event.subagentName} agent`;
+    const description = event.description ?? t("tui.statusMessages.subagentRun", { name: event.subagentName });
     const { turnId, step } = this.host.streamingUI.getTurnContext();
     const toolCall: ToolCallBlockData = {
       id: event.parentToolCallId,

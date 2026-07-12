@@ -14,7 +14,6 @@ import { formatHookResultPlain } from '../utils/hook-result-format';
 import { createMarkdownTheme } from '../theme/pi-tui-theme';
 import type { TUIState } from '../tui-state';
 
-const BTW_BUSY_NOTICE = 'Wait for /btw to finish before sending another question.';
 
 export interface BtwPanelHost {
   state: TUIState;
@@ -162,7 +161,7 @@ export class BtwPanelController {
     input: string,
   ): void {
     this.host.state.editor.setText(input);
-    active.panel.addTransientNotice(BTW_BUSY_NOTICE);
+    active.panel.addTransientNotice(t("tui.statusMessages.btwBusyNotice"));
     this.host.state.ui.requestRender();
   }
 
@@ -201,10 +200,10 @@ function formatBtwTurnEnd(event: TurnEndedEvent): string {
     return `[${event.error.code}] ${event.error.message}`;
   }
   if (event.reason === 'cancelled') {
-    return 'Interrupted by user';
+    return t("tui.statusMessages.btwInterrupted");
   }
   if (event.reason === 'filtered') {
-    return 'Provider safety policy blocked the response.';
+    return t("tui.statusMessages.btwFiltered");
   }
   return `BTW turn ended with reason: ${event.reason}`;
 }

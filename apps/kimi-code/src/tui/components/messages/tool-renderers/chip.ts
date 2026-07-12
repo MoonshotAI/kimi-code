@@ -11,6 +11,7 @@
 import { computeDiffLines } from '#/tui/components/media/diff-preview';
 import type { ToolCallBlockData, ToolResultBlockData } from '#/tui/types';
 
+import { t } from '#/i18n';
 import { goalStatusChip } from './goal';
 import { readMediaChip } from './media';
 import { strArg } from './types';
@@ -25,7 +26,7 @@ export function countNonEmptyLines(text: string): number {
 }
 
 function pluralize(n: number, singular: string, plural?: string): string {
-  return `${String(n)} ${n === 1 ? singular : (plural ?? `${singular}s`)}`;
+  return t('tui.statusMessages.chipMatches', { count: String(n), label: n === 1 ? singular : (plural ?? `${singular}s`) });
 }
 
 function formatBytes(bytes: number): string {
@@ -88,13 +89,13 @@ const readChip: ChipProvider = (_toolCall, result) =>
 
 const grepChip: ChipProvider = (_toolCall, result) => {
   const matches = countNonEmptyLines(result.output);
-  if (matches === 0) return 'no matches';
+  if (matches === 0) return t('tui.statusMessages.chipNoMatches');
   return pluralize(matches, 'match', 'matches');
 };
 
 const globChip: ChipProvider = (_toolCall, result) => {
   const files = countNonEmptyLines(result.output);
-  if (files === 0) return 'no files';
+  if (files === 0) return t('tui.statusMessages.chipNoFiles');
   return pluralize(files, 'file');
 };
 
@@ -107,7 +108,7 @@ const webSearchChip: ChipProvider = (_toolCall, result) => {
   for (const line of lines) {
     if (/^\s*(\d+\.|[-*])\s+/.test(line)) count++;
   }
-  if (count === 0) return lines.length === 0 ? 'no results' : 'web result';
+  if (count === 0) return lines.length === 0 ? t('tui.statusMessages.chipNoResults') : t('tui.statusMessages.chipWebResult');
   return pluralize(count, 'result');
 };
 

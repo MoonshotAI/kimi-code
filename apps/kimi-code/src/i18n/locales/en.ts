@@ -1171,6 +1171,25 @@ export default {
       pluginEntryOutsideRoot: 'Plugin node entry must be inside KIMI_PLUGIN_ROOT: {{entry}}',
       // sub/acp.ts
       acpFatalError: 'acp server: fatal error: {{error}}',
+      // tool-renderers/chip.ts — tool header chips
+      chipNoMatches: 'no matches',
+      chipMatches: '{{count}} {{label}}',
+      chipNoFiles: 'no files',
+      chipNoResults: 'no results',
+      chipWebResult: 'web result',
+      // tool-renderers/truncated.ts — truncated output hints
+      truncatedEarlierLines: '... ({{remaining}} earlier lines)',
+      truncatedMoreLines: '... ({{remaining}} more lines)',
+      truncatedMoreLinesExpandable: '... ({{remaining}} more lines, ctrl+o to expand)',
+      // controllers/btw-panel.ts
+      btwBusyNotice: 'Wait for /btw to finish before sending another question.',
+      btwInterrupted: 'Interrupted by user',
+      btwFiltered: 'Provider safety policy blocked the response.',
+      // subagent-event-handler.ts
+      subagentRun: 'Run {{name}} agent',
+      // config.ts
+      invalidTuiConfig: 'Invalid TUI config in ~/.kimi-code/tui.toml; using defaults.',
+
       // main.ts
       mainError: 'error: {{message}}',
     },

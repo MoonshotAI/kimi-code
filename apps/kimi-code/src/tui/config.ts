@@ -15,9 +15,9 @@ import { z } from 'zod';
 import { getDataDir } from '#/utils/paths';
 
 import type { Locale } from '#/i18n';
+import { t } from '#/i18n';
 
-export const INVALID_TUI_CONFIG_MESSAGE =
-  'Invalid TUI config in ~/.kimi-code/tui.toml; using defaults.';
+export const INVALID_TUI_CONFIG_MESSAGE = t('tui.statusMessages.invalidTuiConfig');
 
 export const TuiThemeSchema = z.string();
 
