@@ -121,7 +121,7 @@ function createService(
     get: () => ({ size: 0, measured: 0, estimated: 0 }),
     measured: () => undefined,
   };
-  const usage = { record: () => undefined };
+  const usage = { record: () => undefined, status: () => ({}) };
   const context = { get: () => history };
   const tools = { list: () => [] };
   const config: Partial<IConfigService> = {

@@ -41,7 +41,7 @@ import {
 import { type Message } from '#/app/llmProtocol/message';
 import { type ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import { type Tool } from '#/app/llmProtocol/tool';
-import { emptyUsage, type TokenUsage } from '#/app/llmProtocol/usage';
+import { emptyUsage, inputTotal, type TokenUsage } from '#/app/llmProtocol/usage';
 import { ILogService, type LogContext } from '#/_base/log/log';
 import type { Model, LLMEvent as ModelRequestEvent } from '#/app/model/modelInstance';
 import type { KimiModelOverrides } from '#/app/model/modelOverrides';
@@ -172,15 +172,34 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     signal: AbortSignal | undefined,
   ): void {
     if (isAbortError(error) || signal?.aborted === true) return;
+    const modelAlias = this.profile.data().modelAlias;
+    // v1 parity: `model` carries the resolved model id with `alias` alongside,
+    // and both protocol keys carry the resolved model's protocol (v2 has no
+    // separate provider type). Resolution must never throw.
+    const model = this.tryGetProvider();
     const properties: ApiErrorEvent = {
       error_type: apiErrorType(error),
-      model: this.profile.data().modelAlias ?? 'unknown',
+      model: model?.id ?? modelAlias ?? 'unknown',
+      alias: modelAlias,
+      provider_type: model?.protocol,
+      protocol: model?.protocol,
       retryable: isRetryableGenerateError(error),
       duration_ms: Math.max(0, Date.now() - startedAt),
     };
     const statusCode = apiStatusCode(error);
     if (statusCode !== undefined) properties['status_code'] = statusCode;
+    // v1 parity: the current turn's accumulated total input tokens.
+    const currentTurn = this.usage.status().currentTurn;
+    if (currentTurn !== undefined) properties['input_tokens'] = inputTotal(currentTurn);
     this.telemetry.track2('api_error', properties);
+  }
+
+  private tryGetProvider(): Model | undefined {
+    try {
+      return this.profile.getProvider();
+    } catch {
+      return undefined;
+    }
   }
 
   private async runRequest(

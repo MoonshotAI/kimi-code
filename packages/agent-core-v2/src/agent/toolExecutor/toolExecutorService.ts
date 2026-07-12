@@ -41,6 +41,7 @@ import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/
 import {
   IAgentToolExecutorService,
   type MissingToolDescriber,
+  type ToolCallDupType,
   type ToolExecutionResult,
   type ToolExecutorExecuteOptions,
   type UnavailableToolDescriber,
@@ -100,6 +101,15 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
   private missingToolDescriber: MissingToolDescriber | undefined;
   private unavailableToolDescriber: UnavailableToolDescriber | undefined;
+  // Duplicate-call tags written by the `toolDedupe` plugin, consumed by
+  // `trackToolCall`. Pruned on turn change so entries from calls that never
+  // reached telemetry (e.g. an aborted batch) cannot leak across turns.
+  private readonly toolCallDupTypes = new Map<string, ToolCallDupType>();
+  private dupTypeTurnId: number | undefined;
+
+  recordDupType(toolCallId: string, dupType: ToolCallDupType): void {
+    this.toolCallDupTypes.set(toolCallId, dupType);
+  }
 
   registerUnavailableToolDescriber(describer: UnavailableToolDescriber) {
     this.unavailableToolDescriber = describer;
@@ -129,6 +139,10 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     options: ToolExecutorExecuteOptions,
   ): AsyncIterable<ToolExecutionResult> {
     if (calls.length === 0) return;
+    if (options.turnId !== this.dupTypeTurnId) {
+      this.dupTypeTurnId = options.turnId;
+      this.toolCallDupTypes.clear();
+    }
 
     const preflighted = calls.map((call) =>
       preflightToolCall(
@@ -252,12 +266,16 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     turnId: number,
   ): void {
     const outcome = toolTelemetryOutcome(result);
+    const toolCallId = call.toolCall.id;
+    const dupType = this.toolCallDupTypes.get(toolCallId) ?? 'normal';
+    this.toolCallDupTypes.delete(toolCallId);
     const properties: ToolCallEvent = {
       turn_id: turnId,
-      tool_call_id: call.toolCall.id,
+      tool_call_id: toolCallId,
       tool_name: call.toolName,
       outcome,
       duration_ms: durationMs,
+      dup_type: dupType,
     };
     if (result.isError === true) properties['error_type'] = toolTelemetryErrorType(outcome);
     this.telemetry.track2('tool_call', properties);

@@ -16,8 +16,10 @@ import {
   createTestAgent,
   llmGenerateServices,
   logServices,
+  telemetryServices,
   type TestAgentContext,
 } from '../../harness';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 interface CapturedLogEntry {
   readonly level: 'error' | 'warn' | 'info' | 'debug';
@@ -345,6 +347,35 @@ describe('LLMRequester service migration coverage', () => {
         name: 'APIConnectionError',
       });
       expect(calls).toBe(1);
+    });
+
+    it('tracks api_error with the v1 wire shape (model id, alias, protocol, status code)', async () => {
+      const records: TelemetryRecord[] = [];
+      ctx = createTestAgent(
+        llmGenerateServices(async () => {
+          throw new APIStatusError(429, 'rate limited');
+        }),
+        telemetryServices(recordingTelemetry(records)),
+      );
+      const llmRequester = ctx.get(IAgentLLMRequesterService);
+
+      await expect(llmRequester.request()).rejects.toMatchObject({
+        name: 'APIStatusError',
+      });
+
+      expect(records).toContainEqual({
+        event: 'api_error',
+        properties: expect.objectContaining({
+          error_type: 'rate_limit',
+          model: 'mock-model',
+          alias: 'mock-model',
+          provider_type: 'kimi',
+          protocol: 'kimi',
+          retryable: expect.any(Boolean),
+          duration_ms: expect.any(Number),
+          status_code: 429,
+        }),
+      });
     });
   });
 

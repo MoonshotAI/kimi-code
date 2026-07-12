@@ -53,13 +53,18 @@ import { IEventBus } from '#/app/event/eventBus';
 import { type FinishReason } from '#/app/llmProtocol/finishReason';
 import { type StreamedMessagePart } from '#/app/llmProtocol/message';
 import { type TokenUsage } from '#/app/llmProtocol/usage';
-import { BugIndicatingError, ErrorCodes, Error2, toKimiErrorPayload } from '#/errors';
+import { BugIndicatingError, ErrorCodes, Error2, isError2, toKimiErrorPayload } from '#/errors';
 import { OrderedHookSlot } from '#/hooks';
 
 import type { ActivityLease } from '#/activity/activity';
 import { IAgentActivityService } from '#/activity/activity';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
+import type {
+  TurnEndedEvent as TurnEndedTelemetryEvent,
+  TurnInterruptedEvent,
+  TurnStartedEvent as TurnStartedTelemetryEvent,
+} from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
@@ -361,10 +366,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     ready: ReturnType<typeof createControlledPromise<void>>,
   ): Promise<TurnResult> {
     const startedAt = Date.now();
-    const turnTelemetry = this.telemetry.withContext(this.telemetryContext.get());
+    const telemetryContext = this.telemetryContext.get();
+    const turnTelemetry = this.telemetry.withContext(telemetryContext);
+    const { mode, provider_type, protocol } = telemetryContext;
     let result: TurnResult | undefined;
     try {
-      turnTelemetry.track2('turn_started');
+      const started: TurnStartedTelemetryEvent = { mode, provider_type, protocol };
+      turnTelemetry.track2('turn_started', started);
       result = await this.run({
         turnId: turn.id,
         signal: lease.signal,
@@ -390,9 +398,26 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         });
         if (error !== undefined) this.eventBus.publish({ type: 'error', ...error });
         if (result.type !== 'completed') {
-          turnTelemetry.track2('turn_interrupted', { at_step: result.steps });
+          const interrupted: TurnInterruptedEvent = {
+            at_step: result.steps,
+            mode,
+            interrupt_reason: interruptReasonFor(result),
+            provider_type,
+            protocol,
+          };
+          turnTelemetry.track2('turn_interrupted', interrupted);
         }
       }
+      // v1 parity: `turn_ended` fires unconditionally at every turn end, even
+      // when the turn never produced a result (it died before the first step).
+      const ended: TurnEndedTelemetryEvent = {
+        reason: result?.type ?? 'failed',
+        duration_ms: Date.now() - startedAt,
+        mode,
+        provider_type,
+        protocol,
+      };
+      turnTelemetry.track2('turn_ended', ended);
       this.pumpTurns();
     }
   }
@@ -990,6 +1015,22 @@ interface StepRuntime {
 }
 
 type BeginStepResult = { readonly step: StepRuntime } | { readonly result: LoopRunResult };
+
+// Map a non-completed turn result to v1's `interrupt_reason` taxonomy.
+// `blocked` exists in the union for parity but is never emitted — the v2 loop
+// has no blocked end.
+function interruptReasonFor(
+  result: Extract<TurnResult, { readonly type: 'cancelled' | 'failed' }>,
+): TurnInterruptedEvent['interrupt_reason'] {
+  if (result.type === 'cancelled') {
+    return isUserCancellation(result.reason) ? 'user_cancelled' : 'aborted';
+  }
+  if (isMaxStepsExceededError(result.error)) return 'max_steps';
+  if (isError2(result.error) && result.error.code === ErrorCodes.PROVIDER_FILTERED) {
+    return 'filtered';
+  }
+  return 'error';
+}
 
 type StepExecutionResult = {
   readonly stopReason: FinishReason;

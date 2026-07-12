@@ -34,7 +34,7 @@ import {
 } from '#/app/llmProtocol/errors';
 import { createUserMessage, type Message } from '#/app/llmProtocol/message';
 import type { Tool } from '#/app/llmProtocol/tool';
-import { type TokenUsage } from '#/app/llmProtocol/usage';
+import { inputTotal, type TokenUsage } from '#/app/llmProtocol/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -91,7 +91,7 @@ const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
 
 type CompactionTelemetryProperties = Pick<
   CompactionFinishedEvent,
-  'input_other' | 'output' | 'input_cache_read' | 'input_cache_creation'
+  'input_tokens' | 'output_tokens' | 'input_cache_read' | 'input_cache_creation'
 >;
 
 interface ActiveCompaction extends FullCompactionTask {
@@ -806,8 +806,8 @@ function dropLeadingToolResults<T extends { readonly role: string }>(messages: r
 function usageTelemetry(usage: TokenUsage | null): CompactionTelemetryProperties {
   if (usage === null) return {};
   return {
-    input_other: usage.inputOther,
-    output: usage.output,
+    input_tokens: inputTotal(usage),
+    output_tokens: usage.output,
     input_cache_read: usage.inputCacheRead,
     input_cache_creation: usage.inputCacheCreation,
   };

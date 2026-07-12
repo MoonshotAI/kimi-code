@@ -8,18 +8,20 @@
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { IAgentTelemetryContextService } from './agentTelemetryContext';
-import type { TelemetryProperties } from './telemetry';
+import {
+  IAgentTelemetryContextService,
+  type AgentTelemetryContext,
+} from './agentTelemetryContext';
 
 export class AgentTelemetryContextService implements IAgentTelemetryContextService {
   declare readonly _serviceBrand: undefined;
-  private context: TelemetryProperties = { mode: 'agent' };
+  private context: AgentTelemetryContext = { mode: 'agent' };
 
-  get(): TelemetryProperties {
+  get(): AgentTelemetryContext {
     return this.context;
   }
 
-  set(patch: TelemetryProperties): void {
+  set(patch: Partial<AgentTelemetryContext>): void {
     this.context = { ...this.context, ...patch };
   }
 }

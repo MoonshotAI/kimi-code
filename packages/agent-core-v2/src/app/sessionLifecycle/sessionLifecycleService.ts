@@ -6,7 +6,8 @@
  * addressing, running lifecycle hook slots, and tearing them down on
  * close/archive — archiving flags the session's `sessionMetadata`, removes
  * its `agentLifecycle` agents, restoring clears the archived flag, and
- * broadcasts through `event`. Materializes the session's initial metadata on
+ * broadcasts through `event`; session start and resume failures are reported
+ * through `telemetry`. Materializes the session's initial metadata on
  * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
  * sessions are discovered through the `sessionIndex` read model, and workspace
  * roots are remembered through `workspaceRegistry`.
@@ -45,7 +46,8 @@ import {
 } from '#/app/sessionIndex/sessionIndex';
 import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
 import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
-import { ErrorCodes, Error2 } from '#/errors';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { createHooks } from '#/hooks';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -114,6 +116,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @IWorkspaceLocalConfigService
     private readonly workspaceLocalConfig: IWorkspaceLocalConfigService,
     @IEventService private readonly event: IEventService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
   }
@@ -192,6 +195,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
     await this.hooks.onDidCreateSession.run(event);
     this._onDidCreateSession.fire(event);
+    // Deliberately broader than v1: resumes also emit, with `resumed: true` —
+    // the flag exists precisely to distinguish them (v1's resume path never
+    // emitted despite the schema having the flag).
+    this.telemetry.track2('session_started', { resumed: event.source === 'resume' });
     event.handle.accessor.get(ISessionActivityKernel).markActive();
   }
 
@@ -216,7 +223,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (inflight !== undefined) return inflight;
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return Promise.resolve(live);
-    const promise = this.doResume(sessionId).finally(() => this.resuming.delete(sessionId));
+    const promise = this.doResume(sessionId)
+      .catch((error: unknown) => {
+        this.telemetry.track2('session_load_failed', {
+          reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
+        });
+        throw error;
+      })
+      .finally(() => this.resuming.delete(sessionId));
     this.resuming.set(sessionId, promise);
     return promise;
   }

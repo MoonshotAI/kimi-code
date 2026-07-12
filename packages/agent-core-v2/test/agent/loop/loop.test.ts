@@ -11,6 +11,7 @@ import type { ExecutableTool } from '#/agent/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IEventBus } from '#/app/event/eventBus';
+import { userCancellationReason } from '#/_base/utils/abort';
 
 import {
   agentService,
@@ -19,6 +20,7 @@ import {
   type TestAgentContext,
   type TestAgentOptions,
 } from '../../harness';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
@@ -585,6 +587,110 @@ describe('Agent loop', () => {
       expect.objectContaining({ content: [{ type: 'text', text: 'cancelled' }] }),
     );
   });
+});
+
+describe('turn telemetry', () => {
+  it('emits turn_started and turn_ended with mode and protocol on completion', async () => {
+    const records: TelemetryRecord[] = [];
+    const local = createTestAgent({ telemetry: recordingTelemetry(records) });
+    try {
+      local.get(IAgentProfileService).update({ activeToolNames: [] });
+      local.mockNextResponse({ type: 'text', text: 'hi' });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+
+      expect(records).toContainEqual({
+        event: 'turn_started',
+        properties: { mode: 'agent', provider_type: 'kimi', protocol: 'kimi' },
+      });
+      expect(records).toContainEqual({
+        event: 'turn_ended',
+        properties: expect.objectContaining({
+          reason: 'completed',
+          duration_ms: expect.any(Number),
+          mode: 'agent',
+          provider_type: 'kimi',
+          protocol: 'kimi',
+        }),
+      });
+      expect(records.some((record) => record.event === 'turn_interrupted')).toBe(false);
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it('emits turn_interrupted with interrupt_reason filtered and turn_ended failed', async () => {
+    const records: TelemetryRecord[] = [];
+    const local = createTestAgent({ telemetry: recordingTelemetry(records) });
+    try {
+      local.mockNextProviderResponse({
+        parts: [{ type: 'text', text: 'blocked' }],
+        finishReason: 'filtered',
+      });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+      await local.untilTurnEnd();
+
+      expect(records).toContainEqual({
+        event: 'turn_interrupted',
+        properties: expect.objectContaining({
+          at_step: 1,
+          mode: 'agent',
+          interrupt_reason: 'filtered',
+          provider_type: 'kimi',
+          protocol: 'kimi',
+        }),
+      });
+      expect(records).toContainEqual({
+        event: 'turn_ended',
+        properties: expect.objectContaining({ reason: 'failed', mode: 'agent' }),
+      });
+    } finally {
+      await local.dispose();
+    }
+  });
+
+  it.each([
+    ['user_cancelled', () => userCancellationReason()],
+    ['aborted', () => new Error('stop')],
+  ] as const)(
+    'emits turn_interrupted with interrupt_reason %s on cancellation',
+    async (expected, makeReason) => {
+      const records: TelemetryRecord[] = [];
+      const local = createTestAgent({ telemetry: recordingTelemetry(records) });
+      try {
+        const localLoop = local.get(IAgentLoopService);
+        let stepStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+          stepStarted = resolve;
+        });
+        localLoop.hooks.onWillBeginStep.register('test-hang', async (hookCtx, next) => {
+          stepStarted();
+          await new Promise<void>((_, reject) => {
+            hookCtx.signal.addEventListener('abort', () => reject(hookCtx.signal.reason), {
+              once: true,
+            });
+          });
+          await next();
+        });
+
+        const turn = (await localLoop.enqueue(nextTurnMessage('hang')).assigned).turn;
+        await started;
+        localLoop.cancel(turn.id, makeReason());
+        await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+
+        expect(records).toContainEqual({
+          event: 'turn_interrupted',
+          properties: expect.objectContaining({ interrupt_reason: expected, mode: 'agent' }),
+        });
+        expect(records).toContainEqual({
+          event: 'turn_ended',
+          properties: expect.objectContaining({ reason: 'cancelled' }),
+        });
+      } finally {
+        await local.dispose();
+      }
+    },
+  );
 });
 
 describe('step timing split propagation', () => {

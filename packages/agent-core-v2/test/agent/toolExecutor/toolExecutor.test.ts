@@ -107,6 +107,40 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
+  it('tags tool_call telemetry with recorded dup types, defaulting to normal', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    // Dup types are recorded mid-execution through the will-hook (the dedupe
+    // plugin's path), so tag from a hook like production does.
+    let tag = true;
+    executor.hooks.onBeforeExecuteTool.register('test-dup-tag', async (ctx, next) => {
+      if (tag && ctx.toolCall.id === 'call_dup') executor.recordDupType('call_dup', 'cross_step');
+      await next();
+    });
+
+    await execute([
+      toolCall('call_ok', 'echo', { text: 'a' }),
+      toolCall('call_dup', 'echo', { text: 'b' }),
+    ]);
+
+    expect(telemetryEvents).toContainEqual({
+      event: 'tool_call',
+      properties: expect.objectContaining({ tool_call_id: 'call_ok', dup_type: 'normal' }),
+    });
+    expect(telemetryEvents).toContainEqual({
+      event: 'tool_call',
+      properties: expect.objectContaining({ tool_call_id: 'call_dup', dup_type: 'cross_step' }),
+    });
+
+    // Entries are consumed on read, not sticky.
+    tag = false;
+    await execute([toolCall('call_dup', 'echo', { text: 'c' })]);
+    expect(telemetryEvents).toContainEqual({
+      event: 'tool_call',
+      properties: expect.objectContaining({ tool_call_id: 'call_dup', dup_type: 'normal' }),
+    });
+  });
+
   it('truncates final tool results before publishing protocol events', async () => {
     truncateForModel = async (input) => ({
       ...input.result,

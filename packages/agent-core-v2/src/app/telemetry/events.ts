@@ -43,10 +43,32 @@ export type StrictPropertyCheck<T, E> = string extends keyof T
       : never
     : never;
 
-export interface TurnStartedEvent {}
+export interface TurnStartedEvent {
+  mode: 'agent' | 'plan';
+  /** Resolved model protocol; v2 has no separate provider type (v1 parity). */
+  provider_type?: string;
+  /** Resolved model protocol. */
+  protocol?: string;
+}
 
 export interface TurnInterruptedEvent {
   at_step: number;
+  mode: 'agent' | 'plan';
+  interrupt_reason: 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
+  /** Resolved model protocol; v2 has no separate provider type (v1 parity). */
+  provider_type?: string;
+  /** Resolved model protocol. */
+  protocol?: string;
+}
+
+export interface TurnEndedEvent {
+  reason: 'completed' | 'cancelled' | 'failed';
+  duration_ms: number;
+  mode: 'agent' | 'plan';
+  /** Resolved model protocol; v2 has no separate provider type (v1 parity). */
+  provider_type?: string;
+  /** Resolved model protocol. */
+  protocol?: string;
 }
 
 export type ToolCallOutcome = 'success' | 'error' | 'cancelled';
@@ -57,15 +79,29 @@ export interface ToolCallEvent {
   tool_name: string;
   outcome: ToolCallOutcome;
   duration_ms: number;
+  /**
+   * Whether the call was a duplicate. v1's union is 'normal' | 'cross_step';
+   * v2 adds 'same_step' because same-step duplicates reach execution telemetry
+   * through the placeholder-result path (v1 swallowed them beforehand).
+   */
+  dup_type: 'normal' | 'same_step' | 'cross_step';
   error_type?: 'cancelled' | 'error';
 }
 
 export interface ApiErrorEvent {
   error_type: string;
   model: string;
+  /** Model alias the request targeted, when one is bound. */
+  alias?: string;
   retryable: boolean;
   duration_ms: number;
   status_code?: number;
+  /** Resolved model protocol; v2 has no separate provider type (v1 parity). */
+  provider_type?: string;
+  /** Resolved model protocol. */
+  protocol?: string;
+  /** Current turn's accumulated total input tokens, when usage exists. */
+  input_tokens?: number;
 }
 
 export interface SkillInvokedEvent {
@@ -150,9 +186,13 @@ export interface CompactionFinishedEvent {
   retry_count: number;
   round: number;
   thinking_effort: string;
-  input_other?: number;
-  output?: number;
+  /** Total input tokens (other + cache read + cache creation). */
+  input_tokens?: number;
+  /** Output tokens. */
+  output_tokens?: number;
+  /** Cache-read input tokens (v2 extra). */
   input_cache_read?: number;
+  /** Cache-creation input tokens (v2 extra). */
   input_cache_creation?: number;
 }
 
@@ -164,6 +204,25 @@ export interface CompactionFailedEvent {
   retry_count: number;
   thinking_effort: string;
   error_type: string;
+}
+
+export interface ContextProjectionRepairedEvent {
+  /** Tool results moved back next to their call. */
+  reordered: number;
+  /** Placeholder results invented for lost ones. */
+  synthesized: number;
+  /** Results with no matching call dropped. */
+  dropped_orphan: number;
+  /** Tool calls with an already-seen id dropped. */
+  duplicate_calls_dropped: number;
+  /** Second results for an already-answered id dropped. */
+  duplicate_results_dropped: number;
+  /** Leading non-user messages dropped. */
+  leading_dropped: number;
+  /** Consecutive assistant messages merged. */
+  assistants_merged: number;
+  /** Whitespace-only text blocks dropped. */
+  whitespace_dropped: number;
 }
 
 export interface BackgroundTaskCreatedEvent {
@@ -226,7 +285,7 @@ export interface GoalStatusChangedEvent extends GoalBudgetProperties {
   wall_clock_ms: number;
 }
 
-export interface ToolCallDedupeDetectedEvent {
+export interface ToolCallDedupDetectedEvent {
   turn_id: number;
   step_no: number;
   tool_call_id: string;
@@ -349,6 +408,16 @@ export interface VideoUploadEvent {
   error_type?: string;
 }
 
+export interface SessionStartedEvent {
+  /** True when the session was resumed from disk; false for startup/fork. */
+  resumed: boolean;
+}
+
+export interface SessionLoadFailedEvent {
+  /** Error code (Error2), error name, or 'unknown'. */
+  reason: string;
+}
+
 export interface FirstLaunchEvent {}
 
 export interface ExitEvent {
@@ -359,12 +428,33 @@ export const telemetryEventDefinitions = {
   turn_started: defineTelemetryEvent<TurnStartedEvent>({
     owner: 'kimi-code',
     comment: 'A turn starts running.',
-    properties: {},
+    properties: {
+      mode: 'Agent mode the turn runs in',
+      provider_type: 'Provider protocol type',
+      protocol: 'Request protocol',
+    },
   }),
   turn_interrupted: defineTelemetryEvent<TurnInterruptedEvent>({
     owner: 'kimi-code',
     comment: 'A running turn is interrupted.',
-    properties: { at_step: 'Step index the turn reached before interruption' },
+    properties: {
+      at_step: 'Step index the turn reached before interruption',
+      mode: 'Agent mode the turn ran in',
+      interrupt_reason: 'Why the turn was interrupted',
+      provider_type: 'Provider protocol type',
+      protocol: 'Request protocol',
+    },
+  }),
+  turn_ended: defineTelemetryEvent<TurnEndedEvent>({
+    owner: 'kimi-code',
+    comment: 'A turn ends, unconditionally.',
+    properties: {
+      reason: 'How the turn ended',
+      duration_ms: 'Turn wall-clock time in milliseconds',
+      mode: 'Agent mode the turn ran in',
+      provider_type: 'Provider protocol type',
+      protocol: 'Request protocol',
+    },
   }),
   tool_call: defineTelemetryEvent<ToolCallEvent>({
     owner: 'kimi-code',
@@ -375,6 +465,7 @@ export const telemetryEventDefinitions = {
       tool_name: 'Registered tool name',
       outcome: 'Execution outcome',
       duration_ms: 'Wall-clock execution time in milliseconds',
+      dup_type: 'Whether the call was a duplicate within the same step or across steps',
       error_type: 'Error category when the call failed',
     },
   }),
@@ -383,10 +474,14 @@ export const telemetryEventDefinitions = {
     comment: 'An LLM API request fails.',
     properties: {
       error_type: 'Classified error category',
-      model: 'Model alias the request targeted',
+      model: 'Model id the request targeted',
+      alias: 'Model alias the request targeted',
       retryable: 'Whether the error is retryable',
       duration_ms: 'Request wall-clock time in milliseconds',
       status_code: 'HTTP status code when available',
+      provider_type: 'Provider protocol type',
+      protocol: 'Request protocol',
+      input_tokens: "Current turn's accumulated total input tokens",
     },
   }),
   skill_invoked: defineTelemetryEvent<SkillInvokedEvent>({
@@ -483,8 +578,8 @@ export const telemetryEventDefinitions = {
       retry_count: 'Number of retries attempted',
       round: 'Compaction round index',
       thinking_effort: 'Thinking effort level in effect',
-      input_other: 'Non-cached input tokens',
-      output: 'Output tokens',
+      input_tokens: 'Total input tokens (other + cache read + cache creation)',
+      output_tokens: 'Output tokens',
       input_cache_read: 'Cache-read input tokens',
       input_cache_creation: 'Cache-creation input tokens',
     },
@@ -500,6 +595,20 @@ export const telemetryEventDefinitions = {
       retry_count: 'Number of retries attempted',
       thinking_effort: 'Thinking effort level in effect',
       error_type: 'Error class name',
+    },
+  }),
+  context_projection_repaired: defineTelemetryEvent<ContextProjectionRepairedEvent>({
+    owner: 'kimi-code',
+    comment: 'The context projector repairs the outgoing request to keep it wire-valid.',
+    properties: {
+      reordered: 'Tool results moved back next to their call',
+      synthesized: 'Placeholder results invented for lost ones',
+      dropped_orphan: 'Results with no matching call dropped',
+      duplicate_calls_dropped: 'Tool calls with an already-seen id dropped',
+      duplicate_results_dropped: 'Second results for an already-answered id dropped',
+      leading_dropped: 'Leading non-user messages dropped',
+      assistants_merged: 'Consecutive assistant messages merged',
+      whitespace_dropped: 'Whitespace-only text blocks dropped',
     },
   }),
   background_task_created: defineTelemetryEvent<BackgroundTaskCreatedEvent>({
@@ -585,7 +694,7 @@ export const telemetryEventDefinitions = {
       has_wall_clock_budget: 'Whether a wall-clock budget was set',
     },
   }),
-  tool_call_dedupe_detected: defineTelemetryEvent<ToolCallDedupeDetectedEvent>({
+  tool_call_dedup_detected: defineTelemetryEvent<ToolCallDedupDetectedEvent>({
     owner: 'kimi-code',
     comment: 'A duplicate tool call is detected.',
     properties: {
@@ -722,6 +831,16 @@ export const telemetryEventDefinitions = {
       duration_ms: 'Upload wall-clock time in milliseconds',
       error_type: 'Error class name when the upload failed',
     },
+  }),
+  session_started: defineTelemetryEvent<SessionStartedEvent>({
+    owner: 'kimi-code',
+    comment: 'A session becomes active (created, forked, or resumed).',
+    properties: { resumed: 'Whether the session was resumed from disk' },
+  }),
+  session_load_failed: defineTelemetryEvent<SessionLoadFailedEvent>({
+    owner: 'kimi-code',
+    comment: 'A session resume fails.',
+    properties: { reason: 'Error code, error name, or unknown' },
   }),
   first_launch: defineTelemetryEvent<FirstLaunchEvent>({
     owner: 'kimi-code',

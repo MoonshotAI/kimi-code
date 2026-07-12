@@ -17,7 +17,9 @@
  * / `warning` events now ride `IEventBus` (`agent.status.updated` canonical in
  * `usageOps`). `chdir` and
  * `emitStatusUpdated` run live-only after the dispatch, so `wire.replay`
- * rebuilds the Models silently.
+ * rebuilds the Models silently; the same live-only path mirrors the resolved
+ * model protocol into the ambient telemetry context (`provider_type` /
+ * `protocol`) whenever the model alias changes.
  * Bound at Agent scope.
  */
 
@@ -47,6 +49,7 @@ import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/
 
 import type { WarningEvent } from '@moonshot-ai/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type { ToolSource } from '#/agent/tool/toolContract';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
@@ -116,6 +119,7 @@ export class AgentProfileService implements IAgentProfileService {
     @IAgentWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
     @IConfigService private readonly config: IConfigService,
     @IModelResolver private readonly modelFactory: IModelResolver,
     @IHostEnvironment private readonly env: IHostEnvironment,
@@ -412,6 +416,13 @@ export class AgentProfileService implements IAgentProfileService {
   private afterConfigDispatch(changed: Omit<ProfileUpdateData, 'activeToolNames'>): void {
     if (changed.cwd !== undefined) {
       void this.optionsValue.chdir?.(changed.cwd);
+    }
+    if (changed.modelAlias !== undefined) {
+      // Mirror the resolved model protocol into the ambient telemetry context
+      // (v1 parity: both keys carry the protocol — v2 has no separate provider
+      // type). Unresolvable models yield undefined; never throw.
+      const protocol = this.tryResolveRawModel()?.protocol;
+      this.telemetryContext.set({ provider_type: protocol, protocol });
     }
     this.emitStatusUpdated();
   }

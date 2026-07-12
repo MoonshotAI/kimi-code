@@ -325,7 +325,7 @@ describe('AgentToolDedupeService', () => {
       expect(tool.calls).toHaveLength(1);
       expect(results.map((result) => result.output)).toEqual(['same', 'same']);
       expect(telemetryEvents).toContainEqual({
-        event: 'tool_call_dedupe_detected',
+        event: 'tool_call_dedup_detected',
         properties: expect.objectContaining({
           turn_id: 3,
           step_no: 1,
@@ -700,7 +700,7 @@ describe('AgentToolDedupeService', () => {
       );
 
       expect(telemetryEvents).toContainEqual({
-        event: 'tool_call_dedupe_detected',
+        event: 'tool_call_dedup_detected',
         properties: {
           turn_id: 7,
           step_no: 1,
@@ -709,6 +709,16 @@ describe('AgentToolDedupeService', () => {
           dup_type: 'same_step',
           args_hash: expect.any(String),
         },
+      });
+      // Same-step dups reach `tool_call` through the placeholder path and must
+      // be tagged, not misreported as 'normal'.
+      expect(telemetryEvents).toContainEqual({
+        event: 'tool_call',
+        properties: expect.objectContaining({ tool_call_id: 'c1', dup_type: 'normal' }),
+      });
+      expect(telemetryEvents).toContainEqual({
+        event: 'tool_call',
+        properties: expect.objectContaining({ tool_call_id: 'c2', dup_type: 'same_step' }),
       });
     });
 
@@ -723,7 +733,7 @@ describe('AgentToolDedupeService', () => {
       await executeAll(h, [toolCall('c2', 'Read', { path: '/a' })], 7, signal);
 
       expect(telemetryEvents).toContainEqual({
-        event: 'tool_call_dedupe_detected',
+        event: 'tool_call_dedup_detected',
         properties: {
           turn_id: 7,
           step_no: 2,
@@ -732,6 +742,10 @@ describe('AgentToolDedupeService', () => {
           dup_type: 'cross_step',
           args_hash: expect.any(String),
         },
+      });
+      expect(telemetryEvents).toContainEqual({
+        event: 'tool_call',
+        properties: expect.objectContaining({ tool_call_id: 'c2', dup_type: 'cross_step' }),
       });
     });
 
@@ -745,7 +759,7 @@ describe('AgentToolDedupeService', () => {
       const [result] = await runStep(h, 7, 3, [toolCall('a2', 'Read', { path: '/a' })]);
 
       expect(result!.result.output as string).not.toContain('<system-reminder>');
-      expect(telemetryEvents.filter((e) => e.event === 'tool_call_dedupe_detected')).toHaveLength(0);
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_dedup_detected')).toHaveLength(0);
       expect(telemetryEvents.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
     });
 
@@ -833,7 +847,7 @@ describe('AgentToolDedupeService', () => {
 
       expect(firstInNewTurn!.result.output as string).not.toContain('<system-reminder>');
       expect(telemetryEvents.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
-      expect(telemetryEvents.filter((e) => e.event === 'tool_call_dedupe_detected')).toHaveLength(0);
+      expect(telemetryEvents.filter((e) => e.event === 'tool_call_dedup_detected')).toHaveLength(0);
     });
 
     it('runs with a no-op telemetry service', async () => {

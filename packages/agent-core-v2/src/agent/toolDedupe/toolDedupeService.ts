@@ -16,7 +16,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/app/llmProtocol/message';
 import { IAgentToolDedupeService, type ToolDedupeResult } from './toolDedupe';
 
@@ -80,8 +80,6 @@ interface CheckedToolCall {
   readonly syntheticResult: ToolDedupeResult | null;
 }
 
-type ToolCallDupType = 'same_step' | 'cross_step';
-
 function appendReminder(result: ToolDedupeResult, reminderText: string): ToolDedupeResult {
   const output = result.output;
   let newOutput: string | ContentPart[];
@@ -124,7 +122,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentLoopService loop: IAgentLoopService,
-    @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
+    @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
   ) {
     super();
     loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
@@ -218,7 +216,10 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     args: unknown,
     dupType: ToolCallDupType,
   ): void {
-    this.telemetry.track2('tool_call_dedupe_detected', {
+    // Tag the call so the executor's `tool_call` telemetry can carry dup_type;
+    // both same_step (placeholder path) and cross_step dups reach trackToolCall.
+    this.toolExecutor.recordDupType(toolCallId, dupType);
+    this.telemetry.track2('tool_call_dedup_detected', {
       turn_id: this.activeTurnId ?? 0,
       step_no: this.activeStep,
       tool_call_id: toolCallId,

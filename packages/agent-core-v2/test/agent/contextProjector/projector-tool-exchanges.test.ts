@@ -9,6 +9,8 @@ import { IAgentContextProjectorService } from '#/agent/contextProjector/contextP
 import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { toProtocolMessage } from '#/agent/contextMemory/messageProjection';
 import type { Message } from '#/app/llmProtocol/message';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 const REPAIR_WARNING = 'repaired the request to keep it wire-valid';
 
@@ -98,12 +100,15 @@ describe('projector tool-exchange normalization', () => {
   let disposables: DisposableStore;
   let projector: IAgentContextProjectorService;
   let warnings: WarningCall[];
+  let telemetryRecords: TelemetryRecord[];
 
   beforeEach(() => {
     disposables = new DisposableStore();
     warnings = [];
+    telemetryRecords = [];
     const ix = disposables.add(new TestInstantiationService());
     ix.set(ILogService, createCapturingLog(warnings));
+    ix.set(ITelemetryService, recordingTelemetry(telemetryRecords));
     ix.set(IAgentContextProjectorService, new SyncDescriptor(AgentContextProjectorService));
     projector = ix.get(IAgentContextProjectorService);
   });
@@ -471,6 +476,36 @@ describe('projector tool-exchange normalization', () => {
       expect(repairPayloads(warnings).at(-1)).toEqual(
         expect.objectContaining({ assistantsMerged: 1 }),
       );
+    });
+
+    it('emits context_projection_repaired telemetry with the v1 wire keys when a repair occurs', () => {
+      project([
+        assistant('', ['c1', 'c2']),
+        reminder('host note'),
+        toolResult('c1', 'one'),
+        toolResult('c2', 'two'),
+      ]);
+      expect(telemetryRecords).toEqual([
+        {
+          event: 'context_projection_repaired',
+          properties: {
+            reordered: 2,
+            synthesized: 0,
+            dropped_orphan: 0,
+            duplicate_calls_dropped: 0,
+            duplicate_results_dropped: 0,
+            leading_dropped: 0,
+            assistants_merged: 0,
+            whitespace_dropped: 0,
+          },
+        },
+      ]);
+    });
+
+    it('does not emit context_projection_repaired on a clean projection or a trailing in-flight close', () => {
+      project([user('go'), assistant('', ['c1']), toolResult('c1', 'one'), user('next')]);
+      project([user('go'), assistant('', ['c1'])]);
+      expect(telemetryRecords).toEqual([]);
     });
   });
 });

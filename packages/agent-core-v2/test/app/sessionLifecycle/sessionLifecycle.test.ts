@@ -42,7 +42,10 @@ import { SessionWorkspaceContextService } from '#/session/workspaceContext/works
 import { IWorkspaceRegistry, type Workspace } from '#/app/workspaceRegistry/workspaceRegistry';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { Error2, ErrorCodes } from '#/errors';
 import { stubSessionActivityKernel } from '../../activity/stubs';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 function bootstrapStub(): IBootstrapService {
   return {
@@ -348,9 +351,11 @@ class RecordingSessionExternalHooksService
 
 describe('SessionLifecycleService', () => {
   let host: ScopedTestHost | undefined;
+  let telemetryRecords: TelemetryRecord[];
 
   beforeEach(() => {
     recordedSessionHookEvents = [];
+    telemetryRecords = [];
     _clearScopedRegistryForTests();
     registerScopedService(
       LifecycleScope.App,
@@ -396,6 +401,7 @@ describe('SessionLifecycleService', () => {
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
       stubPair(ISessionActivityKernel, stubSessionActivityKernel()),
       stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub()),
+      stubPair(ITelemetryService, recordingTelemetry(telemetryRecords)),
       ...extra,
     ]);
     return host.app.accessor.get(ISessionLifecycleService);
@@ -577,6 +583,61 @@ describe('SessionLifecycleService', () => {
     });
     const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
     expect(captured).toMatchObject({ sessionId: 's1', handle: h, source: 'startup' });
+  });
+
+  it('emits session_started with resumed: false on create', async () => {
+    const svc = build();
+    await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    expect(telemetryRecords).toContainEqual({
+      event: 'session_started',
+      properties: { resumed: false },
+    });
+  });
+
+  it('emits session_started with resumed: true on resume', async () => {
+    const workDir = '/tmp/proj';
+    const svc = build([
+      stubPair(IWorkspaceRegistry, persistentWorkspaceRegistryStub()),
+      stubPair(ISessionIndex, sessionIndexWithSummary('s1', workDir)),
+      stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
+    ]);
+
+    await svc.resume('s1');
+
+    expect(telemetryRecords).toContainEqual({
+      event: 'session_started',
+      properties: { resumed: true },
+    });
+  });
+
+  it('emits session_load_failed with the error code when resume fails, then rethrows', async () => {
+    const svc = build([
+      stubPair(ISessionIndex, {
+        ...sessionIndexStub(),
+        get: () => Promise.reject(new Error2(ErrorCodes.SESSION_NOT_FOUND, 'index read failed')),
+      }),
+    ]);
+
+    await expect(svc.resume('s1')).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
+    expect(telemetryRecords).toContainEqual({
+      event: 'session_load_failed',
+      properties: { reason: ErrorCodes.SESSION_NOT_FOUND },
+    });
+  });
+
+  it('emits session_load_failed with the error name for plain errors', async () => {
+    const svc = build([
+      stubPair(ISessionIndex, {
+        ...sessionIndexStub(),
+        get: () => Promise.reject(new TypeError('bad index')),
+      }),
+    ]);
+
+    await expect(svc.resume('s1')).rejects.toBeInstanceOf(TypeError);
+    expect(telemetryRecords).toContainEqual({
+      event: 'session_load_failed',
+      properties: { reason: 'TypeError' },
+    });
   });
 
   it('runs constructor-registered session lifecycle hooks before returning create and close', async () => {
