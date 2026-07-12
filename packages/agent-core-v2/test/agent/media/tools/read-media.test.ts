@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import {
   ReadMediaFileInputSchema,
   ReadMediaFileTool,
@@ -97,6 +97,7 @@ function recordingTelemetry(records: TelemetryRecord[]): ITelemetryService {
     track(event, properties) {
       records.push({ event, properties });
     },
+    track2: (event, properties) => telemetry.track(event, properties as TelemetryProperties),
     withContext: () => telemetry,
     setContext: () => {},
     addAppender: () => ({ dispose: () => {} }),
@@ -801,7 +802,7 @@ describe('createVideoUploader', () => {
   it('never lets a throwing telemetry client break the upload', async () => {
     const throwing = {
       ...recordingTelemetry([]),
-      track: () => {
+      track2: () => {
         throw new Error('sink down');
       },
     } as ITelemetryService;

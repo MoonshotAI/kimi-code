@@ -96,7 +96,7 @@ export function emitAgentRunSpawned(
     swarmIndex: meta.swarmIndex,
     runInBackground: meta.runInBackground ?? false,
   });
-  requester.accessor.get(ITelemetryService)?.track('subagent_created', {
+  requester.accessor.get(ITelemetryService)?.track2('subagent_created', {
     subagent_name: meta.profileName,
     run_in_background: meta.runInBackground ?? false,
   });

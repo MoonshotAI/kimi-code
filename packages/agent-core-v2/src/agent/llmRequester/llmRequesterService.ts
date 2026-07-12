@@ -48,6 +48,7 @@ import type { KimiModelOverrides } from '#/app/model/modelOverrides';
 import { MODELS_SECTION, type ModelsSection } from '#/app/model/model';
 import { applyCompletionBudget, resolveCompletionBudget } from '#/app/model/completionBudget';
 import type { Protocol } from '#/app/protocol/protocol';
+import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
@@ -171,7 +172,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     signal: AbortSignal | undefined,
   ): void {
     if (isAbortError(error) || signal?.aborted === true) return;
-    const properties: Record<string, unknown> = {
+    const properties: ApiErrorEvent = {
       error_type: apiErrorType(error),
       model: this.profile.data().modelAlias ?? 'unknown',
       retryable: isRetryableGenerateError(error),
@@ -179,7 +180,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     };
     const statusCode = apiStatusCode(error);
     if (statusCode !== undefined) properties['status_code'] = statusCode;
-    this.telemetry.track('api_error', properties);
+    this.telemetry.track2('api_error', properties);
   }
 
   private async runRequest(

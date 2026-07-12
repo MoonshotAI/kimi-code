@@ -6,24 +6,27 @@ Telemetry is a **layer-1 root** domain (alongside `log`): pure `App` scope, stat
 
 ## Where things live
 
-- `src/telemetry/telemetry.ts`: contract — `ITelemetryService` (facade), `ITelemetryAppender` (destination), `TelemetryProperties`, `nullTelemetryAppender`, and `TelemetryServiceOptions`.
-- `src/telemetry/telemetryService.ts`: `TelemetryService` impl + `registerScopedService(LifecycleScope.App, …)`.
-- `src/telemetry/consoleAppender.ts`: `ConsoleAppender` — echoes events to a log function (dev / debug).
-- `src/telemetry/cloudAppender.ts`: `CloudAppender` — batches + enriches + posts to the telemetry endpoint.
-- `src/telemetry/cloudTransport.ts`: `CloudTransport` — HTTP transport behind `CloudAppender`.
-- `src/telemetry/index.ts`: **removed (no barrel)**; `src/index.ts` imports the telemetry leafs precisely (e.g. `import './telemetry/telemetryService'`).
+- `src/app/telemetry/telemetry.ts`: contract — `ITelemetryService` (facade), `ITelemetryAppender` (destination), `TelemetryProperties`, `nullTelemetryAppender`, and `TelemetryServiceOptions`.
+- `src/app/telemetry/events.ts`: event registry — `telemetryEventDefinitions` pairs every business event's property type with review metadata (owner / purpose / per-property comment); the single source of truth for `track2`.
+- `src/app/telemetry/telemetryService.ts`: `TelemetryService` impl + `registerScopedService(LifecycleScope.App, …)`.
+- `src/app/telemetry/consoleAppender.ts`: `ConsoleAppender` — echoes events to a log function (dev / debug).
+- `src/app/telemetry/cloudAppender.ts`: `CloudAppender` — sanitizes + PII-cleans properties, batches + enriches + posts to the telemetry endpoint.
+- `src/app/telemetry/cloudTransport.ts`: `CloudTransport` — HTTP transport behind `CloudAppender`.
+- `src/app/telemetry/privacy.ts`: outbound PII redaction (`cleanTelemetryProperties`) — URLs, emails, tokens, and absolute file paths become `<REDACTED: ...>` labels; `node_modules/` tails are kept.
 
 ## Emitting events (business services)
 
-Inject `ITelemetryService` and call `track`:
+Inject `ITelemetryService` and call `track2` with a registered event:
 
 ```ts
-import { ITelemetryService } from '#/telemetry';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 
 constructor(@ITelemetryService private readonly telemetry: ITelemetryService) {}
 
-this.telemetry.track('cron_fired', { task_id: taskId, latency_ms: 12 });
+this.telemetry.track2('cron_fired', { task_id: taskId, coalesced_count: 0, stale: false, buffered: false, recurring: true });
 ```
+
+`track2` is checked against the registry in `events.ts` at compile time: the event name must be a key of `telemetryEventDefinitions`, and the properties must match the registered interface exactly (extra or missing keys are compile errors). **New events must be registered first** — add a properties interface and a `defineTelemetryEvent<P>({ owner, comment, properties })` entry documenting every property. Naming: snake_case for events and properties, unit suffixes (`_ms` / `_count` / `_bytes`), no user content or file paths; `test/app/telemetry/events.test.ts` enforces the conventions. The low-level `track` remains for appender plumbing and tests only.
 
 `TelemetryService.track` merges the bound context into the properties and fans the event out to every registered appender. A single throwing appender is isolated via `onUnexpectedError` and never blocks the rest.
 
@@ -33,7 +36,7 @@ The service carries a bound context (`sessionId` / `agentId` / `turnId`) that is
 
 ```ts
 const child = telemetry.withContext({ agentId: 'main', turnId: 't1' });
-child.track('tool.call', { name: 'bash' });   // carries sessionId + agentId + turnId
+child.track2('tool_call', { turn_id: 1, tool_call_id: 'c1', tool_name: 'bash', outcome: 'success', duration_ms: 12 });   // carries sessionId + agentId + turnId
 ```
 
 `withContext(patch)` returns a new service sharing the same appenders; per-call properties override bound context on key collision. `setContext(patch)` mutates the bound context in place and propagates to appenders that implement `setContext`.
@@ -89,4 +92,4 @@ telemetry.addAppender(new CloudAppender({                          // production
 - Appenders are plain `ITelemetryAppender` objects, not DI Services — register them with `addAppender`, never via `registerScopedService`.
 - `track` is fire-and-forget and must not throw; appender `track` must be synchronous — buffer and send asynchronously via `flush` / `shutdown`.
 - Await `telemetry.shutdown()` before process exit when a buffering appender is registered.
-- Keep event names stable; properties must be JSON-serializable primitives (non-primitives are dropped by `CloudAppender`).
+- Keep event names stable; register every business event in `events.ts` and emit via `track2` — properties must be JSON-serializable primitives (non-primitives are dropped with a warning by `CloudAppender`).

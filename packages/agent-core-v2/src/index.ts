@@ -24,6 +24,7 @@ export { type IWireService, type WireEmission } from '#/wire/wireService';
 export { defineDerivedModel, type DerivedModelDef } from '#/wire/model';
 export * from '#/session/sessionLog/sessionLogService';
 export * from '#/app/telemetry/telemetry';
+export * from '#/app/telemetry/events';
 export * from '#/app/telemetry/telemetryService';
 export * from '#/app/telemetry/agentTelemetryContext';
 export * from '#/app/telemetry/agentTelemetryContextService';

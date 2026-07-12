@@ -16,7 +16,7 @@ import { type HostDirEntry, IHostFileSystem } from '#/os/interface/hostFileSyste
 import { ISessionFsService } from '#/session/sessionFs/fs';
 import { SessionFsService } from '#/session/sessionFs/fsService';
 import { ISessionProcessRunner, type IProcess } from '#/session/process/processRunner';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { ITelemetryService, type TelemetryProperties } from '#/app/telemetry/telemetry';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 const WORK_DIR = '/repo';
@@ -244,8 +244,11 @@ function makeStreamingProcess(lines: readonly string[]): {
 function telemetryStub(events: Array<{ event: string; properties: Record<string, unknown> }>): ITelemetryService {
   return {
     _serviceBrand: undefined,
-    track: (event: string, properties: Record<string, unknown>) => {
-      events.push({ event, properties });
+    track: (event: string, properties?: TelemetryProperties) => {
+      events.push({ event, properties: properties ?? {} });
+    },
+    track2: (event, properties) => {
+      events.push({ event, properties: (properties as TelemetryProperties | undefined) ?? {} });
     },
     withContext: () => telemetryStub(events),
     setContext: () => {},

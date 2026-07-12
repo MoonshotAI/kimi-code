@@ -102,7 +102,7 @@ describe('AgentPermissionGate', () => {
           stubPermissionPolicyService(() => policyResult),
         );
         reg.defineInstance(IEventBus, eventBus);
-        reg.definePartialInstance(ITelemetryService, { track: () => {} });
+        reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
         reg.defineInstance(ISessionApprovalService, stubApprovalService(() => approvalResponse));
         reg.defineInstance(ISessionContext, makeSessionContext({
           sessionId: 'test-session',

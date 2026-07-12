@@ -89,7 +89,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
   ): Promise<AuthorizeToolExecutionResult | undefined> {
     const evaluation = await this.policyService.evaluate(context);
     if (evaluation === undefined) return undefined;
-    this.telemetry.track('permission_policy_decision', {
+    this.telemetry.track2('permission_policy_decision', {
       policy_name: evaluation.policyName,
       tool_name: context.toolCall.name,
       permission_mode: this.modeService.mode,
@@ -172,7 +172,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
         context.signal.throwIfAborted();
       } catch (error) {
         if (isUserCancellation(error)) throw error;
-        this.telemetry.track('permission_approval_result', {
+        this.telemetry.track2('permission_approval_result', {
           policy_name: policyName ?? null,
           tool_name: name,
           permission_mode: this.modeService.mode,
@@ -215,7 +215,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
       sessionApprovalRule,
       result: response,
     });
-    this.telemetry.track('permission_approval_result', {
+    this.telemetry.track2('permission_approval_result', {
       policy_name: policyName ?? null,
       tool_name: name,
       permission_mode: this.modeService.mode,

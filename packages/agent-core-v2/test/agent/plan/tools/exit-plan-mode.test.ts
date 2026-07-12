@@ -37,6 +37,7 @@ function recordingTelemetry(): ITelemetryService {
   return {
     _serviceBrand: undefined,
     track: vi.fn(),
+    track2: vi.fn(),
     withContext: () => recordingTelemetry(),
     setContext: () => {},
     addAppender: () => ({ dispose: () => {} }),

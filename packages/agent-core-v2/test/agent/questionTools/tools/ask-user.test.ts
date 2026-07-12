@@ -63,7 +63,7 @@ function makeTool(
   const request = vi.fn(options.request ?? (async () => ({ Postgres: true }) as QuestionResult));
   const telemetryTrack = vi.fn();
   const question = { request } as unknown as ISessionQuestionService;
-  const telemetry = { track: telemetryTrack } as unknown as ITelemetryService;
+  const telemetry = { track2: telemetryTrack } as unknown as ITelemetryService;
   let lastTask: QuestionBackgroundTask | undefined;
   const registerTask = vi.fn((task: QuestionBackgroundTask) => {
     lastTask = task;

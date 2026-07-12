@@ -288,7 +288,7 @@ describe('ToolManager SkillTool restore behavior', () => {
     skills = new InMemorySkillCatalog();
     skills.register(makeSkill('review'));
     const telemetry = recordingTelemetry([]);
-    track = vi.spyOn(telemetry, 'track');
+    track = vi.spyOn(telemetry, 'track2');
     ctx = createTestAgent(
       skillServices(skills),
       telemetryServices(telemetry),

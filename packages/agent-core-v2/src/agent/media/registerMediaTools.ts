@@ -15,6 +15,7 @@
 
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { Model } from '#/app/model/modelInstance';
+import type { VideoUploadEvent } from '#/app/telemetry/events';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
@@ -87,9 +88,9 @@ export function createVideoUploader(
       mime_type: input.mimeType,
       size_bytes: input.data.length,
     };
-    const track = (props: Record<string, string | number | boolean | undefined>): void => {
+    const track = (props: VideoUploadEvent): void => {
       try {
-        telemetry.client.track('video_upload', props);
+        telemetry.client.track2('video_upload', props);
       } catch {
         // Telemetry must never affect the upload outcome.
       }
@@ -114,5 +115,5 @@ export function createVideoUploader(
 export interface VideoUploadTelemetry {
   readonly client: ITelemetryService;
   /** Static properties merged into every event, e.g. model alias and protocol. */
-  readonly props?: Readonly<Record<string, string | number | boolean | undefined>>;
+  readonly props?: Pick<VideoUploadEvent, 'model' | 'provider_type' | 'protocol'>;
 }

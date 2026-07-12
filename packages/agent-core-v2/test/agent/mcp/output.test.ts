@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, test } from 'vitest';
 
-import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/agent/mcp/types';
@@ -40,6 +40,7 @@ function recordingTelemetry(records: TelemetryRecord[]): ITelemetryService {
     track(event, properties) {
       records.push({ event, properties });
     },
+    track2: (event, properties) => telemetry.track(event, properties as TelemetryProperties),
     withContext: () => telemetry,
     setContext: () => {},
     addAppender: () => ({ dispose: () => {} }),

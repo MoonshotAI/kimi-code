@@ -437,7 +437,7 @@ export class SessionFsService implements ISessionFsService {
       if (resolution !== null) {
         return await this.grepWithRg(req, controller.signal, startedAt, resolution.path);
       }
-      this.telemetry.track('fs_grep_node_fallback', { reason: 'rg_missing' });
+      this.telemetry.track2('fs_grep_node_fallback', { reason: 'rg_missing' });
       return await this.grepWithNode(req, controller.signal, startedAt);
     } finally {
       clearTimeout(timer);

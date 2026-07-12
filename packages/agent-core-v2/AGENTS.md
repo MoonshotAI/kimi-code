@@ -30,6 +30,15 @@ Impl (`src/session/sessionMetadata/sessionMetadataService.ts`):
  */
 ```
 
+## Telemetry
+
+Business events go through `ITelemetryService.track2` — never the low-level `track`, which exists only for appender plumbing and tests. Every event must be registered in `src/app/telemetry/events.ts` (`telemetryEventDefinitions`) before it is emitted: define a properties interface, register it with `defineTelemetryEvent<P>({ owner, comment, properties })`, and document every property — the compiler rejects unregistered event names and any property mismatch at the call site.
+
+- **Naming**: event names and property keys are snake_case (`tool_call`, `duration_ms`). Durations, counts, and sizes carry a unit suffix (`_ms` / `_count` / `_bytes`). Use specific names (`error_type`, not `error`).
+- **Privacy**: never register user content, prompts, or file paths as properties. `CloudAppender` redacts URLs, emails, tokens, and absolute paths from string values before events leave the process, but that is a safety net, not a license.
+- **Stability**: registered event names and property keys are wire data consumed by dashboards — treat renames as breaking changes.
+- The registry is the single source of truth; `test/app/telemetry/events.test.ts` enforces the naming conventions.
+
 ## Persistence
 
 Business domains **do not implement persistence themselves** — they depend on a Service that owns the access pattern. Business code expresses *what* to store or fetch, never *how*.

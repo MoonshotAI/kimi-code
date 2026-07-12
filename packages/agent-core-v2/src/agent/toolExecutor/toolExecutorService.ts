@@ -34,6 +34,7 @@ import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/to
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { ILogService } from '#/_base/log/log';
+import type { ToolCallEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -251,7 +252,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     turnId: number,
   ): void {
     const outcome = toolTelemetryOutcome(result);
-    const properties: Record<string, unknown> = {
+    const properties: ToolCallEvent = {
       turn_id: turnId,
       tool_call_id: call.toolCall.id,
       tool_name: call.toolName,
@@ -259,7 +260,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       duration_ms: durationMs,
     };
     if (result.isError === true) properties['error_type'] = toolTelemetryErrorType(outcome);
-    this.telemetry.track('tool_call', properties);
+    this.telemetry.track2('tool_call', properties);
   }
 
   private async prepareToolCall(
@@ -814,7 +815,7 @@ function toolTelemetryOutcome(result: ToolResult): 'success' | 'error' | 'cancel
     : 'error';
 }
 
-function toolTelemetryErrorType(outcome: 'success' | 'error' | 'cancelled'): string {
+function toolTelemetryErrorType(outcome: 'success' | 'error' | 'cancelled'): 'cancelled' | 'error' {
   if (outcome === 'cancelled') return 'cancelled';
   return 'error';
 }

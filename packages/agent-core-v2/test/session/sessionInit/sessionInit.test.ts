@@ -60,7 +60,7 @@ describe('SessionInitService', () => {
     run = lifecycle.run;
 
     const eventBus = { publish: vi.fn((event: unknown) => events.push(event)) };
-    const telemetry = { track: vi.fn() };
+    const telemetry = { track: vi.fn(), track2: vi.fn() };
     const profile = {
       data: () => ({ modelAlias: 'mock-model', thinkingLevel: 'off', cwd: WORK_DIR }),
     };

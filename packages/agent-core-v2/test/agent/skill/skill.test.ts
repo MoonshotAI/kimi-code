@@ -76,7 +76,7 @@ describe('AgentSkillService', () => {
           IAgentWireService,
           new WireService({ logScope: 'wire', logKey: 'skill-test' }),
         );
-        reg.definePartialInstance(ITelemetryService, { track: () => {} });
+        reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),
         });
@@ -171,7 +171,7 @@ describe('SkillTool', () => {
           IAgentWireService,
           new WireService({ logScope: 'wire', logKey: 'skill-test' }),
         );
-        reg.definePartialInstance(ITelemetryService, { track: () => {} });
+        reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
         reg.definePartialInstance(IAgentToolRegistryService, {
           register: () => ({ dispose: () => {} }),
         });

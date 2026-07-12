@@ -963,14 +963,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   private recordTaskStarted(info: AgentTaskInfo): void {
     this.wire.dispatch(taskStarted({ info }));
-    this.telemetry.track('background_task_created', {
+    this.telemetry.track2('background_task_created', {
       kind: info.kind === 'process' ? 'bash' : info.kind,
     });
   }
 
   private recordTaskTerminated(info: AgentTaskInfo): void {
     this.wire.dispatch(taskTerminated({ info }));
-    this.telemetry.track('background_task_completed', {
+    this.telemetry.track2('background_task_completed', {
       kind: info.kind,
       duration_ms: info.endedAt !== null ? info.endedAt - info.startedAt : null,
       status: info.status,

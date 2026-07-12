@@ -127,7 +127,7 @@ export class AgentRPCService implements IAgentRPCService {
   }
 
   async steer(payload: SteerPayload): Promise<PromptLaunchResult | undefined> {
-    this.telemetry.track('input_steer', { parts: payload.input.length });
+    this.telemetry.track2('input_steer', { parts: payload.input.length });
     const queued = await this.promptService.enqueue({ message: {
       role: 'user',
       content: [...payload.input],
@@ -140,14 +140,14 @@ export class AgentRPCService implements IAgentRPCService {
 
   cancel({ turnId }: CancelPayload): void {
     if (this.loop.status().state === 'running') {
-      this.telemetry.track('cancel', { from: 'streaming' });
+      this.telemetry.track2('cancel', { from: 'streaming' });
     }
     this.loop.cancel(turnId);
   }
 
   undoHistory(payload: UndoHistoryPayload): number {
     const undone = this.promptService.undo(payload.count);
-    this.telemetry.track('conversation_undo', { count: payload.count });
+    this.telemetry.track2('conversation_undo', { count: payload.count });
     return undone;
   }
 
@@ -161,11 +161,11 @@ export class AgentRPCService implements IAgentRPCService {
     this.permissionMode.setMode(payload.mode);
     const enabled = this.permissionMode.mode === 'yolo';
     if (enabled !== wasYolo) {
-      this.telemetry.track('yolo_toggle', { enabled });
+      this.telemetry.track2('yolo_toggle', { enabled });
     }
     const afkEnabled = this.permissionMode.mode === 'auto';
     if (afkEnabled !== wasAuto) {
-      this.telemetry.track('afk_toggle', { enabled: afkEnabled });
+      this.telemetry.track2('afk_toggle', { enabled: afkEnabled });
     }
   }
 
@@ -212,7 +212,7 @@ export class AgentRPCService implements IAgentRPCService {
   cancelCompaction(_payload: EmptyPayload): void {
     const active = this.fullCompaction.compacting;
     if (active !== null) {
-      this.telemetry.track('cancel', { from: 'compacting' });
+      this.telemetry.track2('cancel', { from: 'compacting' });
     }
     active?.abortController.abort();
   }

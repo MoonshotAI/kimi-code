@@ -445,7 +445,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
     const connectedCount = entries.filter((entry) => entry.status === 'connected').length;
     if (connectedCount > 0) {
-      this.telemetry.track('mcp_connected', {
+      this.telemetry.track2('mcp_connected', {
         server_count: connectedCount,
         total_count: totalCount,
       });
@@ -453,7 +453,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
     const failedCount = entries.filter((entry) => entry.status === 'failed').length;
     if (failedCount > 0) {
-      this.telemetry.track('mcp_failed', {
+      this.telemetry.track2('mcp_failed', {
         failed_count: failedCount,
         total_count: totalCount,
       });

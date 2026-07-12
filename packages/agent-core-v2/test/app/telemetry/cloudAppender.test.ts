@@ -4,8 +4,14 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import {
+  resetUnexpectedErrorHandler,
+  setUnexpectedErrorHandler,
+} from '#/_base/errors/unexpectedError';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { CloudAppender, type CloudAppenderOptions } from '#/app/telemetry/cloudAppender';
+
+import { stubBootstrap } from '../bootstrap/stubs';
 
 interface CapturedRequest {
   readonly url: string;
@@ -44,10 +50,9 @@ function baseOptions(
   const { homeDir: dir = '', storage, ...rest } = overrides;
   return {
     storage: storage ?? new FileStorageService(dir),
+    bootstrap: { ...stubBootstrap(), clientVersion: '1.0.0' },
     deviceId: 'dev',
     appName: 'test-app',
-    version: '1.0.0',
-    env: {},
     sleep: async () => {},
     ...rest,
   };
@@ -91,7 +96,9 @@ describe('CloudAppender', () => {
     expect(event?.['property_name']).toBe('bash');
     expect(event?.['property_count']).toBe(2);
     expect(event?.['context_app_name']).toBe('test-app');
+    expect(event?.['context_client_version']).toBe('1.0.0');
     expect(event?.['context_version']).toBe('1.0.0');
+    expect(typeof event?.['context_core_version']).toBe('string');
     expect(typeof event?.['event_id']).toBe('string');
     expect(typeof event?.['timestamp']).toBe('number');
   });
@@ -215,5 +222,32 @@ describe('CloudAppender', () => {
     expect(
       readdirSync(join(homeDir, 'telemetry')).filter((f) => f.startsWith('failed_')),
     ).toHaveLength(0);
+  });
+
+  it('drops non-primitive properties and reports the violation', async () => {
+    const errors: unknown[] = [];
+    setUnexpectedErrorHandler((err) => errors.push(err));
+    try {
+      const requests: CapturedRequest[] = [];
+      const appender = new CloudAppender(
+        baseOptions({
+          homeDir,
+          fetchImpl: makeFetch((req) => {
+            requests.push(req);
+            return okResponse();
+          }),
+        }),
+      );
+
+      appender.track('evt', { ok: 'yes', bad: { nested: true } as unknown as string });
+      await appender.flush();
+
+      const event = requests[0]?.body.events[0];
+      expect(event?.['property_ok']).toBe('yes');
+      expect(event?.['property_bad']).toBeUndefined();
+      expect(errors).toHaveLength(1);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
   });
 });

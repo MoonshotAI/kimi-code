@@ -12,6 +12,11 @@ import { type IDisposable, toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 
+import type {
+  StrictPropertyCheck,
+  TelemetryEventName,
+  TelemetryEventProperties,
+} from './events';
 import {
   ITelemetryService,
   type ITelemetryAppender,
@@ -39,6 +44,13 @@ export class TelemetryService implements ITelemetryService {
         onUnexpectedError(err);
       }
     }
+  }
+
+  track2<K extends TelemetryEventName, E extends TelemetryEventProperties<K> = never>(
+    event: K,
+    properties?: StrictPropertyCheck<TelemetryEventProperties<K>, E>,
+  ): void {
+    this.track(event, properties as TelemetryProperties);
   }
 
   withContext(patch: TelemetryContextPatch): ITelemetryService {

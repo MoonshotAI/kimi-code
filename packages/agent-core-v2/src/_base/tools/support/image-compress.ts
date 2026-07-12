@@ -160,12 +160,17 @@ export interface CompressImageOptions {
 }
 
 /**
- * Minimal telemetry sink for the compression events. Structurally satisfied
- * by the app-layer `ITelemetryService`, so call sites can hand that in
- * directly while this support module stays free of app-layer imports.
+ * Telemetry sink for the compression events. Deliberately a loose local
+ * contract — this L0 support module must not import the app-layer telemetry
+ * registry, so the payload shapes are checked only where the registry lives
+ * (`#/app/telemetry/events`); any object with a compatible `track` slot
+ * (e.g. the app-layer `ITelemetryService`) satisfies it structurally.
  */
 export interface ImageCompressionTelemetryClient {
-  track(event: string, properties?: Readonly<Record<string, unknown>>): void;
+  track(
+    event: string,
+    properties?: Readonly<Record<string, string | number | boolean | null | undefined>>,
+  ): void;
 }
 
 /** Wiring for the optional compression telemetry events. */

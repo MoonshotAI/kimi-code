@@ -33,7 +33,7 @@ import type { IHostProcess, IHostProcessService } from '#/os/interface/hostProce
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { probeHostEnvironmentFromNode } from '#/_base/execEnv/environmentProbe';
-import type { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
 
 // The ripgrep binary locator is mocked out for unit tests so they assert on
@@ -168,8 +168,11 @@ function telemetryStub(
 ): ITelemetryService {
   return {
     _serviceBrand: undefined,
-    track: (event: string, properties: Record<string, unknown>) => {
-      events.push({ event, properties });
+    track: (event: string, properties?: TelemetryProperties) => {
+      events.push({ event, properties: properties ?? {} });
+    },
+    track2: (event, properties) => {
+      events.push({ event, properties: (properties as TelemetryProperties | undefined) ?? {} });
     },
     withContext: () => telemetryStub(events),
     setContext: () => {},

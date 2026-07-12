@@ -15,7 +15,7 @@ import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { TelemetryProperties } from '#/app/telemetry/telemetry';
+import type { QuestionAnsweredEvent } from '#/app/telemetry/events';
 import type {
   BuiltinTool,
   ExecutableToolContext,
@@ -256,15 +256,13 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
 
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
-        this.telemetry.track('question_dismissed');
+        this.telemetry.track2('question_dismissed');
         return dismissedQuestionResult();
       }
 
-      const properties: TelemetryProperties =
-        normalized.method !== undefined
-          ? { answered: Object.keys(normalized.answers).length, method: normalized.method }
-          : { answered: Object.keys(normalized.answers).length };
-      this.telemetry.track('question_answered', properties);
+      const properties: QuestionAnsweredEvent = { answered: Object.keys(normalized.answers).length };
+      if (normalized.method !== undefined) properties.method = normalized.method;
+      this.telemetry.track2('question_answered', properties);
       return {
         isError: false,
         output: JSON.stringify({ answers: normalized.answers }),

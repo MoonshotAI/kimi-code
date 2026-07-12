@@ -283,7 +283,9 @@ export function isCloudPrimitive(value: unknown): value is CloudPrimitive {
     value === undefined ||
     typeof value === 'boolean' ||
     typeof value === 'string' ||
-    (typeof value === 'number' && Number.isFinite(value))
+    (typeof value === 'number' &&
+      Number.isFinite(value) &&
+      Math.abs(value) <= Number.MAX_SAFE_INTEGER)
   );
 }
 

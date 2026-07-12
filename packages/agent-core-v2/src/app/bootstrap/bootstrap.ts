@@ -3,13 +3,14 @@
  *
  * Defines the `IBootstrapService`, the snapshot of the world the process runs
  * in, resolved once at startup and frozen for the process: observed host facts
- * (`platform`, `arch`, `cwd`, `osHomeDir`, `getEnv`) and the app path layout
- * (`homeDir`, `configPath`, …). `resolveBootstrapOptions` is the single place
- * that reads `process.env` / `os.homedir()` / invocation input to resolve
- * the snapshot; everything downstream reads from `IBootstrapService` instead of
- * touching `process` directly. Bound at App scope. Also seeds the
- * `IFileSystemStorageService` with a `FileStorageService` rooted at `homeDir`
- * so the byte layer (and every Store above it) persists to disk.
+ * (`platform`, `arch`, `cwd`, `osHomeDir`, `getEnv`, `clientVersion`) and the
+ * app path layout (`homeDir`, `configPath`, …). `resolveBootstrapOptions` is
+ * the single place that reads `process.env` / `os.homedir()` / invocation
+ * input to resolve the snapshot; everything downstream reads from
+ * `IBootstrapService` instead of touching `process` directly. Bound at App
+ * scope. Also seeds the `IFileSystemStorageService` with a `FileStorageService`
+ * rooted at `homeDir` so the byte layer (and every Store above it) persists
+ * to disk.
  */
 
 import { mkdirSync } from 'node:fs';
@@ -35,6 +36,8 @@ export interface IBootstrapOptions {
   readonly arch: string;
   readonly cwd: string;
   readonly env: NodeJS.ProcessEnv;
+  /** Host application version (e.g. the CLI release version). */
+  readonly clientVersion: string;
 }
 
 export const IBootstrapOptions: ServiceIdentifier<IBootstrapOptions> =
@@ -66,6 +69,8 @@ export interface IBootstrapService {
   readonly osHomeDir: string;
   readonly homeDir: string;
   readonly configPath: string;
+  /** Host application version (e.g. the CLI release version). */
+  readonly clientVersion: string;
   readonly sessionsDir: string;
   readonly blobsDir: string;
   readonly storeDir: string;
@@ -113,6 +118,7 @@ export interface BootstrapInput {
   readonly platform?: NodeJS.Platform;
   readonly arch?: string;
   readonly cwd?: string;
+  readonly clientVersion?: string;
 }
 
 export function resolveBootstrapOptions(input: BootstrapInput = {}): IBootstrapOptions {
@@ -128,6 +134,7 @@ export function resolveBootstrapOptions(input: BootstrapInput = {}): IBootstrapO
     arch: input.arch ?? process.arch,
     cwd: input.cwd ?? process.cwd(),
     env,
+    clientVersion: input.clientVersion ?? 'unknown',
   };
 }
 

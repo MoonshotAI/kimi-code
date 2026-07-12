@@ -1,6 +1,7 @@
 import { IAgentPlanService, type IAgentPlanService as AgentPlanService } from '#/agent/plan/plan';
 import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { PlanResolvedEvent, PlanSubmittedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type {
   PermissionPolicy,
@@ -164,11 +165,17 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
     this.trackPlanTelemetry('plan_resolved', { outcome: 'rejected' });
   }
 
+  private trackPlanTelemetry(event: 'plan_submitted', properties: PlanSubmittedEvent): void;
+  private trackPlanTelemetry(event: 'plan_resolved', properties: PlanResolvedEvent): void;
   private trackPlanTelemetry(
     event: 'plan_submitted' | 'plan_resolved',
-    properties: Record<string, string | number | boolean | undefined>,
+    properties: PlanSubmittedEvent | PlanResolvedEvent,
   ): void {
-    this.telemetry.track(event, properties);
+    if (event === 'plan_submitted') {
+      this.telemetry.track2('plan_submitted', properties as PlanSubmittedEvent);
+    } else {
+      this.telemetry.track2('plan_resolved', properties as PlanResolvedEvent);
+    }
   }
 }
 

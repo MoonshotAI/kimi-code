@@ -218,7 +218,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     args: unknown,
     dupType: ToolCallDupType,
   ): void {
-    this.telemetry.track('tool_call_dedupe_detected', {
+    this.telemetry.track2('tool_call_dedupe_detected', {
       turn_id: this.activeTurnId ?? 0,
       step_no: this.activeStep,
       tool_call_id: toolCallId,
@@ -276,7 +276,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     }
 
     if (streak >= 2) {
-      this.telemetry.track('tool_call_repeat', {
+      this.telemetry.track2('tool_call_repeat', {
         tool_name: toolName,
         repeat_count: streak,
         action,

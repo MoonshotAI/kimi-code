@@ -38,13 +38,14 @@ const options = [
 
 function recordingTelemetry(): {
   readonly telemetry: ITelemetryService;
-  readonly track: ReturnType<typeof vi.fn>;
+  readonly track2: ReturnType<typeof vi.fn>;
 } {
-  const track = vi.fn();
+  const track2 = vi.fn();
   return {
     telemetry: {
       _serviceBrand: undefined,
-      track,
+      track: vi.fn(),
+      track2,
       withContext: () => recordingTelemetry().telemetry,
       setContext: () => {},
       addAppender: () => ({ dispose: () => {} }),
@@ -54,7 +55,7 @@ function recordingTelemetry(): {
       flush: () => Promise.resolve(),
       shutdown: () => Promise.resolve(),
     },
-    track,
+    track2,
   };
 }
 
@@ -191,7 +192,7 @@ describe('EnterPlanModeTool telemetry', () => {
       }),
     });
     vi.mocked(planMode.status).mockImplementation(async () => (active ? ACTIVE_PLAN : null));
-    const { telemetry, track } = recordingTelemetry();
+    const { telemetry, track2 } = recordingTelemetry();
 
     const result = await executeTool(new EnterPlanModeTool(planMode, telemetry), {
       turnId: 0,
@@ -201,7 +202,7 @@ describe('EnterPlanModeTool telemetry', () => {
     });
 
     expect(result.isError).toBeFalsy();
-    expect(track).toHaveBeenCalledWith('plan_enter_resolved', {
+    expect(track2).toHaveBeenCalledWith('plan_enter_resolved', {
       outcome: 'auto_approved',
     });
   });
@@ -351,7 +352,7 @@ describe('ExitPlanModeTool telemetry', () => {
 
   it('tracks submitted without options and auto approval', async () => {
     const exit = vi.fn();
-    const { telemetry, track } = recordingTelemetry();
+    const { telemetry, track2 } = recordingTelemetry();
 
     const result = await executeTool(new ExitPlanModeTool(planService({ exit }), telemetry), {
       turnId: 7,
@@ -362,14 +363,14 @@ describe('ExitPlanModeTool telemetry', () => {
 
     expect(result.isError).toBe(false);
     expect(exit).toHaveBeenCalledTimes(1);
-    expect(track).toHaveBeenCalledWith('plan_submitted', { has_options: false });
-    expect(track).toHaveBeenCalledWith('plan_resolved', {
+    expect(track2).toHaveBeenCalledWith('plan_submitted', { has_options: false });
+    expect(track2).toHaveBeenCalledWith('plan_resolved', {
       outcome: 'auto_approved',
     });
   });
 
   it('tracks submitted with options only when multiple options are present', async () => {
-    const { telemetry, track } = recordingTelemetry();
+    const { telemetry, track2 } = recordingTelemetry();
 
     const result = await executeTool(new ExitPlanModeTool(planService(), telemetry), {
       turnId: 7,
@@ -379,8 +380,8 @@ describe('ExitPlanModeTool telemetry', () => {
     });
 
     expect(result.isError).toBe(false);
-    expect(track).toHaveBeenCalledWith('plan_submitted', { has_options: true });
-    expect(track).toHaveBeenCalledWith('plan_resolved', {
+    expect(track2).toHaveBeenCalledWith('plan_submitted', { has_options: true });
+    expect(track2).toHaveBeenCalledWith('plan_resolved', {
       outcome: 'auto_approved',
     });
   });
@@ -389,7 +390,7 @@ describe('ExitPlanModeTool telemetry', () => {
     const exit = vi.fn(() => {
       throw new Error('state transition failure');
     });
-    const { telemetry, track } = recordingTelemetry();
+    const { telemetry, track2 } = recordingTelemetry();
 
     const result = await executeTool(new ExitPlanModeTool(planService({ exit }), telemetry), {
       turnId: 7,
@@ -401,8 +402,8 @@ describe('ExitPlanModeTool telemetry', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('Failed to exit plan mode');
     expect(exit).toHaveBeenCalledTimes(1);
-    expect(track).toHaveBeenCalledWith('plan_submitted', { has_options: false });
-    expect(track).not.toHaveBeenCalledWith('plan_resolved', {
+    expect(track2).toHaveBeenCalledWith('plan_submitted', { has_options: false });
+    expect(track2).not.toHaveBeenCalledWith('plan_resolved', {
       outcome: 'auto_approved',
     });
   });

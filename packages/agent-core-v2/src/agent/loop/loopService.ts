@@ -364,7 +364,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const turnTelemetry = this.telemetry.withContext(this.telemetryContext.get());
     let result: TurnResult | undefined;
     try {
-      turnTelemetry.track('turn_started');
+      turnTelemetry.track2('turn_started');
       result = await this.run({
         turnId: turn.id,
         signal: lease.signal,
@@ -390,7 +390,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         });
         if (error !== undefined) this.eventBus.publish({ type: 'error', ...error });
         if (result.type !== 'completed') {
-          turnTelemetry.track('turn_interrupted', { at_step: result.steps });
+          turnTelemetry.track2('turn_interrupted', { at_step: result.steps });
         }
       }
       this.pumpTurns();

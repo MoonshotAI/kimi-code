@@ -128,7 +128,7 @@ function createService(
     get: (() => undefined) as IConfigService['get'],
   };
   const log = { info: () => undefined, warn: () => undefined };
-  const telemetry = { track: () => undefined };
+  const telemetry = { track: () => undefined, track2: () => undefined };
   const toolSelect: Partial<IAgentToolSelectService> = {
     enabled: () => false,
     shapeTools: (entries) => entries,

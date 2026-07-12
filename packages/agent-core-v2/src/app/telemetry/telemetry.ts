@@ -12,9 +12,15 @@
 import { createDecorator } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 
-export type TelemetryPropertyValue = unknown;
+import type {
+  StrictPropertyCheck,
+  TelemetryEventName,
+  TelemetryEventProperties,
+} from './events';
 
-export type TelemetryProperties = Readonly<Record<string, TelemetryPropertyValue>>;
+export type TelemetryPrimitive = string | number | boolean | null | undefined;
+
+export type TelemetryProperties = Readonly<Record<string, TelemetryPrimitive>>;
 
 export type TelemetryContextPatch = TelemetryProperties;
 
@@ -38,7 +44,21 @@ export interface TelemetryServiceOptions {
 export interface ITelemetryService {
   readonly _serviceBrand: undefined;
 
+  /**
+   * Low-level untyped event sink — appender plumbing and tests only.
+   * Business events must go through `track2` so the event name and its
+   * properties are checked against the registry in `events.ts`.
+   */
   track(event: string, properties?: TelemetryProperties): void;
+  /**
+   * Track a registered business event. The event name must exist in
+   * `telemetryEventDefinitions` and the properties must match the registered
+   * type exactly (checked at compile time, zero runtime cost).
+   */
+  track2<K extends TelemetryEventName, E extends TelemetryEventProperties<K> = never>(
+    event: K,
+    properties?: StrictPropertyCheck<TelemetryEventProperties<K>, E>,
+  ): void;
   withContext(patch: TelemetryContextPatch): ITelemetryService;
   setContext(patch: TelemetryContextPatch): void;
   addAppender(appender: ITelemetryAppender): IDisposable;
@@ -65,6 +85,7 @@ export const nullTelemetryAppender: ITelemetryAppender = {
 export const noopTelemetryService: ITelemetryService = {
   _serviceBrand: undefined,
   track: () => {},
+  track2: () => {},
   withContext: () => noopTelemetryService,
   setContext: () => {},
   addAppender: () => ({ dispose: () => {} }),

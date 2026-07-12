@@ -16,7 +16,6 @@
  */
 
 import {
-  CloudAppender,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
@@ -26,12 +25,12 @@ import {
   IAuthSummaryService,
   IConfigService,
   IEventBus,
-  IFileSystemStorageService,
   IOAuthToolkit,
   ISessionIndex,
   ISessionLifecycleService,
   ITelemetryService,
   bootstrap,
+  createCloudAppender,
   ensureMainAgent,
   hostRequestHeadersSeed,
   logSeed,
@@ -112,7 +111,7 @@ export async function runV2Print(
   const identity = createKimiCodeHostIdentity(version);
   const hostHeaders = createKimiDefaultHeaders({ homeDir, ...identity });
 
-  const { app } = bootstrap({ homeDir }, [
+  const { app } = bootstrap({ homeDir, clientVersion: version }, [
     ...logSeed(logging),
     ...hostRequestHeadersSeed(hostHeaders),
   ]);
@@ -160,21 +159,18 @@ export async function runV2Print(
     telemetryService = app.accessor.get(ITelemetryService);
     if (telemetryEnabled) {
       telemetryService.setAppender(
-        new CloudAppender({
-          storage: app.accessor.get(IFileSystemStorageService),
+        createCloudAppender(app.accessor, {
           deviceId,
           appName: CLI_USER_AGENT_PRODUCT,
-          version,
           uiMode: PROMPT_UI_MODE,
           model: resolved.telemetryModel,
           getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
-          env: process.env,
         }),
       );
     }
     telemetryService.setContext({ sessionId: resolved.session.id });
     if (firstLaunch) {
-      telemetryService.track('first_launch');
+      telemetryService.track2('first_launch');
     }
 
     const goalCreate = parseHeadlessGoalCreate(opts.prompt!);
@@ -202,7 +198,7 @@ export async function runV2Print(
     }
     writeResumeHint(resolved.session.id, outputFormat, stdout, stderr);
 
-    telemetryService.withContext({ sessionId: resolved.session.id }).track('exit', {
+    telemetryService.withContext({ sessionId: resolved.session.id }).track2('exit', {
       duration_ms: Date.now() - startedAt,
     });
   } finally {

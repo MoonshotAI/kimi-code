@@ -1,15 +1,21 @@
 /**
  * `telemetry` domain (L1) — `CloudAppender`, an `ITelemetryAppender` that
- * batches events, enriches them with common context, and posts them to the
+ * batches events, drops non-primitive properties, redacts PII from string
+ * values, enriches events with common context, and posts them to the
  * telemetry endpoint through `CloudTransport`, which persists failed events
- * through the `storage` byte layer. App-scoped; independent of
- * `@moonshot-ai/kimi-telemetry`.
+ * through the `storage` byte layer. Reads host facts (`clientVersion`, env,
+ * platform/arch) from `IBootstrapService`; `createCloudAppender` assembles
+ * one from a `ServicesAccessor` so hosts only supply identity facts.
+ * App-scoped; independent of `@moonshot-ai/kimi-telemetry`.
  */
 
 import { randomUUID } from 'node:crypto';
-import { arch, platform, release } from 'node:os';
+import { release } from 'node:os';
 
-import type { IFileSystemStorageService } from '#/persistence/interface/storage';
+import type { ServicesAccessor } from '#/_base/di/instantiation';
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
 import type { ITelemetryAppender, TelemetryContextPatch, TelemetryProperties } from './telemetry';
 import {
@@ -20,13 +26,15 @@ import {
   type EnrichedCloudEvent,
   isCloudPrimitive,
 } from './cloudTransport';
+import { resolveCoreVersion } from './coreVersion';
+import { cleanTelemetryProperties } from './privacy';
 
 export interface CloudAppenderOptions {
   readonly storage: IFileSystemStorageService;
+  readonly bootstrap: IBootstrapService;
   readonly deviceId: string;
   readonly sessionId?: string;
   readonly appName: string;
-  readonly version: string;
   readonly uiMode?: string;
   readonly model?: string;
   readonly buildSha?: string;
@@ -41,7 +49,36 @@ export interface CloudAppenderOptions {
   readonly requestTimeoutMs?: number;
   readonly sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly now?: () => number;
-  readonly env: NodeJS.ProcessEnv;
+}
+
+/**
+ * Host identity facts the engine cannot resolve on its own. Everything else
+ * (storage, client version, env, platform) comes from the accessor.
+ */
+export interface CloudAppenderHostOptions {
+  readonly deviceId: string;
+  readonly appName: string;
+  readonly uiMode?: string;
+  readonly model?: string;
+  readonly buildSha?: string;
+  readonly sessionId?: string;
+  readonly getAccessToken?: () => string | null | Promise<string | null>;
+}
+
+/**
+ * Assemble a `CloudAppender` from the accessor's registered services plus
+ * host identity facts. The accessor is only read synchronously during this
+ * call — never stash it.
+ */
+export function createCloudAppender(
+  accessor: ServicesAccessor,
+  host: CloudAppenderHostOptions,
+): CloudAppender {
+  return new CloudAppender({
+    storage: accessor.get(IFileSystemStorageService),
+    bootstrap: accessor.get(IBootstrapService),
+    ...host,
+  });
 }
 
 const DEFAULT_FLUSH_THRESHOLD = 50;
@@ -83,7 +120,7 @@ export class CloudAppender implements ITelemetryAppender {
       session_id: this.sessionId,
       event,
       timestamp: Date.now() / 1000,
-      properties: sanitizeProperties(properties),
+      properties: cleanTelemetryProperties(sanitizeProperties(properties)),
       context: { ...this.context },
     };
     this.buffer.push(enriched);
@@ -140,24 +177,31 @@ function sanitizeProperties(input?: TelemetryProperties): CloudProperties {
   for (const [key, value] of Object.entries(input)) {
     if (isCloudPrimitive(value)) {
       out[key] = value;
+    } else {
+      onUnexpectedError(
+        new Error(`telemetry property "${key}" is not a primitive and was dropped`),
+      );
     }
   }
   return out;
 }
 
 function buildContext(options: CloudAppenderOptions): CloudContext {
-  const env = options.env;
+  const { bootstrap } = options;
   const context: CloudContext = {
     app_name: options.appName,
-    version: options.version,
+    client_version: bootstrap.clientVersion,
+    // `version` is kept as a backward-compatible alias of `client_version`.
+    version: bootstrap.clientVersion,
+    core_version: resolveCoreVersion(),
     runtime: 'node',
-    platform: platform(),
-    arch: arch(),
+    platform: bootstrap.platform,
+    arch: bootstrap.arch,
     node_version: process.versions.node,
     os_version: release(),
-    ci: env['CI'] !== undefined,
-    locale: options.locale ?? env['LANG'] ?? '',
-    terminal: options.terminal ?? env['TERM_PROGRAM'] ?? '',
+    ci: bootstrap.getEnv('CI') !== undefined,
+    locale: options.locale ?? bootstrap.getEnv('LANG') ?? '',
+    terminal: options.terminal ?? bootstrap.getEnv('TERM_PROGRAM') ?? '',
     ui_mode: options.uiMode ?? 'shell',
   };
   setPrimitive(context, 'model', options.model);

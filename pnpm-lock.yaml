@@ -505,9 +505,6 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
-      '@moonshot-ai/kimi-telemetry':
-        specifier: workspace:^
-        version: link:../telemetry
       '@moonshot-ai/minidb':
         specifier: workspace:^
         version: link:../minidb

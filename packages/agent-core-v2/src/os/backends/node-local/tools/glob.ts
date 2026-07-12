@@ -236,7 +236,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       });
       rgPath = resolution.path;
       if (resolution.source !== 'system-path') {
-        this.telemetry.track('glob_tool_rg_fallback', {
+        this.telemetry.track2('glob_tool_rg_fallback', {
           source: resolution.source,
           outcome: 'resolved',
         });
@@ -245,7 +245,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       if (signal.aborted) {
         return { isError: true, output: 'Glob aborted' };
       }
-      this.telemetry.track('glob_tool_rg_fallback', { outcome: 'failed' });
+      this.telemetry.track2('glob_tool_rg_fallback', { outcome: 'failed' });
       return { isError: true, output: rgUnavailableMessage(error) };
     }
 

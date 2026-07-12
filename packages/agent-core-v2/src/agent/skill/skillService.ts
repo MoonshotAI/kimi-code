@@ -123,12 +123,12 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
   }
 
   private publishActivation(origin: SkillActivationOrigin): void {
-    this.telemetry.track('skill_invoked', {
+    this.telemetry.track2('skill_invoked', {
       skill_name: origin.skillName,
       trigger: origin.trigger,
     });
     if (origin.skillType === 'flow') {
-      this.telemetry.track('flow_invoked', {
+      this.telemetry.track2('flow_invoked', {
         flow_name: origin.skillName,
       });
     }

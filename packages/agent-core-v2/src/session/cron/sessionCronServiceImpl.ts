@@ -426,18 +426,18 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
       origin,
     };
     void promptService.inject(message).catch(() => {});
-    this.telemetry.track(CRON_MISSED, { count: tasks.length });
+    this.telemetry.track2(CRON_MISSED, { count: tasks.length });
     return undefined;
   }
 
   emitScheduled(task: CronTask): void {
-    this.telemetry.track(CRON_SCHEDULED, {
+    this.telemetry.track2(CRON_SCHEDULED, {
       recurring: task.recurring !== false,
     });
   }
 
   emitDeleted(taskId: string): void {
-    this.telemetry.track(CRON_DELETED, { task_id: taskId });
+    this.telemetry.track2(CRON_DELETED, { task_id: taskId });
   }
 
   // —— fire delivery ——
@@ -502,7 +502,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     return launched.then(
       () => {
         this.signalCron({ type: 'cron.fired', origin, prompt: task.prompt });
-        this.telemetry.track(CRON_FIRED, {
+        this.telemetry.track2(CRON_FIRED, {
           recurring: task.recurring !== false,
           coalesced_count: ctx.coalescedCount,
           stale: origin.stale,

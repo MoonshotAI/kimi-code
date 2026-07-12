@@ -147,7 +147,7 @@ interface FakeTaskAgent {
   emitEvent: ReturnType<typeof vi.fn>;
   emittedEvents: Array<{ type: string; info?: unknown }>;
   kimiConfig?: { task?: { maxRunningTasks?: number } };
-  telemetry: { track: ReturnType<typeof vi.fn> };
+  telemetry: { track2: ReturnType<typeof vi.fn> };
   context: { appendUserMessage: ReturnType<typeof vi.fn> };
   hooks?: { fireAndForgetTrigger: FireAndForgetTrigger };
 }
@@ -176,7 +176,7 @@ function createAgentTaskService(options: {
 } = {}): TaskServiceFixture {
   const track = vi.fn();
   const telemetry = recordingTelemetry([]);
-  vi.spyOn(telemetry, 'track').mockImplementation(track);
+  vi.spyOn(telemetry, 'track2').mockImplementation(track);
   const hookEngine: Pick<IExternalHooksRunnerService, 'trigger' | 'triggerBlock' | 'fireAndForgetTrigger'> | undefined = options.hooks === undefined
     ? undefined
     : {
@@ -218,7 +218,7 @@ function createAgentTaskService(options: {
       options.maxRunningTasks === undefined
         ? undefined
         : { task: { maxRunningTasks: options.maxRunningTasks } },
-    telemetry: { track },
+    telemetry: { track2: track },
     context: { appendUserMessage: appendHistorySpy },
     hooks: options.hooks,
   };
@@ -326,7 +326,7 @@ describe('AgentTaskService — event emission', () => {
         status: 'running',
       }),
     });
-    expect(agent.telemetry.track).toHaveBeenCalledWith('background_task_created', {
+    expect(agent.telemetry.track2).toHaveBeenCalledWith('background_task_created', {
       kind: 'bash',
     });
   });
@@ -345,7 +345,7 @@ describe('AgentTaskService — event emission', () => {
         status: 'running',
       }),
     });
-    expect(agent.telemetry.track).toHaveBeenCalledWith('background_task_created', {
+    expect(agent.telemetry.track2).toHaveBeenCalledWith('background_task_created', {
       kind: 'agent',
     });
   });
@@ -353,7 +353,7 @@ describe('AgentTaskService — event emission', () => {
   it('emits task.terminated and telemetry on natural exit', async () => {
     const { agent, manager } = createAgentTaskService();
     const taskId = registerProcess(manager, immediateProcess(0), 'echo', 'done');
-    agent.telemetry.track.mockClear();
+    agent.telemetry.track2.mockClear();
 
     await manager.wait(taskId);
 
@@ -364,7 +364,7 @@ describe('AgentTaskService — event emission', () => {
         status: 'completed',
       }),
     });
-    expect(agent.telemetry.track).toHaveBeenCalledWith(
+    expect(agent.telemetry.track2).toHaveBeenCalledWith(
       'background_task_completed',
       expect.objectContaining({
         kind: 'process',
@@ -381,18 +381,18 @@ describe('AgentTaskService — event emission', () => {
     const timedOutId = manager.registerTask(
       agentTask(new Promise(() => {}), 'slow agent', { timeoutMs: 1 }),
     );
-    agent.telemetry.track.mockClear();
+    agent.telemetry.track2.mockClear();
 
     await manager.wait(failedId);
     const timedOut = manager.wait(timedOutId);
     await vi.advanceTimersByTimeAsync(5_010);
     await timedOut;
 
-    expect(agent.telemetry.track).toHaveBeenCalledWith(
+    expect(agent.telemetry.track2).toHaveBeenCalledWith(
       'background_task_completed',
       expect.objectContaining({ kind: 'process', status: 'failed' }),
     );
-    expect(agent.telemetry.track).toHaveBeenCalledWith(
+    expect(agent.telemetry.track2).toHaveBeenCalledWith(
       'background_task_completed',
       expect.objectContaining({ kind: 'agent', status: 'timed_out' }),
     );

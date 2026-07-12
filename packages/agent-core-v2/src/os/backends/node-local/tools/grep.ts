@@ -246,7 +246,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
       });
       rgPath = resolution.path;
       if (resolution.source !== 'system-path') {
-        this.telemetry.track('grep_tool_rg_fallback', {
+        this.telemetry.track2('grep_tool_rg_fallback', {
           source: resolution.source,
           outcome: 'resolved',
         });
@@ -255,7 +255,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
       if (signal.aborted) {
         return { isError: true, output: 'Grep aborted' };
       }
-      this.telemetry.track('grep_tool_rg_fallback', { outcome: 'failed' });
+      this.telemetry.track2('grep_tool_rg_fallback', { outcome: 'failed' });
       return { isError: true, output: rgUnavailableMessage(error) };
     }
 

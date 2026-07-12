@@ -41,7 +41,7 @@ import { IAgentSystemReminderService } from '#/agent/systemReminder/systemRemind
 import type { ExecutableToolResult } from '#/agent/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentUsageService, type UsageRecordedContext } from '#/agent/usage/usage';
-import type { TelemetryProperties } from '#/app/telemetry/telemetry';
+import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IConfigService } from '#/app/config/config';
 import {
@@ -318,7 +318,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.adoptStarterTurn();
     const state = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(state));
-    this.telemetry.track('goal_created', { actor, replace: input.replace === true });
+    this.telemetry.track2('goal_created', { actor, replace: input.replace === true });
     return this.toSnapshot(state);
   }
 
@@ -389,7 +389,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.wire.dispatch(updateGoal({ budgetLimits }));
     const next = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(next));
-    this.telemetry.track('goal_budget_set', {
+    this.telemetry.track2('goal_budget_set', {
       actor,
       ...budgetTelemetryProperties(input.budgetLimits),
     });
@@ -479,7 +479,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.wire.dispatch(updateGoal({ turnsUsed }));
     const next = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(next));
-    this.telemetry.track('goal_continued', { turns_used: next.turnsUsed });
+    this.telemetry.track2('goal_continued', { turns_used: next.turnsUsed });
     return this.blockIfBudgetReached(next) ?? this.toSnapshot(next);
   }
 
@@ -697,7 +697,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.wallClockResumedAt = undefined;
     this.wire.dispatch(clearGoal({}));
     if (opts.emit !== false) this.emitGoalUpdated(null);
-    if (opts.track !== false) this.telemetry.track('goal_cleared', { actor });
+    if (opts.track !== false) this.telemetry.track2('goal_cleared', { actor });
   }
 
   private applyLifecycle(
@@ -722,7 +722,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private trackStatusChanged(state: GoalState, actor: GoalActor): void {
-    this.telemetry.track('goal_status_changed', {
+    this.telemetry.track2('goal_status_changed', {
       actor,
       status: state.status,
       turns_used: state.turnsUsed,
@@ -827,7 +827,7 @@ function goalBudgetBlockReason(budget: GoalBudgetReport): string | undefined {
   return reached.length === 0 ? undefined : `${GOAL_BUDGET_BLOCK_PREFIX}: ${reached.join(', ')}`;
 }
 
-function budgetTelemetryProperties(limits: GoalBudgetLimits): TelemetryProperties {
+function budgetTelemetryProperties(limits: GoalBudgetLimits): GoalBudgetProperties {
   return {
     has_token_budget: limits.tokenBudget !== undefined,
     has_turn_budget: limits.turnBudget !== undefined,

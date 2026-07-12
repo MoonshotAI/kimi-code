@@ -190,10 +190,10 @@ export class AgentProfileService implements IAgentProfileService {
     const model = this.modelFactory.resolve(alias);
     if (this.profileName === undefined) {
       await this.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: alias });
-      this.telemetry.track('model_switch', { model: alias });
+      this.telemetry.track2('model_switch', { model: alias });
     } else if (this.modelAlias !== alias) {
       this.update({ modelAlias: alias });
-      this.telemetry.track('model_switch', { model: alias });
+      this.telemetry.track2('model_switch', { model: alias });
     }
     return {
       model: alias,
@@ -206,7 +206,7 @@ export class AgentProfileService implements IAgentProfileService {
     this.update({ thinkingLevel: level });
     const effort = this.thinkingLevel;
     if (effort !== previousEffort) {
-      this.telemetry.track('thinking_toggle', {
+      this.telemetry.track2('thinking_toggle', {
         enabled: effort !== 'off',
         effort,
         from: previousEffort,

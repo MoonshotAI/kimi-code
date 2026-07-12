@@ -36,6 +36,7 @@ import { createUserMessage, type Message } from '#/app/llmProtocol/message';
 import type { Tool } from '#/app/llmProtocol/tool';
 import { type TokenUsage } from '#/app/llmProtocol/usage';
 import { IEventBus } from '#/app/event/eventBus';
+import type { CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, KimiError, isCodedError, isKimiError, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { IAgentWireService } from '#/wire/tokens';
@@ -88,7 +89,10 @@ const EMPTY_TOOL_PARAMETERS: Record<string, unknown> = {
   properties: {},
 };
 
-type CompactionTelemetryProperties = Record<string, string | number | boolean | undefined>;
+type CompactionTelemetryProperties = Pick<
+  CompactionFinishedEvent,
+  'input_other' | 'output' | 'input_cache_read' | 'input_cache_creation'
+>;
 
 interface ActiveCompaction extends FullCompactionTask {
   blockedByTurn: boolean;
@@ -654,7 +658,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         droppedCount: droppedCount === 0 ? undefined : droppedCount,
       });
 
-      this.telemetry.track('compaction_finished', {
+      const properties: CompactionFinishedEvent = {
         // Never send `data.instruction` (user-authored content) to telemetry.
         source: data.source,
         tokens_before: result.tokensBefore,
@@ -666,11 +670,12 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         round: 1,
         thinking_effort: this.profile.data().thinkingLevel,
         ...usageTelemetry(attempt.usage),
-      });
+      };
+      this.telemetry.track2('compaction_finished', properties);
       return result;
     } catch (error) {
       if (isAbortError(error)) throw error;
-      this.telemetry.track('compaction_failed', {
+      this.telemetry.track2('compaction_failed', {
         source: data.source,
         tokens_before: tokensBefore,
         duration_ms: Date.now() - startedAt,
