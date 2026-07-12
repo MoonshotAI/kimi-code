@@ -20,28 +20,45 @@ import { assertSerializable } from './errors';
 import { MAIN_AGENT_ID, ensureMainAgent } from './mainAgent';
 
 /**
- * Resolve the scope a request targets. Returns `undefined` when the referenced
- * session / agent does not exist (caller maps to `40401`).
+ * Resolve the scope a request targets. Throws `Error2` when the referenced
+ * session or agent does not exist — `session.not_found` for a missing session,
+ * `agent.not_found` when the session exists but the agent scope is not
+ * materialized (e.g. a subagent created before the last server restart or
+ * session close: its metadata registry entry and wire log persist, but
+ * `resume` only re-materializes the main agent).
  */
 export async function resolveScope(
   core: Scope,
   scopeKind: ScopeKind,
   params: Record<string, string>,
-): Promise<Scope | IScopeHandle | undefined> {
+): Promise<Scope | IScopeHandle> {
   switch (scopeKind) {
     case 'core':
       return core;
     case 'session': {
       const sessionId = params['session_id'] ?? '';
-      return core.accessor.get(ISessionLifecycleService).get(sessionId);
+      const session = core.accessor.get(ISessionLifecycleService).get(sessionId);
+      if (session === undefined) {
+        throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} not found`);
+      }
+      return session;
     }
     case 'agent': {
       const sessionId = params['session_id'] ?? '';
       const agentId = params['agent_id'] ?? '';
       const session = core.accessor.get(ISessionLifecycleService).get(sessionId);
-      if (session === undefined) return undefined;
+      if (session === undefined) {
+        throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} not found`);
+      }
       if (agentId === MAIN_AGENT_ID) return ensureMainAgent(session);
-      return session.accessor.get(IAgentLifecycleService).getHandle(agentId);
+      const agent = session.accessor.get(IAgentLifecycleService).getHandle(agentId);
+      if (agent === undefined) {
+        throw new Error2(
+          ErrorCodes.AGENT_NOT_FOUND,
+          `agent ${agentId} not found in session ${sessionId}`,
+        );
+      }
+      return agent;
     }
   }
 }

@@ -487,6 +487,9 @@ describe('server-v2 /api/v2 RPC', () => {
       { input: [{ type: 'text', text: 'hello' }] },
     );
     expect(body.code).toBe(40401);
+    // A missing agent must not be reported as a missing session — the message
+    // names the agent (parity with v1's `agent.not_found`).
+    expect(body.msg).toBe(`agent does-not-exist not found in session ${id}`);
   });
 
   // --- cross-scope channel routing -----------------------------------------
