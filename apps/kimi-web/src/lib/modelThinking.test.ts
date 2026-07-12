@@ -1,4 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { computed } from 'vue';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AppModel, AppSession } from '../api/types';
+import {
+  useModelProviderState,
+  type UseModelProviderStateDeps,
+} from '../composables/client/useModelProviderState';
+import type { ExtendedState } from '../composables/useKimiWebClient';
 import {
   coerceThinkingForModel,
   commitLevel,
@@ -10,6 +17,14 @@ import {
   thinkingLevelForModelSwitch,
 } from './modelThinking';
 import type { ModelThinkingInfo } from './modelThinking';
+
+const apiMock = vi.hoisted(() => ({
+  updateSession: vi.fn(),
+}));
+
+vi.mock('../api', () => ({
+  getKimiWebApi: () => apiMock,
+}));
 
 function model(partial: ModelThinkingInfo): ModelThinkingInfo {
   return partial;
@@ -182,5 +197,105 @@ describe('modelThinking', () => {
     it('passes concrete efforts through', () => {
       expect(commitLevel(effortModel, 'max')).toBe('max');
     });
+  });
+});
+
+describe('useModelProviderState thinking on model selection', () => {
+  const effortAppModel: AppModel = {
+    id: 'provider/effort-model',
+    provider: 'provider',
+    model: 'effort-model',
+    maxContextSize: 128_000,
+    capabilities: ['thinking'],
+    supportEfforts: ['low', 'high', 'max'],
+    defaultEffort: 'high',
+  };
+  const booleanAppModel: AppModel = {
+    id: 'provider/boolean-model',
+    provider: 'provider',
+    model: 'boolean-model',
+    maxContextSize: 128_000,
+    capabilities: ['thinking'],
+  };
+
+  beforeEach(() => {
+    apiMock.updateSession.mockReset();
+    apiMock.updateSession.mockResolvedValue({});
+  });
+
+  function createState(options: {
+    activeSession?: Pick<AppSession, 'id' | 'model'>;
+    defaultModel: string;
+  }): ExtendedState {
+    return {
+      activeSessionId: options.activeSession?.id ?? null,
+      sessions: options.activeSession ? [options.activeSession] : [],
+      thinking: 'off',
+      defaultModel: options.defaultModel,
+    } as ExtendedState;
+  }
+
+  function createModelProvider(state: ExtendedState) {
+    const deps: UseModelProviderStateDeps = {
+      pushOperationFailure: vi.fn(),
+      refreshSessionStatus: vi.fn().mockResolvedValue(undefined),
+      persistSessionProfile: vi.fn().mockResolvedValue(undefined),
+      activity: computed(() => 'idle'),
+      inFlightPromptSessions: new Set(),
+      saveThinkingToStorage: vi.fn(),
+      updateSession: (id, update) => {
+        state.sessions = state.sessions.map((session) =>
+          session.id === id ? update(session) : session,
+        );
+      },
+      updateSessionMessages: vi.fn(),
+    };
+    const provider = useModelProviderState(state, deps);
+    provider.models.value = [effortAppModel, booleanAppModel];
+    return provider;
+  }
+
+  it('keeps thinking off when re-selecting the default model in a new-session draft', async () => {
+    const state = createState({ defaultModel: effortAppModel.id });
+    const provider = createModelProvider(state);
+
+    await provider.setModel(effortAppModel.id);
+
+    expect(state.thinking).toBe('off');
+  });
+
+  it('keeps thinking off when re-selecting an explicit new-session draft model', async () => {
+    const state = createState({ defaultModel: booleanAppModel.id });
+    const provider = createModelProvider(state);
+    provider.draftModel.value = effortAppModel.id;
+
+    await provider.setModel(effortAppModel.id);
+
+    expect(state.thinking).toBe('off');
+  });
+
+  it('keeps thinking off when an active session inherits the selected default model', async () => {
+    const state = createState({
+      activeSession: { id: 'session-1', model: '' },
+      defaultModel: effortAppModel.id,
+    });
+    const provider = createModelProvider(state);
+
+    await provider.setModel(effortAppModel.id);
+
+    expect(state.thinking).toBe('off');
+    expect(apiMock.updateSession).toHaveBeenCalledWith('session-1', {
+      model: effortAppModel.id,
+      thinking: undefined,
+    });
+  });
+
+  it('enables the default effort when switching from a different model', async () => {
+    const state = createState({ defaultModel: booleanAppModel.id });
+    const provider = createModelProvider(state);
+
+    await provider.setModel(effortAppModel.id);
+
+    expect(state.thinking).toBe('high');
   });
 });

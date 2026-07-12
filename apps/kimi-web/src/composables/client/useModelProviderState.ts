@@ -109,11 +109,19 @@ export function useModelProviderState(
     );
   }
 
-  function activeThinkingModel(): AppModel | undefined {
+  function currentModelId(): string | undefined {
     const activeSession = rawState.activeSessionId
       ? rawState.sessions.find((s) => s.id === rawState.activeSessionId)
       : undefined;
-    return modelById(activeSession?.model ?? draftModel.value ?? rawState.defaultModel);
+    const rawModel =
+      activeSession === undefined
+        ? draftModel.value ?? rawState.defaultModel
+        : activeSession.model || rawState.defaultModel;
+    return modelById(rawModel)?.id ?? rawModel ?? undefined;
+  }
+
+  function activeThinkingModel(): AppModel | undefined {
+    return modelById(currentModelId());
   }
 
   function applyThinkingLevel(level: ThinkingLevel): ThinkingLevel {
@@ -194,8 +202,10 @@ export function useModelProviderState(
     const sid = rawState.activeSessionId;
     const targetModel = modelById(modelId);
     const prevThinking = rawState.thinking;
-    const prevModel = sid === undefined ? undefined : rawState.sessions.find((s) => s.id === sid)?.model;
-    const isSwitch = prevModel !== modelId;
+    const prevSessionModel = sid
+      ? rawState.sessions.find((s) => s.id === sid)?.model
+      : undefined;
+    const isSwitch = currentModelId() !== (targetModel?.id ?? modelId);
     const nextThinking = thinkingLevelForModelSwitch(targetModel, prevThinking, isSwitch);
     if (!sid) {
       // New-session draft (onboarding composer): no backend session to update.
@@ -221,7 +231,7 @@ export function useModelProviderState(
       // not fail it — but when the daemon is unreachable the request throws here.
       // Roll the picker back to the real model so the UI can't keep showing the
       // new one as if the switch succeeded, then surface the failure.
-      updateSession(sid, (s) => ({ ...s, model: prevModel ?? s.model }));
+      updateSession(sid, (s) => ({ ...s, model: prevSessionModel ?? s.model }));
       if (nextThinking !== prevThinking) {
         rawState.thinking = prevThinking;
         saveThinkingToStorage(prevThinking);
