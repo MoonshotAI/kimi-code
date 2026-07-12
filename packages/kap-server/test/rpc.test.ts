@@ -141,7 +141,12 @@ describe('server-v2 /api/v2 RPC', () => {
       readonly {
         name: string;
         scope: 'app' | 'session' | 'agent';
-        methods: readonly { name: string; kind: 'method' | 'property'; arity: number }[];
+        methods: readonly {
+          name: string;
+          kind: 'method' | 'property';
+          arity: number;
+          params: string;
+        }[];
       }[]
     >('GET', '/api/v2/channels');
     expect(status).toBe(200);
@@ -159,6 +164,12 @@ describe('server-v2 /api/v2 RPC', () => {
     expect(meta?.methods.find((m) => m.name === 'read')).toMatchObject({
       kind: 'method',
       arity: 0,
+      params: '',
+    });
+    // Parameter names come from the declaration source (types are erased).
+    expect(meta?.methods.find((m) => m.name === 'setTitle')).toMatchObject({
+      arity: 1,
+      params: 'title',
     });
     // Framework plumbing stays out of the listing.
     expect(meta?.methods.map((m) => m.name)).not.toContain('dispose');

@@ -41,6 +41,9 @@ describe('v2 server channel registry', () => {
     expect(meta?.methods.map((m) => m.name)).toEqual(
       expect.arrayContaining(['read', 'setTitle', 'update']),
     );
+    // Parameter names are recovered from the declaration source.
+    expect(meta?.methods.find((m) => m.name === 'setTitle')?.params).toBe('title');
+    expect(meta?.methods.find((m) => m.name === 'read')?.params).toBe('');
     // Events are instance properties; framework plumbing is excluded.
     const names = meta?.methods.map((m) => m.name) ?? [];
     expect(names).not.toContain('onDidChangeMetadata');

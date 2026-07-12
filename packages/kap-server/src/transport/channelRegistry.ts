@@ -81,6 +81,13 @@ export interface ChannelMethodDescriptor {
   readonly kind: 'method' | 'property';
   /** Declared parameter count (`Function.length`) — a UI hint, not a schema. */
   readonly arity: number;
+  /**
+   * Declared parameter list as written in source (e.g. `title`,
+   * `{ workspaceId, limit }`), parsed from `Function#toString`. Names only —
+   * types are erased at runtime. Empty for getters and zero-arg methods.
+   * Relies on running from source; a minified bundle would degrade the names.
+   */
+  readonly params: string;
 }
 
 export interface ChannelDescriptor {
@@ -115,6 +122,27 @@ function scopedEntryIndex(): Map<ServiceIdentifier<unknown>, ScopedEntry> {
   return entryIndex;
 }
 
+/**
+ * Extract the declared parameter list from a function's source text
+ * (`name(a, b = 1) {` → `a, b = 1`). Handles `async` method syntax and
+ * nested parens/brackets in defaults; returns '' when unparseable.
+ */
+function extractParams(fn: (...args: never[]) => unknown): string {
+  const src = fn.toString();
+  const start = src.indexOf('(');
+  if (start === -1) return '';
+  let depth = 0;
+  for (let i = start; i < src.length; i++) {
+    const ch = src[i];
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0) return src.slice(start + 1, i).trim();
+    }
+  }
+  return '';
+}
+
 /** Enumerate public methods/getters by walking the ctor prototype chain. */
 function describeMethods(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -129,9 +157,15 @@ function describeMethods(
       const desc = Object.getOwnPropertyDescriptor(proto, name);
       if (desc === undefined) continue;
       if (typeof desc.get === 'function') {
-        methods.set(name, { name, kind: 'property', arity: 0 });
+        methods.set(name, { name, kind: 'property', arity: 0, params: '' });
       } else if (typeof desc.value === 'function') {
-        methods.set(name, { name, kind: 'method', arity: desc.value.length as number });
+        const fn = desc.value as (...args: never[]) => unknown;
+        methods.set(name, {
+          name,
+          kind: 'method',
+          arity: fn.length,
+          params: extractParams(fn),
+        });
       }
     }
     proto = Object.getPrototypeOf(proto) as object | null;
