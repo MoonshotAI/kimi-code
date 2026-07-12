@@ -14,7 +14,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { Emitter, type Event } from '#/_base/event';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { KimiError, PluginErrors } from '#/errors';
+import { Error2, PluginErrors } from '#/errors';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IProviderService } from '#/app/provider/provider';
 import { ISkillDiscovery } from '#/app/skillCatalog/skillDiscovery';
@@ -116,7 +116,7 @@ export class PluginService extends Disposable implements IPluginService {
         return summary;
       } catch (error) {
         this.loadError = error instanceof Error ? error : new Error(String(error));
-        throw new KimiError(
+        throw new Error2(
           PluginErrors.codes.PLUGIN_LOAD_FAILED,
           `Failed to reload plugins: ${this.loadError.message}`,
           { cause: this.loadError, details: { kimiHomeDir: this.homeDir } },
@@ -134,7 +134,7 @@ export class PluginService extends Disposable implements IPluginService {
     return this.runManagementRead(async () => {
       const info = this.manager.info(input.id);
       if (info === undefined) {
-        throw new KimiError(
+        throw new Error2(
           PluginErrors.codes.PLUGIN_NOT_FOUND,
           `Plugin "${input.id}" is not installed`,
           { details: { id: input.id } },
@@ -228,7 +228,7 @@ export class PluginService extends Disposable implements IPluginService {
 
   private assertLoaded(): void {
     if (this.loadError === undefined) return;
-    throw new KimiError(
+    throw new Error2(
       PluginErrors.codes.PLUGIN_LOAD_FAILED,
       `Plugin state failed to load: ${this.loadError.message}. ` +
         `Fix the file at ${this.homeDir}/plugins/installed.json and run /plugins reload.`,

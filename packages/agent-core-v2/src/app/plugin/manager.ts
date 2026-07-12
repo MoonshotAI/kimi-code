@@ -9,7 +9,7 @@ import { cp, mkdir, mkdtemp, realpath, rename, rm, stat } from 'node:fs/promises
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { KimiError, PluginErrors } from '#/errors';
+import { Error2, PluginErrors } from '#/errors';
 import type { HookDef } from '#/agent/externalHooks/types';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import { discoverFileSkills } from '#/app/skillCatalog/fileSkillDiscovery';
@@ -454,8 +454,8 @@ function explicitGithubRef(record: PluginRecord): PluginGithubMetadata['ref'] | 
   }
 }
 
-function pluginNotFound(id: string): KimiError {
-  return new KimiError(PluginErrors.codes.PLUGIN_NOT_FOUND, `Plugin "${id}" is not installed`, {
+function pluginNotFound(id: string): Error2 {
+  return new Error2(PluginErrors.codes.PLUGIN_NOT_FOUND, `Plugin "${id}" is not installed`, {
     details: { id },
   });
 }
