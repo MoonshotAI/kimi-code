@@ -48,8 +48,11 @@ import { isMacosDesktop } from './lib/desktopFlag';
 
 // Hydrate the server-transport credential (fragment token or sessionStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
-const hasServerCredential = initServerAuth();
-const authRequired = ref(!hasServerCredential);
+initServerAuth();
+// Stays false until the server actually rejects us with 401/40101. Starting
+// from "no credential ⇒ prompt" flashed the token dialog for a frame in
+// `--dangerous-bypass-auth` mode, before /meta had advertised the bypass.
+const authRequired = ref(false);
 let offAuthRequired: (() => void) | null = null;
 
 const client = useKimiWebClient();
@@ -134,17 +137,19 @@ function openOnboarding(): void {
 }
 
 onMounted(() => {
-  void client.load();
-  loadSidebarCollapsed();
-  // Capture-phase so Escape closes the side detail layer BEFORE the
-  // conversation pane's bubble-phase handler interrupts a running prompt.
-  document.addEventListener('keydown', onGlobalKeydown, true);
+  // Register the 401 listener before the first requests go out, so a token
+  // rejection during the initial load() can never be missed.
   offAuthRequired = onAuthRequired(() => {
     authRequired.value = true;
     // The server now demands a token, so any cached "bypass" state from a
     // previous mode is stale — drop it so the token prompt can show.
     client.clearDangerousBypassAuth();
   });
+  void client.load();
+  loadSidebarCollapsed();
+  // Capture-phase so Escape closes the side detail layer BEFORE the
+  // conversation pane's bubble-phase handler interrupts a running prompt.
+  document.addEventListener('keydown', onGlobalKeydown, true);
 });
 
 onUnmounted(() => {
