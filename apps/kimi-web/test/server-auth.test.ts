@@ -26,7 +26,7 @@ function createMemoryStorage(): Storage {
       data.delete(key);
     },
     setItem(key: string, value: string) {
-      data.set(key, String(value));
+      data.set(key, value);
     },
   };
 }
@@ -37,7 +37,7 @@ let sessionStore: Storage;
 /** Fresh module instance per test — the store keeps module-level state. */
 async function loadAuth() {
   vi.resetModules();
-  return await import('../src/api/daemon/serverAuth');
+  return import('../src/api/daemon/serverAuth');
 }
 
 beforeEach(() => {
@@ -104,7 +104,9 @@ describe('credential persistence', () => {
     expect(auth.initServerAuth()).toBe(false);
     auth.setCredential('tok-mem');
     expect(auth.getCredential()).toBe('tok-mem');
-    expect(() => auth.clearCredential()).not.toThrow();
+    expect(() => {
+      auth.clearCredential();
+    }).not.toThrow();
   });
 });
 
