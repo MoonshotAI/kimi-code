@@ -59,6 +59,7 @@ export interface PromptSession {
   onEvent(listener: (event: Event) => void): Unsubscribe;
   prompt(input: string | PromptInput): Promise<void>;
   waitForBackgroundTasksOnPrint(): Promise<void>;
+  handlePrintMainTurnCompleted?(): Promise<'finish' | 'continue'>;
   createGoal(input: CreateGoalInput): Promise<GoalSnapshot>;
   getGoal(): Promise<GoalToolResult>;
   getCronTasks(): Promise<GetCronTasksResult>;

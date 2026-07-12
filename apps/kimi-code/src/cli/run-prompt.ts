@@ -204,7 +204,13 @@ export async function runPrompt(
     if (goalCreate !== undefined) {
       await runHeadlessGoal(session, goalCreate, goalModel, outputFormat, stdout, stderr);
     } else {
-      await runPromptTurn(session, opts.prompt!, outputFormat, stdout, stderr);
+      await runPromptTurn(
+        session as PrintTurnSession,
+        opts.prompt!,
+        outputFormat,
+        stdout,
+        stderr,
+      );
     }
     writeResumeHint(session.id, outputFormat, stdout, stderr);
 
@@ -251,7 +257,13 @@ async function runHeadlessGoal(
   try {
     // The objective is sent as the normal prompt; goal continuation keeps the
     // turn alive until a terminal state is reached.
-    await runPromptTurn(session, goal.objective, outputFormat, stdout, stderr);
+    await runPromptTurn(
+      session as PrintTurnSession,
+      goal.objective,
+      outputFormat,
+      stdout,
+      stderr,
+    );
   } finally {
     unsubscribeGoalEvents();
     const snapshot = completedSnapshot ?? (await session.getGoal()).goal;
@@ -443,8 +455,11 @@ export function signalExitCode(signal: NodeJS.Signals): number {
   return 143;
 }
 
+type PrintTurnSession = PromptSession &
+  Required<Pick<PromptSession, 'handlePrintMainTurnCompleted'>>;
+
 function runPromptTurn(
-  session: PromptSession,
+  session: PrintTurnSession,
   prompt: string,
   outputFormat: PromptOutputFormat,
   stdout: PromptOutput,
