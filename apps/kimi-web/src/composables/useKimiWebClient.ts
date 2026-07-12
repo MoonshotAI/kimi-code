@@ -1347,10 +1347,10 @@ async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
     running task is its BTW side-channel agent should not look busy. When tasks
     have not been loaded yet — e.g. right after a page refresh — we trust the
     daemon-reported `running` status rather than hiding the spinner. */
-function isSessionEffectivelyRunning(sessionId: string): boolean {
-  const session = rawState.sessions.find((s) => s.id === sessionId);
+function isSessionEffectivelyRunning(session: AppSession | undefined): boolean {
   if (!session) return false;
   if (session.status !== 'running') return false;
+  const sessionId = session.id;
   const hiddenBtwAgentId = sideChat.sideChatTargetBySession.value[sessionId]?.agentId;
   const tasks = rawState.tasksBySession[sessionId] ?? [];
   const runningTasks = tasks.filter((t) => t.status === 'running');
@@ -1664,7 +1664,7 @@ const sessions = computed<Session[]>(() => {
       title: s.title,
       time: formatTime(s.updatedAt, s.status),
       status: s.status,
-      busy: isSessionEffectivelyRunning(s.id),
+      busy: isSessionEffectivelyRunning(s),
     }));
 });
 
@@ -1875,7 +1875,8 @@ const activity = computed<ActivityState>(() => {
   const questionList = rawState.questionsBySession[sid] ?? [];
   if (questionList.length > 0) return 'awaiting-question';
 
-  if (isSessionEffectivelyRunning(sid)) {
+  const activeSession = rawState.sessions.find((s) => s.id === sid);
+  if (isSessionEffectivelyRunning(activeSession)) {
     return 'running';
   }
 
@@ -2148,7 +2149,7 @@ const sessionsForView = computed<Session[]>(() => {
         title: s.title,
         time: formatTime(s.updatedAt, s.status),
         status: s.status,
-        busy: isSessionEffectivelyRunning(s.id),
+        busy: isSessionEffectivelyRunning(s),
         lastPrompt: s.lastPrompt,
         workspaceId,
         workspaceName: nameByWorkspaceId.get(workspaceId),
@@ -2170,7 +2171,7 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
       title: s.title,
       time: formatTime(s.updatedAt, s.status),
       status: s.status,
-      busy: isSessionEffectivelyRunning(s.id),
+      busy: isSessionEffectivelyRunning(s),
       updatedAt: s.updatedAt,
     };
     const list = byId.get(wid) ?? [];
