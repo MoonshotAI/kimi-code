@@ -8,6 +8,7 @@ import {
   IAgentPromptService,
   IAgentTaskService,
   IAuthSummaryService,
+  IBootstrapService,
   IConfigService,
   IEventBus,
   IFileSystemStorageService,
@@ -146,14 +147,16 @@ describe('runV2Print', () => {
       [
         IAgentPromptService,
         {
-          prompt: vi.fn(async () => {
+          enqueue: vi.fn(async () => {
             // Emit a native assistant delta on the main agent bus, then complete.
             for (const listener of [...eventListeners]) {
               listener({ type: 'assistant.delta', turnId: 1, delta: 'hello world' } as DomainEvent);
             }
             return {
-              id: 1,
-              result: Promise.resolve({ reason: 'completed' }),
+              launched: Promise.resolve({
+                id: 1,
+                result: Promise.resolve({ type: 'completed' }),
+              }),
             };
           }),
         },
@@ -186,6 +189,15 @@ describe('runV2Print', () => {
         },
       ],
       [ISessionIndex, { list: vi.fn(async () => ({ items: [] })) }],
+      [
+        IBootstrapService,
+        {
+          platform: 'linux',
+          arch: 'x64',
+          clientVersion: '1.2.3-test',
+          getEnv: () => undefined,
+        },
+      ],
       [IOAuthToolkit, { getCachedAccessToken: vi.fn(async () => undefined) }],
       [IFileSystemStorageService, {}],
       [
@@ -195,6 +207,7 @@ describe('runV2Print', () => {
             setAppender: vi.fn(),
             setContext: vi.fn(),
             track: vi.fn(),
+            track2: vi.fn(),
             shutdown: vi.fn(async () => {}),
             withContext: vi.fn(() => svc),
           };
@@ -209,12 +222,14 @@ describe('runV2Print', () => {
 
     await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
 
-    const promptService = agentServices.get(IAgentPromptService) as { prompt: ReturnType<typeof vi.fn> };
-    expect(promptService.prompt).toHaveBeenCalledWith({
-      role: 'user',
-      content: [{ type: 'text', text: 'say hello' }],
-      toolCalls: [],
-      origin: { kind: 'user' },
+    const promptService = agentServices.get(IAgentPromptService) as { enqueue: ReturnType<typeof vi.fn> };
+    expect(promptService.enqueue).toHaveBeenCalledWith({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'say hello' }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
     });
     // Version banner is first, then the rendered assistant output.
     expect(stderr.write).toHaveBeenNthCalledWith(1, 'kimi version 1.2.3-test\n');

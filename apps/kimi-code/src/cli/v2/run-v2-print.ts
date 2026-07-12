@@ -8,7 +8,7 @@
  *   - creates / resumes a session and its main agent via native services,
  *   - subscribes to the main agent's per-agent `IEventBus` and renders the
  *     native `DomainEvent` stream (payloads are already v1-protocol-shaped),
- *   - drives a turn through `IAgentPromptService.prompt()` and awaits
+ *   - drives a turn through `IAgentPromptService.enqueue()` and awaits
  *     `Turn.result` for authoritative completion,
  *   - drains background tasks (config-driven) before exiting.
  *
@@ -39,6 +39,7 @@ import {
   type DomainEvent,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
+  type LoopRunResult,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
@@ -335,14 +336,24 @@ async function runNativeTurn(
     dispatchNativeEvent(writer, event, stderr);
   });
   try {
-    const turn = await agent.accessor.get(IAgentPromptService).prompt({
-      role: 'user',
-      content: [{ type: 'text', text: prompt }],
-      toolCalls: [],
-      origin: { kind: 'user' },
+    const handle = await agent.accessor.get(IAgentPromptService).enqueue({
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: prompt }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
     });
+    const turn = await handle.launched;
     if (turn === undefined) {
-      throw new Error('Prompt turn could not be started');
+      // A prompt blocked by an onBeforeSubmitPrompt hook never launches a turn.
+      writer.finish();
+      const completion = await handle.completion;
+      throw new Error(
+        completion.state === 'blocked'
+          ? 'Prompt hook blocked the request.'
+          : 'Prompt turn could not be started',
+      );
     }
     const result = await turn.result;
 
@@ -350,7 +361,7 @@ async function runNativeTurn(
     // spawned has drained (config-bounded). Flush the buffered assistant
     // message first so a long drain does not withhold the final message.
     writer.flushAssistant();
-    if (result.reason === 'completed') {
+    if (result.type === 'completed') {
       try {
         await drainBackgroundTasks(app, session);
       } catch {
@@ -489,22 +500,18 @@ async function drainBackgroundTasks(app: Scope, session: ISessionScopeHandle): P
   if (allWaiters.length > 0) await Promise.all(allWaiters);
 }
 
-function formatNativeTurnFailure(result: {
-  readonly reason: string;
-  readonly error?: unknown;
-}): string {
-  const error = result.error as { readonly code?: string; readonly message?: string } | undefined;
-  if (error?.code === 'provider.filtered') {
-    return 'Provider safety policy blocked the response.';
+function formatNativeTurnFailure(result: LoopRunResult): string {
+  if (result.type === 'failed') {
+    const error = result.error as { readonly code?: string; readonly message?: string } | undefined;
+    if (error?.code === 'provider.filtered') {
+      return 'Provider safety policy blocked the response.';
+    }
+    if (error?.code !== undefined) {
+      return `${error.code}: ${error.message ?? ''}`.trimEnd();
+    }
+    if (result.error instanceof Error) {
+      return result.error.message;
+    }
   }
-  if (error?.code !== undefined) {
-    return `${error.code}: ${error.message ?? ''}`.trimEnd();
-  }
-  if (result.error instanceof Error) {
-    return result.error.message;
-  }
-  if (result.reason === 'blocked') {
-    return 'Prompt hook blocked the request.';
-  }
-  return `Prompt turn ended with reason: ${result.reason}`;
+  return `Prompt turn ended with reason: ${result.type}`;
 }

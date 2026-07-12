@@ -39,6 +39,7 @@ export function stubBootstrap(homeDir = '/tmp/kimi-home', env: NodeJS.ProcessEnv
     homeDir,
     configPath: `${homeDir}/config.toml`,
     configKey: 'config.toml',
+    clientVersion: '0.0.0-test',
     sessionsDir: `${homeDir}/sessions`,
     blobsDir: `${homeDir}/blobs`,
     storeDir: `${homeDir}/store`,

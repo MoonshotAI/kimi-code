@@ -112,6 +112,9 @@ describe('Event public types', () => {
         case 'background.task.terminated':
         case 'cron.fired':
         case 'prompt.submitted':
+        case 'prompt.completed':
+        case 'prompt.aborted':
+        case 'prompt.steered':
           return;
         default:
           assertNever(event);
