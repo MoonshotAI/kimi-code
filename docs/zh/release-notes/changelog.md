@@ -6,6 +6,34 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.23.6（2026-07-12）
+
+### 优化
+
+- web: 优化宽 Markdown 表格的显示，可超出阅读栏宽至 1040px，更宽时在表格内部横向滚动。
+- web: 服务端访问令牌在关闭标签页或重启浏览器后最多保留 7 天，不再每次开新标签页都要求重新输入。
+- web: 工作区选择器搜索框支持直接输入绝对路径添加工作区，输入时实时校验并给出补全建议。
+- web: 切换到支持思考强度级别的模型时，自动启用默认思考强度。
+- 导入自定义 registry 时识别 `support_efforts` 和 `default_effort` 字段，这些模型可设置思考强度（thinking effort）级别。
+- 更新 `/plugins` 面板中打开的 WebBridge 安装页链接。
+- 新增 `subagent.timeout_ms` 配置项（或 `KIMI_SUBAGENT_TIMEOUT_MS` 环境变量），控制单个子代理的超时时间，默认从 30 分钟提高到 2 小时。
+- 新增 print 模式后台策略：设置 `[background].print_background_mode = "steer"` 后，`kimi -p` 在后台任务完成后保持运行，继续引导主 Agent 进入后续轮次。
+
+### 修复
+
+- web: 修复断线重连后会话卡在发送状态的问题，断线期间完成的轮次现在能正常结束加载状态并发送下一条消息。
+- web: 修复启动或更新 web UI 后首次访问时，初始鉴权检查失败跳转到登录页的问题；现在停留在连接界面，显示连接错误并持续重试。
+- 修复 `kimi -p` 在目标仍活跃或有定时任务待触发时主轮次结束即退出的问题，目标续跑与定时任务触发现在能正常执行对应轮次。
+- 修复关闭问题提示时默认选中推荐选项的问题，现在视为用户选择不回答。
+- web: 修复恢复或重新加载会话后，ReadMediaFile 结果显示为普通工具卡片而非图片的问题。
+- web: 修复滚动浏览对话历史时聊天视图向下跳动的问题。
+- web: 修复模型下拉菜单中其他提供商的同名模型被错误勾选的问题，现在按唯一的模型 id 匹配当前模型。
+- web: 修复会话较多时侧边栏卡顿的问题，移除了渲染期间重复的会话列表扫描。
+
+### 重构
+
+- 将动态工具加载的模型能力名称从 `select_tools` 重命名为 `dynamically_loaded_tools`。
+
 ## 0.23.5（2026-07-10）
 
 ### 优化
@@ -169,7 +197,6 @@ outline: 2
 - TUI 新增一项偏好设置：当 bracketed paste 不可用时，避免快速多行粘贴被逐行提交。可在 `tui.toml` 中设置 `disable_paste_burst = true` 关闭该行为。
 - 优化子 Agent 卡片，使其保持固定高度，并在紧凑的双行活动窗口内显示实时状态 spinner。
 - `kimi -p` 运行时，若启用了 `background.keep_alive_on_exit`，退出前会等待后台子 Agent 完成。设置 `keep_alive_on_exit = true` 可让并发的后台子 Agent 执行完毕。
-- `kimi -p` 新增 `background.print_background_mode`（`exit`/`drain`/`steer`）：`steer` 模式下，后台任务（含 `Bash(run_in_background=true)`）完成时会像后台子 Agent 一样，以合成 user 消息 steer 主 Agent 进入新 turn，使其能依据后台结果继续工作；上限由 `print_wait_ceiling_s` 与新增的 `print_max_turns` 控制。
 
 ### 重构
 
