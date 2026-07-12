@@ -15,7 +15,7 @@ export default {
   copy: '复制',
   goalKicker: '目标',
   goalDoneWhen: '完成条件',
-  goalTurns: '{{count}} 轮',
-  goalTokens: '{{count}} tokens',
-  goalTokenBudget: '{{pct}}% token 预算',
+  goalTurns: '{count} 轮',
+  goalTokens: '{count} tokens',
+  goalTokenBudget: '{pct}% token 预算',
 } as const;

@@ -15,7 +15,7 @@ export default {
   copy: 'Copy',
   goalKicker: 'Goal',
   goalDoneWhen: 'Done when',
-  goalTurns: '{{count}} turns',
-  goalTokens: '{{count}} tokens',
-  goalTokenBudget: '{{pct}}% token budget',
+  goalTurns: '{count} turns',
+  goalTokens: '{count} tokens',
+  goalTokenBudget: '{pct}% token budget',
 } as const;

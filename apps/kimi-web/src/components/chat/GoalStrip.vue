@@ -73,14 +73,14 @@ function formatMs(ms: number): string {
     <template v-if="expanded" #foot>
       <div class="goal-actions">
         <Button
-          v-if="goal.status !== 'paused'"
+          v-if="goal.status !== 'paused' && goal.status !== 'blocked'"
           size="sm"
           variant="secondary"
           class="goal-action"
           @click.stop="emit('controlGoal', 'pause')"
         >{{ t('status.goalPause') }}</Button>
         <Button
-          v-if="goal.status === 'paused'"
+          v-if="goal.status === 'paused' || goal.status === 'blocked'"
           size="sm"
           variant="primary"
           class="goal-action"
