@@ -104,7 +104,7 @@ export default {
     empty: '（空）',
   },
   tabs: {
-    wire: 'Wire',
+    wire: '连线',
     timeline: '时间线',
     context: '上下文',
     agents: '智能体',

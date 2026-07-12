@@ -1,6 +1,6 @@
 export default {
-  workspaceMeta: 'workspace · {branch}',
-  sessionsHeader: 'sessions',
+  workspaceMeta: '工作区 · {branch}',
+  sessionsHeader: '会话',
   workspaces: '工作区',
   sortWorkspaces: '工作区排序',
   sortManual: '手动排序',

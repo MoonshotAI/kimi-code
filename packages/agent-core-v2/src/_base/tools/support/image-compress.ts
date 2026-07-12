@@ -29,6 +29,10 @@
 import type { ContentPart } from '#/app/llmProtocol/message';
 
 import { sniffImageDimensions } from './file-type';
+import {
+  tryNativeCompressImage,
+  tryNativeCropImage,
+} from '#/_base/native-tools';
 
 /**
  * Built-in longest-edge ceiling (px). Larger images are scaled down to fit.

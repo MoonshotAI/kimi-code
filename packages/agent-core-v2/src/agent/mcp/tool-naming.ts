@@ -1,6 +1,8 @@
 const MCP_NAME_PREFIX = 'mcp__';
 const MCP_NAME_SEPARATOR = '__';
 
+import { tryNativeSanitizeMcpNamePart, tryNativeQualifyMcpToolName } from '#/_base/native-tools';
+
 export { isMcpToolName } from '#/agent/tool/toolName';
 /**
  * Most LLM providers cap tool names around 64 characters. Leave headroom
@@ -17,6 +19,8 @@ const MAX_QUALIFIED_LENGTH = 64;
  * first `__` after the prefix.
  */
 export function sanitizeMcpNamePart(part: string): string {
+  const native = tryNativeSanitizeMcpNamePart(part);
+  if (native !== undefined) return native;
   return part.replaceAll(/[^a-zA-Z0-9_-]/g, '_').replaceAll(/_+/g, '_');
 }
 
@@ -26,6 +30,8 @@ export function sanitizeMcpNamePart(part: string): string {
  * 8-char hash suffix replaces the tail so the prefix structure stays intact.
  */
 export function qualifyMcpToolName(serverName: string, toolName: string): string {
+  const native = tryNativeQualifyMcpToolName(serverName, toolName);
+  if (native !== undefined) return native;
   const full = `${MCP_NAME_PREFIX}${sanitizeMcpNamePart(serverName)}${MCP_NAME_SEPARATOR}${sanitizeMcpNamePart(toolName)}`;
   if (full.length <= MAX_QUALIFIED_LENGTH) return full;
 

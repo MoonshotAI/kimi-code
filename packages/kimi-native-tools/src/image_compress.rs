@@ -10,9 +10,13 @@
 /// decode-bomb guard) and telemetry; this module handles only the
 /// compute-heavy decode → resize → encode → quality-ladder path.
 
+use std::io::Cursor;
+
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::{CompressionType, FilterType, PngEncoder};
-use image::{DynamicImage, GenericImageView, ImageEncoder, ImageFormat};
+use image::{
+    DynamicImage, GenericImageView, ImageDecoder, ImageEncoder, ImageFormat, ImageReader,
+};
 
 // ── config / result structs ──────────────────────────────────────────────
 
@@ -151,7 +155,7 @@ pub fn compress_image(
         _ => return None,
     };
 
-    let mut img = image::load_from_memory_with_format(bytes, format).ok()?;
+    let mut img = decode_with_orientation(bytes, format).ok()?;
     let original_width = img.width();
     let original_height = img.height();
 
@@ -221,7 +225,7 @@ pub fn crop_image(
         return Err(CropError::RegionInvalid);
     }
 
-    let img = image::load_from_memory_with_format(bytes, format)
+    let img = decode_with_orientation(bytes, format)
         .map_err(|e| CropError::DecodeFailed(e.to_string()))?;
     let original_width = img.width();
     let original_height = img.height();
@@ -577,6 +581,34 @@ fn is_animated_webp(bytes: &[u8]) -> bool {
     // VP8X flags at bytes[20..24]; bit 1 is the animation flag.
     // The flags field is 4 bytes: [bitfield byte] [0] [0] [0]
     bytes[20] & 0x02 != 0
+}
+
+/// Decode `bytes` (known `format`) into a `DynamicImage` with EXIF
+/// orientation applied, so the returned image lives in the same display
+/// (EXIF-rotated) coordinate space as jimp's decode.
+///
+/// This is the crucial parity point with the TS `jimp` pipeline: jimp rotates
+/// on decode, so `image-compress.ts` reports original dimensions and accepts
+/// crop regions in the rotated space. The raw `image` crate decode does NOT
+/// auto-rotate, so without this a portrait JPEG shot in landscape+EXIF would
+/// report swapped width/height and crop the wrong region. We read the
+/// orientation tag from the decoder's Exif metadata and apply it after decode.
+///
+/// Formats without orientation metadata (e.g. WebP, or a JPEG/PNG with no
+/// Exif) resolve to `Orientation::NoTransforms`, so this is a no-op there and
+/// behaviour matches the previous direct decode.
+fn decode_with_orientation(
+    bytes: &[u8],
+    format: ImageFormat,
+) -> Result<DynamicImage, image::ImageError> {
+    let mut decoder = ImageReader::with_format(Cursor::new(bytes), format).into_decoder()?;
+    // `orientation()` reads the decoder's Exif metadata; its default is
+    // `NoTransforms` when absent or unreadable. Never fail the whole decode
+    // over a missing/garbled orientation tag — fall back to no transform.
+    let orientation = decoder.orientation().unwrap_or(image::metadata::Orientation::NoTransforms);
+    let mut img = DynamicImage::from_decoder(decoder)?;
+    img.apply_orientation(orientation);
+    Ok(img)
 }
 
 fn normalize_mime(mime_type: &str) -> String {
@@ -1013,6 +1045,83 @@ mod tests {
         let r = result.unwrap();
         assert_eq!(r.region_width, 16);
         assert_eq!(r.region_height, 16);
+    }
+
+    // ── EXIF orientation ─────────────────────────────────────────────────
+
+    /// Build a JPEG carrying an EXIF `Orientation` tag with the given value by
+    /// splicing a hand-built APP1/Exif segment right after the SOI marker of a
+    /// crate-encoded JPEG. Orientation 6 = rotate 90° CW on display, which
+    /// swaps the displayed width/height relative to the stored pixels.
+    fn make_jpeg_with_exif_orientation(width: u32, height: u32, orientation: u16) -> Vec<u8> {
+        let jpeg = encode_to_jpeg_bytes(&make_rgb_image(width, height), 90);
+        assert_eq!(&jpeg[0..2], &[0xFF, 0xD8], "crate JPEG must start with SOI");
+
+        // TIFF (little-endian) with a single IFD0 entry: Orientation (0x0112),
+        // type SHORT (3), count 1, value = `orientation`.
+        let mut tiff: Vec<u8> = Vec::new();
+        tiff.extend_from_slice(b"II"); // little-endian byte order
+        tiff.extend_from_slice(&0x002Au16.to_le_bytes()); // TIFF magic 42
+        tiff.extend_from_slice(&8u32.to_le_bytes()); // offset to IFD0
+        tiff.extend_from_slice(&1u16.to_le_bytes()); // entry count
+        tiff.extend_from_slice(&0x0112u16.to_le_bytes()); // tag: Orientation
+        tiff.extend_from_slice(&3u16.to_le_bytes()); // type: SHORT
+        tiff.extend_from_slice(&1u32.to_le_bytes()); // count
+        // SHORT value in the low 2 bytes of the 4-byte value field.
+        tiff.extend_from_slice(&orientation.to_le_bytes());
+        tiff.extend_from_slice(&[0u8, 0u8]); // pad to 4 bytes
+        tiff.extend_from_slice(&0u32.to_le_bytes()); // next IFD offset (none)
+
+        let mut payload: Vec<u8> = Vec::new();
+        payload.extend_from_slice(b"Exif\0\0");
+        payload.extend_from_slice(&tiff);
+
+        let seg_len = (payload.len() + 2) as u16; // length field includes itself
+        let mut app1: Vec<u8> = Vec::new();
+        app1.extend_from_slice(&[0xFF, 0xE1]); // APP1 marker
+        app1.extend_from_slice(&seg_len.to_be_bytes()); // big-endian length
+        app1.extend_from_slice(&payload);
+
+        // SOI + APP1 + (rest of the crate JPEG after SOI).
+        let mut out: Vec<u8> = Vec::new();
+        out.extend_from_slice(&jpeg[0..2]);
+        out.extend_from_slice(&app1);
+        out.extend_from_slice(&jpeg[2..]);
+        out
+    }
+
+    #[test]
+    fn test_decode_applies_exif_orientation() {
+        // Stored pixels are 120x80 (landscape); Orientation 6 displays it
+        // rotated 90° CW, so the decoded image must be 80x120 (portrait).
+        let bytes = make_jpeg_with_exif_orientation(120, 80, 6);
+        let img = decode_with_orientation(&bytes, ImageFormat::Jpeg)
+            .expect("EXIF-oriented JPEG should decode");
+        assert_eq!(img.width(), 80, "width should be the rotated (displayed) width");
+        assert_eq!(img.height(), 120, "height should be the rotated (displayed) height");
+    }
+
+    #[test]
+    fn test_compress_reports_exif_rotated_dimensions() {
+        // Regression for the parity gap with jimp: compression must report the
+        // ORIGINAL dimensions in EXIF-rotated (display) space, matching the TS
+        // pipeline. Without applying orientation this reported 120x80.
+        let bytes = make_jpeg_with_exif_orientation(120, 80, 6);
+        let config = default_compress_config(100); // tiny budget forces a re-encode
+        let result = compress_image(&bytes, "image/jpeg", &config)
+            .expect("EXIF-oriented JPEG should compress");
+        assert_eq!(result.original_width, 80);
+        assert_eq!(result.original_height, 120);
+    }
+
+    #[test]
+    fn test_no_exif_orientation_is_noop() {
+        // A plain JPEG with no Exif keeps its stored dimensions (no rotation).
+        let bytes = encode_to_jpeg_bytes(&make_rgb_image(120, 80), 90);
+        let img = decode_with_orientation(&bytes, ImageFormat::Jpeg)
+            .expect("plain JPEG should decode");
+        assert_eq!(img.width(), 120);
+        assert_eq!(img.height(), 80);
     }
 
     // ── normalize_mime ──────────────────────────────────────────────────

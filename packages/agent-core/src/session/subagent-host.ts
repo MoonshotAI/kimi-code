@@ -782,7 +782,7 @@ function providerRateLimitErrorFromPayload(error: {
   return new APIProviderRateLimitError(error.message, requestId);
 }
 
-function providerErrorFromPayload(error: KimiErrorPayload | undefined): Error {
+function providerErrorFromPayload(error: { readonly code: string; readonly message: string; readonly details?: Record<string, unknown> } | undefined): Error {
   if (error === undefined) return new Error('Subagent turn failed');
 
   const requestId =

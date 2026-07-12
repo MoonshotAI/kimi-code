@@ -5,9 +5,13 @@
 import type { ContentPart, Message } from '#/app/llmProtocol/message';
 import type { Tool } from '#/app/llmProtocol/tool';
 
+import { tryNativeEstimateTokens } from '#/_base/native-tools';
+
 const messageTokenEstimateCache = new WeakMap<Message, number>();
 
 export function estimateTokens(text: string): number {
+  const native = tryNativeEstimateTokens(text);
+  if (native !== undefined) return native;
   let asciiCount = 0;
   let nonAsciiCount = 0;
   for (const char of text) {
