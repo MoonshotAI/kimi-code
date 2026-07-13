@@ -66,7 +66,7 @@ import type {
   ThinkingLevel,
 } from '../api/types';
 import { createInitialState, reduceAppEvent, type CompactionStatus, type KimiClientState } from '../api/daemon/eventReducer';
-import { toAppEvent } from '../api/daemon/mappers';
+import { isPlaceholderSessionUsage, toAppEvent } from '../api/daemon/mappers';
 
 import { messagesToTurns } from './messagesToTurns';
 import { latestTodos } from './latestTodos';
@@ -1268,6 +1268,10 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
         snap.session.model && snap.session.model.length > 0
           ? snap.session.model
           : s.model,
+      // The wire session's usage is a placeholder (both engines return zeros
+      // for the heavy fields); keep the live usage folded in from /status and
+      // the WS status stream instead of zeroing it on every snapshot sync.
+      usage: isPlaceholderSessionUsage(snap.session.usage) ? s.usage : snap.session.usage,
     }));
     // The snapshot only carries the most recent page; keep any older pages the
     // user already loaded so reopening does not reset scrollback.

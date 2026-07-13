@@ -70,6 +70,24 @@ export function toAppSessionUsage(wire: WireSessionUsage): AppSessionUsage {
   };
 }
 
+/**
+ * True when a session usage object is the daemon's all-zero placeholder.
+ * Both engines return placeholders for the heavy session fields on the
+ * list/snapshot read paths; the live values arrive via GET /status and the
+ * WS `agent.status.updated` stream. Callers replacing a cached session with
+ * a wire record must keep the live usage when the incoming one is this
+ * placeholder, or the context ring drops to 0 until the next refresh.
+ */
+export function isPlaceholderSessionUsage(usage: AppSessionUsage): boolean {
+  return (
+    usage.contextTokens === 0 &&
+    usage.contextLimit === 0 &&
+    usage.inputTokens === 0 &&
+    usage.outputTokens === 0 &&
+    usage.turnCount === 0
+  );
+}
+
 export function toAppSessionStatus(wire: WireSessionStatus): AppSessionStatus {
   switch (wire) {
     case 'idle': return 'idle';
