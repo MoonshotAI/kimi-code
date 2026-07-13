@@ -157,7 +157,7 @@ export function isFunctionToolCall<T extends { type: string }>(
 export function thinkingEffortToReasoningEffort(effort: ThinkingEffort): string | undefined {
   switch (effort) {
     case 'off':
-      return undefined;
+      return 'none';
     case 'low':
       return 'low';
     case 'medium':
