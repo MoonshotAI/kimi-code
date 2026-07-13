@@ -70,6 +70,8 @@ describe('DaemonKimiWebApi.getSessionGoal', () => {
   it('requests the session goal endpoint', async () => {
     vi.mocked(fetch).mockResolvedValue(envelope(null));
     await createApi().getSessionGoal('sess_42');
-    expect(String(vi.mocked(fetch).mock.calls[0]?.[0])).toContain('/api/v1/sessions/sess_42/goal');
+    expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
+      'http://daemon.test/api/v1/sessions/sess_42/goal',
+    );
   });
 });
