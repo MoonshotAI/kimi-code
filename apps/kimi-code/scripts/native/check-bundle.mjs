@@ -46,7 +46,7 @@ function executableLines() {
 }
 
 for (const line of executableLines()) {
-  for (const match of line.matchAll(/\brequire\(\s*["']([^"']+)["']\s*\)/g)) {
+  for (const match of line.matchAll(/(?<![.\w])require\(\s*["']([^"']+)["']\s*\)/g)) {
     const specifier = match[1];
     if (specifier.startsWith('.') || specifier.startsWith('/')) {
       if (optionalRelativeRuntimeRequires.has(specifier)) continue;

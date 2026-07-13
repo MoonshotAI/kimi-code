@@ -91,6 +91,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   constructor(
     private readonly subagentHost: SessionSubagentHost,
     private readonly swarmMode: SwarmMode,
+    private readonly subagentTimeoutMs?: number,
   ) {}
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
@@ -145,7 +146,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
         runInBackground: false,
         swarmItem: spec.item,
         signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
+        timeout: this.subagentTimeoutMs ?? DEFAULT_SUBAGENT_TIMEOUT_MS,
       };
       if (spec.kind === 'resume') {
         return {

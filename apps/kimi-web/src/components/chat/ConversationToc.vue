@@ -17,6 +17,10 @@ const props = defineProps<{
   activeTurnId: string | null;
   mobile?: boolean;
   sessionLoading?: boolean;
+  /** Temporarily hidden while a wide table actually covers the rail. Kept out
+      of `visible` on purpose: the nav must stay mounted so the occlusion can
+      be measured and lifted again. Never touches the user's TOC setting. */
+  occluded?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -95,9 +99,9 @@ onBeforeUnmount(() => {
     v-if="visible"
     ref="navRef"
     class="conversation-toc"
-    :class="{ 'toc-clipped': !fits }"
+    :class="{ 'toc-clipped': !fits || occluded }"
     :aria-label="t('conversation.toc')"
-    :aria-hidden="fits ? undefined : true"
+    :aria-hidden="fits && !occluded ? undefined : true"
   >
     <div class="toc-scroll">
       <button
@@ -121,7 +125,15 @@ onBeforeUnmount(() => {
   z-index: var(--z-sticky);
   top: 50%;
   transform: translateY(-50%);
-  left: calc(50% + (var(--read-max) / 2) + 14px);
+  /* Anchor to the reading-column edge, the rail's original position. Tables
+     that grow past it (up to --p-table-max) temporarily hide the rail via the
+     occlusion hit-test in ConversationPane, so proximity is safe again.
+     The cqi cap keeps the rail inside narrow containers. */
+  --toc-content-max: min(
+    var(--p-content-max),
+    calc(100cqi - var(--space-5) - var(--space-5))
+  );
+  left: calc(50% + (var(--toc-content-max) / 2) + 14px);
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -130,15 +142,18 @@ onBeforeUnmount(() => {
 }
 /* Invisible hover bridge: the collapsed rail is only a few px wide, so this
    extends the hover target on both sides to make the outline easy to open and
-   forgiving to stay within. Kept at z-index 0 so it sits behind the rows
-   (which are raised to z-index 1) — otherwise the bridge, as a positioned
-   pseudo-element, paints above the in-flow rows and swallows their clicks. */
+   forgiving to stay within. The left side covers only the 14px gap to the
+   content edge — a table wide enough to reach past the gap also covers the
+   bar, which hides the rail (pointer-events: none) before the bridge can
+   steal its events. Kept at z-index 0 so it sits behind the rows (which are
+   raised to z-index 1) — otherwise the bridge, as a positioned pseudo-element,
+   paints above the in-flow rows and swallows their clicks. */
 .conversation-toc::before {
   content: "";
   position: absolute;
   top: 0;
   bottom: 0;
-  left: -48px;
+  left: -14px;
   right: -48px;
   z-index: 0;
 }

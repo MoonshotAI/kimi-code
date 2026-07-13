@@ -64,11 +64,15 @@
       workspacePaths = [
         ./packages/acp-adapter
         ./packages/agent-core
+        ./packages/agent-core-v2
         ./packages/server
+        ./packages/kap-server
         ./packages/server-e2e
         ./packages/kaos
+        ./packages/klient
         ./packages/kosong
         ./packages/migration-legacy
+        ./packages/minidb
         ./packages/node-sdk
         ./packages/oauth
         ./packages/pi-tui
@@ -86,13 +90,17 @@
       workspaceNames = [
         "@moonshot-ai/acp-adapter"
         "@moonshot-ai/agent-core"
+        "@moonshot-ai/agent-core-v2"
         "@moonshot-ai/server"
+        "@moonshot-ai/kap-server"
         "@moonshot-ai/server-e2e"
         "@moonshot-ai/kaos"
         "@moonshot-ai/kosong"
         "@moonshot-ai/migration-legacy"
+        "@moonshot-ai/minidb"
         "@moonshot-ai/kimi-code-sdk"
         "@moonshot-ai/kimi-code-oauth"
+        "@moonshot-ai/klient"
         "@moonshot-ai/pi-tui"
         "@moonshot-ai/protocol"
         "@moonshot-ai/kimi-telemetry"
@@ -152,7 +160,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-RPjCWL7NqDSKgpHGL16zPlUOfjWN2rkaDY/4GFAD8VA=";
+              hash = "sha256-Z3daIqAm/BikwRSMXydiorikn5PMsxvWtB07SujJYzQ=";
             };
 
             nativeBuildInputs = [

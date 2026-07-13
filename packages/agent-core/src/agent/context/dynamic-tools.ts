@@ -39,10 +39,10 @@ export function isLoadableToolsAnnouncement(message: ContextMessage): boolean {
  * Shape a history for a consumer that must not see dynamic-tool protocol
  * context: drop the loadable-tools announcements and strip `message.tools`
  * (dropping the message entirely when nothing else remains). Two callers:
- *   - projection for a model without the `select_tools` capability (mid-session
- *     model switch — the canonical history keeps its shape, only the outgoing
- *     view changes; announcements would be noise and even reference a
- *     select_tools tool the model does not have);
+ *   - projection for a model without the dynamically-loaded-tools capability
+ *     (mid-session model switch — the canonical history keeps its shape, only
+ *     the outgoing view changes; announcements would be noise and even
+ *     reference a select_tools tool the model does not have);
  *   - the compaction summarizer input (schemas and announcements are protocol
  *     context, not conversation — summarizing them wastes tokens and risks
  *     leaking schema text into the summary).

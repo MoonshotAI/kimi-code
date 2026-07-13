@@ -24,6 +24,10 @@ const KEEP_MODEL = new Set([
   "reasoning",
   "interleaved",
   "modalities",
+  // Message-level tool declarations capability — kosong's
+  // catalogModelToCapability reads it; stripping it here would silently
+  // disable tool-select for catalog-imported aliases.
+  "dynamically_loaded_tools",
 ]);
 
 function resolveOutputFile(args) {

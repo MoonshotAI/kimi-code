@@ -84,7 +84,7 @@ export interface SystemTriggerOrigin {
   readonly name: string;
 }
 
-export type AgentCoreBackgroundTaskStatus =
+export type TaskLifecycleStatus =
   | 'running'
   | 'completed'
   | 'failed'
@@ -92,10 +92,23 @@ export type AgentCoreBackgroundTaskStatus =
   | 'killed'
   | 'lost';
 
+export interface TaskOrigin {
+  readonly kind: 'task';
+  readonly taskId: string;
+  readonly status: TaskLifecycleStatus;
+  readonly notificationId: string;
+}
+
+/**
+ * Legacy spelling of `TaskOrigin` emitted by the pre-v2 agent core, which
+ * identifies background-task notifications with `kind: 'background_task'`.
+ * Retained so the wire `PromptOrigin` accepts turns steered by the legacy
+ * engine; new code should emit `TaskOrigin` (`kind: 'task'`).
+ */
 export interface BackgroundTaskOrigin {
   readonly kind: 'background_task';
   readonly taskId: string;
-  readonly status: AgentCoreBackgroundTaskStatus;
+  readonly status: TaskLifecycleStatus;
   readonly notificationId: string;
 }
 
@@ -132,6 +145,7 @@ export type PromptOrigin =
   | ShellCommandOrigin
   | CompactionSummaryOrigin
   | SystemTriggerOrigin
+  | TaskOrigin
   | BackgroundTaskOrigin
   | CronJobOrigin
   | CronMissedOrigin
@@ -203,6 +217,7 @@ export type KimiErrorCode =
   | 'session.state_not_found'
   | 'session.state_invalid'
   | 'session.fork_active_turn'
+  | 'session.undo_unavailable'
   | 'session.export_not_found'
   | 'session.export_missing_version'
   | 'session.closed'
@@ -214,6 +229,12 @@ export type KimiErrorCode =
   | 'session.question_handler_error'
   | 'session.init_failed'
   | 'agent.not_found'
+  | 'activity.agent_busy'
+  | 'activity.cancelling'
+  | 'activity.disposing'
+  | 'activity.disposed'
+  | 'activity.initializing'
+  | 'activity.session_rejected'
   | 'turn.agent_busy'
   | 'goal.already_exists'
   | 'goal.not_found'
@@ -224,30 +245,77 @@ export type KimiErrorCode =
   | 'goal.not_resumable'
   | 'model.not_configured'
   | 'model.config_invalid'
+  | 'profile.thinking_alias_conflict'
+  | 'model.not_found'
   | 'auth.login_required'
+  | 'auth.provisioning_required'
+  | 'auth.token_missing'
+  | 'auth.token_unauthorized'
+  | 'auth.model_not_resolved'
   | 'context.overflow'
   | 'loop.max_steps_exceeded'
   | 'provider.api_error'
+  | 'provider.filtered'
   | 'provider.rate_limit'
   | 'provider.auth_error'
   | 'provider.connection_error'
+  | 'provider.overloaded'
+  | 'provider.not_found'
   | 'skill.not_found'
   | 'skill.type_unsupported'
   | 'skill.name_empty'
   | 'records.write_failed'
   | 'compaction.failed'
   | 'compaction.unable'
-  | 'background.task_id_empty'
+  | 'task.task_id_empty'
+  | 'usage.turn_id_conflict'
   | 'mcp.server_not_found'
   | 'mcp.server_disabled'
   | 'mcp.startup_failed'
   | 'mcp.tool_name_collision'
+  | 'message.not_found'
   | 'plugin.not_found'
   | 'plugin.load_failed'
   | 'request.invalid'
   | 'request.work_dir_required'
   | 'request.prompt_input_empty'
+  | 'prompt.not_found'
+  | 'prompt.already_completed'
+  | 'session.busy'
   | 'shell.git_bash_not_found'
+  | 'workspace.not_found'
+  | 'terminal.not_found'
+  | 'file.not_found'
+  | 'file.too_large'
+  | 'fs.path_not_found'
+  | 'fs.permission_denied'
+  | 'fs.path_escapes'
+  | 'fs.is_directory'
+  | 'fs.is_binary'
+  | 'fs.too_large'
+  | 'fs.already_exists'
+  | 'fs.too_many_results'
+  | 'fs.grep_timeout'
+  | 'fs.git_unavailable'
+  | 'os.fs.not_found'
+  | 'os.fs.is_directory'
+  | 'os.fs.not_directory'
+  | 'os.fs.already_exists'
+  | 'os.fs.permission_denied'
+  | 'os.fs.not_empty'
+  | 'os.fs.unavailable'
+  | 'os.fs.unknown'
+  | 'os.process.spawn_failed'
+  | 'os.process.kill_failed'
+  | 'storage.not_found'
+  | 'storage.decode_failed'
+  | 'storage.corrupted'
+  | 'storage.io_failed'
+  | 'storage.locked'
+  | 'wire.duplicate_op'
+  | 'wire.cycle'
+  | 'wire.unknown_record'
+  | 'validation.failed'
   | 'not_implemented'
   | 'internal';
 
@@ -257,12 +325,13 @@ export interface KimiErrorPayload {
   readonly name?: string;
   readonly details?: Record<string, unknown>;
   readonly retryable: boolean;
+  readonly cause?: KimiErrorPayload;
 }
 
-export interface BackgroundTaskInfoBase {
+export interface TaskInfoBase {
   readonly taskId: string;
   readonly description: string;
-  readonly status: AgentCoreBackgroundTaskStatus;
+  readonly status: TaskLifecycleStatus;
   readonly detached?: boolean;
   readonly startedAt: number;
   readonly endedAt: number | null;
@@ -271,29 +340,29 @@ export interface BackgroundTaskInfoBase {
   readonly timeoutMs?: number;
 }
 
-export interface ProcessBackgroundTaskInfo extends BackgroundTaskInfoBase {
+export interface ProcessTaskInfo extends TaskInfoBase {
   readonly kind: 'process';
   readonly command: string;
   readonly pid: number;
   readonly exitCode: number | null;
 }
 
-export interface AgentBackgroundTaskInfo extends BackgroundTaskInfoBase {
+export interface AgentTaskInfo extends TaskInfoBase {
   readonly kind: 'agent';
   readonly agentId?: string;
   readonly subagentType?: string;
 }
 
-export interface QuestionBackgroundTaskInfo extends BackgroundTaskInfoBase {
+export interface QuestionTaskInfo extends TaskInfoBase {
   readonly kind: 'question';
   readonly questionCount: number;
   readonly toolCallId?: string;
 }
 
-export type BackgroundTaskInfo =
-  | ProcessBackgroundTaskInfo
-  | AgentBackgroundTaskInfo
-  | QuestionBackgroundTaskInfo;
+export type TaskInfo =
+  | ProcessTaskInfo
+  | AgentTaskInfo
+  | QuestionTaskInfo;
 
 export interface CompactionResult {
   readonly summary: string;
@@ -341,7 +410,70 @@ export interface McpOAuthAuthorizationUrlUpdateData {
   readonly authorizationUrl: string;
 }
 
-export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'filtered';
+export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
+
+export type AgentPhase =
+  | { readonly kind: 'idle' }
+  | {
+      readonly kind: 'running';
+      readonly turnId: number;
+      readonly step: number;
+      readonly stepId: string;
+      readonly since: number;
+    }
+  | {
+      readonly kind: 'streaming';
+      readonly turnId: number;
+      readonly step: number;
+      readonly stepId: string;
+      readonly stream: 'assistant' | 'thinking' | 'tool_call';
+      readonly toolCallId?: string;
+      readonly toolName?: string;
+      readonly since: number;
+    }
+  | {
+      readonly kind: 'tool_call';
+      readonly turnId: number;
+      readonly step: number;
+      readonly toolCallId: string;
+      readonly name: string;
+      readonly since: number;
+    }
+  | {
+      readonly kind: 'retrying';
+      readonly turnId: number;
+      readonly step: number;
+      readonly stepId: string;
+      readonly failedAttempt: number;
+      readonly nextAttempt: number;
+      readonly maxAttempts: number;
+      readonly delayMs: number;
+      readonly errorName?: string;
+      readonly statusCode?: number;
+      readonly since: number;
+    }
+  | {
+      readonly kind: 'awaiting_approval';
+      readonly turnId: number;
+      readonly step?: number;
+      readonly approval?: unknown;
+      readonly since: number;
+    }
+  | {
+      readonly kind: 'interrupted';
+      readonly turnId: number;
+      readonly step?: number;
+      readonly reason: 'aborted' | 'max_steps' | 'error';
+      readonly message?: string;
+      readonly at: number;
+    }
+  | {
+      readonly kind: 'ended';
+      readonly turnId: number;
+      readonly reason: TurnEndReason;
+      readonly durationMs?: number;
+      readonly at: number;
+    };
 
 export interface AgentStatusUpdatedEvent {
   readonly type: 'agent.status.updated';
@@ -353,6 +485,7 @@ export interface AgentStatusUpdatedEvent {
   readonly swarmMode?: boolean;
   readonly permission?: PermissionMode;
   readonly usage?: UsageStatus;
+  readonly phase?: AgentPhase;
 }
 
 export interface SessionMetaUpdatedEvent {
@@ -522,7 +655,7 @@ export interface AssistantDeltaEvent {
 
 export interface HookResultEvent {
   readonly type: 'hook.result';
-  readonly turnId: number;
+  readonly turnId?: number;
   readonly hookEvent: string;
   readonly content: string;
   readonly blocked?: boolean;
@@ -597,6 +730,7 @@ export interface SubagentSpawnedEvent {
   readonly parentToolCallId: string;
   readonly parentToolCallUuid?: string;
   readonly parentAgentId?: string;
+  readonly callerAgentId?: string;
   readonly description?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
@@ -647,14 +781,30 @@ export interface CompactionCompletedEvent {
   readonly result: CompactionResult;
 }
 
+export interface TaskStartedEvent {
+  readonly type: 'task.started';
+  readonly info: TaskInfo;
+}
+
+export interface TaskTerminatedEvent {
+  readonly type: 'task.terminated';
+  readonly info: TaskInfo;
+}
+
+/**
+ * Legacy background-task lifecycle events emitted by the pre-v2 agent core
+ * (`background.task.started` / `background.task.terminated`). The v2 engine
+ * emits `task.started` / `task.terminated` instead; both spellings are kept in
+ * the union so clients see a consistent event stream across engines.
+ */
 export interface BackgroundTaskStartedEvent {
   readonly type: 'background.task.started';
-  readonly info: BackgroundTaskInfo;
+  readonly info: TaskInfo;
 }
 
 export interface BackgroundTaskTerminatedEvent {
   readonly type: 'background.task.terminated';
-  readonly info: BackgroundTaskInfo;
+  readonly info: TaskInfo;
 }
 
 export interface CronFiredEvent {
@@ -667,9 +817,30 @@ export interface PromptSubmittedEvent {
   readonly type: 'prompt.submitted';
   readonly promptId: string;
   readonly userMessageId: string;
-  readonly status: 'running' | 'queued';
+  readonly status: 'running' | 'queued' | 'blocked';
   readonly content: readonly MessageContent[];
   readonly createdAt: string;
+}
+
+export interface PromptCompletedEvent {
+  readonly type: 'prompt.completed';
+  readonly promptId: string;
+  readonly finishedAt: string;
+  readonly reason?: 'completed' | 'failed' | 'blocked';
+}
+
+export interface PromptAbortedEvent {
+  readonly type: 'prompt.aborted';
+  readonly promptId: string;
+  readonly abortedAt: string;
+}
+
+export interface PromptSteeredEvent {
+  readonly type: 'prompt.steered';
+  readonly activePromptId: string;
+  readonly promptIds: readonly string[];
+  readonly content: readonly MessageContent[];
+  readonly steeredAt: string;
 }
 
 export type ToolListUpdatedReason = 'mcp.connected' | 'mcp.disconnected' | 'mcp.failed';
@@ -734,10 +905,15 @@ export type AgentEvent =
   | CompactionBlockedEvent
   | CompactionCancelledEvent
   | CompactionCompletedEvent
+  | TaskStartedEvent
+  | TaskTerminatedEvent
   | BackgroundTaskStartedEvent
   | BackgroundTaskTerminatedEvent
   | CronFiredEvent
-  | PromptSubmittedEvent;
+  | PromptSubmittedEvent
+  | PromptCompletedEvent
+  | PromptAbortedEvent
+  | PromptSteeredEvent;
 
 export type Event = AgentEvent & { agentId: string; sessionId: string };
 
@@ -811,19 +987,26 @@ export const systemTriggerOriginSchema = z.object({
   name: z.string(),
 }) satisfies z.ZodType<SystemTriggerOrigin>;
 
-export const agentCoreBackgroundTaskStatusSchema = z.enum([
+export const taskLifecycleStatusSchema = z.enum([
   'running',
   'completed',
   'failed',
   'timed_out',
   'killed',
   'lost',
-]) satisfies z.ZodType<AgentCoreBackgroundTaskStatus>;
+]) satisfies z.ZodType<TaskLifecycleStatus>;
+
+export const taskOriginSchema = z.object({
+  kind: z.literal('task'),
+  taskId: z.string(),
+  status: taskLifecycleStatusSchema,
+  notificationId: z.string(),
+}) satisfies z.ZodType<TaskOrigin>;
 
 export const backgroundTaskOriginSchema = z.object({
   kind: z.literal('background_task'),
   taskId: z.string(),
-  status: agentCoreBackgroundTaskStatusSchema,
+  status: taskLifecycleStatusSchema,
   notificationId: z.string(),
 }) satisfies z.ZodType<BackgroundTaskOrigin>;
 
@@ -860,6 +1043,7 @@ export const promptOriginSchema = z.discriminatedUnion('kind', [
   shellCommandOriginSchema,
   compactionSummaryOriginSchema,
   systemTriggerOriginSchema,
+  taskOriginSchema,
   backgroundTaskOriginSchema,
   cronJobOriginSchema,
   cronMissedOriginSchema,
@@ -933,6 +1117,7 @@ export const kimiErrorCodeSchema = z.enum([
   'session.state_not_found',
   'session.state_invalid',
   'session.fork_active_turn',
+  'session.undo_unavailable',
   'session.export_not_found',
   'session.export_missing_version',
   'session.closed',
@@ -944,6 +1129,12 @@ export const kimiErrorCodeSchema = z.enum([
   'session.question_handler_error',
   'session.init_failed',
   'agent.not_found',
+  'activity.agent_busy',
+  'activity.cancelling',
+  'activity.disposing',
+  'activity.disposed',
+  'activity.initializing',
+  'activity.session_rejected',
   'turn.agent_busy',
   'goal.already_exists',
   'goal.not_found',
@@ -954,78 +1145,112 @@ export const kimiErrorCodeSchema = z.enum([
   'goal.not_resumable',
   'model.not_configured',
   'model.config_invalid',
+  'profile.thinking_alias_conflict',
+  'model.not_found',
   'auth.login_required',
+  'auth.provisioning_required',
+  'auth.token_missing',
+  'auth.token_unauthorized',
+  'auth.model_not_resolved',
   'context.overflow',
   'loop.max_steps_exceeded',
   'provider.api_error',
+  'provider.filtered',
   'provider.rate_limit',
   'provider.auth_error',
   'provider.connection_error',
+  'provider.overloaded',
+  'provider.not_found',
   'skill.not_found',
   'skill.type_unsupported',
   'skill.name_empty',
   'records.write_failed',
   'compaction.failed',
   'compaction.unable',
-  'background.task_id_empty',
+  'task.task_id_empty',
+  'usage.turn_id_conflict',
   'mcp.server_not_found',
   'mcp.server_disabled',
   'mcp.startup_failed',
   'mcp.tool_name_collision',
+  'message.not_found',
   'plugin.not_found',
   'plugin.load_failed',
   'request.invalid',
   'request.work_dir_required',
   'request.prompt_input_empty',
+  'prompt.not_found',
+  'prompt.already_completed',
+  'session.busy',
   'shell.git_bash_not_found',
+  'workspace.not_found',
+  'terminal.not_found',
+  'file.not_found',
+  'file.too_large',
+  'fs.path_not_found',
+  'fs.permission_denied',
+  'fs.path_escapes',
+  'fs.is_directory',
+  'fs.is_binary',
+  'fs.too_large',
+  'fs.already_exists',
+  'fs.too_many_results',
+  'fs.grep_timeout',
+  'fs.git_unavailable',
+  'validation.failed',
   'not_implemented',
   'internal',
 ]) satisfies z.ZodType<KimiErrorCode>;
 
-export const kimiErrorPayloadSchema = z.object({
+export const kimiErrorPayloadSchema: z.ZodType<KimiErrorPayload> = z.lazy(
+  () => kimiErrorPayloadObjectSchema,
+);
+
+const kimiErrorPayloadObjectSchema = z.object({
   code: kimiErrorCodeSchema,
   message: z.string(),
   name: z.string().optional(),
   details: z.record(z.string(), z.unknown()).optional(),
   retryable: z.boolean(),
+  cause: kimiErrorPayloadSchema.optional(),
 }) satisfies z.ZodType<KimiErrorPayload>;
 
-export const backgroundTaskInfoBaseSchema = z.object({
+export const taskInfoBaseSchema = z.object({
   taskId: z.string(),
   description: z.string(),
-  status: agentCoreBackgroundTaskStatusSchema,
+  status: taskLifecycleStatusSchema,
   detached: z.boolean().optional(),
   startedAt: z.number(),
   endedAt: z.number().nullable(),
   stopReason: z.string().optional(),
   terminalNotificationSuppressed: z.boolean().optional(),
   timeoutMs: z.number().optional(),
-}) satisfies z.ZodType<BackgroundTaskInfoBase>;
+}) satisfies z.ZodType<TaskInfoBase>;
 
-export const processBackgroundTaskInfoSchema = backgroundTaskInfoBaseSchema.extend({
+export const processTaskInfoSchema = taskInfoBaseSchema.extend({
   kind: z.literal('process'),
   command: z.string(),
   pid: z.number(),
   exitCode: z.number().nullable(),
-}) satisfies z.ZodType<ProcessBackgroundTaskInfo>;
+}) satisfies z.ZodType<ProcessTaskInfo>;
 
-export const agentBackgroundTaskInfoSchema = backgroundTaskInfoBaseSchema.extend({
+export const agentTaskInfoSchema = taskInfoBaseSchema.extend({
   kind: z.literal('agent'),
   agentId: z.string().optional(),
   subagentType: z.string().optional(),
-}) satisfies z.ZodType<AgentBackgroundTaskInfo>;
+}) satisfies z.ZodType<AgentTaskInfo>;
 
-export const questionBackgroundTaskInfoSchema = backgroundTaskInfoBaseSchema.extend({
+export const questionTaskInfoSchema = taskInfoBaseSchema.extend({
   kind: z.literal('question'),
   questionCount: z.number(),
   toolCallId: z.string().optional(),
-}) satisfies z.ZodType<QuestionBackgroundTaskInfo>;
+}) satisfies z.ZodType<QuestionTaskInfo>;
 
-export const backgroundTaskInfoSchema = z.discriminatedUnion('kind', [
-  processBackgroundTaskInfoSchema,
-  agentBackgroundTaskInfoSchema,
-  questionBackgroundTaskInfoSchema,
-]) satisfies z.ZodType<BackgroundTaskInfo>;
+export const taskInfoSchema = z.discriminatedUnion('kind', [
+  processTaskInfoSchema,
+  agentTaskInfoSchema,
+  questionTaskInfoSchema,
+]) satisfies z.ZodType<TaskInfo>;
 
 export const compactionResultSchema = z.object({
   summary: z.string(),
@@ -1050,7 +1275,71 @@ export const mcpOAuthAuthorizationUrlUpdateDataSchema = z.object({
   authorizationUrl: z.string(),
 }) satisfies z.ZodType<McpOAuthAuthorizationUrlUpdateData>;
 
-export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'filtered']) satisfies z.ZodType<TurnEndReason>;
+export const turnEndReasonSchema = z.enum(['completed', 'cancelled', 'failed', 'blocked']) satisfies z.ZodType<TurnEndReason>;
+
+export const agentPhaseSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('idle') }),
+  z.object({
+    kind: z.literal('running'),
+    turnId: z.number(),
+    step: z.number(),
+    stepId: z.string(),
+    since: z.number(),
+  }),
+  z.object({
+    kind: z.literal('streaming'),
+    turnId: z.number(),
+    step: z.number(),
+    stepId: z.string(),
+    stream: z.enum(['assistant', 'thinking', 'tool_call']),
+    toolCallId: z.string().optional(),
+    toolName: z.string().optional(),
+    since: z.number(),
+  }),
+  z.object({
+    kind: z.literal('tool_call'),
+    turnId: z.number(),
+    step: z.number(),
+    toolCallId: z.string(),
+    name: z.string(),
+    since: z.number(),
+  }),
+  z.object({
+    kind: z.literal('retrying'),
+    turnId: z.number(),
+    step: z.number(),
+    stepId: z.string(),
+    failedAttempt: z.number(),
+    nextAttempt: z.number(),
+    maxAttempts: z.number(),
+    delayMs: z.number(),
+    errorName: z.string().optional(),
+    statusCode: z.number().optional(),
+    since: z.number(),
+  }),
+  z.object({
+    kind: z.literal('awaiting_approval'),
+    turnId: z.number(),
+    step: z.number().optional(),
+    approval: z.unknown().optional(),
+    since: z.number(),
+  }),
+  z.object({
+    kind: z.literal('interrupted'),
+    turnId: z.number(),
+    step: z.number().optional(),
+    reason: z.enum(['aborted', 'max_steps', 'error']),
+    message: z.string().optional(),
+    at: z.number(),
+  }),
+  z.object({
+    kind: z.literal('ended'),
+    turnId: z.number(),
+    reason: turnEndReasonSchema,
+    durationMs: z.number().optional(),
+    at: z.number(),
+  }),
+]) satisfies z.ZodType<AgentPhase>;
 
 export const agentStatusUpdatedEventSchema = z.object({
   type: z.literal('agent.status.updated'),
@@ -1062,6 +1351,7 @@ export const agentStatusUpdatedEventSchema = z.object({
   swarmMode: z.boolean().optional(),
   permission: permissionModeSchema.optional(),
   usage: usageStatusSchema.optional(),
+  phase: agentPhaseSchema.optional(),
 }) satisfies z.ZodType<AgentStatusUpdatedEvent>;
 
 export const sessionMetaUpdatedEventSchema = z.object({
@@ -1136,7 +1426,7 @@ export const pluginCommandActivatedEventSchema = z.object({
   trigger: z.literal('user-slash'),
 }) satisfies z.ZodType<PluginCommandActivatedEvent>;
 
-export const errorEventSchema = kimiErrorPayloadSchema.extend({
+export const errorEventSchema = kimiErrorPayloadObjectSchema.extend({
   type: z.literal('error'),
 }) satisfies z.ZodType<ErrorEvent>;
 
@@ -1215,7 +1505,7 @@ export const assistantDeltaEventSchema = z.object({
 
 export const hookResultEventSchema = z.object({
   type: z.literal('hook.result'),
-  turnId: z.number(),
+  turnId: z.number().optional(),
   hookEvent: z.string(),
   content: z.string(),
   blocked: z.boolean().optional(),
@@ -1280,6 +1570,7 @@ export const subagentSpawnedEventSchema = z.object({
   parentToolCallId: z.string(),
   parentToolCallUuid: z.string().optional(),
   parentAgentId: z.string().optional(),
+  callerAgentId: z.string().optional(),
   description: z.string().optional(),
   swarmIndex: z.number().optional(),
   runInBackground: z.boolean(),
@@ -1330,14 +1621,24 @@ export const compactionCompletedEventSchema = z.object({
   result: compactionResultSchema,
 }) satisfies z.ZodType<CompactionCompletedEvent>;
 
+export const taskStartedEventSchema = z.object({
+  type: z.literal('task.started'),
+  info: taskInfoSchema,
+}) satisfies z.ZodType<TaskStartedEvent>;
+
+export const taskTerminatedEventSchema = z.object({
+  type: z.literal('task.terminated'),
+  info: taskInfoSchema,
+}) satisfies z.ZodType<TaskTerminatedEvent>;
+
 export const backgroundTaskStartedEventSchema = z.object({
   type: z.literal('background.task.started'),
-  info: backgroundTaskInfoSchema,
+  info: taskInfoSchema,
 }) satisfies z.ZodType<BackgroundTaskStartedEvent>;
 
 export const backgroundTaskTerminatedEventSchema = z.object({
   type: z.literal('background.task.terminated'),
-  info: backgroundTaskInfoSchema,
+  info: taskInfoSchema,
 }) satisfies z.ZodType<BackgroundTaskTerminatedEvent>;
 
 export const cronFiredEventSchema = z.object({
@@ -1350,10 +1651,31 @@ export const promptSubmittedEventSchema = z.object({
   type: z.literal('prompt.submitted'),
   promptId: z.string(),
   userMessageId: z.string(),
-  status: z.enum(['running', 'queued']),
+  status: z.enum(['running', 'queued', 'blocked']),
   content: z.array(messageContentSchema),
   createdAt: isoDateTimeSchema,
 }) satisfies z.ZodType<PromptSubmittedEvent>;
+
+export const promptCompletedEventSchema = z.object({
+  type: z.literal('prompt.completed'),
+  promptId: z.string(),
+  finishedAt: isoDateTimeSchema,
+  reason: z.enum(['completed', 'failed', 'blocked']).optional(),
+}) satisfies z.ZodType<PromptCompletedEvent>;
+
+export const promptAbortedEventSchema = z.object({
+  type: z.literal('prompt.aborted'),
+  promptId: z.string(),
+  abortedAt: isoDateTimeSchema,
+}) satisfies z.ZodType<PromptAbortedEvent>;
+
+export const promptSteeredEventSchema = z.object({
+  type: z.literal('prompt.steered'),
+  activePromptId: z.string(),
+  promptIds: z.array(z.string()),
+  content: z.array(messageContentSchema),
+  steeredAt: isoDateTimeSchema,
+}) satisfies z.ZodType<PromptSteeredEvent>;
 
 export const toolListUpdatedReasonSchema = z.enum([
   'mcp.connected',
@@ -1420,10 +1742,15 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   compactionBlockedEventSchema,
   compactionCancelledEventSchema,
   compactionCompletedEventSchema,
+  taskStartedEventSchema,
+  taskTerminatedEventSchema,
   backgroundTaskStartedEventSchema,
   backgroundTaskTerminatedEventSchema,
   cronFiredEventSchema,
   promptSubmittedEventSchema,
+  promptCompletedEventSchema,
+  promptAbortedEventSchema,
+  promptSteeredEventSchema,
 ]) satisfies z.ZodType<AgentEvent>;
 
 export const eventSchema = agentEventSchema.and(
@@ -1444,6 +1771,12 @@ export const eventSchema = agentEventSchema.and(
  * other REST surfaces instead of delta replay.
  *
  * Everything not listed here is durable: journaled, seq-bearing, replayable.
+ *
+ * @deprecated Use the server-side `isVolatileSignal`
+ * (`packages/kap-server/src/transport/ws/v1/sessionEventBroadcaster.ts`) instead,
+ * which owns volatile-vs-durable classification for the `wire` emission path.
+ * The legacy `IAgentRecordService` (`record.on`) transport path still consumes
+ * this until Phase 4 removes it; do not add new consumers.
  */
 export const VOLATILE_EVENT_TYPES = [
   'assistant.delta',
@@ -1459,6 +1792,13 @@ export type VolatileEventType = (typeof VOLATILE_EVENT_TYPES)[number];
 
 const volatileEventTypeSet: ReadonlySet<string> = new Set(VOLATILE_EVENT_TYPES);
 
+/**
+ * @deprecated Use the server-side `isVolatileSignal`
+ * (`packages/kap-server/src/transport/ws/v1/sessionEventBroadcaster.ts`) instead,
+ * which owns volatile-vs-durable classification for the `wire` emission path.
+ * Retained only for the legacy `IAgentRecordService` (`record.on`) transport
+ * path until Phase 4 removes it; do not add new consumers.
+ */
 export function isVolatileEventType(type: string): type is VolatileEventType {
   return volatileEventTypeSet.has(type);
 }

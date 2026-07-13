@@ -2,6 +2,7 @@ import type { Kaos } from '@moonshot-ai/kaos';
 import {
   ErrorCodes,
   KimiError,
+  ImageLimits,
   withTelemetryContext,
   type ExperimentalFeatureState,
 } from '@moonshot-ai/agent-core';
@@ -39,6 +40,13 @@ export interface KimiHarnessRuntimeOptions {
   readonly ensureConfigFile: () => Promise<void>;
   readonly onClose: () => void | Promise<void>;
   readonly sessionStartedProperties?: TelemetryProperties;
+  /**
+   * Owner-scoped [image] limits for prompt-ingestion compression in the
+   * client process (paste-time, ACP prompt conversion). In-process cores
+   * (SDKRpcClient) hand over their core's instance; daemon-client hosts
+   * leave it undefined and ingestion falls back to env/built-in defaults.
+   */
+  readonly imageLimits?: ImageLimits | undefined;
 }
 
 export class KimiHarness {
@@ -54,6 +62,12 @@ export class KimiHarness {
   private readonly closeImpl: () => void | Promise<void>;
   private readonly sessionStartedProperties: TelemetryProperties;
 
+  /**
+   * Ingestion-side [image] limits owned by this harness's core; undefined for
+   * daemon-client hosts, where the env var / built-in defaults apply.
+   */
+  readonly imageLimits: ImageLimits | undefined;
+
   constructor(
     private readonly rpc: SDKRpcClientBase,
     options: KimiHarnessRuntimeOptions,
@@ -67,6 +81,7 @@ export class KimiHarness {
     this.ensureConfigFileImpl = options.ensureConfigFile;
     this.closeImpl = options.onClose;
     this.sessionStartedProperties = options.sessionStartedProperties ?? {};
+    this.imageLimits = options.imageLimits;
   }
 
   get sessions(): ReadonlyMap<string, Session> {

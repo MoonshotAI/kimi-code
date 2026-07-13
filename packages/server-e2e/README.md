@@ -20,7 +20,49 @@ typed `DaemonClient` you can reuse in vitest e2e files.
 - You want a typed in-process facade over the server for user-facing code —
   use `@moonshot-ai/node-sdk` instead (`KimiHarness`, `Session`).
 
-## Quick start
+## Quick start (server-v2 — recommended)
+
+`ServerClient` is a lark-style typed client for the `server-v2` `/api/v2` RPC
++ WebSocket surface. The resource tree mirrors the server's `actionMap`; a drift
+test (`test/v2/actionMap.test.ts`) keeps it in lockstep.
+
+```ts
+import { ServerClient } from '@moonshot-ai/server-e2e';
+
+const sdk = new ServerClient({ baseUrl: 'http://127.0.0.1:58627', token });
+
+// Core scope — /api/v2/<resource>:<action>
+const { items } = await sdk.sessions.list({ page_size: 20 });
+await sdk.workspaces.createOrTouch(process.cwd());
+
+// Session scope — the `session` resource is flattened onto the handle
+const s = sdk.session(items[0].id);
+await s.setTitle('renamed');
+await s.status();
+await s.approvals.decide(approvalId, { decision: 'approved' });
+
+// Agent scope
+const { turn_id } = await s.agent('main').prompts.submit({
+  input: [{ type: 'text', text: 'hello' }],
+});
+await s.agent('main').shell.run({ command: 'ls' });
+
+// Events over /api/v2/ws
+const events = await sdk.connect();
+const off = events.onAgentEvents(items[0].id, 'main', (e) => {
+  console.log('agent event', e);
+});
+// ...
+off();
+await sdk.close();
+```
+
+Anything not (yet) in the typed tree is reachable via the escape hatches
+`sdk.core<T>(resource)`, `sdk.session(sid).service<T>(resource)`, and
+`sdk.session(sid).agent(aid).service<T>(resource)`. The legacy `/api/v1` REST
+surface is reachable via `sdk.v1` (the unchanged `HttpClient`).
+
+## Quick start (legacy `/api/v1` client)
 
 ```ts
 import { DaemonClient } from '@moonshot-ai/server-e2e';
@@ -89,6 +131,7 @@ Override the namespace with `KIMI_SERVER_E2E_RUN_ID`, or override paths with
 
 | Symbol | Purpose |
 |---|---|
+| `ServerClient` | **server-v2** lark-style client — typed `/api/v2` resource tree (HTTP) + events (WS), with `sdk.v1` for the legacy REST surface. |
 | `DaemonClient` | Main facade — HTTP + WS, handshake plumbing, reverse-RPC handlers. |
 | `HttpClient` | REST helpers only (no WS). Useful when you don't need event observation. |
 | `WsClient` | Raw WS wrapper — queue, waiters, ack correlation. |

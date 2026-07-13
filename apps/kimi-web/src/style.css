@@ -204,11 +204,9 @@ summary {
   --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
   --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
   --content-font-size: calc(var(--base-ui-font-size) + 1px);
-  --sidebar-ui-font-size: calc(var(--base-ui-font-size) + 1px);
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-  /* Body/UI font follows the design-system canonical token (system UI font
-     first; Inter intentionally NOT in the body chain — it stays reserved for
-     --font-display headings). Mirrors --font-ui so the two can never drift. */
+  /* Body/UI font follows the design-system canonical token. Mirrors --font-ui
+     so the legacy alias can never drift from the current text face. */
   --sans: var(--font-ui);
   color-scheme: light dark;
 }
@@ -388,6 +386,15 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --color-text-on-accent: #ffffff;
   --color-line: #e7eaee;
   --color-line-strong: #d4d9e0;
+  /* Neutral selected fill (sidebar rows, list pickers) — deliberately NOT
+     accent-tinted, so selection reads as "where I am", not as an action. */
+  --color-selected: #00000014;
+  /* Row hover wash — lighter than the selected fill (hover < selected); both
+     are translucent black so they sit naturally on any light surface. */
+  --color-hover: #0000000d;
+  /* Sidebar surface — one step off --color-bg (warm off-white / near-black)
+     so the session column reads as its own plane. */
+  --color-sidebar-bg: #fbfaf9;
   --color-accent: var(--accent-primary);
   --color-accent-hover: #0f6fe0;
   --color-accent-soft: #e8f3ff;
@@ -454,14 +461,15 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --duration-slow: 260ms;
 
   /* -- type families ------------------------------------------------------- */
-  /* UI/body use the platform's native UI font first (design-system §02);
-     Inter is intentionally NOT in this chain — it is reserved for
-     --font-display (optional headings / brand wordmarks) below. */
-  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", "Noto Sans SC",
-    Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif, "Apple Color Emoji",
-    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
-  --font-display: "Inter Variable", "Inter", var(--font-ui);
+  /* UI/body use self-hosted Inter first. CJK and platform system UI families
+     stay late in the fallback chain so Latin glyphs resolve to Inter while
+     Chinese text can still fall through to native CJK fonts. */
+  --font-ui: "Inter Variable", "Inter", "Helvetica Neue", Arial,
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC",
+    "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Ubuntu, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
+    "Segoe UI Symbol", "Noto Color Emoji";
+  --font-display: var(--font-ui);
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
     "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
@@ -495,6 +503,8 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --p-sidebar-w: 264px;
   --p-content-max: 760px;
   --p-content-wide: 920px;
+  --p-table-max: 1040px;
+  --p-table-cell-max: 700px;
   --p-bp-sm: 640px;
   --p-bp-md: 980px;
 }
@@ -511,6 +521,9 @@ html[data-color-scheme="dark"] {
   --color-text-faint: #6b7280;
   --color-line: #2d333b;
   --color-line-strong: #3d444d;
+  --color-selected: #ffffff14;
+  --color-hover: #ffffff0d;
+  --color-sidebar-bg: #181817;
   --color-accent: #58a6ff;
   --color-accent-hover: #79b8ff;
   --color-accent-soft: rgba(88, 166, 255, 0.14);
@@ -550,6 +563,9 @@ html[data-color-scheme="dark"] {
     --color-text-faint: #6b7280;
     --color-line: #2d333b;
     --color-line-strong: #3d444d;
+    --color-selected: #ffffff14;
+    --color-hover: #ffffff0d;
+    --color-sidebar-bg: #181817;
     --color-accent: #58a6ff;
     --color-accent-hover: #79b8ff;
     --color-accent-soft: rgba(88, 166, 255, 0.14);
@@ -614,9 +630,16 @@ body {
    A single mid-gray works on either background, so no per-theme tokens needed.
    Components may still override locally (e.g. the sidebar's even-thinner rule).
    --------------------------------------------------------------------------- */
-* {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+/* Firefox-only fallback: the standard scrollbar properties DISABLE the whole
+   ::-webkit-scrollbar customisation in Chromium 121+ (any non-auto value wins
+   over the pseudo-element styles), silently replacing the 6px/4px custom bars
+   with the ~11px native thin gutter. Scope them to engines that don't know
+   the webkit pseudo-element instead. */
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(128, 128, 128, 0.3) transparent;
+  }
 }
 *::-webkit-scrollbar {
   width: 6px;
@@ -643,6 +666,7 @@ body {
   font-size: var(--ui-font-size);
   font-weight: 400;
   line-height: 1.6;
+  font-optical-sizing: auto;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: auto;

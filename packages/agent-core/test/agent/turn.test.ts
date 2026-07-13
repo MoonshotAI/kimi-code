@@ -9,9 +9,12 @@ import { createControlledPromise } from '@antfu/utils';
 import {
   APIConnectionError,
   APIEmptyResponseError,
+  APIRequestTooLargeError,
   APIStatusError,
   APITimeoutError,
+  ChatProviderError,
   type ChatProvider,
+  type Message,
   type ModelCapability,
   type ToolCall,
 } from '@moonshot-ai/kosong';
@@ -31,7 +34,12 @@ import type {
 } from '../../src/session/subagent-host';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
-import { createCommandKaos, testAgent, type TestAgentOptions } from './harness/agent';
+import {
+  createCommandKaos,
+  testAgent,
+  type TestAgentContext,
+  type TestAgentOptions,
+} from './harness/agent';
 import { executeTool } from '../tools/fixtures/execute-tool';
 import { agentTask } from './background/helpers';
 
@@ -60,6 +68,338 @@ function captureLogs(): { logger: Logger; entries: CapturedLogEntry[] } {
 }
 
 describe('Agent turn flow', () => {
+  it('degrades older history media and retries when the provider rejects the request body as too large', async () => {
+    let attempts = 0;
+    const histories: Message[][] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      attempts += 1;
+      histories.push(structuredClone(history));
+      if (attempts === 1) {
+        throw new APIRequestTooLargeError(413, 'Request exceeds the maximum size');
+      }
+      return {
+        id: 'mock-degraded-recovery',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+      modelCapabilities: {
+        image_in: true,
+        video_in: false,
+        audio_in: false,
+        thinking: false,
+        tool_use: true,
+        max_context_tokens: 256_000,
+      },
+    });
+    // Three ReadMediaFile-shaped image results in the history.
+    for (const name of ['a', 'b', 'c']) {
+      ctx.agent.context.appendUserMessage(
+        [
+          { type: 'text', text: `<image path="/workspace/${name}.png">` },
+          { type: 'image_url', imageUrl: { url: `data:image/png;base64,${name}AAA` } },
+          { type: 'text', text: '</image>' },
+        ],
+        { kind: 'user' },
+      );
+    }
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'inspect the screenshots' }] });
+    await ctx.untilTurnEnd();
+
+    expect(attempts).toBe(2);
+    // The first request carried all three images.
+    const firstParts = histories[0]!.flatMap((message) => message.content);
+    expect(firstParts.filter((part) => part.type === 'image_url')).toHaveLength(3);
+    // The retry keeps only the two most recent images; the oldest becomes a
+    // placeholder while its path wrapper survives for readback.
+    const retryParts = histories[1]!.flatMap((message) => message.content);
+    const retryImages = retryParts.filter((part) => part.type === 'image_url');
+    expect(retryImages).toHaveLength(2);
+    expect(
+      retryImages.map((part) => (part.type === 'image_url' ? part.imageUrl.url : '')),
+    ).toEqual(['data:image/png;base64,bAAA', 'data:image/png;base64,cAAA']);
+    const retryText = retryParts
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
+    expect(retryText).toContain('[image omitted:');
+    expect(retryText).toContain('<image path="/workspace/a.png">');
+    // The real history is untouched.
+    expect(
+      ctx.agent.context.history
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url'),
+    ).toHaveLength(3);
+  });
+
+  it('gates unsupported image formats at the prompt and steer entry so the session cannot be poisoned', async () => {
+    const histories: Message[][] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      histories.push(structuredClone(history));
+      return {
+        id: 'mock-format-gate',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+      modelCapabilities: {
+        image_in: true,
+        video_in: false,
+        audio_in: false,
+        thinking: false,
+        tool_use: true,
+        max_context_tokens: 256_000,
+      },
+    });
+
+    // The SDK/RPC prompt path carries no upstream gate: the turn entry is
+    // the last funnel before parts land in the session history.
+    await ctx.rpc.prompt({
+      input: [
+        { type: 'text', text: 'what is in these images?' },
+        { type: 'image_url', imageUrl: { url: 'data:image/avif;base64,QUJD' } },
+        { type: 'image_url', imageUrl: { url: 'data:image/jpg;base64,REVG' } },
+      ],
+    });
+    await ctx.untilTurnEnd();
+
+    // The AVIF image never reaches the model: a notice stands in, and the
+    // accepted image/jpg alias is forwarded as canonical image/jpeg.
+    const sentParts = histories[0]!.flatMap((message) => message.content);
+    const sentImages = sentParts.filter((part) => part.type === 'image_url');
+    expect(sentImages).toEqual([
+      { type: 'image_url', imageUrl: { url: 'data:image/jpeg;base64,REVG' } },
+    ]);
+    const sentText = sentParts
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n');
+    expect(sentText).toContain('image/avif');
+
+    // The history itself is clean — no image/avif part can re-poison later turns.
+    const historyParts = ctx.agent.context.history.flatMap((message) => message.content);
+    expect(
+      historyParts.some(
+        (part) => part.type === 'image_url' && part.imageUrl.url.includes('image/avif'),
+      ),
+    ).toBe(false);
+
+    // Steer input enters the history the same way and gets the same gate.
+    await ctx.rpc.steer({
+      input: [{ type: 'image_url', imageUrl: { url: 'data:image/heic;base64,QUJD' } }],
+    });
+    await ctx.untilTurnEnd();
+
+    // The steer turn's history also carries the first turn's (canonical)
+    // image; what must be gone is the HEIC one.
+    const steerParts = histories[1]!.flatMap((message) => message.content);
+    expect(
+      steerParts.some(
+        (part) => part.type === 'image_url' && part.imageUrl.url.includes('image/heic'),
+      ),
+    ).toBe(false);
+    expect(
+      steerParts
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n'),
+    ).toContain('image/heic');
+
+    // A mislabeled image is gated on its real bytes: AVIF bytes labeled
+    // image/png never reach the model.
+    const avif = Buffer.alloc(16);
+    avif.writeUInt32BE(16, 0);
+    avif.write('ftyp', 4, 'latin1');
+    avif.write('avif', 8, 'latin1');
+    await ctx.rpc.prompt({
+      input: [
+        {
+          type: 'image_url',
+          imageUrl: { url: `data:image/png;base64,${avif.toString('base64')}` },
+        },
+      ],
+    });
+    await ctx.untilTurnEnd();
+
+    // The third turn's history also carries the first turn's canonical
+    // image; what must be gone is the mislabeled AVIF payload.
+    const mislabeledParts = histories[2]!.flatMap((message) => message.content);
+    expect(
+      mislabeledParts.some(
+        (part) =>
+          part.type === 'image_url' && part.imageUrl.url.includes(avif.toString('base64')),
+      ),
+    ).toBe(false);
+    expect(
+      mislabeledParts
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text)
+        .join('\n'),
+    ).toContain('image/avif');
+  });
+
+  describe('image-format recovery', () => {
+    const IMAGE_CAPABLE: ModelCapability = {
+      image_in: true,
+      video_in: false,
+      audio_in: false,
+      thinking: false,
+      tool_use: true,
+      max_context_tokens: 256_000,
+    };
+
+    // Simulate a legacy/pre-gate history that already carries a poisoned
+    // image. The turn.prompt gate only sanitizes NEW prompt input, not the
+    // pre-existing context, so this reaches the provider unmodified.
+    function plantPoisonedImage(ctx: TestAgentContext): void {
+      ctx.agent.context.appendUserMessage(
+        [
+          { type: 'text', text: '<image path="/workspace/old.avif">' },
+          { type: 'image_url', imageUrl: { url: 'data:image/avif;base64,QUJD' } },
+          { type: 'text', text: '</image>' },
+        ],
+        { kind: 'user' },
+      );
+    }
+
+    function okResponse() {
+      return {
+        id: 'mock-recovery',
+        message: {
+          role: 'assistant' as const,
+          content: [{ type: 'text' as const, text: 'ok' }],
+          toolCalls: [],
+        },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'completed' as const,
+        rawFinishReason: 'stop',
+      };
+    }
+
+    it('strips all media and retries once on a server image-format 400', async () => {
+      let attempts = 0;
+      const histories: Message[][] = [];
+      const generate: GenerateFn = async (_p, _s, _t, history) => {
+        attempts += 1;
+        histories.push(structuredClone(history));
+        if (attempts === 1) throw new APIStatusError(400, 'unsupported image format');
+        return okResponse();
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      plantPoisonedImage(ctx);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      expect(attempts).toBe(2);
+      expect(histories[0]!.flatMap((m) => m.content).some((p) => p.type === 'image_url')).toBe(true);
+      expect(histories[1]!.flatMap((m) => m.content).some((p) => p.type === 'image_url')).toBe(false);
+      // Read-side only: the real history keeps the poisoned image.
+      expect(
+        ctx.agent.context.history.flatMap((m) => m.content).some((p) => p.type === 'image_url'),
+      ).toBe(true);
+    });
+
+    it('strips all media and retries once on kosong client-side image error', async () => {
+      let attempts = 0;
+      const generate: GenerateFn = async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new ChatProviderError('Unsupported media type for base64 image: image/avif');
+        }
+        return okResponse();
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      plantPoisonedImage(ctx);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      // isRetryableGenerateError excludes image-format errors, so no transient
+      // retries burn first — exactly one throw then one recovered resend.
+      expect(attempts).toBe(2);
+    });
+
+    it('does NOT recover a non-image 400 (no wasted resend)', async () => {
+      let attempts = 0;
+      const generate: GenerateFn = async () => {
+        attempts += 1;
+        throw new APIStatusError(400, 'max_tokens must be positive');
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      plantPoisonedImage(ctx);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      expect(attempts).toBe(1);
+    });
+
+    it('does NOT recover image count/size/support errors (no silent blind resend)', async () => {
+      // "too many images" mentions "image" but is not a format/data error:
+      // stripping media would let the turn complete with the model blind to
+      // the user's images, hiding the real problem. Surface it instead.
+      let attempts = 0;
+      const generate: GenerateFn = async () => {
+        attempts += 1;
+        throw new APIStatusError(400, 'too many images in request');
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      plantPoisonedImage(ctx);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      expect(attempts).toBe(1);
+    });
+
+    it('surfaces the error when the strip resend also fails (no infinite loop)', async () => {
+      let attempts = 0;
+      const generate: GenerateFn = async () => {
+        attempts += 1;
+        throw new APIStatusError(400, 'unsupported image format');
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      plantPoisonedImage(ctx);
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+      await ctx.untilTurnEnd();
+
+      expect(attempts).toBe(2);
+    });
+  });
+
   it('tracks turn_started and turn_interrupted telemetry', async () => {
     const records: TelemetryRecord[] = [];
     const ctx = testAgent({ telemetry: recordingTelemetry(records) });
@@ -542,7 +882,7 @@ describe('Agent turn flow', () => {
         args: expect.objectContaining({
           reason: 'failed',
           error: expect.objectContaining({
-            code: 'provider.api_error',
+            code: 'provider.filtered',
             name: 'APIEmptyResponseError',
             details: expect.objectContaining({
               finishReason: 'filtered',
@@ -558,7 +898,7 @@ describe('Agent turn flow', () => {
         type: '[rpc]',
         event: 'error',
         args: expect.objectContaining({
-          code: 'provider.api_error',
+          code: 'provider.filtered',
           name: 'APIEmptyResponseError',
           details: expect.objectContaining({
             finishReason: 'filtered',
@@ -570,7 +910,7 @@ describe('Agent turn flow', () => {
     );
   });
 
-  it('ends the turn with reason filtered when the provider filters a non-empty response', async () => {
+  it('ends the turn with a provider.filtered error when the provider filters a non-empty response', async () => {
     const generate: GenerateFn = async () => ({
       id: null,
       message: {
@@ -601,7 +941,14 @@ describe('Agent turn flow', () => {
         type: '[rpc]',
         event: 'turn.ended',
         args: expect.objectContaining({
-          reason: 'filtered',
+          reason: 'failed',
+          error: expect.objectContaining({
+            code: 'provider.filtered',
+            details: expect.objectContaining({
+              finishReason: 'filtered',
+              turnId: 0,
+            }),
+          }),
         }),
       }),
     );
@@ -785,6 +1132,12 @@ describe('Agent turn flow', () => {
           content: 'no profanity',
           blocked: true,
         }),
+      }),
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.ended',
+        args: expect.objectContaining({ reason: 'blocked' }),
       }),
     );
     expect(ctx.agent.context.data().history).toEqual([
@@ -1409,7 +1762,7 @@ describe('Agent turn flow', () => {
     );
   });
 
-  it('falls back to login_required when force-refresh and replay both 401', async () => {
+  it('treats 401 after force-refresh as provider auth error', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
     const oauthOptions = oauthAgentOptions(
@@ -1447,7 +1800,7 @@ describe('Agent turn flow', () => {
         args: expect.objectContaining({
           reason: 'failed',
           error: expect.objectContaining({
-            code: 'auth.login_required',
+            code: 'provider.auth_error',
             details: expect.objectContaining({
               statusCode: 401,
               requestId: 'req-401',
@@ -1644,7 +1997,7 @@ describe('Agent turn flow', () => {
     expect(payloads[1]).toMatchObject({ turnStep: '0.1', attempt: '2/3' });
   });
 
-  it('force-refreshes OAuth credentials on video upload 401 and falls back to login_required when replay 401', async () => {
+  it('force-refreshes OAuth credentials on video upload 401 and surfaces the provider auth error when replay 401', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
     const oauthOptions = oauthAgentOptions(
@@ -1689,8 +2042,9 @@ describe('Agent turn flow', () => {
     expect(result.isError).toBe(true);
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token']);
     expect(tokenCalls).toEqual([undefined, true]);
-    expect(result.output).toContain('OAuth provider credentials were rejected');
-    expect(result.output).toContain('Send /login to login');
+    expect(result.output).toContain('Unauthorized');
+    expect(result.output).not.toContain('OAuth provider credentials were rejected');
+    expect(result.output).not.toContain('Send /login to login');
   });
 
   it('cancels an active turn', async () => {

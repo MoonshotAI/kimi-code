@@ -1,3 +1,8 @@
+/**
+ * Web daemon projector contract for transcript isolation, task progress, and
+ * client-visible error projection.
+ */
+
 import { describe, expect, it } from 'vitest';
 import { classifyFrame, createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
 
@@ -58,6 +63,41 @@ describe('subagent streaming text', () => {
     const projector = createAgentProjector();
     const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: '' }, 's1');
     expect(events).toEqual([]);
+  });
+});
+
+describe('agent error projection', () => {
+  it('drops a subagent error instead of surfacing it as a session warning', () => {
+    const projector = createAgentProjector();
+
+    expect(
+      projector.project(
+        'error',
+        { agentId: 'sub-1', code: 'provider.rate_limit', message: 'Rate limited' },
+        's1',
+      ),
+    ).toEqual([]);
+  });
+
+  it('keeps a main-agent error visible to the session', () => {
+    const projector = createAgentProjector();
+
+    expect(
+      projector.project(
+        'error',
+        { agentId: 'main', code: 'provider.rate_limit', message: 'Rate limited' },
+        's1',
+      ),
+    ).toEqual([
+      {
+        type: 'unknown',
+        raw: {
+          _agentError: true,
+          code: 'provider.rate_limit',
+          message: 'Rate limited',
+        },
+      },
+    ]);
   });
 });
 
@@ -132,5 +172,50 @@ describe('classifyFrame cron.fired', () => {
     const payload = { origin: { kind: 'cron_job' }, prompt: 'x' };
     expect(classifyFrame('cron.fired', payload)).toEqual({ route: 'agent', agentType: 'cron.fired' });
     expect(classifyFrame('event.cron.fired', payload)).toEqual({ route: 'agent', agentType: 'cron.fired' });
+  });
+});
+
+// Session status has a single source: the daemon's event.session.status_changed
+// (mapped by toAppEvent). The raw turn stream must NOT project a second
+// sessionStatusChanged per transition — when it did, every turn end fired
+// turn-end consumers (completion notification, sound) twice.
+describe('session status single-sourcing', () => {
+  it('turn.started projects no sessionStatusChanged', () => {
+    const projector = createAgentProjector();
+    const events = projector.project('turn.started', { turnId: 1 }, 's1');
+    expect(events.some((e) => e.type === 'sessionStatusChanged')).toBe(false);
+  });
+
+  it('turn.ended finalizes the message and usage but projects no sessionStatusChanged', () => {
+    const projector = createAgentProjector();
+    projector.project('turn.started', { turnId: 1 }, 's1');
+    projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
+    const events = projector.project(
+      'turn.ended',
+      { turnId: 1, reason: 'completed', durationMs: 123 },
+      's1',
+    );
+    expect(events.some((e) => e.type === 'sessionStatusChanged')).toBe(false);
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'messageUpdated', status: 'completed', durationMs: 123 }),
+    );
+    expect(events).toContainEqual(expect.objectContaining({ type: 'sessionUsageUpdated' }));
+  });
+
+  it('seedInFlight returns only the seeded message — status comes from the snapshot', () => {
+    const projector = createAgentProjector();
+    const events = projector.seedInFlight('s1', {
+      turnId: 1,
+      assistantText: 'partial',
+      thinkingText: '',
+      runningTools: [],
+    });
+    expect(events.some((e) => e.type === 'sessionStatusChanged')).toBe(false);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'messageCreated',
+        message: expect.objectContaining({ role: 'assistant' }),
+      }),
+    );
   });
 });

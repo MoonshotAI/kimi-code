@@ -328,10 +328,15 @@ describe('TaskOutputTool', () => {
   });
 
   it('returns timeout for block=true when a running task does not finish', async () => {
+    // Fake timers drive the real 1s block timeout (taskOutput passes
+    // timeout: 1) so the test does not wait a real second.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const { manager } = createBackgroundManager();
     const taskId = registerProcess(manager, pendingProcess(), 'sleep 60', 'blocking task');
 
-    const content = await taskOutput(manager, taskId, true);
+    const contentPromise = taskOutput(manager, taskId, true);
+    await vi.advanceTimersByTimeAsync(1_000);
+    const content = await contentPromise;
 
     expect(content).toContain('retrieval_status: timeout');
     expect(content).toContain('status: running');

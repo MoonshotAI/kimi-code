@@ -1,10 +1,15 @@
-import { APIConnectionError, emptyUsage, isRetryableGenerateError } from '@moonshot-ai/kosong';
+import {
+  APIConnectionError,
+  APIProviderRateLimitError,
+  emptyUsage,
+  isRetryableGenerateError,
+} from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
 import type { KimiConfig } from '#/config';
 import { ErrorCodes, KimiError } from '#/errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from '#/loop/llm';
-import { chatWithRetry } from '#/loop/retry';
+import { chatWithRetry, retryBackoffDelays } from '#/loop/retry';
 import { ProviderManager } from '#/session/provider-manager';
 
 function okResponse(): LLMChatResponse {
@@ -134,6 +139,74 @@ describe('chatWithRetry: terminated stream drops', () => {
     });
     expect(chatCalls).toBe(1);
     expect(tokenCalls).toBe(1);
+  });
+});
+
+describe('retryBackoffDelays', () => {
+  it('uses a 500ms base, factor-2 ramp, 32s cap, and up to +25% jitter', () => {
+    const delays = retryBackoffDelays(10);
+    expect(delays).toHaveLength(9);
+    // Max possible delay is the capped base (32s) plus 25% jitter = 40s.
+    for (const d of delays) {
+      expect(d).toBeGreaterThan(0);
+      expect(d).toBeLessThanOrEqual(40_000);
+    }
+    // First attempt base is 500ms (plus up to 25% jitter) -> within [500, 625].
+    expect(delays[0]).toBeGreaterThanOrEqual(500);
+    expect(delays[0]).toBeLessThanOrEqual(625);
+  });
+
+  it('reaches the 32s cap for high-attempt configs (overload ride-out)', () => {
+    // The ramp hits 32s by attempt 7 (500 * 2^6); across many draws the peak
+    // approaches the cap (32s..40s with jitter), well above the old 5s cap.
+    let maxSeen = 0;
+    for (let i = 0; i < 50; i += 1) {
+      for (const d of retryBackoffDelays(12)) {
+        maxSeen = Math.max(maxSeen, d);
+      }
+    }
+    expect(maxSeen).toBeGreaterThan(30_000);
+  });
+
+  it('keeps default-attempt retries quick so interactive runs are not slowed', () => {
+    // 3 attempts -> 2 delays at the bottom of the ramp (~0.5s / ~1s before
+    // jitter); their sum stays small.
+    const delays = retryBackoffDelays(3);
+    expect(delays).toHaveLength(2);
+    expect(delays.reduce((a, b) => a + b, 0)).toBeLessThan(3_000);
+  });
+});
+
+describe('chatWithRetry: honors server retry-after', () => {
+  it('uses the error retryAfterMs as the retry delay instead of the backoff', async () => {
+    let calls = 0;
+    const captured: Array<{ type: string; delayMs?: number }> = [];
+    const llm: LLM = {
+      systemPrompt: '',
+      modelName: 'mock',
+      isRetryableError: (e) => isRetryableGenerateError(e),
+      async chat(): Promise<LLMChatResponse> {
+        calls += 1;
+        if (calls === 1) {
+          // 429 carrying a server `retry-after` of 42ms. Kept tiny so the test
+          // sleeps only briefly, while still being distinguishable from the
+          // attempt-1 backoff (500..625ms) it must override.
+          throw new APIProviderRateLimitError('rate limited', null, 42);
+        }
+        return okResponse();
+      },
+    };
+    const input = makeInput(llm, new AbortController().signal);
+    await chatWithRetry({
+      ...input,
+      dispatchEvent: async (event) => {
+        captured.push(event as { type: string; delayMs?: number });
+      },
+    });
+
+    expect(calls).toBe(2);
+    const retrying = captured.find((e) => e.type === 'step.retrying');
+    expect(retrying?.delayMs).toBe(42);
   });
 });
 

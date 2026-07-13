@@ -83,7 +83,7 @@ export class ApprovalService extends Disposable implements IApprovalService {
       this.eventService.onDidPublish((event) => {
         if ((event as { type?: string }).type !== 'turn.ended') return;
         const reason = (event as { reason?: string }).reason;
-        if (reason !== 'cancelled' && reason !== 'failed' && reason !== 'filtered') return;
+        if (reason !== 'cancelled' && reason !== 'failed' && reason !== 'blocked') return;
         const sessionId = (event as { sessionId?: string }).sessionId;
         if (sessionId === undefined || sessionId === '') return;
         this.dismissForSession(sessionId);

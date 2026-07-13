@@ -74,7 +74,9 @@ function onKeydown(e: KeyboardEvent): void {
 .server-auth-overlay {
   position: fixed;
   inset: 0;
-  z-index: var(--z-modal);
+  /* Above the connecting splash (--z-toast): on a 401 during first load the
+     splash stays up, and this prompt must remain reachable on top of it. */
+  z-index: var(--z-max);
   display: flex;
   align-items: center;
   justify-content: center;

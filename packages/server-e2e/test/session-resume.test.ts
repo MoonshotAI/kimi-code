@@ -13,9 +13,9 @@
  *      protocol exposes `idle | running | awaiting_approval |
  *      awaiting_question | aborted` (`session.ts:36-42`); pre-fix,
  *      `toProtocolSession` (`services/src/session/session.ts:178`) hardcoded
- *      `status: 'idle'`. This test asserts the live server transitions
- *      `idle → running → idle` across a prompt; it's marked `it.fails` so the
- *      runner flags the moment the hardcode is removed.
+ *      `status: 'idle'`; the v2 backend pulls real status, so this test
+ *      asserts the live server transitions `idle → running → idle` across a
+ *      prompt.
  *
  * Both tests gate on `daemonReachable()` so CI without a server stays green.
  */
@@ -119,12 +119,12 @@ describeLive('session resume + status (live server required)', () => {
   );
 
   // ── Gap 2: live status field ───────────────────────────────────────────
-  // Marked `it.fails` until the toProtocolSession hardcode at
-  // `services/src/session/session.ts:178` is replaced with a real status
-  // pull (likely from the bridge's `ISessionService.getStatus(sid)` or
-  // similar). When the fix lands the test starts passing and vitest fails
-  // *this* assertion shape — that's the cue to remove `.fails`.
-  it.fails(
+  // Asserts the live server transitions `idle → running → idle` across a
+  // prompt. Historically gated behind `it.fails` pending v1's
+  // `toProtocolSession` hardcode (`services/src/session/session.ts:178`);
+  // the v2 backend pulls real status and the transition now passes, so the
+  // gate was removed.
+  it(
     'GET /sessions/{sid}.status transitions idle → running → idle across a prompt',
     async () => {
       const log = createCaseLogger('session status: live transition');

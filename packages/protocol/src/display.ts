@@ -50,7 +50,7 @@ export const ToolInputDisplaySchema = z.discriminatedUnion('kind', [
     items: z.array(z.object({ title: z.string(), status: z.string() })),
   }),
   z.object({
-    kind: z.literal('background_task'),
+    kind: z.literal('task'),
     task_id: z.string(),
     status: z.string(),
     description: z.string(),
@@ -131,7 +131,7 @@ export const ToolResultDisplaySchema = z.discriminatedUnion('kind', [
     steps: z.number().optional(),
   }),
   z.object({
-    kind: z.literal('background_task'),
+    kind: z.literal('task'),
     task_id: z.string(),
     status: z.string(),
     description: z.string(),

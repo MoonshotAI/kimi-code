@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { pino } from 'pino';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, assert, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   oauthFlowSnapshotSchema,
@@ -187,6 +187,7 @@ describe('POST /api/v1/oauth/login (P2.7)', () => {
     expect(env.code).toBe(0);
     const data = oauthFlowStartSchema.parse(env.data);
     expect(data.flow_id).toBe('oauth_01ABCDEFGH');
+    assert(data.status === 'pending');
     expect(data.verification_uri_complete).toBe(
       'https://example.com/device?user_code=KIMI-1234',
     );

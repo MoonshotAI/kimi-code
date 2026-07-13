@@ -57,6 +57,20 @@ describe('envelope', () => {
       '{"code":40001,"msg":"validation failed","data":null,"request_id":"req_z"}',
     );
   });
+
+  it('errEnvelope surfaces stack when provided and omits it when absent', () => {
+    const err = new Error('boom');
+    const withStack = errEnvelope(ErrorCode.INTERNAL_ERROR, 'boom', 'req_s', err.stack);
+    expect(withStack.stack).toBe(err.stack);
+    expect(JSON.stringify(withStack)).toContain('"stack":');
+    expect(envelopeSchema(z.any()).parse(withStack).stack).toBe(err.stack);
+
+    // No stack → field is absent and the wire shape is byte-identical to before.
+    const without = errEnvelope(ErrorCode.INTERNAL_ERROR, 'boom', 'req_s');
+    expect(JSON.stringify(without)).toBe(
+      '{"code":50001,"msg":"boom","data":null,"request_id":"req_s"}',
+    );
+  });
 });
 
 describe('error-codes', () => {

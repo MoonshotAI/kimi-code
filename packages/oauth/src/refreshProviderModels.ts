@@ -33,6 +33,12 @@ export interface RefreshProviderHost {
   removeProvider(providerId: string): Promise<ManagedKimiConfigShape>;
   setConfig(patch: ManagedKimiConfigShape): Promise<ManagedKimiConfigShape>;
   resolveOAuthToken(providerName: string, oauthRef?: ManagedKimiOAuthRef): Promise<string>;
+  /**
+   * Product User-Agent sent on custom-registry (api.json) fetches, e.g.
+   * `kimi-code-cli/1.2.3`. When omitted the fetch falls back to the runtime
+   * default (`User-Agent: node`).
+   */
+  readonly userAgent?: string;
 }
 
 export interface ProviderChange {
@@ -111,6 +117,7 @@ function customRegistrySourceCredentialKey(source: CustomRegistrySource): string
 
 async function fetchCustomRegistryFromSources(
   sources: readonly CustomRegistrySource[],
+  userAgent?: string,
 ): Promise<{
   readonly entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
   readonly source: CustomRegistrySource;
@@ -119,7 +126,7 @@ async function fetchCustomRegistryFromSources(
   for (const source of sources) {
     try {
       return {
-        entries: await fetchCustomRegistry(source),
+        entries: await fetchCustomRegistry(source, { userAgent }),
         source,
       };
     } catch (error) {
@@ -543,7 +550,7 @@ export async function refreshProviderModels(
     // are left untouched).
     if (targetId !== undefined && !providerIds.includes(targetId)) continue;
     try {
-      const { entries, source } = await fetchCustomRegistryFromSources(sources);
+      const { entries, source } = await fetchCustomRegistryFromSources(sources, host.userAgent);
       // Build the whole batch on one clone so that several changed providers
       // from the same source do not overwrite each other's aliases, and so the
       // config we compare is exactly the config we persist.

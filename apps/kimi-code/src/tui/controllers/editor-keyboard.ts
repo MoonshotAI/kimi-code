@@ -1,4 +1,4 @@
-import type { Session } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
 
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
@@ -15,7 +15,8 @@ import {
 } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
-import type { PendingExit, QueuedMessage } from '../types';
+import { extractMediaAttachments } from '../utils/image-placeholder';
+import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
 
@@ -23,10 +24,21 @@ export interface EditorKeyboardHost {
   state: TUIState;
   session: Session | undefined;
   cancelInFlight: (() => void) | undefined;
+  /**
+   * The host's harness (KimiTUI always has one). Its `imageLimits` drives
+   * paste-time image compression; hosts without one fall back to the
+   * env/built-in default.
+   */
+  harness?: KimiHarness | undefined;
 
   handleUserInput(text: string): void;
   readonly btwPanelController: BtwPanelController;
-  steerMessage(session: Session, input: string[]): void;
+  steerMessage(session: Session, input: readonly SteerInputItem[]): void;
+  validateMediaCapabilities(extraction: {
+    hasMedia: boolean;
+    imageAttachmentIds: readonly number[];
+    videoAttachmentIds: readonly number[];
+  }): boolean;
   recallLastQueued(): QueuedMessage | undefined;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
@@ -244,22 +256,53 @@ export class EditorKeyboardController {
       // after the current task instead of being injected into the turn as text.
       const queued = host.state.queuedMessages;
       const steerable = queued.filter((m) => m.mode !== 'bash');
-      host.state.queuedMessages = queued.filter((m) => m.mode === 'bash');
 
-      const parts: string[] = [];
+      const items: SteerInputItem[] = [];
       for (const m of steerable) {
         const trimmed = m.text.trim();
-        if (trimmed.length > 0) parts.push(trimmed);
+        if (trimmed.length > 0) {
+          // Queued items carry the parts extracted when they were submitted
+          // (and were already capability-validated then).
+          items.push({ text: trimmed, parts: m.parts, imageAttachmentIds: m.imageAttachmentIds });
+        }
       }
-      if (!editorIsBash && text.length > 0) parts.push(text);
+      let editorExtraction: ReturnType<typeof extractMediaAttachments> | undefined;
+      if (!editorIsBash && text.length > 0) {
+        try {
+          editorExtraction = extractMediaAttachments(text, this.imageStore);
+        } catch (error) {
+          // Cache copy failed (e.g. the pasted video's source vanished) —
+          // leave the queue and the editor draft untouched.
+          host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+          return;
+        }
+        items.push({
+          text,
+          parts: editorExtraction.hasMedia ? editorExtraction.parts : undefined,
+          imageAttachmentIds:
+            editorExtraction.imageAttachmentIds.length > 0
+              ? editorExtraction.imageAttachmentIds
+              : undefined,
+        });
+      }
 
-      if (parts.length > 0) {
+      if (items.length > 0) {
+        // The editor draft is fresh input: gate it on the model's media
+        // capabilities before splicing the queue, so a rejection leaves the
+        // queue and the draft untouched.
+        if (
+          editorExtraction !== undefined &&
+          !host.validateMediaCapabilities(editorExtraction)
+        ) {
+          return;
+        }
+        host.state.queuedMessages = queued.filter((m) => m.mode === 'bash');
         if (!editorIsBash) editor.setText('');
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
           host.showError(LLM_NOT_SET_MESSAGE);
         } else {
-          host.steerMessage(session, parts);
+          host.steerMessage(session, items);
         }
       }
       host.updateQueueDisplay();
@@ -407,8 +450,24 @@ export class EditorKeyboardController {
     // session's media-originals dir when known, else the temp-dir fallback)
     // and recorded on the attachment, so submit-time expansion can announce
     // the compression and point the model at the full-fidelity copy.
-    const compressed = await compressImageForModel(media.bytes, meta.mime);
+    // The edge cap comes from the host harness's [image] config (resolved per
+    // paste so a config reload applies immediately); hosts without a harness
+    // use the env/built-in default.
+    const compressed = await compressImageForModel(media.bytes, meta.mime, {
+      maxEdge: this.host.harness?.imageLimits?.maxEdgePx(),
+      telemetry: {
+        client: {
+          track: (event, properties) =>
+            this.host.track(event, properties === undefined ? undefined : { ...properties }),
+        },
+        source: 'tui_paste',
+      },
+    });
     const sessionDir = this.host.session?.summary?.sessionDir;
+    // Dimensions come from the compression result, not parseImageMeta: the
+    // compressor reports display space (EXIF orientation applied) — the space
+    // the sent image, the caption, and ReadMediaFile region readback share —
+    // while parseImageMeta reads the raw pre-rotation header.
     const attachment = compressed.changed
       ? this.imageStore.addImage(
           compressed.data,
@@ -421,13 +480,18 @@ export class EditorKeyboardController {
               meta.mime,
               sessionDir === undefined ? {} : { dir: sessionMediaOriginalsDir(sessionDir) },
             ),
-            width: meta.width,
-            height: meta.height,
+            width: compressed.originalWidth,
+            height: compressed.originalHeight,
             byteLength: media.bytes.length,
             mime: meta.mime,
           },
         )
-      : this.imageStore.addImage(media.bytes, meta.mime, meta.width, meta.height);
+      : this.imageStore.addImage(
+          media.bytes,
+          meta.mime,
+          compressed.width || meta.width,
+          compressed.height || meta.height,
+        );
     this.host.state.editor.insertTextAtCursor?.(`${attachment.placeholder} `);
     this.host.state.ui.requestRender();
     this.host.track('shortcut_paste', { kind: 'image' });

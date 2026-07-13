@@ -1,5 +1,17 @@
 # @moonshot-ai/kosong
 
+## 0.5.4
+
+### Patch Changes
+
+- [#1488](https://github.com/MoonshotAI/kimi-code/pull/1488) [`7bd29ab`](https://github.com/MoonshotAI/kimi-code/commit/7bd29ab0117a1c15691404f411fd67f511bbb897) Thanks [@starquakee](https://github.com/starquakee)! - Rename the dynamic tool loading model capability from `select_tools` to `dynamically_loaded_tools`.
+
+## 0.5.3
+
+### Patch Changes
+
+- [#1397](https://github.com/MoonshotAI/kimi-code/pull/1397) [`6c9abe8`](https://github.com/MoonshotAI/kimi-code/commit/6c9abe8cf7765b489ca50a2bb0f9b829fd680a51) Thanks [@kermanx](https://github.com/kermanx)! - Add provider-level structured response format support.
+
 ## 0.5.2
 
 ### Patch Changes

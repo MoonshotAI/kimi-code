@@ -20,6 +20,8 @@ export const CUSTOM_REGISTRY_MODEL_FIELDS: ReadonlySet<string> = new Set([
   'maxContextSize',
   'capabilities',
   'displayName',
+  'supportEfforts',
+  'defaultEffort',
 ]);
 
 function cloneOverrides(

@@ -4,9 +4,12 @@ dist-web/
 dist-single/
 dist-native/
 .tmp-api-extractor/
+.contract-types-tmp/
+.local/
 coverage/
 *.tsbuildinfo
 .vitest-results/
+.vite/
 .DS_Store
 .playwright-mcp/
 .claude
@@ -16,6 +19,7 @@ plugins/cdn/
 .worktrees/
 .kimi-code/local.toml
 .kimi-sandbox/
+.vscode/
 
 Dockerfile
 docker-compose.yml

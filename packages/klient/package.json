@@ -1,0 +1,34 @@
+{
+  "name": "@moonshot-ai/klient",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Kimi client SDK — reuse agent-core-v2 service interfaces over the /api/v2 HTTP channel.",
+  "license": "MIT",
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./package.json": {
+      "types": "./package.json",
+      "default": "./package.json"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@moonshot-ai/agent-core-v2": "workspace:^"
+  }
+}

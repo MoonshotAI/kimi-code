@@ -26,6 +26,7 @@ import type {
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
+  OAuthLoginStartResult,
   Page,
   PageRequest,
   PromptSubmission,
@@ -55,7 +56,7 @@ import {
 } from './mappers';
 import type {
   WireAuthResult,
-  WireBackgroundTask,
+  WireTask,
   WireConfig,
   WireEvent,
   WireFileMeta,
@@ -99,6 +100,8 @@ interface WireMeta {
   capabilities: Record<string, boolean>;
   open_in_apps?: string[];
   dangerous_bypass_auth?: boolean;
+  /** Engine generation serving the API; older (v1) servers omit the field. */
+  backend?: 'v1' | 'v2';
 }
 
 interface WireAbortResult {
@@ -272,6 +275,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
     capabilities: Record<string, boolean>;
     openInApps: string[];
     dangerousBypassAuth: boolean;
+    /** Engine generation: 'v2' = kap-server / agent-core-v2; absent ⇒ 'v1'. */
+    backend: 'v1' | 'v2';
   }> {
     const data = await this.http.get<WireMeta>('/meta');
     return {
@@ -281,6 +286,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       capabilities: data.capabilities,
       openInApps: Array.isArray(data.open_in_apps) ? data.open_in_apps : [],
       dangerousBypassAuth: data.dangerous_bypass_auth === true,
+      backend: data.backend === 'v2' ? 'v2' : 'v1',
     };
   }
 
@@ -661,7 +667,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     const query: Record<string, string | undefined> = {
       status: status,
     };
-    const data = await this.http.get<{ items: WireBackgroundTask[] }>(
+    const data = await this.http.get<{ items: WireTask[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/tasks`,
       query,
     );
@@ -677,7 +683,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       with_output: input?.withOutput,
       output_bytes: input?.outputBytes,
     };
-    const data = await this.http.get<WireBackgroundTask>(
+    const data = await this.http.get<WireTask>(
       `/sessions/${encodeURIComponent(sessionId)}/tasks/${encodeURIComponent(taskId)}`,
       query,
     );
@@ -1184,27 +1190,24 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
   }
 
-  async startOAuthLogin(): Promise<{
-    flowId: string;
-    provider: string;
-    verificationUri: string;
-    verificationUriComplete: string;
-    userCode: string;
-    expiresIn: number;
-    interval: number;
-    status: 'pending';
-    expiresAt: string;
-  }> {
+  async startOAuthLogin(): Promise<OAuthLoginStartResult> {
     const data = await this.http.post<WireOAuthLoginStartResult>('/oauth/login', {});
+    if (data.status === 'authenticated') {
+      return {
+        flowId: data.flow_id,
+        provider: data.provider,
+        status: 'authenticated',
+      };
+    }
     return {
       flowId: data.flow_id,
       provider: data.provider,
+      status: 'pending',
       verificationUri: data.verification_uri,
       verificationUriComplete: data.verification_uri_complete,
       userCode: data.user_code,
       expiresIn: data.expires_in,
       interval: data.interval,
-      status: data.status,
       expiresAt: data.expires_at,
     };
   }
@@ -1355,11 +1358,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
       seedSnapshot(sessionId: string, snapshot: AppSessionSnapshot): void {
         // Rebuild the projector's mid-turn state from the snapshot. The
-        // resulting AppEvents (running status + partially-streamed assistant
-        // message) flow through the SAME onEvent path as live events, so the
-        // rendering layer needs no special handling. When there is no
-        // in-flight turn we only reset, so stale turn state can't leak into
-        // the freshly-loaded message list.
+        // resulting AppEvent (the partially-streamed assistant message) flows
+        // through the SAME onEvent path as live events, so the rendering layer
+        // needs no special handling; session status comes from the snapshot's
+        // authoritative session record. When there is no in-flight turn we
+        // only reset, so stale turn state can't leak into the freshly-loaded
+        // message list.
         if (snapshot.inFlightTurn === null) {
           projector.reset(sessionId);
           return;

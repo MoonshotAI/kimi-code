@@ -25,6 +25,24 @@ const USER_MEDIA_PATH_TAG_RE = /^<(image|video|audio)\s+path="([^"]+)">(?:<\/\1>
 const SYSTEM_MIME_RE = /Mime type:\s*([^.\s]+)/i;
 const SYSTEM_SIZE_RE = /Size:\s*(\d+)\s*bytes/i;
 const SYSTEM_DIMENSIONS_RE = /Original dimensions:\s*(\d+)x(\d+)\s*pixels/i;
+// agent-core inlines a single model-facing `<system>` caption next to a
+// compressed image upload (buildImageCompressionCaption), which rides along as
+// a text part of the persisted user message. That one caption is harness
+// metadata, not something the user typed, and its raw markup must never reach
+// the bubble (or the edit/preview text derived from `turn.text`). The TUI and
+// agent-core strip ONLY that caption — anchored on its fixed opening
+// `<system>Image compressed to fit model limits:` (see
+// extractImageCompressionCaptions in agent-core) — and reroute it through the
+// hidden system-reminder injection. Mirror that narrow targeting here: a
+// literal `<system>…</system>` the user pasted themselves (e.g. an XML / prompt
+// example) is their own text, not harness metadata, so it survives untouched.
+const CAPTION_OPENING = '<system>Image compressed to fit model limits:';
+const CAPTION_PATTERN = /<system>Image compressed to fit model limits:[\s\S]*?<\/system>/g;
+
+function stripImageCompressionCaptions(text: string): string {
+  if (!text.includes(CAPTION_OPENING)) return text;
+  return text.replace(CAPTION_PATTERN, '');
+}
 
 function unescapeAttr(value: string): string {
   // &amp; last so a doubly-escaped value isn't decoded twice.
@@ -415,10 +433,6 @@ function buildCronTurn(msg: AppMessage, no: number, kind: 'cron_job' | 'cron_mis
   return { id: msg.id, role: 'cron', no, text, createdAt: msg.createdAt, cron };
 }
 
-function buildCronBlock(msg: AppMessage, kind: 'cron_job' | 'cron_missed'): TurnBlock {
-  const { text, cron } = buildCronData(msg, kind);
-  return { kind: 'cron', text, cron };
-}
 
 /**
  * Whether a USER-role message should be shown. Mirrors the TUI's
@@ -457,12 +471,6 @@ function continuesAssistantGroup(group: Group | null, promptId: string | undefin
   );
 }
 
-/** True while a tool in this group has been called but not yet resolved — i.e.
- *  the group is mid-tool-call. A cron injection that arrives now is sandwiched
- *  between the tool use and its result and must not flush the group. */
-function hasRunningTool(group: Group): boolean {
-  return group.tools.some((t) => t.status === 'running');
-}
 
 /** Extract the plan file path from an ExitPlanMode tool result. The approved
  *  output contains `Plan saved to: <path>`; this survives a page reload (unlike
@@ -653,19 +661,10 @@ export function messagesToTurns(
     // User messages flush the pending group and start a new user turn
     if (msg.role === 'user') {
       const cronKind = cronOriginKind(msg);
-      // A cron injection steered into an in-flight turn can land between a
-      // tool use and its result in the live event stream. It must NOT flush the
-      // pending assistant group then — flushing would orphan the next
-      // tool.result, which only folds into a pending group, leaving the tool
-      // rendered without output. So embed it as a block only while the group
-      // has an in-flight tool. Otherwise — a cron at a turn boundary, including
-      // an idle fire on a REST snapshot that carries no prompt ids (where the
-      // whole transcript shares one group) — flush and render it as its own
-      // turn so it doesn't merge into the previous answer.
-      if (cronKind !== undefined && pendingGroup !== null && hasRunningTool(pendingGroup)) {
-        pendingGroup.blocks.push(buildCronBlock(msg, cronKind));
-        continue;
-      }
+      // A cron injection always renders as its own standalone turn: agent-core
+      // buffers steer input while a turn is in flight and only injects it at the
+      // turn boundary, so the cron message does not land between a tool use and
+      // its result in practice.
       flushGroup();
       if (cronKind !== undefined) {
         turns.push(buildCronTurn(msg, no++, cronKind));
@@ -717,7 +716,9 @@ export function messagesToTurns(
                 continue;
               }
             }
-            textParts.push(c.text);
+            const stripped = stripImageCompressionCaptions(c.text);
+            if (stripped !== c.text && stripped.trim().length === 0) continue;
+            textParts.push(stripped);
           }
         }
         const media = resolveMediaUrl(c);

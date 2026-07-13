@@ -10,6 +10,7 @@ import {
   OpenAIResponsesChatProvider,
   OpenAIResponsesStreamedMessage,
 } from '#/providers/openai-responses';
+import type { GenerateOptions } from '#/provider';
 import type { Tool } from '#/tool';
 import { describe, it, expect, vi } from 'vitest';
 
@@ -45,6 +46,7 @@ async function captureRequestBody(
   systemPrompt: string,
   tools: Tool[],
   history: Message[],
+  options?: GenerateOptions,
 ): Promise<Record<string, unknown>> {
   let capturedBody: Record<string, unknown> | undefined;
 
@@ -57,7 +59,7 @@ async function captureRequestBody(
       return Promise.resolve(makeResponsesAPIResponse());
     });
 
-  const stream = await provider.generate(systemPrompt, tools, history);
+  const stream = await provider.generate(systemPrompt, tools, history, options);
   for await (const part of stream) {
     void part;
   }
@@ -909,6 +911,75 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(provider).not.toBe(original);
       expect(body['max_output_tokens']).toBe(1024);
       expect(provider.maxCompletionTokens).toBe(1024);
+    });
+
+    it('maps json_schema response format to text.format', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      expect(body['text']).toEqual({
+        format: {
+          type: 'json_schema',
+          name: 'contact',
+          schema,
+          strict: true,
+          description: undefined,
+        },
+      });
+    });
+
+    it('preserves existing Responses text options when applying response format', async () => {
+      const provider = createProvider().withGenerationKwargs({
+        text: { verbosity: 'low' },
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Extract contact' }], toolCalls: [] },
+      ];
+      const schema = {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      };
+      const body = await captureRequestBody(provider, '', [], history, {
+        responseFormat: {
+          type: 'json_schema',
+          jsonSchema: {
+            name: 'contact',
+            schema,
+            strict: true,
+          },
+        },
+      });
+
+      expect(body['text']).toEqual({
+        verbosity: 'low',
+        format: {
+          type: 'json_schema',
+          name: 'contact',
+          schema,
+          strict: true,
+          description: undefined,
+        },
+      });
     });
   });
 
@@ -1838,6 +1909,33 @@ describe('OpenAIResponsesChatProvider', () => {
       expect((caughtError as APIProviderRateLimitError).statusCode).toBe(429);
       expect((caughtError as Error).message).toContain('Rate limit reached for gpt-5.5');
       expect((caughtError as Error).message).not.toContain('stream event.type must be a string');
+    });
+
+    it('promotes an embedded upstream status_code=429 to a retryable rate limit', async () => {
+      // llmproxy forwards the original provider 429 as text inside the message
+      // (`.../responses/<id>.json status_code=429`) while the Responses API
+      // `code` is not `rate_limit_exceeded`. It must still surface as an
+      // APIProviderRateLimitError so chatWithRetry recovers it.
+      const events = [
+        {
+          type: 'error',
+          code: 'upstream_error',
+          message: 'llmproxy/openai/responses/resp_abc.json status_code=429',
+          param: null,
+        },
+      ];
+      const stream = new OpenAIResponsesStreamedMessage(makeAsyncIterable(events), true);
+
+      let caughtError: unknown;
+      try {
+        await collectStreamParts(stream);
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(APIProviderRateLimitError);
+      expect((caughtError as APIProviderRateLimitError).statusCode).toBe(429);
+      expect((caughtError as Error).message).toContain('status_code=429');
     });
 
     it('rejects malformed stream events with a non-string type even when message is present', async () => {

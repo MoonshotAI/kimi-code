@@ -63,7 +63,7 @@ export function registerMetaRoute(app: RouteHost, opts: MetaRouteOptions): void 
       file_upload: true as const,
       fs_query: true as const,
       mcp: true as const,
-      background_tasks: true as const,
+      tasks: true as const,
       terminal: true as const,
     }),
     server_id: opts.serverId,

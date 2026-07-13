@@ -106,10 +106,15 @@ describe('Event public types', () => {
         case 'compaction.blocked':
         case 'compaction.cancelled':
         case 'compaction.completed':
+        case 'task.started':
+        case 'task.terminated':
         case 'background.task.started':
         case 'background.task.terminated':
         case 'cron.fired':
         case 'prompt.submitted':
+        case 'prompt.completed':
+        case 'prompt.aborted':
+        case 'prompt.steered':
           return;
         default:
           assertNever(event);

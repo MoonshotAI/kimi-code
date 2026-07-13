@@ -203,9 +203,10 @@ export class ProviderManager implements ModelProvider {
         } catch (error) {
           if (!(error instanceof APIStatusError) || error.statusCode !== 401) throw error;
           if (refreshed) {
+            const reason = error.message.replaceAll('\r', '');
             throw new KimiError(
-              ErrorCodes.AUTH_LOGIN_REQUIRED,
-              'OAuth provider credentials were rejected. Send /login to login.',
+              ErrorCodes.PROVIDER_AUTH_ERROR,
+              reason.length > 0 ? reason : 'OAuth provider credentials were rejected.',
               {
                 cause: error,
                 details: { statusCode: error.statusCode, requestId: error.requestId },
@@ -233,10 +234,12 @@ function resolveModelCapabilities(
     thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
     tool_use: declared.has('tool_use') || detected.tool_use,
     max_context_tokens: alias.maxContextSize,
-    // Message-level tool declarations (select_tools progressive disclosure).
-    // Every field here must be merged explicitly — a capability registered in
+    // Message-level tool declarations ("dynamically loaded tools"). Every
+    // field here must be merged explicitly — a capability registered in
     // kosong that is not forwarded here never reaches the agent.
-    select_tools: declared.has('select_tools') || detected.select_tools === true,
+    dynamically_loaded_tools:
+      declared.has('dynamically_loaded_tools') ||
+      detected.dynamically_loaded_tools === true,
   };
 }
 

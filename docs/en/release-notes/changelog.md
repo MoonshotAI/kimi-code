@@ -6,6 +6,100 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.23.6 (2026-07-12)
+
+### Polish
+
+- web: Let wide Markdown tables grow beyond the reading column up to 1040px, scrolling horizontally inside the table when wider.
+- web: Keep the server access token for up to 7 days across tab close and browser restarts, instead of asking for it again with every new tab.
+- web: Add workspaces by typing an absolute path directly in the workspace picker's search box, with live validation and completion suggestions.
+- web: Auto-enable the default thinking effort when switching to a model that supports effort levels in the web UI.
+- Recognize the `support_efforts` and `default_effort` fields when importing a custom registry, so thinking effort levels are available for those models.
+- Update the WebBridge install page link opened from the `/plugins` panel.
+- Add a `subagent.timeout_ms` config option (or the `KIMI_SUBAGENT_TIMEOUT_MS` env var) to control how long a single subagent may run before timing out; the default is raised from 30 minutes to 2 hours.
+- Add a print-mode background policy: set `[background].print_background_mode = "steer"` to keep `kimi -p` alive across background-task completions, so the main agent can be steered into follow-up turns.
+
+### Bug Fixes
+
+- web: Fix sessions getting stuck in a sending state after a reconnect; turns that finish while the connection is down now stop the spinner and let the next message send normally.
+- web: Fix the first visit after starting or updating the web UI bouncing to the login page when the initial auth check fails; the connecting screen now stays up, shows the connection error, and retries.
+- Keep `kimi -p` runs alive after a turn ends while a goal is still active or a cron task is pending, so goal continuations and cron fires run their turns instead of being cut off when the main turn finishes.
+- Treat a dismissed question prompt as the user choosing not to answer, instead of implicitly selecting the recommended option.
+- web: Fix ReadMediaFile results rendering as plain tool cards instead of images after resuming or reloading a session.
+- web: Fix the chat view jumping downward while scrolling through conversation history.
+- web: Fix the model dropdown showing checkmarks on same-named models from other providers; the current model is now matched by its unique model id.
+- web: Fix sidebar lag with many sessions by removing repeated session list scans during rendering.
+
+### Refactors
+
+- Rename the dynamic tool loading model capability from `select_tools` to `dynamically_loaded_tools`.
+
+## 0.23.5 (2026-07-10)
+
+### Polish
+
+- Retry provider 429, overload, and other transient errors more reliably, honoring the server Retry-After delay, and surface retries in `-p --output-format stream-json`.
+
+### Bug Fixes
+
+- Stop unsupported image formats (AVIF, BMP, TIFF, ICO, …) from breaking sessions at every entry point — including remote image URLs and images mislabeled by a tool — and recover an already-stuck session by dropping the offending image and retrying, so one such image can no longer make every later request fail.
+- web: Fix the "Turn finished" desktop notification and completion sound firing twice per turn.
+- web: Hide the internal image-compression note so it no longer renders as user message text.
+
+## 0.23.4 (2026-07-10)
+
+### Features
+
+- web: Add notifications when a tool needs approval, and improve notification reliability.
+
+### Polish
+
+- web: Polish the chat UI with Inter typography, localized labels, and tighter composer and menu styling.
+- web: Polish the session sidebar layout, colors, icons, and typography.
+- Display the Extra Usage (fuel pack) balance in the `/usage` and `/status` commands.
+- Add a Kimi WebBridge entry to the Official tab of the `/plugins` panel that opens the WebBridge install page in your browser.
+
+### Bug Fixes
+
+- Keep image-heavy sessions within provider request-size limits: oversized images (model-read and pasted, including WebP) are downscaled and compressed, HEIC/HEIF reads are refused with a platform-matched conversion command instead of poisoning the session, and an HTTP 413 request-too-large now recovers automatically — the request and `/compact` retry with older media replaced by text markers. The limits are configurable via `[image]` in `config.toml` (or `KIMI_IMAGE_*` env vars), and each core keeps its own settings so reloading one client's config no longer changes another client's compression.
+- Fix resuming sessions whose original working directory no longer exists.
+- Fix prompt-mode goals so they run until completion and report invalid goal commands before sending prompts.
+- web: Fix an occasional "another turn is active" error when sending the first message of a new conversation, and show a starting state while it is being sent.
+
+## 0.23.3 (2026-07-08)
+
+### Bug Fixes
+
+- Fix a misleading "OAuth login expired" message shown when a model is not available for the current account.
+
+## 0.23.2 (2026-07-08)
+
+### Features
+
+- Add the Vercel plugin to the bundled plugin marketplace. Run `/plugins` and select Vercel Plugin to install it.
+
+### Bug Fixes
+
+- Fix `kimi -p` runs exiting with code 0 when a turn fails.
+- Prevent autonomous goals from being paused by model-reported status updates.
+- Count the turn that starts an autonomous goal toward its turn budget.
+- Raise the image downscale cap from 2000px to 3000px, and fix swapped width/height for EXIF-rotated (portrait) photos in compression captions and media read notes so region readback coordinates map correctly.
+- web: Fix the connection error toast lingering after the WebSocket reconnects when returning from the background.
+- Fix console windows flashing on Windows each time a hook runs.
+
+### Polish
+
+- web: Redesign the scheduled reminder UI.
+- web: Show session skills in the slash menu as `/skill:<name>` so they are distinguishable from built-in commands; typing the bare skill name still works.
+- web: The composer model switcher switches the active session's model as before and additionally bumps the global default model, so new sessions inherit the choice.
+- web: Press Enter to confirm in archive and other confirmation dialogs.
+- Tighten goal-mode guidance for blocked and complete status updates.
+- Progressive tool disclosure (`select_tools`, experimental): compaction now discards the loaded tool schemas instead of re-injecting them, and the model re-selects the tools it still needs afterward. A from-memory call to a no-longer-loaded tool is rejected with guidance to select it first. No effect unless the `tool-select` experimental flag and a `select_tools`-capable model are active.
+
+### Refactors
+
+- web: Compile icons at build time so the bundled web UI only carries the icons it renders.
+
 ## 0.23.1 (2026-07-07)
 
 ### Bug Fixes

@@ -3,6 +3,7 @@ export default {
   toc: 'Conversation outline',
   newMessages: 'Latest messages',
   loading: 'Loading…',
+  starting: 'Starting conversation…',
   emptyWorkspaceHint: 'Send in {name}',
   switchWorkspace: 'Switch workspace',
   addWorkspace: 'New workspace',

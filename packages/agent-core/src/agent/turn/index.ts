@@ -34,6 +34,7 @@ import {
 } from '../../loop/index';
 import type { AgentEvent, TurnEndedEvent, TurnEndReason } from '../../rpc';
 import type { TelemetryPropertyValue } from '../../telemetry';
+import { gateImageFormatParts } from '../../tools/support/image-compress';
 import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
@@ -93,15 +94,23 @@ const GOAL_CONTINUATION_PROMPT = [
   'useful slice, if material work remains, end the turn normally without calling UpdateGoal so',
   'the runtime can continue the goal in the next turn. Call UpdateGoal with `complete` only when',
   'all required work is done, any stated validation has passed, and there is no useful next',
-  'action. Do not mark complete after only producing a plan, summary, first pass, or partial',
-  'result. Before calling `complete`, check that every required part of the objective is done,',
-  'completion criteria are satisfied, requested or expected validation passed or has been',
-  'reported as impossible, and no known material task remains. Call UpdateGoal with `blocked`',
-  'only for a genuine impasse: an external condition, required user input, missing credentials',
-  'or permissions, a persistent technical failure, or an impossible, unsafe, or contradictory',
-  'objective. Do not use `blocked` because the work is large, hard, slow, uncertain, partial,',
-  'still needs validation, or needs more goal turns. Do not ask the user for input unless a real',
-  'blocker prevents progress.',
+  'action. Completion audit: before calling `complete`, verify the current state against the',
+  'actual objective and every explicit requirement. Treat weak or indirect evidence as not',
+  'complete. Do not mark complete after only producing a plan, summary, first pass, or partial',
+  'result. Do not mark complete merely because a budget is nearly exhausted or you want to stop.',
+  'Blocked audit: do not call UpdateGoal with `blocked` the first time you hit a blocker. Use',
+  '`blocked` only for a genuine impasse: an external condition, required user input, missing',
+  'credentials or permissions, or a persistent technical failure. For those non-terminal',
+  'blockers, the same blocking condition must repeat for at least 3 consecutive goal turns before',
+  'you call `blocked`, counting the original/user-triggered turn and automatic continuations.',
+  'If a previously blocked goal is resumed, treat the resumed run as a fresh blocked audit.',
+  'Exception: if the objective itself is impossible, unsafe, or contradictory, call UpdateGoal',
+  'with `blocked` in the same turn; do not run more goal turns just to satisfy the audit. Do not',
+  'use `blocked` because the work is large, hard, slow, uncertain, incomplete, still needs',
+  'validation, would benefit from clarification, or needs more goal turns. Once the 3-turn',
+  'threshold is met and you cannot make meaningful progress without user input or an',
+  'external-state change, call UpdateGoal with `blocked`; do not keep reporting the blocker while',
+  'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
 ].join(' ');
 
 export class TurnFlow {
@@ -126,20 +135,27 @@ export class TurnFlow {
 
   // Returns the new turnId, or null if the turn was marked as resuming.
   prompt(input: readonly ContentPart[], origin: PromptOrigin = USER_PROMPT_ORIGIN): number | null {
+    // The last funnel before a prompt lands in the session history: images
+    // in formats providers reject (AVIF, HEIC, …) become text notices here,
+    // so no caller — the SDK/RPC prompt path included — can poison the
+    // session. Upstream ingestion points already gate; this is the backstop.
+    const gated = gateImageFormatParts(input);
     this.agent.records.logRecord({
       type: 'turn.prompt',
-      input,
+      input: gated,
       origin,
     });
-    return this.launch(input, origin);
+    return this.launch(gated, origin);
   }
 
   // Returns the new turnId, or null if the input was buffered as a steer
   // message or the turn was marked as resuming.
   steer(input: readonly ContentPart[], origin: PromptOrigin = USER_PROMPT_ORIGIN): number | null {
+    // Same format gate as prompt() — steer input enters the history too.
+    const gated = gateImageFormatParts(input);
     this.agent.records.logRecord({
       type: 'turn.steer',
-      input,
+      input: gated,
       origin,
     });
     // Buffer while a turn is active OR a manual compaction holds the context;
@@ -147,10 +163,10 @@ export class TurnFlow {
     // (summary + reinjection) is done. Returning null means "buffered" — which is
     // exactly what fire-and-forget callers (background notifications, cron) assume.
     if (this.activeTurn || this.agent.fullCompaction.isCompacting) {
-      this.steerBuffer.push({ input, origin });
+      this.steerBuffer.push({ input: gated, origin });
       return null;
     }
-    return this.launch(input, origin);
+    return this.launch(gated, origin);
   }
 
   retry(trigger?: string): number | null {
@@ -368,8 +384,15 @@ export class TurnFlow {
         goalBecameActive &&
         end.event.reason !== 'cancelled' &&
         end.event.reason !== 'failed' &&
-        end.event.reason !== 'filtered'
+        end.event.reason !== 'blocked'
       ) {
+        // The ordinary turn created or resumed the goal, so it counts as the
+        // first active goal turn before the continuation driver takes over.
+        const countedGoal = await this.agent.goal.incrementTurn();
+        if (countedGoal?.budget.overBudget === true) {
+          await this.agent.goal.markBlocked({ reason: 'A configured budget was reached' });
+          return end;
+        }
         return await this.driveGoal(
           this.allocateTurnId(),
           [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }],
@@ -389,8 +412,8 @@ export class TurnFlow {
    * Drives an active goal as a sequence of ordinary turns — the autonomous
    * equivalent of the user repeatedly typing "continue". Each iteration runs one
    * full turn, then reads the goal status the model set via `UpdateGoal`:
-   * `complete` (the record is cleared) / `blocked` / `paused` stop the loop;
-   * `active` (the model didn't decide) re-injects the goal reminder and runs the
+   * `complete` (the record is cleared) / `blocked` stop the loop; `active`
+   * (the model didn't decide) re-injects the goal reminder and runs the
    * next continuation turn. Aborted or failed turns pause the goal. Goal-state
    * blockers, such as explicit `UpdateGoal('blocked')`, prompt-hook blocks, and
    * budget limits, block it (all resumable). Returns the final turn's result.
@@ -427,18 +450,15 @@ export class TurnFlow {
         await this.agent.goal.pauseActiveGoal({ reason: goalFailurePauseReason(end.event.error) });
         return end;
       }
-      if (end.event.reason === 'filtered') {
-        await this.agent.goal.pauseActiveGoal({ reason: GOAL_PROVIDER_FILTERED_PAUSE_REASON });
-        return end;
-      }
-      if (end.blockedByUserPromptHook === true) {
+      if (end.event.reason === 'blocked' || end.blockedByUserPromptHook === true) {
         await this.agent.goal.markBlocked({ reason: 'Blocked by UserPromptSubmit hook' });
         return end;
       }
 
       // The model decides via UpdateGoal: a cleared record means `complete`;
-      // anything non-active means it stopped (blocked / paused). Only a still
-      // `active` goal continues to another turn.
+      // `blocked` remains as a non-active record. Runtime failures and user
+      // interrupts can still leave the goal paused. Only a still `active` goal
+      // continues to another turn.
       const goal = this.agent.goal.getGoal().goal;
       if (goal === null || goal.status !== 'active') {
         return end;
@@ -516,14 +536,25 @@ export class TurnFlow {
       } else {
         const stopReason = await this.runStepLoop(turnId, signal);
         completedStopReason = stopReason;
-        const reason: TurnEndReason =
-          stopReason === 'aborted' ? 'cancelled' : stopReason === 'filtered' ? 'filtered' : 'completed';
-        ended = {
-          type: 'turn.ended',
-          turnId,
-          reason,
-          durationMs: Date.now() - startedAt,
-        };
+        if (stopReason === 'filtered') {
+          const summary = providerFilteredPayload(turnId);
+          ended = {
+            type: 'turn.ended',
+            turnId,
+            reason: 'failed',
+            error: summary,
+            durationMs: Date.now() - startedAt,
+          };
+          errorEvent = { type: 'error', ...summary };
+        } else {
+          const reason: TurnEndReason = stopReason === 'aborted' ? 'cancelled' : 'completed';
+          ended = {
+            type: 'turn.ended',
+            turnId,
+            reason,
+            durationMs: Date.now() - startedAt,
+          };
+        }
       }
     } catch (error) {
       if (isAbortError(error)) {
@@ -661,7 +692,7 @@ export class TurnFlow {
       // The terminal turn.ended is emitted by runOneTurn (synchronously with the
       // activeTurn clear), not here, so the session is idle the moment it fires.
       return {
-        event: { type: 'turn.ended', turnId, reason: 'completed', durationMs: Date.now() - startedAt },
+        event: { type: 'turn.ended', turnId, reason: 'blocked', durationMs: Date.now() - startedAt },
         blocked: true,
       };
     }
@@ -708,6 +739,8 @@ export class TurnFlow {
           llm: this.agent.llm,
           buildMessages: () => this.agent.context.messages,
           buildMessagesStrict: () => this.agent.context.strictMessages,
+          buildMessagesMediaDegraded: () => this.agent.context.mediaDegradedMessages,
+          buildMessagesMediaStripped: () => this.agent.context.mediaStrippedMessages,
           dispatchEvent: this.buildDispatchEvent(turnId),
           // Re-read per step (not snapshotted per turn) so a select_tools load
           // is dispatchable on the very next step of the same turn.
@@ -1239,13 +1272,26 @@ function summarizeTurnError(error: unknown, turnId: number): KimiErrorPayload {
   return { ...payload, details };
 }
 
-function goalFailurePauseReason(error: KimiErrorPayload | undefined): string {
+function providerFilteredPayload(turnId: number): KimiErrorPayload {
+  return {
+    code: ErrorCodes.PROVIDER_FILTERED,
+    message: 'Provider safety policy blocked the response.',
+    name: 'ProviderFilteredError',
+    details: { finishReason: 'filtered', turnId },
+    retryable: false,
+  };
+}
+
+function goalFailurePauseReason(error: TurnEndedEvent['error']): string {
   if (error?.code === ErrorCodes.PROVIDER_RATE_LIMIT) return GOAL_RATE_LIMIT_PAUSE_REASON;
   if (error?.code === ErrorCodes.PROVIDER_CONNECTION_ERROR) {
     return pauseReasonWithMessage(GOAL_PROVIDER_CONNECTION_PAUSE_PREFIX, error.message);
   }
   if (error?.code === ErrorCodes.PROVIDER_AUTH_ERROR) {
     return pauseReasonWithMessage(GOAL_PROVIDER_AUTH_PAUSE_PREFIX, error.message);
+  }
+  if (error?.code === ErrorCodes.PROVIDER_FILTERED) {
+    return GOAL_PROVIDER_FILTERED_PAUSE_REASON;
   }
   if (error?.code === ErrorCodes.PROVIDER_API_ERROR) {
     return pauseReasonWithMessage(GOAL_PROVIDER_API_PAUSE_PREFIX, error.message);
@@ -1293,7 +1339,8 @@ type TelemetryInterruptReason =
   | 'aborted'
   | 'max_steps'
   | 'error'
-  | 'filtered';
+  | 'filtered'
+  | 'blocked';
 
 function telemetryInterruptReason(
   reason: LoopTurnInterruptedEvent['reason'] | Exclude<TurnEndedEvent['reason'], 'completed'>,
@@ -1304,6 +1351,7 @@ function telemetryInterruptReason(
   }
   if (reason === 'aborted' || reason === 'cancelled') return 'aborted';
   if (reason === 'failed') return 'error';
+  if (reason === 'blocked') return 'blocked';
   // Remaining values are `max_steps` | `error` | `filtered`, which match the
   // telemetry enum.
   return reason;

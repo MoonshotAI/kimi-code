@@ -112,3 +112,21 @@ export function commitLevel(
   if (draft === 'on') return defaultThinkingLevelFor(model);
   return draft;
 }
+
+/**
+ * Thinking level to use when the user picks a model in the switcher.
+ * Mirrors the TUI model picker: switching onto a different effort-capable
+ * model from 'off' pre-selects the model's default effort, so the user sees
+ * the effort control immediately; re-selecting the current model or moving
+ * to a boolean/unsupported model just coerces the carried-over level.
+ */
+export function thinkingLevelForModelSwitch(
+  model: ModelThinkingInfo | undefined,
+  currentLevel: ThinkingLevel,
+  isSwitch: boolean,
+): ThinkingLevel {
+  if (isSwitch && currentLevel === 'off' && (model?.supportEfforts?.length ?? 0) > 0) {
+    return defaultThinkingLevelFor(model);
+  }
+  return coerceThinkingForModel(model, currentLevel);
+}

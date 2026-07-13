@@ -439,4 +439,52 @@ describe('ModelCatalogService', () => {
     expect(result.unchanged).toEqual([KIMI_CODE_PROVIDER_NAME]);
     expect(published).toEqual([]);
   });
+
+  it('sends the host User-Agent on custom-registry fetches', async () => {
+    const configRef: { current: KimiConfig } = {
+      current: {
+        providers: {
+          acme: {
+            type: 'openai',
+            apiKey: 'sk-acme',
+            source: {
+              kind: 'apiJson',
+              url: 'https://registry.example.test/api.json',
+              apiKey: 'sk-registry',
+            },
+          },
+        },
+        models: {},
+      },
+    };
+    const { core } = makeCore(configRef);
+    (core as { kimiRequestHeaders?: Record<string, string> }).kimiRequestHeaders = {
+      'User-Agent': 'kimi-code-cli/test',
+    };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            acme: {
+              id: 'acme',
+              name: 'Acme',
+              api: 'https://acme.example.test/v1',
+              type: 'openai',
+              models: { m1: { id: 'm1', name: 'M1' } },
+            },
+          }),
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const svc = ModelCatalogService._createForTest(makeEnv(), core, authFacade());
+
+    await svc.refreshProviderModels();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://registry.example.test/api.json',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'User-Agent': 'kimi-code-cli/test' }),
+      }),
+    );
+  });
 });

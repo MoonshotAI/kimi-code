@@ -14,6 +14,7 @@ import {
   listSessionChildrenQuerySchema,
   listSessionChildrenResponseSchema,
   listSessionsQuerySchema,
+  restoreSessionResponseSchema,
   sessionStatusResponseSchema,
   updateSessionProfileRequestSchema,
   updateSessionRequestSchema,
@@ -97,6 +98,15 @@ describe('listSessionsQuerySchema', () => {
     });
     expect(listSessionsQuerySchema.parse({ include_archive: 0 })).toEqual({
       include_archive: false,
+    });
+  });
+
+  it('parses archived_only to boolean', () => {
+    expect(listSessionsQuerySchema.parse({ archived_only: 'true' })).toEqual({
+      archived_only: true,
+    });
+    expect(listSessionsQuerySchema.parse({ archived_only: false })).toEqual({
+      archived_only: false,
     });
   });
 
@@ -495,6 +505,36 @@ describe('archiveSessionResponseSchema', () => {
 
   it('rejects { archived: false }', () => {
     expect(archiveSessionResponseSchema.safeParse({ archived: false }).success).toBe(false);
+  });
+});
+
+describe('restoreSessionResponseSchema', () => {
+  it('accepts a restored Session payload', () => {
+    const parsed = restoreSessionResponseSchema.parse({
+      id: 'sess_abc',
+      workspace_id: 'wd_kimi_0123456789ab',
+      title: 'Restored',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:00:00.000Z',
+      status: 'idle',
+      archived: false,
+      metadata: { cwd: '/tmp/foo' },
+      agent_config: { model: '' },
+      usage: {
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        total_cost_usd: 0,
+        context_tokens: 0,
+        context_limit: 0,
+        turn_count: 0,
+      },
+      permission_rules: [],
+      message_count: 0,
+      last_seq: 0,
+    });
+    expect(parsed.archived).toBe(false);
   });
 });
 

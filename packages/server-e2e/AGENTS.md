@@ -2,6 +2,22 @@
 
 This file contains package-local rules for `packages/server-e2e`.
 
+## Package layout
+
+This package ships two clients:
+
+- **Legacy `/api/v1` client** — `DaemonClient` (`src/client.ts`), `HttpClient`
+  (`src/http.ts`), `WsClient` (`src/ws.ts`) and the helpers under `src/`
+  (`wait.ts`, `reverse-rpc.ts`, `report.ts`, `envelope.ts`). This is the
+  original wire-level test client; the existing `test/*.test.ts` cases and
+  `scenarios/*.ts` scripts are built on it and **must keep running unchanged**.
+  Do not break or rewrite those tests when extending the package.
+- **server-v2 SDK** — `ServerClient` under `src/v2/`. A lark-style typed client
+  for the `server-v2` `/api/v2` RPC + WS surface. `src/v2/resources/manifest.ts`
+  mirrors `server-v2/src/transport/actionMap.ts`; `test/v2/actionMap.test.ts`
+  is a drift test that fails when the server surface and the manifest diverge.
+  The legacy REST surface is reachable via `ServerClient#v1`.
+
 ## Testing Principle
 
 - Keep observability inside each server-e2e case. Do not add a separate "observable" test or scenario as a substitute for making the existing cases explain what they drove and what the server returned.
@@ -23,4 +39,6 @@ This file contains package-local rules for `packages/server-e2e`.
 - Run the full server client Vitest file: `KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm --filter @moonshot-ai/server-e2e test -- test/client.test.ts`.
 - Run all server-e2e Vitest tests: `KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm --filter @moonshot-ai/server-e2e test`.
 - Run all executable scenarios against the local server: `KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm --filter @moonshot-ai/server-e2e test:scenarios`.
+- Run the server-v2 SDK drift test (no server needed): `pnpm --filter @moonshot-ai/server-e2e exec vitest run test/v2/actionMap.test.ts`.
+- Run the server-v2 SDK smoke test (boots server-v2 in-process): `pnpm --filter @moonshot-ai/server-e2e exec vitest run test/v2/smoke.test.ts`.
 - Run type checking for this package: `pnpm --filter @moonshot-ai/server-e2e typecheck`.

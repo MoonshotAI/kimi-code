@@ -260,18 +260,31 @@ describe('AcpServer error mapping', () => {
     expect(response.stopReason).toBe('cancelled');
   });
 
-  it('maps the filtered turn-end reason to ACP stopReason refusal', () => {
+  it('maps blocked turn-end reasons to ACP stopReason refusal', () => {
     // ACP has a native `refusal` stop reason that matches a provider safety
-    // block; mapping filtered to anything else (e.g. end_turn) would let the
-    // client mistake the block for a clean turn.
-    expect(turnEndReasonToStopReason('filtered')).toBe('refusal');
+    // block or prompt-hook block; mapping either to anything else (e.g.
+    // end_turn) would let the client mistake the block for a clean turn.
+    expect(turnEndReasonToStopReason('failed', { code: 'provider.filtered' })).toBe('refusal');
+    expect(turnEndReasonToStopReason('blocked')).toBe('refusal');
   });
 
-  it('resolves with refusal when turn.ended reason is filtered', async () => {
+  it('resolves with refusal when turn.ended fails with provider.filtered', async () => {
     const sessionId = 'sess-filtered';
     const { session, unsubscribeCount } = makeScriptedSession(sessionId, {
       script: [
-        { type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'filtered' } as Event,
+        {
+          type: 'turn.ended',
+          sessionId,
+          agentId: 'main',
+          turnId: 1,
+          reason: 'failed',
+          error: {
+            code: 'provider.filtered',
+            message: 'Provider safety policy blocked the response.',
+            name: 'ProviderFilteredError',
+            retryable: false,
+          },
+        } as Event,
       ],
     });
 

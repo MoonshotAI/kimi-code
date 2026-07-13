@@ -32,6 +32,8 @@ const props = defineProps<{
   notify: boolean;
   /** Browser-notification-on-question (needs answer) preference. */
   notifyQuestion: boolean;
+  /** Browser-notification-on-approval preference. */
+  notifyApproval: boolean;
   /** OS permission state ('default' | 'granted' | 'denied') for the hint. */
   notifyPermission?: string;
   /** Play-a-sound-on-completion preference. */
@@ -46,6 +48,8 @@ const props = defineProps<{
   configSaving?: boolean;
   /** Server version reported by GET /api/v1/meta. */
   serverVersion?: string;
+  /** Backend engine generation from GET /api/v1/meta ('v1' legacy, 'v2' kap-server). */
+  backend?: 'v1' | 'v2';
 }>();
 
 const emit = defineEmits<{
@@ -54,6 +58,7 @@ const emit = defineEmits<{
   setUiFontSize: [size: number];
   setNotify: [on: boolean];
   setNotifyQuestion: [on: boolean];
+  setNotifyApproval: [on: boolean];
   setSound: [on: boolean];
   setConversationToc: [on: boolean];
   login: [];
@@ -77,6 +82,9 @@ const tabs: { id: SettingsTab; labelKey: string }[] = [
 ];
 
 const daemonEndpoint = serverEndpointLabel();
+const backendLabel = computed(() =>
+  props.backend === 'v2' ? 'v2 (kap-server)' : 'v1 (server)',
+);
 const permissionModes = ['manual', 'auto', 'yolo'] as const;
 // Reuse the Composer's permission labels (status.permission*) so the
 // default-permission names stay in sync with the toolbar.
@@ -418,6 +426,18 @@ function archiveTime(iso: string): string {
               />
             </div>
             <div class="row">
+              <span class="rlabel">
+                {{ t('settings.notifyOnApproval') }}
+                <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
+              </span>
+              <Switch
+                :model-value="notifyApproval"
+                :disabled="notifyPermission === 'denied'"
+                :label="t('settings.notifyOnApproval')"
+                @update:model-value="emit('setNotifyApproval', $event)"
+              />
+            </div>
+            <div class="row">
               <span class="rlabel">{{ t('settings.soundOnComplete') }}</span>
               <Switch
                 :model-value="sound"
@@ -543,6 +563,10 @@ function archiveTime(iso: string): string {
             <div class="row">
               <span class="rlabel">{{ t('sidebar.daemon') }}</span>
               <span class="rvalue mono">{{ daemonEndpoint }}</span>
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('settings.backend') }}</span>
+              <span class="rvalue mono">{{ backendLabel }}</span>
             </div>
             <div class="row">
               <span class="rlabel">{{ t('settings.serverVersion') }}</span>

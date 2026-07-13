@@ -1,0 +1,212 @@
+/**
+ * Tests for `reduceContextTranscript` — the wire-transcript reducer used by the
+ * snapshot and messages endpoints. Mirrors v1 `reduceWireRecords` expectations:
+ * compaction keeps the prefix and appends a summary marker; undo removes the
+ * tail but stops at compaction summaries / clear floors; clear keeps the
+ * transcript but resets the folded view.
+ */
+
+import { describe, expect, it } from 'vitest';
+
+import {
+  reduceContextTranscript,
+  type ContextTranscript,
+} from '#/agent/contextMemory/contextTranscript';
+import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
+import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
+import type { PersistedRecord } from '#/wire/wireService';
+
+function userMessage(text: string, origin?: PromptOrigin): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text }],
+    toolCalls: [],
+    ...(origin === undefined ? {} : { origin }),
+  };
+}
+
+function assistantMessage(text: string): ContextMessage {
+  return { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] };
+}
+
+function appendMessage(message: ContextMessage): PersistedRecord {
+  return { type: 'context.append_message', message };
+}
+
+function loopEvent(event: LoopRecordedEvent): PersistedRecord {
+  return { type: 'context.append_loop_event', event };
+}
+
+function assistantStep(uuid: string, text: string): PersistedRecord[] {
+  return [
+    loopEvent({ type: 'step.begin', uuid }),
+    loopEvent({ type: 'content.part', stepUuid: uuid, part: { type: 'text', text } }),
+    loopEvent({ type: 'step.end', uuid }),
+  ];
+}
+
+function compaction(
+  summary: string,
+  compactedCount: number,
+  keptUserMessageCount?: number,
+  keptHeadUserMessageCount?: number,
+): PersistedRecord {
+  return {
+    type: 'context.apply_compaction',
+    summary,
+    contextSummary: `prefixed ${summary}`,
+    compactedCount,
+    tokensBefore: 1000,
+    tokensAfter: 100,
+    ...(keptUserMessageCount === undefined ? {} : { keptUserMessageCount }),
+    ...(keptHeadUserMessageCount === undefined ? {} : { keptHeadUserMessageCount }),
+  };
+}
+
+function undo(count: number): PersistedRecord {
+  return { type: 'context.undo', count };
+}
+
+function texts(result: ContextTranscript): string[] {
+  return result.entries.map((m) =>
+    m.content.map((p) => (p.type === 'text' ? p.text : `[${p.type}]`)).join(''),
+  );
+}
+
+describe('reduceContextTranscript', () => {
+  it('builds the transcript from append_message and loop events', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+    ]);
+    expect(texts(result)).toEqual(['u1', 'a1']);
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant']);
+    expect(result.foldedLength).toBe(2);
+  });
+
+  it('compaction keeps the prefix and appends a user-role summary marker', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('u2')),
+      ...assistantStep('s2', 'a2'),
+      compaction('SUM', 4),
+      appendMessage(userMessage('u3')),
+    ]);
+    expect(texts(result)).toEqual(['u1', 'a1', 'u2', 'a2', 'SUM', 'u3']);
+    expect(result.entries[4]!.origin).toEqual({ kind: 'compaction_summary' });
+    expect(result.entries[4]!.role).toBe('user');
+    // live folded view would be [u1, u2, SUM, u3]
+    expect(result.foldedLength).toBe(4);
+  });
+
+  it('uses the recorded kept-user count for foldedLength when present', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      appendMessage(userMessage('u3')),
+      compaction('SUM', 3, 1),
+      appendMessage(userMessage('u4')),
+    ]);
+    // 1 kept user message + summary + u4 appended after compaction.
+    expect(result.foldedLength).toBe(3);
+  });
+
+  it('accounts for the elision marker when the record kept a head segment', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      ...assistantStep('s1', 'a1'),
+      compaction('SUM', 3, 2, 1),
+    ]);
+    // Live context: head user + elision marker + tail user + summary.
+    expect(result.foldedLength).toBe(4);
+  });
+
+  it('preserves the pre-compaction assistant reply after a later undo', () => {
+    // The reported regression: send A, /compact, send B, undo. The snapshot
+    // must still show A's assistant reply (compaction only folds the live
+    // context; the transcript keeps the full history).
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('message A')),
+      appendMessage(assistantMessage('reply A')),
+      compaction('summary text', 2, 1),
+      appendMessage(userMessage('message B')),
+      appendMessage(assistantMessage('reply B')),
+      undo(1),
+    ]);
+    expect(texts(result)).toEqual(['message A', 'reply A', 'summary text']);
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'user']);
+    expect(result.foldedLength).toBe(2);
+  });
+
+  it('undo without compaction keeps the earlier exchange intact', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('message A')),
+      appendMessage(assistantMessage('reply A')),
+      appendMessage(userMessage('message B')),
+      appendMessage(assistantMessage('reply B')),
+      undo(1),
+    ]);
+    expect(texts(result)).toEqual(['message A', 'reply A']);
+  });
+
+  it('undo stops at a compaction summary', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('old')),
+      compaction('SUM', 1, 1),
+      appendMessage(userMessage('recent')),
+      appendMessage(assistantMessage('answer')),
+      undo(2),
+    ]);
+    // Only the post-compaction exchange is removed; the summary blocks further undo.
+    expect(texts(result)).toEqual(['old', 'SUM']);
+  });
+
+  it('clear keeps prior transcript entries but resets the folded view', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+      { type: 'context.clear' },
+      appendMessage(userMessage('u3')),
+    ]);
+    expect(texts(result)).toEqual(['u1', 'u2', 'u3']);
+    expect(result.foldedLength).toBe(1);
+  });
+
+  it('undo does not cross a clear floor', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('u1')),
+      { type: 'context.clear' },
+      appendMessage(userMessage('u2')),
+      appendMessage(assistantMessage('a2')),
+      undo(1),
+    ]);
+    // The post-clear exchange (u2 + a2) is removed; pre-clear u1 stays in the
+    // transcript and the clear floor blocks undo from reaching it.
+    expect(texts(result)).toEqual(['u1']);
+    expect(result.foldedLength).toBe(0);
+  });
+
+  it('folds tool calls and results from loop events', () => {
+    const result = reduceContextTranscript([
+      appendMessage(userMessage('q')),
+      loopEvent({ type: 'step.begin', uuid: 's1' }),
+      loopEvent({ type: 'content.part', stepUuid: 's1', part: { type: 'text', text: 'hi' } }),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 's1',
+        toolCallId: 'call_1',
+        name: 'Bash',
+        args: { command: 'echo hi' },
+      }),
+      loopEvent({ type: 'tool.result', toolCallId: 'call_1', result: { output: 'hi' } }),
+      loopEvent({ type: 'step.end', uuid: 's1' }),
+    ]);
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'tool']);
+    expect(result.entries[1]!.toolCalls).toHaveLength(1);
+    expect(result.entries[1]!.toolCalls[0]!.id).toBe('call_1');
+    expect(result.entries[2]!.toolCallId).toBe('call_1');
+    expect(result.foldedLength).toBe(3);
+  });
+});

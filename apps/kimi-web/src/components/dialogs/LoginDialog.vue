@@ -33,17 +33,25 @@ const emit = defineEmits<{
 // -------------------------------------------------------------------------
 
 const props = defineProps<{
-  onStartOAuthLogin: () => Promise<{
-    flowId: string;
-    provider: string;
-    verificationUri: string;
-    verificationUriComplete: string;
-    userCode: string;
-    expiresIn: number;
-    interval: number;
-    status: 'pending';
-    expiresAt: string;
-  } | null>;
+  onStartOAuthLogin: () => Promise<
+    | {
+        flowId: string;
+        provider: string;
+        status: 'pending';
+        verificationUri: string;
+        verificationUriComplete: string;
+        userCode: string;
+        expiresIn: number;
+        interval: number;
+        expiresAt: string;
+      }
+    | {
+        flowId: string;
+        provider: string;
+        status: 'authenticated';
+      }
+    | null
+  >;
   onPollOAuthLogin: () => Promise<{
     flowId: string;
     status: 'pending' | 'authenticated' | 'expired' | 'cancelled';
@@ -104,6 +112,19 @@ async function startFlow(): Promise<void> {
   const result = await props.onStartOAuthLogin();
   if (!result) {
     step.value = 'error';
+    return;
+  }
+
+  // Already-authenticated fast path: the server had a usable cached token and
+  // did not issue a device code. Skip the device-code UI entirely and surface
+  // the success state — the poller is irrelevant here.
+  if (result.status === 'authenticated') {
+    stopTimers();
+    step.value = 'success';
+    setTimeout(() => {
+      emit('success');
+      emit('close');
+    }, 800);
     return;
   }
 

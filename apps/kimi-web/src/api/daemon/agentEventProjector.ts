@@ -57,6 +57,7 @@ const MAIN_AGENT_TRANSCRIPT_FRAMES = new Set<string>([
   'tool.result',
   'agent.status.updated',
   'prompt.completed',
+  'error',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -499,10 +500,11 @@ export interface AgentProjector {
   /**
    * Seed mid-turn state from a session snapshot's `in_flight_turn` (v2 sync):
    * resets per-session state, builds the partially-streamed assistant message
-   * (thinking + text + running tool_use parts), and returns the AppEvents
-   * (sessionStatusChanged + messageCreated) to apply to the reducer. Live
-   * deltas continue appending; their wire `offset` aligns against the seeded
-   * text so the overlap window around snapshot/subscribe is exact.
+   * (thinking + text + running tool_use parts), and returns the messageCreated
+   * AppEvent to apply to the reducer. Live deltas continue appending; their
+   * wire `offset` aligns against the seeded text so the overlap window around
+   * snapshot/subscribe is exact. Session status is NOT seeded here — the REST
+   * snapshot's `session.status` is the authoritative value.
    */
   seedInFlight(sessionId: string, turn: AppInFlightTurn): AppEvent[];
   /** Reset all per-session state (call on re-subscribe / resync). */
@@ -574,16 +576,7 @@ export function createAgentProjector(): AgentProjector {
     s.turnTextLen = turn.assistantText.length;
     s.turnThinkLen = turn.thinkingText.length;
 
-    return [
-      {
-        type: 'sessionStatusChanged',
-        sessionId,
-        status: 'running',
-        previousStatus: 'idle',
-        currentPromptId: promptId,
-      },
-      { type: 'messageCreated', message: cloneMessage(msg) },
-    ];
+    return [{ type: 'messageCreated', message: cloneMessage(msg) }];
   }
 
   function project(
@@ -701,6 +694,12 @@ export function createAgentProjector(): AgentProjector {
       // -----------------------------------------------------------------------
       case 'turn.started': {
         // Bind turnId → promptId. Generate a synthetic one if none was pre-bound.
+        // Session status is intentionally NOT projected here — the daemon's
+        // `event.session.status_changed` is the single source of status
+        // transitions (it carries the authoritative previousStatus /
+        // currentPromptId and dedupes per real transition); projecting a
+        // second running/idle event per turn from the raw stream made every
+        // turn-end consumer (notifications, sounds) fire twice.
         const turnId: number = p?.turnId;
         const existingPromptId = s.currentPromptId ?? ulid('pr_');
         s.currentPromptId = existingPromptId;
@@ -710,14 +709,6 @@ export function createAgentProjector(): AgentProjector {
         // Fresh turn → fresh per-turn stream offsets.
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
-
-        out.push({
-          type: 'sessionStatusChanged',
-          sessionId,
-          status: 'running',
-          previousStatus: 'idle',
-          currentPromptId: existingPromptId,
-        });
         break;
       }
 
@@ -963,7 +954,7 @@ export function createAgentProjector(): AgentProjector {
               sessionId,
               messageId: msgId,
               content: msg.content.map((c) => ({ ...c })),
-              status: reason === 'failed' || reason === 'filtered' ? 'error' : 'completed',
+              status: reason === 'failed' || reason === 'blocked' ? 'error' : 'completed',
               durationMs,
             });
           }
@@ -973,14 +964,8 @@ export function createAgentProjector(): AgentProjector {
         const usageSnapshot = buildUsageSnapshot(s);
         out.push({ type: 'sessionUsageUpdated', sessionId, usage: usageSnapshot });
 
-        const newStatus =
-          reason === 'cancelled' || reason === 'failed' || reason === 'filtered' ? 'aborted' : 'idle';
-        out.push({
-          type: 'sessionStatusChanged',
-          sessionId,
-          status: newStatus,
-          previousStatus: 'running',
-        });
+        // No sessionStatusChanged here — see turn.started. The daemon's
+        // `event.session.status_changed` flips the session to idle/aborted.
 
         // Clear per-turn state. Reset the stream offsets too so a stale length
         // from this turn can't wedge the next turn's delta alignment into a
@@ -1108,10 +1093,10 @@ export function createAgentProjector(): AgentProjector {
       }
 
       // -----------------------------------------------------------------------
-      // Background tasks (e.g. a backgrounded Bash command). Real daemon shape:
+      // Tasks (e.g. a detached Bash command). Real daemon shape:
       // payload.info = { taskId, description, status, startedAt(ms), endedAt,
       // kind:'process', command, pid, exitCode }.
-      case 'background.task.started': {
+      case 'task.started': {
         const info = (p?.info ?? {}) as Record<string, unknown>;
         const startedAt =
           typeof info.startedAt === 'number' ? new Date(info.startedAt).toISOString() : undefined;
@@ -1145,7 +1130,7 @@ export function createAgentProjector(): AgentProjector {
         });
         break;
       }
-      case 'background.task.terminated': {
+      case 'task.terminated': {
         const info = (p?.info ?? {}) as Record<string, unknown>;
         const failed =
           info.status === 'failed' ||
@@ -1333,6 +1318,8 @@ const KNOWN_AGENT_CORE_TYPES = new Set([
   'subagent.suspended',
   'subagent.completed',
   'subagent.failed',
+  'task.started',
+  'task.terminated',
   'background.task.started',
   'background.task.terminated',
   'cron.fired',

@@ -65,16 +65,30 @@ export function parseSlash(input: string): { cmd: string; arg: string } | null {
   };
 }
 
+/** The prefix marking a slash item as a skill activation (`/skill:<name>`). */
+export const SKILL_COMMAND_PREFIX = 'skill:';
+
+/**
+ * Strip the `skill:` prefix from a slash-command name (with or without the
+ * leading `/`), returning the bare skill name. Non-prefixed input is returned
+ * unchanged.
+ */
+export function stripSkillPrefix(name: string): string {
+  return name.startsWith(SKILL_COMMAND_PREFIX) ? name.slice(SKILL_COMMAND_PREFIX.length) : name;
+}
+
 /**
  * Build the full slash-item list: built-in commands followed by the session's
- * skills (each shown as `/<skill-name>`). Skills carry their raw description and
+ * skills. Non-builtin skills are shown as `/skill:<skill-name>` so the user can
+ * tell them apart from built-in commands (mirroring the TUI); builtin-sourced
+ * skills keep the bare `/<skill-name>`. Skills carry their raw description and
  * an `isSkill` flag so the caller knows to activate rather than run a command.
  */
 export function buildSlashItems(
-  skills: ReadonlyArray<{ name: string; description: string }> = [],
+  skills: ReadonlyArray<{ name: string; description: string; source?: string }> = [],
 ): SlashCommand[] {
   const skillItems: SlashCommand[] = skills.map((s) => ({
-    name: `/${s.name}`,
+    name: s.source === 'builtin' ? `/${s.name}` : `/${SKILL_COMMAND_PREFIX}${s.name}`,
     desc: s.description,
     isSkill: true,
     // Keep the selected skill in the composer so arguments can be appended.

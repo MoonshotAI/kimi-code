@@ -1074,6 +1074,13 @@ describe('SessionService status lifecycle', () => {
     expect((await svc.get(session.id)).status).toBe('aborted');
   });
 
+  it('turn.ended with blocked moves status to aborted', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/blocked' } });
+    eventBus.eventService.publish({ type: 'turn.started', sessionId: session.id } as unknown as Event);
+    eventBus.eventService.publish({ type: 'turn.ended', sessionId: session.id, reason: 'blocked' } as unknown as Event);
+    expect((await svc.get(session.id)).status).toBe('aborted');
+  });
+
   it('prompt.submitted moves status to running when a current prompt exists', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/prompt' } });
     promptStub.activePromptIds.set(session.id, 'p1');

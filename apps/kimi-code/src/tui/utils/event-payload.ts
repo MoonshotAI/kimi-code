@@ -1,7 +1,4 @@
-import {
-  isKimiError,
-  type KimiErrorPayload,
-} from '@moonshot-ai/kimi-code-sdk';
+import { isKimiError } from '@moonshot-ai/kimi-code-sdk';
 
 import {
   STREAMING_ARGS_FIELD_RE,
@@ -103,9 +100,13 @@ export function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-export function formatErrorPayload(
-  error: Pick<KimiErrorPayload, 'code' | 'message' | 'details'>,
-): string {
+interface ErrorPayloadLike {
+  readonly code: string;
+  readonly message: string;
+  readonly details?: Record<string, unknown>;
+}
+
+export function formatErrorPayload(error: ErrorPayloadLike): string {
   const filteredMessage = formatProviderFilteredMessage(error.details);
   if (filteredMessage !== undefined) return `[${error.code}] ${filteredMessage}`;
   return `[${error.code}] ${error.message}`;

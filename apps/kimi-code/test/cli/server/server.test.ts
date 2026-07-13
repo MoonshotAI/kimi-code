@@ -671,6 +671,36 @@ describe('shared parsers stay strict', () => {
   });
 });
 
+describe('server-v2 routing (KIMI_CODE_EXPERIMENTAL_FLAG)', () => {
+  it('is off when the env is unset or blank', async () => {
+    const { isServerV2Enabled } = await import('#/cli/sub/server/run');
+    expect(isServerV2Enabled({})).toBe(false);
+    expect(isServerV2Enabled({ KIMI_CODE_EXPERIMENTAL_FLAG: '' })).toBe(false);
+    expect(isServerV2Enabled({ KIMI_CODE_EXPERIMENTAL_FLAG: '   ' })).toBe(false);
+  });
+
+  it('is on for the documented truthy values (case-insensitive)', async () => {
+    const { isServerV2Enabled } = await import('#/cli/sub/server/run');
+    for (const value of ['1', 'true', 'yes', 'on', 'TRUE', 'Yes', 'ON']) {
+      expect(isServerV2Enabled({ KIMI_CODE_EXPERIMENTAL_FLAG: value })).toBe(true);
+    }
+  });
+
+  it('is off for explicit falsey values and arbitrary strings', async () => {
+    const { isServerV2Enabled } = await import('#/cli/sub/server/run');
+    for (const value of ['0', 'false', 'no', 'off', '2', 'server-v2']) {
+      expect(isServerV2Enabled({ KIMI_CODE_EXPERIMENTAL_FLAG: value })).toBe(false);
+    }
+  });
+
+  it('is the canonical experimental-v2 gate', async () => {
+    const { isServerV2Enabled } = await import('#/cli/sub/server/run');
+    const { isKimiV2Enabled, KIMI_V2_ENV } = await import('#/cli/experimental-v2');
+    expect(KIMI_V2_ENV).toBe('KIMI_CODE_EXPERIMENTAL_FLAG');
+    expect(isServerV2Enabled).toBe(isKimiV2Enabled);
+  });
+});
+
 describe('server web asset directory resolution', () => {
   it('uses extracted SEA web assets when available', async () => {
     const { resolveServerWebAssetsDir } = await import('#/cli/sub/server/run');

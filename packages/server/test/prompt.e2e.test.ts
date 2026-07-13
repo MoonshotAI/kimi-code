@@ -32,7 +32,12 @@ import { WebSocket } from 'ws';
 import { Jimp } from 'jimp';
 
 import type { Event, PromptSubmission } from '@moonshot-ai/protocol';
-import { IEventService, IPromptService, PromptService } from '@moonshot-ai/agent-core';
+import {
+  IEventService,
+  IPromptService,
+  PromptService,
+  type TelemetryClient,
+} from '@moonshot-ai/agent-core';
 
 import { IRestGateway, startServer, type ServerStartOptions, type RunningServer } from '../src';
 import { fixedTokenAuth } from './helpers/serverHarness';
@@ -61,13 +66,14 @@ afterEach(async () => {
 
 async function bootDaemon(
   serviceOverrides?: ServerStartOptions['serviceOverrides'],
+  telemetry?: TelemetryClient,
 ): Promise<RunningServer> {
   server = await startServer({
     host: '127.0.0.1',
     port: 0,
     lockPath,
     logger: pino({ level: 'silent' }),
-    coreProcessOptions: { homeDir: bridgeHome },
+    coreProcessOptions: { homeDir: bridgeHome, telemetry },
     wsGatewayOptions: { pingIntervalMs: 5_000, pongTimeoutMs: 5_000 },
     serviceOverrides: [fixedTokenAuth(), ...(serviceOverrides ?? [])],
   });
@@ -352,6 +358,50 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     ]);
   });
 
+  it('replaces a remote image URL whose extension is unsupported with a notice', async () => {
+    // No bytes to sniff, so the gate uses the path extension: a `.avif`
+    // link becomes a notice (the provider would fetch it server-side and
+    // 400); an extensionless or accepted-extension URL passes through.
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'text', text: 'describe this' },
+          { type: 'image', source: { kind: 'url', url: 'https://example.com/pic.avif' } },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    expect(submitted?.content[0]).toEqual({ type: 'text', text: 'describe this' });
+    const notice = submitted?.content[1];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(notice.text).toContain('https://example.com/pic.avif');
+    expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
+  });
+
   it('uploads a real PNG image file and resolves it before submitting the prompt', async () => {
     let submitted: PromptSubmission | undefined;
     const r = await bootDaemon([
@@ -445,7 +495,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     const sid = await createSession(r);
 
     const bigPng = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const upload = buildMultipart({
       file: { fieldName: 'file', filename: 'big.png', contentType: 'image/png', data: bigPng },
@@ -479,7 +529,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     const sentBytes = Buffer.from(part.source.data, 'base64');
     const decoded = await Jimp.fromBuffer(sentBytes);
     // The model-facing copy is downsampled to the edge cap.
-    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
+    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(3000);
 
     // Compression is announced next to the image, and the caption points at
     // the stored file (which keeps the original bytes) for readback.
@@ -488,7 +538,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
       throw new Error('expected a compression caption before the image part');
     }
     expect(caption.text).toContain('Image compressed');
-    expect(caption.text).toContain('2600x2600');
+    expect(caption.text).toContain('3600x1800');
     const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
     expect(pathMatch).not.toBeNull();
     const persisted = await readFile(pathMatch![1]!);
@@ -516,10 +566,10 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     ]);
     const sid = await createSession(r);
 
-    // Solid 2600×2600: over the edge cap but tiny in bytes, so it stays well
+    // Solid 3600×1800: over the edge cap but tiny in bytes, so it stays well
     // under Fastify's inline-JSON limit yet still benefits from downscaling.
     const base64 = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
 
     const res = await appOf(r).inject({
@@ -538,7 +588,7 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
       throw new Error('expected a base64 image part');
     }
     const decoded = await Jimp.fromBuffer(Buffer.from(part.source.data, 'base64'));
-    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(2000);
+    expect(Math.max(decoded.width, decoded.height)).toBeLessThanOrEqual(3000);
 
     // Inline base64 has no stored file, so the original is persisted into the
     // session's media-originals dir and the caption points there.
@@ -557,6 +607,349 @@ describe('POST /api/v1/sessions/{sid}/prompts — submit validation (W7.2 / Chai
     expect(pathMatch![1]!).toContain('/media-originals/');
     const persisted = await readFile(pathMatch![1]!);
     expect(persisted.equals(Buffer.from(base64, 'base64'))).toBe(true);
+  });
+
+  it('replaces an inline base64 image the provider cannot accept with a notice', async () => {
+    // An AVIF inline image must never reach the session history — the
+    // provider rejects it and every later request would fail.
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'text', text: 'what is this?' },
+          {
+            type: 'image',
+            source: {
+              kind: 'base64',
+              media_type: 'image/avif',
+              data: Buffer.from([1, 2, 3]).toString('base64'),
+            },
+          },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    expect(submitted?.content[0]).toEqual({ type: 'text', text: 'what is this?' });
+    const notice = submitted?.content[1];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
+  });
+
+  it('gates an inline base64 image on its real bytes when the declared MIME lies', async () => {
+    // AVIF bytes declared image/png: the provider decodes bytes, not labels,
+    // so the sniffed format decides — the image must not reach the session.
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const avif = Buffer.alloc(16);
+    avif.writeUInt32BE(16, 0);
+    avif.write('ftyp', 4, 'latin1');
+    avif.write('avif', 8, 'latin1');
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          {
+            type: 'image',
+            source: { kind: 'base64', media_type: 'image/png', data: avif.toString('base64') },
+          },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    const notice = submitted?.content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
+  });
+
+  it('gates an uploaded file on its real bytes when the Content-Type lies', async () => {
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const avif = Buffer.alloc(16);
+    avif.writeUInt32BE(16, 0);
+    avif.write('ftyp', 4, 'latin1');
+    avif.write('avif', 8, 'latin1');
+
+    const upload = buildMultipart({
+      file: {
+        fieldName: 'file',
+        filename: 'photo.png',
+        contentType: 'image/png',
+        data: avif,
+      },
+    });
+    const uploadRes = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/files',
+      payload: upload.body,
+      headers: { 'content-type': upload.contentType },
+    });
+    const uploadEnv = envelopeOf<{ id: string; media_type: string }>(uploadRes.json());
+    expect(uploadEnv.code).toBe(0);
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [{ type: 'image', source: { kind: 'file', file_id: uploadEnv.data!.id } }],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    const notice = submitted?.content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
+  });
+
+  it('forwards an inline base64 image with an aliased MIME in canonical form', async () => {
+    // Strict provider whitelists reject the raw `image/jpg` alias — the part
+    // must land in the session with the canonical MIME.
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const base64 = Buffer.from([1, 2, 3]).toString('base64');
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'image', source: { kind: 'base64', media_type: 'image/jpg', data: base64 } },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    expect(submitted?.content).toEqual([
+      { type: 'image', source: { kind: 'base64', media_type: 'image/jpeg', data: base64 } },
+    ]);
+  });
+
+  it('treats an inline base64 image with a parameterized media type like the bare form', async () => {
+    // `image/jpeg; charset=utf-8` is the same accepted image as `image/jpeg`:
+    // MIME parameters are stripped before the acceptance check, so it is
+    // forwarded (canonicalized), not dropped as if unsupported. Garbage
+    // bytes force the declared-MIME fallback path that exercises the strip.
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const base64 = Buffer.from([1, 2, 3]).toString('base64');
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          {
+            type: 'image',
+            source: { kind: 'base64', media_type: 'image/jpeg; charset=utf-8', data: base64 },
+          },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    expect(submitted?.content).toEqual([
+      { type: 'image', source: { kind: 'base64', media_type: 'image/jpeg', data: base64 } },
+    ]);
+  });
+
+  it('replaces an uploaded image the provider cannot accept with a notice naming the file', async () => {
+    let submitted: PromptSubmission | undefined;
+    const r = await bootDaemon([
+      [
+        IPromptService,
+        createPromptServiceOverride({
+          submit: async (_sid, body) => {
+            submitted = body;
+            return {
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            };
+          },
+        }),
+      ],
+    ]);
+    const sid = await createSession(r);
+
+    const upload = buildMultipart({
+      file: {
+        fieldName: 'file',
+        filename: 'photo.avif',
+        contentType: 'image/avif',
+        data: Buffer.from([1, 2, 3]),
+      },
+    });
+    const uploadRes = await appOf(r).inject({
+      method: 'POST',
+      url: '/api/v1/files',
+      payload: upload.body,
+      headers: { 'content-type': upload.contentType },
+    });
+    const uploadEnv = envelopeOf<{ id: string; media_type: string }>(uploadRes.json());
+    expect(uploadEnv.code).toBe(0);
+    expect(uploadEnv.data?.media_type).toBe('image/avif');
+
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [{ type: 'image', source: { kind: 'file', file_id: uploadEnv.data!.id } }],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    const notice = submitted?.content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(notice.text).toContain('photo.avif');
+    expect(submitted?.content.some((p) => p.type === 'image')).toBe(false);
+  });
+
+  it('scopes prompt image compression telemetry to the session', async () => {
+    // The agent-side image_compress sources inherit the session context from
+    // their per-session telemetry client; the prompt-ingestion sources must
+    // match, or prompt_inline/prompt_file events cannot be correlated with
+    // the session they belong to.
+    const events: { event: string; sessionId: string | null | undefined }[] = [];
+    const makeClient = (ctx: { sessionId?: string | null }): TelemetryClient => ({
+      track: (event) => events.push({ event, sessionId: ctx.sessionId }),
+      withContext: (patch) => makeClient({ ...ctx, ...patch }),
+    });
+    const r = await bootDaemon(
+      [
+        [
+          IPromptService,
+          createPromptServiceOverride({
+            submit: async (_sid, body) => ({
+              prompt_id: 'prompt_from_stub',
+              user_message_id: 'msg_from_stub',
+              status: 'running',
+              content: body.content,
+              created_at: '2026-06-09T00:00:00.000Z',
+            }),
+          }),
+        ],
+      ],
+      makeClient({}),
+    );
+    const sid = await createSession(r);
+
+    const base64 = Buffer.from(
+      await new Jimp({ width: 3600, height: 400, color: 0x3366ccff }).getBuffer('image/png'),
+    ).toString('base64');
+    const res = await appOf(r).inject({
+      method: 'POST',
+      url: `/api/v1/sessions/${sid}/prompts`,
+      payload: {
+        content: [
+          { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: base64 } },
+        ],
+      },
+    });
+    expect(envelopeOf(res.json()).code).toBe(0);
+
+    const compress = events.filter((e) => e.event === 'image_compress');
+    expect(compress).toHaveLength(1);
+    expect(compress[0]!.sessionId).toBe(sid);
   });
 
   it('returns 40407 when prompt image file_id is unknown', async () => {

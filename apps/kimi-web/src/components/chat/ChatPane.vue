@@ -9,13 +9,13 @@ import Markdown from './Markdown.vue';
 import ThinkingBlock from './ThinkingBlock.vue';
 import ActivityNotice from './ActivityNotice.vue';
 import CronNotice from './CronNotice.vue';
+import MessageTime from './MessageTime.vue';
 import AuthMedia from './AuthMedia.vue';
 import MoonSpinner from '../ui/MoonSpinner.vue';
 import Spinner from '../ui/Spinner.vue';
 import Icon from '../ui/Icon.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
-import { formatMessageTime } from '../../lib/formatMessageTime';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import {
   assistantRenderBlocks,
@@ -318,27 +318,6 @@ const undoingTurnId = ref<string | null>(null);
 let undoFallbackTimer: ReturnType<typeof setTimeout> | null = null;
 const UNDO_FALLBACK_MS = 2500;
 
-// Expanded timestamp state (keyed by turn id)
-const expandedTimeTurnIds = ref<Set<string>>(new Set());
-function isTimeExpanded(turnId: string): boolean {
-  return expandedTimeTurnIds.value.has(turnId);
-}
-function toggleTime(turnId: string): void {
-  const next = new Set(expandedTimeTurnIds.value);
-  if (next.has(turnId)) next.delete(turnId);
-  else next.add(turnId);
-  expandedTimeTurnIds.value = next;
-}
-function displayMessageTime(iso: string, turnId: string): string {
-  if (isTimeExpanded(turnId)) {
-    const d = new Date(iso);
-    if (Number.isNaN(d.getTime())) return iso;
-    const pad2 = (n: number) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
-  }
-  return formatMessageTime(iso, t('conversation.yesterday'));
-}
-
 async function onUndo(turn: ChatTurn): Promise<void> {
   if (
     await confirm({
@@ -611,14 +590,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
               <Icon v-if="copiedTurn !== turn.id" name="copy" size="sm" />
               <Icon v-else name="check" size="sm" />
             </button>
-            <button
-              v-if="turn.createdAt"
-              type="button"
-              class="u-time"
-              @click.stop="toggleTime(turn.id)"
-            >
-              {{ displayMessageTime(turn.createdAt, turn.id) }}
-            </button>
+            <MessageTime v-if="turn.createdAt" :time="turn.createdAt" />
           </div>
         </div>
       </template>
@@ -642,7 +614,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 
       <!-- Cron notice — a turn triggered by a scheduled reminder, rendered as
            a lightweight in-transcript notice rather than a user bubble. -->
-      <CronNotice v-else-if="turn.role === 'cron'" :text="turn.text" :cron="turn.cron" :turn-id="turn.id" />
+      <CronNotice v-else-if="turn.role === 'cron'" :text="turn.text" :cron="turn.cron" :turn-id="turn.id" :created-at="turn.createdAt" />
 
       <!-- Assistant turn → left-aligned, no name/role label. -->
       <div v-else class="a-msg turn-anchor" :data-turn-id="turn.id">
@@ -660,7 +632,6 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
             @open-agent="emit('openAgent', $event)"
           />
           <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" @open-agent="emit('openAgent', $event)" />
-          <CronNotice v-else-if="blk.kind === 'cron'" :text="blk.text" :cron="blk.cron" />
         </template>
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turn.durationMs !== undefined)" class="a-msg-ft">
           <Tooltip :text="`${turn.durationMs} ms`">
@@ -855,29 +826,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   margin-top: 2px;
   margin-right: 4px;
 }
-.u-meta .u-time {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px 5px;
-  background: none;
-  border: none;
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  font: inherit;
-  font-size: var(--text-base);
-  line-height: 1;
-  cursor: pointer;
-  opacity: 0.7;
-  transition: opacity 0.12s, color 0.12s, background-color 0.12s;
-  white-space: nowrap;
-}
-.u-meta .u-time:hover {
-  opacity: 1;
-  color: var(--color-accent);
-  background: var(--hover);
-}
-.u-meta .u-edit,
-.u-meta .u-time {
+.u-meta .u-edit {
   min-height: 22px;
   box-sizing: border-box;
 }
@@ -1081,6 +1030,33 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   border-radius: var(--radius-sm);
   padding: 1px 6px;
   color: var(--color-accent-hover);
+}
+
+/* ===================== Wide tables (desktop) ===================== */
+/* 760px corresponds to --p-content-max. Container-query conditions cannot
+   reference CSS custom properties directly. */
+@container (min-width: 760px) {
+  /* markstream's content-visibility:auto implies paint containment, which can
+     clip a table that breaks out of the normal Markdown width. Disable it only
+     for renderers that actually contain a table. Keep contain:layout intact. */
+  .a-msg .msg :deep(.markstream-vue.markdown-renderer:has(.table-node-wrapper)) {
+    content-visibility: visible;
+  }
+
+  /* Let a table grow naturally beyond the reading column, centred within the
+     conversation pane. The first-stage overflow-x:auto continues to handle
+     content wider than this wrapper. */
+  .a-msg .msg :deep(.table-node-wrapper) {
+    position: relative;
+    left: 50%;
+    width: max-content;
+    min-width: 100%;
+    max-width: min(
+      var(--p-table-max),
+      calc(100cqi - var(--space-5) - var(--space-5))
+    ) !important;
+    transform: translateX(-50%);
+  }
 }
 
 .u-imgs {

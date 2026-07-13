@@ -12,6 +12,7 @@
  *   POST    /v1/sessions/{id}:compact     body: CompactSession  data: {}
  *   POST    /v1/sessions/{id}:undo        body: UndoSession     data: UndoSession
  *   POST    /v1/sessions/{id}:archive     -                     data: { archived: true }
+ *   POST    /v1/sessions/{id}:restore     -                     data: Session
  */
 
 import { z } from 'zod';
@@ -46,6 +47,7 @@ export const listSessionsQuerySchema = cursorQuerySchema.and(
   z.object({
     status: sessionStatusSchema.optional(),
     include_archive: booleanQueryParam,
+    archived_only: booleanQueryParam,
     exclude_empty: booleanQueryParam,
   }),
 );
@@ -160,6 +162,9 @@ export const archiveSessionResponseSchema = z.object({
   archived: z.literal(true),
 });
 export type ArchiveSessionResponse = z.infer<typeof archiveSessionResponseSchema>;
+
+export const restoreSessionResponseSchema = sessionSchema;
+export type RestoreSessionResponse = z.infer<typeof restoreSessionResponseSchema>;
 
 /** @deprecated kept as an alias for backward compatibility; prefer archiveSessionResponseSchema. */
 export const deleteSessionResponseSchema = archiveSessionResponseSchema;

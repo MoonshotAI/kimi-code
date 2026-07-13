@@ -17,7 +17,6 @@ import {
   type BackgroundTaskInfo,
   type ContextMessage,
   type Event,
-  type KimiErrorPayload,
   type KimiHarness,
   type McpServerInfo,
   type PromptPart,
@@ -737,9 +736,18 @@ export class AcpSession {
     let parts: readonly PromptPart[];
     try {
       const sessionDir = this.session.summary?.sessionDir;
+      const track = this.track;
       parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks), {
         originalsDir:
           sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir),
+        maxImageEdgePx: this.harness?.imageLimits?.maxEdgePx(),
+        telemetry:
+          track === undefined
+            ? undefined
+            : {
+                track: (event, properties) =>
+                  track(event, properties === undefined ? undefined : { ...properties }),
+              },
       });
     } finally {
       this.pendingPromptAborts.delete(pending);
@@ -1176,12 +1184,15 @@ export class AcpSession {
               return;
             }
           } else {
-            if (event.reason === 'filtered') {
-              // The provider's safety policy blocked the response. It is
-              // mapped to ACP `refusal` (see turnEndReasonToStopReason); log
-              // it here too so the block stays observable in the agent logs,
-              // mirroring the `failed` branch above.
-              log.warn('acp: turn ended with filtered reason', { sessionId });
+            if (event.reason === 'blocked') {
+              // Provider safety and prompt hooks both map to ACP `refusal`
+              // (see turnEndReasonToStopReason); log them here too so the
+              // block stays observable in the agent logs, mirroring the
+              // `failed` branch above.
+              log.warn('acp: turn ended with blocked reason', {
+                reason: event.reason,
+                sessionId,
+              });
             }
             argsByToolCall.clear();
             startedToolCalls.clear();
@@ -1191,7 +1202,7 @@ export class AcpSession {
             this.currentTurnId = undefined;
             unsub();
           }
-          resolve({ stopReason: turnEndReasonToStopReason(event.reason) });
+          resolve({ stopReason: turnEndReasonToStopReason(event.reason, event.error) });
         }
       });
 
@@ -1539,7 +1550,9 @@ function mapPromptError(err: unknown, sessionId: string): RequestError {
  * `turn.ended` event hands us a serialized payload (no class identity
  * to branch on) — we only need the `code` discriminator here.
  */
-function authRequiredFromPayload(payload: KimiErrorPayload | undefined): RequestError | undefined {
+function authRequiredFromPayload(
+  payload: { readonly code: unknown } | undefined,
+): RequestError | undefined {
   if (!payload) return undefined;
   if (isAuthErrorCode(payload.code)) {
     return RequestError.authRequired();

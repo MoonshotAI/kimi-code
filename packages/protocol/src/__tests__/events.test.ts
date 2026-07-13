@@ -110,18 +110,19 @@ describe('events / display re-exports', () => {
       sessionId: 'sess_1',
       promptId: 'prompt_1',
       userMessageId: 'msg_1',
-      status: 'running',
+      status: 'blocked',
       content: [{ type: 'text', text: 'hello' }],
       createdAt: '2026-06-11T00:00:00.000Z',
     });
 
     expect(parsed.type).toBe('prompt.submitted');
     expect((parsed as { promptId: string }).promptId).toBe('prompt_1');
+    expect((parsed as { status: string }).status).toBe('blocked');
   });
 
-  it('preserves detached on background task events', () => {
+  it('preserves detached on task events', () => {
     const parsed = eventSchema.parse({
-      type: 'background.task.started',
+      type: 'task.started',
       agentId: 'main',
       sessionId: 'sess_1',
       info: {
@@ -138,7 +139,7 @@ describe('events / display re-exports', () => {
       },
     });
 
-    expect(parsed.type).toBe('background.task.started');
+    expect(parsed.type).toBe('task.started');
     expect((parsed as { info: { detached?: boolean } }).info.detached).toBe(false);
   });
 

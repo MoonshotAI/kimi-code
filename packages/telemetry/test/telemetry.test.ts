@@ -160,6 +160,21 @@ describe('TelemetryClient', () => {
     expect(transport.sent).toHaveLength(0);
   });
 
+  it('drops unsafe numeric properties before enqueueing events', async () => {
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+
+    client.track('big_number', { big: 2 ** 64, keep: true });
+    await client.flush();
+
+    const event = transport.sent[0]?.[0];
+    if (event === undefined) throw new Error('Expected a telemetry event');
+    expect(event.event).toBe('big_number');
+    expect(event.properties).not.toHaveProperty('big');
+    expect(event.properties['keep']).toBe(true);
+  });
+
   it('stops the previous system metrics collector when replacing it', () => {
     const client = new TelemetryClient();
     const first = { stop: vi.fn() };
@@ -267,6 +282,70 @@ describe('SystemMetricsCollector', () => {
     expect(numberProperty(event.properties, 'cpu_count')).toBeGreaterThanOrEqual(1);
   });
 
+  it('omits constrained_memory_bytes when it is not a safe non-negative integer', () => {
+    vi.useFakeTimers();
+    vi.spyOn(process, 'constrainedMemory').mockReturnValue(2 ** 64);
+    const tracked: Array<{
+      event: string;
+      properties: Record<string, number | string | boolean | undefined | null>;
+    }> = [];
+    const client = {
+      track(
+        event: string,
+        properties: Record<string, number | string | boolean | undefined | null> = {},
+      ): void {
+        tracked.push({ event, properties });
+      },
+    };
+    const collector = new SystemMetricsCollector({
+      client,
+      intervalMs: 30_000,
+      warmupSampleMs: 1_500,
+    });
+
+    collector.start();
+    vi.advanceTimersByTime(1_500);
+    collector.stop();
+
+    expect(tracked).toHaveLength(1);
+    const event = tracked[0];
+    if (event === undefined) throw new Error('Expected a system_metrics event');
+    expect(event.event).toBe('system_metrics');
+    expect(event.properties).not.toHaveProperty('constrained_memory_bytes');
+    expect(numberProperty(event.properties, 'rss_bytes')).toBeGreaterThan(0);
+  });
+
+  it('reports constrained_memory_bytes when it is a safe non-negative integer', () => {
+    vi.useFakeTimers();
+    vi.spyOn(process, 'constrainedMemory').mockReturnValue(8 * 1024 ** 3);
+    const tracked: Array<{
+      event: string;
+      properties: Record<string, number | string | boolean | undefined | null>;
+    }> = [];
+    const client = {
+      track(
+        event: string,
+        properties: Record<string, number | string | boolean | undefined | null> = {},
+      ): void {
+        tracked.push({ event, properties });
+      },
+    };
+    const collector = new SystemMetricsCollector({
+      client,
+      intervalMs: 30_000,
+      warmupSampleMs: 1_500,
+    });
+
+    collector.start();
+    vi.advanceTimersByTime(1_500);
+    collector.stop();
+
+    expect(tracked).toHaveLength(1);
+    const event = tracked[0];
+    if (event === undefined) throw new Error('Expected a system_metrics event');
+    expect(event.properties['constrained_memory_bytes']).toBe(8 * 1024 ** 3);
+  });
+
   it('does not duplicate interval sampling when started twice', () => {
     vi.useFakeTimers();
     const tracked: string[] = [];
@@ -361,6 +440,17 @@ describe('payload assembly', () => {
     } as unknown as EnrichedTelemetryEvent;
 
     expect(() => buildPayload([event], 'device-1')).toThrow(/property.nested/);
+  });
+
+  it('rejects unsafe numeric property values before outbound send', () => {
+    const event = {
+      ...sampleEvent('bad_number'),
+      properties: {
+        big: 2 ** 64,
+      },
+    };
+
+    expect(() => buildPayload([event], 'device-1')).toThrow(/property.big/);
   });
 
   it('rejects nested context and array property values before outbound send', () => {

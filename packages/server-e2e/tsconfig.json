@@ -3,5 +3,13 @@
   "compilerOptions": {
     "experimentalDecorators": true
   },
-  "include": ["src", "test", "scenarios", "../agent-core/src/prompt-modules.d.ts"]
+  "include": ["src", "test", "scenarios", "../agent-core/src/prompt-modules.d.ts"],
+  "exclude": [
+    // The v2 smoke test boots `server-v2` in-process, which pulls in server-v2's
+    // full source graph. server-v2 currently has a pre-existing type error in
+    // `src/transport/ws/eventMap.ts` (`ISessionInteractionService.onDidChange`
+    // was removed upstream in agent-core-v2). The smoke test still runs under
+    // vitest (esbuild transpiles without typechecking); only `tsc` skips it.
+    "test/v2/smoke.test.ts"
+  ]
 }

@@ -287,12 +287,12 @@ export interface WireQuestionResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Background Task
+// Task
 // ---------------------------------------------------------------------------
 
 export type WireTaskStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
-export interface WireBackgroundTask {
+export interface WireTask {
   id: string;
   session_id: string;
   kind: 'subagent' | 'bash' | 'tool';
@@ -413,17 +413,34 @@ export interface WireAuthResult {
   managed_provider: WireManagedProvider | null;
 }
 
-export interface WireOAuthLoginStartResult {
+// `POST /oauth/login` returns one of two shapes, discriminated by `status`:
+//   - `pending`: a real device-code flow was started; all device fields are
+//     populated so the client can render the device-code step and poll.
+//   - `authenticated`: the toolkit already had a usable token and short-
+//     circuited via its `ensureFresh` fast path, so no device code was
+//     issued; the client can skip the device-code step and treat the login
+//     as already complete.
+interface WireOAuthLoginStartPending {
   flow_id: string;
   provider: string;
+  status: 'pending';
   verification_uri: string;
   verification_uri_complete: string;
   user_code: string;
   expires_in: number;
   interval: number;
-  status: 'pending';
   expires_at: string;
 }
+
+interface WireOAuthLoginStartAuthenticated {
+  flow_id: string;
+  provider: string;
+  status: 'authenticated';
+}
+
+export type WireOAuthLoginStartResult =
+  | WireOAuthLoginStartPending
+  | WireOAuthLoginStartAuthenticated;
 
 export interface WireOAuthLoginPollResult {
   flow_id: string;
@@ -739,8 +756,8 @@ type WireEventQuestionDismissed = WireEventBase<'event.question.dismissed', {
   dismissed_by: string;
   dismissed_at: string;
 }>;
-// Background tasks
-type WireEventTaskCreated = WireEventBase<'event.task.created', { task: WireBackgroundTask }>;
+// Tasks
+type WireEventTaskCreated = WireEventBase<'event.task.created', { task: WireTask }>;
 type WireEventTaskProgress = WireEventBase<'event.task.progress', {
   task_id: string;
   output_chunk: string;
@@ -811,7 +828,7 @@ export type WireEvent =
   | WireEventQuestionRequested
   | WireEventQuestionAnswered
   | WireEventQuestionDismissed
-  // Background tasks
+  // Tasks
   | WireEventTaskCreated
   | WireEventTaskProgress
   | WireEventTaskCompleted

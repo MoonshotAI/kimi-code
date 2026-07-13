@@ -25,7 +25,7 @@
  *   - logout → delegates to facade.logout
  */
 
-import { describe, expect, it, vi } from 'vitest';
+import { assert, describe, expect, it, vi } from 'vitest';
 
 import {
   DeviceCodeTimeoutError,
@@ -129,7 +129,7 @@ describe('OAuthService.startLogin', () => {
     await mock.loginCalls[0]!.onDeviceCode?.(auth);
 
     const start = await startPromise;
-    expect(start.status).toBe('pending');
+    assert(start.status === 'pending');
     expect(start.flow_id).toMatch(/^oauth_/);
     expect(start.verification_uri).toBe(auth.verificationUri);
     expect(start.verification_uri_complete).toBe(auth.verificationUriComplete);
@@ -147,6 +147,7 @@ describe('OAuthService.startLogin', () => {
       fakeDeviceAuth({ expiresIn: null }),
     );
     const start = await startPromise;
+    assert(start.status === 'pending');
     expect(start.expires_in).toBe(15 * 60);
   });
 });

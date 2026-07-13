@@ -701,6 +701,38 @@ describe('PromptService lifecycle synthesis (via IEventService.onDidPublish)', (
     expect(impl._activeForTest(SID)).toBeUndefined();
   });
 
+  it('preserves blocked reason when synthesizing prompt.completed', async () => {
+    const { bridge } = makeBridge();
+    const { bus, events, triggerSubscribers } = makeBus();
+    const impl = newSvc(bridge, bus);
+    const submit = await impl.submit(SID, mkBody());
+    triggerSubscribers({
+      type: 'turn.started',
+      turnId: 7,
+      origin: { kind: 'user' },
+      sessionId: SID,
+      agentId: 'main',
+    } as unknown as Event);
+    events.length = 0;
+    triggerSubscribers({
+      type: 'turn.ended',
+      turnId: 7,
+      reason: 'blocked',
+      sessionId: SID,
+      agentId: 'main',
+    } as unknown as Event);
+    expect(events).toHaveLength(1);
+    const synth = events[0] as unknown as {
+      type: string;
+      promptId: string;
+      reason: string;
+    };
+    expect(synth.type).toBe('prompt.completed');
+    expect(synth.promptId).toBe(submit.prompt_id);
+    expect(synth.reason).toBe('blocked');
+    expect(impl._activeForTest(SID)).toBeUndefined();
+  });
+
   it('fires onDidComplete listener before bus.publish', async () => {
     const { bridge } = makeBridge();
     const { bus, events, triggerSubscribers } = makeBus();

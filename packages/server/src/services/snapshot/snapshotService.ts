@@ -304,7 +304,7 @@ export class SnapshotService extends Disposable implements ISnapshotService {
       case 'turn.ended': {
         this._activeTurns.delete(sessionId);
         const reason = (event as { reason?: string }).reason;
-        if (reason === 'cancelled' || reason === 'failed') {
+        if (reason === 'cancelled' || reason === 'failed' || reason === 'blocked') {
           this._abortedTurns.add(sessionId);
         } else {
           this._abortedTurns.delete(sessionId);

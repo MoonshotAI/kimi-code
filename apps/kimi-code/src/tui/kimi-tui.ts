@@ -123,6 +123,7 @@ import {
   type LivePaneState,
   type LoginProgressSpinnerHandle,
   type QueuedMessage,
+  type SteerInputItem,
   type TranscriptEntry,
   type TUIStartupOptions,
   type TUIStartupState,
@@ -132,7 +133,7 @@ import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
-import { extractMediaAttachments } from './utils/image-placeholder';
+import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -236,6 +237,50 @@ interface SendMessageOptions {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   readonly hasMedia?: boolean;
+}
+
+/**
+ * Flatten steer items into the payload `session.steer` expects: the
+ * historical `'\n\n'`-joined string when nothing carries media, or a
+ * merged part list when any item has extracted media parts (queued image
+ * messages, or the editor draft after placeholder extraction).
+ *
+ * Items are separated by the historical `'\n\n'`, which merges into the
+ * adjacent text part. The one exception is two touching media parts: a
+ * standalone `{type:'text',text:'\n\n'}` between them would be rejected
+ * by `normalizePromptInput` as an empty text part, so the separator is
+ * dropped there (media parts are self-delimiting anyway).
+ */
+function combineSteerInput(items: readonly SteerInputItem[]): string | PromptPart[] {
+  const hasMedia = items.some((item) => item.parts !== undefined && item.parts.length > 0);
+  if (!hasMedia) return items.map((item) => item.text).join('\n\n');
+  const parts: PromptPart[] = [];
+  for (const item of items) {
+    const startsWithMedia =
+      item.parts !== undefined && item.parts.length > 0 && item.parts[0]?.type !== 'text';
+    const lastIsMedia = parts.length > 0 && parts.at(-1)?.type !== 'text';
+    if (parts.length > 0 && !(lastIsMedia && startsWithMedia)) {
+      appendSteerText(parts, '\n\n');
+    }
+    if (item.parts !== undefined && item.parts.length > 0) {
+      for (const part of item.parts) {
+        if (part.type === 'text') appendSteerText(parts, part.text);
+        else parts.push(part);
+      }
+    } else {
+      appendSteerText(parts, item.text);
+    }
+  }
+  return parts;
+}
+
+function appendSteerText(parts: PromptPart[], text: string): void {
+  const last = parts.at(-1);
+  if (last?.type === 'text') {
+    parts[parts.length - 1] = { type: 'text', text: last.text + text };
+    return;
+  }
+  parts.push({ type: 'text', text });
 }
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
@@ -1095,9 +1140,11 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  private validateMediaCapabilities(
-    extraction: ReturnType<typeof extractMediaAttachments>,
-  ): boolean {
+  validateMediaCapabilities(extraction: {
+    hasMedia: boolean;
+    imageAttachmentIds: readonly number[];
+    videoAttachmentIds: readonly number[];
+  }): boolean {
     if (!extraction.hasMedia) return true;
     if (
       extraction.imageAttachmentIds.length > 0 &&
@@ -1243,8 +1290,22 @@ export class KimiTUI {
   }
 
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void {
+    // Args are a plain-text channel, so pasted media can't ride along as
+    // inline parts. Skill args are XML-escaped on render (renderSkillAttributes
+    // + expandSkillParameters), so rewrite placeholders into escape-proof
+    // plain-text file references the model can open with ReadMediaFile.
+    let rewrite: ReturnType<typeof rewriteMediaPlaceholders>;
+    try {
+      rewrite = rewriteMediaPlaceholders(skillArgs, this.imageStore, 'plain');
+    } catch (error) {
+      // Cache copy failed (unwritable cache dir, vanished video source…);
+      // nothing has been dispatched yet, so just report and keep the input.
+      this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      return;
+    }
+    if (!this.validateMediaCapabilities(rewrite)) return;
     this.beginSessionRequest();
-    void session.activateSkill(skillName, skillArgs).catch((error: unknown) => {
+    void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.failSessionRequest(`Skill "${skillName}" failed: ${message}`);
     });
@@ -1256,11 +1317,24 @@ export class KimiTUI {
     commandName: string,
     args: string,
   ): void {
+    // Plugin command args are expanded verbatim (no XML escaping), so the
+    // standard <image|video path> tag convention works — see
+    // sendSkillActivation for the escaped-channel variant.
+    let rewrite: ReturnType<typeof rewriteMediaPlaceholders>;
+    try {
+      rewrite = rewriteMediaPlaceholders(args, this.imageStore, 'tag');
+    } catch (error) {
+      this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      return;
+    }
+    if (!this.validateMediaCapabilities(rewrite)) return;
     this.beginSessionRequest();
-    void session.activatePluginCommand(pluginId, commandName, args).catch((error: unknown) => {
-      const message = formatErrorMessage(error);
-      this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
-    });
+    void session
+      .activatePluginCommand(pluginId, commandName, rewrite.text)
+      .catch((error: unknown) => {
+        const message = formatErrorMessage(error);
+        this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
+      });
   }
 
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
@@ -1275,31 +1349,35 @@ export class KimiTUI {
     this.sendMessageInternal(session, input, options);
   }
 
-  steerMessage(session: Session, input: string[]): void {
+  steerMessage(session: Session, input: readonly SteerInputItem[]): void {
     if (this.deferUserMessages || this.state.appState.isCompacting) {
-      for (const part of input) {
-        this.enqueueMessage(part);
+      for (const item of input) {
+        this.enqueueMessage(item.text, item);
       }
       return;
     }
     if (this.state.appState.streamingPhase === 'idle') {
-      for (const part of input) {
-        this.sendMessageInternal(session, part);
+      for (const item of input) {
+        this.sendMessageInternal(session, item.text, item);
       }
       return;
     }
 
-    for (const part of input) {
+    for (const item of input) {
       this.appendTranscriptEntry({
         id: nextTranscriptId(),
         kind: 'user',
         turnId: this.streamingUI.getTurnContext().turnId,
         renderMode: 'plain',
-        content: part,
+        content: item.text,
+        imageAttachmentIds:
+          item.imageAttachmentIds !== undefined && item.imageAttachmentIds.length > 0
+            ? item.imageAttachmentIds
+            : undefined,
       });
     }
 
-    void session.steer(input.join('\n\n')).catch((error: unknown) => {
+    void session.steer(combineSteerInput(input)).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.showError(`Failed to steer: ${message}`);
     });

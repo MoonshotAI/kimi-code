@@ -25,6 +25,10 @@ const TOOL_LABEL_KEYS: Record<string, string> = {
   task: 'tools.label.task',
   agentswarm: 'tools.label.swarm',
   askuserquestion: 'tools.label.ask_user',
+  creategoal: 'tools.label.goal_create',
+  getgoal: 'tools.label.goal_get',
+  setgoalbudget: 'tools.label.goal_budget',
+  updategoal: 'tools.label.goal_update',
 };
 
 // ---------------------------------------------------------------------------
@@ -60,6 +64,10 @@ const NAME_ALIASES: Record<string, string> = {
   subagent: 'task',
   websearch: 'search',
   web_search: 'search',
+  create_goal: 'creategoal',
+  get_goal: 'getgoal',
+  set_goal_budget: 'setgoalbudget',
+  update_goal: 'updategoal',
 };
 
 export function normalizeToolName(name: string): string {
@@ -93,6 +101,14 @@ const TOOL_GLYPH: Record<string, IconName> = {
   task: 'sparkles',
   agentswarm: 'git-pull-request',
   askuserquestion: 'help-circle',
+  creategoal: 'target',
+  getgoal: 'target',
+  setgoalbudget: 'target',
+  updategoal: 'target',
+  // Cron scheduling tools share a calendar motif: schedule / list / cancel.
+  croncreate: 'calendar-schedule',
+  cronlist: 'calendar-todo',
+  crondelete: 'calendar-close',
 };
 
 export function toolGlyph(name: string): string {
@@ -178,6 +194,41 @@ function filePath(d: Record<string, unknown>): string | undefined {
   return str(d.path) ?? str(d.file_path) ?? str(d.filePath) ?? str(d.filename);
 }
 
+const GOAL_STATUS_KEYS: Record<string, string> = {
+  active: 'status.goalStatusActive',
+  blocked: 'status.goalStatusBlocked',
+  complete: 'status.goalStatusComplete',
+};
+
+function goalStatusLabel(value: unknown): string | undefined {
+  const status = str(value);
+  if (!status) return undefined;
+  const key = GOAL_STATUS_KEYS[status];
+  return key ? t(key) : status;
+}
+
+function goalBudgetSummary(d: Record<string, unknown>): string | undefined {
+  const value = num(d.value);
+  const unit = str(d.unit);
+  if (value === undefined || !unit) return undefined;
+  switch (unit) {
+    case 'turns':
+      return t('tools.goal.turns', { value });
+    case 'tokens':
+      return t('tools.goal.tokens', { value });
+    case 'milliseconds':
+      return t('tools.goal.milliseconds', { value });
+    case 'seconds':
+      return t('tools.goal.seconds', { value });
+    case 'minutes':
+      return t('tools.goal.minutes', { value });
+    case 'hours':
+      return t('tools.goal.hours', { value });
+    default:
+      return t('tools.goal.budget', { value, unit });
+  }
+}
+
 const BASH_MAX = 64;
 
 /**
@@ -250,6 +301,27 @@ export function toolSummary(name: string, arg: string, full = false): string {
         const items = Array.isArray(d.todos) ? d.todos : Array.isArray(d.items) ? d.items : undefined;
         if (items) return c(t('tools.chip.todos', { count: items.length }));
         return fallback();
+      }
+      case 'creategoal': {
+        if (full) return fallback();
+        const objective = str(d.objective);
+        const criterion = str(d.completionCriterion);
+        if (objective && criterion) return c(t('tools.goal.objectiveWithCriterion', { objective, criterion }));
+        return objective ? c(objective) : fallback();
+      }
+      case 'getgoal': {
+        if (full) return fallback();
+        return '';
+      }
+      case 'setgoalbudget': {
+        if (full) return fallback();
+        const summary = goalBudgetSummary(d);
+        return summary ? c(summary) : fallback();
+      }
+      case 'updategoal': {
+        if (full) return fallback();
+        const status = goalStatusLabel(d.status);
+        return status ? c(t('tools.goal.status', { status })) : fallback();
       }
       default:
         return fallback();
