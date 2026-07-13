@@ -10,7 +10,9 @@
  * through `telemetry`. Materializes the session's initial metadata on
  * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
  * sessions are discovered through the `sessionIndex` read model, and workspace
- * roots are remembered through `workspaceRegistry`.
+ * roots are remembered through `workspaceRegistry`. On create / fork the
+ * session is also appended to the shared `session_index.jsonl` so v1 clients
+ * (TUI, export) can discover sessions created by the v2 engine.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -25,6 +27,7 @@ import {
   registerScopedService,
 } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionActivityKernel } from '#/activity/activity';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/agent/plan/configSection';
@@ -124,6 +127,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
     const handle = await this.materializeSession({ ...opts, sessionId });
+    await this.appendSessionIndexEntry(sessionId, opts.workDir);
     if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
       const main = await ensureMainAgent(handle);
       await main.accessor.get(IAgentPlanService).enter();
@@ -190,6 +194,17 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await handle.accessor.get(IAgentLifecycleService).ensureMcpReady();
     handle.accessor.get(ISessionExternalHooksService);
     return handle;
+  }
+
+  private async appendSessionIndexEntry(sessionId: string, workDir: string): Promise<void> {
+    const workspaceId = encodeWorkDirKey(workDir);
+    const sessionDir = this.bootstrap.sessionDir(workspaceId, sessionId);
+    this.appendLogStore.append('', 'session_index.jsonl', {
+      sessionId,
+      sessionDir,
+      workDir,
+    });
+    await this.appendLogStore.flush();
   }
 
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
@@ -420,6 +435,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         await agentHandle.accessor.get(IAgentWireService).replay(...forkRecords);
       }
 
+      await this.appendSessionIndexEntry(targetId, workspace.root);
       this._onDidForkSession.fire({
         sourceSessionId: sourceId,
         sessionId: targetId,

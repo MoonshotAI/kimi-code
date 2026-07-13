@@ -31,6 +31,12 @@ const OPTIMISTIC_USER_MESSAGE_METADATA_KEY = 'kimiWeb.optimisticUserMessage';
  *  in full (small synthesized lines). */
 const MAX_BACKGROUND_OUTPUT_LINES = 40;
 
+/** Skeleton description used by `patchSubagent` in agentEventProjector.ts when
+ *  a lifecycle event re-projects a subagent the projector never saw spawn
+ *  (e.g. after a page refresh, where the snapshot roster — not the WS stream —
+ *  carried the real description). */
+const PLACEHOLDER_SUBAGENT_DESCRIPTION = 'Sub Agent';
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -564,6 +570,14 @@ export function reduceAppEvent(
           ...event.task,
           outputLines: previous.outputLines,
           text: previous.text,
+          // A post-refresh lifecycle event re-projects the task with skeleton
+          // metadata; don't let its placeholder clobber the roster-seeded
+          // description.
+          description:
+            event.task.description === PLACEHOLDER_SUBAGENT_DESCRIPTION &&
+            previous.description !== PLACEHOLDER_SUBAGENT_DESCRIPTION
+              ? previous.description
+              : event.task.description,
           swarmIndex: event.task.swarmIndex ?? previous.swarmIndex,
           parentToolCallId: event.task.parentToolCallId ?? previous.parentToolCallId,
           subagentType: event.task.subagentType ?? previous.subagentType,

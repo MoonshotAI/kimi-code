@@ -64,6 +64,7 @@ class StubBroadcast implements IWSBroadcastServiceT {
   readonly _serviceBrand: undefined;
   snapshotCalls = 0;
   inFlight: SessionSnapshotState['inFlightTurn'] = null;
+  subagents: SessionSnapshotState['subagents'] = [];
   seq = 0;
   epoch = 'ep_test';
 
@@ -75,7 +76,12 @@ class StubBroadcast implements IWSBroadcastServiceT {
   }
   async getSnapshotState(): Promise<SessionSnapshotState> {
     this.snapshotCalls++;
-    return { seq: this.seq, epoch: this.epoch, inFlightTurn: this.inFlight };
+    return {
+      seq: this.seq,
+      epoch: this.epoch,
+      inFlightTurn: this.inFlight,
+      subagents: this.subagents,
+    };
   }
   currentSeq(): number {
     return this.seq;
@@ -374,6 +380,34 @@ describe('SnapshotService.read', () => {
     expect((snap.in_flight_turn as { current_prompt_id?: string }).current_prompt_id).toBe(
       'prompt_xyz',
     );
+  });
+
+  it('passes the broadcast subagent roster through to the response', async () => {
+    const f = await makeFixture();
+    const sid = 'sess_roster';
+    await f.store.create({ id: sid, workDir: f.workDir });
+
+    f.broadcast.subagents = [
+      {
+        id: 'agent_1',
+        session_id: sid,
+        kind: 'subagent',
+        description: 'explore the auth flow',
+        status: 'running',
+        created_at: new Date().toISOString(),
+        subagent_phase: 'working',
+        swarm_index: 0,
+        run_in_background: false,
+      },
+    ];
+
+    const snap = await f.service.read(sid);
+    expect(snap.subagents).toHaveLength(1);
+    expect(snap.subagents?.[0]).toMatchObject({
+      id: 'agent_1',
+      subagent_phase: 'working',
+      swarm_index: 0,
+    });
   });
 });
 
