@@ -231,10 +231,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     readonly agentScope: string;
     readonly mcpManager: McpConnectionManager;
   }): ScopeSeed {
-    const { agentId, agentHomedir, agentScope, mcpManager } = input;
+    const { agentId, agentScope, mcpManager } = input;
     return [
       [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })],
-      [IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService, [{ homedir: agentHomedir }])],
+      [IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService)],
       [
         IAgentWireService,
         new SyncDescriptor(WireService, [

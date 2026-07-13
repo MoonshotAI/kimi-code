@@ -1056,7 +1056,7 @@ export class AgentTestContext {
           (reg) => {
             reg.defineDescriptor(
               IAgentWireRecordService,
-              new SyncDescriptor(AgentWireRecordService, [{}]),
+              new SyncDescriptor(AgentWireRecordService),
             );
             reg.defineDescriptor(
               IAgentWireService,
