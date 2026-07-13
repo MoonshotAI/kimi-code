@@ -36,9 +36,10 @@ const { t } = useI18n();
 const { confirm } = useConfirmDialog();
 
 // Dev-only affordance: when the page is served by the Vite dev server, the
-// logo turns yellow and a backend pill next to the brand shows which engine
-// the dev proxy forwards to (v1 legacy server / v2 kap-server) — click it to
-// switch without restarting Vite. In production this is all inert.
+// logo turns yellow and a backend pill next to the brand shows the engine
+// generation reported by /meta (v1 = older server binary, v2 = kap-server)
+// plus the endpoint the dev proxy forwards to — click it to switch presets
+// without restarting Vite. In production this is all inert.
 const isDev = import.meta.env.DEV;
 const devBackend = ref<DevBackendState | null>(isDev ? initialDevBackendState() : null);
 if (isDev) {
@@ -54,7 +55,7 @@ const endpoint = computed(() => {
   const current = devBackend.value?.current;
   return current ? shortOrigin(current) : serverEndpointLabel();
 });
-const backendNames: BackendName[] = ['v1', 'v2'];
+const backendNames: BackendName[] = ['default', 'multi'];
 function presetUrl(name: BackendName): string {
   const url = devBackend.value?.presets[name] ?? '';
   return url ? shortOrigin(url) : '';
@@ -1016,9 +1017,9 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Dev-only backend pill next to the brand: shows which engine the dev proxy
-   forwards to (v1 / v2) and opens the switcher menu. v2 is accent-colored so
-   the two engines read differently at a glance. */
+/* Dev-only backend pill next to the brand: shows the engine generation from
+   /meta (v1 / v2) and opens the dev-proxy preset switcher menu. v2 is
+   accent-colored so it reads differently at a glance. */
 .ch-backend {
   flex: none;
   min-width: 0;

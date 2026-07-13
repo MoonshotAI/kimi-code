@@ -3,7 +3,7 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import { resolveKimiHome } from '@moonshot-ai/agent-core';
+import { resolveKimiHome } from '@moonshot-ai/agent-core-v2';
 
 
 export const KIMI_SERVER_LABEL = 'ai.moonshot.kimi-server';

@@ -9,14 +9,14 @@ typed `DaemonClient` you can reuse in vitest e2e files.
 - You want to drive a real, running server process from a Node script and
   observe HTTP + WS behavior end to end.
 - You're writing a vitest e2e that covers server REST + WS lifecycle as a
-  whole — not a single in-process unit (those belong in `packages/server/test/`).
+  whole — not a single in-process unit (those belong in `packages/kap-server/test/`).
 - You need a reference for the wire shape of approval / question / events.
 
 ## When NOT to use this
 
 - You're testing the WS gateway in isolation — keep using
-  `packages/server/test/ws-*.e2e.test.ts` (in-process `startServer` boots are
-  faster and assert on the server's internal services directly).
+  `packages/kap-server/test/` in-process `startServer` boots (faster, and they
+  assert on the server's internal services directly).
 - You want a typed in-process facade over the server for user-facing code —
   use `@moonshot-ai/node-sdk` instead (`KimiHarness`, `Session`).
 
