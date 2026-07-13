@@ -27,6 +27,7 @@ import { approvalRequestSchema } from '../approval';
 import { messageSchema } from '../message';
 import { questionRequestSchema } from '../question';
 import { sessionSchema } from '../session';
+import { taskSchema } from '../task';
 
 export const inFlightToolCallSchema = z.object({
   tool_call_id: z.string().min(1),
@@ -59,6 +60,21 @@ export const inFlightTurnSchema = z.object({
 });
 export type InFlightTurn = z.infer<typeof inFlightTurnSchema>;
 
+/**
+ * A live subagent task as of the snapshot watermark. Extends the base task
+ * wire shape with the swarm identity metadata that otherwise only rides the
+ * (non-replayed) `subagent.spawned` WS event.
+ */
+export const snapshotSubagentSchema = taskSchema.extend({
+  subagent_phase: z.enum(['queued', 'working', 'suspended', 'completed', 'failed']).optional(),
+  subagent_type: z.string().optional(),
+  parent_tool_call_id: z.string().optional(),
+  suspended_reason: z.string().optional(),
+  swarm_index: z.number().int().nonnegative().optional(),
+  run_in_background: z.boolean().optional(),
+});
+export type SnapshotSubagent = z.infer<typeof snapshotSubagentSchema>;
+
 export const sessionSnapshotResponseSchema = z.object({
   /** Durable event watermark this snapshot is consistent with. */
   as_of_seq: z.number().int().nonnegative(),
@@ -71,6 +87,12 @@ export const sessionSnapshotResponseSchema = z.object({
     has_more: z.boolean(),
   }),
   in_flight_turn: inFlightTurnSchema.nullable(),
+  /**
+   * Roster of live subagent tasks at the watermark, so a reconnecting client
+   * can rebuild swarm cards before the swarm's tool result lands. Optional
+   * for cross-version tolerance: older servers do not send it.
+   */
+  subagents: z.array(snapshotSubagentSchema).optional(),
   pending_approvals: z.array(approvalRequestSchema),
   pending_questions: z.array(questionRequestSchema),
 });

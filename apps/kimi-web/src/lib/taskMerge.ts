@@ -20,3 +20,22 @@ export function keepLiveSubagents(restBased: AppTask[], existing: AppTask[]): Ap
   const liveSubagents = existing.filter((t) => t.kind === 'subagent' && !restIds.has(t.id));
   return liveSubagents.length === 0 ? restBased : [...restBased, ...liveSubagents];
 }
+
+/**
+ * Seed the task store from the snapshot's subagent roster. The roster is
+ * authoritative for identity/status/phase; keep reducer-owned accumulated
+ * output (outputLines/text) from any already-live task, and keep tasks the
+ * roster does not know about (background bash tasks from REST).
+ */
+export function mergeSnapshotSubagents(roster: AppTask[], existing: AppTask[]): AppTask[] {
+  if (roster.length === 0) return existing;
+  const existingById = new Map(existing.map((t) => [t.id, t] as const));
+  const rosterIds = new Set(roster.map((t) => t.id));
+  const merged = roster.map((task) => {
+    const live = existingById.get(task.id);
+    if (!live) return task;
+    return { ...task, outputLines: live.outputLines, text: live.text };
+  });
+  const kept = existing.filter((t) => !rosterIds.has(t.id));
+  return kept.length === 0 ? merged : [...merged, ...kept];
+}

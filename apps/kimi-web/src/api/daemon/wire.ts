@@ -309,6 +309,7 @@ export interface WireTask {
   parent_tool_call_id?: string;
   suspended_reason?: string;
   swarm_index?: number;
+  run_in_background?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -561,6 +562,8 @@ export interface WireSessionSnapshot {
   session: WireSession;
   messages: { items: WireMessage[]; has_more: boolean };
   in_flight_turn: WireInFlightTurn | null;
+  /** Live subagent roster at the watermark (absent on older servers). */
+  subagents?: WireTask[];
   pending_approvals: WireApprovalRequest[];
   pending_questions: WireQuestionRequest[];
 }
