@@ -32,6 +32,8 @@
  *     result is a no-op; extreme aspect ratios never collapse to zero
  */
 
+import { createRequire } from 'node:module';
+
 import { Jimp, ResizeStrategy } from 'jimp';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -130,6 +132,55 @@ function fillXorshiftNoise(data: Buffer | Uint8Array): void {
 async function decodeAlpha(bytes: Uint8Array): Promise<boolean> {
   const image = await Jimp.fromBuffer(Buffer.from(bytes));
   return image.hasAlpha();
+}
+
+async function encodeWebp(
+  image: { bitmap: { data: Buffer | Uint8Array; width: number; height: number } },
+  quality = 90,
+): Promise<Uint8Array> {
+  const requireLocal = createRequire(import.meta.url);
+  const encMod = (await import(
+    requireLocal.resolve('@jsquash/webp/encode.js')
+  )) as typeof import('@jsquash/webp/encode.js');
+  const { readFileSync } = await import('node:fs');
+  // The repo tsconfig has no DOM lib, so the global WebAssembly name is
+  // reached structurally (same approach as the production decoder).
+  const wasmNamespace = (
+    globalThis as unknown as { WebAssembly: { compile(bytes: Uint8Array): Promise<object> } }
+  ).WebAssembly;
+  const wasm = await wasmNamespace.compile(
+    readFileSync(requireLocal.resolve('@jsquash/webp/codec/enc/webp_enc.wasm')),
+  );
+  await encMod.init(wasm as never);
+  const { bitmap } = image;
+  const encoded = await encMod.default(
+    {
+      data: new Uint8ClampedArray(
+        bitmap.data.buffer,
+        bitmap.data.byteOffset,
+        bitmap.data.byteLength,
+      ),
+      width: bitmap.width,
+      height: bitmap.height,
+    } as never,
+    { quality },
+  );
+  return new Uint8Array(encoded);
+}
+
+/** Minimal VP8X container header with the ANIM flag set. */
+function animatedWebpHeader(): Uint8Array {
+  const bytes = new Uint8Array(30);
+  const ascii = (s: string, at: number) => {
+    for (let i = 0; i < s.length; i++) bytes[at + i] = s.codePointAt(i)!;
+  };
+  ascii('RIFF', 0);
+  new DataView(bytes.buffer).setUint32(4, 22, true);
+  ascii('WEBP', 8);
+  ascii('VP8X', 12);
+  new DataView(bytes.buffer).setUint32(16, 10, true);
+  bytes[20] = 0x02; // ANIM flag
+  return bytes;
 }
 
 /**
@@ -332,7 +383,9 @@ describe('compressImageForModel — fallback', () => {
     expect(result.data).toBe(gif);
   });
 
-  it('passes WebP through (no codec in the default build)', async () => {
+  it('passes a tiny within-budget WebP through untouched (fast path)', async () => {
+    // Too small to be worth re-encoding: already within both budgets, so the
+    // fast path returns it before any codec is loaded.
     const webp = new Uint8Array([
       0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50,
     ]);
@@ -364,6 +417,93 @@ describe('compressImageForModel — fallback', () => {
     const result = await compressImageForModel(png, 'image/png', { maxDecodeBytes: 64 });
     expect(result.changed).toBe(false);
     expect(result.data).toBe(png); // passthrough → Jimp was never called
+  });
+});
+
+// ── webp ─────────────────────────────────────────────────────────────
+
+describe('compressImageForModel — webp', () => {
+  it(
+    'downscales an oversized WebP to the edge cap',
+    async () => {
+      const source = new Jimp({ width: 2100, height: 1050, color: 0x3366ccff });
+      const webp = await encodeWebp(source);
+      const result = await compressImageForModel(webp, 'image/webp');
+      expect(result.changed).toBe(true);
+      expect(Math.max(result.width, result.height)).toBe(2000);
+      expect(result.originalWidth).toBe(2100);
+      expect(result.originalHeight).toBe(1050);
+      expect(sniffImageDimensions(result.data)).toEqual({ width: 2000, height: 1000 });
+    },
+    15_000,
+  );
+
+  it(
+    're-encodes an over-budget WebP within the byte budget',
+    async () => {
+      const budget = 128 * 1024;
+      const noisy = new Jimp({ width: 700, height: 700, color: 0x000000ff });
+      fillXorshiftNoise(noisy.bitmap.data);
+      const webp = await encodeWebp(noisy, 100);
+      expect(webp.length).toBeGreaterThan(budget);
+      const result = await compressImageForModel(webp, 'image/webp', { byteBudget: budget });
+      expect(result.changed).toBe(true);
+      expect(result.finalByteLength).toBeLessThanOrEqual(budget);
+    },
+    15_000,
+  );
+
+  it(
+    'keeps alpha when re-encoding a translucent WebP',
+    async () => {
+      const translucent = new Jimp({ width: 2100, height: 1050, color: 0x33_66_cc_80 });
+      const webp = await encodeWebp(translucent);
+      const result = await compressImageForModel(webp, 'image/webp');
+      expect(result.changed).toBe(true);
+      expect(result.mimeType).toBe('image/png');
+      expect(await decodeAlpha(result.data)).toBe(true);
+    },
+    15_000,
+  );
+
+  it('passes an animated WebP through to preserve animation', async () => {
+    const animated = animatedWebpHeader();
+    const result = await compressImageForModel(animated, 'image/webp');
+    expect(result.changed).toBe(false);
+    expect(result.data).toBe(animated);
+  });
+
+  it(
+    'crops a region out of a WebP',
+    async () => {
+      const source = new Jimp({ width: 800, height: 400, color: 0x3366ccff });
+      const webp = await encodeWebp(source);
+      const result = await cropImageForModel(webp, 'image/webp', {
+        x: 10,
+        y: 20,
+        width: 300,
+        height: 200,
+      });
+      expect(result.ok).toBe(true);
+      if (!result.ok) return;
+      expect(result.width).toBe(300);
+      expect(result.height).toBe(200);
+      expect(result.originalWidth).toBe(800);
+      expect(result.originalHeight).toBe(400);
+    },
+    15_000,
+  );
+
+  it('refuses to crop an animated WebP', async () => {
+    const result = await cropImageForModel(animatedWebpHeader(), 'image/webp', {
+      x: 0,
+      y: 0,
+      width: 10,
+      height: 10,
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toContain('animated WebP');
   });
 });
 
@@ -959,7 +1099,7 @@ describe('cropImageForModel', () => {
     });
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    expect(result.error).toMatch(/PNG and JPEG/);
+    expect(result.error).toMatch(/PNG, JPEG, and WebP/);
   });
 
   it('rejects corrupt bytes without throwing', async () => {

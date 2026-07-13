@@ -32,6 +32,7 @@ import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIProviderOverloadedError,
+  APIRequestTooLargeError,
   APIStatusError,
   APITimeoutError,
   isContextOverflowStatusError,
@@ -96,12 +97,13 @@ interface ResolvedLLMRequest {
 
 /**
  * Which projection a request attempt is built from: the normal wire
- * projection, or one of the two one-shot recovery rebuilds — `strict`
- * (guaranteed wire-compliant) after a structural rejection, `media-stripped`
- * (every media part replaced by a text marker) after an image-format
- * rejection.
+ * projection, or one of the three one-shot recovery rebuilds — `strict`
+ * (guaranteed wire-compliant) after a structural rejection, `media-degraded`
+ * (all but the most recent media replaced by text markers) after an HTTP 413
+ * body-size rejection, `media-stripped` (every media part replaced) after an
+ * image-format rejection.
  */
-type RequestProjection = 'normal' | 'strict' | 'media-stripped';
+type RequestProjection = 'normal' | 'strict' | 'media-degraded' | 'media-stripped';
 
 interface LLMRequestLogInput {
   readonly protocol: Protocol;
@@ -132,12 +134,16 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   private lastConfigLogSignature: string | undefined;
   private readonly turnConfigs = new Map<number, TurnRequestConfig>();
   /**
-   * Turns whose steps must build from the media-stripped projection: once a
-   * step only succeeded via the image-format resend, the poison is still in
-   * the full history, so later steps of the same turn stay stripped (v1
-   * parity: run-turn's `mediaStrippedActive`). Turn ids are monotonic per
-   * agent, so a newer turn evicts every older entry.
+   * Turns whose steps must build from a recovery projection: once a step only
+   * succeeded via the media-degraded (413) or media-stripped (image-format)
+   * resend, the cause is still in the full history, so later steps of the
+   * same turn build from the recovery projection directly instead of paying
+   * a fresh rejection on every step (v1 parity: run-turn's
+   * `mediaDegradedActive` / `mediaStrippedActive`; stripped wins over
+   * degraded). Turn ids are monotonic per agent, so a newer turn evicts
+   * every older entry.
    */
+  private readonly mediaDegradedTurns = new Set<number>();
   private readonly mediaStrippedTurns = new Set<number>();
 
   constructor(
@@ -233,9 +239,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         messages:
           projection === 'strict'
             ? this.projector.projectStrict(shaped)
-            : projection === 'media-stripped'
-              ? this.projector.projectMediaStripped(shaped)
-              : this.projector.project(shaped),
+            : projection === 'media-degraded'
+              ? this.projector.projectMediaDegraded(shaped)
+              : projection === 'media-stripped'
+                ? this.projector.projectMediaStripped(shaped)
+                : this.projector.project(shaped),
       };
     };
 
@@ -303,18 +311,40 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
     };
 
-    // Once a step of this turn only succeeded via the media-stripped resend,
-    // later steps build from the stripped projection directly: the poison is
-    // still in the full history, so rebuilding it would pay a fresh rejection
-    // on every step (v1 parity: run-turn's mediaStrippedActive).
-    const initialProjection: RequestProjection = this.isMediaStrippedTurn(request.source)
+    // Once a step of this turn only succeeded via a recovery resend, later
+    // steps build from the recovery projection directly: the cause is still
+    // in the full history, so rebuilding it would pay a fresh rejection on
+    // every step (v1 parity: run-turn's mediaDegradedActive /
+    // mediaStrippedActive — stripped wins over degraded).
+    const initialProjection: RequestProjection = this.isRecoveryTurn(
+      this.mediaStrippedTurns,
+      request.source,
+    )
       ? 'media-stripped'
-      : 'normal';
+      : this.isRecoveryTurn(this.mediaDegradedTurns, request.source)
+        ? 'media-degraded'
+        : 'normal';
     try {
       return await run(initialProjection);
     } catch (error) {
       if (signal?.aborted === true) throw error;
       const raw = unwrapErrorCause(error);
+      if (initialProjection === 'normal' && raw instanceof APIRequestTooLargeError) {
+        // The provider rejected the request BODY as too large (HTTP 413) —
+        // accumulated base64 media, not tokens, so compaction's token-driven
+        // recovery never fires (media is estimated at a small flat cost). The
+        // same media is re-sent on every request, so without intervention the
+        // session stays stuck. Resend ONCE with the media-degraded projection
+        // (old media replaced by text markers, the most recent kept); a
+        // rejection of that rebuild propagates unchanged.
+        signal?.throwIfAborted();
+        this.log.warn('provider rejected request as too large; resending with degraded media', {
+          model: request.model.name,
+          ...request.logFields,
+        });
+        this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
+        return run('media-degraded');
+      }
       if (initialProjection !== 'media-stripped' && isImageFormatError(raw)) {
         // The provider rejected an IMAGE in the request (unsupported format
         // or undecodable data). Unlike a size rejection — too MUCH media —
@@ -334,7 +364,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
             ...request.logFields,
           },
         );
-        this.markMediaStrippedTurn(request.source);
+        this.markRecoveryTurn(this.mediaStrippedTurns, request.source);
         return run('media-stripped');
       }
       if (initialProjection === 'normal' && isRecoverableRequestStructureError(raw)) {
@@ -349,16 +379,18 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     }
   }
 
-  private isMediaStrippedTurn(source: LLMRequestSource | undefined): boolean {
+  private isRecoveryTurn(set: ReadonlySet<number>, source: LLMRequestSource | undefined): boolean {
     if (source?.type !== 'turn') return false;
-    for (const id of this.mediaStrippedTurns) {
-      if (id < source.turnId) this.mediaStrippedTurns.delete(id);
-    }
-    return this.mediaStrippedTurns.has(source.turnId);
+    return set.has(source.turnId);
   }
 
-  private markMediaStrippedTurn(source: LLMRequestSource | undefined): void {
-    if (source?.type === 'turn') this.mediaStrippedTurns.add(source.turnId);
+  private markRecoveryTurn(set: Set<number>, source: LLMRequestSource | undefined): void {
+    if (source?.type !== 'turn') return;
+    // Turn ids are monotonic per agent: a newer turn evicts every older entry.
+    for (const id of set) {
+      if (id < source.turnId) set.delete(id);
+    }
+    set.add(source.turnId);
   }
 
   private resolveRequest(overrides: LLMRequestOverrides): ResolvedLLMRequest {
@@ -574,9 +606,13 @@ function numberField(fields: LLMRequestLogFields, key: string): number | undefin
   return typeof value === 'number' ? value : undefined;
 }
 
-function projectionField(fields: LLMRequestLogFields): 'strict' | 'media-stripped' | undefined {
+function projectionField(
+  fields: LLMRequestLogFields,
+): 'strict' | 'media-degraded' | 'media-stripped' | undefined {
   const value = fields['projection'];
-  return value === 'strict' || value === 'media-stripped' ? value : undefined;
+  return value === 'strict' || value === 'media-degraded' || value === 'media-stripped'
+    ? value
+    : undefined;
 }
 
 function fingerprint(content: string): string {

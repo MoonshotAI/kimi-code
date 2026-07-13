@@ -509,6 +509,49 @@ describe('projector tool-exchange normalization', () => {
     });
   });
 
+  describe('projectMediaDegraded', () => {
+    function imageMessage(url: string): ContextMessage {
+      return {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      };
+    }
+
+    it('keeps the two most recent media parts and replaces older ones with markers', () => {
+      const projected = projector.projectMediaDegraded([
+        imageMessage('data:image/png;base64,OLD1'),
+        user('middle'),
+        imageMessage('data:image/png;base64,OLD2'),
+        imageMessage('data:image/png;base64,KEEP1'),
+        imageMessage('data:image/png;base64,KEEP2'),
+      ]);
+
+      const urls = projected
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url')
+        .map((part) => part.imageUrl.url);
+      expect(urls).toEqual(['data:image/png;base64,KEEP1', 'data:image/png;base64,KEEP2']);
+      const markers = projected
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text);
+      expect(
+        markers.filter((text) => text.includes('dropped to fit the provider request size limit')),
+      ).toHaveLength(2);
+    });
+
+    it('returns the projected messages untouched when media fits within keep-recent', () => {
+      const projected = projector.projectMediaDegraded([
+        user('text'),
+        imageMessage('data:image/png;base64,AAAA'),
+      ]);
+      const allParts = projected.flatMap((message) => message.content);
+      expect(allParts.some((part) => part.type === 'image_url')).toBe(true);
+    });
+  });
+
   describe('projectMediaStripped', () => {
     function imageMessage(url: string): ContextMessage {
       return {

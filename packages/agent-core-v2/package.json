@@ -58,6 +58,7 @@
     "@antfu/utils": "^9.3.0",
     "@anthropic-ai/sdk": "^0.95.2",
     "@google/genai": "^1.49.0",
+    "@jsquash/webp": "^1.5.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/minidb": "workspace:^",

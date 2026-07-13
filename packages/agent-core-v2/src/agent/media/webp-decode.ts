@@ -47,7 +47,7 @@ async function loadDecoder(): Promise<WebpDecodeFn> {
     const decode = decodeModule.default;
     return async (bytes: Uint8Array) => {
       const copy = new Uint8Array(bytes); // detach from any shared buffer
-      return (await decode(copy.buffer as ArrayBuffer)) as unknown as DecodedWebp;
+      return (await decode(copy.buffer)) as unknown as DecodedWebp;
     };
   })();
   return decoderReady;

@@ -25,7 +25,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
-import { APIStatusError } from '#/app/llmProtocol/errors';
+import { APIRequestTooLargeError, APIStatusError } from '#/app/llmProtocol/errors';
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import type { Message } from '#/app/llmProtocol/message';
 import type { ModelCapability } from '#/app/llmProtocol/capability';
@@ -96,7 +96,7 @@ afterEach(() => disposables.dispose());
 function createService(
   model: Model,
   projector: Pick<IAgentContextProjectorService, 'project' | 'projectStrict'> &
-    Partial<Pick<IAgentContextProjectorService, 'projectMediaStripped'>>,
+    Partial<Pick<IAgentContextProjectorService, 'projectMediaDegraded' | 'projectMediaStripped'>>,
 ) {
   const ix = disposables.add(new TestInstantiationService());
   const profile: Partial<IAgentProfileService> = {
@@ -294,5 +294,91 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
     await expect(service.request()).rejects.toMatchObject({ statusCode: 400 });
     expect(calls.value).toBe(1);
     expect(strippedCalls).toBe(0);
+  });
+});
+
+describe('AgentLLMRequesterService media-degraded resend', () => {
+  const BODY_TOO_LARGE_413 = new APIRequestTooLargeError(413, 'Request Entity Too Large');
+
+  it('resends once with the media-degraded projection after an HTTP 413', async () => {
+    const calls = { value: 0 };
+    let projectCalls = 0;
+    let degradedCalls = 0;
+    let strippedCalls = 0;
+    const service = createService(createModel(calls, BODY_TOO_LARGE_413), {
+      project: (messages: readonly ContextMessage[]) => {
+        projectCalls += 1;
+        return messages;
+      },
+      projectStrict: (messages: readonly ContextMessage[]) => messages,
+      projectMediaDegraded: (messages: readonly ContextMessage[]) => {
+        degradedCalls += 1;
+        return messages;
+      },
+      projectMediaStripped: (messages: readonly ContextMessage[]) => {
+        strippedCalls += 1;
+        return messages;
+      },
+    });
+
+    const result = await service.request();
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(2);
+    expect(projectCalls).toBe(1);
+    expect(degradedCalls).toBe(1);
+    expect(strippedCalls).toBe(0);
+  });
+
+  it('keeps later steps of the same turn on the degraded projection', async () => {
+    const calls = { value: 0 };
+    let projectCalls = 0;
+    let degradedCalls = 0;
+    const service = createService(createModel(calls, BODY_TOO_LARGE_413), {
+      project: (messages: readonly ContextMessage[]) => {
+        projectCalls += 1;
+        return messages;
+      },
+      projectStrict: (messages: readonly ContextMessage[]) => messages,
+      projectMediaDegraded: (messages: readonly ContextMessage[]) => {
+        degradedCalls += 1;
+        return messages;
+      },
+    });
+
+    // Step 1: normal projection rejected with 413, degraded resend recovers.
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+    expect(calls.value).toBe(2);
+    expect(projectCalls).toBe(1);
+    expect(degradedCalls).toBe(1);
+
+    // Step 2 of the same turn: the accumulated media is still in the full
+    // history, so the request builds from the degraded projection directly.
+    await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
+    expect(calls.value).toBe(3);
+    expect(projectCalls).toBe(1);
+    expect(degradedCalls).toBe(2);
+  });
+
+  it('does not resend for a plain 400 or a non-413 status', async () => {
+    for (const error of [
+      new APIStatusError(400, 'max_tokens must be positive'),
+      new APIStatusError(422, 'unprocessable'),
+    ]) {
+      const calls = { value: 0 };
+      let degradedCalls = 0;
+      const service = createService(createModel(calls, error), {
+        project: (messages: readonly ContextMessage[]) => messages,
+        projectStrict: (messages: readonly ContextMessage[]) => messages,
+        projectMediaDegraded: (messages: readonly ContextMessage[]) => {
+          degradedCalls += 1;
+          return messages;
+        },
+      });
+
+      await expect(service.request()).rejects.toBe(error);
+      expect(calls.value).toBe(1);
+      expect(degradedCalls).toBe(0);
+    }
   });
 });

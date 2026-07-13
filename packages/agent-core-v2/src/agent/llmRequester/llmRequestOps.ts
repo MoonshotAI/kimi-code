@@ -71,9 +71,9 @@ export const llmRequest = LlmRequestTraceModel.defineOp('llm.request', {
     turnStep: z.string().optional(),
     attempt: z.string().optional(),
     /** Set when this request is a recovery resend (strict rebuild after a
-     * structural rejection, media-stripped rebuild after an image-format
-     * rejection). */
-    projection: z.enum(['strict', 'media-stripped']).optional(),
+     * structural rejection, media-degraded rebuild after an HTTP 413 body-size
+     * rejection, media-stripped rebuild after an image-format rejection). */
+    projection: z.enum(['strict', 'media-degraded', 'media-stripped']).optional(),
     droppedCount: z.number().optional(),
   }),
   apply: (s) => s,
