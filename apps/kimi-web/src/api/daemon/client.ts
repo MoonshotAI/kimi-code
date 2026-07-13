@@ -1434,6 +1434,18 @@ export class DaemonKimiWebApi implements KimiWebApi {
         const { type, seq, session_id: sessionId, payload, offset } = frame;
         const appEvents = projector.project(type, payload, sessionId, { offset });
         for (const appEvent of appEvents) {
+          const turnId = (payload as { turnId?: unknown } | null)?.turnId;
+          const stream =
+            appEvent.type === 'assistantDelta' &&
+            typeof turnId === 'number' &&
+            typeof offset === 'number' &&
+            (type === 'assistant.delta' || type === 'thinking.delta')
+              ? {
+                  turnId,
+                  offset,
+                  kind: type === 'assistant.delta' ? ('text' as const) : ('thinking' as const),
+                }
+              : undefined;
           // historyCompacted from the projector is either a compaction signal
           // (reason auto_compact — no reload, the divider marker handles it) or
           // a delta-gap recovery (reason delta_gap — a real resync, routed to
@@ -1441,7 +1453,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
           if (appEvent.type === 'historyCompacted' && !isCompactionReason(appEvent.reason)) {
             handlers.onResync(sessionId, seq);
           }
-          handlers.onEvent(appEvent, { sessionId, seq });
+          handlers.onEvent(appEvent, { sessionId, seq, stream });
         }
       },
 
