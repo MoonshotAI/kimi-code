@@ -109,7 +109,7 @@ export class FsWatcherService extends Disposable implements IFsWatcher {
     private readonly lookup: FsWatcherConnectionLookup,
     options: FsWatcherServiceOptions,
     @ILogService private readonly logger: ILogService,
-    @ISessionService _sessionService: ISessionService,
+    @ISessionService sessionService: ISessionService,
   ) {
     super();
     this.sessions = this._register(new DisposableMap<string, SessionEntry>());
@@ -126,6 +126,11 @@ export class FsWatcherService extends Disposable implements IFsWatcher {
           persistent: false,
           ignored: (p: string) => /(?:^|[/\\])\.git(?:$|[/\\])/.test(p),
         }));
+    this._register(
+      sessionService.onDidClose(({ sessionId }) => {
+        this.disposeSessionEntry(sessionId);
+      }),
+    );
   }
 
   addPaths(
@@ -255,6 +260,19 @@ export class FsWatcherService extends Disposable implements IFsWatcher {
       );
       entry.cwd = cwd;
     }
+  }
+
+  private disposeSessionEntry(sessionId: string): void {
+    const entry = this.sessions.get(sessionId);
+    if (!entry) return;
+    for (const connectionId of entry.connectionPathRefs.keys()) {
+      const connSessions = this.connections.get(connectionId);
+      connSessions?.delete(sessionId);
+      if (connSessions !== undefined && connSessions.size === 0) {
+        this.connections.delete(connectionId);
+      }
+    }
+    this.sessions.deleteAndDispose(sessionId);
   }
 
   private getOrCreateConnection(
