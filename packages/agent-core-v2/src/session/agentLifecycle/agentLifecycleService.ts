@@ -76,6 +76,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
+import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 
 import { createHooks } from '#/hooks';
@@ -538,6 +539,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const handle = this.handles.get(agentId);
     if (handle === undefined) return;
     this.handles.delete(agentId);
+    // Stop the agent's background tasks before disposal — v1's
+    // `stopBackgroundTasksOnExit` (suppress terminal notifications, then
+    // SIGTERM → grace → SIGKILL, gated by `keepAliveOnExit`). Without this
+    // their processes leak past the scope (the server stays up) and reconcile
+    // as `lost` instead of `killed` on the next resume.
+    await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
     // Drive the agent activity kernel through disposal: reject new begins and
     // abort any in-flight turn / background activity, then wait for it to drain
     // (including the tool-execution grace window) before releasing the scope.

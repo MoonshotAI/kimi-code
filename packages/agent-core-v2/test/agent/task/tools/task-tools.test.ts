@@ -227,6 +227,10 @@ class FakeTaskService implements IAgentTaskService {
     return stopped.filter((info): info is AgentTaskInfo => info !== undefined);
   }
 
+  async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
+    return this.stopAll(reason);
+  }
+
   async wait(
     taskId: string,
     timeoutMs?: number,

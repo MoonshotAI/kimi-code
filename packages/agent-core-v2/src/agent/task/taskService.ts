@@ -13,7 +13,10 @@
  * following step; idle ones launch a fresh turn themselves, matching v1's
  * `turn.steer`, so the model consumes the notification without waiting for
  * the user), silently appends restored notifications through `contextMemory`,
- * and re-surfaces active tasks through `contextInjector` after compaction.
+ * re-surfaces active tasks through `contextInjector` after compaction, and
+ * stops every owned task on session close (`stopAllOnExit` — v1's
+ * `stopBackgroundTasksOnExit`, gated by `keepAliveOnExit`), with a last-resort
+ * abort in `dispose` for scope-disposal paths that bypass the graceful close.
  * Bound at Agent scope.
  */
 
@@ -159,6 +162,7 @@ function outputLimitReason(): string {
 const SIGTERM_GRACE_MS = 5_000;
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 const USER_INTERRUPT_REASON = 'Interrupted by user';
+const SESSION_CLOSED_REASON = 'Session closed';
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
 const ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT = 'background_task_status';
 const ACTIVE_BACKGROUND_TASK_GUIDANCE = [
@@ -657,8 +661,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
    * Manager-driven teardown shared by every termination path: explicit `stop`,
    * the wall-clock `timeoutMs` deadline, and the post-detach `detachTimeoutMs`
    * deadline. It sends SIGTERM (or `handle.cancel()`), gives the task up to
-   * `SIGTERM_GRACE_MS` to settle, escalates to `forceStop` (SIGKILL) when it is
-   * still alive, and records `finalStatus`.
+   * `[task] killGracePeriodMs` (default `SIGTERM_GRACE_MS`) to settle,
+   * escalates to `forceStop` (SIGKILL) when it is still alive, and records
+   * `finalStatus`.
    *
    * This mirrors v1's `settlementForOutcome`, where timeout and stop always
    * shared the same grace + force-stop sequence. Routing the deadline paths
@@ -693,6 +698,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       entry.abortController.abort(options.abortReason);
     }
 
+    const graceMs = resolveAgentTaskConfig(this.config)?.killGracePeriodMs ?? SIGTERM_GRACE_MS;
     let graceTimer: ReturnType<typeof setTimeout> | undefined;
     const graceful = await Promise.race([
       entry.lifecyclePromise.then(
@@ -702,7 +708,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       new Promise<false>((resolve) => {
         graceTimer = setTimeout(() => {
           resolve(false);
-        }, SIGTERM_GRACE_MS);
+        }, graceMs);
         graceTimer.unref?.();
       }),
     ]);
@@ -742,6 +748,49 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       Array.from(this.tasks.keys()).map((taskId) => this.stop(taskId, reason)),
     );
     return results.filter((info): info is AgentTaskInfo => info !== undefined);
+  }
+
+  async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
+    if (this.keepAliveOnExit()) return [];
+    // Suppress BEFORE stopping so a task settling during teardown cannot
+    // enqueue a terminal notification that steers the closing agent into a
+    // new turn (v1 did the same in `stopBackgroundTasksOnExit`).
+    const active = this.list(true);
+    await Promise.all(active.map((task) => this.suppressTerminalNotification(task.taskId)));
+    return this.stopAll(reason);
+  }
+
+  override dispose(): void {
+    // Last-resort reclamation for scope-disposal paths that bypass
+    // `stopAllOnExit` (root-scope dispose on server shutdown, fork rollback,
+    // bootstrap failure): disarm every live task's deadline and abort it so no
+    // abortController / timeoutHandle / child process outlives the scope.
+    // Honors the same keepAliveOnExit opt-in — when set, tasks are left
+    // running by design.
+    if (!this.keepAliveOnExit()) {
+      for (const entry of this.tasks.values()) {
+        if (TERMINAL_STATUSES.has(entry.status)) continue;
+        if (entry.timeoutHandle !== undefined) {
+          clearTimeout(entry.timeoutHandle);
+          entry.timeoutHandle = undefined;
+        }
+        if (entry.handle !== undefined) {
+          entry.handle.cancel();
+        } else {
+          entry.abortController.abort(SESSION_CLOSED_REASON);
+        }
+      }
+    }
+    super.dispose();
+  }
+
+  /**
+   * The `keepAliveOnExit` opt-out shared by the graceful (`stopAllOnExit`)
+   * and last-resort (`dispose`) teardown paths: when set, background work is
+   * deliberately left running across session close (v1 parity).
+   */
+  private keepAliveOnExit(): boolean {
+    return resolveAgentTaskConfig(this.config)?.keepAliveOnExit === true;
   }
 
   async wait(

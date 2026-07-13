@@ -30,6 +30,13 @@ import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSe
 // tests below can assert its schema and live env overlay.
 import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
+// Side-effect: registers the `task` / legacy `background` sections (with the
+// keepAliveOnExit env binding) so the tests below can assert the live overlay.
+import '#/agent/task/configSection';
+import {
+  KEEP_ALIVE_ON_EXIT_ENV,
+  type AgentTaskConfig,
+} from '#/agent/task/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -429,6 +436,37 @@ describe('image config section', () => {
     // Live re-apply on the next get().
     env['KIMI_IMAGE_MAX_EDGE_PX'] = '2500';
     expect(config.get<ImageConfig>(IMAGE_SECTION).maxEdgePx).toBe(2500);
+
+    disposables.dispose();
+  });
+});
+
+describe('task config section', () => {
+  it('re-applies the keepAliveOnExit env binding on every get()', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    // No env, no file → unset.
+    expect(config.get<AgentTaskConfig>('task')?.keepAliveOnExit).toBeUndefined();
+
+    // The v1 env name still overrides, live.
+    env[KEEP_ALIVE_ON_EXIT_ENV] = '1';
+    expect(config.get<AgentTaskConfig>('task')?.keepAliveOnExit).toBe(true);
+    env[KEEP_ALIVE_ON_EXIT_ENV] = '0';
+    expect(config.get<AgentTaskConfig>('task')?.keepAliveOnExit).toBe(false);
+
+    // The legacy [background] section carries the same binding.
+    env[KEEP_ALIVE_ON_EXIT_ENV] = 'true';
+    expect(config.get<AgentTaskConfig>('background')?.keepAliveOnExit).toBe(true);
 
     disposables.dispose();
   });

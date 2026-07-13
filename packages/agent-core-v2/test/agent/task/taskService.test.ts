@@ -140,6 +140,107 @@ describe('AgentTaskService', () => {
     await svc.stop(id);
   });
 
+  // ── Session-close teardown (v1 `stopBackgroundTasksOnExit` parity) ──────
+
+  function stubTaskConfig(value: unknown): void {
+    ix.stub(IConfigService, {
+      get: ((domain: string) => (domain === 'task' ? value : undefined)) as IConfigService['get'],
+    });
+  }
+
+  function abortObservingTask(onAbort: (reason: unknown) => void): AgentTask {
+    return {
+      ...fakeProcessTask(),
+      start: ({ signal }) => {
+        // `registerTask` starts the task on a microtask, so teardown may have
+        // aborted the controller before `start` runs — observe both.
+        if (signal.aborted) {
+          onAbort(signal.reason);
+          return;
+        }
+        signal.addEventListener('abort', () => onAbort(signal.reason));
+      },
+    };
+  }
+
+  it('stopAllOnExit suppresses and stops every active task', async () => {
+    const svc = ix.get(IAgentTaskService);
+    const first = svc.registerTask(fakeProcessTask());
+    const second = svc.registerTask(fakeProcessTask());
+
+    const stopped = await svc.stopAllOnExit('Session closed');
+
+    expect(stopped.map((info) => info.taskId).sort()).toEqual([first, second].sort());
+    for (const taskId of [first, second]) {
+      const info = svc.getTask(taskId);
+      expect(info?.status).toBe('killed');
+      expect(info?.stopReason).toBe('Session closed');
+      expect(info?.terminalNotificationSuppressed).toBe(true);
+    }
+  });
+
+  it('stopAllOnExit leaves tasks running when keepAliveOnExit is set', async () => {
+    stubTaskConfig({ keepAliveOnExit: true });
+    const svc = ix.get(IAgentTaskService);
+    const taskId = svc.registerTask(fakeProcessTask());
+
+    const stopped = await svc.stopAllOnExit('Session closed');
+
+    expect(stopped).toEqual([]);
+    expect(svc.getTask(taskId)?.status).toBe('running');
+
+    await svc.stop(taskId);
+  });
+
+  it('dispose aborts live tasks as a last resort', async () => {
+    const svc = ix.get(IAgentTaskService) as AgentTaskService;
+    let abortReason: unknown;
+    svc.registerTask(abortObservingTask((reason) => (abortReason = reason)), {
+      timeoutMs: 60_000,
+    });
+
+    svc.dispose();
+    // `start` runs one microtask after `registerTask`; the abort it observes
+    // landed synchronously during `dispose`.
+    await Promise.resolve();
+
+    expect(abortReason).toBe('Session closed');
+  });
+
+  it('dispose leaves tasks running when keepAliveOnExit is set', async () => {
+    stubTaskConfig({ keepAliveOnExit: true });
+    const svc = ix.get(IAgentTaskService) as AgentTaskService;
+    let aborted = false;
+    svc.registerTask(abortObservingTask(() => (aborted = true)));
+
+    svc.dispose();
+
+    expect(aborted).toBe(false);
+  });
+
+  it('stop force-stops after the configured killGracePeriodMs instead of the default grace', async () => {
+    stubTaskConfig({ killGracePeriodMs: 20 });
+    const svc = ix.get(IAgentTaskService);
+    let forceStopped = false;
+    // Ignores SIGTERM entirely: the only way out is forceStop after the grace.
+    const taskId = svc.registerTask({
+      ...fakeProcessTask(),
+      start: () => new Promise<void>(() => {}),
+      forceStop: async () => {
+        forceStopped = true;
+      },
+    });
+
+    const startedAt = Date.now();
+    const info = await svc.stop(taskId);
+
+    expect(forceStopped).toBe(true);
+    expect(info?.status).toBe('killed');
+    // The default 5s grace would make this test take five seconds; the
+    // configured 20ms grace lands well under a second even on a loaded CI.
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
   function compactionSummary(text: string): ContextMessage {
     return {
       role: 'user',

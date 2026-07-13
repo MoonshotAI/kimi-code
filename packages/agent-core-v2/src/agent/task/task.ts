@@ -119,6 +119,13 @@ export interface IAgentTaskService {
   detach(taskId: string): AgentTaskInfo | undefined;
   stop(taskId: string, reason?: string): Promise<AgentTaskInfo | undefined>;
   stopAll(reason?: string): Promise<readonly AgentTaskInfo[]>;
+  /**
+   * Session-close teardown: unless `keepAliveOnExit` is set, suppress every
+   * active task's terminal notification, then stop them all (SIGTERM → grace
+   * → SIGKILL). Called by `agentLifecycle.remove` before the agent scope is
+   * disposed.
+   */
+  stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]>;
   wait(
     taskId: string,
     timeoutMs?: number,
