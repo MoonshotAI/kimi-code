@@ -18,7 +18,7 @@ function randomDoc(rng) {
   return {
     city: pick(rng, CITIES),
     age: randInt(rng, 60),
-    email: 'u' + randInt(rng, 100000) + '@x.com',
+    email: 'u' + randInt(rng, 100000) + '@example.test',
     bio: pick(rng, BIOS),
   };
 }

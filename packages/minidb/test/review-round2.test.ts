@@ -190,14 +190,14 @@ test('batch allows swapping a unique value between two keys', async () => {
   const dir = await tmpDir();
   const db = await MiniDb.open({ dir, valueCodec: 'json' });
   await db.createIndex('byMail', { field: 'email', unique: true });
-  await db.set('u1', { email: 'a@x.com' });
-  await db.set('u2', { email: 'b@x.com' });
+  await db.set('u1', { email: 'alice@example.test' });
+  await db.set('u2', { email: 'bob@example.test' });
   await db.batch([
-    { op: 'set', key: 'u1', value: { email: 'b@x.com' } },
-    { op: 'set', key: 'u2', value: { email: 'a@x.com' } },
+    { op: 'set', key: 'u1', value: { email: 'bob@example.test' } },
+    { op: 'set', key: 'u2', value: { email: 'alice@example.test' } },
   ]);
-  assert.equal(db.get('u1')?.email, 'b@x.com');
-  assert.equal(db.get('u2')?.email, 'a@x.com');
+  assert.equal(db.get('u1')?.email, 'bob@example.test');
+  assert.equal(db.get('u2')?.email, 'alice@example.test');
   await db.close();
   await fs.rm(dir, { recursive: true, force: true });
 });
@@ -206,14 +206,14 @@ test('batch allows del(u1) + set(u2) reusing u1 unique value', async () => {
   const dir = await tmpDir();
   const db = await MiniDb.open({ dir, valueCodec: 'json' });
   await db.createIndex('byMail', { field: 'email', unique: true });
-  await db.set('u1', { email: 'x@y.com' });
+  await db.set('u1', { email: 'shared@example.test' });
   await db.batch([
     { op: 'del', key: 'u1' },
-    { op: 'set', key: 'u2', value: { email: 'x@y.com' } },
+    { op: 'set', key: 'u2', value: { email: 'shared@example.test' } },
   ]);
   assert.equal(db.get('u1'), undefined);
-  assert.equal(db.get('u2')?.email, 'x@y.com');
-  assert.deepEqual(db.findEq('byMail', 'x@y.com').map((r) => r.key), ['u2']);
+  assert.equal(db.get('u2')?.email, 'shared@example.test');
+  assert.deepEqual(db.findEq('byMail', 'shared@example.test').map((r) => r.key), ['u2']);
   await db.close();
   await fs.rm(dir, { recursive: true, force: true });
 });
@@ -222,8 +222,8 @@ test('batch still rejects genuine unique violations', async () => {
   const dir = await tmpDir();
   const db = await MiniDb.open({ dir, valueCodec: 'json' });
   await db.createIndex('byMail', { field: 'email', unique: true });
-  await db.set('u1', { email: 'x@y.com' });
-  await assert.rejects(db.batch([{ op: 'set', key: 'u2', value: { email: 'x@y.com' } }]), /unique/i);
+  await db.set('u1', { email: 'duplicate@example.test' });
+  await assert.rejects(db.batch([{ op: 'set', key: 'u2', value: { email: 'duplicate@example.test' } }]), /unique/i);
   assert.equal(db.get('u2'), undefined);
   await db.close();
   await fs.rm(dir, { recursive: true, force: true });
@@ -234,8 +234,8 @@ test('batch still rejects genuine unique violations', async () => {
 test('createIndex(unique) rejects existing duplicate data', async () => {
   const dir = await tmpDir();
   const db = await MiniDb.open({ dir, valueCodec: 'json' });
-  await db.set('a', { email: 'dup@x.com' });
-  await db.set('b', { email: 'dup@x.com' });
+  await db.set('a', { email: 'duplicate@example.test' });
+  await db.set('b', { email: 'duplicate@example.test' });
   await assert.rejects(db.createIndex('byMail', { field: 'email', unique: true }), /unique/i);
   assert.equal(db.listIndexes().length, 0, 'index must not persist after failed create');
   await db.close();

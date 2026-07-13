@@ -163,7 +163,7 @@ describe('collectGitContext', () => {
   it('omits both Remote and Project for a disallowed remote host', async () => {
     const { runner } = gitRunner({
       'rev-parse --is-inside-work-tree': { stdout: 'true' },
-      'remote get-url origin': { stdout: 'git@internal.corp:secret/repo.git' },
+      'remote get-url origin': { stdout: 'git@internal.example.test:secret/repo.git' },
       'symbolic-ref --short HEAD': { stdout: 'main' },
       'status --porcelain': { stdout: '' },
       'log -3 --format=%h %s': { stdout: '' },
@@ -286,7 +286,7 @@ describe('remote url helpers', () => {
   });
 
   it('rejects private hosts', () => {
-    expect(sanitizeRemoteUrl('https://git.example.internal/owner/repo.git')).toBeNull();
+    expect(sanitizeRemoteUrl('https://git.example.test/owner/repo.git')).toBeNull();
   });
 
   it('parses project names from ssh and https urls', () => {
