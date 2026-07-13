@@ -22,11 +22,19 @@ const emit = defineEmits<{
 }>();
 
 const Renderer = computed(() => resolveToolRenderer(props.tool));
+
+function rendererKey(tool: ToolCall): string {
+  const status = tool.planReview?.status;
+  return status === 'approved' || status === 'dismissed'
+    ? `${tool.id}:plan-review:${status}`
+    : tool.id;
+}
 </script>
 
 <template>
   <component
     :is="Renderer"
+    :key="rendererKey(tool)"
     :tool="tool"
     :mobile="mobile"
     :stack-position="stackPosition"

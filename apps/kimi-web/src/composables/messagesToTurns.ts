@@ -281,6 +281,7 @@ function planReviewStatusFromApproval(result: ApprovalResponse | undefined): Pla
   if (result === undefined) return 'pending';
   if (result.decision === 'approved') return 'approved';
   if (result.decision === 'cancelled') return 'dismissed';
+  if (result.selectedLabel === 'Reject and Exit') return 'rejected';
   const revisionRequested =
     result.selectedLabel?.trim().toLowerCase() === 'revise' ||
     (result.feedback?.trim().length ?? 0) > 0;

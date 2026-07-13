@@ -114,6 +114,7 @@ describe('plan review history (durable message projection)', () => {
       approvalResult: {
         decision: 'rejected',
         selected_label: 'Reject and Exit',
+        feedback: 'Do not continue with this plan.',
       },
       toolOutput: 'Plan rejected by the user.',
       isError: true,
@@ -124,6 +125,7 @@ describe('plan review history (durable message projection)', () => {
       plan: '## Release plan\n\n1. Update the server\n2. Verify the web replay',
       path: '/workspace/plans/release.md',
       selectedLabel: 'Reject and Exit',
+      feedback: 'Do not continue with this plan.',
     });
   });
 
