@@ -28,7 +28,7 @@ import { type ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import type { ChatProvider } from '#/app/llmProtocol/provider';
 import type { Protocol, ProtocolProviderOptions } from '#/app/protocol/protocol';
 import { generate, type GenerateResult } from '#/app/llmProtocol/generate';
-import { translateProviderError } from '#/app/protocol/errors';
+import { sanitizeStatusErrorMessage, translateProviderError } from '#/app/protocol/errors';
 import { type ProtocolAdapterRegistry } from '#/app/protocol/protocolAdapterRegistry';
 import { ErrorCodes, Error2 } from '#/errors';
 
@@ -333,7 +333,7 @@ export class ModelImpl implements Model {
     try {
       return await run(refreshedAuth);
     } catch (error) {
-      if (isUnauthorizedStatusError(error)) throw toLoginRequiredError(error);
+      if (isUnauthorizedStatusError(error)) throw toProviderAuthError(error);
       throw error;
     }
   }
@@ -347,11 +347,19 @@ function isUnauthorizedStatusError(error: unknown): error is APIStatusError {
   return error instanceof APIStatusError && error.statusCode === 401;
 }
 
-function toLoginRequiredError(error: APIStatusError): Error2 {
+/**
+ * A 401 that survives a forced token refresh means the provider rejected the
+ * account itself (plan or model unavailable), not an expired token — surface
+ * the provider's message as `PROVIDER_AUTH_ERROR` instead of misleading the
+ * user into re-running /login.
+ */
+function toProviderAuthError(error: APIStatusError): Error2 {
+  const reason = sanitizeStatusErrorMessage(error.message);
   return new Error2(
-    ErrorCodes.AUTH_LOGIN_REQUIRED,
-    'OAuth provider credentials were rejected. Send /login to login.',
+    ErrorCodes.PROVIDER_AUTH_ERROR,
+    reason.length > 0 ? reason : 'OAuth provider credentials were rejected.',
     {
+      name: error.name,
       cause: error,
       details: {
         statusCode: error.statusCode,

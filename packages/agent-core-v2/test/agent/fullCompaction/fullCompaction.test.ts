@@ -428,7 +428,7 @@ describe('FullCompaction', () => {
     ).toBe(false);
   });
 
-  it('force-refreshes OAuth credentials on compaction 401 and falls back to login_required when replay 401', async () => {
+  it('force-refreshes OAuth credentials on compaction 401 and treats replay 401 as provider auth error', async () => {
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
     const oauthOptions = oauthTestAgentOptions(async (options) => {
@@ -467,7 +467,7 @@ describe('FullCompaction', () => {
       expect.objectContaining({
         event: 'error',
         args: expect.objectContaining({
-          code: 'auth.login_required',
+          code: 'provider.auth_error',
           details: expect.objectContaining({
             statusCode: 401,
             requestId: 'req-compact-401',

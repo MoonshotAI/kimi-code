@@ -356,7 +356,7 @@ describe('ModelResolverService', () => {
       expect(events).toContainEqual({ type: 'part', part: { type: 'text', text: 'recovered' } });
     });
 
-    it('throws login_required when force-refresh and replay both 401', async () => {
+    it('throws provider auth error when force-refresh and replay both 401', async () => {
       configureOAuthModel();
       const authKeys: string[] = [];
       resolveTokenProvider.mockReturnValue({
@@ -378,7 +378,9 @@ describe('ModelResolverService', () => {
           void _event;
         }
       }).rejects.toMatchObject({
-        code: 'auth.login_required',
+        code: 'provider.auth_error',
+        name: 'APIStatusError',
+        message: 'Unauthorized',
         details: {
           statusCode: 401,
           requestId: 'req-401',
