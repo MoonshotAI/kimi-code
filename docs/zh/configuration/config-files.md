@@ -334,9 +334,19 @@ timeout_ms = 200
     "usage": 0.12,
     "tokens": 31457,
     "max_tokens": 262144
-  }
+  },
+  "rate_limits": [
+    {
+      "label": "Weekly limit",
+      "used": 120,
+      "limit": 1000,
+      "reset_hint": "resets in 2d"
+    }
+  ]
 }
 ```
+
+对于 Kimi 托管供应商，`rate_limits` 包含可用的套餐额度行，并且最多每 30 秒刷新一次。使用其他供应商或无法获取用量数据时，它是一个空数组。
 
 修改在下次启动时生效，或用 `/reload-tui` 立即生效（只重载 `tui.toml`）；`/reload` 会同时重载 `config.toml` 和 `tui.toml`。
 

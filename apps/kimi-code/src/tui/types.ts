@@ -12,6 +12,7 @@ import type {
 import type { NotificationsConfig, StatusLineConfig, UpgradePreferences } from './config';
 import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
 import type { ColorToken, ThemeName } from './theme';
+import type { StatusLineManagedUsageLoader } from './utils/status-line-command';
 
 export type BannerDisplay = 'always' | 'once' | 'cooldown';
 
@@ -232,6 +233,7 @@ export type TUIStartupState = 'pending' | 'ready' | 'picker';
 export interface KimiTUIOptions {
   initialAppState: AppState;
   startup: TUIStartupOptions;
+  loadStatusLineManagedUsage?: StatusLineManagedUsageLoader;
 }
 
 export interface PendingExit {

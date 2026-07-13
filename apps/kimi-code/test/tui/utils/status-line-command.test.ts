@@ -1,3 +1,7 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -20,10 +24,20 @@ const payload: StatusLineCommandPayload = {
     tokens: 1000,
     max_tokens: 4000,
   },
+  rate_limits: [],
 };
 
 function nodeCommand(script: string): string {
   return `${JSON.stringify(process.execPath)} -e ${JSON.stringify(script)}`;
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 describe('runStatusLineCommand', () => {
@@ -47,5 +61,32 @@ describe('runStatusLineCommand', () => {
     });
 
     expect(result).toBeNull();
+  });
+
+  it('terminates the whole shell process tree on timeout', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-status-line-'));
+    const pidFile = join(dir, 'child.pid');
+    let childPid: number | undefined;
+    try {
+      const writer = nodeCommand(
+        `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); setInterval(() => {}, 1000);`,
+      );
+      const relay = nodeCommand('process.stdin.resume();');
+
+      const result = await runStatusLineCommand({
+        command: `${writer} | ${relay}`,
+        timeoutMs: 50,
+        payload,
+      });
+
+      expect(result).toBeNull();
+      childPid = Number(await readFile(pidFile, 'utf8'));
+      await expect.poll(() => isProcessAlive(childPid!), { timeout: 500 }).toBe(false);
+    } finally {
+      if (childPid !== undefined && isProcessAlive(childPid)) {
+        process.kill(childPid, 'SIGKILL');
+      }
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

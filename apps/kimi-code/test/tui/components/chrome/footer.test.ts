@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { FooterComponent } from '#/tui/components/chrome/footer';
+import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/tui/constant/kimi-tui';
 import { setRainbowDance, type RainbowDanceController } from '#/tui/easter-eggs/dance';
 import { currentTheme, darkColors, lightColors } from '#/tui/theme';
 import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
@@ -245,6 +246,94 @@ describe('FooterComponent status line command', () => {
     });
 
     footer.dispose();
+  });
+
+  it('includes managed rate limits in the command payload', async () => {
+    statusLineMocks.runStatusLineCommand.mockResolvedValue('custom status');
+    const loadManagedUsage = vi.fn().mockResolvedValue({
+      kind: 'ok',
+      summary: null,
+      limits: [
+        {
+          label: 'Weekly limit',
+          used: 25,
+          limit: 100,
+          resetHint: 'resets in 2d',
+        },
+      ],
+      extraUsage: null,
+    });
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        availableModels: {
+          'kimi-k2': {
+            model: 'kimi-k2',
+            provider: DEFAULT_OAUTH_PROVIDER_NAME,
+          } as ModelAlias,
+        },
+        statusLine: { command: 'kimi-hud', timeoutMs: 250 },
+      },
+      () => {},
+      loadManagedUsage,
+    );
+
+    await vi.waitFor(() => {
+      expect(statusLineMocks.runStatusLineCommand).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            rate_limits: [
+              {
+                label: 'Weekly limit',
+                used: 25,
+                limit: 100,
+                reset_hint: 'resets in 2d',
+              },
+            ],
+          }),
+        }),
+      );
+    });
+
+    expect(loadManagedUsage).toHaveBeenCalledTimes(1);
+    expect(loadManagedUsage).toHaveBeenCalledWith(DEFAULT_OAUTH_PROVIDER_NAME);
+    footer.dispose();
+  });
+
+  it('caches managed rate limits for thirty seconds', async () => {
+    vi.useFakeTimers();
+    statusLineMocks.runStatusLineCommand.mockResolvedValue('custom status');
+    const loadManagedUsage = vi.fn().mockResolvedValue({
+      kind: 'ok',
+      summary: null,
+      limits: [],
+      extraUsage: null,
+    });
+    const footer = new FooterComponent(
+      {
+        ...appState,
+        availableModels: {
+          'kimi-k2': {
+            model: 'kimi-k2',
+            provider: DEFAULT_OAUTH_PROVIDER_NAME,
+          } as ModelAlias,
+        },
+        statusLine: { command: 'kimi-hud', timeoutMs: 250 },
+      },
+      () => {},
+      loadManagedUsage,
+    );
+
+    try {
+      await vi.advanceTimersByTimeAsync(29_000);
+      expect(loadManagedUsage).toHaveBeenCalledTimes(1);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(loadManagedUsage).toHaveBeenCalledTimes(2);
+    } finally {
+      footer.dispose();
+      vi.useRealTimers();
+    }
   });
 
   it('does not refresh the external command on unrelated state updates', async () => {

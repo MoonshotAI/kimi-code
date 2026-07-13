@@ -79,9 +79,13 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
   const editor = new CustomEditor(ui, {
     disablePasteBurst: initialAppState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
   });
-  const footer = new FooterComponent({ ...initialAppState }, () => {
-    ui.requestRender();
-  });
+  const footer = new FooterComponent(
+    { ...initialAppState },
+    () => {
+      ui.requestRender();
+    },
+    options.loadStatusLineManagedUsage,
+  );
 
   return {
     ui,

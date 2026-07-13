@@ -20,6 +20,9 @@ import { DEFAULT_TUI_CONFIG, type StatusLineConfig } from '#/tui/config';
 import {
   runStatusLineCommand,
   type StatusLineCommandPayload,
+  type StatusLineManagedUsage,
+  type StatusLineManagedUsageLoader,
+  type StatusLineRateLimit,
 } from '#/tui/utils/status-line-command';
 import {
   createGitStatusCache,
@@ -33,6 +36,7 @@ import { safeUsageRatio } from '#/utils/usage/usage-format';
 const MAX_CWD_SEGMENTS = 3;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
 const STATUS_LINE_REFRESH_INTERVAL_MS = 1_000;
+const STATUS_LINE_RATE_LIMIT_REFRESH_INTERVAL_MS = 30_000;
 
 // Toolbar tips — rotates every 10s. Most tips are short and pair up (two
 // joined by " | ") when space allows; tips flagged `solo` are long or
@@ -196,9 +200,14 @@ export class FooterComponent implements Component {
   private transientHint: string | null = null;
   private statusLineText: string | null = null;
   private statusLineInFlight = false;
+  private statusLineRefreshPending = false;
   private statusLineTimer: ReturnType<typeof setInterval> | null = null;
   private statusLineCommand: string | null = null;
   private statusLineGeneration = 0;
+  private statusLineRateLimits: readonly StatusLineRateLimit[] = [];
+  private statusLineRateLimitsProvider: string | null = null;
+  private statusLineRateLimitsLoadedAt = 0;
+  private statusLineRateLimitsInFlight = false;
   private disposed = false;
   private goalSnapshotKey: string | null = null;
   private goalObservedAtMs = Date.now();
@@ -213,7 +222,12 @@ export class FooterComponent implements Component {
   private backgroundBashTaskCount = 0;
   private backgroundAgentCount = 0;
 
-  constructor(state: AppState, onRefresh: () => void = () => {}) {
+  constructor(
+    state: AppState,
+    onRefresh: () => void = () => {},
+    private readonly loadStatusLineManagedUsage: StatusLineManagedUsageLoader = async () =>
+      undefined,
+  ) {
     this.state = state;
     this.onRefresh = onRefresh;
     this.gitCacheWorkDir = state.workDir;
@@ -400,21 +414,30 @@ export class FooterComponent implements Component {
 
   private syncStatusLineTimer(command: string | null): void {
     const commandChanged = command !== this.statusLineCommand;
+    const providerKey = statusLineProvider(this.state);
+    const providerChanged = providerKey !== this.statusLineRateLimitsProvider;
     if (command !== this.statusLineCommand) {
       this.statusLineCommand = command;
       this.statusLineGeneration += 1;
       this.statusLineText = null;
+    }
+    if (providerChanged) {
+      this.statusLineRateLimitsProvider = providerKey;
+      this.statusLineRateLimits = [];
+      this.statusLineRateLimitsLoadedAt = 0;
     }
 
     if (command !== null) {
       const timerCreated = this.statusLineTimer === null;
       if (this.statusLineTimer === null) {
         this.statusLineTimer = setInterval(() => {
+          void this.refreshStatusLineRateLimits();
           void this.refreshStatusLine();
         }, STATUS_LINE_REFRESH_INTERVAL_MS);
         this.statusLineTimer.unref?.();
       }
-      if (commandChanged || timerCreated) {
+      void this.refreshStatusLineRateLimits();
+      if (commandChanged || timerCreated || providerChanged) {
         void this.refreshStatusLine();
       }
       return;
@@ -428,7 +451,12 @@ export class FooterComponent implements Component {
 
   private async refreshStatusLine(): Promise<void> {
     const { command, timeoutMs } = statusLineConfig(this.state);
-    if (command === null || this.statusLineInFlight) return;
+    if (command === null) return;
+    if (this.statusLineInFlight) {
+      this.statusLineRefreshPending = true;
+      return;
+    }
+    this.statusLineRefreshPending = false;
     const generation = this.statusLineGeneration;
     this.statusLineInFlight = true;
     let text: string | null = null;
@@ -457,6 +485,38 @@ export class FooterComponent implements Component {
 
     this.statusLineText = text;
     this.onRefresh();
+    if (this.statusLineRefreshPending) {
+      void this.refreshStatusLine();
+    }
+  }
+
+  private async refreshStatusLineRateLimits(): Promise<void> {
+    const providerKey = this.statusLineRateLimitsProvider;
+    if (
+      providerKey === null ||
+      this.statusLineRateLimitsInFlight ||
+      Date.now() - this.statusLineRateLimitsLoadedAt <
+        STATUS_LINE_RATE_LIMIT_REFRESH_INTERVAL_MS
+    ) {
+      return;
+    }
+
+    this.statusLineRateLimitsInFlight = true;
+    let result: StatusLineManagedUsage | undefined;
+    try {
+      result = await this.loadStatusLineManagedUsage(providerKey);
+    } catch {
+      result = undefined;
+    } finally {
+      this.statusLineRateLimitsInFlight = false;
+    }
+
+    if (this.disposed || providerKey !== this.statusLineRateLimitsProvider) return;
+    this.statusLineRateLimitsLoadedAt = Date.now();
+    this.statusLineRateLimits = managedUsageRateLimits(result);
+    if (statusLineConfig(this.state).command !== null) {
+      void this.refreshStatusLine();
+    }
   }
 
   private createStatusLinePayload(): StatusLineCommandPayload {
@@ -476,6 +536,7 @@ export class FooterComponent implements Component {
         tokens: state.contextTokens,
         max_tokens: state.maxContextTokens,
       },
+      rate_limits: this.statusLineRateLimits,
     };
   }
 
@@ -515,4 +576,23 @@ function goalSnapshotKey(goal: AppState['goal']): string | null {
 
 function statusLineConfig(state: AppState): StatusLineConfig {
   return (state as Partial<AppState>).statusLine ?? DEFAULT_TUI_CONFIG.statusLine;
+}
+
+function statusLineProvider(state: AppState): string | null {
+  return state.availableModels[state.model]?.provider ?? null;
+}
+
+function managedUsageRateLimits(
+  result: StatusLineManagedUsage | undefined,
+): readonly StatusLineRateLimit[] {
+  if (result?.kind !== 'ok') return [];
+  const rows = result.summary === null ? result.limits : [result.summary, ...result.limits];
+  return rows
+    .filter((row) => row.limit > 0)
+    .map((row) => ({
+      label: row.label,
+      used: row.used,
+      limit: row.limit,
+      reset_hint: row.resetHint,
+    }));
 }

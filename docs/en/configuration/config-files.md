@@ -334,9 +334,19 @@ Example payload:
     "usage": 0.12,
     "tokens": 31457,
     "max_tokens": 262144
-  }
+  },
+  "rate_limits": [
+    {
+      "label": "Weekly limit",
+      "used": 120,
+      "limit": 1000,
+      "reset_hint": "resets in 2d"
+    }
+  ]
 }
 ```
+
+For managed Kimi providers, `rate_limits` contains the available plan quota rows and is refreshed at most once every 30 seconds. It is an empty array for other providers or when usage data is unavailable.
 
 Changes apply on the next start, or immediately with `/reload-tui` (which reloads only `tui.toml`); `/reload` reloads both `config.toml` and `tui.toml`.
 

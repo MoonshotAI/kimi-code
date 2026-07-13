@@ -1,6 +1,10 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 
+import type { KimiHarness } from '@moonshot-ai/kimi-code-sdk';
+
+const PROCESS_KILL_GRACE_MS = 100;
+
 export interface StatusLineCommandPayload {
   readonly session_id: string;
   readonly model: string;
@@ -16,7 +20,23 @@ export interface StatusLineCommandPayload {
     readonly tokens: number;
     readonly max_tokens: number;
   };
+  readonly rate_limits: readonly StatusLineRateLimit[];
 }
+
+export interface StatusLineRateLimit {
+  readonly label: string;
+  readonly used: number;
+  readonly limit: number;
+  readonly reset_hint?: string;
+}
+
+export type StatusLineManagedUsage = Awaited<
+  ReturnType<KimiHarness['auth']['getManagedUsage']>
+>;
+
+export type StatusLineManagedUsageLoader = (
+  providerKey: string,
+) => Promise<StatusLineManagedUsage | undefined>;
 
 export interface RunStatusLineCommandOptions {
   readonly command: string;
@@ -30,8 +50,10 @@ export async function runStatusLineCommand({
   payload,
 }: RunStatusLineCommandOptions): Promise<string | null> {
   const child = spawn(command, {
+    detached: process.platform !== 'win32',
     shell: true,
     stdio: ['pipe', 'pipe', 'ignore'],
+    windowsHide: true,
   });
 
   let stdout = '';
@@ -57,7 +79,7 @@ export async function runStatusLineCommand({
   const result = await Promise.race([closed, errored, timeout]);
 
   if (result === 'timeout') {
-    child.kill();
+    killProcessTree(child);
     return null;
   }
   if (result.kind === 'error' || result.code !== 0) {
@@ -66,4 +88,46 @@ export async function runStatusLineCommand({
 
   const line = stdout.trimEnd().split(/\r?\n/, 1)[0]?.trimEnd() ?? '';
   return line.length > 0 ? line : null;
+}
+
+function killProcessTree(child: ReturnType<typeof spawn>): void {
+  tryKillProcessTree(child, 'SIGTERM');
+  const timer = setTimeout(() => {
+    tryKillProcessTree(child, 'SIGKILL');
+  }, PROCESS_KILL_GRACE_MS);
+  timer.unref?.();
+}
+
+function tryKillProcessTree(
+  child: ReturnType<typeof spawn>,
+  signal: NodeJS.Signals,
+): void {
+  if (process.platform === 'win32') {
+    if (child.pid === undefined) return;
+    const args =
+      signal === 'SIGKILL'
+        ? ['/T', '/F', '/PID', String(child.pid)]
+        : ['/T', '/PID', String(child.pid)];
+    try {
+      const killer = spawn('taskkill', args, { stdio: 'ignore', windowsHide: true });
+      killer.once('error', () => {});
+    } catch {
+      try {
+        child.kill(signal);
+      } catch {}
+    }
+    return;
+  }
+
+  try {
+    if (child.pid !== undefined) {
+      process.kill(-child.pid, signal);
+    } else {
+      child.kill(signal);
+    }
+  } catch {
+    try {
+      child.kill(signal);
+    } catch {}
+  }
 }
