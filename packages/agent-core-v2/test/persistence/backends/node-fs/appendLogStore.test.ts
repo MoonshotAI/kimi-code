@@ -265,6 +265,230 @@ describe('AppendLogStore', () => {
     await rewrite;
   });
 
+  it('rewrite preserves an append whose old drain is in flight at cutover', async () => {
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseOldAppend!: () => void;
+    const oldAppendGate = new Promise<void>((resolve) => {
+      releaseOldAppend = resolve;
+    });
+    let appendAttempts = 0;
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      appendAttempts++;
+      if (appendAttempts === 1) {
+        markAppendStarted();
+        await oldAppendGate;
+      }
+      return originalAppend(...args);
+    };
+    const replacement = [{ n: 9 }];
+    record.append<Rec>(SCOPE, KEY, { n: 2 });
+    await appendStarted;
+
+    const rewrite = record.rewrite<Rec>(SCOPE, KEY, replacement);
+    const flushed = record.flush();
+    releaseOldAppend();
+    await flushed;
+    await rewrite;
+
+    expect(appendAttempts).toBe(2);
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 2 }]);
+  });
+
+  it('explicit rewrite recovers an in-flight ambiguous append failure', async () => {
+    const failure = new Error('append failed after commit');
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend!: () => void;
+    const appendGate = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    let appendAttempts = 0;
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      appendAttempts++;
+      if (appendAttempts === 1) {
+        markAppendStarted();
+        await appendGate;
+        await originalAppend(...args);
+        throw failure;
+      }
+      return originalAppend(...args);
+    };
+    record.append<Rec>(SCOPE, KEY, { n: 2 });
+    await appendStarted;
+
+    const rewrite = record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }]);
+    const flushed = record.flush();
+    releaseAppend();
+    await Promise.all([rewrite, flushed]);
+
+    expect(appendAttempts).toBe(2);
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 2 }]);
+  });
+
+  it('atomic rewrite rejection does not retry an append already written before cutover', async () => {
+    const failure = new Error('atomic rewrite rejected');
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend!: () => void;
+    const appendGate = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    let appendAttempts = 0;
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      appendAttempts++;
+      markAppendStarted();
+      await appendGate;
+      return originalAppend(...args);
+    };
+    storage.write = async () => {
+      throw failure;
+    };
+    record.append<Rec>(SCOPE, KEY, { n: 2 });
+    await appendStarted;
+
+    const rewriteRejected = expect(
+      record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }]),
+    ).rejects.toBe(failure);
+    releaseAppend();
+    await rewriteRejected;
+
+    await expect(record.flush()).rejects.toBe(failure);
+    expect(appendAttempts).toBe(1);
+    expect(new TextDecoder().decode(await storage.read(SCOPE, KEY))).toBe('{"n":2}\n');
+  });
+
+  it('invalid replacement records do not change append ownership', async () => {
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend!: () => void;
+    const appendGate = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    let appendAttempts = 0;
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      appendAttempts++;
+      markAppendStarted();
+      await appendGate;
+      return originalAppend(...args);
+    };
+    record.append<Rec>(SCOPE, KEY, { n: 2 });
+    await appendStarted;
+
+    const invalid = expect(
+      record.rewrite<unknown>(SCOPE, KEY, [{ n: 9n }]),
+    ).rejects.toBeInstanceOf(TypeError);
+    releaseAppend();
+    await invalid;
+    await record.flush();
+
+    expect(appendAttempts).toBe(1);
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 2 }]);
+  });
+
+  it('successful explicit rewrite recovers sticky failure and drains the tail once', async () => {
+    const failure = new Error('atomic rewrite rejected');
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend!: () => void;
+    const appendGate = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    let appendAttempts = 0;
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      appendAttempts++;
+      if (appendAttempts === 1) {
+        markAppendStarted();
+        await appendGate;
+      }
+      return originalAppend(...args);
+    };
+    let writeAttempts = 0;
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (...args) => {
+      writeAttempts++;
+      if (writeAttempts === 1) throw failure;
+      return originalWrite(...args);
+    };
+    record.append<Rec>(SCOPE, KEY, { n: 2 });
+    await appendStarted;
+
+    const failedRewrite = expect(
+      record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }]),
+    ).rejects.toBe(failure);
+    releaseAppend();
+    await failedRewrite;
+    await expect(record.flush()).rejects.toBe(failure);
+    await expect(collect<Rec>(SCOPE, KEY)).rejects.toBe(failure);
+    await expect(record.close()).rejects.toBe(failure);
+
+    await record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }]);
+    await record.flush();
+
+    expect(writeAttempts).toBe(2);
+    expect(appendAttempts).toBe(2);
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 2 }]);
+  });
+
+  it('close waits for every key before reporting the first sticky failure', async () => {
+    const failedScope = 'agents/a';
+    const pendingScope = 'agents/b';
+    const failure = new Error('first key failed');
+    let reportFailure!: (error: unknown) => void;
+    const reportedFailure = new Promise<unknown>((resolve) => {
+      reportFailure = resolve;
+    });
+    let markPendingAppendStarted!: () => void;
+    const pendingAppendStarted = new Promise<void>((resolve) => {
+      markPendingAppendStarted = resolve;
+    });
+    let releasePendingAppend!: () => void;
+    const pendingAppendGate = new Promise<void>((resolve) => {
+      releasePendingAppend = resolve;
+    });
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      if (args[0] === failedScope) throw failure;
+      if (args[0] === pendingScope) {
+        markPendingAppendStarted();
+        await pendingAppendGate;
+      }
+      return originalAppend(...args);
+    };
+    record.append(failedScope, KEY, { n: 1 }, { onError: reportFailure });
+    expect(await reportedFailure).toBe(failure);
+    record.append(pendingScope, KEY, { n: 2 });
+    await pendingAppendStarted;
+
+    const closed = record.close();
+    let closeSettled = false;
+    void closed.finally(() => {
+      closeSettled = true;
+    }).catch(() => {});
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(closeSettled).toBe(false);
+
+    releasePendingAppend();
+    await expect(closed).rejects.toBe(failure);
+    expect(new TextDecoder().decode(await storage.read(pendingScope, KEY))).toBe('{"n":2}\n');
+  });
+
   it('appends that arrive during a rewrite land after the replaced content', async () => {
     let releaseWrite!: () => void;
     const writeGate = new Promise<void>((resolve) => {

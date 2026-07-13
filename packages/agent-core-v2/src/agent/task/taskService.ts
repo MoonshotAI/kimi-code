@@ -17,9 +17,11 @@
  * `turn.steer`, so the model consumes the notification without waiting for
  * the user), silently appends restored notifications through `contextMemory`,
  * re-surfaces active tasks through `contextInjector` after compaction, and
- * stops every owned task on session close (`stopAllOnExit` — v1's
- * `stopBackgroundTasksOnExit`, gated by `keepAliveOnExit`) with configurable
- * SIGTERM grace and SIGKILL escalation. Scope disposal paths that bypass
+ * requests every owned task to stop on session close (`stopAllOnExit` — v1's
+ * `stopBackgroundTasksOnExit`) with configurable SIGTERM grace and SIGKILL
+ * escalation. `keepAliveOnExit` skips task-manager teardown so independently
+ * living external work such as processes can continue; Session-scoped agents
+ * remain governed by the Session lifecycle. Scope disposal paths that bypass
  * graceful close synchronously cancel/abort work and immediately attempt a
  * best-effort force-stop to reduce the risk of surviving child processes.
  * Bound at Agent scope.

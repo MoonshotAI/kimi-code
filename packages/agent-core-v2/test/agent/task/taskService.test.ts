@@ -130,7 +130,8 @@ describe('AgentTaskService', () => {
         cwd: '/tmp/test-session',
       }),
     );
-    ix.stub(IAgentScopeContext, 
+    ix.stub(
+      IAgentScopeContext,
       makeAgentScopeContext({
         agentId: 'main',
         agentScope: 'sessions/test-ws/test-session/agents/main',
@@ -277,6 +278,40 @@ describe('AgentTaskService', () => {
 
     expect(aborted).toBe(false);
     expect(forceStop).not.toHaveBeenCalled();
+  });
+
+  it('scope disposal leaves a process running when keepAliveOnExit is set', async () => {
+    stubTaskConfig({ keepAliveOnExit: true });
+    const stdout = new Readable({ read() {} });
+    const stderr = new Readable({ read() {} });
+    let resolveWait!: (code: number) => void;
+    const wait = new Promise<number>((resolve) => {
+      resolveWait = resolve;
+    });
+    const proc = {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr,
+      pid: 4245,
+      exitCode: null,
+      wait: () => wait,
+      kill: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    } as unknown as IProcess;
+    const svc = ix.get(IAgentTaskService);
+    svc.registerTask(new ProcessTask(proc, 'keep-running', 'long-running process'));
+    await Promise.resolve();
+
+    disposables.dispose();
+    await Promise.resolve();
+
+    expect(proc.kill).not.toHaveBeenCalled();
+    expect(proc.dispose).not.toHaveBeenCalled();
+
+    stdout.push(null);
+    stderr.push(null);
+    resolveWait(0);
+    await Promise.resolve();
   });
 
   it('stop requests force-stop when killGracePeriodMs is zero', async () => {

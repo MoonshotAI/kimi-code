@@ -6,10 +6,11 @@
  * deliberately ignores: line framing (one JSON value per line, a.k.a. JSONL),
  * batching of appends into a single durable `append`, and crash-tolerant
  * decoding (a torn final line is dropped; corruption anywhere else throws).
- * Serializes whole-log rewrites with live appends, preserves queued records
- * across the atomic replacement and failed appends, keeps ambiguous append
- * failures sticky, keeps the shared flush pending until the post-rewrite drain
- * is durable, and preserves per-key storage ordering while acquired buffers
+ * Serializes whole-log rewrites with live appends, preserves queued or
+ * in-flight records across the atomic replacement, keeps ambiguous append and
+ * rewrite failures sticky, keeps the shared flush pending until the
+ * post-rewrite drain is durable, waits every key before a global flush reports
+ * an error, and preserves per-key storage ordering while acquired buffers
  * retire and hand off to replacement owners. Bound at App scope.
  */
 
@@ -30,7 +31,8 @@ interface LogState {
   pending: unknown[];
   flushPromise: Promise<void> | undefined;
   flushScheduled: boolean;
-  appendFailure: { readonly error: unknown } | undefined;
+  storageFailure: { readonly error: unknown } | undefined;
+  cutoverEpoch: number;
   refCount: number;
   retired: boolean;
   ready: Promise<void>;
@@ -105,12 +107,23 @@ export class AppendLogStore implements IAppendLogStore {
   }
 
   async rewrite<R>(scope: string, key: string, records: readonly R[]): Promise<void> {
+    const encoded = encodeBatch(records);
     const state = this.state(scope, key);
-    if (state.appendFailure !== undefined) throw state.appendFailure.error;
+    state.cutoverEpoch++;
     const prior = state.flushPromise ?? state.ready;
-    const rewrite = prior.then(() =>
-      this.storage.write(scope, key, encodeBatch(records), { atomic: true }),
+    const priorSettled = prior.then(
+      () => undefined,
+      () => undefined,
     );
+    const rewrite = priorSettled.then(async () => {
+      try {
+        await this.storage.write(scope, key, encoded, { atomic: true });
+        state.storageFailure = undefined;
+      } catch (error) {
+        state.storageFailure = { error };
+        throw error;
+      }
+    });
     await this.ownFlush(scope, key, state, rewrite);
   }
 
@@ -119,7 +132,10 @@ export class AppendLogStore implements IAppendLogStore {
       const { scope, key } = fromLogId(id);
       return this.flushState(scope, key, state);
     });
-    await Promise.all(inFlight);
+    const settled = await Promise.allSettled(inFlight);
+    for (const result of settled) {
+      if (result.status === 'rejected') throw result.reason;
+    }
   }
 
   async close(): Promise<void> {
@@ -143,7 +159,8 @@ export class AppendLogStore implements IAppendLogStore {
         pending: [],
         flushPromise: undefined,
         flushScheduled: false,
-        appendFailure: undefined,
+        storageFailure: undefined,
+        cutoverEpoch: 0,
         refCount: 0,
         retired: false,
         ready,
@@ -170,7 +187,7 @@ export class AppendLogStore implements IAppendLogStore {
 
   private flushState(scope: string, key: string, state: LogState): Promise<void> {
     if (state.flushPromise !== undefined) return state.flushPromise;
-    if (state.appendFailure !== undefined) return Promise.reject(state.appendFailure.error);
+    if (state.storageFailure !== undefined) return Promise.reject(state.storageFailure.error);
     return this.ownFlush(scope, key, state, this.drain(scope, key, state));
   }
 
@@ -219,7 +236,7 @@ export class AppendLogStore implements IAppendLogStore {
     if (state.flushPromise === owned) {
       try {
         if (failure === undefined) {
-          while (state.pending.length > 0) {
+          while (state.flushPromise === owned && state.pending.length > 0) {
             await this.drain(scope, key, state);
           }
         }
@@ -233,15 +250,18 @@ export class AppendLogStore implements IAppendLogStore {
   }
 
   private async drain(scope: string, key: string, state: LogState): Promise<void> {
+    const cutoverEpoch = state.cutoverEpoch;
     await state.ready;
+    if (state.cutoverEpoch !== cutoverEpoch) return;
     while (state.pending.length > 0) {
       const batch = state.pending.slice();
       try {
         await this.storage.append(scope, key, encodeBatch(batch), { durable: true });
       } catch (error) {
-        state.appendFailure = { error };
-        throw error;
+        const failure = (state.storageFailure ??= { error });
+        throw failure.error;
       }
+      if (state.cutoverEpoch !== cutoverEpoch) return;
       state.pending.splice(0, batch.length);
     }
   }
