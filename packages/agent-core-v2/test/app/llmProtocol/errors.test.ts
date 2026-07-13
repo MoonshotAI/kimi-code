@@ -193,6 +193,15 @@ describe('isRetryableGenerateError', () => {
   it('retries an unclassified provider error as a transient fallback', () => {
     expect(isRetryableGenerateError(new ChatProviderError('upstream failure'))).toBe(true);
   });
+
+  it.each([
+    ['Invalid data URL for image: data:image/png;base64'],
+    [
+      'Unsupported media type for base64 image: image/avif, url: data:image/avif;base64,AAAA',
+    ],
+  ])('does not retry deterministic provider validation error: %s', (message) => {
+    expect(isRetryableGenerateError(new ChatProviderError(message))).toBe(false);
+  });
 });
 
 describe('error hierarchy instanceof checks', () => {

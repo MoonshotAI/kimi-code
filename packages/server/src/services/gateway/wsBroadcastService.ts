@@ -8,6 +8,7 @@ import { IConnectionRegistry } from './connectionRegistry';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
 import { ISessionClientsService } from './sessionClients';
 import { SessionEventJournal } from './sessionEventJournal';
+import { SubagentRosterTracker } from './subagentRosterTracker';
 import {
   DEFAULT_MAX_BUFFER_SIZE,
   IWSBroadcastService,
@@ -40,6 +41,7 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
   private readonly _maxBufferSize: number;
   private readonly _journalDir: string;
   private readonly _turnTracker = new InFlightTurnTracker();
+  private readonly _rosterTracker = new SubagentRosterTracker();
 
   constructor(
     @IEventService eventService: IEventService,
@@ -87,6 +89,9 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
     // text, the journal watermark, and fan-out order stay consistent. For
     // text deltas this also yields the pre-append offset for the envelope.
     const annotation = this._turnTracker.apply(sid, event);
+    // Same queue-discipline for the subagent roster: snapshot rebuilds must
+    // see exactly the roster as of the durable watermark.
+    this._rosterTracker.apply(sid, event);
 
     let envelope: EventEnvelope;
     if (isVolatileEventType(evType)) {
@@ -172,6 +177,7 @@ export class WSBroadcastService extends Disposable implements IWSBroadcastServic
       seq: journal.seq,
       epoch: journal.epoch,
       inFlightTurn: this._turnTracker.get(sid),
+      subagents: this._rosterTracker.get(sid),
     };
   }
 
