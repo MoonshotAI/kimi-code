@@ -6,8 +6,8 @@
  * (tick / coalesce / jitter / cursor), persists mutations through the
  * App-scoped `ICronTaskPersistence`, mirrors mutations as `cron.add` /
  * `cron.delete` / `cron.cursor` Ops on the main agent's `wire` (cross-scope
- * borrow) so `wire.replay` can rebuild the `CronModel`, fires `cron.fired`
- * through the main agent's `wire` signal channel, steers the main agent
+ * borrow) so `wire.replay` can rebuild the `CronModel`, publishes `cron.fired`
+ * to the main agent's `IEventBus`, steers the main agent
  * through `IAgentPromptService` when a task fires, and registers the cron
  * tools (`CronCreate` / `CronList` / `CronDelete`) into the main agent's
  * `IAgentToolRegistryService` once `IAgentLifecycleService` signals
