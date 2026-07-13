@@ -8,8 +8,9 @@
  * decoding (a torn final line is dropped; corruption anywhere else throws).
  * Serializes whole-log rewrites with live appends, preserves queued records
  * across the atomic replacement and failed appends, keeps ambiguous append
- * failures sticky, and keeps the shared flush pending until the post-rewrite
- * drain is durable. Bound at App scope.
+ * failures sticky, keeps the shared flush pending until the post-rewrite drain
+ * is durable, and preserves per-key storage ordering while acquired buffers
+ * retire and hand off to replacement owners. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -30,6 +31,10 @@ interface LogState {
   flushPromise: Promise<void> | undefined;
   flushScheduled: boolean;
   appendFailure: { readonly error: unknown } | undefined;
+  refCount: number;
+  retired: boolean;
+  ready: Promise<void>;
+  retirement: Promise<void> | undefined;
   onError?: (error: unknown) => void;
 }
 
@@ -102,7 +107,7 @@ export class AppendLogStore implements IAppendLogStore {
   async rewrite<R>(scope: string, key: string, records: readonly R[]): Promise<void> {
     const state = this.state(scope, key);
     if (state.appendFailure !== undefined) throw state.appendFailure.error;
-    const prior = state.flushPromise ?? Promise.resolve();
+    const prior = state.flushPromise ?? state.ready;
     const rewrite = prior.then(() =>
       this.storage.write(scope, key, encodeBatch(records), { atomic: true }),
     );
@@ -110,9 +115,9 @@ export class AppendLogStore implements IAppendLogStore {
   }
 
   async flush(): Promise<void> {
-    const inFlight = [...this.logs.keys()].map((id) => {
+    const inFlight = [...this.logs.entries()].map(([id, state]) => {
       const { scope, key } = fromLogId(id);
-      return this.flushLog(scope, key);
+      return this.flushState(scope, key, state);
     });
     await Promise.all(inFlight);
   }
@@ -122,20 +127,27 @@ export class AppendLogStore implements IAppendLogStore {
   }
 
   acquire(scope: string, key: string): IDisposable {
+    const state = this.state(scope, key);
+    state.refCount++;
     return toDisposable(() => {
-      void this.flushLog(scope, key);
+      this.release(scope, key, state);
     });
   }
 
   private state(scope: string, key: string): LogState {
     const id = logId(scope, key);
     let state = this.logs.get(id);
-    if (state === undefined) {
+    if (state === undefined || state.retired) {
+      const ready = state?.retirement ?? Promise.resolve();
       state = {
         pending: [],
         flushPromise: undefined,
         flushScheduled: false,
         appendFailure: undefined,
+        refCount: 0,
+        retired: false,
+        ready,
+        retirement: undefined,
       };
       this.logs.set(id, state);
     }
@@ -147,15 +159,35 @@ export class AppendLogStore implements IAppendLogStore {
     state.flushScheduled = true;
     queueMicrotask(() => {
       state.flushScheduled = false;
-      void this.flushLog(scope, key).catch((error) => state.onError?.(error));
+      void this.flushState(scope, key, state).catch((error) => state.onError?.(error));
     });
   }
 
   private flushLog(scope: string, key: string): Promise<void> {
     const state = this.state(scope, key);
+    return this.flushState(scope, key, state);
+  }
+
+  private flushState(scope: string, key: string, state: LogState): Promise<void> {
     if (state.flushPromise !== undefined) return state.flushPromise;
     if (state.appendFailure !== undefined) return Promise.reject(state.appendFailure.error);
     return this.ownFlush(scope, key, state, this.drain(scope, key, state));
+  }
+
+  private release(scope: string, key: string, state: LogState): void {
+    state.refCount--;
+    if (state.refCount > 0) return;
+    state.retired = true;
+    state.retirement = this.settleRetiredState(scope, key, state).catch(() => undefined);
+  }
+
+  private async settleRetiredState(scope: string, key: string, state: LogState): Promise<void> {
+    try {
+      await this.flushState(scope, key, state);
+    } finally {
+      const id = logId(scope, key);
+      if (this.logs.get(id) === state) this.logs.delete(id);
+    }
   }
 
   private ownFlush(
@@ -201,6 +233,7 @@ export class AppendLogStore implements IAppendLogStore {
   }
 
   private async drain(scope: string, key: string, state: LogState): Promise<void> {
+    await state.ready;
     while (state.pending.length > 0) {
       const batch = state.pending.slice();
       try {

@@ -130,6 +130,104 @@ describe('AppendLogStore', () => {
     );
   });
 
+  it('reacquire after final release waits for retiring storage before fresh I/O', async () => {
+    const failure = new Error('retiring append failed');
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend!: () => void;
+    const appendGate = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    let markReplacementAppendStarted!: () => void;
+    const replacementAppendStarted = new Promise<void>((resolve) => {
+      markReplacementAppendStarted = resolve;
+    });
+    let releaseReplacementAppend!: () => void;
+    const replacementAppendGate = new Promise<void>((resolve) => {
+      releaseReplacementAppend = resolve;
+    });
+    let reportFailure!: (error: unknown) => void;
+    const reportedFailure = new Promise<unknown>((resolve) => {
+      reportFailure = resolve;
+    });
+    let appendAttempts = 0;
+    let replacementStarted = false;
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      appendAttempts++;
+      if (appendAttempts === 1) {
+        markAppendStarted();
+        await appendGate;
+        throw failure;
+      }
+      replacementStarted = true;
+      markReplacementAppendStarted();
+      await replacementAppendGate;
+      return originalAppend(...args);
+    };
+
+    const retiringOwner = record.acquire(SCOPE, KEY);
+    record.append(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+    await appendStarted;
+    retiringOwner.dispose();
+    const replacementOwner = record.acquire(SCOPE, KEY);
+    record.append(SCOPE, KEY, { n: 2 });
+    const orderedFlush = record.flush();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(replacementStarted).toBe(false);
+
+    releaseAppend();
+    expect(await reportedFailure).toBe(failure);
+    await replacementAppendStarted;
+
+    const currentFlush = record.flush();
+    let flushSettled = false;
+    void currentFlush.then(() => {
+      flushSettled = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(flushSettled).toBe(false);
+
+    releaseReplacementAppend();
+    await Promise.all([orderedFlush, currentFlush]);
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 2 }]);
+    replacementOwner.dispose();
+  });
+
+  it('keeps a sticky failure until every acquired owner releases it', async () => {
+    const failure = new Error('shared append failed');
+    let reportFailure!: (error: unknown) => void;
+    const reportedFailure = new Promise<unknown>((resolve) => {
+      reportFailure = resolve;
+    });
+    let appendAttempts = 0;
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      appendAttempts++;
+      if (appendAttempts === 1) throw failure;
+      return originalAppend(...args);
+    };
+
+    const firstOwner = record.acquire(SCOPE, KEY);
+    const finalOwner = record.acquire(SCOPE, KEY);
+    record.append(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+    expect(await reportedFailure).toBe(failure);
+
+    firstOwner.dispose();
+    await expect(record.flush()).rejects.toBe(failure);
+
+    finalOwner.dispose();
+    const replacementOwner = record.acquire(SCOPE, KEY);
+    record.append(SCOPE, KEY, { n: 2 });
+    await record.flush();
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 2 }]);
+    replacementOwner.dispose();
+  });
+
   it('rewrite atomically replaces the whole log', async () => {
     record.append<Rec>(SCOPE, KEY, { n: 1 });
     record.append<Rec>(SCOPE, KEY, { n: 2 });

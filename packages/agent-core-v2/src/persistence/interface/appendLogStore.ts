@@ -4,7 +4,9 @@
  * The append-log access-pattern store: turns a byte stream into an ordered
  * sequence of typed JSON records on top of `IFileSystemStorageService`. Owns the
  * concerns the storage service deliberately ignores: line framing, batching,
- * and crash-tolerant decoding.
+ * and crash-tolerant decoding. Acquired handles share a keyed buffer; its final
+ * owner release starts a flush and retires that buffer once the flush settles,
+ * before a replacement buffer starts storage I/O for the same key.
  *
  * This file ships the interface, error class, and DI token only.
  * The concrete `AppendLogStore` implementation lives in
