@@ -150,6 +150,18 @@ function withoutBackgroundDescription(description: string): string {
     );
 }
 
+/**
+ * Strip the auto-background-on-timeout promise when the config disabled it
+ * (`background.bash_auto_background_on_timeout = false`): timed-out foreground
+ * commands are killed in that configuration, and the description must say so.
+ */
+function withoutAutoBackgroundOnTimeout(description: string): string {
+  return description.replace(
+    ' When a foreground command hits its timeout it is moved to the background instead of being killed, and you will be automatically notified when it completes.',
+    ' A foreground command that hits its timeout is killed.',
+  );
+}
+
 export class BashTool implements BuiltinTool<BashInput> {
   readonly name = 'Bash' as const;
   readonly description: string;
@@ -174,7 +186,11 @@ export class BashTool implements BuiltinTool<BashInput> {
     this.allowBackground = options?.allowBackground ?? true;
     this.autoBackgroundOnTimeout = options?.autoBackgroundOnTimeout ?? true;
     const rendered = renderBashDescription(this.kaos.osEnv.shellName);
-    this.description = this.allowBackground ? rendered : withoutBackgroundDescription(rendered);
+    this.description = !this.allowBackground
+      ? withoutBackgroundDescription(rendered)
+      : this.autoBackgroundOnTimeout
+        ? rendered
+        : withoutAutoBackgroundOnTimeout(rendered);
   }
 
   resolveExecution(args: BashInput): ToolExecution {

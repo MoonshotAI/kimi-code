@@ -401,6 +401,33 @@ describe('BashTool', () => {
     expect(tool.description).toContain('exits non-zero');
   });
 
+  it('describes timeout behavior according to the auto-background option', () => {
+    const autoBg = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+    );
+    expect(autoBg.description).toContain('moved to the background instead of being killed');
+
+    const killOnTimeout = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+      { autoBackgroundOnTimeout: false },
+    );
+    expect(killOnTimeout.description).not.toContain('moved to the background instead of being killed');
+    expect(killOnTimeout.description).toContain('hits its timeout is killed');
+
+    const noBackground = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+      { allowBackground: false },
+    );
+    expect(noBackground.description).not.toContain('moved to the background instead of being killed');
+    expect(noBackground.description).toContain('hits its timeout is killed');
+  });
+
   it('runs through execWithEnv, injects cwd, noninteractive env, and closes stdin', async () => {
     const proc = processWithOutput({ stdout: 'ok\n' });
     const execWithEnv = vi.fn().mockResolvedValue(proc);
