@@ -220,6 +220,7 @@ export interface UseWorkspaceStateDeps {
   reopenSession: (sessionId: string) => Promise<SyncSessionResult>;
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
+  refreshSessionGoal: (sessionId: string) => Promise<void>;
   persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<void>;
   mergedWorkspaces: ComputedRef<AppWorkspace[]>;
   /** Sidebar-facing workspaces in the user's (dragged) display order. */
@@ -271,6 +272,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     reopenSession,
     hasLoadedMessages,
     refreshSessionStatus,
+    refreshSessionGoal,
     persistSessionProfile,
     mergedWorkspaces,
     workspacesView,
@@ -339,6 +341,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     void taskPoller.loadTasksForSession(sessionId);
     void loadGitStatus(sessionId);
     void refreshSessionStatus(sessionId);
+    void refreshSessionGoal(sessionId);
     if (!Object.prototype.hasOwnProperty.call(modelProvider.skillsBySession.value, sessionId)) {
       void modelProvider.loadSkillsForSession(sessionId);
     }

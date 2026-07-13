@@ -429,7 +429,7 @@ function recordNullableNumber(source: Record<string, unknown>, key: string): num
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function toAppGoal(snapshot: unknown): AppGoal | null {
+export function toAppGoal(snapshot: unknown): AppGoal | null {
   if (!snapshot || typeof snapshot !== 'object') return null;
   const source = snapshot as Record<string, unknown>;
   const status = recordString(source, 'status');

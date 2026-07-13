@@ -649,6 +649,28 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
 }
 
+/**
+ * Fetch GET /sessions/{id}/goal and fold the result into goalBySession — the
+ * recovery channel for the goal card after a full-page reload (the snapshot +
+ * WS-replay path never carries the historical `goal.updated`, since its seq is
+ * ≤ the snapshot watermark). Never throws — an old daemon without the /goal
+ * endpoint keeps any live-event state.
+ */
+async function refreshSessionGoal(sessionId: string): Promise<void> {
+  let goal: AppGoal | null;
+  try {
+    goal = await getKimiWebApi().getSessionGoal(sessionId);
+  } catch {
+    return; // goal endpoint missing/unreachable — keep what we have.
+  }
+  // Mirror the reducer's goalUpdated branch: null (or a completed goal) clears
+  // the card, anything else replaces it.
+  const nextGoals = { ...rawState.goalBySession };
+  if (goal === null || goal.status === 'complete') delete nextGoals[sessionId];
+  else nextGoals[sessionId] = goal;
+  rawState.goalBySession = nextGoals;
+}
+
 /** Persist runtime controls to a session via POST /profile, then re-read
  *  /status. `sessionId` overrides the active session — used when creating a
  *  session and immediately persisting its draft modes, so a concurrent session
@@ -2394,6 +2416,7 @@ const workspaceState = useWorkspaceState(rawState, {
   reopenSession,
   hasLoadedMessages,
   refreshSessionStatus,
+  refreshSessionGoal,
   persistSessionProfile,
   mergedWorkspaces,
   workspacesView,
