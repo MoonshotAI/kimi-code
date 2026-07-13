@@ -649,6 +649,38 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
 }
 
+/**
+ * Fetch GET /sessions/{id}/goal and fold the result into goalBySession — the
+ * recovery channel for the goal card after a full-page reload (the snapshot +
+ * WS-replay path never carries the historical `goal.updated`, since its seq is
+ * ≤ the snapshot watermark). Never throws — an old daemon without the /goal
+ * endpoint keeps any live-event state.
+ */
+async function refreshSessionGoal(sessionId: string): Promise<void> {
+  // A live `goal.updated` arriving during the request is newer than whatever
+  // the server read when handling it — never let this recovery write override
+  // such an event (it would resurrect a finished goal until the next reload).
+  // Track the per-session goal event version, not the goal entry itself:
+  // clear/complete events DELETE the entry, which would leave an
+  // undefined === undefined comparison blind to exactly the race that matters.
+  const versionBefore = rawState.goalVersionBySession[sessionId] ?? 0;
+  let goal: AppGoal | null;
+  try {
+    goal = await getKimiWebApi().getSessionGoal(sessionId);
+  } catch {
+    return; // goal endpoint missing/unreachable — keep what we have.
+  }
+  if ((rawState.goalVersionBySession[sessionId] ?? 0) !== versionBefore) {
+    return; // a live goal event won the race
+  }
+  // Mirror the reducer's goalUpdated branch: null (or a completed goal) clears
+  // the card, anything else replaces it.
+  const nextGoals = { ...rawState.goalBySession };
+  if (goal === null || goal.status === 'complete') delete nextGoals[sessionId];
+  else nextGoals[sessionId] = goal;
+  rawState.goalBySession = nextGoals;
+}
+
 /** Persist runtime controls to a session via POST /profile, then re-read
  *  /status. `sessionId` overrides the active session — used when creating a
  *  session and immediately persisting its draft modes, so a concurrent session
@@ -758,6 +790,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     questionsBySession: rawState.questionsBySession,
     tasksBySession: rawState.tasksBySession,
     goalBySession: rawState.goalBySession,
+    goalVersionBySession: rawState.goalVersionBySession,
     lastSeqBySession: rawState.lastSeqBySession,
     compactionBySession: rawState.compactionBySession,
     config: rawState.config,
@@ -773,6 +806,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   rawState.questionsBySession = next.questionsBySession;
   rawState.tasksBySession = next.tasksBySession;
   rawState.goalBySession = next.goalBySession;
+  rawState.goalVersionBySession = next.goalVersionBySession;
   rawState.lastSeqBySession = next.lastSeqBySession;
   rawState.compactionBySession = next.compactionBySession;
   rawState.config = next.config ?? null;
@@ -2405,6 +2439,7 @@ const workspaceState = useWorkspaceState(rawState, {
   reopenSession,
   hasLoadedMessages,
   refreshSessionStatus,
+  refreshSessionGoal,
   persistSessionProfile,
   mergedWorkspaces,
   workspacesView,

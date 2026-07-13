@@ -4,7 +4,8 @@
  * Stateless App-scope dispatcher: each method resolves the target session (and
  * its main agent) per call, delegates to the native v2 services, and projects
  * the result into the v1 wire shape. Only `updateProfile` (the cross-domain
- * `agent_config` patch) and `status` (the best-effort status rollup) live here;
+ * `agent_config` patch), `status` (the best-effort status rollup), and `goal`
+ * (the current-goal read) live here;
  * the `:undo`, `fork`-as-child, and child-listing actions were pushed down into
  * the native services (`IAgentPromptService.undo`,
  * `ISessionLifecycleService.createChild`, `ISessionIndex.list({ childOf })`) and
@@ -12,7 +13,11 @@
  * the real work stays in the native services.
  */
 
-import type { SessionStatusResponse, UpdateSessionProfileRequest } from '@moonshot-ai/protocol';
+import type {
+  GoalSnapshot,
+  SessionStatusResponse,
+  UpdateSessionProfileRequest,
+} from '@moonshot-ai/protocol';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -208,6 +213,11 @@ export class SessionLegacyService implements ISessionLegacyService {
       max_context_tokens: maxTokens,
       context_usage: maxTokens > 0 ? tokens / maxTokens : 0,
     };
+  }
+
+  async goal(sessionId: string): Promise<GoalSnapshot | null> {
+    const agent = await this.resolveMainAgent(sessionId);
+    return agent.accessor.get(IAgentGoalService).getGoal().goal;
   }
 }
 

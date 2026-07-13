@@ -123,6 +123,7 @@ function createDeps(): UseWorkspaceStateDeps {
     subscribeToSessionEvents: vi.fn(),
     hasLoadedMessages: vi.fn(),
     refreshSessionStatus: vi.fn(),
+    refreshSessionGoal: vi.fn(),
     persistSessionProfile: vi.fn(),
     mergedWorkspaces: computed(() => []),
     workspacesView: computed(() => []),
