@@ -347,13 +347,14 @@ interface Group {
   /** Client-side measured duration from turn.started to turn.ended (ms). */
   durationMs?: number;
   /**
-   * Content signatures already folded into this group, used to drop a duplicate
-   * assistant message. The same logical reply can reach us under two different
-   * ids — e.g. the streamed copy plus the persisted copy after a reload — and
-   * since both share the promptId they'd otherwise merge and render the text +
-   * tool cards twice. Dedupe by exact content so a turn shows each reply once.
+   * Normalized signatures already folded into this group, used to drop a
+   * duplicate assistant message. The same logical reply can reach us under two
+   * different ids — e.g. the streamed copy plus the persisted copy after a
+   * reload — and since both share the promptId they'd otherwise merge and
+   * render the text + tool cards twice. Dedupe by normalized content (see
+   * `contentSig` / `covers`) so a turn shows each reply once.
    */
-  seenSigs: Set<string>;
+  foldedSigs: ContentSig[];
 }
 
 // ---------------------------------------------------------------------------
@@ -485,6 +486,57 @@ function parsePlanSavedPath(output: string[] | undefined): string | undefined {
   return undefined;
 }
 
+/**
+ * Normalize an assistant message's content for duplicate detection. The same
+ * logical reply reaches us as both a persisted transcript message and a
+ * streamed copy (live deltas, or a resync seed from `in_flight_turn`), and the
+ * two differ in ways that must not defeat the dedup: the persisted thinking
+ * part may carry a provider `signature`, the seeded tool card may carry
+ * progress `outputLines`, and the seeded copy concatenates each stream into a
+ * single part instead of keeping the model's part boundaries. Reduce to the
+ * concatenated stream text plus sorted tool-call ids — a toolCallId is unique
+ * per call, so identical id sets mean the same logical message.
+ */
+interface ContentSig {
+  text: string;
+  thinking: string;
+  toolIds: string[];
+  rest: string[];
+}
+
+function contentSig(content: AppMessage['content']): ContentSig {
+  let text = '';
+  let thinking = '';
+  const toolIds: string[] = [];
+  const rest: string[] = [];
+  for (const c of content) {
+    if (c.type === 'text') text += c.text;
+    else if (c.type === 'thinking') thinking += c.thinking;
+    else if (c.type === 'toolUse') toolIds.push(c.toolCallId);
+    else rest.push(JSON.stringify(c));
+  }
+  toolIds.sort();
+  rest.sort();
+  return { text, thinking, toolIds, rest };
+}
+
+/**
+ * Whether an already-folded message's signature fully covers `incoming` —
+ * i.e. `incoming` is a duplicate of it. Subset, not equality: a resync seed
+ * carries only the still-running tools of a parallel batch (finished ones
+ * left `running_tools`), so its id set is a strict subset of the persisted
+ * message's. Empty text/thinking in `incoming` adds nothing and counts as
+ * covered.
+ */
+function covers(folded: ContentSig, incoming: ContentSig): boolean {
+  if (incoming.text !== '' && incoming.text !== folded.text) return false;
+  if (incoming.thinking !== '' && incoming.thinking !== folded.thinking) return false;
+  return (
+    incoming.toolIds.every((id) => folded.toolIds.includes(id)) &&
+    incoming.rest.every((j) => folded.rest.includes(j))
+  );
+}
+
 export function messagesToTurns(
   messages: AppMessage[],
   approvals: AppApprovalRequest[],
@@ -611,6 +663,28 @@ export function messagesToTurns(
           if (blk && blk.kind === 'tool') blk.tool = updated;
         }
       }
+    }
+  }
+
+  /**
+   * Fold the volatile extras of a dropped duplicate into the group: a resync
+   * seed's tool cards carry live progress (`outputLines` from
+   * `in_flight_turn.running_tools[].last_progress`) that the persisted copy
+   * lacks — without this, a mid-tool refresh blanks the card's latest output
+   * until the next progress frame. Never overwrite output a tool result
+   * already settled.
+   */
+  function mergeVolatileExtras(g: Group, content: AppMessage['content']): void {
+    for (const c of content) {
+      if (c.type !== 'toolUse' || !c.outputLines?.length) continue;
+      const idx = g.tools.findIndex((t) => t.id === c.toolCallId);
+      if (idx === -1) continue;
+      const tool = g.tools[idx]!;
+      if (tool.output !== undefined) continue;
+      const updated: ToolCall = { ...tool, output: c.outputLines };
+      g.tools[idx] = updated;
+      const blk = g.blocks.find((b) => b.kind === 'tool' && b.tool.id === c.toolCallId);
+      if (blk && blk.kind === 'tool') blk.tool = updated;
     }
   }
 
@@ -769,7 +843,7 @@ export function messagesToTurns(
         blocks: [],
         approval: undefined,
         approvalId: undefined,
-        seenSigs: new Set<string>(),
+        foldedSigs: [],
         durationMs: msg.durationMs,
       };
     } else if (pendingGroup !== null && pendingGroup.promptId === undefined && pid !== undefined) {
@@ -781,10 +855,15 @@ export function messagesToTurns(
 
     // Drop an assistant message whose content was already folded into this group
     // (a duplicate streamed-vs-persisted copy sharing the promptId), so the turn
-    // doesn't render the same text + tools twice.
-    const sig = JSON.stringify(msg.content);
-    if (group.promptId !== undefined && group.seenSigs.has(sig)) continue;
-    group.seenSigs.add(sig);
+    // doesn't render the same text + tools twice. The duplicate can still carry
+    // volatile extras the persisted copy lacks (tool progress), so merge those
+    // into the existing cards before dropping it.
+    const sig = contentSig(msg.content);
+    if (group.promptId !== undefined && group.foldedSigs.some((folded) => covers(folded, sig))) {
+      mergeVolatileExtras(group, msg.content);
+      continue;
+    }
+    group.foldedSigs.push(sig);
 
     absorbContent(group, msg.content);
   }
