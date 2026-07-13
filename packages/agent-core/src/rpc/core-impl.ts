@@ -120,6 +120,7 @@ import type {
   PluginInfo,
   PluginSummary,
   PromptPayload,
+  PromptWithSkillsPayload,
   PutGlobalMcpServerPayload,
   RunShellCommandPayload,
   ReconnectMcpServerPayload,
@@ -860,6 +861,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
     return this.sessionApi(sessionId).prompt(payload);
+  }
+
+  promptWithSkills({ sessionId, ...payload }: SessionAgentPayload<PromptWithSkillsPayload>) {
+    return this.sessionApi(sessionId).promptWithSkills(payload);
   }
 
   runShellCommand({ sessionId, ...payload }: SessionAgentPayload<RunShellCommandPayload>) {

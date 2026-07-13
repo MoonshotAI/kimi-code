@@ -54,6 +54,7 @@ import type {
   SessionStatus,
   SessionUsage,
   PromptInput,
+  PromptSkillActivation,
   RenameSessionInput,
   ResumeSessionInput,
   ResumedSessionSummary,
@@ -75,6 +76,10 @@ export interface SessionPromptRpcInput {
    * `[]` clears the client portion.
    */
   readonly disabledTools?: readonly string[];
+}
+
+export interface SessionPromptWithSkillsRpcInput extends SessionPromptRpcInput {
+  readonly skills: readonly PromptSkillActivation[];
 }
 
 export interface SessionIdRpcInput {
@@ -369,6 +374,17 @@ export abstract class SDKRpcClientBase {
       agentId,
       input: input.input,
       disabledTools: input.disabledTools,
+    });
+  }
+
+  async promptWithSkills(input: SessionPromptWithSkillsRpcInput): Promise<void> {
+    const agentId = this.interactiveAgentId;
+    const rpc = await this.getRpc();
+    return rpc.promptWithSkills({
+      sessionId: input.sessionId,
+      agentId,
+      input: input.input,
+      skills: input.skills,
     });
   }
 

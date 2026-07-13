@@ -214,6 +214,41 @@ describe('Session skills', () => {
     }
   });
 
+  it('submits multiple skills with a prompt without competing turns', async () => {
+    const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
+    const workDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-work-');
+    await writeSkill(workDir, 'review', [
+      '---', 'name: review', 'description: Review code', '---', '', 'Review the requested code.',
+    ]);
+    await writeSkill(workDir, 'security', [
+      '---', 'name: security', 'description: Check security', '---', '',
+      'Check the requested code for security issues.',
+    ]);
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+
+    try {
+      const session = await harness.createSession({ id: 'ses_sdk_multi_skill_prompt', workDir });
+      const events: Event[] = [];
+      const unsubscribe = session.onEvent((event) => { events.push(event); });
+      const ended = waitForSDKEvent(session, (event) => event.type === 'turn.ended');
+
+      await session.promptWithSkills('Review this change.', [
+        { name: 'review' },
+        { name: 'security' },
+      ]);
+      await ended;
+      unsubscribe();
+
+      expect(events.filter((event) => event.type === 'skill.activated').map((event) => event.skillName))
+        .toEqual(['review', 'security']);
+      expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(1);
+      expect(events.some((event) => event.type === 'error' && event.code === 'turn.agent_busy'))
+        .toBe(false);
+    } finally {
+      await harness.close();
+    }
+  });
+
   it('resolves user brand skills from KIMI_CODE_HOME, not the OS home', async () => {
     const homeDir = await makeTempDir(tempDirs, 'kimi-sdk-skills-home-');
     const processHome = await makeTempDir(tempDirs, 'kimi-sdk-skills-process-home-');

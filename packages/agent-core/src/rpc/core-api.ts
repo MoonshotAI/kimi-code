@@ -205,6 +205,15 @@ export interface PromptPayload {
    */
   readonly disabledTools?: readonly string[];
 }
+
+export interface PromptSkillActivation {
+  readonly name: string;
+  readonly args?: string;
+}
+
+export interface PromptWithSkillsPayload extends PromptPayload {
+  readonly skills: readonly PromptSkillActivation[];
+}
 export interface RunShellCommandPayload {
   readonly command: string;
   /**
@@ -465,6 +474,7 @@ export interface GetCronTasksResult {
 
 export interface AgentAPI {
   prompt: (payload: PromptPayload) => void;
+  promptWithSkills: (payload: PromptWithSkillsPayload) => void;
   runShellCommand: (payload: RunShellCommandPayload) => Promise<ShellCommandResult>;
   cancelShellCommand: (payload: CancelShellCommandPayload) => void;
   steer: (payload: SteerPayload) => void;

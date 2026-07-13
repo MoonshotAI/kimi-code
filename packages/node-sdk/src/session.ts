@@ -26,6 +26,7 @@ import type {
   PluginInfo,
   PluginSummary,
   PromptInput,
+  PromptSkillActivation,
   ReloadSessionOptions,
   ReloadSummary,
   ResumedSessionState,
@@ -134,6 +135,18 @@ export class Session {
     await this.rpc.prompt({
       sessionId: this.id,
       input: normalizePromptInput(input),
+    });
+  }
+
+  async promptWithSkills(
+    input: string | PromptInput,
+    skills: readonly PromptSkillActivation[],
+  ): Promise<void> {
+    this.ensureOpen();
+    await this.rpc.promptWithSkills({
+      sessionId: this.id,
+      input: normalizePromptInput(input),
+      skills,
     });
   }
 

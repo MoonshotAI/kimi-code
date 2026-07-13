@@ -20,6 +20,7 @@ import type {
   McpServerInfo,
   McpStartupMetrics,
   PromptPayload,
+  PromptWithSkillsPayload,
   RunShellCommandPayload,
   ReconnectMcpServerPayload,
   RenameSessionPayload,
@@ -125,6 +126,13 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
       await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
     }
     return (await this.getAgent(agentId)).prompt(payload);
+  }
+
+  async promptWithSkills({ agentId, ...payload }: AgentScopedPayload<PromptWithSkillsPayload>) {
+    await (await this.getAgent(agentId)).promptWithSkills(payload);
+    if (agentId === 'main') {
+      await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
+    }
   }
 
   async steer({ agentId, ...payload }: AgentScopedPayload<SteerPayload>) {

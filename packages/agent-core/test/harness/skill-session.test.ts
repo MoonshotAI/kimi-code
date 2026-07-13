@@ -260,6 +260,66 @@ describe('HarnessAPI session skills', () => {
     expect(expectedPrompt).toContain('User activated the skill "phase-one-review".');
   });
 
+  it('submits multiple user-activated skills and one prompt in a single turn', async () => {
+    await writeSkill('review', [
+      '---', 'name: review', 'description: Review code', '---', '', 'Review the requested code.',
+    ]);
+    await writeSkill('security', [
+      '---', 'name: security', 'description: Check security', '---', '',
+      'Check the requested code for security issues.',
+    ]);
+    const { events, rpc } = await createTestRpc();
+    const created = await rpc.createSession({ id: 'ses_multi_skill_prompt', workDir });
+
+    await rpc.promptWithSkills({
+      sessionId: created.id,
+      agentId: 'main',
+      input: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'review' }, { name: 'security' }],
+    });
+    await waitForEvent(events, (event) => event.type === 'turn.ended');
+
+    const relevantEvents = events.filter(
+      (event) => event.type === 'skill.activated' || event.type === 'turn.started',
+    );
+    expect(relevantEvents.map((event) => event.type)).toEqual([
+      'skill.activated', 'skill.activated', 'turn.started',
+    ]);
+    expect(relevantEvents.filter((event) => event.type === 'skill.activated').map((event) => event.skillName))
+      .toEqual(['review', 'security']);
+
+    await vi.waitFor(async () => {
+      const records = await readMainWire(created.sessionDir);
+      expect(records.filter((record) => record['type'] === 'turn.prompt')).toHaveLength(1);
+    });
+    const records = await readMainWire(created.sessionDir);
+    const prompts = records.filter((record) => record['type'] === 'turn.prompt');
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toMatchObject({ input: [{ type: 'text', text: 'Review this change.' }] });
+    expect(JSON.stringify(records)).toContain('Review the requested code.');
+    expect(JSON.stringify(records)).toContain('Check the requested code for security issues.');
+  });
+
+  it('rejects a multi-skill prompt atomically when any skill is invalid', async () => {
+    await writeSkill('review', [
+      '---', 'name: review', 'description: Review code', '---', '', 'Review the requested code.',
+    ]);
+    const { events, rpc } = await createTestRpc();
+    const created = await rpc.createSession({ id: 'ses_invalid_multi_skill_prompt', workDir });
+
+    await expect(rpc.promptWithSkills({
+      sessionId: created.id,
+      agentId: 'main',
+      input: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'review' }, { name: 'missing' }],
+    })).rejects.toThrow('Skill "missing" was not found');
+
+    expect(events.some((event) => event.type === 'skill.activated')).toBe(false);
+    expect(events.some((event) => event.type === 'turn.started')).toBe(false);
+    const metadata = await rpc.getSessionMetadata({ sessionId: created.id });
+    expect(metadata.lastPrompt).toBeUndefined();
+  });
+
   it('expands skill body placeholders on user slash activation', async () => {
     await writeSkill('templated-review', [
       '---',

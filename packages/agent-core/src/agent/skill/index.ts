@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ActivateSkillPayload } from '#/rpc';
+import type { ActivateSkillPayload, PromptWithSkillsPayload } from '#/rpc';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
@@ -19,6 +19,23 @@ export class SkillManager {
   ) {}
 
   activate(input: ActivateSkillPayload): void {
+    const prepared = this.prepare(input);
+    this.recordActivation(prepared.origin, prepared.input);
+  }
+
+  prompt(payload: PromptWithSkillsPayload): void {
+    const prepared = payload.skills.map((skill) => this.prepare(skill));
+    for (const activation of prepared) {
+      this.recordActivation(activation.origin);
+      this.agent.context.appendUserMessage(activation.input, activation.origin);
+    }
+    this.agent.turn.prompt(payload.input);
+  }
+
+  private prepare(input: ActivateSkillPayload): {
+    readonly origin: SkillActivationOrigin;
+    readonly input: readonly ContentPart[];
+  } {
     const skill = this.registry.getSkill(input.name);
     if (skill === undefined) {
       throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
@@ -29,21 +46,8 @@ export class SkillManager {
 
     const skillArgs = input.args ?? '';
     const skillContent = this.registry.renderSkillPrompt(skill, skillArgs);
-    const wrapped = [
-      {
-        type: 'text' as const,
-        text: renderUserSlashSkillPrompt({
-          skillName: skill.name,
-          skillArgs,
-          skillContent,
-          skillSource: skill.source,
-          skillDir: skill.dir,
-        }),
-      },
-    ];
-
-    this.recordActivation(
-      {
+    return {
+      origin: {
         kind: 'skill_activation',
         activationId: randomUUID(),
         skillName: skill.name,
@@ -53,8 +57,19 @@ export class SkillManager {
         skillSource: skill.source,
         skillArgs: input.args,
       },
-      wrapped,
-    );
+      input: [
+        {
+          type: 'text',
+          text: renderUserSlashSkillPrompt({
+            skillName: skill.name,
+            skillArgs,
+            skillContent,
+            skillSource: skill.source,
+            skillDir: skill.dir,
+          }),
+        },
+      ],
+    };
   }
 
   recordActivation(

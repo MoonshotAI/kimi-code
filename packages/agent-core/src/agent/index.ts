@@ -552,6 +552,12 @@ export class Agent {
       prompt: (payload) => {
         this.turn.prompt(payload.input);
       },
+      promptWithSkills: (payload) => {
+        if (this.skills === null) {
+          throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, 'No skills are available');
+        }
+        this.skills.prompt(payload);
+      },
       runShellCommand: (payload) => this.tools.runShellCommand(payload.command, payload.commandId),
       cancelShellCommand: (payload) => this.tools.cancelShellCommand(payload.commandId),
       steer: (payload) => {

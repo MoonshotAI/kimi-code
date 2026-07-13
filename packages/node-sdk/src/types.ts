@@ -100,6 +100,11 @@ export type PromptPart = Extract<ContentPart, { type: 'text' | 'image_url' | 'vi
 
 export type PromptInput = readonly PromptPart[];
 
+export interface PromptSkillActivation {
+  readonly name: string;
+  readonly args?: string;
+}
+
 export interface KimiHarnessOptions {
   readonly identity?: KimiHostIdentity | undefined;
   readonly homeDir?: string | undefined;
