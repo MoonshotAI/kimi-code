@@ -588,8 +588,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /** Fetch the first page of sessions for every known workspace concurrently.
-   *  Returns the merged, recency-sorted list and seeds per-workspace hasMore. */
-  async function loadInitialSessionsByWorkspace(): Promise<AppSession[]> {
+   *  Returns the merged, recency-sorted list and seeds per-workspace hasMore.
+   *  When every workspace request fails, returns undefined so the caller keeps
+   *  the previously loaded sessions instead of committing a false empty list. */
+  async function loadInitialSessionsByWorkspace(): Promise<AppSession[] | undefined> {
     const workspaces = rawState.workspaces;
     if (workspaces.length === 0) {
       // /workspaces may be unavailable or empty on older / partially-failing
@@ -606,23 +608,66 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       rawState.sessionsFullyLoaded = true;
       return fallback;
     }
-    const pages = await Promise.all(
-      workspaces.map((w) =>
-        loadInitialSessionsForWorkspace(w.id).catch((err) => {
-          console.warn('[kimi-web] initial session load failed for workspace', w.id, err);
-          return {
-            workspaceId: w.id,
-            page: { items: [] as AppSession[], hasMore: false },
-          };
-        }),
-      ),
+    const results = await Promise.allSettled(
+      workspaces.map((w) => loadInitialSessionsForWorkspace(w.id)),
     );
     const loaded: AppSession[] = [];
+    const loadedIds = new Set<string>();
+    const successfulPages = new Map<string, { items: AppSession[]; hasMore: boolean }>();
+    const failedWorkspaceIds = new Set<string>();
+    let firstError: unknown;
+    for (let index = 0; index < results.length; index++) {
+      const result = results[index]!;
+      if (result.status === 'fulfilled') {
+        successfulPages.set(result.value.workspaceId, result.value.page);
+        for (const session of result.value.page.items) {
+          if (loadedIds.has(session.id)) continue;
+          loaded.push(session);
+          loadedIds.add(session.id);
+        }
+        continue;
+      }
+      if (failedWorkspaceIds.size === 0) firstError = result.reason;
+      failedWorkspaceIds.add(workspaces[index]!.id);
+    }
+
+    // One failed workspace must not erase another workspace's successful page,
+    // nor the failed workspace's last usable rows. If every request failed,
+    // leave both sessions and pagination state untouched for a natural retry.
+    if (successfulPages.size === 0) {
+      pushOperationFailure('load', firstError);
+      return undefined;
+    }
+    const failedWorkspaceRoots = new Set(
+      workspaces
+        .filter((workspace) => failedWorkspaceIds.has(workspace.id))
+        .map((workspace) => workspace.root),
+    );
+    for (const session of rawState.sessions) {
+      const belongsToFailedWorkspace =
+        session.workspaceId !== undefined
+          ? failedWorkspaceIds.has(session.workspaceId)
+          : failedWorkspaceRoots.has(session.cwd) ||
+            failedWorkspaceIds.has(workspaceIdForSession(session));
+      if (!belongsToFailedWorkspace || loadedIds.has(session.id)) continue;
+      loaded.push(session);
+      loadedIds.add(session.id);
+    }
+
     const hasMore: Record<string, boolean> = {};
     const cursors: Record<string, string | undefined> = {};
     const counts: Record<string, number> = {};
-    for (const { workspaceId, page } of pages) {
-      loaded.push(...page.items);
+    for (const { id: workspaceId } of workspaces) {
+      const page = successfulPages.get(workspaceId);
+      if (page === undefined) {
+        const previousHasMore = rawState.sessionsHasMoreByWorkspace[workspaceId];
+        const previousCursor = rawState.sessionsCursorByWorkspace[workspaceId];
+        const previousCount = rawState.sessionsInitialCountByWorkspace[workspaceId];
+        if (previousHasMore !== undefined) hasMore[workspaceId] = previousHasMore;
+        if (previousCursor !== undefined) cursors[workspaceId] = previousCursor;
+        if (previousCount !== undefined) counts[workspaceId] = previousCount;
+        continue;
+      }
       // Trust the server's hasMore — the per-workspace session_count is only a
       // (possibly stale) label total, not an authority on whether more pages exist.
       hasMore[workspaceId] = page.hasMore;
@@ -646,6 +691,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Keep rawState.sessions newest-first for readers that pick sessions[0]
     // (e.g. auto-selecting the most recent session on first load).
     loaded.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    if (failedWorkspaceIds.size > 0) pushOperationFailure('load', firstError);
     return loaded;
   }
 
@@ -764,8 +810,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // the old full global walk: the sidebar now truncates by loading, not by
       // hiding already-fetched rows.
       await loadWorkspaces();
-      const sessions = await loadInitialSessionsByWorkspace();
-      setSessionsPreservingLiveUsage(sessions);
+      const loadedSessions = await loadInitialSessionsByWorkspace();
+      const sessions = loadedSessions ?? rawState.sessions;
+      if (loadedSessions !== undefined) setSessionsPreservingLiveUsage(loadedSessions);
 
       // First load: pick the workspace of the most-recent session, unless the
       // user already has a persisted active workspace that still exists.
