@@ -216,7 +216,7 @@ describe('sanitizeMcpSchema — nested arrays and items', () => {
       },
     });
     const pairProp = prop(result, 'pair');
-    const items = pairProp['items'] as Schema[];
+    const items = (pairProp['items'] as Schema)['anyOf'] as Schema[];
     expect(items[0]!['type']).toBe('string');
     expect(items[1]!['type']).toBe('number');
   });
