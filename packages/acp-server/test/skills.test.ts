@@ -33,7 +33,7 @@ describe('acp-server skills / available commands', () => {
   }
 
   it(
-    'session/new pushes an available_commands_update containing the builtin commands',
+    'session/new pushes an available_commands_update without unhandled builtin commands',
     async () => {
       const c = await boot();
       await c.send('session/new', { cwd: homeDir, mcpServers: [] });
@@ -43,10 +43,11 @@ describe('acp-server skills / available commands', () => {
         update: { availableCommands: readonly AvailableCommand[] };
       };
       const names = params.update.availableCommands.map((command) => command.name);
-      // The ACP-owned builtin commands are always advertised.
-      expect(names).toContain('compact');
-      expect(names).toContain('status');
-      expect(names).toContain('help');
+      // Builtin commands are not advertised until the host can execute them;
+      // only invocable skills are listed.
+      expect(names).not.toContain('compact');
+      expect(names).not.toContain('status');
+      expect(names).not.toContain('help');
     },
     30_000,
   );

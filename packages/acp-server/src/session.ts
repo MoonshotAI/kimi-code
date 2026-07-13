@@ -34,7 +34,6 @@ import {
   type SkillCatalog,
 } from '@moonshot-ai/agent-core-v2';
 
-import { ACP_BUILTIN_SLASH_COMMANDS } from './builtin-commands';
 import { buildSessionConfigOptions } from './config-options';
 import { acpBlocksToContentParts } from './convert';
 import {
@@ -175,14 +174,17 @@ export class AcpSession {
     return buildSkillCommandMap(catalog);
   }
 
-  /** Build the `available_commands_update` payload (builtins + skills). */
+  /** Build the `available_commands_update` payload (skills only). */
   availableCommands(): AvailableCommand[] {
     const catalog = this.sessionHandle.accessor.get(ISessionSkillCatalog).catalog;
     const skills: AvailableCommand[] = catalog.listInvocableSkills().map((skill) => ({
       name: skill.name,
       description: skill.description,
     }));
-    return [...ACP_BUILTIN_SLASH_COMMANDS, ...skills];
+    // TODO: re-add ACP_BUILTIN_SLASH_COMMANDS once builtin command execution is
+    // implemented — advertising them now would route unhandled commands to the
+    // model as plain prompts.
+    return skills;
   }
 
   /** Push the current `available_commands_update` to the client. */
@@ -223,8 +225,10 @@ export class AcpSession {
       toolCalls: [],
       origin: { kind: 'user' },
     };
-    return this.driveTurn(() =>
-      this.mainAgent.accessor.get(IAgentPromptService).inject(message),
+    return this.driveTurn(async () =>
+      // `enqueue` (not `inject`) so the prompt runs through the full submission
+      // path, including `onBeforeSubmitPrompt` hooks (prompt-blocking policy).
+      (await this.mainAgent.accessor.get(IAgentPromptService).enqueue({ message })).launched,
     );
   }
 
