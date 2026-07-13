@@ -56,21 +56,6 @@ export const CRON_FIRED = 'cron_fired' as const;
 export const CRON_MISSED = 'cron_missed' as const;
 export const CRON_DELETED = 'cron_deleted' as const;
 
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'cron.add': {
-      task: CronTask;
-    };
-    'cron.delete': {
-      ids: readonly string[];
-    };
-    'cron.cursor': {
-      id: string;
-      lastFiredAt: number;
-    };
-  }
-}
-
 const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const MAX_COALESCE_ITERATIONS = 10_000;

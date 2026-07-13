@@ -61,8 +61,27 @@ export interface GoalCreatePayload {
   readonly completionCriterion?: string;
 }
 
+export interface GoalUpdatePayload {
+  readonly status?: GoalStatus;
+  readonly reason?: string;
+  readonly turnsUsed?: number;
+  readonly tokensUsed?: number;
+  readonly wallClockMs?: number;
+  readonly budgetLimits?: GoalBudgetLimits;
+  readonly actor?: GoalActor;
+}
+
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'goal.create': GoalCreatePayload;
+    'goal.update': GoalUpdatePayload;
+    'goal.clear': {};
+    forked: {};
+  }
+}
+
 export const createGoal = defineOp(GoalModel, 'goal.create', {
-  apply: (_s, p: GoalCreatePayload): GoalModelState => ({
+  apply: (_s, p) => ({
     goalId: p.goalId,
     objective: p.objective,
     completionCriterion: p.completionCriterion,
@@ -74,18 +93,8 @@ export const createGoal = defineOp(GoalModel, 'goal.create', {
   }),
 });
 
-export interface GoalUpdatePayload {
-  readonly status?: GoalStatus;
-  readonly reason?: string;
-  readonly turnsUsed?: number;
-  readonly tokensUsed?: number;
-  readonly wallClockMs?: number;
-  readonly budgetLimits?: GoalBudgetLimits;
-  readonly actor?: GoalActor;
-}
-
 export const updateGoal = defineOp(GoalModel, 'goal.update', {
-  apply: (s, p: GoalUpdatePayload): GoalModelState => {
+  apply: (s, p) => {
     if (s === null) return null;
     let next: GoalState | undefined;
     if (p.status !== undefined && p.status !== s.status) {
@@ -112,9 +121,9 @@ export const updateGoal = defineOp(GoalModel, 'goal.update', {
 });
 
 export const clearGoal = defineOp(GoalModel, 'goal.clear', {
-  apply: (): GoalModelState => null,
+  apply: () => null,
 });
 
 export const forkGoal = defineOp(GoalModel, 'forked', {
-  apply: (): GoalModelState => null,
+  apply: () => null,
 });

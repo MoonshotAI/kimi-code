@@ -9,9 +9,10 @@
  * lives in the Model (set from each Op payload, never by `Date.now()` inside
  * `apply`); the `wallClockResumedAt` cursor is a live-only field, reset on
  * replay and (re)started on the live path. A `forked` wire Op clears the Model
- * at a fork boundary; the `goal.*` record shapes stay declared in
- * `WireRecordMap` because they still ride the shared wire log read by
- * `getRecords()` and replayed into the Model. Injects reminders through
+ * at a fork boundary; the `goal.*` payload shapes are registered in
+ * `PersistedOpMap` (`#/wire/types`) inside `goalOps` because they still ride
+ * the shared wire log read by `getRecords()` and replayed into the Model.
+ * Injects reminders through
  * `contextInjector`, drives continuation turns by enqueueing `newTurn`
  * `StepRequest`s onto `loop` (the continuation message materializes when the
  * loop pops it), accounts live
@@ -68,27 +69,6 @@ import type {
   GoalStatus,
   GoalToolResult,
 } from './types';
-
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    forked: {};
-    'goal.create': {
-      goalId: string;
-      objective: string;
-      completionCriterion?: string;
-    };
-    'goal.update': {
-      status?: GoalStatus;
-      reason?: string;
-      turnsUsed?: number;
-      tokensUsed?: number;
-      wallClockMs?: number;
-      budgetLimits?: GoalBudgetLimits;
-      actor?: GoalActor;
-    };
-    'goal.clear': {};
-  }
-}
 
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
 

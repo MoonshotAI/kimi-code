@@ -30,17 +30,6 @@ export interface LlmToolsSnapshotPayload {
   readonly tools: readonly LlmRequestToolSchema[];
 }
 
-export const llmToolsSnapshot = defineOp(
-  LlmRequestTraceModel,
-  'llm.tools_snapshot',
-  {
-    apply: (s, p: LlmToolsSnapshotPayload): LlmRequestTraceState => {
-      if (s.seenToolsHashes.includes(p.hash)) return s;
-      return { seenToolsHashes: [...s.seenToolsHashes, p.hash] };
-    },
-  },
-);
-
 export interface LlmRequestPayload {
   readonly kind: 'loop' | 'compaction';
   readonly provider: string;
@@ -64,13 +53,24 @@ export interface LlmRequestPayload {
   readonly droppedCount?: number;
 }
 
-export const llmRequest = defineOp(LlmRequestTraceModel, 'llm.request', {
-  apply: (s, _p: LlmRequestPayload): LlmRequestTraceState => s,
-});
-
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
+declare module '#/wire/types' {
+  interface PersistedOpMap {
     'llm.tools_snapshot': LlmToolsSnapshotPayload;
     'llm.request': LlmRequestPayload;
   }
 }
+
+export const llmToolsSnapshot = defineOp(
+  LlmRequestTraceModel,
+  'llm.tools_snapshot',
+  {
+    apply: (s, p) => {
+      if (s.seenToolsHashes.includes(p.hash)) return s;
+      return { seenToolsHashes: [...s.seenToolsHashes, p.hash] };
+    },
+  },
+);
+
+export const llmRequest = defineOp(LlmRequestTraceModel, 'llm.request', {
+  apply: (s, _p) => s,
+});

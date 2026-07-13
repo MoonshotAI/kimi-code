@@ -33,16 +33,16 @@ export interface McpToolsDiscoveredPayload {
   readonly collisions?: readonly McpToolCollision[];
 }
 
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'mcp.tools_discovered': McpToolsDiscoveredPayload;
+  }
+}
+
 export const mcpToolsDiscovered = defineOp(McpDiscoveryModel, 'mcp.tools_discovered', {
-  apply: (s, p: McpToolsDiscoveredPayload): McpDiscoveryState => {
+  apply: (s, p) => {
     const key = `${p.serverName}\n${p.hash}`;
     if (s.seen.includes(key)) return s;
     return { seen: [...s.seen, key] };
   },
 });
-
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'mcp.tools_discovered': McpToolsDiscoveredPayload;
-  }
-}

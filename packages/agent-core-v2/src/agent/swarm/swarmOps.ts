@@ -18,6 +18,12 @@ import type { SwarmModeTrigger } from './swarm';
 
 export const SwarmModel = defineModel<SwarmModeTrigger | null>('swarm', () => null);
 
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'swarm_mode.exit': Record<string, never>;
+  }
+}
+
 export const swarmEnter = defineOp(SwarmModel, 'swarm_mode.enter', {
   apply: (_s, p: { trigger: SwarmModeTrigger }) => p.trigger,
   toEvent: () => ({ type: 'agent.status.updated' as const, swarmMode: true }),

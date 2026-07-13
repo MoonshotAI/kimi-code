@@ -116,6 +116,12 @@ export interface SetActiveToolsPayload {
   readonly names: readonly string[];
 }
 
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'tools.set_active_tools': SetActiveToolsPayload;
+  }
+}
+
 export const setActiveTools = defineOp(ActiveToolsModel, 'tools.set_active_tools', {
-  apply: (s, p: SetActiveToolsPayload): ActiveToolsState => (p.names === s ? s : p.names),
+  apply: (s, p) => (p.names === s ? s : p.names),
 });

@@ -47,31 +47,31 @@ export interface PromptTurnPayload {
   readonly origin: PromptOrigin;
 }
 
-export const promptTurn = defineOp(TurnModel, 'turn.prompt', {
-  apply: (s, _p: PromptTurnPayload): TurnModelState => ({ nextTurnId: s.nextTurnId + 1 }),
-});
-
 export interface SteerTurnPayload {
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
 }
 
-export const steerTurn = defineOp(TurnModel, 'turn.steer', {
-  apply: (s, _p: SteerTurnPayload): TurnModelState => s,
-});
-
 export interface CancelTurnPayload {
   readonly turnId?: number;
 }
 
-export const cancelTurn = defineOp(TurnModel, 'turn.cancel', {
-  apply: (s, _p: CancelTurnPayload): TurnModelState => s,
-});
-
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
+declare module '#/wire/types' {
+  interface PersistedOpMap {
     'turn.prompt': PromptTurnPayload;
     'turn.steer': SteerTurnPayload;
     'turn.cancel': CancelTurnPayload;
   }
 }
+
+export const promptTurn = defineOp(TurnModel, 'turn.prompt', {
+  apply: (s, _p) => ({ nextTurnId: s.nextTurnId + 1 }),
+});
+
+export const steerTurn = defineOp(TurnModel, 'turn.steer', {
+  apply: (s, _p) => s,
+});
+
+export const cancelTurn = defineOp(TurnModel, 'turn.cancel', {
+  apply: (s, _p) => s,
+});

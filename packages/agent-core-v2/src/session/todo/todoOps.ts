@@ -31,7 +31,12 @@ export interface ToolStoreUpdatePayload {
   readonly value: unknown;
 }
 
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'tools.update_store': ToolStoreUpdatePayload;
+  }
+}
+
 export const todoSet = defineOp(TodoModel, 'tools.update_store', {
-  apply: (s, p: ToolStoreUpdatePayload): TodoModelState =>
-    p.key === 'todo' ? readTodoItems(p.value) : s,
+  apply: (s, p) => (p.key === 'todo' ? readTodoItems(p.value) : s),
 });

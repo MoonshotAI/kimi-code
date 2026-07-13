@@ -30,8 +30,8 @@
  * `begin` Op's `toEvent`; the rest directly) and also emit live through
  * `wire.signal` (legacy channel, until Phase 3); they are declared here via
  * interface-merge (`error` is already declared by `mcp`, so it is not
- * re-declared). The `full_compaction.*` record shapes stay declared in
- * `WireRecordMap` (see `fullCompactionService.ts`) because the records still
+ * re-declared). The `full_compaction.*` record shapes are registered in
+ * `PersistedOpMap` (`#/wire/types`, below) because the records still
  * ride the per-agent `wire.jsonl` log read by `wireRecord.restore()` /
  * `getRecords()`. Consumed by the Agent-scope `fullCompactionService`.
  */
@@ -68,9 +68,18 @@ declare module '#/app/event/eventBus' {
 
 export type FullCompactionBeginPayload = CompactionBeginData;
 
+export type FullCompactionCompletePayload = Record<string, never>;
+
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'full_compaction.begin': FullCompactionBeginPayload;
+    'full_compaction.cancel': {};
+    'full_compaction.complete': FullCompactionCompletePayload;
+  }
+}
+
 export const fullCompactionBegin = defineOp(CompactionModel, 'full_compaction.begin', {
-  apply: (s, _p: FullCompactionBeginPayload): CompactionState =>
-    s.phase === 'running' ? s : { phase: 'running' },
+  apply: (s, _p) => (s.phase === 'running' ? s : { phase: 'running' }),
   toEvent: (p) => ({
     type: 'compaction.started' as const,
     trigger: p.source,
@@ -79,12 +88,9 @@ export const fullCompactionBegin = defineOp(CompactionModel, 'full_compaction.be
 });
 
 export const fullCompactionCancel = defineOp(CompactionModel, 'full_compaction.cancel', {
-  apply: (s): CompactionState => (s.phase === 'idle' ? s : { phase: 'idle' }),
+  apply: (s) => (s.phase === 'idle' ? s : { phase: 'idle' }),
 });
 
-export type FullCompactionCompletePayload = Record<string, never>;
-
 export const fullCompactionComplete = defineOp(CompactionModel, 'full_compaction.complete', {
-  apply: (s, _p: FullCompactionCompletePayload): CompactionState =>
-    s.phase === 'idle' ? s : { phase: 'idle' },
+  apply: (s, _p) => (s.phase === 'idle' ? s : { phase: 'idle' }),
 });

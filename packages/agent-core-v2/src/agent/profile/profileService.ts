@@ -79,14 +79,6 @@ import {
   type ProfileModelState,
 } from './profileOps';
 
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'tools.set_active_tools': {
-      names: readonly string[];
-    };
-  }
-}
-
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     // `warning` is owned by `profile` (the agents-md-oversized notice).

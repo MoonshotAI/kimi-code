@@ -124,23 +124,28 @@ export interface ContextMessagePayload {
   readonly message: ContextMessage;
 }
 
-export const contextAppendMessage = defineOp(ContextModel, 'context.append_message', {
-  apply: (state, p: ContextMessagePayload): ContextMessage[] =>
-    foldAppendMessage(state, p.message) as ContextMessage[],
-});
-
 export interface ContextLoopEventPayload {
   readonly event: LoopRecordedEvent;
 }
 
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'context.append_message': ContextMessagePayload;
+    'context.append_loop_event': ContextLoopEventPayload;
+  }
+}
+
+export const contextAppendMessage = defineOp(ContextModel, 'context.append_message', {
+  apply: (state, p): ContextMessage[] =>
+    foldAppendMessage(state, p.message) as ContextMessage[],
+});
+
 export const contextAppendLoopEvent = defineOp(ContextModel, 'context.append_loop_event', {
-  apply: (state, p: ContextLoopEventPayload): ContextMessage[] =>
-    foldLoopEvent(state, p.event) as ContextMessage[],
+  apply: (state, p) => foldLoopEvent(state, p.event) as ContextMessage[],
 });
 
 export const contextClear = defineOp(ContextModel, 'context.clear', {
-  apply: (state): ContextMessage[] =>
-    state.length === 0 ? state : (resetFold([]) as ContextMessage[]),
+  apply: (state) => state.length === 0 ? state : (resetFold([]) as ContextMessage[]),
 });
 
 interface ContextCompactionBasePayload {

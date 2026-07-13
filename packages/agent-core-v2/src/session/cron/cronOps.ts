@@ -38,22 +38,35 @@ export interface CronAddPayload {
   readonly task: CronTask;
 }
 
+export interface CronDeletePayload {
+  readonly ids: readonly string[];
+}
+
+export interface CronCursorPayload {
+  readonly id: string;
+  readonly lastFiredAt: number;
+}
+
+declare module '#/wire/types' {
+  interface TransientOpMap {
+    'cron.add': CronAddPayload;
+    'cron.delete': CronDeletePayload;
+    'cron.cursor': CronCursorPayload;
+  }
+}
+
 export const cronAdd = defineOp(CronModel, 'cron.add', {
   persist: false,
-  apply: (s, p: CronAddPayload): CronModelState => {
+  apply: (s, p) => {
     const next = new Map(s);
     next.set(p.task.id, p.task);
     return next;
   },
 });
 
-export interface CronDeletePayload {
-  readonly ids: readonly string[];
-}
-
 export const cronDelete = defineOp(CronModel, 'cron.delete', {
   persist: false,
-  apply: (s, p: CronDeletePayload): CronModelState => {
+  apply: (s, p) => {
     let next: Map<string, CronTask> | undefined;
     for (const id of p.ids) {
       if (s.has(id)) {
@@ -65,14 +78,9 @@ export const cronDelete = defineOp(CronModel, 'cron.delete', {
   },
 });
 
-export interface CronCursorPayload {
-  readonly id: string;
-  readonly lastFiredAt: number;
-}
-
 export const cronCursor = defineOp(CronModel, 'cron.cursor', {
   persist: false,
-  apply: (s, p: CronCursorPayload): CronModelState => {
+  apply: (s, p) => {
     const task = s.get(p.id);
     if (task === undefined) return s;
     const next = new Map(s);
