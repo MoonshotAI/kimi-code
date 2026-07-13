@@ -61,7 +61,7 @@ import {
   type IAgentTaskEntry,
   type RegisterAgentTaskOptions,
 } from './task';
-import { LEGACY_BACKGROUND_SECTION, TASK_SECTION, type AgentTaskConfig } from './configSection';
+import { resolveAgentTaskConfig } from './configSection';
 import { AgentTaskPersistence } from './persist';
 import { TaskModel, taskStarted, taskTerminated } from './taskOps';
 import { formatTaskList } from '#/agent/task/tools/task-list';
@@ -303,6 +303,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       detached,
       timeoutMs,
       detachTimeoutMs: options.detachTimeoutMs,
+      autoBackgroundOnTimeout: options.autoBackgroundOnTimeout,
       signal: detached ? undefined : options.signal,
     };
     this.assertCanRegister(detached);
@@ -334,13 +335,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.ghosts.delete(entry.taskId);
 
     if (timeoutMs !== undefined && timeoutMs > 0) {
-      entry.timeoutHandle = setTimeout(() => {
-        void this.terminateWithGrace(entry, {
-          abortReason: 'Timed out',
-          finalStatus: 'timed_out',
-        });
-      }, timeoutMs);
-      entry.timeoutHandle.unref?.();
+      this.armManagerTimeout(entry, timeoutMs);
     }
 
     entry.lifecyclePromise = Promise.resolve()
@@ -416,13 +411,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.ghosts.delete(taskId);
 
     if (timeoutMs !== undefined && timeoutMs > 0) {
-      entry.timeoutHandle = setTimeout(() => {
-        void this.terminateWithGrace(entry, {
-          abortReason: 'Timed out',
-          finalStatus: 'timed_out',
-        });
-      }, timeoutMs);
-      entry.timeoutHandle.unref?.();
+      this.armManagerTimeout(entry, timeoutMs);
     }
 
     const outputSub = handle.onDidOutput((chunk) => {
@@ -577,6 +566,15 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   detach(taskId: string): AgentTaskInfo | undefined {
     const entry = this.tasks.get(taskId);
     if (entry === undefined) return this.ghosts.get(taskId);
+    return this.detachEntry(entry, false);
+  }
+
+  /**
+   * Move a foreground task to the background, releasing its tool-call waiter.
+   * `viaTimeout` marks an automatic detach triggered by the task deadline (vs.
+   * an explicit user/RPC detach) so the waiter can word its result.
+   */
+  private detachEntry(entry: ManagedTask, viaTimeout: boolean): AgentTaskInfo | undefined {
     if (TERMINAL_STATUSES.has(entry.status)) return this.toInfo(entry);
 
     const foregroundRelease = entry.foregroundRelease;
@@ -597,7 +595,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this.startOutputPersist(entry);
     void this.persistLive(entry);
     this.recordTaskStarted(this.toInfo(entry));
-    foregroundRelease.resolve('detached');
+    foregroundRelease.resolve(viaTimeout ? 'timeout_detached' : 'detached');
     return this.toInfo(entry);
   }
 
@@ -610,14 +608,37 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       entry.timeoutHandle = undefined;
     }
     if (timeoutMs > 0) {
-      entry.timeoutHandle = setTimeout(() => {
-        void this.terminateWithGrace(entry, {
-          abortReason: 'Timed out',
-          finalStatus: 'timed_out',
-        });
-      }, timeoutMs);
-      entry.timeoutHandle.unref?.();
+      this.armManagerTimeout(entry, timeoutMs);
     }
+  }
+
+  /**
+   * Arm a manager-owned deadline (`timeoutMs` / `detachTimeoutMs`). A
+   * foreground task opted into auto-background survives its first deadline by
+   * detaching to the background — `detachEntry` re-arms `detachTimeoutMs` —
+   * instead of being killed; every other deadline terminates with grace.
+   */
+  private armManagerTimeout(entry: ManagedTask, timeoutMs: number): void {
+    entry.timeoutHandle = setTimeout(() => {
+      entry.timeoutHandle = undefined;
+      if (this.canAutoBackgroundOnTimeout(entry)) {
+        this.detachEntry(entry, true);
+        return;
+      }
+      void this.terminateWithGrace(entry, {
+        abortReason: 'Timed out',
+        finalStatus: 'timed_out',
+      });
+    }, timeoutMs);
+    entry.timeoutHandle.unref?.();
+  }
+
+  /**
+   * Foreground tasks opted into auto-background survive their first deadline
+   * by detaching to the background instead of being killed.
+   */
+  private canAutoBackgroundOnTimeout(entry: ManagedTask): boolean {
+    return entry.options.autoBackgroundOnTimeout === true && !this.isDetached(entry);
   }
 
   async stop(taskId: string, reason?: string): Promise<AgentTaskInfo | undefined> {
@@ -790,18 +811,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private assertCanRegister(detached: boolean): void {
-    const maxRunningTasks = this.taskConfig()?.maxRunningTasks;
+    const maxRunningTasks = resolveAgentTaskConfig(this.config)?.maxRunningTasks;
     if (maxRunningTasks === undefined) return;
     if (!detached) return;
     if (this.activeTaskCount() < maxRunningTasks) return;
     throw new Error('Too many background tasks are already running.');
-  }
-
-  private taskConfig(): AgentTaskConfig | undefined {
-    return (
-      this.config.get<AgentTaskConfig | undefined>(TASK_SECTION) ??
-      this.config.get<AgentTaskConfig | undefined>(LEGACY_BACKGROUND_SECTION)
-    );
   }
 
   private activeTaskCount(): number {
