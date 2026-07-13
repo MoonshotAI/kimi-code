@@ -52,6 +52,26 @@ describe('fetchCatalog', () => {
       fetchCatalog('https://x', undefined, fetchMock as unknown as typeof fetch),
     ).rejects.toThrow(/Unexpected catalog response/);
   });
+
+  it('sends the given User-Agent, and none by default', async () => {
+    const fetchMock = vi.fn(async () => catalogResponse({}));
+
+    await fetchCatalog(
+      'https://x/api.json',
+      undefined,
+      fetchMock as unknown as typeof fetch,
+      'kimi-code-cli/1.2.3',
+    );
+    const withUa = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const withUaHeaders = withUa[1].headers as Record<string, string>;
+    expect(withUaHeaders['User-Agent']).toBe('kimi-code-cli/1.2.3');
+    expect(withUaHeaders['Accept']).toBe('application/json');
+
+    fetchMock.mockClear();
+    await fetchCatalog('https://x/api.json', undefined, fetchMock as unknown as typeof fetch);
+    const withoutUa = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((withoutUa[1].headers as Record<string, string>)['User-Agent']).toBeUndefined();
+  });
 });
 
 describe('catalogModelToAlias', () => {

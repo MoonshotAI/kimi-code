@@ -127,6 +127,28 @@ describe('fetchCustomRegistry', () => {
     expect(headers['Accept']).toBe('application/json');
   });
 
+  it('sends the given User-Agent, and none by default', async () => {
+    const fetchMock = vi.fn(async () => makeJsonResponse(makeKokubResponseBody()));
+
+    await fetchCustomRegistry(
+      KOKUB_SOURCE,
+      fetchMock as unknown as typeof fetch,
+      undefined,
+      'kimi-code-cli/1.2.3',
+    );
+
+    const withUa = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((withUa[1].headers as Record<string, string>)['User-Agent']).toBe(
+      'kimi-code-cli/1.2.3',
+    );
+
+    fetchMock.mockClear();
+    await fetchCustomRegistry(KOKUB_SOURCE, fetchMock as unknown as typeof fetch);
+
+    const withoutUa = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect((withoutUa[1].headers as Record<string, string>)['User-Agent']).toBeUndefined();
+  });
+
   it('forwards an AbortSignal when provided', async () => {
     const fetchMock = vi.fn(async () => makeJsonResponse(makeKokubResponseBody()));
     const controller = new AbortController();

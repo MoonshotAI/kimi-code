@@ -189,15 +189,22 @@ function toProviderEntry(value: unknown): CustomRegistryProviderEntry | undefine
  * Fetches and validates an api.json document. The returned record is keyed by
  * the top-level provider key in the document (which may differ from
  * `entry.id`); callers should iterate `Object.values` to apply each entry.
+ *
+ * `userAgent` identifies the host product (e.g. `kimi-code-cli/1.2.3`); when
+ * omitted the request falls back to the runtime default (`User-Agent: node`).
  */
 export async function fetchCustomRegistry(
   source: CustomRegistrySource,
   fetchImpl: typeof fetch = fetch,
   signal?: AbortSignal,
+  userAgent?: string,
 ): Promise<Record<string, CustomRegistryProviderEntry>> {
   const headers: Record<string, string> = {
     Accept: 'application/json',
   };
+  if (userAgent !== undefined) {
+    headers['User-Agent'] = userAgent;
+  }
   if (source.apiKey.length > 0) {
     headers['Authorization'] = `Bearer ${source.apiKey}`;
   }

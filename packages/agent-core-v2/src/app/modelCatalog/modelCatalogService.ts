@@ -32,6 +32,7 @@ import { IConfigService } from '#/app/config/config';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IEventService } from '#/app/event/event';
 import { IModelService, MODELS_SECTION, type ModelAlias } from '#/app/model/model';
+import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
 import {
   IProviderService,
   type OAuthRef,
@@ -66,6 +67,7 @@ export class ModelCatalogService implements IModelCatalogService {
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
+    @IHostRequestHeaders private readonly hostRequestHeaders: IHostRequestHeaders,
   ) {}
 
   async listModels(): Promise<readonly ModelCatalogItem[]> {
@@ -151,6 +153,9 @@ export class ModelCatalogService implements IModelCatalogService {
       removeProvider: (providerId) => this.removeProviderForRefresh(providerId),
       setConfig: (patch) => this.applyRefreshPatch(patch),
       resolveOAuthToken: (providerName, oauthRef) => this.resolveOAuthToken(providerName, oauthRef),
+      // Mirrors ModelResolverService: only the User-Agent leaves the host, so
+      // device identity never reaches third-party registry endpoints.
+      userAgent: this.hostRequestHeaders.headers['User-Agent'],
     };
   }
 
