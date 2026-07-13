@@ -15,6 +15,8 @@ import {
   IAppendLogStore,
   type PersistedWireRecord,
 } from '#/index';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { AgentWireRecordService } from '#/agent/wireRecord/wireRecordService';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
@@ -260,5 +262,75 @@ describe('wire record append-log persistence', () => {
         created_at: 1,
       },
     ]);
+  });
+});
+
+describe('AgentWireRecordService migration rewrite', () => {
+  async function seedLegacyLog(storage: InMemoryStorageService): Promise<IAppendLogStore> {
+    const log = createAppendLogHarness(storage);
+    log.append<PersistedWireRecord>(SCOPE, KEY, {
+      type: 'metadata',
+      protocol_version: '1.0',
+      created_at: 1,
+    });
+    log.append<PersistedWireRecord>(SCOPE, KEY, {
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'hi' }],
+      origin: { kind: 'user' },
+    });
+    await log.flush();
+    return log;
+  }
+
+  it('restore resolves only after the migration rewrite is durable', async () => {
+    const storage = new InMemoryStorageService();
+    const log = await seedLegacyLog(storage);
+    // Gate `storage.write` so the migration rewrite stays in flight: restore
+    // must not resolve before the rewritten log has landed.
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (...args) => {
+      await writeGate;
+      return originalWrite(...args);
+    };
+
+    const svc = new AgentWireRecordService(
+      makeAgentScopeContext({ agentId: 'main', agentScope: SCOPE }),
+      log,
+    );
+    let restored = false;
+    const restorePromise = svc.restore().then(() => {
+      restored = true;
+    });
+    // Let the restore pipeline run up to the gated rewrite.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(restored).toBe(false);
+
+    releaseWrite();
+    await restorePromise;
+
+    const records = await collect<PersistedWireRecord>(log);
+    expect(records[0]).toMatchObject({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+    });
+  });
+
+  it('restore propagates a migration rewrite failure', async () => {
+    const storage = new InMemoryStorageService();
+    const log = await seedLegacyLog(storage);
+    storage.write = async () => {
+      throw new Error('disk full');
+    };
+
+    const svc = new AgentWireRecordService(
+      makeAgentScopeContext({ agentId: 'main', agentScope: SCOPE }),
+      log,
+    );
+
+    await expect(svc.restore()).rejects.toThrow('disk full');
   });
 });

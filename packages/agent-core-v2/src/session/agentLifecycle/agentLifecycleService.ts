@@ -65,6 +65,7 @@ import {
 } from '#/agent/wireRecord/wireRecord';
 import {
   AgentWireRecordService,
+  missingWireMetadataError,
   WIRE_RECORD_FILENAME,
 } from '#/agent/wireRecord/wireRecordService';
 import { wireMetadata } from '#/agent/wireRecord/metadataOps';
@@ -375,24 +376,27 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const appendLog = this.appendLog;
     if (appendLog === undefined) return;
     let firstRecord: PersistedWireRecord | undefined;
-    const remainingRecords: PersistedWireRecord[] = [];
-    for await (const record of appendLog.read<PersistedWireRecord>(agentScope, WIRE_RECORD_FILENAME)) {
-      if (firstRecord === undefined) {
-        firstRecord = record;
-        if (firstRecord.type === 'metadata') return;
-        continue;
-      }
-      remainingRecords.push(record);
+    for await (const record of appendLog.read<PersistedWireRecord>(
+      agentScope,
+      WIRE_RECORD_FILENAME,
+    )) {
+      firstRecord = record;
+      break;
     }
     if (firstRecord === undefined) {
+      // Brand-new log: seed the metadata envelope through the live dispatch
+      // path so it orders ahead of every record the agent persists from here.
       handle.accessor.get(IAgentWireService).dispatch(wireMetadata(freshMetadataPayload()));
       return;
     }
-    await appendLog.rewrite(agentScope, WIRE_RECORD_FILENAME, [
-      freshMetadataRecord(),
-      firstRecord,
-      ...remainingRecords,
-    ]);
+    if (firstRecord.type === 'metadata') return;
+    // A non-empty log without a leading metadata envelope predates protocol
+    // versioning (or is corrupt). v1's replay rejects the same file outright
+    // (`records/index.ts`); never paper over the gap by prepending a
+    // current-version envelope — that would stamp legacy records as the
+    // current protocol, skip every migration, and reinterpret them as the
+    // new format.
+    throw missingWireMetadataError();
   }
 
   ensureMcpReady(): Promise<void> {
@@ -550,13 +554,6 @@ function freshMetadataPayload(): PayloadOf<typeof wireMetadata> {
   return {
     protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
     created_at: Date.now(),
-  };
-}
-
-function freshMetadataRecord(): PersistedWireRecord {
-  return {
-    type: 'metadata',
-    ...freshMetadataPayload(),
   };
 }
 

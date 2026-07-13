@@ -301,7 +301,7 @@ describe('AgentLifecycleService', () => {
     );
   });
 
-  it('prepends metadata to an existing agent wire that is missing the envelope', async () => {
+  it('rejects an existing agent wire that is missing the metadata envelope', async () => {
     const log = recordingAppendLog([
       { type: 'turn.prompt', turnId: 0 } as PersistedWireRecord,
     ]);
@@ -309,14 +309,15 @@ describe('AgentLifecycleService', () => {
     stubBlobPassThrough(ix);
     const svc = ix.get(IAgentLifecycleService);
 
-    await svc.create({ agentId: 'main' });
+    await expect(svc.create({ agentId: 'main' })).rejects.toThrow(
+      'WireRecord restore expected metadata as the first record',
+    );
 
+    // The legacy log must be left untouched: fabricating a current-version
+    // envelope would stamp legacy records as the current protocol and skip
+    // every migration (v1 rejects the same file outright).
     expect(log.appended).toEqual([]);
-    expect(log.rewritten?.map((record) => record.type)).toEqual(['metadata', 'turn.prompt']);
-    expect(log.rewritten?.[0]).toMatchObject({
-      type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    });
+    expect(log.rewritten).toBeUndefined();
   });
 
   it('leaves an existing metadata envelope in place', async () => {

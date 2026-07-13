@@ -41,7 +41,11 @@ import {
   IAgentWireRecordService,
   type PersistedWireRecord,
 } from '#/agent/wireRecord/wireRecord';
-import { WIRE_RECORD_FILENAME, wireRecordScope } from '#/agent/wireRecord/wireRecordService';
+import {
+  missingWireMetadataError,
+  WIRE_RECORD_FILENAME,
+  wireRecordScope,
+} from '#/agent/wireRecord/wireRecordService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -557,10 +561,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       ),
     );
     // Ensure the log starts with a metadata envelope (restore() requires it).
+    // An empty log is brand new and gets a fresh envelope; a non-empty log
+    // without one predates protocol versioning (or is corrupt) — fail loudly
+    // like restore() does instead of fabricating a current-version envelope
+    // over legacy records (which would skip every migration and reinterpret
+    // them as the new format).
     if (records.length === 0) {
       records.push(freshMetadataRecord());
     } else if (records[0]?.type !== 'metadata') {
-      records.unshift(freshMetadataRecord());
+      throw missingWireMetadataError();
     }
     records.push(forkedRecord());
 

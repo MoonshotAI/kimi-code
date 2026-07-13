@@ -108,7 +108,7 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
           shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
         }
       } else if (requireMetadata) {
-        throw new Error('WireRecord restore expected metadata as the first record');
+        throw missingWireMetadataError();
       }
     }
 
@@ -129,8 +129,12 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
     }
 
     if (shouldRewrite && restoredRecords !== undefined && this.log !== undefined) {
-      void this.log.rewrite(this.wireScope, WIRE_RECORD_FILENAME, restoredRecords);
-      await this.log.flush();
+      // Await the migration rewrite: `restore()` must not resolve before the
+      // migrated log is durable, and a rewrite failure must surface here
+      // rather than as an unhandled rejection (v1: `rewrite` + `await flush`
+      // in `records/index.ts`). The store holds the log's flush across the
+      // whole-file replace, so live appends made meanwhile land after it.
+      await this.log.rewrite(this.wireScope, WIRE_RECORD_FILENAME, restoredRecords);
     }
     return warning === undefined ? {} : { warning };
   }
@@ -166,6 +170,18 @@ function isWireRecordMetadata(record: PersistedWireRecord): record is WireRecord
  * (`<homeDir>/sessions/<ws>/<sid>/agents/<aid>/wire.jsonl`).
  */
 export const WIRE_RECORD_FILENAME = 'wire.jsonl';
+
+/**
+ * Error thrown when a non-empty wire log does not start with the metadata
+ * envelope: the log predates protocol versioning (or is corrupt). Restore
+ * rejects it outright — v1 parity (`records/index.ts` throws the same) — and
+ * the lifecycle entry points must too, instead of papering over the gap with
+ * a current-version envelope that would skip every migration and reinterpret
+ * legacy records as the new format.
+ */
+export function missingWireMetadataError(): Error {
+  return new Error('WireRecord restore expected metadata as the first record');
+}
 
 /**
  * Store `scope` of an agent's wire log: its homedir made relative to the app

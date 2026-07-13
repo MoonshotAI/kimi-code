@@ -93,6 +93,52 @@ describe('AppendLogStore', () => {
     expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 8 }]);
   });
 
+  it('appends that arrive during a rewrite land after the replaced content', async () => {
+    // Gate `storage.write` so the whole-file replace is in flight when the
+    // live append arrives: the append must not be wiped by the replace.
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (...args) => {
+      await writeGate;
+      return originalWrite(...args);
+    };
+
+    record.append<Rec>(SCOPE, KEY, { n: 1 });
+    await record.flush();
+    const rewrite = record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }]);
+    record.append<Rec>(SCOPE, KEY, { n: 2 });
+    releaseWrite();
+    await rewrite;
+    await record.flush();
+
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 2 }]);
+  });
+
+  it('flush() awaits an in-flight rewrite', async () => {
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (...args) => {
+      await writeGate;
+      return originalWrite(...args);
+    };
+
+    record.append<Rec>(SCOPE, KEY, { n: 1 });
+    const rewrite = record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }]);
+    const flushed = record.flush();
+    releaseWrite();
+    // `flush()` alone must cover the rewrite: once it resolves, the replaced
+    // content is durable without awaiting the rewrite call itself.
+    await flushed;
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }]);
+    await rewrite;
+  });
+
   it('logs addressed by different scope/key are independent', async () => {
     record.append<Rec>('a', 'l', { n: 1 });
     record.append<Rec>('b', 'l', { n: 2 });

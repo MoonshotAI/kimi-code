@@ -95,8 +95,38 @@ export class AppendLogStore implements IAppendLogStore {
   }
 
   async rewrite<R>(scope: string, key: string, records: readonly R[]): Promise<void> {
-    await this.flushLog(scope, key);
-    await this.storage.write(scope, key, encodeBatch(records), { atomic: true });
+    const state = this.state(scope, key);
+    // Snapshot `pending` synchronously: records appended before this call
+    // belong to the pre-rewrite log (the replace supersedes them — drain them
+    // first, mirroring the old flush-then-write), while anything appended
+    // from here on must survive the replace.
+    const preExisting = state.pending.splice(0);
+    // Chain behind any in-flight flush, then hold the log's `flushPromise`
+    // across the whole-file replace: appends arriving while the replace runs
+    // stay parked in `pending` (`scheduleFlush` sees a flush in flight) and
+    // drain only AFTER the new content has landed, so a live append can never
+    // be wiped by the replace. `read()` / `flush()` on this log also await
+    // the rewrite through the shared promise.
+    const prior = state.flushPromise ?? Promise.resolve();
+    const promise = prior
+      .then(async () => {
+        if (preExisting.length > 0) {
+          await this.storage.append(scope, key, encodeBatch(preExisting), { durable: true });
+        }
+        await this.storage.write(scope, key, encodeBatch(records), { atomic: true });
+      })
+      .finally(() => {
+        if (state.flushPromise === promise) {
+          state.flushPromise = undefined;
+        }
+        // Records appended during the replace must be drained now that it has
+        // settled — they were never part of the replaced content.
+        if (state.pending.length > 0) {
+          void this.flushLog(scope, key);
+        }
+      });
+    state.flushPromise = promise;
+    await promise;
   }
 
   async flush(): Promise<void> {
