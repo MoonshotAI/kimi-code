@@ -7,19 +7,20 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 const webPort = Number(process.env.WEB_PORT) || 5175;
-// Dev-proxy backend presets: v1 is the legacy server (@moonshot-ai/server),
-// v2 the kap-server engine. With KIMI_CODE_EXPERIMENTAL_MULTI_SERVER=1 both
-// can run side by side — the root scripts `dev:v1` / `dev:v2` pin them to
-// 58627 / 58628. Override with KIMI_BACKEND_V1_URL / KIMI_BACKEND_V2_URL.
+// Dev-proxy backend presets: `default` is the kap-server started by the root
+// `pnpm dev:server` (port 58627); `multi` is a second kap-server instance
+// started with `pnpm dev:v2` (KIMI_CODE_EXPERIMENTAL_MULTI_SERVER=1, port
+// 58628) for multi-instance debugging. Override with KIMI_BACKEND_DEFAULT_URL
+// / KIMI_BACKEND_MULTI_URL.
 const backendPresets = {
-  v1: process.env.KIMI_BACKEND_V1_URL || 'http://127.0.0.1:58627',
-  v2: process.env.KIMI_BACKEND_V2_URL || 'http://127.0.0.1:58628',
+  default: process.env.KIMI_BACKEND_DEFAULT_URL || 'http://127.0.0.1:58627',
+  multi: process.env.KIMI_BACKEND_MULTI_URL || 'http://127.0.0.1:58628',
 } as const;
 type BackendName = keyof typeof backendPresets;
-// Where the dev proxy forwards server traffic. Defaults to the v1 preset;
-// KIMI_SERVER_URL pins the initial target (and disables nothing — the dev
-// switcher can still move it at runtime).
-const serverTarget = process.env.KIMI_SERVER_URL || backendPresets.v1;
+// Where the dev proxy forwards server traffic. Defaults to the `default`
+// preset; KIMI_SERVER_URL pins the initial target (and disables nothing — the
+// dev switcher can still move it at runtime).
+const serverTarget = process.env.KIMI_SERVER_URL || backendPresets.default;
 // Mutable proxy target. Vite copies its proxy-options object per HTTP request
 // and reads it directly per WS upgrade, so assigning `target` on the captured
 // options repoints the proxy without a dev-server restart (see the plugin).
@@ -70,9 +71,9 @@ function backendSwitcherPlugin(): Plugin {
             } catch {
               name = undefined;
             }
-            if (name !== 'v1' && name !== 'v2') {
+            if (name !== 'default' && name !== 'multi') {
               res.statusCode = 400;
-              sendJson(res, { error: 'expected { "name": "v1" | "v2" }' });
+              sendJson(res, { error: 'expected { "name": "default" | "multi" }' });
               return;
             }
             switchTo(name as BackendName);
@@ -94,10 +95,10 @@ function backendSwitcherPlugin(): Plugin {
 //      and the object itself per WS upgrade);
 //   2. strips the browser `Origin` header on the forwarded request. The proxy
 //      rewrites `Host` to the server (changeOrigin) but leaves `Origin`
-//      pointing at the Vite origin — and the v1 server's WS upgrade path
+//      pointing at the Vite origin — and kap-server's WS upgrade path
 //      rejects any present Origin whose host ≠ Host with 403. An Origin-less
-//      request is treated as a non-browser client by both engines (and the
-//      browser never needs CORS here: it talks to its own origin).
+//      request is treated as a non-browser client (and the browser never
+//      needs CORS here: it talks to its own origin).
 const apiProxyOptions = {
   target: serverTarget,
   changeOrigin: true,

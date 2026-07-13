@@ -10,6 +10,14 @@
  * dropped) are reported through an optional sink and surfaced once here as a
  * single deduped warning plus a `context_projection_repaired` telemetry event,
  * so a silently-mangled history always leaves a trace.
+ *
+ * `projectMediaDegraded` / `projectMediaStripped` are the fallback
+ * projections for the two deterministic provider rejections: media-degraded
+ * (all but the most recent media replaced by text markers) resends after an
+ * HTTP 413 body-size rejection; media-stripped (every media part replaced)
+ * resends after an image-format rejection, since that error never says WHICH
+ * image is poison and only a full strip guarantees a clean request. Both are
+ * read-side only — the history keeps its media.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -42,6 +50,17 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
 
   projectStrict(messages: readonly ContextMessage[]): readonly Message[] {
     return this.projectWithTrace(messages, projectStrict);
+  }
+
+  projectMediaDegraded(messages: readonly ContextMessage[]): readonly Message[] {
+    return degradeOlderMediaParts(
+      this.projectWithTrace(messages, project),
+      MEDIA_DEGRADE_KEEP_RECENT,
+    );
+  }
+
+  projectMediaStripped(messages: readonly ContextMessage[]): readonly Message[] {
+    return degradeOlderMediaParts(this.projectWithTrace(messages, project), 0, MEDIA_STRIPPED_PLACEHOLDERS);
   }
 
   private projectWithTrace(
@@ -148,6 +167,81 @@ type ProjectionAnomaly =
   | { readonly kind: 'whitespace_text_dropped'; readonly role: string };
 
 type OnAnomaly = (anomaly: ProjectionAnomaly) => void;
+
+/**
+ * How many of the most recent media parts survive the media-degraded
+ * projection. The tail images are what the model is actively working from
+ * (the screenshot it just took); everything older is replaced by a marker.
+ */
+export const MEDIA_DEGRADE_KEEP_RECENT = 2;
+
+const MEDIA_DEGRADED_PLACEHOLDERS = {
+  image_url:
+    '[image omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+  audio_url:
+    '[audio omitted: dropped to fit the provider request size limit; re-read the file to hear it]',
+  video_url:
+    '[video omitted: dropped to fit the provider request size limit; re-read the file to view it]',
+} as const;
+
+/**
+ * Markers for the media-stripped resend after the provider rejected an
+ * image's FORMAT (not its size): the image marker points the model at
+ * re-reading the file, whose refusal carries per-OS conversion instructions;
+ * audio/video are collateral of the full strip and say so.
+ */
+export const MEDIA_STRIPPED_PLACEHOLDERS = {
+  image_url:
+    '[image omitted: the provider rejected this image; re-read the file for conversion instructions]',
+  audio_url:
+    '[audio omitted: dropped along with a rejected image; re-read the file to hear it]',
+  video_url:
+    '[video omitted: dropped along with a rejected image; re-read the file to view it]',
+} as const;
+
+type MediaPlaceholderSet = typeof MEDIA_DEGRADED_PLACEHOLDERS | typeof MEDIA_STRIPPED_PLACEHOLDERS;
+
+function isDegradableMediaPart(
+  part: ContentPart,
+): part is ContentPart & { type: keyof MediaPlaceholderSet } {
+  return part.type in MEDIA_DEGRADED_PLACEHOLDERS;
+}
+
+/**
+ * Replace all but the `keepRecent` most recent media parts with deterministic
+ * text markers. This is the media-degraded projection used to resend a request
+ * the provider rejected as too large (HTTP 413 on accumulated base64 media)
+ * and — with `keepRecent = 0` and `MEDIA_STRIPPED_PLACEHOLDERS` — the resend
+ * after an image-format rejection, where the poisoned image could be anywhere
+ * and only a full strip guarantees a clean request. A purely read-side
+ * transform — the underlying history is left untouched — that trades pixels
+ * for deliverability while the surrounding text (including ReadMediaFile's
+ * `<image path="...">` wrapper) survives, so the model can re-read any file
+ * it still needs. Untouched messages are returned by reference, and when
+ * nothing needs degrading the input array itself is returned.
+ */
+export function degradeOlderMediaParts(
+  messages: readonly Message[],
+  keepRecent: number,
+  placeholders: MediaPlaceholderSet = MEDIA_DEGRADED_PLACEHOLDERS,
+): readonly Message[] {
+  const mediaCount = messages.reduce(
+    (count, message) => count + message.content.filter(isDegradableMediaPart).length,
+    0,
+  );
+  let toDegrade = Math.max(0, mediaCount - keepRecent);
+  if (toDegrade === 0) return messages;
+
+  return messages.map((message) => {
+    if (toDegrade === 0 || !message.content.some(isDegradableMediaPart)) return message;
+    const content = message.content.map((part): ContentPart => {
+      if (toDegrade === 0 || !isDegradableMediaPart(part)) return part;
+      toDegrade -= 1;
+      return { type: 'text', text: placeholders[part.type] };
+    });
+    return { ...message, content };
+  });
+}
 
 function projectStrict(history: readonly ContextMessage[], onAnomaly?: OnAnomaly): Message[] {
   const projected = project(history, onAnomaly);

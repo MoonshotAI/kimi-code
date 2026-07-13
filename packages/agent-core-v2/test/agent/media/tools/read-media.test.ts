@@ -841,4 +841,32 @@ describe('createVideoUploader', () => {
     // The exact command depends on the host osKind; accept any of the named tools.
     expect(result.output).toMatch(/sips -s format jpeg|heif-convert|magick/);
   });
+
+  function ftypBytes(brand: string): Buffer {
+    // Minimal ftyp box with the given major_brand (avif, bmp, …).
+    const buf = Buffer.alloc(24);
+    buf.writeUInt32BE(24, 0);
+    buf.write('ftyp', 4, 'latin1');
+    buf.write(brand, 8, 'latin1');
+    buf.write(brand, 16, 'latin1');
+    return buf;
+  }
+
+  it('refuses every format outside the provider-accepted set, not just HEIC', async () => {
+    // AVIF/BMP/TIFF/ICO are no more accepted than HEIC: once the image_url
+    // lands in the history every later request fails, so the tool refuses
+    // with conversion guidance instead of passing the bytes through.
+    const result = await execute(makeTool({ '/workspace/photo.avif': { data: ftypBytes('avif') } }), {
+      path: '/workspace/photo.avif',
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain('image/avif');
+    expect(result.output).toContain('Convert it to JPEG first');
+    expect(result.output).toContain('/workspace/photo.jpg');
+    // AVIF has no dedicated Linux decoder in the policy, so the guidance is
+    // sips (macOS) or ImageMagick — never heif-convert.
+    expect(result.output).toMatch(/sips -s format jpeg|magick/);
+    expect(result.output).not.toContain('heif-convert');
+  });
 });

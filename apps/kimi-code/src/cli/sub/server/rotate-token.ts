@@ -6,7 +6,7 @@
  * auth check, so rotation takes effect without a restart.
  */
 
-import { getLiveLock, rotateServerToken } from '@moonshot-ai/server';
+import { getLiveLock, rotateServerToken } from '@moonshot-ai/kap-server';
 import chalk from 'chalk';
 import type { Command } from 'commander';
 

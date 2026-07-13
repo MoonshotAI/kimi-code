@@ -31,6 +31,10 @@ import type { ContentPart } from '#/app/llmProtocol/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { compressImageContentParts } from '#/agent/media/image-compress';
+import {
+  buildUnsupportedImageNotice,
+  isModelAcceptedImageMime,
+} from '#/agent/media/image-format-policy';
 import { persistOriginalImage } from '#/agent/media/image-originals';
 import type { MCPContentBlock, MCPToolResult } from './types';
 
@@ -129,6 +133,15 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
   if (block.type === 'resource_link' && typeof block.uri === 'string') {
     const mimeType = block.mimeType ?? 'application/octet-stream';
     if (mimeType.startsWith('image/')) {
+      // The declared MIME is the only format signal for a remote image: an
+      // extensionless or signed URL gives the extension gate nothing to work
+      // with, and the provider fetches it server-side. When the server
+      // honestly declares a format providers reject (e.g. an image search
+      // tool returning AVIF links), drop the image for a notice that keeps
+      // the URL — the model can still fetch and convert it.
+      if (!isModelAcceptedImageMime(mimeType)) {
+        return { type: 'text', text: buildUnsupportedImageNotice(mimeType, block.uri) };
+      }
       return { type: 'image_url', imageUrl: { url: block.uri } };
     }
     if (mimeType.startsWith('audio/')) {

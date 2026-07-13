@@ -18,6 +18,14 @@ export type {
 } from './services/pinoLoggerService';
 export { acquireLock, getLiveLock, DEFAULT_LOCK_PATH, DEFAULT_LOCK_DIR } from './lock';
 export type { AcquireLockOptions, AcquireLockResult, LockContents } from './lock';
+export { resolveServiceManager, ServiceUnavailableError, ServiceUnsupportedError } from './svc';
+export type {
+  InstallArgs,
+  InstallResult,
+  LifecycleResult,
+  ServiceManager,
+  ServiceStatus,
+} from './svc';
 export {
   createInstanceRegistry,
   listLiveServerInstances,

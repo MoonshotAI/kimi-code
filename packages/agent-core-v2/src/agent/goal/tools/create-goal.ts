@@ -1,7 +1,8 @@
 /**
  * CreateGoalTool — lets the main agent start an explicit goal on the user's
  * behalf. The goal becomes durable, structured state owned by the agent's
- * goal service, not text parsed from a slash command.
+ * goal service, not text parsed from a slash command. Registered for the main
+ * agent only, mirroring v1's `agent.type === 'main'` gate.
  */
 
 import { z } from 'zod';
@@ -10,6 +11,7 @@ import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
@@ -80,4 +82,6 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
   }
 }
 
-registerTool(CreateGoalTool);
+registerTool(CreateGoalTool, {
+  when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
+});

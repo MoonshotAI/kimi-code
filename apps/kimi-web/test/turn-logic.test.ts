@@ -336,6 +336,176 @@ describe('messagesToTurns', () => {
   });
 });
 
+describe('messagesToTurns resync dedup', () => {
+  it('drops a resync-seeded copy that differs only by signature, progress, and part boundaries', () => {
+    const turns = messagesToTurns(
+      [
+        // Persisted transcript copy: thinking carries the provider signature,
+        // text split at the model's part boundary, plain tool_use.
+        message(
+          'a1',
+          'assistant',
+          [
+            { type: 'thinking', thinking: 'let me check', signature: 'sig-abc' },
+            { type: 'text', text: 'I will ' },
+            { type: 'text', text: 'run ls' },
+            { type: 'toolUse', toolCallId: 'tool-1', toolName: 'bash', input: { command: 'ls' } },
+          ],
+          { promptId: 'p1' },
+        ),
+        // Resync seed from in_flight_turn: no signature, streams concatenated
+        // into single parts, tool card carrying live progress outputLines.
+        message(
+          'seed',
+          'assistant',
+          [
+            { type: 'thinking', thinking: 'let me check' },
+            { type: 'text', text: 'I will run ls' },
+            {
+              type: 'toolUse',
+              toolCallId: 'tool-1',
+              toolName: 'bash',
+              input: { command: 'ls' },
+              outputLines: ['total 8'],
+            },
+          ],
+          { promptId: 'p1' },
+        ),
+      ],
+      [],
+      undefined,
+      true,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.thinking).toBe('let me check');
+    expect(turns[0]?.text).toBe('I will \nrun ls');
+    expect(turns[0]?.tools).toHaveLength(1);
+    // The seed's live progress survives the dedup — the persisted card had none.
+    expect(turns[0]?.tools?.[0]?.output).toEqual(['total 8']);
+  });
+
+  it('keeps the seeded message when the transcript has no copy of the current step yet', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [{ type: 'text', text: 'step one done' }], { promptId: 'p1' }),
+        message('seed', 'assistant', [{ type: 'text', text: 'step two streami' }], {
+          promptId: 'p1',
+        }),
+      ],
+      [],
+      undefined,
+      true,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.text).toBe('step one done\nstep two streami');
+  });
+
+  it('keeps a following step whose content differs', () => {
+    const turns = messagesToTurns(
+      [
+        message(
+          'a1',
+          'assistant',
+          [
+            { type: 'text', text: 'step one' },
+            { type: 'toolUse', toolCallId: 'tool-1', toolName: 'bash', input: { command: 'ls' } },
+          ],
+          { promptId: 'p1' },
+        ),
+        message('a2', 'assistant', [{ type: 'text', text: 'step two' }], { promptId: 'p1' }),
+      ],
+      [],
+      undefined,
+      false,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.text).toBe('step one\nstep two');
+  });
+
+  it('does not overwrite a settled tool result with seed progress', () => {
+    const turns = messagesToTurns(
+      [
+        message(
+          'a1',
+          'assistant',
+          [{ type: 'toolUse', toolCallId: 'tool-1', toolName: 'bash', input: { command: 'ls' } }],
+          { promptId: 'p1' },
+        ),
+        message('t1', 'tool', [
+          { type: 'toolResult', toolCallId: 'tool-1', output: 'real result' },
+        ]),
+        message(
+          'seed',
+          'assistant',
+          [
+            {
+              type: 'toolUse',
+              toolCallId: 'tool-1',
+              toolName: 'bash',
+              input: { command: 'ls' },
+              outputLines: ['stale progress'],
+            },
+          ],
+          { promptId: 'p1' },
+        ),
+      ],
+      [],
+      undefined,
+      false,
+    );
+
+    expect(turns[0]?.tools).toHaveLength(1);
+    expect(turns[0]?.tools?.[0]?.output).toEqual(['real result']);
+  });
+
+  it('drops a seed whose finished parallel tools left running_tools (subset of the persisted message)', () => {
+    const turns = messagesToTurns(
+      [
+        message(
+          'a1',
+          'assistant',
+          [
+            { type: 'text', text: 'running two tools' },
+            { type: 'toolUse', toolCallId: 'tool-a', toolName: 'bash', input: { command: 'a' } },
+            { type: 'toolUse', toolCallId: 'tool-b', toolName: 'bash', input: { command: 'b' } },
+          ],
+          { promptId: 'p1' },
+        ),
+        message('t1', 'tool', [{ type: 'toolResult', toolCallId: 'tool-a', output: 'a done' }]),
+        // tool-a finished and left running_tools; the seed carries only tool-b.
+        message(
+          'seed',
+          'assistant',
+          [
+            { type: 'text', text: 'running two tools' },
+            {
+              type: 'toolUse',
+              toolCallId: 'tool-b',
+              toolName: 'bash',
+              input: { command: 'b' },
+              outputLines: ['b progress'],
+            },
+          ],
+          { promptId: 'p1' },
+        ),
+      ],
+      [],
+      undefined,
+      true,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.text).toBe('running two tools');
+    expect(turns[0]?.tools).toMatchObject([
+      { id: 'tool-a', status: 'ok', output: ['a done'] },
+      { id: 'tool-b', status: 'running', output: ['b progress'] },
+    ]);
+  });
+});
+
 describe('latestTodos', () => {
   it('returns the newest todo write and ignores later read-only queries', () => {
     expect(

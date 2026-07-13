@@ -13,6 +13,7 @@
  *   GET    /sessions/{session_id}/children     list child sessions
  *   POST   /sessions/{session_id}/children     create child session (fork+tag)
  *   GET    /sessions/{session_id}/status       best-effort
+ *   GET    /sessions/{session_id}/goal         current goal (null when none)
  *   GET    /sessions/{session_id}/warnings     agents-md-oversized notice
  *
  * The `POST /sessions/{tail}` actions split into two groups. The thin
@@ -26,9 +27,10 @@
  * `/sessions/{id}/children` endpoints call `ISessionLifecycleService.createChild`
  * and `ISessionIndex.list({ childOf })` directly — the child markers and
  * parent-title default live in the lifecycle, and the child filter lives in the
- * index. Only `POST /sessions/{id}/profile` (`updateProfile`) and
- * `GET /sessions/{id}/status` go through `ISessionLegacyService` (the
- * `agent_config` patch and the status rollup hold real cross-domain adaptation);
+ * index. Only `POST /sessions/{id}/profile` (`updateProfile`),
+ * `GET /sessions/{id}/status`, and `GET /sessions/{id}/goal` go through
+ * `ISessionLegacyService` (the `agent_config` patch, the status rollup, and the
+ * current-goal read hold real cross-domain adaptation);
  * the route forwards each adapter result verbatim, mirroring v1's thin handler.
  * `create`, `fork`, and child creation publish `event.session.created` on the
  * core event bus, matching v1.
@@ -101,6 +103,7 @@ import {
   createSessionRequestSchema,
   emptySessionUsage,
   forkSessionRequestSchema,
+  getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
   pageResponseSchema,
   sessionAbortResponseSchema,
@@ -916,6 +919,35 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     statusRoute.path,
     statusRoute.options,
     statusRoute.handler as Parameters<SessionRouteHost['get']>[2],
+  );
+
+  const goalRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/{session_id}/goal',
+      params: sessionIdParamSchema,
+      success: { data: getSessionGoalResponseSchema },
+      errors: {
+        [ErrorCode.VALIDATION_FAILED]: { detailsSchema },
+        [ErrorCode.SESSION_NOT_FOUND]: {},
+      },
+      description: 'Get the current session goal (null when none is active)',
+      tags: ['sessions'],
+    },
+    async (req, reply) => {
+      try {
+        const { session_id } = req.params;
+        const goal = await core.accessor.get(ISessionLegacyService).goal(session_id);
+        reply.send(okEnvelope(goal, req.id));
+      } catch (error) {
+        sendMappedError(reply, req.id, error);
+      }
+    },
+  );
+  app.get(
+    goalRoute.path,
+    goalRoute.options,
+    goalRoute.handler as Parameters<SessionRouteHost['get']>[2],
   );
 
   const sessionWarningsRoute = defineRoute(

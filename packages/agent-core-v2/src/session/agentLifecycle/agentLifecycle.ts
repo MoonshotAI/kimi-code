@@ -19,9 +19,11 @@
  * - The main agent is an ordinary agent whose only distinction is
  *   `agentId === 'main'`. Business operations (create / fork / run / lookup)
  *   treat it uniformly; the only main-specific surface is the
- *   `onDidCreateMain` event, fired via `notifyMainCreated` by the main
- *   bootstrapper so main-only capabilities subscribe without filtering every
- *   `onDidCreate`.
+ *   `onDidCreateMain` event, fired idempotently via `notifyMainCreated` by the
+ *   main bootstrapper so main-only capabilities subscribe without filtering
+ *   every `onDidCreate`.
+ * - Creation is single-flight per explicit agent id, and readiness lookups
+ *   return only settled handles.
  * - `forkedFrom` is provenance only (a recorded value); business logic must
  *   not branch on it.
  */
@@ -148,18 +150,13 @@ export interface IAgentLifecycleService {
   readonly onDidDispose: Event<string>;
   /** Create an agent from zero (empty context). */
   create(opts?: CreateAgentOptions): Promise<IAgentScopeHandle>;
+  whenReady(agentId: string): Promise<IAgentScopeHandle | undefined>;
   /**
    * Resolve the session/plugin MCP config and wait for the initial connection
    * attempt to finish. Per-server failures are reflected in MCP status entries
    * rather than rejecting this promise.
    */
   ensureMcpReady(): Promise<void>;
-  /**
-   * Fire {@link onDidCreateMain} for the given handle. Called exactly once by
-   * the main-agent bootstrapper (`ensureMainAgent`) after main-only wirings
-   * are attached, so main-only capabilities can subscribe without filtering
-   * every {@link onDidCreate}. No other caller should invoke it.
-   */
   notifyMainCreated(handle: IAgentScopeHandle): void;
   /**
    * Fire {@link onDidStopAgentTask} for a mirrored run that has stopped.

@@ -330,6 +330,25 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(after.body.data.permission).toBe('yolo');
   });
 
+  it('returns the current goal via GET /goal', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+
+    const before = await getJson<unknown>(`/api/v1/sessions/${id}/goal`);
+    expect(before.body.data).toBeNull();
+
+    await postJson(`/api/v1/sessions/${id}/profile`, {
+      agent_config: { goal_objective: 'fix all lint warnings' },
+    });
+
+    const after = await getJson<{ objective: string; status: string } | null>(
+      `/api/v1/sessions/${id}/goal`,
+    );
+    expect(after.body.data?.objective).toBe('fix all lint warnings');
+    expect(after.body.data?.status).toBe('active');
+  });
+
   it('archives a session via :archive and reflects archived flag on get', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });

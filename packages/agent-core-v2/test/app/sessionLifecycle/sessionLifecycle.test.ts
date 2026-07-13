@@ -240,6 +240,7 @@ function agentLifecycleStub(): IAgentLifecycleService {
     onDidCreateMain: () => ({ dispose: () => {} }),
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.reject(new Error('not implemented')),
+    whenReady: () => Promise.resolve(undefined),
     notifyMainCreated: () => {},
     notifyAgentTaskStopped: () => {},
     ensureMcpReady: () => Promise.resolve(),
@@ -267,6 +268,7 @@ function agentLifecycleWithMainStub(): IAgentLifecycleService {
   return {
     ...agentLifecycleStub(),
     getHandle: (id) => (id === MAIN_AGENT_ID ? main : undefined),
+    whenReady: (id) => Promise.resolve(id === MAIN_AGENT_ID ? main : undefined),
   };
 }
 
@@ -311,6 +313,7 @@ function agentLifecycleCapturingPlanSpy(opts: { mainPreexists?: boolean } = {}):
   const lifecycle: IAgentLifecycleService = {
     ...agentLifecycleStub(),
     getHandle: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
+    whenReady: (id: string) => Promise.resolve(id === MAIN_AGENT_ID ? mainHandle : undefined),
     create,
   };
   return { lifecycle, enter, create };
@@ -424,6 +427,33 @@ describe('SessionLifecycleService', () => {
     // create() awaits ISessionMetadata.ready, so a resolved handle implies the
     // metadata service was resolved inside the new session scope.
     expect(h.kind).toBe(LifecycleScope.Session);
+  });
+
+  it('create appends the session to the shared session_index.jsonl', async () => {
+    const appended: unknown[] = [];
+    const svc = build([
+      stubPair(IAppendLogStore, {
+        ...appendLogStoreStub(),
+        append: (scope: string, key: string, record: unknown) => {
+          appended.push({ scope, key, record });
+        },
+      }),
+    ]);
+
+    await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+    const workspaceId = encodeWorkDirKey('/tmp/proj');
+    expect(appended).toEqual([
+      {
+        scope: '',
+        key: 'session_index.jsonl',
+        record: {
+          sessionId: 's1',
+          sessionDir: `/tmp/sessions/${workspaceId}/s1`,
+          workDir: '/tmp/proj',
+        },
+      },
+    ]);
   });
 
   it('registers the workspace during create so a cold resume can resolve the workdir', async () => {

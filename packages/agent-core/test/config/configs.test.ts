@@ -101,6 +101,7 @@ compaction_trigger_ratio = 0.85
 [background]
 max_running_tasks = 4
 keep_alive_on_exit = false
+bash_auto_background_on_timeout = false
 kill_grace_period_ms = 2000
 print_wait_ceiling_s = 3600
 
@@ -185,6 +186,7 @@ describe('harness config TOML loader', () => {
     expect(config.background).toMatchObject({
       maxRunningTasks: 4,
       keepAliveOnExit: false,
+      bashAutoBackgroundOnTimeout: false,
       killGracePeriodMs: 2000,
       printWaitCeilingS: 3600,
     });

@@ -5,12 +5,14 @@
  *
  * The argument is intentionally just a status enum — no reason or evidence. The
  * model explains itself in its own reply; the status is the machine-readable
- * signal.
+ * signal. Registered for the main agent only, mirroring v1's
+ * `agent.type === 'main'` gate.
  */
 
 import { z } from 'zod';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
@@ -91,4 +93,6 @@ function isUpdateGoalStatus(status: unknown): status is UpdateGoalToolInput['sta
   return status === 'active' || status === 'complete' || status === 'blocked';
 }
 
-registerTool(UpdateGoalTool);
+registerTool(UpdateGoalTool, {
+  when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
+});

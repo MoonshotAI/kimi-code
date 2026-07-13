@@ -90,8 +90,6 @@ function makeConn(socket: FakeSocket, opts: Partial<WsConnectionV1Options> = {})
     connectionRegistry: makeRegistry(),
     remoteAddress: null,
     userAgent: null,
-    // Keep the heartbeat far from the test window so pings never interfere.
-    pingIntervalMs: 600_000,
     ...opts,
   });
 }

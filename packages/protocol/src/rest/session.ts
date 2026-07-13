@@ -17,6 +17,7 @@
 
 import { z } from 'zod';
 
+import { goalSnapshotSchema } from '../events';
 import { messageSchema } from '../message';
 import { cursorQuerySchema, pageResponseSchema } from '../pagination';
 import {
@@ -119,6 +120,12 @@ export const sessionStatusResponseSchema = z.object({
   context_usage: z.number().min(0).max(1),
 });
 export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;
+
+// GET /sessions/{id}/goal — the session's current goal snapshot (camelCase,
+// same shape as the `goal.updated` WS event payload), or null when none is
+// active.
+export const getSessionGoalResponseSchema = goalSnapshotSchema.nullable();
+export type GetSessionGoalResponse = z.infer<typeof getSessionGoalResponseSchema>;
 
 export const sessionWarningSchema = z.object({
   code: z.string(),

@@ -101,9 +101,9 @@ interface SessionState {
   // Assistant message tracking
   currentAssistantMsgId: string | undefined;
 
-  // Per-turn accumulated stream lengths — aligned against the wire `offset`
-  // on volatile delta frames (v2 sync protocol) to skip duplicates and
-  // detect gaps after a snapshot seed.
+  // Per-step accumulated stream lengths — aligned against the (step-relative)
+  // wire `offset` on volatile delta frames (v2 sync protocol) to skip
+  // duplicates and detect gaps after a snapshot seed.
   turnTextLen: number;
   turnThinkLen: number;
 
@@ -500,9 +500,10 @@ export interface AgentProjector {
   /**
    * Seed mid-turn state from a session snapshot's `in_flight_turn` (v2 sync):
    * resets per-session state, builds the partially-streamed assistant message
-   * (thinking + text + running tool_use parts), and returns the messageCreated
-   * AppEvent to apply to the reducer. Live deltas continue appending; their
-   * wire `offset` aligns against the seeded text so the overlap window around
+   * (thinking + text + running tool_use parts — the current step only; earlier
+   * steps arrive via the transcript), and returns the messageCreated AppEvent
+   * to apply to the reducer. Live deltas continue appending; their wire
+   * `offset` aligns against the seeded text so the overlap window around
    * snapshot/subscribe is exact. Session status is NOT seeded here — the REST
    * snapshot's `session.status` is the authoritative value.
    */
@@ -573,6 +574,7 @@ export function createAgentProjector(): AgentProjector {
       s.toolStartTimes.set(tool.toolCallId, Date.now());
     }
     s.currentAssistantMsgId = msg.id;
+    // Seeded step-relative lengths; the next turn.step.started resets both.
     s.turnTextLen = turn.assistantText.length;
     s.turnThinkLen = turn.thinkingText.length;
 
@@ -706,7 +708,7 @@ export function createAgentProjector(): AgentProjector {
         if (turnId !== undefined) {
           s.turnPromptId.set(turnId, existingPromptId);
         }
-        // Fresh turn → fresh per-turn stream offsets.
+        // Fresh turn → fresh step stream offsets.
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
         break;
@@ -724,6 +726,12 @@ export function createAgentProjector(): AgentProjector {
           s.currentPromptId = promptId;
           if (turnId !== undefined) s.turnPromptId.set(turnId, promptId);
         }
+
+        // Fresh step → fresh stream offsets: the server's delta `offset` is
+        // step-relative, so without this reset every delta from step 2 on is
+        // silently skipped or misread as a gap.
+        s.turnTextLen = 0;
+        s.turnThinkLen = 0;
 
         // Create a new pending assistant message
         const msg = startAssistantMessage(s, sessionId, promptId);

@@ -5,6 +5,7 @@ import type { KimiApiConfig } from '../config';
 import { buildRestUrl, buildWsUrl } from '../config';
 import type {
   AppConfig,
+  AppGoal,
   AppMessage,
   AppMessageRole,
   AppModel,
@@ -40,6 +41,7 @@ import {
   toAppConfig,
   toAppEvent,
   toAppFsEntry,
+  toAppGoal,
   toAppMessage,
   toAppModel,
   toAppProvider,
@@ -63,6 +65,7 @@ import type {
   WireFsBrowseResult,
   WireFsEntry,
   WireFsHomeResult,
+  WireGoalSnapshot,
   WireMessage,
   WireModel,
   WireOAuthCancelResult,
@@ -413,6 +416,17 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
   }
 
+  /**
+   * GET /sessions/{id}/goal — the session's current goal, or null when no goal
+   * is active.
+   */
+  async getSessionGoal(sessionId: string): Promise<AppGoal | null> {
+    const data = await this.http.get<WireGoalSnapshot | null>(
+      `/sessions/${encodeURIComponent(sessionId)}/goal`,
+    );
+    return toAppGoal(data);
+  }
+
   async getSessionWarnings(sessionId: string): Promise<WireSessionWarning[]> {
     const data = await this.http.get<WireSessionWarningsResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/warnings`,
@@ -495,6 +509,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
             },
       pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
       pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
+      // Older servers omit the roster entirely; treat as an empty roster.
+      subagents: (data.subagents ?? []).map(toAppTask),
     };
   }
 

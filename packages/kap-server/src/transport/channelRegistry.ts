@@ -23,6 +23,7 @@ import {
   IAgentPermissionRulesService,
   IAgentPlanService,
   IAgentProfileService,
+  IAgentPromptService,
   IAgentRPCService,
   IAgentSwarmService,
   IAgentTaskService,
@@ -31,6 +32,7 @@ import {
   IAuthSummaryService,
   IBootstrapService,
   IConfigService,
+  IFaultInjectionService,
   IFlagService,
   IHostFolderBrowser,
   IOAuthService,
@@ -229,10 +231,12 @@ const EXPOSED_SERVICES: readonly ServiceIdentifier<unknown>[] = [
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
   IAgentProfileService,
+  IAgentPromptService,
   IAgentContextMemoryService,
   IAgentMcpService,
   IAgentToolRegistryService,
   IAgentRPCService,
+  IFaultInjectionService,
 ];
 
 for (const id of EXPOSED_SERVICES) {
