@@ -48,6 +48,7 @@ export interface ExportSessionManifest {
   readonly sessionLogPath?: string | undefined;
   /** zip-relative path to the bundled global diagnostic log (only when --include-global-log). */
   readonly globalLogPath?: string | undefined;
+  readonly webLogPath?: string;
   /** How the CLI was installed (e.g. 'npm-global', 'native'). */
   readonly installSource?: string | undefined;
   readonly shellEnv?: ShellEnvironment | undefined;
@@ -60,10 +61,17 @@ export interface ExportSessionResult {
   readonly manifest: ExportSessionManifest;
 }
 
+export interface ExportSessionOptions {
+  readonly webLog?: string;
+}
+
 export interface ISessionExportService {
   readonly _serviceBrand: undefined;
 
-  export(input: ExportSessionPayload): Promise<ExportSessionResult>;
+  export(
+    input: ExportSessionPayload,
+    options?: ExportSessionOptions,
+  ): Promise<ExportSessionResult>;
 }
 
 export const ISessionExportService: ServiceIdentifier<ISessionExportService> =

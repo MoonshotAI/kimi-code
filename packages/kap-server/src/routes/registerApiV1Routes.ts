@@ -30,6 +30,7 @@ import { registerModelCatalogRoutes } from './modelCatalog';
 import { registerOAuthRoutes } from './oauth';
 import { registerPromptsRoutes } from './prompts';
 import { registerQuestionsRoutes } from './questions';
+import { registerSessionExportRoute } from './sessionExport';
 import { registerSessionsRoutes } from './sessions';
 import { registerShutdownRoutes } from './shutdown';
 import { registerSnapshotRoutes } from './snapshot';
@@ -99,6 +100,11 @@ export async function registerApiV1Routes(
       registerSessionsRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
+      );
+      registerSessionExportRoute(
+        apiV1 as unknown as Parameters<typeof registerSessionExportRoute>[0],
+        core,
+        { serverVersion: opts.serverVersion },
       );
       registerSkillsRoutes(apiV1 as unknown as Parameters<typeof registerSkillsRoutes>[0], core);
       registerMessagesRoutes(

@@ -4,7 +4,7 @@
 
 import { computed, reactive, ref, watch } from 'vue';
 import { i18n } from '../i18n';
-import { traceClientEvent } from '../debug/trace';
+import { traceClientEvent, traceKeyEvent } from '../debug/trace';
 import { getKimiWebApi } from '../api';
 import { isDaemonApiError, isDaemonNetworkError } from '../api/errors';
 import {
@@ -496,6 +496,10 @@ if (typeof window !== 'undefined') {
 function recoverStaleConnection(): void {
   if (eventConn === null) return;
   if (!eventConn.health().stale) return;
+  traceKeyEvent('ws:stale-reconnect', {
+    sessionId: rawState.activeSessionId,
+    status: 'stale',
+  });
   traceClientEvent('ws: stale socket on focus, reconnecting', {
     activeSessionId: rawState.activeSessionId,
   });
@@ -948,6 +952,7 @@ function connectEventsIfNeeded(): void {
   // Guard: jsdom and some environments have no WebSocket
   if (typeof WebSocket === 'undefined') return;
 
+  traceKeyEvent('ws:connection', { status: 'connecting' });
   rawState.connection = 'connecting';
 
   const api = getKimiWebApi();
@@ -973,6 +978,11 @@ function connectEventsIfNeeded(): void {
     },
 
     onResync(sessionId: string, currentSeq: number, epoch?: string) {
+      traceKeyEvent('ws:resync', {
+        sessionId,
+        status: 'required',
+        seq: currentSeq,
+      });
       // Flush streaming deltas already queued so they render on the
       // pre-snapshot state (the snapshot is authoritative and will overwrite
       // them). Stragglers that arrive during the snapshot fetch are drained
@@ -989,7 +999,12 @@ function connectEventsIfNeeded(): void {
       snapshotSyncRunner.request(sessionId);
     },
 
-    onError(_code: number, msg: string, _fatal: boolean) {
+    onError(code: number, msg: string, fatal: boolean) {
+      traceKeyEvent('ws:error', {
+        status: 'failed',
+        errorCode: code,
+        fatal,
+      });
       pushWarning({
         severity: 'error',
         title: i18n.global.t('warnings.wsTitle'),
@@ -1001,6 +1016,9 @@ function connectEventsIfNeeded(): void {
     },
 
     onConnectionChange(connected: boolean) {
+      traceKeyEvent('ws:connection', {
+        status: connected ? 'connected' : 'disconnected',
+      });
       rawState.connected = connected;
       rawState.connection = connected ? 'connected' : 'disconnected';
       // The data channel is healthy again (server_hello received). Clear any
@@ -2743,6 +2761,7 @@ export function useKimiWebClient() {
     reorderWorkspaces,
     setWorkspaceSortMode,
     archiveSession: workspaceState.archiveSession,
+    exportSession: workspaceState.exportSession,
     restoreSession: workspaceState.restoreSession,
     loadArchivedSessions: workspaceState.loadArchivedSessions,
     compact: workspaceState.compact,

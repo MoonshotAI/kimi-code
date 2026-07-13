@@ -14,6 +14,7 @@ const apiMock = vi.hoisted(() => ({
   addWorkspace: vi.fn(),
   updateWorkspace: vi.fn(),
   createSession: vi.fn(),
+  exportSession: vi.fn(),
   updateSession: vi.fn(),
   submitPrompt: vi.fn(),
   respondQuestion: vi.fn(),
@@ -274,6 +275,109 @@ describe('useWorkspaceState — abortCurrentPrompt', () => {
 
     expect(apiMock.abortPrompt).not.toHaveBeenCalled();
     expect(apiMock.abortSession).toHaveBeenCalledWith('sess_1');
+  });
+});
+
+describe('useWorkspaceState — exportSession', () => {
+  let anchor: {
+    href: string;
+    download: string;
+    click: ReturnType<typeof vi.fn>;
+    remove: ReturnType<typeof vi.fn>;
+  };
+  let append: ReturnType<typeof vi.fn>;
+  let createObjectURL: ReturnType<typeof vi.fn>;
+  let revokeObjectURL: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    apiMock.exportSession.mockReset();
+    anchor = { href: '', download: '', click: vi.fn(), remove: vi.fn() };
+    append = vi.fn();
+    createObjectURL = vi.fn(() => 'blob:session-export');
+    revokeObjectURL = vi.fn();
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => anchor),
+      body: { append },
+    });
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('downloads the returned ZIP and reclaims its temporary browser resources', async () => {
+    const blob = new Blob(['zip']);
+    apiMock.exportSession.mockResolvedValue({ blob, fileName: 'sess_1.zip' });
+    const workspace = useWorkspaceState(createState(), createDeps());
+
+    await workspace.exportSession();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(apiMock.exportSession).toHaveBeenCalledWith('sess_1', expect.any(String));
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(anchor).toMatchObject({ href: 'blob:session-export', download: 'sess_1.zip' });
+    expect(append).toHaveBeenCalledWith(anchor);
+    expect(anchor.click).toHaveBeenCalledOnce();
+    expect(anchor.remove).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+  });
+
+  it('keeps one request targeted at the session selected when export started', async () => {
+    let resolveExport!: (value: { blob: Blob; fileName: string }) => void;
+    apiMock.exportSession.mockReturnValue(
+      new Promise((resolve) => {
+        resolveExport = resolve;
+      }),
+    );
+    const state = createState();
+    const workspace = useWorkspaceState(state, createDeps());
+
+    const first = workspace.exportSession();
+    state.activeSessionId = 'sess_2';
+    const second = workspace.exportSession();
+    resolveExport({ blob: new Blob(['zip']), fileName: 'sess_1.zip' });
+    await Promise.all([first, second]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(apiMock.exportSession).toHaveBeenCalledTimes(1);
+    expect(apiMock.exportSession).toHaveBeenCalledWith('sess_1', expect.any(String));
+  });
+
+  it('reclaims the object URL when the browser rejects the download click', async () => {
+    apiMock.exportSession.mockResolvedValue({ blob: new Blob(['zip']), fileName: 'sess_1.zip' });
+    anchor.click.mockImplementation(() => {
+      throw new Error('download blocked');
+    });
+    const deps = createDeps();
+    const workspace = useWorkspaceState(createState(), deps);
+
+    await workspace.exportSession();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(anchor.remove).toHaveBeenCalledOnce();
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'exportSession',
+      expect.any(Error),
+      { sessionId: 'sess_1' },
+    );
+  });
+
+  it('surfaces an error instead of silently exporting without an active session', async () => {
+    const state = createState();
+    state.activeSessionId = undefined;
+    const deps = createDeps();
+    const workspace = useWorkspaceState(state, deps);
+
+    await workspace.exportSession();
+
+    expect(apiMock.exportSession).not.toHaveBeenCalled();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'exportSession',
+      expect.any(Error),
+      expect.objectContaining({ message: expect.any(String) }),
+    );
   });
 });
 

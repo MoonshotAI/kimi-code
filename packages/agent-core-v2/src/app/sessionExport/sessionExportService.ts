@@ -27,6 +27,7 @@ import { buildExportManifest, type ExportSessionManifestSummary } from './manife
 import {
   type ExportSessionPayload,
   type ExportSessionResult,
+  type ExportSessionOptions,
   ISessionExportService,
 } from './sessionExport';
 import { scanSessionWire } from './wire-scan';
@@ -38,6 +39,7 @@ import {
 
 const SESSION_LOG_REL = 'logs/kimi-code.log';
 const GLOBAL_LOG_REL = 'logs/global/kimi-code.log';
+const WEB_LOG_REL = 'logs/kimi-web.jsonl';
 
 export class SessionExportService implements ISessionExportService {
   declare readonly _serviceBrand: undefined;
@@ -50,7 +52,10 @@ export class SessionExportService implements ISessionExportService {
     @ILogService private readonly log: ILogService,
   ) {}
 
-  async export(input: ExportSessionPayload): Promise<ExportSessionResult> {
+  async export(
+    input: ExportSessionPayload,
+    options: ExportSessionOptions = {},
+  ): Promise<ExportSessionResult> {
     if (input.version.trim().length === 0) {
       throw new Error2(
         ErrorCodes.SESSION_EXPORT_MISSING_VERSION,
@@ -79,6 +84,7 @@ export class SessionExportService implements ISessionExportService {
       request: input,
       summary: liveSummary,
       globalLogPath: resolveGlobalLogPath(this.bootstrap.homeDir),
+      webLog: options.webLog,
     });
   }
 
@@ -149,6 +155,7 @@ export async function exportSessionDirectory(input: {
   readonly request: ExportSessionPayload;
   readonly summary: ExportSessionDirectorySummary;
   readonly globalLogPath?: string | undefined;
+  readonly webLog?: string;
 }): Promise<ExportSessionResult> {
   const sessionDir = input.summary.sessionDir;
   const sessionFiles = await collectFilesRecursive(sessionDir);
@@ -174,6 +181,10 @@ export async function exportSessionDirectory(input: {
       bundledGlobal = true;
     }
   }
+  const bundledWebLog = input.webLog !== undefined;
+  if (input.webLog !== undefined) {
+    extras.push({ data: Buffer.from(input.webLog, 'utf8'), target: WEB_LOG_REL });
+  }
 
   const manifest = buildExportManifest({
     summary: input.summary,
@@ -182,6 +193,7 @@ export async function exportSessionDirectory(input: {
     sessionScan,
     sessionLogPath: hasSessionLog ? SESSION_LOG_REL : undefined,
     globalLogPath: bundledGlobal ? GLOBAL_LOG_REL : undefined,
+    webLogPath: bundledWebLog ? WEB_LOG_REL : undefined,
     installSource: input.request.installSource,
     shellEnv: input.request.shellEnv,
   });

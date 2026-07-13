@@ -35,6 +35,7 @@ import {
 } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
 import { coerceThinkingForModel } from '../../lib/modelThinking';
+import { traceKeyEvent, traceToJsonl } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
 import type {
@@ -295,6 +296,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     fileDiffLines,
     fileDiffLoading,
   } = deps;
+  let exportInFlight = false;
 
   async function loadOlderMessages(sessionId: string): Promise<void> {
     if (rawState.messagesLoadingMoreBySession[sessionId]) return;
@@ -719,6 +721,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   async function load(): Promise<void> {
+    const startedAt = Date.now();
+    let traceStatus = 'accepted';
+    traceKeyEvent('app:load:start');
     rawState.loading = true;
     // The very first load gates on /auth before anything else: a transient
     // failure there (daemon still booting, network blip, 5xx) must NOT be read
@@ -731,6 +736,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       if (firstLoad && (await waitForFirstAuth()) === 'server-auth-required') {
         authResolved = false;
+        traceStatus = 'auth-required';
         return;
       }
       const api = getKimiWebApi();
@@ -784,6 +790,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         await selectSession(sessions[0]!.id, { urlMode: 'replace' });
       }
     } catch (err) {
+      traceStatus = 'failed';
       pushOperationFailure('load', err);
       // Do not re-throw — app stays mounted with empty sessions
     } finally {
@@ -791,6 +798,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Without a definitive /auth outcome the splash stays up (retry loop or
       // ServerAuthDialog is handling it) — never expose the half-loaded app.
       if (authResolved) initialized.value = true;
+      traceKeyEvent('app:load:complete', {
+        status: traceStatus,
+        sessionId: rawState.activeSessionId,
+        sessionCount: rawState.sessions.length,
+        workspaceCount: rawState.workspaces.length,
+        durationMs: Date.now() - startedAt,
+      });
     }
   }
 
@@ -2129,6 +2143,77 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
+  /** Export the session selected when the action starts. A synchronous lock
+   * prevents duplicate ZIP generation and a later session switch cannot
+   * redirect the in-flight request. */
+  async function exportSession(): Promise<void> {
+    if (exportInFlight) return;
+    const sessionId = rawState.activeSessionId;
+    if (!sessionId) {
+      const message = t('commands.export.noSession');
+      traceKeyEvent('export:failed', { status: 'no-session' });
+      pushOperationFailure('exportSession', new Error(message), { message });
+      return;
+    }
+    exportInFlight = true;
+    const startedAt = Date.now();
+    traceKeyEvent('export:start', { sessionId });
+    try {
+      const webLog = traceToJsonl();
+      const { blob, fileName } = await getKimiWebApi().exportSession(sessionId, webLog);
+      if (typeof document === 'undefined') throw new Error('Document is unavailable');
+      const url = URL.createObjectURL(blob);
+      let anchor: HTMLAnchorElement | undefined;
+      try {
+        anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = fileName;
+        document.body.append(anchor);
+        anchor.click();
+      } finally {
+        anchor?.remove();
+        setTimeout(() => {
+          try {
+            URL.revokeObjectURL(url);
+          } catch {
+            // Object URL cleanup is best-effort in restricted browser contexts.
+          }
+        }, 0);
+      }
+      traceKeyEvent('export:accepted', {
+        sessionId,
+        status: 'accepted',
+        zipBytes: blob.size,
+        durationMs: Date.now() - startedAt,
+      });
+    } catch (error) {
+      const failure =
+        typeof error === 'object' && error !== null
+          ? (error as {
+              name?: unknown;
+              code?: unknown;
+              requestId?: unknown;
+              phase?: unknown;
+              status?: unknown;
+            })
+          : undefined;
+      traceKeyEvent('export:failed', {
+        sessionId,
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        errorName:
+          typeof failure?.name === 'string' ? failure.name : typeof error,
+        errorCode: typeof failure?.code === 'number' ? failure.code : undefined,
+        requestId: typeof failure?.requestId === 'string' ? failure.requestId : undefined,
+        phase: typeof failure?.phase === 'string' ? failure.phase : undefined,
+        httpStatus: typeof failure?.status === 'number' ? failure.status : undefined,
+      });
+      pushOperationFailure('exportSession', error, { sessionId });
+    } finally {
+      exportInFlight = false;
+    }
+  }
+
   /** Restore an archived session — calls API, then puts the returned session
    *  back at the front of the list so it reappears in the sidebar. */
   async function restoreSession(id: string): Promise<boolean> {
@@ -2474,6 +2559,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     renameWorkspace,
     deleteWorkspace,
     archiveSession,
+    exportSession,
     restoreSession,
     loadArchivedSessions,
     logout,

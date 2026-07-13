@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { join } from 'pathe';
+import { open as openZip } from 'yauzl';
 
 import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import {
@@ -135,6 +136,37 @@ describe('sessionExport', () => {
     await expect(stat(outputPath)).resolves.toMatchObject({ size: expect.any(Number) });
     expect(result.manifest.globalLogPath).toBeUndefined();
     expect(result.entries).not.toContain('logs/global/kimi-code.log');
+  });
+
+  it('includes a bounded Web log in the exported archive', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_demo', 'ses_web_log');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+    const webLog = [
+      JSON.stringify({ event: 'websocket.connected', time: 1 }),
+      JSON.stringify({ event: 'prompt.submitted', time: 2 }),
+    ].join('\n');
+    const outputPath = join(tmp, 'web-log.zip');
+
+    const result = await exportSessionDirectory({
+      request: {
+        sessionId: 'ses_web_log',
+        outputPath,
+        version: '1.0.0-test',
+      },
+      summary: {
+        id: 'ses_web_log',
+        sessionDir,
+      },
+      webLog,
+    });
+
+    expect(result.entries).toContain('logs/kimi-web.jsonl');
+    expect(result.manifest.webLogPath).toBe('logs/kimi-web.jsonl');
+    await expect(readZipEntry(outputPath, 'logs/kimi-web.jsonl')).resolves.toEqual(
+      Buffer.from(webLog, 'utf8'),
+    );
   });
 
   it('throws a coded error when the session is unknown', async () => {
@@ -442,4 +474,50 @@ function stubAgentWire(flush: () => Promise<void> = async () => {}): IAgentWireR
     flush,
     close: async () => {},
   };
+}
+
+function readZipEntry(path: string, target: string): Promise<Buffer> {
+  return new Promise<Buffer>((resolve, reject) => {
+    openZip(path, { lazyEntries: true }, (openError, zip) => {
+      if (openError !== null) {
+        reject(openError);
+        return;
+      }
+
+      let settled = false;
+      const fail = (error: Error): void => {
+        if (settled) return;
+        settled = true;
+        zip.close();
+        reject(error);
+      };
+
+      zip.once('error', fail);
+      zip.on('entry', (entry) => {
+        if (entry.fileName !== target) {
+          zip.readEntry();
+          return;
+        }
+        zip.openReadStream(entry, (streamError, stream) => {
+          if (streamError !== null) {
+            fail(streamError);
+            return;
+          }
+          const chunks: Buffer[] = [];
+          stream.on('data', (chunk: Buffer) => chunks.push(chunk));
+          stream.once('error', fail);
+          stream.once('end', () => {
+            if (settled) return;
+            settled = true;
+            zip.close();
+            resolve(Buffer.concat(chunks));
+          });
+        });
+      });
+      zip.once('end', () => {
+        fail(new Error(`zip entry not found: ${target}`));
+      });
+      zip.readEntry();
+    });
+  });
 }

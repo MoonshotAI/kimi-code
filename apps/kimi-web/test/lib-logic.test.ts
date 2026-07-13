@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   collectFilePathAliases,
   findFilePathLinks,
@@ -32,6 +32,75 @@ import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
 import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
 import GenericTool from '../src/components/chat/tool-calls/GenericTool.vue';
 import type { ToolCall } from '../src/types';
+import {
+  clearTrace,
+  sanitizeForTrace,
+  traceEntries,
+  traceKeyEvent,
+  tracePaused,
+  traceToJsonl,
+} from '../src/debug/trace';
+
+// The trace tests exercise its exported recording/serialization contract:
+// always-on key events are cloned, redacted, and bounded before export.
+
+describe('bounded Web trace', () => {
+  beforeEach(() => {
+    tracePaused.value = false;
+    clearTrace();
+  });
+
+  afterEach(() => {
+    clearTrace();
+  });
+
+  it('records key-path metadata without debug mode and does not retain input references', () => {
+    const metadata = {
+      sessionId: 'sess_1',
+      nested: { marker: 'before' },
+      apiKey: 'must-not-leak',
+    };
+    traceKeyEvent('session:test', metadata as unknown as Record<string, string>);
+
+    metadata.nested.marker = 'after';
+
+    expect(traceEntries()).toHaveLength(1);
+    expect(traceEntries()[0]?.detail).toMatchObject({
+      sessionId: 'sess_1',
+      nested: { marker: 'before' },
+      apiKey: '[redacted]',
+    });
+  });
+
+  it('caps object keys and reports how many were omitted', () => {
+    const input = Object.fromEntries(Array.from({ length: 60 }, (_, index) => [`key${index}`, index]));
+
+    const result = sanitizeForTrace(input) as Record<string, unknown>;
+
+    expect(result['_truncatedKeys']).toBe(10);
+    expect(Object.keys(result)).toHaveLength(51);
+  });
+
+  it('keeps at most 500 of the newest entries', () => {
+    for (let index = 0; index < 501; index++) {
+      traceKeyEvent('budget:event', { marker: index });
+    }
+
+    expect(traceEntries()).toHaveLength(500);
+    expect(traceEntries()[0]?.detail).toMatchObject({ marker: 1 });
+    expect(traceEntries().at(-1)?.detail).toMatchObject({ marker: 500 });
+  });
+
+  it('keeps serialized JSONL within the 256 KiB UTF-8 budget including newlines', () => {
+    for (let index = 0; index < 500; index++) {
+      traceKeyEvent('budget:utf8', { marker: index, detail: '😀'.repeat(400) });
+    }
+
+    const jsonl = traceToJsonl();
+    expect(new TextEncoder().encode(jsonl).byteLength).toBeLessThanOrEqual(256 * 1024);
+    expect(traceEntries().at(-1)?.detail).toMatchObject({ marker: 499 });
+  });
+});
 
 describe('workspace path input', () => {
   it('recognizes the supported absolute path forms', () => {

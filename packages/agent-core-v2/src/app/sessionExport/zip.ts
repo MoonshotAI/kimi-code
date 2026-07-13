@@ -7,7 +7,7 @@
  */
 
 import { createWriteStream } from 'node:fs';
-import { mkdir, readdir, readFile } from 'node:fs/promises';
+import { mkdir, readdir } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
@@ -53,27 +53,31 @@ export async function writeExportZip(args: {
 
   const entries: string[] = ['manifest.json'];
   const zip = new ZipFile();
-  zip.addBuffer(Buffer.from(JSON.stringify(args.manifest, null, 2), 'utf-8'), 'manifest.json');
+  const output = zip.outputStream as unknown as Readable;
+  const writing = pipeline(output, createWriteStream(args.outputPath));
 
-  for (const abs of args.sessionFiles) {
-    const rel = relative(args.sessionDir, abs).split(/[\\/]/).join('/');
-    const data = await readFile(abs);
-    zip.addBuffer(data, rel);
-    entries.push(rel);
-  }
+  try {
+    zip.addBuffer(Buffer.from(JSON.stringify(args.manifest, null, 2), 'utf-8'), 'manifest.json');
 
-  for (const extra of args.extraEntries ?? []) {
-    try {
-      const data = 'data' in extra ? extra.data : await readFile(extra.source);
-      zip.addBuffer(data, extra.target);
-      entries.push(extra.target);
-    } catch (error) {
-      if (!isMissingPath(error)) throw error;
+    for (const abs of args.sessionFiles) {
+      const rel = relative(args.sessionDir, abs).split(/[\\/]/).join('/');
+      zip.addFile(abs, rel);
+      entries.push(rel);
     }
-  }
 
-  zip.end();
-  await pipeline(zip.outputStream as unknown as Readable, createWriteStream(args.outputPath));
+    for (const extra of args.extraEntries ?? []) {
+      if ('data' in extra) zip.addBuffer(extra.data, extra.target);
+      else zip.addFile(extra.source, extra.target);
+      entries.push(extra.target);
+    }
+
+    zip.end();
+    await writing;
+  } catch (error) {
+    output.destroy(error instanceof Error ? error : new Error(String(error)));
+    await writing.catch(() => undefined);
+    throw error;
+  }
   return entries;
 }
 

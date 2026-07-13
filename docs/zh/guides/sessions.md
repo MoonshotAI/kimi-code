@@ -108,6 +108,8 @@ kimi export <sessionId> -o ~/Desktop/my-session.zip
 - **`/export-debug-zip`**：产生与 `kimi export` 相同的调试 ZIP。
 - **`/export-md`**（别名 `/export`）：导出为人类可读的 Markdown 对话记录，适合分享或存档。可选接收路径参数；不带参数时写入工作目录下的 `kimi-export-<short-id>-<timestamp>.md`。
 
+在 web UI 中，`/export` 会把当前会话下载为诊断 ZIP。压缩包包含持久化的会话数据、诊断日志，以及记录浏览器关键事件且大小有上限的 `logs/kimi-web.jsonl`。这里的 web 命令与上面的 TUI `/export` 别名行为不同。
+
 ::: tip 提示
 导出文件可能包含代码、命令输出和路径等敏感信息，分享前请先确认内容。
 :::

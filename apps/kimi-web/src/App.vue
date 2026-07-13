@@ -470,6 +470,9 @@ function handleCommand(cmd: string): void {
     case '/fork':
       void client.forkSession();
       break;
+    case '/export':
+      void client.exportSession();
+      break;
     case '/undo':
       void client.undo();
       break;

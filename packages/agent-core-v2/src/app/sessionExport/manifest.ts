@@ -30,6 +30,7 @@ export function buildExportManifest(args: {
   readonly sessionScan: SessionWireScan;
   readonly sessionLogPath?: string | undefined;
   readonly globalLogPath?: string | undefined;
+  readonly webLogPath?: string;
   readonly installSource?: string | undefined;
   readonly shellEnv?: ShellEnvironment | undefined;
 }): ExportSessionManifest {
@@ -52,6 +53,7 @@ export function buildExportManifest(args: {
     workspaceDir: args.summary.workspaceDir,
     sessionLogPath: args.sessionLogPath,
     globalLogPath: args.globalLogPath,
+    webLogPath: args.webLogPath,
     installSource: args.installSource,
     shellEnv: args.shellEnv,
   };

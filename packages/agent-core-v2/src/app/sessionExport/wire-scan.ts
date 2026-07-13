@@ -6,7 +6,8 @@
  * export manifest without depending on live Agent services.
  */
 
-import { readdir, readFile } from 'node:fs/promises';
+import { open, readdir, type FileHandle } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
 
 import { join } from 'pathe';
 
@@ -58,51 +59,61 @@ async function collectWireFiles(sessionDir: string): Promise<readonly string[]> 
 }
 
 async function scanWireFile(path: string): Promise<SessionWireScan> {
-  let raw: string;
+  let file: FileHandle;
   try {
-    raw = await readFile(path, 'utf-8');
+    file = await open(path, 'r');
   } catch (error) {
     if (!isMissingPath(error)) throw error;
     return {};
   }
+
+  const input = file.createReadStream({ encoding: 'utf8', autoClose: false });
+  const lines = createInterface({ input, crlfDelay: Infinity });
 
   let firstActivityMs: number | undefined;
   let lastActivityMs: number | undefined;
   let lastUserMessageMs: number | undefined;
   let firstUserInput: string | undefined;
 
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed) as unknown;
-    } catch {
-      continue;
-    }
-    if (typeof parsed !== 'object' || parsed === null) continue;
-    const record = parsed as {
-      type?: unknown;
-      time?: unknown;
-      userInput?: unknown;
-    };
-    const timeMs = typeof record.time === 'number' ? normalizeTimestampMs(record.time) : undefined;
-    if (timeMs !== undefined) {
-      firstActivityMs = minDefined(firstActivityMs, timeMs);
-      lastActivityMs = maxDefined(lastActivityMs, timeMs);
-    }
-    if (record.type === 'turn_begin') {
+  try {
+    for await (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed) as unknown;
+      } catch {
+        continue;
+      }
+      if (typeof parsed !== 'object' || parsed === null) continue;
+      const record = parsed as {
+        type?: unknown;
+        time?: unknown;
+        userInput?: unknown;
+      };
+      const timeMs =
+        typeof record.time === 'number' ? normalizeTimestampMs(record.time) : undefined;
       if (timeMs !== undefined) {
-        lastUserMessageMs = maxDefined(lastUserMessageMs, timeMs);
+        firstActivityMs = minDefined(firstActivityMs, timeMs);
+        lastActivityMs = maxDefined(lastActivityMs, timeMs);
       }
-      if (
-        firstUserInput === undefined &&
-        typeof record.userInput === 'string' &&
-        record.userInput.trim().length > 0
-      ) {
-        firstUserInput = record.userInput;
+      if (record.type === 'turn_begin') {
+        if (timeMs !== undefined) {
+          lastUserMessageMs = maxDefined(lastUserMessageMs, timeMs);
+        }
+        if (
+          firstUserInput === undefined &&
+          typeof record.userInput === 'string' &&
+          record.userInput.trim().length > 0
+        ) {
+          firstUserInput = record.userInput;
+        }
       }
     }
+  } finally {
+    lines.close();
+    input.destroy();
+    await file.close();
   }
 
   return {
