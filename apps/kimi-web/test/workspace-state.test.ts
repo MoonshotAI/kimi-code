@@ -1316,6 +1316,109 @@ describe('useWorkspaceState — session list loading', () => {
     expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
   });
 
+  it('keeps root-matched sessions when their stored workspace id is no longer registered', async () => {
+    const error = new Error('current workspace unavailable');
+    const cached = {
+      ...createSession(),
+      id: 'sess_cached',
+      title: 'Cached old workspace id',
+      workspaceId: 'wd_removed',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const fresh = {
+      ...createSession(),
+      id: 'sess_fresh',
+      title: 'Fresh other workspace',
+      cwd: '/other-workspace',
+      workspaceId: 'wd_other',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([
+      workspace('wd_current', '/workspace', 'Workspace'),
+      workspace('wd_other', '/other-workspace', 'Other'),
+    ]);
+    apiMock.listSessions.mockImplementation(
+      async ({ workspaceId }: { workspaceId?: string }) => {
+        if (workspaceId === 'wd_current') throw error;
+        return { items: [fresh], hasMore: false };
+      },
+    );
+    const { state, deps, workspaceState } = createSessionLoadRig([cached]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_fresh', 'sess_cached']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+  });
+
+  it('loads the next page when a retry follows an automatic continuation failure', async () => {
+    const error = new Error('automatic continuation unavailable');
+    const cached = {
+      ...createSession(),
+      title: 'Cached first page',
+      workspaceId: 'wd_1',
+      updatedAt: '2099-01-01T00:00:00.000Z',
+    };
+    const fresh = { ...cached, title: 'Fresh first page' };
+    const older = {
+      ...createSession(),
+      id: 'sess_older',
+      workspaceId: 'wd_1',
+      updatedAt: '2025-12-31T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_1', '/workspace', 'Workspace')]);
+    apiMock.listSessions
+      .mockResolvedValueOnce({ items: [fresh], hasMore: true })
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue({ items: [older], hasMore: false });
+    const { state, deps, workspaceState } = createSessionLoadRig([cached]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.title)).toEqual(['Fresh first page']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+
+    await workspaceState.loadMoreSessions('wd_1');
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+  });
+
+  it('recovers the global session list when a retry follows a second-page failure', async () => {
+    const error = new Error('global continuation unavailable');
+    const cached = { ...createSession(), title: 'Cached first page' };
+    const fresh = {
+      ...cached,
+      title: 'Fresh first page',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const older = {
+      ...createSession(),
+      id: 'sess_older',
+      updatedAt: '2025-12-31T00:00:00.000Z',
+    };
+    const cachedOlder = { ...older, title: 'Cached older page' };
+    apiMock.listSessions
+      .mockResolvedValueOnce({ items: [fresh], hasMore: true })
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue({ items: [fresh, older], hasMore: false });
+    const { state, deps, workspaceState } = createSessionLoadRig([cached, cachedOlder]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.title)).toEqual([
+      'Fresh first page',
+      'Cached older page',
+    ]);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
+  });
+
   it('preserves cached sessions when every workspace initial page rejects', async () => {
     const firstError = new Error('workspace A unavailable');
     const cachedA = {
