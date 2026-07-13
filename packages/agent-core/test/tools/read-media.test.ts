@@ -923,7 +923,10 @@ describe('ReadMediaFileTool', () => {
     });
 
     it('reads a region crop at native resolution', async () => {
-      const big = await bigPng(600, 600);
+      // Over the 2000px edge cap on purpose: region reads must crop from the
+      // original coordinate space, which a sub-cap fixture cannot distinguish
+      // from cropping the downsampled delivery.
+      const big = await bigPng(2100, 2100);
       const result = await executeTool(toolFor(big), {
         turnId: 't1',
         toolCallId: 'c_crop',
@@ -938,14 +941,16 @@ describe('ReadMediaFileTool', () => {
       expect(sentDims).toEqual({ width: 400, height: 300 });
 
       const systemText = noteText(result);
-      expect(systemText).toContain('600x600');
+      expect(systemText).toContain('2100x2100');
       expect(systemText).toMatch(/region \(x=100, y=50, width=400, height=300\)/);
       expect(systemText).toMatch(/native resolution/);
       expect(systemText).toContain('offset');
     });
 
     it('rejects a region outside the image with the original size in the error', async () => {
-      const big = await bigPng(600, 600);
+      // Over the edge cap so "original size" is distinguishable from any
+      // downsampled delivery size.
+      const big = await bigPng(2100, 2100);
       const result = await executeTool(toolFor(big), {
         turnId: 't1',
         toolCallId: 'c_crop_oob',
@@ -953,7 +958,7 @@ describe('ReadMediaFileTool', () => {
         signal,
       });
       expect(result.isError).toBe(true);
-      expect(result.output).toContain('600x600');
+      expect(result.output).toContain('2100x2100');
     });
 
     it('serves full_resolution when the bytes fit the per-image budget', async () => {

@@ -357,7 +357,10 @@ describe('ReadMediaFileTool', () => {
 
   it('reads image regions at native resolution', async () => {
     const big = Buffer.from(
-      await new Jimp({ width: 600, height: 600, color: 0x3366ccff }).getBuffer('image/png'),
+      // Over the 2000px edge cap on purpose: region reads must crop from the
+      // original coordinate space, which a sub-cap fixture cannot distinguish
+      // from cropping the downsampled delivery.
+      await new Jimp({ width: 2100, height: 2100, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
       path: '/workspace/big.png',
@@ -372,7 +375,7 @@ describe('ReadMediaFileTool', () => {
       height: 300,
     });
     const systemText = noteText(result);
-    expect(systemText).toContain('600x600');
+    expect(systemText).toContain('2100x2100');
     expect(systemText).toMatch(/region \(x=100, y=50, width=400, height=300\)/);
     expect(systemText).toMatch(/native resolution/);
     expect(systemText).toContain('offset');
@@ -380,14 +383,16 @@ describe('ReadMediaFileTool', () => {
 
   it('rejects a region outside the image with the original size in the error', async () => {
     const big = Buffer.from(
-      await new Jimp({ width: 600, height: 600, color: 0x3366ccff }).getBuffer('image/png'),
+      // Over the edge cap so "original size" is distinguishable from any
+      // downsampled delivery size.
+      await new Jimp({ width: 2100, height: 2100, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
       path: '/workspace/big.png',
       region: { x: 5000, y: 0, width: 100, height: 100 },
     });
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('600x600');
+    expect(result.output).toContain('2100x2100');
   });
 
   it('serves full_resolution when the bytes fit the per-image budget', async () => {
