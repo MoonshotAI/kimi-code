@@ -32,6 +32,7 @@ export type {
   Catalog,
   CatalogModel,
   CatalogProviderEntry,
+  FetchCatalogOptions,
 } from '#/catalog';
 
 export {
