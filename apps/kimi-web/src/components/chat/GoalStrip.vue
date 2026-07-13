@@ -110,7 +110,7 @@ onBeforeUnmount(() => setCancelConfirmOpen(false));
           size="sm"
           class="goal-status"
         >{{ goalStatusLabel(goal.status) }}</Badge>
-        <span class="goal-progress" aria-hidden="true">
+        <span v-if="goal.budget.tokenBudget !== null" class="goal-progress" aria-hidden="true">
           <span class="goal-progress-fill" :style="{ width: `${tokenPct}%` }"></span>
         </span>
         <Icon class="goal-chevron" :class="{ open: expanded }" name="chevron-right" size="md" />
