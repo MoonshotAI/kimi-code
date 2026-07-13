@@ -8,9 +8,13 @@
  *
  * `kimi -p` (print mode) routes to the native agent-core-v2 runner through the
  * same master switch.
+ *
+ * `kimi acp-v2` is gated behind its own per-feature env var
+ * `KIMI_CODE_EXPERIMENTAL_ACP_V2`, or the master switch.
  */
 
 export const KIMI_V2_ENV = 'KIMI_CODE_EXPERIMENTAL_FLAG';
+export const KIMI_ACP_V2_ENV = 'KIMI_CODE_EXPERIMENTAL_ACP_V2';
 
 const TRUTHY_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
@@ -25,4 +29,10 @@ export function isKimiV2Enabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): boolean {
   return isTruthyEnv(KIMI_V2_ENV, env);
+}
+
+export function isAcpV2Enabled(
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): boolean {
+  return isTruthyEnv(KIMI_ACP_V2_ENV, env) || isKimiV2Enabled(env);
 }

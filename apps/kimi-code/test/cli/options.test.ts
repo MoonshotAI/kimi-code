@@ -462,7 +462,6 @@ describe('CLI options parsing', () => {
         'export',
         'provider',
         'acp',
-        'acp-v2',
         'server',
         'web',
         'login',
@@ -471,6 +470,28 @@ describe('CLI options parsing', () => {
         'migrate',
         'upgrade',
       ]);
+    });
+
+    it('registers acp-v2 when the experimental flag is enabled', () => {
+      const original = process.env['KIMI_CODE_EXPERIMENTAL_ACP_V2'];
+      process.env['KIMI_CODE_EXPERIMENTAL_ACP_V2'] = '1';
+      try {
+        const program = createProgram(
+          '0.0.0',
+          () => {},
+          () => {},
+        );
+        const commandNames: string[] = program.commands
+          .filter((command) => !command.name().startsWith('__'))
+          .map((command) => command.name());
+        expect(commandNames).toContain('acp-v2');
+      } finally {
+        if (original === undefined) {
+          delete process.env['KIMI_CODE_EXPERIMENTAL_ACP_V2'];
+        } else {
+          process.env['KIMI_CODE_EXPERIMENTAL_ACP_V2'] = original;
+        }
+      }
     });
   });
 
