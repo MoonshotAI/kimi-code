@@ -45,16 +45,18 @@ function harness() {
     hooks: createHooks(['onWillCompact']),
     onDidFinishCompaction: Event.None,
   } as unknown as IAgentFullCompactionService;
-  const ix = createServices(disposables, { strict: true, additionalServices: (reg) => {
-    reg.defineInstance(IAgentContextMemoryService, context);
-    reg.defineInstance(IAgentLoopService, loop);
-    reg.defineInstance(IAgentWireService, stubWire());
-    reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
-    reg.defineInstance(IAgentFullCompactionService, fullCompaction);
-    reg.define(IEventBus, EventBusService);
-    reg.define(IAgentSystemReminderService, AgentSystemReminderService);
-    reg.define(IAgentPromptService, AgentPromptService);
-  }});
+  const ix = createServices(disposables, {
+    strict: true, additionalServices: (reg) => {
+      reg.defineInstance(IAgentContextMemoryService, context);
+      reg.defineInstance(IAgentLoopService, loop);
+      reg.defineInstance(IAgentWireService, stubWire());
+      reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
+      reg.defineInstance(IAgentFullCompactionService, fullCompaction);
+      reg.define(IEventBus, EventBusService);
+      reg.define(IAgentSystemReminderService, AgentSystemReminderService);
+      reg.define(IAgentPromptService, AgentPromptService);
+    }
+  });
   return { prompt: ix.get(IAgentPromptService), loop, context, fullCompaction };
 }
 
@@ -126,5 +128,57 @@ describe('AgentPromptService', () => {
     await expect(handle.launched).resolves.toBeUndefined();
     await expect(handle.completion).resolves.toMatchObject({ state: 'failed', result: undefined });
     expect(prompt.list()).toEqual({ active: undefined, pending: [] });
+  });
+
+  it('replaces an unsupported prompt image with a text notice at the history funnel', async () => {
+    // The format gate is the last funnel before prompt content lands in the
+    // session history: an AVIF data-URL image (accepted by no provider)
+    // must never be appended as an image_url — one poisoned part makes every
+    // later request in the session fail.
+    const { prompt, context, loop } = harness();
+    const avifUrl = `data:image/avif;base64,${Buffer.from([1, 2, 3]).toString('base64')}`;
+    const handle = await prompt.enqueue({
+      id: 'prompt-img',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    await handle.launched;
+    loop.drainNextBatch(context);
+
+    const appended = context.get();
+    expect(appended).toHaveLength(1);
+    const parts = appended[0]!.content;
+    expect(parts.some((part) => part.type === 'image_url')).toBe(false);
+    expect(parts[0]).toMatchObject({ type: 'text' });
+    expect((parts[0] as { text: string }).text).toContain('image/avif');
+  });
+
+  it('gates steered prompt images too', async () => {
+    const { prompt, context, loop } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const avifUrl = `data:image/avif;base64,${Buffer.from([4, 5, 6]).toString('base64')}`;
+    const queued = await prompt.enqueue({
+      id: 'prompt-steer-img',
+      message: {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url: avifUrl } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    });
+    await prompt.steer([queued.id]);
+    loop.drainNextBatch(context);
+
+    const appended = context.get();
+    const parts = appended.flatMap((entry) => entry.content);
+    expect(parts.some((part) => part.type === 'image_url')).toBe(false);
+    expect(
+      parts.some((part) => part.type === 'text' && part.text.includes('image/avif')),
+    ).toBe(true);
   });
 });

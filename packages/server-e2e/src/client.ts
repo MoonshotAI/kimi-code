@@ -367,7 +367,8 @@ export class DaemonClient {
   // ── WS lifecycle ────────────────────────────────────────────────────────
   /**
    * Open the WS socket, wait for `server_hello`, send `client_hello`, await
-   * the ack. Returns the server's hello payload (heartbeat config, etc.).
+   * the ack. Returns the server's hello payload (buffer sizes, capabilities,
+   * etc.).
    */
   async connect(): Promise<ServerHelloMessage['payload']> {
     if (this._serverHello) return this._serverHello;

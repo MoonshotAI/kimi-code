@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
   clearManagedKimiCodeConfig,
+  resolveKimiCodeOAuthKey,
   resolveKimiCodeRuntimeAuth,
 } from '@moonshot-ai/kimi-code-oauth';
 
@@ -52,6 +53,27 @@ const deviceAuth = {
 };
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+/**
+ * Scoped credential ref derived for the `https://api.example.com` fixture
+ * environment (default OAuth host) — what login resolves when the configured
+ * ref does not match its (host, baseUrl) environment.
+ */
+const EXAMPLE_COM_SCOPED_REF = {
+  storage: 'file',
+  key: resolveKimiCodeOAuthKey({ baseUrl: 'https://api.example.com' }),
+  oauthHost: 'https://auth.kimi.com',
+} as const;
+
+/** Scoped credential ref for the env-override fixture environment. */
+const ENV_SCOPED_REF = {
+  storage: 'file',
+  key: resolveKimiCodeOAuthKey({
+    oauthHost: 'https://env-auth.example.com',
+    baseUrl: 'https://env-api.example.com/coding/v1',
+  }),
+  oauthHost: 'https://env-auth.example.com',
+} as const;
 
 interface FakeToolkit {
   readonly login: Mock<(...args: any[]) => any>;
@@ -167,6 +189,7 @@ describe('OAuthService', () => {
   afterEach(() => {
     disposables.dispose();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   function createService(): IOAuthService {
@@ -214,7 +237,14 @@ describe('OAuthService', () => {
     });
     expect(toolkit.login).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
-      expect.objectContaining({ oauthRef: { storage: 'file', key: 'oauth/kimi-code' } }),
+      expect.objectContaining({
+        // The fixture's configured key does not match its (host, baseUrl)
+        // environment, so login re-derives the slot from the environment
+        // (v1 parity) instead of trusting the stale ref.
+        oauthRef: EXAMPLE_COM_SCOPED_REF,
+        baseUrl: 'https://api.example.com',
+        oauthHost: undefined,
+      }),
     );
 
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
@@ -236,12 +266,14 @@ describe('OAuthService', () => {
         type: 'kimi',
         baseUrl: 'https://api.example.com',
         apiKey: '',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        // The provisioned entry records the env-scoped slot explicitly, so
+        // the runtime reads the same slot login wrote (v1 parity).
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
   });
 
-  it('startLogin resolves a default oauth ref for the managed provider without oauth config', async () => {
+  it('startLogin resolves an env-scoped oauth ref for the managed provider without oauth config', async () => {
     providers[OAUTH_PROVIDER] = { type: 'kimi', baseUrl: 'https://api.example.com' };
     stubManagedModelsFetch();
     toolkit.login.mockImplementation((_provider, options) => {
@@ -254,7 +286,8 @@ describe('OAuthService', () => {
     expect(toolkit.login).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
       expect.objectContaining({
-        oauthRef: expect.objectContaining({ storage: 'file', key: expect.any(String) }),
+        oauthRef: EXAMPLE_COM_SCOPED_REF,
+        baseUrl: 'https://api.example.com',
       }),
     );
     await flush();
@@ -262,7 +295,90 @@ describe('OAuthService', () => {
       OAUTH_PROVIDER,
       expect.objectContaining({
         type: 'kimi',
-        oauth: expect.objectContaining({ storage: 'file', key: expect.any(String) }),
+        baseUrl: 'https://api.example.com',
+        oauth: EXAMPLE_COM_SCOPED_REF,
+      }),
+    );
+  });
+
+  it('startLogin reuses the configured oauth ref when it matches the login environment', async () => {
+    providers[OAUTH_PROVIDER] = {
+      type: 'kimi',
+      baseUrl: 'https://api.kimi.com/coding/v1',
+      oauth: { storage: 'file', key: 'oauth/kimi-code' },
+    };
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+
+    expect(toolkit.login).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        oauthRef: { storage: 'file', key: 'oauth/kimi-code' },
+        baseUrl: 'https://api.kimi.com/coding/v1',
+      }),
+    );
+  });
+
+  it('startLogin honors KIMI_CODE_BASE_URL / KIMI_CODE_OAUTH_HOST for the login environment', async () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://env-api.example.com/coding/v1');
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://env-auth.example.com');
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+
+    expect(toolkit.login).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        oauthRef: ENV_SCOPED_REF,
+        baseUrl: 'https://env-api.example.com/coding/v1',
+        oauthHost: 'https://env-auth.example.com',
+      }),
+    );
+    await flush();
+    expect(providerSet).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        type: 'kimi',
+        // The provisioned entry targets the env environment, not the stale
+        // configured one — so runtime reads hit the same credential slot.
+        baseUrl: 'https://env-api.example.com/coding/v1',
+        oauth: ENV_SCOPED_REF,
+      }),
+    );
+  });
+
+  it('resolves the runtime credential slot to the env environment after an env-scoped login', async () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://env-api.example.com/coding/v1');
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://env-auth.example.com');
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+    await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
+
+    // The slot login targeted and the slot the runtime reads must be the
+    // same env-scoped key — the mismatch was "login succeeds but every
+    // call 401s".
+    await svc.status(OAUTH_PROVIDER);
+    expect(toolkit.getCachedAccessToken).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        key: resolveKimiCodeOAuthKey({
+          oauthHost: 'https://env-auth.example.com',
+          baseUrl: 'https://env-api.example.com/coding/v1',
+        }),
       }),
     );
   });
@@ -291,7 +407,7 @@ describe('OAuthService', () => {
       expect.objectContaining({
         type: 'kimi',
         baseUrl: 'https://api.example.com',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -315,7 +431,7 @@ describe('OAuthService', () => {
       expect.objectContaining({
         type: 'kimi',
         baseUrl: 'https://api.example.com',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
     expect(configSet).not.toHaveBeenCalledWith('defaultModel', expect.any(String));
@@ -355,7 +471,7 @@ describe('OAuthService', () => {
       OAUTH_PROVIDER,
       expect.objectContaining({
         type: 'kimi',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
     expect(configReplace).toHaveBeenCalledWith(
@@ -421,10 +537,10 @@ describe('OAuthService', () => {
 
     const result = await svc.logout(OAUTH_PROVIDER);
     expect(result).toEqual({ logged_out: true, provider: OAUTH_PROVIDER });
-    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, {
-      storage: 'file',
-      key: 'oauth/kimi-code',
-    });
+    // Logout deletes from the slot the runtime reads: the fixture's configured
+    // key does not match its (host, baseUrl) environment, so the env-derived
+    // scoped slot is the one cleared (v1 parity).
+    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, EXAMPLE_COM_SCOPED_REF);
     expect(configReplace).toHaveBeenCalledWith('providers', {
       [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' },
     });
@@ -500,10 +616,7 @@ describe('OAuthService', () => {
     const svc = createService();
 
     await expect(svc.logout(OAUTH_PROVIDER)).rejects.toThrow('config write failed');
-    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, {
-      storage: 'file',
-      key: 'oauth/kimi-code',
-    });
+    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, EXAMPLE_COM_SCOPED_REF);
   });
 
   it('status reports loggedIn based on the cached access token', async () => {

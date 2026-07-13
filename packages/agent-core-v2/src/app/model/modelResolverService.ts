@@ -99,7 +99,9 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     // overrides into the Anthropic transport. Native Anthropic providers keep
     // their configured `/v1` because the old provider manager did too.
     const resolvedBaseUrl =
-      model.protocol === 'anthropic' ? stripTrailingV1(rawBaseUrl) : rawBaseUrl;
+      model.protocol === 'anthropic' && rawBaseUrl !== undefined
+        ? stripTrailingV1(rawBaseUrl)
+        : rawBaseUrl;
     const wireName = model.name ?? model.model;
     if (wireName === undefined) {
       throw new Error2(
@@ -201,7 +203,10 @@ export class ModelResolverService extends Disposable implements IModelResolver {
   /**
    * Return the ProviderConfig this Model resolves against, plus the URL to
    * hit at runtime. Structured path reads `[providers.<providerId>]`; flat
-   * path synthesizes a Provider record from the Model's inline baseUrl.
+   * path synthesizes a Provider record from the Model's inline baseUrl. A
+   * structured Model with no baseUrl anywhere (config, provider, env) yields
+   * `undefined` — the wire provider then applies its protocol default
+   * endpoint, matching v1's `provider-manager`.
    */
   private resolveProviderContext(
     id: string,
@@ -209,7 +214,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
   ): {
     readonly providerConfig: ProviderConfig | undefined;
     readonly providerName: string;
-    readonly resolvedBaseUrl: string;
+    readonly resolvedBaseUrl: string | undefined;
   } {
     // Structured path — Model references a Provider (which may reference a
     // Platform). Legacy configs still use `provider` in place of `providerId`,
@@ -232,12 +237,6 @@ export class ModelResolverService extends Disposable implements IModelResolver {
           model.protocol ?? providerConfig.type,
           providerConfig.env,
         );
-      if (baseUrl === undefined || baseUrl.length === 0) {
-        throw new Error2(
-          ErrorCodes.CONFIG_INVALID,
-          `Model "${id}" (via provider "${providerId}") is missing a base URL.`,
-        );
-      }
       return { providerConfig, providerName: providerId, resolvedBaseUrl: baseUrl };
     }
 
@@ -360,7 +359,7 @@ function buildProtocolProviderOptions(
   model: ModelConfig,
   protocol: Protocol,
   provider: ProviderConfig | undefined,
-  baseUrl: string,
+  baseUrl: string | undefined,
 ): ProtocolProviderOptions | undefined {
   const options: MutableProtocolProviderOptions = {};
 

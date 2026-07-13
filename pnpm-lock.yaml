@@ -496,6 +496,9 @@ importers:
       '@google/genai':
         specifier: ^1.49.0
         version: 1.49.0(@modelcontextprotocol/sdk@1.29.0(zod@4.3.6))
+      '@jsquash/webp':
+        specifier: ^1.5.0
+        version: 1.5.0
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.3.6)

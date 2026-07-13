@@ -22,6 +22,10 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import {
+  IFaultInjectionService,
+  type FaultKind,
+} from '#/agent/faultInjection/faultInjection';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -32,9 +36,11 @@ import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIProviderOverloadedError,
+  APIRequestTooLargeError,
   APIStatusError,
   APITimeoutError,
   isContextOverflowStatusError,
+  isImageFormatError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
 } from '#/app/llmProtocol/errors';
@@ -93,6 +99,16 @@ interface ResolvedLLMRequest {
   readonly logFields: LLMRequestLogFields;
 }
 
+/**
+ * Which projection a request attempt is built from: the normal wire
+ * projection, or one of the three one-shot recovery rebuilds — `strict`
+ * (guaranteed wire-compliant) after a structural rejection, `media-degraded`
+ * (all but the most recent media replaced by text markers) after an HTTP 413
+ * body-size rejection, `media-stripped` (every media part replaced) after an
+ * image-format rejection.
+ */
+type RequestProjection = 'normal' | 'strict' | 'media-degraded' | 'media-stripped';
+
 interface LLMRequestLogInput {
   readonly protocol: Protocol;
   readonly modelName: string;
@@ -121,6 +137,18 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private lastConfigLogSignature: string | undefined;
   private readonly turnConfigs = new Map<number, TurnRequestConfig>();
+  /**
+   * Turns whose steps must build from a recovery projection: once a step only
+   * succeeded via the media-degraded (413) or media-stripped (image-format)
+   * resend, the cause is still in the full history, so later steps of the
+   * same turn build from the recovery projection directly instead of paying
+   * a fresh rejection on every step (v1 parity: run-turn's
+   * `mediaDegradedActive` / `mediaStrippedActive`; stripped wins over
+   * degraded). Turn ids are monotonic per agent, so a newer turn evicts
+   * every older entry.
+   */
+  private readonly mediaDegradedTurns = new Set<number>();
+  private readonly mediaStrippedTurns = new Set<number>();
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -134,6 +162,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentWireService private readonly wire: IWireService,
+    @IFaultInjectionService private readonly faultInjection: IFaultInjectionService,
   ) {}
 
   async request(
@@ -207,19 +236,28 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     onPart: LLMRequestPartHandler,
     signal: AbortSignal | undefined,
   ): Promise<LLMRequestFinish> {
-    const requestInput = (strict: boolean) => ({
-      systemPrompt: request.systemPrompt,
-      tools: request.tools,
-      messages: strict
-        ? this.projector.projectStrict(this.toolSelect.shapeHistory(request.messages))
-        : this.projector.project(this.toolSelect.shapeHistory(request.messages)),
-    });
+    const requestInput = (projection: RequestProjection) => {
+      const shaped = this.toolSelect.shapeHistory(request.messages);
+      return {
+        systemPrompt: request.systemPrompt,
+        tools: request.tools,
+        messages:
+          projection === 'strict'
+            ? this.projector.projectStrict(shaped)
+            : projection === 'media-degraded'
+              ? this.projector.projectMediaDegraded(shaped)
+              : projection === 'media-stripped'
+                ? this.projector.projectMediaStripped(shaped)
+                : this.projector.project(shaped),
+      };
+    };
 
-    const run = async (strict: boolean): Promise<LLMRequestFinish> => {
-      const input = requestInput(strict);
-      const fields = strict
-        ? { ...request.logFields, projection: 'strict' }
-        : request.logFields;
+    const run = async (projection: RequestProjection): Promise<LLMRequestFinish> => {
+      const input = requestInput(projection);
+      const fields =
+        projection === 'normal'
+          ? request.logFields
+          : { ...request.logFields, projection };
       const logInput: LLMRequestLogInput = {
         protocol: request.model.protocol,
         modelName: request.model.name,
@@ -233,6 +271,16 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
       this.logRequest(logInput);
       this.recordRequest(logInput);
+
+      // Fault injection (experimental): an armed one-shot fault replaces this
+      // attempt with a deterministic provider failure, raised exactly where a
+      // real rejection would surface — so the recovery-resend chain below
+      // handles it identically. The resend attempt consumes nothing (the
+      // latch is one-shot) and reaches the real provider.
+      const fault = this.faultInjection.take();
+      if (fault !== undefined) {
+        throw faultToError(fault);
+      }
 
       let message: Message | undefined;
       let usage = emptyUsage();
@@ -278,17 +326,86 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
     };
 
+    // Once a step of this turn only succeeded via a recovery resend, later
+    // steps build from the recovery projection directly: the cause is still
+    // in the full history, so rebuilding it would pay a fresh rejection on
+    // every step (v1 parity: run-turn's mediaDegradedActive /
+    // mediaStrippedActive — stripped wins over degraded).
+    const initialProjection: RequestProjection = this.isRecoveryTurn(
+      this.mediaStrippedTurns,
+      request.source,
+    )
+      ? 'media-stripped'
+      : this.isRecoveryTurn(this.mediaDegradedTurns, request.source)
+        ? 'media-degraded'
+        : 'normal';
     try {
-      return await run(false);
+      return await run(initialProjection);
     } catch (error) {
-      if (signal?.aborted === true || !isRecoverableRequestStructureError(unwrapErrorCause(error))) throw error;
-      signal?.throwIfAborted();
-      this.log.warn('provider rejected request structure; resending with strict projection', {
-        model: request.model.name,
-        ...request.logFields,
-      });
-      return run(true);
+      if (signal?.aborted === true) throw error;
+      const raw = unwrapErrorCause(error);
+      if (initialProjection === 'normal' && raw instanceof APIRequestTooLargeError) {
+        // The provider rejected the request BODY as too large (HTTP 413) —
+        // accumulated base64 media, not tokens, so compaction's token-driven
+        // recovery never fires (media is estimated at a small flat cost). The
+        // same media is re-sent on every request, so without intervention the
+        // session stays stuck. Resend ONCE with the media-degraded projection
+        // (old media replaced by text markers, the most recent kept); a
+        // rejection of that rebuild propagates unchanged.
+        signal?.throwIfAborted();
+        this.log.warn('provider rejected request as too large; resending with degraded media', {
+          model: request.model.name,
+          ...request.logFields,
+        });
+        this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
+        return run('media-degraded');
+      }
+      if (initialProjection !== 'media-stripped' && isImageFormatError(raw)) {
+        // The provider rejected an IMAGE in the request (unsupported format
+        // or undecodable data). Unlike a size rejection — too MUCH media —
+        // the error never says WHICH image is poison, and the same history
+        // is re-sent every request, so the session would stay stuck. Resend
+        // ONCE with every media part replaced by a text marker: the only
+        // projection guaranteed to carry no poison. Read-side only — the
+        // history keeps its media, and the `<image path="...">` wrappers
+        // survive so the model can re-read files (getting conversion
+        // guidance for refused formats). A rejection of that rebuild
+        // propagates unchanged.
+        signal?.throwIfAborted();
+        this.log.warn(
+          'provider rejected an image in the request; resending with all media stripped',
+          {
+            model: request.model.name,
+            ...request.logFields,
+          },
+        );
+        this.markRecoveryTurn(this.mediaStrippedTurns, request.source);
+        return run('media-stripped');
+      }
+      if (initialProjection === 'normal' && isRecoverableRequestStructureError(raw)) {
+        signal?.throwIfAborted();
+        this.log.warn('provider rejected request structure; resending with strict projection', {
+          model: request.model.name,
+          ...request.logFields,
+        });
+        return run('strict');
+      }
+      throw error;
     }
+  }
+
+  private isRecoveryTurn(set: ReadonlySet<number>, source: LLMRequestSource | undefined): boolean {
+    if (source?.type !== 'turn') return false;
+    return set.has(source.turnId);
+  }
+
+  private markRecoveryTurn(set: Set<number>, source: LLMRequestSource | undefined): void {
+    if (source?.type !== 'turn') return;
+    // Turn ids are monotonic per agent: a newer turn evicts every older entry.
+    for (const id of set) {
+      if (id < source.turnId) set.delete(id);
+    }
+    set.add(source.turnId);
   }
 
   private resolveRequest(overrides: LLMRequestOverrides): ResolvedLLMRequest {
@@ -504,8 +621,22 @@ function numberField(fields: LLMRequestLogFields, key: string): number | undefin
   return typeof value === 'number' ? value : undefined;
 }
 
-function projectionField(fields: LLMRequestLogFields): 'strict' | undefined {
-  return fields['projection'] === 'strict' ? 'strict' : undefined;
+function projectionField(
+  fields: LLMRequestLogFields,
+): 'strict' | 'media-degraded' | 'media-stripped' | undefined {
+  const value = fields['projection'];
+  return value === 'strict' || value === 'media-degraded' || value === 'media-stripped'
+    ? value
+    : undefined;
+}
+
+/** The deterministic provider failure an armed fault raises. Mirrors the
+ * real rejections the recovery projections key off: an HTTP 413 body-size
+ * rejection, or a 400 image-format rejection. */
+function faultToError(kind: FaultKind): Error {
+  return kind === 'request-too-large'
+    ? new APIRequestTooLargeError(413, 'Request Entity Too Large (fault injection)')
+    : new APIStatusError(400, 'unsupported image format: image/avif (fault injection)');
 }
 
 function fingerprint(content: string): string {
