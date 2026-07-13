@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppGoal } from '../../api/types';
 import Card from '../ui/Card.vue';
@@ -13,6 +13,9 @@ const emit = defineEmits<{ controlGoal: [action: 'pause' | 'resume' | 'cancel'] 
 const { t } = useI18n();
 
 const expanded = ref(false);
+const cancelConfirmOpen = ref(false);
+const cancelActionRef = ref<HTMLElement | null>(null);
+const cancelPopoverStyle = ref<Record<string, string>>({});
 
 watch(
   () => props.forceExpanded,
@@ -45,12 +48,61 @@ function formatMs(ms: number): string {
   const hour = Math.floor(min / 60);
   return `${hour}h ${min % 60}m`;
 }
+
+function updateCancelPopoverPosition(): void {
+  const anchor = cancelActionRef.value;
+  if (!anchor || typeof window === 'undefined') return;
+  const rect = anchor.getBoundingClientRect();
+  const width = 240;
+  const left = Math.min(
+    window.innerWidth - width - 8,
+    Math.max(8, rect.right - width),
+  );
+  const arrowRight = Math.min(
+    width - 12,
+    Math.max(12, width - (rect.left + rect.width / 2 - left)),
+  );
+  cancelPopoverStyle.value = {
+    left: `${left}px`,
+    top: `${Math.max(8, rect.top - 8)}px`,
+    '--goal-cancel-arrow-right': `${arrowRight}px`,
+  };
+}
+
+function onCancelPopoverDocumentMouseDown(event: MouseEvent): void {
+  const target = event.target as Node | null;
+  if (target && cancelActionRef.value?.contains(target)) return;
+  cancelConfirmOpen.value = false;
+}
+
+function setCancelConfirmOpen(open: boolean): void {
+  cancelConfirmOpen.value = open;
+  if (typeof window === 'undefined') return;
+  if (open) {
+    updateCancelPopoverPosition();
+    document.addEventListener('mousedown', onCancelPopoverDocumentMouseDown);
+    window.addEventListener('resize', updateCancelPopoverPosition);
+    window.addEventListener('scroll', updateCancelPopoverPosition, true);
+  } else {
+    document.removeEventListener('mousedown', onCancelPopoverDocumentMouseDown);
+    window.removeEventListener('resize', updateCancelPopoverPosition);
+    window.removeEventListener('scroll', updateCancelPopoverPosition, true);
+  }
+}
+
+function confirmCancel(): void {
+  setCancelConfirmOpen(false);
+  emit('controlGoal', 'cancel');
+}
+
+onBeforeUnmount(() => setCancelConfirmOpen(false));
 </script>
 
 <template>
   <Card class="goal-strip" :class="{ expanded }">
     <template #head>
       <button class="goal-row" type="button" @click="expanded = !expanded">
+        <Icon class="goal-icon" name="target" size="md" />
         <span class="goal-kicker">{{ t('status.goalLabel') }}</span>
         <span class="goal-objective" :class="{ 'expanded-hidden': expanded }">{{ goal.objective }}</span>
         <Badge
@@ -65,7 +117,7 @@ function formatMs(ms: number): string {
       </button>
     </template>
 
-    <template v-if="expanded" #default>
+    <template #default>
       <div class="goal-full">{{ goal.objective }}</div>
       <div v-if="goal.completionCriterion" class="goal-criterion">
         <span>Done when</span>
@@ -73,7 +125,7 @@ function formatMs(ms: number): string {
       </div>
     </template>
 
-    <template v-if="expanded" #foot>
+    <template #foot>
       <div class="goal-footer">
         <div class="goal-meta">
           <span>{{ goal.turnsUsed }} turns</span>
@@ -102,29 +154,62 @@ function formatMs(ms: number): string {
             <Icon name="play" size="md" />
             <span>{{ t('status.goalResume') }}</span>
           </Button>
-          <Button
-            size="sm"
-            variant="danger-soft"
-            class="goal-action"
-            @click.stop="emit('controlGoal', 'cancel')"
-          >
-            <Icon name="close" size="md" />
-            <span>{{ t('status.goalCancel') }}</span>
-          </Button>
+          <div ref="cancelActionRef" class="goal-cancel-action">
+            <Button
+              size="sm"
+              variant="danger-soft"
+              class="goal-action"
+              :aria-expanded="cancelConfirmOpen"
+              aria-haspopup="dialog"
+              @click.stop="setCancelConfirmOpen(!cancelConfirmOpen)"
+            >
+              <Icon name="close" size="md" />
+              <span>{{ t('status.goalCancel') }}</span>
+            </Button>
+          </div>
         </div>
       </div>
     </template>
   </Card>
+
+  <Teleport to="body">
+    <div
+      v-if="cancelConfirmOpen"
+      id="goal-cancel-confirm"
+      class="goal-cancel-popover"
+      role="dialog"
+      :aria-label="t('status.goalCancelConfirm')"
+      :style="cancelPopoverStyle"
+      @mousedown.stop
+    >
+      <p>{{ t('status.goalCancelConfirm') }}</p>
+      <div class="goal-cancel-popover__actions">
+        <Button size="sm" variant="secondary" @click="setCancelConfirmOpen(false)">
+          {{ t('status.goalCancelConfirmNo') }}
+        </Button>
+        <Button size="sm" variant="danger" @click="confirmCancel">
+          {{ t('status.goalCancelConfirmYes') }}
+        </Button>
+      </div>
+    </div>
+  </Teleport>
 </template>
 
 <style scoped>
 .goal-strip {
   --composer-send-size: 32px;
   --composer-send-inset: var(--space-2);
+  --goal-corner-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset) + var(--space-3));
   margin: var(--space-2) var(--space-4) 0;
+  box-shadow: var(--shadow-md);
 }
 .goal-strip.ui-card {
-  border-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset));
+  border-radius: var(--goal-corner-radius);
+  corner-shape: superellipse(1.5);
+}
+.goal-strip:not(.expanded).ui-card {
+  border-radius: var(--radius-full);
+  corner-shape: round;
 }
 .goal-strip :deep(.ui-card__foot) {
   padding: var(--composer-send-inset);
@@ -134,10 +219,31 @@ function formatMs(ms: number): string {
 .goal-strip :deep(.ui-card__foot) {
   padding-left: calc((var(--composer-send-inset) + var(--composer-send-size)) / 2);
 }
-/* When collapsed the body/foot slots are not rendered; collapse the (always-
-   rendered) Card body and drop the head border so the strip is a single row. */
-.goal-strip:not(.expanded) :deep(.ui-card__body) { display: none; }
-.goal-strip:not(.expanded) :deep(.ui-card__head) { border-bottom: none; }
+.goal-strip :deep(.ui-card__body) {
+  background: var(--color-surface-raised);
+  max-height: 480px;
+  overflow: hidden;
+  opacity: 1;
+  transition: max-height var(--duration-slow) var(--ease-out),
+    padding-top var(--duration-slow) var(--ease-out),
+    padding-bottom var(--duration-slow) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out);
+}
+/* Collapse the body and footer while keeping both mounted so their height and
+   padding can animate instead of jumping between two layouts. */
+.goal-strip:not(.expanded) :deep(.ui-card__body) {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  opacity: 0;
+}
+.goal-strip :deep(.ui-card__head) {
+  border-bottom-color: var(--color-line);
+  transition: border-bottom-color var(--duration-base) var(--ease-out);
+}
+.goal-strip:not(.expanded) :deep(.ui-card__head) {
+  border-bottom-color: transparent;
+}
 
 .goal-row {
   width: 100%;
@@ -157,6 +263,11 @@ function formatMs(ms: number): string {
   color: var(--color-success);
   font: var(--text-base)/var(--leading-normal) var(--font-ui);
   font-weight: var(--weight-semibold);
+}
+.goal-icon {
+  flex: none;
+  color: var(--color-success);
+  margin-right: calc(-1 * var(--space-1));
 }
 .goal-objective {
   min-width: 0;
@@ -201,7 +312,7 @@ function formatMs(ms: number): string {
 }
 .goal-full {
   color: var(--color-text);
-  font-size: var(--text-sm);
+  font-size: var(--text-base);
   line-height: var(--leading-normal);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -226,13 +337,30 @@ function formatMs(ms: number): string {
   width: 100%;
   min-width: 0;
 }
+.goal-strip :deep(.ui-card__foot) {
+  max-height: 100px;
+  overflow: hidden;
+  opacity: 1;
+  transition: max-height var(--duration-slow) var(--ease-out),
+    padding-top var(--duration-slow) var(--ease-out),
+    padding-bottom var(--duration-slow) var(--ease-out),
+    opacity var(--duration-base) var(--ease-out),
+    border-top-color var(--duration-base) var(--ease-out);
+}
+.goal-strip:not(.expanded) :deep(.ui-card__foot) {
+  max-height: 0;
+  padding-top: 0;
+  padding-bottom: 0;
+  border-top-color: transparent;
+  opacity: 0;
+}
 .goal-meta {
   min-width: 0;
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
   color: var(--color-text-muted);
-  font: 12px/var(--leading-normal) var(--font-ui);
+  font: var(--text-xs)/var(--leading-normal) var(--font-ui);
   font-weight: 450;
   font-variant-numeric: tabular-nums;
 }
@@ -252,6 +380,44 @@ function formatMs(ms: number): string {
 .goal-action :deep(.ui-button__content) {
   gap: var(--space-1);
 }
+.goal-cancel-action {
+  position: relative;
+}
+.goal-cancel-popover {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  width: 240px;
+  padding: var(--space-3);
+  transform: translateY(-100%);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-line);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-lg);
+  color: var(--color-text);
+}
+.goal-cancel-popover::after {
+  content: '';
+  position: absolute;
+  right: var(--goal-cancel-arrow-right, 32px);
+  bottom: -9px;
+  width: 16px;
+  height: 16px;
+  background: var(--color-surface-raised);
+  border-right: 1px solid var(--color-line);
+  border-bottom: 1px solid var(--color-line);
+  transform: rotate(45deg);
+}
+.goal-cancel-popover p {
+  margin: 0;
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+.goal-cancel-popover__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
 @media (max-width: 640px) {
   .goal-strip {
     --composer-send-size: 36px;
@@ -259,6 +425,13 @@ function formatMs(ms: number): string {
   }
   .goal-progress {
     display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .goal-strip :deep(.ui-card__head),
+  .goal-strip :deep(.ui-card__body),
+  .goal-strip :deep(.ui-card__foot) {
+    transition: none;
   }
 }
 </style>
