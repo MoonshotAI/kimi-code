@@ -17,6 +17,7 @@ import type {
   SessionConfigOption,
   SessionNotification,
 } from '@agentclientprotocol/sdk';
+import { RequestError } from '@agentclientprotocol/sdk';
 import {
   type ContextMessage,
   type DomainEvent,
@@ -50,6 +51,7 @@ import {
   toolProgressToSessionUpdate,
   toolResultToSessionUpdate,
   turnEndReasonToStopReason,
+  isAuthError,
 } from './events-map';
 import { AcpInteractionBridge } from './interaction-bridge';
 import { log } from './log';
@@ -242,6 +244,12 @@ export class AcpSession {
     return new Promise<PromptResponse>((resolve, reject) => {
       const eventBus = this.mainAgent.accessor.get(IEventBus);
       let settled = false;
+      /**
+       * Turn id captured once `launch()` resolves with a `Turn`. Events from
+       * any other turn (e.g. a still-running prior turn whose events arrive
+       * while our prompt is queued) are ignored until this is set.
+       */
+      let turnId: number | undefined;
 
       // Per-tool-call streaming state, reset for every turn.
       const accumulators = new Map<string, { args: string }>();
@@ -267,6 +275,9 @@ export class AcpSession {
       };
 
       const handleEvent = (event: DomainEvent): void => {
+        // Ignore events from any turn other than ours. While the prompt is
+        // queued `turnId` is undefined, which skips every turn-scoped event.
+        if ('turnId' in event && event.turnId !== turnId) return;
         switch (event.type) {
           case 'assistant.delta':
             emit(assistantDeltaToSessionUpdate(this.sessionId, event));
@@ -310,9 +321,15 @@ export class AcpSession {
             emit(toolResultToSessionUpdate(this.sessionId, event));
             break;
           case 'turn.ended':
-            settle(() =>
-              resolve({ stopReason: turnEndReasonToStopReason(event.reason, event.error) }),
-            );
+            settle(() => {
+              // Auth failures must surface as a JSON-RPC `auth_required` error
+              // so the client triggers its re-auth flow, not a silent `end_turn`.
+              if (event.reason === 'failed' && isAuthError(event.error)) {
+                reject(RequestError.authRequired(undefined, event.error?.message));
+                return;
+              }
+              resolve({ stopReason: turnEndReasonToStopReason(event.reason, event.error) });
+            });
             break;
           default:
             break;
@@ -330,6 +347,7 @@ export class AcpSession {
             return;
           }
           this.activeTurn = turn;
+          turnId = turn.id;
           // Fallback settlement: `turn.ended` is the primary signal, but if the
           // turn resolves/rejects without it, settle here so the prompt never
           // hangs.
