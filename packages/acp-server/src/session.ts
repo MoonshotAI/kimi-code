@@ -32,6 +32,7 @@ import {
   IModelService,
   ISessionSkillCatalog,
   type ISessionScopeHandle,
+  type PromptHandle,
   type SkillCatalog,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -227,10 +228,16 @@ export class AcpSession {
       toolCalls: [],
       origin: { kind: 'user' },
     };
-    return this.driveTurn(async () =>
-      // `enqueue` (not `inject`) so the prompt runs through the full submission
-      // path, including `onBeforeSubmitPrompt` hooks (prompt-blocking policy).
-      (await this.mainAgent.accessor.get(IAgentPromptService).enqueue({ message })).launched,
+    // Capture the PromptHandle so driveTurn can detect hook-blocked prompts.
+    let promptHandle: PromptHandle | undefined;
+    return this.driveTurn(
+      async () => {
+        // `enqueue` (not `inject`) so the prompt runs through the full submission
+        // path, including `onBeforeSubmitPrompt` hooks (prompt-blocking policy).
+        promptHandle = await this.mainAgent.accessor.get(IAgentPromptService).enqueue({ message });
+        return promptHandle.launched;
+      },
+      () => promptHandle,
     );
   }
 
@@ -239,8 +246,14 @@ export class AcpSession {
    * launching (so no events are missed), translate each event into an ACP
    * `session/update`, and settle on `turn.ended` (falling back to the turn's
    * `result` promise). Used by both normal prompts and skill activations.
+   *
+   * `getPromptHandle` is optional — only the normal-prompt path provides it, so
+   * hook-blocked prompts can be distinguished from other no-launch causes.
    */
-  private driveTurn(launch: () => Promise<AgentTurn | undefined>): Promise<PromptResponse> {
+  private driveTurn(
+    launch: () => Promise<AgentTurn | undefined>,
+    getPromptHandle?: () => PromptHandle | undefined,
+  ): Promise<PromptResponse> {
     return new Promise<PromptResponse>((resolve, reject) => {
       const eventBus = this.mainAgent.accessor.get(IEventBus);
       let settled = false;
@@ -343,6 +356,14 @@ export class AcpSession {
           if (turn === undefined) {
             // busy / not runnable / hook-blocked — no turn will emit
             // `turn.ended`, so settle gracefully.
+            const handle = getPromptHandle?.();
+            if (handle?.state === 'blocked') {
+              // The prompt was blocked by an onBeforeSubmitPrompt hook.
+              // PromptSubmitContext only sets block: true without a message,
+              // so we cannot stream a blocking reason to the client.
+              // TODO: stream the hook's blocking message as an
+              // agent_message_chunk when PromptSubmitContext exposes one.
+            }
             settle(() => resolve({ stopReason: 'end_turn' }));
             return;
           }

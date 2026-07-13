@@ -192,11 +192,13 @@ export class AcpServer implements Agent {
 
   async listSessions(params: ListSessionsRequest): Promise<ListSessionsResponse> {
     const cwd = params.cwd ?? undefined;
-    // ACP `cwd` ↔ session `cwd`. Filtering by workspaceId is a later phase;
-    // for now list everything (the client filters by cwd on its side).
-    void cwd;
     const page = await this.core.accessor.get(ISessionIndex).list({});
-    const sessions: SessionInfo[] = page.items.map(sessionSummaryToSessionInfo);
+    // Filter by cwd when the client supplies one. SessionSummary.cwd is optional
+    // (sessions written before cwd was persisted); those are excluded when a
+    // filter is active.
+    const items =
+      cwd !== undefined ? page.items.filter((s) => s.cwd === cwd) : page.items;
+    const sessions: SessionInfo[] = items.map(sessionSummaryToSessionInfo);
     return { sessions, nextCursor: page.nextCursor ?? null };
   }
 
