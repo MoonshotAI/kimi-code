@@ -194,6 +194,13 @@ function measureText(text: string, style: CSSStyleDeclaration): number {
   return measureNaturalWidth(prepared);
 }
 
+function inlineBoxSize(style: CSSStyleDeclaration): number {
+  return cssPx(style.paddingLeft)
+    + cssPx(style.paddingRight)
+    + cssPx(style.borderLeftWidth)
+    + cssPx(style.borderRightWidth);
+}
+
 function workspacePickerMaxWidth(): number {
   const containerWidth = contentWrapRef.value?.getBoundingClientRect().width ?? window.innerWidth;
   return Math.max(0, containerWidth * 0.75);
@@ -203,17 +210,58 @@ function updateWorkspacePickerWidth(): void {
   const probe = wsPickMeasureRef.value;
   if (!probe) return;
 
+  const menu = probe.querySelector<HTMLElement>('.ws-pick-menu');
+  const item = probe.querySelector<HTMLElement>('.ws-pick-item');
+  const itemName = probe.querySelector<HTMLElement>('.ws-pick-item-name');
   const itemPath = probe.querySelector<HTMLElement>('.ws-pick-item-path');
-  if (!itemPath) return;
+  const moreItem = probe.querySelector<HTMLElement>('.ws-pick-more');
+  const moreLabel = moreItem?.querySelector<HTMLElement>('span');
+  const action = probe.querySelector<HTMLElement>('.ws-pick-action');
+  const actionIcon = action?.querySelector<SVGElement>('svg');
+  const actionLabel = action?.querySelector<HTMLElement>('span');
+  if (
+    !menu ||
+    !item ||
+    !itemName ||
+    !itemPath ||
+    !moreItem ||
+    !moreLabel ||
+    !action ||
+    !actionIcon ||
+    !actionLabel
+  ) {
+    return;
+  }
 
+  const menuStyle = getComputedStyle(menu);
+  const itemStyle = getComputedStyle(item);
+  const itemNameStyle = getComputedStyle(itemName);
   const itemPathStyle = getComputedStyle(itemPath);
+  const moreItemStyle = getComputedStyle(moreItem);
+  const moreLabelStyle = getComputedStyle(moreLabel);
+  const actionStyle = getComputedStyle(action);
+  const actionLabelStyle = getComputedStyle(actionLabel);
 
-  const measuredPathWidth = (props.workspaces ?? []).reduce(
-    (max, workspace) => Math.max(max, measureText(workspace.shortPath, itemPathStyle)),
+  const workspaceRowWidth = (props.workspaces ?? []).reduce(
+    (max, workspace) => Math.max(
+      max,
+      measureText(workspace.name, itemNameStyle),
+      measureText(workspace.shortPath, itemPathStyle),
+    ),
     0,
-  );
-  wsPickMenuWidth.value = measuredPathWidth
-    ? `${Math.ceil(Math.min(measuredPathWidth, workspacePickerMaxWidth()))}px`
+  ) + inlineBoxSize(itemStyle);
+  const moreRowWidth = hiddenWorkspaceCount.value > 0
+    ? measureText(moreLabel.textContent ?? '', moreLabelStyle) + inlineBoxSize(moreItemStyle)
+    : 0;
+  const actionRowWidth = measureText(actionLabel.textContent ?? '', actionLabelStyle)
+    + actionIcon.getBoundingClientRect().width
+    + cssPx(actionStyle.columnGap)
+    + inlineBoxSize(actionStyle);
+  const naturalMenuWidth = Math.max(workspaceRowWidth, moreRowWidth, actionRowWidth)
+    + inlineBoxSize(menuStyle);
+
+  wsPickMenuWidth.value = naturalMenuWidth
+    ? `${Math.ceil(Math.min(naturalMenuWidth, workspacePickerMaxWidth()))}px`
     : '';
 }
 
@@ -1795,7 +1843,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   top: calc(100% + 6px);
   z-index: var(--z-dropdown);
   width: var(--ws-pick-menu-width, max-content);
-  min-width: var(--ws-pick-menu-width, max-content);
+  min-width: min(180px, calc(100vw - var(--space-8)));
   max-width: calc(100vw - var(--space-8));
   max-height: 50vh;
   overflow-y: auto;
@@ -1822,12 +1870,24 @@ defineExpose({ loadComposerForEdit, focusComposer });
 .ws-pick-item:hover { background: var(--panel2); }
 .ws-pick-item.on { background: var(--color-accent-soft); }
 .ws-pick-item-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--text-base);
   font-weight: var(--weight-medium);
   color: var(--color-text);
 }
 .ws-pick-item.on .ws-pick-item-name { color: var(--color-accent-hover); }
-.ws-pick-item-path { font-size: var(--text-xs); font-weight: 475; color: var(--muted); }
+.ws-pick-item-path {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-xs);
+  font-weight: 475;
+  color: var(--muted);
+}
 .ws-pick-item.ws-pick-more {
   flex-direction: row;
   align-items: center;
