@@ -463,6 +463,35 @@ describe('AgentLifecycleService', () => {
     expect(settled).toBe(true);
   });
 
+  it('merges caller-supplied MCP servers into the initial connect (file < caller < plugin)', async () => {
+    ix.stub(IPluginService, {
+      ...pluginServiceStub,
+      enabledMcpServers: async () => ({
+        shared: { transport: 'stdio', command: 'plugin-version' },
+      }),
+    } as unknown as IPluginService);
+    const connectAll = vi
+      .spyOn(McpConnectionManager.prototype, 'connectAll')
+      .mockResolvedValue(undefined);
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.ensureMcpReady({
+      shared: { transport: 'stdio', command: 'caller-version' },
+      callerOnly: { transport: 'http', url: 'https://caller.example.com' },
+    });
+
+    expect(connectAll).toHaveBeenCalledTimes(1);
+    expect(connectAll).toHaveBeenCalledWith({
+      shared: { transport: 'stdio', command: 'plugin-version' },
+      callerOnly: { transport: 'http', url: 'https://caller.example.com' },
+    });
+
+    // The initial load is single-flight: later calls only await it and never
+    // re-merge a different caller payload.
+    await svc.ensureMcpReady({ ignored: { transport: 'stdio', command: 'ignored' } });
+    expect(connectAll).toHaveBeenCalledTimes(1);
+  });
+
   it('whenReady waits for an in-flight creation to finish bootstrap', async () => {
     let releaseRegister!: () => void;
     registerAgent.mockImplementationOnce(

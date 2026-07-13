@@ -488,6 +488,16 @@ describe('SessionLifecycleService', () => {
     expect(h.kind).toBe(LifecycleScope.Session);
   });
 
+  it('create forwards caller-supplied MCP servers to the session MCP initial load', async () => {
+    const ensureMcpReady = vi.fn(() => Promise.resolve());
+    const svc = build([
+      stubPair(IAgentLifecycleService, { ...agentLifecycleStub(), ensureMcpReady }),
+    ]);
+    const mcpServers = { docs: { transport: 'http', url: 'https://mcp.example.com' } } as const;
+    await svc.create({ sessionId: 's1', workDir: '/tmp/proj', mcpServers });
+    expect(ensureMcpReady).toHaveBeenCalledWith(mcpServers);
+  });
+
   it('create appends the session to the shared session_index.jsonl', async () => {
     const appended: unknown[] = [];
     const svc = build([

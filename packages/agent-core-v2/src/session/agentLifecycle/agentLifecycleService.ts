@@ -37,9 +37,10 @@ import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentP
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { AgentMcpService } from '#/agent/mcp/mcpService';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import { McpOAuthService } from '#/agent/mcp/oauth/service';
 import { createMcpOAuthStore } from '#/agent/mcp/oauth/store';
-import { resolveSessionMcpConfig } from '#/agent/mcp/session-config';
+import { mergeCallerMcpServers, resolveSessionMcpConfig } from '#/agent/mcp/session-config';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -395,10 +396,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     ]);
   }
 
-  ensureMcpReady(): Promise<void> {
+  ensureMcpReady(callerServers?: Readonly<Record<string, McpServerConfig>>): Promise<void> {
     if (this.mcpInitialLoad !== undefined) return this.mcpInitialLoad;
     const manager = this.getMcpManager();
-    const initialLoad = this.connectMcpServers(manager).catch((error: unknown) => {
+    const initialLoad = this.connectMcpServers(manager, callerServers).catch((error: unknown) => {
       this.log.error('mcp initial load failed', { error });
       const message = error instanceof Error ? error.message : String(error);
       this.handles.get('main')?.accessor.get(IEventBus)?.publish({
@@ -486,12 +487,18 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     return manager;
   }
 
-  private async connectMcpServers(manager: McpConnectionManager): Promise<void> {
+  private async connectMcpServers(
+    manager: McpConnectionManager,
+    callerServers?: Readonly<Record<string, McpServerConfig>>,
+  ): Promise<void> {
     const [base, pluginServers] = await Promise.all([
       resolveSessionMcpConfig({ cwd: this.workspace.workDir, homeDir: this.bootstrap.homeDir }),
       this.plugins.enabledMcpServers(),
     ]);
-    const servers = { ...base?.servers, ...pluginServers };
+    // Precedence mirrors v1's `mergeCallerMcpServers` + `mergePluginMcpConfig`
+    // (`rpc/core-impl.ts`): file config < caller-supplied < plugin.
+    const withCaller = mergeCallerMcpServers(base, callerServers);
+    const servers = { ...withCaller?.servers, ...pluginServers };
     if (Object.keys(servers).length === 0) return;
     await manager.connectAll(servers);
     this.trackMcpInitialLoad(manager);

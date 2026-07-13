@@ -33,6 +33,7 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import type { BindAgentInput } from '#/agent/profile/profile';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { Turn } from '#/agent/loop/loop';
@@ -152,11 +153,15 @@ export interface IAgentLifecycleService {
   create(opts?: CreateAgentOptions): Promise<IAgentScopeHandle>;
   whenReady(agentId: string): Promise<IAgentScopeHandle | undefined>;
   /**
-   * Resolve the session/plugin MCP config and wait for the initial connection
-   * attempt to finish. Per-server failures are reflected in MCP status entries
-   * rather than rejecting this promise.
+   * Resolve the session MCP config (file config + caller-supplied servers, with
+   * plugin servers on top) and wait for the initial connection attempt to
+   * finish. Per-server failures are reflected in MCP status entries rather than
+   * rejecting this promise. `callerServers` is honored only by the call that
+   * starts the initial load — `sessionLifecycle.materializeSession` passes the
+   * session's caller-supplied servers there; later callers (e.g. agent
+   * creation) just await the in-flight load.
    */
-  ensureMcpReady(): Promise<void>;
+  ensureMcpReady(callerServers?: Readonly<Record<string, McpServerConfig>>): Promise<void>;
   notifyMainCreated(handle: IAgentScopeHandle): void;
   /**
    * Fire {@link onDidStopAgentTask} for a mirrored run that has stopped.
