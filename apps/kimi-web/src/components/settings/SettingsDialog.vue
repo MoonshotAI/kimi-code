@@ -48,6 +48,8 @@ const props = defineProps<{
   configSaving?: boolean;
   /** Server version reported by GET /api/v1/meta. */
   serverVersion?: string;
+  /** Backend engine generation from GET /api/v1/meta ('v1' legacy, 'v2' kap-server). */
+  backend?: 'v1' | 'v2';
 }>();
 
 const emit = defineEmits<{
@@ -80,6 +82,9 @@ const tabs: { id: SettingsTab; labelKey: string }[] = [
 ];
 
 const daemonEndpoint = serverEndpointLabel();
+const backendLabel = computed(() =>
+  props.backend === 'v2' ? 'v2 (kap-server)' : 'v1 (server)',
+);
 const permissionModes = ['manual', 'auto', 'yolo'] as const;
 // Reuse the Composer's permission labels (status.permission*) so the
 // default-permission names stay in sync with the toolbar.
@@ -558,6 +563,10 @@ function archiveTime(iso: string): string {
             <div class="row">
               <span class="rlabel">{{ t('sidebar.daemon') }}</span>
               <span class="rvalue mono">{{ daemonEndpoint }}</span>
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('settings.backend') }}</span>
+              <span class="rvalue mono">{{ backendLabel }}</span>
             </div>
             <div class="row">
               <span class="rlabel">{{ t('settings.serverVersion') }}</span>
