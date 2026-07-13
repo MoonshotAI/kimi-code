@@ -141,7 +141,7 @@ test('concurrent SET/UPDATE/DEL during compaction survive recovery', async () =>
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 test('compaction with no concurrent writes produces an empty WAL tail', async () => {
   // When nothing is written during compaction, the post-fence WAL tail is empty

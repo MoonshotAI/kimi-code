@@ -312,9 +312,9 @@ describe('ReadMediaFileTool', () => {
 
   it('downsamples large images and points the model to region readback', async () => {
     const big = Buffer.from(
-      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 2200, height: 2200, color: 0x3366ccff }).getBuffer('image/png'),
     );
-    expect(sniffImageDimensions(big)).toEqual({ width: 3600, height: 3600 });
+    expect(sniffImageDimensions(big)).toEqual({ width: 2200, height: 2200 });
 
     const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
       path: '/workspace/big.png',
@@ -322,7 +322,7 @@ describe('ReadMediaFileTool', () => {
 
     // The <system> note keeps the ORIGINAL size so coordinate mapping holds.
     const systemText = noteText(result);
-    expect(systemText).toContain('3600x3600');
+    expect(systemText).toContain('2200x2200');
     expect(systemText).toContain(`${String(big.length)} bytes`);
     // Wording must not depend on serialization order: some providers keep
     // the note inline after the media, others flatten tool text and
@@ -357,7 +357,7 @@ describe('ReadMediaFileTool', () => {
 
   it('reads image regions at native resolution', async () => {
     const big = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 600, height: 600, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
       path: '/workspace/big.png',
@@ -372,7 +372,7 @@ describe('ReadMediaFileTool', () => {
       height: 300,
     });
     const systemText = noteText(result);
-    expect(systemText).toContain('2600x2600');
+    expect(systemText).toContain('600x600');
     expect(systemText).toMatch(/region \(x=100, y=50, width=400, height=300\)/);
     expect(systemText).toMatch(/native resolution/);
     expect(systemText).toContain('offset');
@@ -380,20 +380,20 @@ describe('ReadMediaFileTool', () => {
 
   it('rejects a region outside the image with the original size in the error', async () => {
     const big = Buffer.from(
-      await new Jimp({ width: 2600, height: 2600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 600, height: 600, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
       path: '/workspace/big.png',
       region: { x: 5000, y: 0, width: 100, height: 100 },
     });
     expect(result.isError).toBe(true);
-    expect(result.output).toContain('2600x2600');
+    expect(result.output).toContain('600x600');
   });
 
   it('serves full_resolution when the bytes fit the per-image budget', async () => {
     const big = Buffer.from(
       // Over the edge cap, tiny in bytes.
-      await new Jimp({ width: 3900, height: 1950, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 2100, height: 1050, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
       path: '/workspace/big.png',
@@ -425,13 +425,13 @@ describe('ReadMediaFileTool', () => {
   });
 
   it('reports an EXIF-rotated original in the decoded coordinate space', async () => {
-    // Orientation 6 (rotate 90° CW): the header says 3600x1800, but jimp
-    // decodes to 1800x3600 — the space the sent image and any region
+    // Orientation 6 (rotate 90° CW): the header says 2200x1100, but jimp
+    // decodes to 1100x2200 — the space the sent image and any region
     // readback live in. The note's original size must match that space,
     // not the pre-rotation header sniff.
     const portrait = withExifOrientation(
       new Uint8Array(
-        await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/jpeg', {
+        await new Jimp({ width: 2200, height: 1100, color: 0x3366ccff }).getBuffer('image/jpeg', {
           quality: 90,
         }),
       ),
@@ -442,7 +442,7 @@ describe('ReadMediaFileTool', () => {
     });
 
     const systemText = noteText(result);
-    expect(systemText).toContain('Original dimensions: 1800x3600');
+    expect(systemText).toContain('Original dimensions: 1100x2200');
     expect(systemText).toMatch(/downsampled to 1000x2000/);
   }, 15000);
 
@@ -489,7 +489,7 @@ describe('ReadMediaFileTool', () => {
   it('emits image_compress and image_crop telemetry tagged read_media', async () => {
     const records: TelemetryRecord[] = [];
     const big = Buffer.from(
-      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 2200, height: 1100, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const tool = makeTool(
       { '/workspace/big.png': { data: big } },

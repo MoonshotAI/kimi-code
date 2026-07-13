@@ -86,7 +86,12 @@ test('compaction-race: snapshot phase does not block writes', async () => {
     compactThresholdBytes: 1 << 30, // drive compaction manually
   });
   try {
-    const N = 150_000;
+    // writeSnapshot yields to the event loop every 2000 entries (snapshot.ts
+    // `yieldEvery`, plus an async writev per ~1 MiB batch), so N just has to
+    // clear a few yield quanta for the write to land in a yield gap. 10_000
+    // entries = 5 explicit yields — ~5x headroom over the minimum for
+    // "multiple yields", enough for slow CI machines without writing ~75 MB.
+    const N = 10_000;
     for (let i = 0; i < N; i++) await db.set('k' + i, { i, pad: 'x'.repeat(500) });
 
     const cp = db.compact();
@@ -112,7 +117,7 @@ test('compaction-race: snapshot phase does not block writes', async () => {
     await db.close().catch(() => {});
     await rmrf(dir);
   }
-}, 60_000);
+}, 15_000);
 
 test('compaction-race: heavy writes during compaction grow a WAL tail that survives recovery', async () => {
   // Sustained writes during compaction force the pre-copy loop to drain a real
