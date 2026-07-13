@@ -4,8 +4,8 @@ import { z } from 'zod';
 import {
   compileToolArgsValidator,
   validateToolArgs,
-} from '#/_base/tools/args-validator';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
+} from '#/tool/args-validator';
+import { toInputJsonSchema } from '#/tool/input-schema';
 
 function collectRequired(schema: unknown, acc: string[] = []): string[] {
   if (Array.isArray(schema)) {

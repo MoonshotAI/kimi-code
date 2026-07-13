@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { isSensitiveFile } from '#/_base/tools/policies/sensitive';
+import { isSensitiveFile } from '#/tool/path-access';
 
 describe('isSensitiveFile', () => {
   it('flags base .env files in any directory', () => {

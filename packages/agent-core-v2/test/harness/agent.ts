@@ -33,7 +33,7 @@ import { AgentSkillService } from '#/agent/skill/skillService';
 import type {
   ExecutableToolOutput as ToolOutput,
   ExecutableToolResult,
-} from '#/agent/tool/toolContract';
+} from '#/tool/toolContract';
 import type {
   PersistedWireRecord,
   WireRecordRestoreOptions,

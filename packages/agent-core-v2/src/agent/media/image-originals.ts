@@ -1,5 +1,5 @@
 /**
- * Content-addressed store for pre-compression image originals.
+ * `media` domain (L4) — content-addressed store for pre-compression image originals.
  *
  * When an ingestion point (MCP tool result, pasted image, inline base64
  * upload) compresses an image that exists only in memory, the original bytes

@@ -10,8 +10,8 @@ import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/tel
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/agent/mcp/types';
-import type { ToolExecution } from '#/agent/tool/toolContract';
-import { sniffImageDimensions } from '#/_base/tools/support/file-type';
+import type { ToolExecution } from '#/tool/toolContract';
+import { sniffImageDimensions } from '#/agent/media/file-type';
 
 const MCP_OUTPUT_TRUNCATED_TEXT =
   '\n\n[Output truncated: exceeded 100000 character limit. ' +

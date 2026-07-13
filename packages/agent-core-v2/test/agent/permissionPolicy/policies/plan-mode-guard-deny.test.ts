@@ -1,10 +1,10 @@
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { describe, expect, it } from 'vitest';
 
-import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
 import { PlanModeGuardDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/plan-mode-guard-deny';
-import { ToolAccesses } from '#/agent/tool/tool-access';
+import { ToolAccesses } from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PLAN_PATH = '/workspace/plan/current-plan.md';

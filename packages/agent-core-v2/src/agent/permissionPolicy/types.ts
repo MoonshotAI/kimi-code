@@ -1,4 +1,4 @@
-import type { PrepareToolExecutionResult, ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+import type { PrepareToolExecutionResult, ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 

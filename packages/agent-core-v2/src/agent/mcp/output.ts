@@ -30,8 +30,8 @@
 import type { ContentPart } from '#/app/llmProtocol/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
-import { compressImageContentParts } from '#/_base/tools/support/image-compress';
-import { persistOriginalImage } from '#/_base/tools/support/image-originals';
+import { compressImageContentParts } from '#/agent/media/image-compress';
+import { persistOriginalImage } from '#/agent/media/image-originals';
 import type { MCPContentBlock, MCPToolResult } from './types';
 
 export interface McpOutputOptions {

@@ -5,8 +5,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type { ExecutableTool, ExecutableToolContext, ExecutableToolResult, ToolExecution, ToolResult, ToolUpdate } from '#/agent/tool/toolContract';
+import {
+  ToolAccesses,
+  type ExecutableTool,
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
+  type ToolResult,
+  type ToolUpdate,
+} from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService, parseToolCallArguments } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ToolResultBuilder } from '#/agent/tool/result-builder';
+import { ToolResultBuilder } from '#/tool/result-builder';
 
 describe('ToolResultBuilder', () => {
   it('returns concatenated output and a confirmation message under the limit', () => {

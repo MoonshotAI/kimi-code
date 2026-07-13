@@ -6,7 +6,7 @@ import { Readable, type Writable } from 'node:stream';
 import { LifecycleScope, type IAgentScopeHandle } from '#/_base/di/scope';
 import { Event, type Event as KimiEvent } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
+import { toInputJsonSchema } from '#/tool/input-schema';
 import { userCancellationReason } from '#/_base/utils/abort';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
@@ -16,10 +16,9 @@ import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInj
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
-import { makeHookRunner } from '../externalHooks/runner-stub';
+import { makeHookRunner } from '../agent/externalHooks/runner-stub';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type { ExecutableTool } from '#/agent/tool/toolContract';
+import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService, type UserToolRegistration } from '#/agent/userTool/userTool';
@@ -51,7 +50,7 @@ import type {
 } from '#/session/swarm/sessionSwarm';
 import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
 import { IAgentWireService } from '#/wire/tokens';
-import { createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
+import { createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import {
   configServices,
   createCommandRunner,
@@ -64,8 +63,8 @@ import {
   type TestAgentContext,
   type TestAgentOptions,
   type TestAgentServiceOverride,
-} from '../../harness';
-import { executeTool } from '../../tools/fixtures/execute-tool';
+} from '../harness';
+import { executeTool } from '../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
 

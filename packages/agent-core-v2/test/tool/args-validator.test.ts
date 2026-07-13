@@ -4,7 +4,7 @@ import {
   compileToolArgsValidator,
   type JsonType,
   validateToolArgs,
-} from '#/_base/tools/args-validator';
+} from '#/tool/args-validator';
 
 function validate(schema: Record<string, unknown>, value: JsonType): string | null {
   return validateToolArgs(compileToolArgsValidator(schema), value);

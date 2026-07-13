@@ -6,7 +6,7 @@ import type { GoalChange, GoalSnapshot } from '#/agent/goal/types';
 import type { PermissionApprovalResultRecord } from '#/agent/permissionRules/permissionRules';
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PlanData } from '#/agent/plan/plan';
-import type { ToolInfo } from '#/agent/tool/toolContract';
+import type { ToolInfo } from '#/tool/toolContract';
 import type { SessionSummary } from '#/agent/rpc/core-api';
 import type { UsageStatus } from '@moonshot-ai/protocol';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
