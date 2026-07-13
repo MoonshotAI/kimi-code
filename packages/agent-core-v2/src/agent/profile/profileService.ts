@@ -37,7 +37,7 @@ import picomatch from 'picomatch';
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { resolveThinkingEffort, resolveThinkingKeep } from './thinking';
+import { resolveThinkingEffort, resolveThinkingKeep, supportsThinkingEffort } from './thinking';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -64,7 +64,7 @@ import type {
   ProfileSetModelResult,
   ProfileUpdateData,
 } from './profile';
-import { IAgentProfileService } from './profile';
+import { IAgentProfileService, ProfileError, ProfileErrors } from './profile';
 import {
   THINKING_SECTION,
   type ThinkingConfig,
@@ -207,6 +207,15 @@ export class AgentProfileService implements IAgentProfileService {
 
   setThinking(level: string): void {
     const previousEffort = this.thinkingLevel;
+    const model = this.tryResolveRawModel();
+    if (!supportsThinkingEffort(level as ThinkingEffort, model)) {
+      const efforts = model?.supportEfforts ?? [];
+      const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
+      throw new ProfileError(
+        ProfileErrors.codes.MODEL_CONFIG_INVALID,
+        `Thinking effort "${level}" is not supported by model "${this.modelAlias}". Supported efforts: ${supported}.`,
+      );
+    }
     this.update({ thinkingLevel: level });
     const effort = this.thinkingLevel;
     if (effort !== previousEffort) {
@@ -401,10 +410,12 @@ export class AgentProfileService implements IAgentProfileService {
     if (changed.cwd !== undefined) payload.cwd = changed.cwd;
     if (changed.modelAlias !== undefined) payload.modelAlias = changed.modelAlias;
     if (changed.profileName !== undefined) payload.profileName = changed.profileName;
-    if (changed.thinkingLevel !== undefined) {
-      const model = this.resolveModelForThinking(changed.modelAlias);
+    if (changed.thinkingLevel !== undefined || changed.modelAlias !== undefined) {
+      const model = this.resolveModelForThinking(changed.modelAlias ?? this.modelAlias);
+      const requested =
+        changed.thinkingLevel ?? (this.modelAlias === undefined ? undefined : this.thinkingLevel);
       payload.thinkingEffort = resolveThinkingEffort(
-        changed.thinkingLevel,
+        requested,
         this.config.get<ThinkingConfig>(THINKING_SECTION),
         model,
       );
@@ -424,7 +435,9 @@ export class AgentProfileService implements IAgentProfileService {
       const protocol = this.tryResolveRawModel()?.protocol;
       this.telemetryContext.set({ provider_type: protocol, protocol });
     }
-    this.emitStatusUpdated();
+    this.emitStatusUpdated(
+      changed.modelAlias !== undefined || changed.thinkingLevel !== undefined,
+    );
   }
 
   private setActiveTools(names: readonly string[]): void {
@@ -434,7 +447,7 @@ export class AgentProfileService implements IAgentProfileService {
     this.wire.dispatch(setActiveTools({ names: [...names] }));
   }
 
-  private emitStatusUpdated(): void {
+  private emitStatusUpdated(includeThinkingEffort = false): void {
     const custom = this.optionsValue.emitStatusUpdated;
     if (custom !== undefined) {
       custom();
@@ -444,6 +457,7 @@ export class AgentProfileService implements IAgentProfileService {
     this.eventBus.publish({
       type: 'agent.status.updated',
       model: this.modelAlias,
+      thinkingEffort: includeThinkingEffort ? this.thinkingLevel : undefined,
       maxContextTokens: this.getModelCapabilities().max_context_tokens,
     });
   }

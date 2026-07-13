@@ -95,8 +95,7 @@ export interface AnthropicOptions {
    * encode a parseable Claude version. Leave undefined to infer from the name.
    */
   adaptiveThinking?: boolean | undefined;
-  /** Kimi-managed endpoint effort set. When present, only declared values send. */
-  supportEfforts?: readonly string[];
+  kimiThinking?: boolean | undefined;
   /**
    * Use the Anthropic **beta** Messages API (`client.beta.messages.create`,
    * `POST /v1/messages?beta=true`) instead of the standard Messages API.
@@ -920,7 +919,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private _defaultHeaders: Record<string, string | null> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => Anthropic) | undefined;
   private _adaptiveThinking: boolean | undefined;
-  private readonly _supportEfforts: readonly string[];
+  private readonly _kimiThinking: boolean;
   private _betaApi: boolean;
   private _explicitMaxTokens: boolean;
 
@@ -929,7 +928,7 @@ export class AnthropicChatProvider implements ChatProvider {
     this._stream = options.stream ?? true;
     this._metadata = options.metadata;
     this._adaptiveThinking = options.adaptiveThinking;
-    this._supportEfforts = options.supportEfforts ?? [];
+    this._kimiThinking = options.kimiThinking ?? false;
     this._betaApi = options.betaApi ?? false;
     this._apiKey =
       options.apiKey === undefined || options.apiKey.length === 0 ? undefined : options.apiKey;
@@ -1209,11 +1208,10 @@ export class AnthropicChatProvider implements ChatProvider {
 
     if (effort === 'off') {
       thinking = { type: 'disabled' };
-    } else if (this._supportEfforts.length > 0) {
+    } else if (this._kimiThinking) {
       thinking = { type: 'enabled' } as MessageCreateParams['thinking'];
-      outputConfig = this._supportEfforts.includes(effort)
-        ? ({ effort } as MessageCreateParams['output_config'])
-        : undefined;
+      outputConfig =
+        effort === 'on' ? undefined : ({ effort } as MessageCreateParams['output_config']);
     } else if (adaptive) {
       thinking = { type: 'adaptive', display: 'summarized' };
       outputConfig =

@@ -1068,11 +1068,10 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(provider.thinkingEffort).toBe('extreme');
     });
 
-    it('omits undeclared efforts for Kimi-style supportEfforts', async () => {
+    it('does not filter concrete efforts through a client-side allow-list', async () => {
       const provider = new OpenAIResponsesChatProvider({
         model: 'kimi-for-coding',
         apiKey: 'test-key',
-        supportEfforts: ['low', 'high', 'max'],
       });
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
@@ -1081,7 +1080,7 @@ describe('OpenAIResponsesChatProvider', () => {
       const xhighBody = await captureRequestBody(provider.withThinking('xhigh'), '', [], history);
 
       expect((maxBody['reasoning'] as Record<string, unknown>)['effort']).toBe('max');
-      expect(xhighBody['reasoning']).toBeUndefined();
+      expect((xhighBody['reasoning'] as Record<string, unknown>)['effort']).toBe('xhigh');
     });
   });
 

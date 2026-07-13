@@ -148,6 +148,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       supportEfforts: model.supportEfforts,
       defaultEffort: model.defaultEffort,
       alwaysThinking,
+      providerType: providerConfig?.type,
       providerName,
       authProvider,
       protocolRegistry: this.protocolRegistry as ProtocolAdapterRegistry,
@@ -159,7 +160,11 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     // same `thinking` config). Required for models whose
     // endpoint rejects a request that omits thinking (e.g. kimi-k2.7 over the
     // Anthropic protocol returns 400 unless `thinking.type === 'enabled'`).
-    const effort = this.resolveDefaultThinking(model, alwaysThinking);
+    const effort = this.resolveDefaultThinking(
+      model,
+      alwaysThinking,
+      providerConfig?.type === 'kimi',
+    );
     return effort === 'off' ? impl : impl.withThinking(effort);
   }
 
@@ -174,6 +179,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
   private resolveDefaultThinking(
     model: ModelConfig,
     alwaysThinking: boolean,
+    kimiProvider: boolean,
   ): ThinkingEffort {
     const thinking = this.config.get<ThinkingSection | undefined>('thinking');
     return resolveThinkingEffortForModel(
@@ -183,6 +189,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
         effort: thinking?.effort,
       },
       { ...model, alwaysThinking },
+      kimiProvider,
     );
   }
 
@@ -368,6 +375,7 @@ function buildProtocolProviderOptions(
     case 'anthropic':
       if (model.maxOutputSize !== undefined) options.defaultMaxTokens = model.maxOutputSize;
       if (model.adaptiveThinking !== undefined) options.adaptiveThinking = model.adaptiveThinking;
+      if (provider?.type === 'kimi') options.kimiThinking = true;
       if (model.betaApi !== undefined) options.betaApi = model.betaApi;
       break;
     case 'openai': {
@@ -392,10 +400,6 @@ function buildProtocolProviderOptions(
       const exhaustive: never = protocol;
       void exhaustive;
     }
-  }
-
-  if (provider?.type === 'kimi' && model.supportEfforts !== undefined) {
-    options.supportEfforts = model.supportEfforts;
   }
 
   return Object.values(options).some((value) => value !== undefined)

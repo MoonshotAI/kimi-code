@@ -122,8 +122,8 @@ describe('applyKimiEnvThinkingEffort', () => {
   });
 
   it('forces the effort even when the model does not declare it', () => {
-    // kimi() has no support_efforts, so withThinking('high') carries no effort;
-    // the env var injects one anyway, bypassing the support_efforts gate.
+    // The env override remains authoritative even when withThinking already
+    // carries a different concrete effort.
     const provider = kimi().withThinking('high');
     const out = applyKimiEnvThinkingEffort(provider, 'high', {
       KIMI_MODEL_THINKING_EFFORT: 'max',

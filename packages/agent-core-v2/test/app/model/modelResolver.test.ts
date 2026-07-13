@@ -594,7 +594,7 @@ describe('ModelResolverService', () => {
       });
     });
 
-    it('passes Kimi supportEfforts through to the protocol adapter', async () => {
+    it('keeps Kimi supportEfforts as model metadata instead of adapter options', async () => {
       providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
       models['m'] = {
         provider: 'p',
@@ -603,15 +603,12 @@ describe('ModelResolverService', () => {
         supportEfforts: ['low', 'high', 'max'],
       };
 
-      const config = await resolveAndCreateProvider();
+      const model = ix.get(IModelResolver).resolve('m');
 
-      expect(config).toMatchObject({
-        protocol: 'kimi',
-        providerOptions: { supportEfforts: ['low', 'high', 'max'] },
-      });
+      expect(model.supportEfforts).toEqual(['low', 'high', 'max']);
     });
 
-    it('passes overridden Kimi supportEfforts through to the protocol adapter', async () => {
+    it('applies overridden Kimi supportEfforts to model metadata', async () => {
       providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
       models['m'] = {
         provider: 'p',
@@ -621,12 +618,9 @@ describe('ModelResolverService', () => {
         overrides: { supportEfforts: ['low', 'high'] },
       };
 
-      const config = await resolveAndCreateProvider();
+      const model = ix.get(IModelResolver).resolve('m');
 
-      expect(config).toMatchObject({
-        protocol: 'kimi',
-        providerOptions: { supportEfforts: ['low', 'high'] },
-      });
+      expect(model.supportEfforts).toEqual(['low', 'high']);
     });
 
     it('does not pass supportEfforts through for non-Kimi providers', async () => {
@@ -649,7 +643,7 @@ describe('ModelResolverService', () => {
       expect(providerOptions?.supportEfforts).toBeUndefined();
     });
 
-    it('passes Kimi supportEfforts through when Kimi uses the Anthropic protocol', async () => {
+    it('marks the Anthropic adapter when it transports a Kimi provider', async () => {
       providers['p'] = { type: 'kimi', baseUrl: 'https://example.test', apiKey: 'sk' };
       models['m'] = {
         provider: 'p',
@@ -663,7 +657,7 @@ describe('ModelResolverService', () => {
 
       expect(config).toMatchObject({
         protocol: 'anthropic',
-        providerOptions: { supportEfforts: ['low', 'high', 'max'] },
+        providerOptions: { kimiThinking: true },
       });
     });
 
@@ -758,13 +752,17 @@ describe('ModelResolverService', () => {
   });
 
   describe('default thinking', () => {
-    function resolveEffort(capabilities?: string[]): string | null {
+    function resolveEffort(
+      capabilities?: string[],
+      supportEfforts?: string[],
+    ): string | null {
       providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
       models['m'] = {
         provider: 'p',
         model: 'wire-name',
         maxContextSize: 1000,
         ...(capabilities === undefined ? {} : { capabilities }),
+        supportEfforts,
       };
       return ix.get(IModelResolver).resolve('m').thinkingEffort;
     }
@@ -811,7 +809,7 @@ describe('ModelResolverService', () => {
 
     it('uses the configured thinking.effort', () => {
       configValues['thinking'] = { effort: 'medium' };
-      expect(resolveEffort()).toBe('medium');
+      expect(resolveEffort(['thinking'], ['low', 'medium', 'high'])).toBe('medium');
     });
 
     it('clamps an explicit off back to on for always_thinking models', () => {

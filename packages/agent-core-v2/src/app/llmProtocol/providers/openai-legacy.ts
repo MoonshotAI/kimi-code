@@ -83,8 +83,6 @@ export interface OpenAILegacyOptions {
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
   toolMessageConversion?: ToolMessageConversion | undefined;
-  /** Kimi-managed endpoint effort set. When present, only declared values send. */
-  supportEfforts?: readonly string[];
   clientFactory?: (auth: ProviderRequestAuth) => OpenAI;
 }
 
@@ -470,7 +468,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   private _defaultHeaders: Record<string, string> | undefined;
   private _reasoningKey: string | undefined;
   private _reasoningEffort: string | undefined;
-  private readonly _supportEfforts: readonly string[];
   private _generationKwargs: OpenAILegacyGenerationKwargs;
   private _toolMessageConversion: ToolMessageConversion;
   private _client: OpenAI | undefined;
@@ -494,7 +491,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
         ? normalizedReasoningKey
         : undefined;
     this._reasoningEffort = undefined;
-    this._supportEfforts = options.supportEfforts ?? [];
     this._generationKwargs =
       options.maxTokens !== undefined ? completionTokenKwargs(this._model, options.maxTokens) : {};
     this._toolMessageConversion = options.toolMessageConversion ?? null;
@@ -611,12 +607,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): OpenAILegacyChatProvider {
-    const reasoningEffort =
-      effort === 'off' ||
-      effort === 'on' ||
-      (this._supportEfforts.length > 0 && !this._supportEfforts.includes(effort))
-        ? undefined
-        : effort;
+    const reasoningEffort = effort === 'off' || effort === 'on' ? undefined : effort;
     const clone = this._clone();
     clone._reasoningEffort = reasoningEffort;
     return clone;

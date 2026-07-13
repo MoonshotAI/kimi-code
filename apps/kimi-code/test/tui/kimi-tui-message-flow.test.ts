@@ -139,6 +139,8 @@ function makeStartupInput(): KimiTUIStartupInput {
 }
 
 function makeSession(overrides: Record<string, unknown> = {}) {
+  let model = 'k2';
+  let thinkingEffort = 'off';
   return {
     id: 'ses-1',
     model: 'k2',
@@ -151,8 +153,8 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     cancel: vi.fn(async () => {}),
     cancelCompaction: vi.fn(async () => {}),
     getStatus: vi.fn(async () => ({
-      model: 'k2',
-      thinkingEffort: 'off',
+      model,
+      thinkingEffort,
       permission: 'manual',
       planMode: false,
       contextTokens: 0,
@@ -162,8 +164,12 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     getGoal: vi.fn(async () => ({ goal: null })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
-    setModel: vi.fn(async () => {}),
-    setThinking: vi.fn(async () => {}),
+    setModel: vi.fn(async (alias: string) => {
+      model = alias;
+    }),
+    setThinking: vi.fn(async (effort: string) => {
+      thinkingEffort = effort;
+    }),
     setPermission: vi.fn(async () => {}),
     setPlanMode: vi.fn(async () => {}),
     setSwarmMode: vi.fn(async () => {}),
@@ -2768,6 +2774,24 @@ command = "vim"
     expect(stripSgr(renderTranscript(driver))).toContain('LLM not set');
   });
 
+  it('applies the effective thinking effort from status updates', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        model: 'turbo',
+        thinkingEffort: 'mid',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.model).toBe('turbo');
+    expect(driver.state.appState.thinkingEffort).toBe('mid');
+  });
+
   it('renders swarm mode markers from /swarm commands, not tool-triggered status updates', async () => {
     const { driver } = await makeDriver();
 
@@ -4367,6 +4391,67 @@ command = "vim"
     expect(setConfig).not.toHaveBeenCalled();
     expect(driver.state.appState.model).toBe('turbo');
     expect(driver.state.appState.thinkingEffort).toBe('on');
+  });
+
+  it('uses the effective effort returned after a model-switch fallback', async () => {
+    let switched = false;
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: switched ? 'turbo' : 'k2',
+        thinkingEffort: switched ? 'mid' : 'ultra',
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+      setModel: vi.fn(async () => {
+        switched = true;
+      }),
+    });
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'ultra'],
+            defaultEffort: 'ultra',
+          },
+          turbo: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-turbo',
+            maxContextSize: 100,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'mid', 'high'],
+            defaultEffort: 'mid',
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'ultra' },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model turbo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        thinking: { enabled: true, effort: 'mid' },
+      });
+    });
+    expect(driver.state.appState.model).toBe('turbo');
+    expect(driver.state.appState.thinkingEffort).toBe('mid');
+    expect(renderTranscript(driver)).toContain('Switched to kimi-turbo with thinking mid.');
   });
 
   it('persists /model selection even when runtime state is unchanged', async () => {

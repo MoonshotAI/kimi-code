@@ -105,6 +105,7 @@ export interface Model {
    * `thinkingLevel` is `off`.
    */
   readonly alwaysThinking: boolean;
+  readonly providerType?: string;
   /**
    * The config-side Provider id this Model resolves against (the entry in
    * `[providers.*]`). For flat-case Models, this is the origin derived from

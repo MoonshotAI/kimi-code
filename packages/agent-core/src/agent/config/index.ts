@@ -16,7 +16,11 @@ import {
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
 import type { AgentConfigData, AgentConfigUpdateData } from './types';
-import { resolveThinkingEffort, type ThinkingEffort } from './thinking';
+import {
+  resolveThinkingEffort,
+  supportsThinkingEffort,
+  type ThinkingEffort,
+} from './thinking';
 import type { ModelAlias } from '../../config/schema';
 import type { ResolvedRuntimeProvider } from '../../session/provider-manager';
 
@@ -38,13 +42,36 @@ export class ConfigState {
   update(changed: AgentConfigUpdateData): void {
     if (Object.keys(changed).length === 0) return;
 
+    const targetAlias = changed.modelAlias ?? this._modelAlias;
+    const targetProvider = this.tryResolvedProviderConfigFor(targetAlias);
+    const targetModel = this.modelForThinking(targetAlias, targetProvider);
+    const kimiProvider = targetProvider?.type === 'kimi';
+    let thinkingEffort: ThinkingEffort | undefined;
+    if (changed.thinkingEffort !== undefined) {
+      thinkingEffort = resolveThinkingEffort(
+        changed.thinkingEffort,
+        this.agent.kimiConfig?.thinking,
+        targetModel,
+        kimiProvider,
+      );
+    } else if (changed.modelAlias !== undefined) {
+      thinkingEffort = resolveThinkingEffort(
+        this._modelAlias === undefined ? undefined : this._thinkingEffort,
+        this.agent.kimiConfig?.thinking,
+        targetModel,
+        kimiProvider,
+      );
+    }
+    const effectiveChanged =
+      thinkingEffort === undefined ? changed : { ...changed, thinkingEffort };
+
     this.agent.records.logRecord({
       type: 'config.update',
-      ...changed,
+      ...effectiveChanged,
     });
     this.agent.replayBuilder.push({
       type: 'config_updated',
-      config: changed,
+      config: effectiveChanged,
     });
     if (changed.cwd) {
       this._cwd = changed.cwd;
@@ -56,32 +83,28 @@ export class ConfigState {
     if (changed.profileName) {
       this._profileName = changed.profileName;
     }
-    if (changed.thinkingEffort !== undefined) {
-      // Resolve through the single source of truth so the always_thinking
-      // clamp and any future normalization apply uniformly — whether the
-      // level comes from createSession, setThinking RPC, or subagent
-      // inheritance.
-      this._thinkingEffort = resolveThinkingEffort(
-        changed.thinkingEffort,
-        this.agent.kimiConfig?.thinking,
-        this.currentModel,
-      );
-    } else if (changed.modelAlias !== undefined) {
-      // Re-apply the always_thinking clamp against the new model so a stale
-      // 'off' cannot survive a switch onto an always-thinking alias.
-      this._thinkingEffort = resolveThinkingEffort(
-        this._thinkingEffort,
-        this.agent.kimiConfig?.thinking,
-        this.currentModel,
-      );
-    }
+    if (thinkingEffort !== undefined) this._thinkingEffort = thinkingEffort;
     if (changed.systemPrompt !== undefined) {
       this._systemPrompt = changed.systemPrompt;
     }
     if (this.hasProvider && (changed.cwd !== undefined || changed.modelAlias)) {
       this.agent.tools.initializeBuiltinTools();
     }
-    this.agent.emitStatusUpdated();
+    this.agent.emitStatusUpdated(thinkingEffort !== undefined);
+  }
+
+  setThinkingEffort(effort: ThinkingEffort): void {
+    const model = this.currentModel;
+    const kimiProvider = this.tryResolvedProviderConfig()?.type === 'kimi';
+    if (!supportsThinkingEffort(effort, model, kimiProvider)) {
+      const efforts = model?.supportEfforts ?? [];
+      const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
+      throw new KimiError(
+        ErrorCodes.MODEL_CONFIG_INVALID,
+        `Thinking effort "${effort}" is not supported by model "${this.modelAlias}". Supported efforts: ${supported}.`,
+      );
+    }
+    this.update({ thinkingEffort: effort });
   }
 
   data(): AgentConfigData {
@@ -157,9 +180,31 @@ export class ConfigState {
   }
 
   private get currentModel(): ModelAlias | undefined {
-    const alias = this._modelAlias;
-    if (alias === undefined) return undefined;
-    return this.agent.kimiConfig?.models?.[alias];
+    const resolved = this.tryResolvedProviderConfig();
+    return this.modelForThinking(this._modelAlias, resolved);
+  }
+
+  private modelForThinking(
+    alias: string | undefined,
+    resolved: ResolvedRuntimeProvider | undefined,
+  ): ModelAlias | undefined {
+    if (resolved !== undefined) {
+      const capabilities = resolved.alwaysThinking
+        ? ['always_thinking']
+        : resolved.modelCapabilities.thinking
+          ? ['thinking']
+          : [];
+      return {
+        provider: resolved.providerName,
+        model: resolved.provider.model,
+        maxContextSize: Math.max(resolved.modelCapabilities.max_context_tokens, 1),
+        capabilities,
+        supportEfforts:
+          resolved.supportEfforts === undefined ? undefined : [...resolved.supportEfforts],
+        defaultEffort: resolved.defaultEffort,
+      };
+    }
+    return alias === undefined ? undefined : this.agent.kimiConfig?.models?.[alias];
   }
 
   get profileName(): string | undefined {
@@ -184,8 +229,14 @@ export class ConfigState {
   }
 
   private tryResolvedProviderConfig(): ResolvedRuntimeProvider | undefined {
+    return this.tryResolvedProviderConfigFor(this._modelAlias);
+  }
+
+  private tryResolvedProviderConfigFor(
+    alias: string | undefined,
+  ): ResolvedRuntimeProvider | undefined {
     try {
-      return this.resolvedProviderConfig;
+      return alias === undefined ? undefined : this.agent.modelProvider?.resolveProviderConfig(alias);
     } catch {
       return undefined;
     }

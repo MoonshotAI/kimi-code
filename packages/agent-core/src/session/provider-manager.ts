@@ -27,6 +27,8 @@ export interface ResolvedRuntimeProvider {
   readonly modelCapabilities: ModelCapability;
   /** Declared 'always_thinking' capability — the model cannot disable thinking. */
   readonly alwaysThinking?: boolean;
+  readonly supportEfforts?: readonly string[];
+  readonly defaultEffort?: string;
   readonly maxOutputSize?: number;
   /** Configured provider wire type (`provider.type`), before any model-level protocol override. */
   readonly type: ProviderType;
@@ -129,7 +131,6 @@ export class ProviderManager implements ModelProvider {
       this.options.promptCacheKey,
       effectiveAlias.adaptiveThinking,
       alias.betaApi,
-      effectiveAlias.supportEfforts,
     );
 
     return {
@@ -139,6 +140,8 @@ export class ProviderManager implements ModelProvider {
       alwaysThinking: (effectiveAlias.capabilities ?? []).some(
         (c) => c.trim().toLowerCase() === 'always_thinking',
       ),
+      supportEfforts: effectiveAlias.supportEfforts,
+      defaultEffort: effectiveAlias.defaultEffort,
       maxOutputSize: effectiveAlias.maxOutputSize,
       type: providerConfig.type,
       protocol: alias.protocol,
@@ -253,7 +256,6 @@ function toKosongProviderConfig(
   promptCacheKey: string | undefined,
   adaptiveThinking: boolean | undefined,
   betaApi: boolean | undefined,
-  supportEfforts: readonly string[] | undefined,
 ): KosongProviderConfig {
   const effectiveType = modelProtocol === 'anthropic' ? 'anthropic' : provider.type;
   const envCustomHeaders = parseKimiCodeCustomHeaders();
@@ -270,8 +272,8 @@ function toKosongProviderConfig(
         apiKey: providerApiKey(provider),
         ...(maxOutputSize !== undefined ? { defaultMaxTokens: maxOutputSize } : {}),
         ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
+        ...(provider.type === 'kimi' ? { kimiThinking: true } : {}),
         ...(betaApi !== undefined ? { betaApi } : {}),
-        ...(provider.type === 'kimi' && supportEfforts !== undefined ? { supportEfforts } : {}),
         // Session affinity: Anthropic's analog of OpenAI `prompt_cache_key` is
         // `metadata.user_id` on the Messages API (cache-affinity / end-user id).
         ...(promptCacheKey !== undefined ? { metadata: { user_id: promptCacheKey } } : {}),
@@ -296,7 +298,6 @@ function toKosongProviderConfig(
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
         reasoningKey,
-        ...(provider.type === 'kimi' && supportEfforts !== undefined ? { supportEfforts } : {}),
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
@@ -310,7 +311,6 @@ function toKosongProviderConfig(
         baseUrl: providerValue(provider.baseUrl, provider.env, 'KIMI_BASE_URL'),
         apiKey: providerApiKey(provider),
         generationKwargs: { prompt_cache_key: promptCacheKey },
-        supportEfforts,
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiRequestHeaders,
@@ -335,7 +335,6 @@ function toKosongProviderConfig(
         model,
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
-        ...(provider.type === 'kimi' && supportEfforts !== undefined ? { supportEfforts } : {}),
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),

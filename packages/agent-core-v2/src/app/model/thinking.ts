@@ -55,6 +55,10 @@ function middleOf(values: readonly string[]): string {
   return values[Math.floor(values.length / 2)]!;
 }
 
+function effortsFor(model: ModelThinkingMetadata | undefined): readonly string[] {
+  return model?.supportEfforts?.map(nonEmpty).filter((v): v is string => v !== undefined) ?? [];
+}
+
 export function modelSupportsThinking(model: ModelThinkingMetadata | undefined): boolean {
   if (model === undefined) return false;
   return (
@@ -69,25 +73,57 @@ export function defaultThinkingEffortForModel(
   model: ModelThinkingMetadata | undefined,
 ): ThinkingEffort {
   if (model === undefined || !modelSupportsThinking(model)) return 'off';
-  const efforts = model.supportEfforts?.map(nonEmpty).filter((v): v is string => v !== undefined);
-  if (efforts !== undefined && efforts.length > 0) {
-    return (nonEmpty(model.defaultEffort) ?? middleOf(efforts)) as ThinkingEffort;
+  const efforts = effortsFor(model);
+  if (efforts.length > 0) {
+    const declaredDefault = nonEmpty(model.defaultEffort);
+    return (declaredDefault !== undefined && efforts.includes(declaredDefault)
+      ? declaredDefault
+      : middleOf(efforts)) as ThinkingEffort;
   }
   return 'on';
+}
+
+export function modelSupportsThinkingEffort(
+  effort: ThinkingEffort,
+  model: ModelThinkingMetadata | undefined,
+  kimiProvider: boolean,
+): boolean {
+  if (!kimiProvider || effort === 'off') return true;
+  if (!modelSupportsThinking(model)) return false;
+  const efforts = effortsFor(model);
+  return efforts.length === 0 || effort === 'on' || efforts.includes(effort);
+}
+
+function normalizeThinkingEffortForModel(
+  effort: ThinkingEffort,
+  model: ModelThinkingMetadata | undefined,
+  kimiProvider: boolean,
+): ThinkingEffort {
+  if (effort === 'off' && model?.alwaysThinking !== true) return 'off';
+  const efforts = effortsFor(model);
+  if (!kimiProvider) {
+    return effort === 'on' && efforts.length > 0
+      ? defaultThinkingEffortForModel(model)
+      : effort;
+  }
+  if (!modelSupportsThinking(model)) return 'off';
+  if (efforts.length === 0) return 'on';
+  if (effort === 'on' || !efforts.includes(effort)) {
+    return defaultThinkingEffortForModel(model);
+  }
+  return effort;
 }
 
 export function resolveThinkingEffortForModel(
   requested: string | undefined,
   defaults: ThinkingDefaults | undefined,
   model: ModelThinkingMetadata | undefined,
+  kimiProvider = false,
 ): ThinkingEffort {
   const configured = nonEmpty(defaults?.effort) as ThinkingEffort | undefined;
   const normalized = nonEmpty(requested)?.toLowerCase();
   let effort: ThinkingEffort;
   if (normalized !== undefined) {
-    // A requested effort is taken verbatim — including 'on', which is a valid
-    // wire value for boolean thinking models. Normalizing 'on' to a concrete
-    // effort is the UI boundary's job, not the resolver's (v1 parity).
     effort = normalized as ThinkingEffort;
   } else if (defaults?.enabled === false) {
     effort = 'off';
@@ -100,7 +136,7 @@ export function resolveThinkingEffortForModel(
     // is still honored — `enabled = false` only expresses the intent to
     // disable, it should not also discard a chosen effort. Fall back to the
     // model default only when no effort is configured.
-    return configured ?? defaultThinkingEffortForModel(model);
+    effort = configured ?? defaultThinkingEffortForModel(model);
   }
-  return effort;
+  return normalizeThinkingEffortForModel(effort, model, kimiProvider);
 }

@@ -65,6 +65,7 @@ describe('ConfigState model capabilities', () => {
           provider: 'kimi',
           model: 'kimi-for-coding',
           maxContextSize: 1_000_000,
+          supportEfforts: ['low', 'high'],
           capabilities: ['image_in', 'video_in', 'thinking', 'tool_use'],
         },
       },
@@ -98,6 +99,8 @@ describe('ConfigState model capabilities', () => {
           provider: 'kimi',
           model: 'kimi-for-coding',
           maxContextSize: 1_000_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
         },
       },
     };
@@ -265,6 +268,14 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
           supportEfforts: ['low', 'medium', 'max'],
           defaultEffort: 'max',
         },
+        'kimi-code/ultra': {
+          provider: 'kimi',
+          model: 'kimi-ultra',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high', 'ultra'],
+          defaultEffort: 'ultra',
+        },
       },
     };
     capturedProvider = undefined;
@@ -319,10 +330,10 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     expect(profile.data().thinkingLevel).toBe('off');
   });
 
-  it('keeps an explicit on request verbatim (normalization is the UI boundary)', () => {
+  it('resolves an explicit on request to the model default effort', () => {
     profile.update({ modelAlias: 'kimi-code/custom', thinkingLevel: 'on' });
 
-    expect(profile.data().thinkingLevel).toBe('on');
+    expect(profile.data().thinkingLevel).toBe('max');
   });
 
   it('re-clamps when switching to an always-on model after thinking was off', () => {
@@ -331,6 +342,32 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 
     profile.update({ modelAlias: 'kimi-code/deep' });
     expect(profile.data().thinkingLevel).toBe('high');
+  });
+
+  it('falls back to the target default when a model switch carries an unsupported effort', () => {
+    profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'ultra' });
+
+    profile.update({ modelAlias: 'kimi-code/custom' });
+
+    expect(profile.data().thinkingLevel).toBe('max');
+  });
+
+  it('projects an inherited concrete effort to on when switching to a boolean model', () => {
+    profile.update({ modelAlias: 'kimi-code/ultra', thinkingLevel: 'ultra' });
+
+    profile.update({ modelAlias: 'kimi-code/toggle' });
+
+    expect(profile.data().thinkingLevel).toBe('on');
+  });
+
+  it('rejects an unsupported effort explicitly set on the current Kimi model', () => {
+    profile.update({ modelAlias: 'kimi-code/custom' });
+
+    expect(() => {
+      profile.setThinking('ultra');
+    }).toThrow(
+      'Thinking effort "ultra" is not supported by model "kimi-code/custom"',
+    );
   });
 });
 
@@ -345,7 +382,12 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     kimiConfig = {
       providers: { kimi: { type: 'kimi', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' } },
       models: {
-        'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
+        'kimi-code': {
+          provider: 'kimi',
+          model: 'kimi-code',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+        },
       },
     };
     capturedProvider = undefined;

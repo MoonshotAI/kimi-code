@@ -118,7 +118,7 @@ describe('Agent config', () => {
 
     await expect(ctx.rpc.getConfig({})).resolves.toMatchObject({
       systemPrompt: 'Changed profile prompt.',
-      thinkingLevel: 'high',
+      thinkingLevel: 'on',
       modelCapabilities: nextCapability,
     });
   });

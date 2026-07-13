@@ -2170,16 +2170,14 @@ describe('FullCompaction', () => {
     await ctx.untilTurnEnd();
 
     expect(callCount).toBe(3);
-    // The catalogued model declares no supportEfforts, so the Kimi provider
-    // normalizes to boolean thinking and reports 'on' rather than the
-    // requested 'high'. The stored thinkingLevel still carries 'high' across
-    // compaction, which is asserted through telemetry below.
+    // A Kimi model without supportEfforts is boolean-only, so the effective
+    // state and every compaction request use 'on'.
     expect(providerThinkingEfforts).toEqual(['on', 'on', 'on']);
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
         source: 'auto',
-        thinking_effort: 'high',
+        thinking_effort: 'on',
       }),
     });
   });

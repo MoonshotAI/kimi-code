@@ -1624,16 +1624,13 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toBeUndefined();
     });
 
-    it('declared support_efforts win over model-name heuristics (Kimi max)', async () => {
-      // Kimi's Anthropic-compatible endpoint declares ["low","high","max"]:
-      // max must reach the wire verbatim — no adaptive
-      // inference, no budget_tokens.
+    it('Kimi thinking mode sends concrete effort without budget conversion', async () => {
       const provider = new AnthropicChatProvider({
         model: 'kimi-for-coding',
         apiKey: 'test-key',
         defaultMaxTokens: 1024,
         stream: false,
-        supportEfforts: ['low', 'high', 'max'],
+        kimiThinking: true,
       }).withThinking('max');
       const body = await captureRequestBody(provider, '', [], thinkHistory);
 
@@ -1641,28 +1638,30 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toEqual({ effort: 'max' });
     });
 
-    it('declared support_efforts omit undeclared efforts', async () => {
+    it('Kimi thinking mode passes concrete efforts through and omits only on', async () => {
       const provider = new AnthropicChatProvider({
         model: 'kimi-for-coding',
         apiKey: 'test-key',
         defaultMaxTokens: 1024,
         stream: false,
-        supportEfforts: ['low', 'high', 'max'],
+        kimiThinking: true,
       });
       for (const requested of ['xhigh', 'medium', 'on'] as const) {
         const body = await captureRequestBody(provider.withThinking(requested), '', [], thinkHistory);
         expect(body['thinking']).toEqual({ type: 'enabled' });
-        expect(body['output_config']).toBeUndefined();
+        expect(body['output_config']).toEqual(
+          requested === 'on' ? undefined : { effort: requested },
+        );
       }
     });
 
-    it('declared support_efforts keep thinking off clean', async () => {
+    it('Kimi thinking mode keeps thinking off clean', async () => {
       const provider = new AnthropicChatProvider({
         model: 'kimi-for-coding',
         apiKey: 'test-key',
         defaultMaxTokens: 1024,
         stream: false,
-        supportEfforts: ['low', 'high', 'max'],
+        kimiThinking: true,
       }).withThinking('off');
       const body = await captureRequestBody(provider, '', [], thinkHistory);
 
@@ -1670,16 +1669,16 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toBeUndefined();
     });
 
-    it('thinkingEffort reads back declared efforts and boolean enabled fallback', () => {
+    it('thinkingEffort reads back Kimi concrete efforts and boolean on', () => {
       const provider = new AnthropicChatProvider({
         model: 'kimi-for-coding',
         apiKey: 'test-key',
         defaultMaxTokens: 1024,
         stream: false,
-        supportEfforts: ['low', 'high', 'max'],
+        kimiThinking: true,
       });
       expect(provider.withThinking('max').thinkingEffort).toBe('max');
-      expect(provider.withThinking('xhigh').thinkingEffort).toBe('on');
+      expect(provider.withThinking('xhigh').thinkingEffort).toBe('xhigh');
       expect(provider.withThinking('off').thinkingEffort).toBe('off');
     });
 

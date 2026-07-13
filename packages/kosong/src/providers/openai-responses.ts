@@ -347,8 +347,6 @@ export interface OpenAIResponsesOptions {
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
   toolMessageConversion?: ToolMessageConversion | undefined;
-  /** Kimi-managed endpoint effort set. When present, only declared values send. */
-  supportEfforts?: readonly string[] | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => OpenAI;
 }
 
@@ -1018,7 +1016,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   private _baseUrl: string | undefined;
   private _defaultHeaders: Record<string, string> | undefined;
   private _generationKwargs: OpenAIResponsesGenerationKwargs;
-  private readonly _supportEfforts: readonly string[];
   private _toolMessageConversion: ToolMessageConversion;
   private _client: OpenAI | undefined;
   private _httpClient: unknown;
@@ -1032,7 +1029,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     this._model = options.model;
     this._stream = true; // Responses API always supports streaming
     this._generationKwargs = {};
-    this._supportEfforts = options.supportEfforts ?? [];
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
     this._clientFactory = options.clientFactory;
@@ -1140,12 +1136,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): OpenAIResponsesChatProvider {
-    const reasoningEffort =
-      effort === 'off' ||
-      effort === 'on' ||
-      (this._supportEfforts.length > 0 && !this._supportEfforts.includes(effort))
-        ? undefined
-        : effort;
+    const reasoningEffort = effort === 'off' || effort === 'on' ? undefined : effort;
     const clone = this._clone();
     clone._generationKwargs = {
       ...clone._generationKwargs,

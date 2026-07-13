@@ -202,6 +202,22 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
           maxContextSize: 128_000,
           capabilities: ['thinking'],
         },
+        'kimi-code/ultra': {
+          provider: 'kimi',
+          model: 'kimi-ultra',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high', 'ultra'],
+          defaultEffort: 'ultra',
+        },
+        'kimi-code/standard': {
+          provider: 'kimi',
+          model: 'kimi-standard',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'mid', 'high'],
+          defaultEffort: 'mid',
+        },
       },
     };
     return testAgent({
@@ -246,19 +262,53 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     ctx.agent.config.update({ modelAlias: 'kimi-code/deep' });
     expect(ctx.agent.config.thinkingEffort).toBe('on');
   });
+
+  it('falls back to the target default when a model switch carries an unsupported effort', () => {
+    const ctx = alwaysThinkingAgent();
+    ctx.agent.config.update({ modelAlias: 'kimi-code/ultra', thinkingEffort: 'ultra' });
+
+    ctx.agent.config.update({ modelAlias: 'kimi-code/standard' });
+
+    expect(ctx.agent.config.thinkingEffort).toBe('mid');
+  });
+
+  it('projects an inherited concrete effort to on when switching to a boolean model', () => {
+    const ctx = alwaysThinkingAgent();
+    ctx.agent.config.update({ modelAlias: 'kimi-code/ultra', thinkingEffort: 'ultra' });
+
+    ctx.agent.config.update({ modelAlias: 'kimi-code/toggle' });
+
+    expect(ctx.agent.config.thinkingEffort).toBe('on');
+  });
+
+  it('rejects an unsupported effort explicitly set on the current Kimi model', () => {
+    const ctx = alwaysThinkingAgent();
+    ctx.agent.config.update({ modelAlias: 'kimi-code/standard' });
+
+    expect(() => {
+      ctx.agent.config.setThinkingEffort('ultra');
+    }).toThrow(
+      'Thinking effort "ultra" is not supported by model "kimi-code/standard"',
+    );
+  });
 });
 
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
   function kimiAgent() {
-    return testAgent({
-      providerManager: new ProviderManager({
-        config: {
-          providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
-          models: {
-            'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
-          },
+    const config: KimiConfig = {
+      providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
+      models: {
+        'kimi-code': {
+          provider: 'kimi',
+          model: 'kimi-code',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
         },
-      }),
+      },
+    };
+    return testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
     });
   }
 
@@ -268,7 +318,12 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     const config: KimiConfig = {
       providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
       models: {
-        'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
+        'kimi-code': {
+          provider: 'kimi',
+          model: 'kimi-code',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+        },
       },
       ...(keep !== undefined ? { thinking: { keep } } : {}),
     };

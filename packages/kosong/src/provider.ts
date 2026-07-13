@@ -30,9 +30,9 @@ export type ResponseFormat = JsonObjectResponseFormat | JsonSchemaResponseFormat
  * `string` at runtime; it exists purely as a semantic marker that a value is
  * expected to be `'off'`, `'on'`, or a model-declared effort.
  *
- * Kimi's native provider uses the model's `support_efforts` as the set of
- * effort values it may send. Non-Kimi providers pass concrete effort strings
- * through to their upstream API and let the provider validate them.
+ * Provider adapters receive an already-resolved effort. Adapters with a native
+ * effort field pass concrete strings through to their upstream API; model
+ * compatibility and fallback are resolved before this boundary.
  */
 export type ThinkingEffort = 'off' | 'on' | (string & {});
 

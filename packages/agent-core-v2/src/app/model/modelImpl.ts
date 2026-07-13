@@ -49,6 +49,7 @@ export interface ModelImplInit {
   readonly supportEfforts?: readonly string[];
   readonly defaultEffort?: string;
   readonly alwaysThinking: boolean;
+  readonly providerType?: string;
   readonly providerName: string;
   readonly authProvider: AuthProvider;
   readonly protocolRegistry: ProtocolAdapterRegistry;
@@ -72,6 +73,7 @@ export class ModelImpl implements Model {
   readonly authProvider: AuthProvider;
   readonly thinkingEffort: ThinkingEffort | null;
   readonly alwaysThinking: boolean;
+  readonly providerType?: string;
   readonly providerName: string;
 
   private readonly protocolRegistry: ProtocolAdapterRegistry;
@@ -105,6 +107,7 @@ export class ModelImpl implements Model {
     this.providerOptions = init.providerOptions ?? {};
     this.transforms = transforms;
     this.alwaysThinking = init.alwaysThinking;
+    this.providerType = init.providerType;
     this.providerName = init.providerName;
     // thinkingEffort is materialized via `withThinking` — the transform chain
     // owns the actual value applied to the underlying ChatProvider; we track
@@ -133,6 +136,7 @@ export class ModelImpl implements Model {
         supportEfforts: this.supportEfforts,
         defaultEffort: this.defaultEffort,
         alwaysThinking: this.alwaysThinking,
+        providerType: this.providerType,
         providerName: this.providerName,
         authProvider: this.authProvider,
         protocolRegistry: this.protocolRegistry,

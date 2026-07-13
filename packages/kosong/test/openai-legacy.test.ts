@@ -27,7 +27,6 @@ function createProvider(
     stream: boolean;
     reasoningKey: string;
     model: string;
-    supportEfforts: readonly string[];
   }>,
 ): OpenAILegacyChatProvider {
   return new OpenAILegacyChatProvider({
@@ -35,7 +34,6 @@ function createProvider(
     apiKey: 'test-key',
     stream: options?.stream ?? false,
     reasoningKey: options?.reasoningKey,
-    supportEfforts: options?.supportEfforts,
   });
 }
 
@@ -980,20 +978,19 @@ describe('OpenAILegacyChatProvider', () => {
       }
     });
 
-    it('omits undeclared efforts for Kimi-style supportEfforts', async () => {
+    it('does not filter concrete efforts through a client-side allow-list', async () => {
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
       const provider = createProvider({
         model: 'kimi-for-coding',
-        supportEfforts: ['low', 'high', 'max'],
       });
 
       const maxBody = await captureRequestBody(provider.withThinking('max'), '', [], history);
       const xhighBody = await captureRequestBody(provider.withThinking('xhigh'), '', [], history);
 
       expect(maxBody['reasoning_effort']).toBe('max');
-      expect(xhighBody['reasoning_effort']).toBeUndefined();
+      expect(xhighBody['reasoning_effort']).toBe('xhigh');
     });
   });
 

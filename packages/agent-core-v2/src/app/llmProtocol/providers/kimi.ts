@@ -47,10 +47,6 @@ export interface KimiOptions {
   stream?: boolean | undefined;
   defaultHeaders?: Record<string, string> | undefined;
   generationKwargs?: GenerationKwargs | undefined;
-  /** Efforts the model advertises (e.g. ["low", "high", "max"]). When
-   * present and non-empty, withThinking sends the chosen effort only when it
-   * is in this set; otherwise only thinking.type is sent. */
-  supportEfforts?: readonly string[];
   clientFactory?: (auth: ProviderRequestAuth) => OpenAI;
 }
 
@@ -390,7 +386,6 @@ export class KimiChatProvider implements ChatProvider {
   private _baseUrl: string;
   private _defaultHeaders: Record<string, string> | undefined;
   private _generationKwargs: GenerationKwargs;
-  private readonly _supportEfforts: readonly string[];
   private _client: OpenAI | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
   private _files: KimiFiles | undefined;
@@ -404,7 +399,6 @@ export class KimiChatProvider implements ChatProvider {
     this._model = options.model;
     this._stream = options.stream ?? true;
     this._generationKwargs = { ...options.generationKwargs };
-    this._supportEfforts = options.supportEfforts ?? [];
     this._client =
       this._apiKey === undefined
         ? undefined
@@ -535,16 +529,11 @@ export class KimiChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): KimiChatProvider {
-    // Only efforts the endpoint declares via `support_efforts` go on the wire.
-    // When the request is not declared, omit effort and let Kimi apply the
-    // model's default effort.
     let thinking: ThinkingConfig;
     if (effort === 'off') {
       thinking = { type: 'disabled' };
     } else {
-      thinking = this._supportEfforts.includes(effort)
-        ? { type: 'enabled', effort }
-        : { type: 'enabled' };
+      thinking = effort === 'on' ? { type: 'enabled' } : { type: 'enabled', effort };
     }
     const oldExtra = this._generationKwargs.extra_body ?? {};
     const keep = oldExtra.thinking?.keep;
