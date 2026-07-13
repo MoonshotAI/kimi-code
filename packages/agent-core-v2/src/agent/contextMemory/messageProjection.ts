@@ -15,9 +15,15 @@
  * so REST consumers can still render the media after reload/resume.
  */
 
-import type { Message, MessageContent, MessageRole, ToolUseContent } from '@moonshot-ai/protocol';
+import type {
+  ApprovalResponse,
+  Message,
+  MessageContent,
+  MessageRole,
+  ToolUseContent,
+} from '@moonshot-ai/protocol';
 
-import type { ContextMessage } from './types';
+import type { ContextApprovalResult, ContextMessage } from './types';
 
 /** Derive a stable opaque message id from (sessionId, index) — fallback for legacy records that predate intrinsic message ids. */
 function deriveMessageId(sessionId: string, index: number): string {
@@ -107,12 +113,26 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
         tool_call_id: call.id,
         tool_name: call.name,
         input: parsedInput,
+        tool_input_display: call.display,
+        approval_result: toProtocolApprovalResult(call.approvalResult),
       };
       base.push(part);
     }
   }
 
   return base;
+}
+
+function toProtocolApprovalResult(
+  result: ContextApprovalResult | undefined,
+): ApprovalResponse | undefined {
+  if (result === undefined) return undefined;
+  return {
+    decision: result.decision,
+    scope: result.scope,
+    feedback: result.feedback,
+    selected_label: result.selectedLabel,
+  };
 }
 
 /**

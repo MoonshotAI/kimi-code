@@ -12,17 +12,19 @@ import type { ToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import type { OrderedHookSlot } from '#/hooks';
+import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
-export interface ToolCallStartedPayload {
+export interface ToolCallRecordedPayload {
   readonly toolCallId: string;
   readonly name: string;
   readonly args: unknown;
+  readonly display?: ToolInputDisplay;
 }
 
 export interface ToolExecutorExecuteOptions {
   readonly signal: AbortSignal;
   readonly turnId: number;
-  readonly onToolCall?: (payload: ToolCallStartedPayload) => void;
+  readonly onToolCall?: (payload: ToolCallRecordedPayload) => void;
 }
 
 export interface ToolExecutionResult {

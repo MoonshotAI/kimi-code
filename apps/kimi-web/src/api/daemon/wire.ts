@@ -186,7 +186,16 @@ export interface WireFsHomeResult {
 
 export type WireMessageContent =
   | { type: 'text'; text: string }
-  | { type: 'tool_use'; tool_call_id: string; tool_name: string; input: unknown }
+  | {
+      type: 'tool_use';
+      tool_call_id: string;
+      tool_name: string;
+      input: unknown;
+      /** Optional v1 extension; absent on older servers. */
+      tool_input_display?: unknown;
+      /** Optional v1 extension; absent until an approval is resolved. */
+      approval_result?: WireApprovalResponse;
+    }
   | { type: 'tool_result'; tool_call_id: string; output: unknown; is_error?: boolean }
   | { type: 'image'; source: WireImageSource }
   | { type: 'video'; source: WireImageSource }

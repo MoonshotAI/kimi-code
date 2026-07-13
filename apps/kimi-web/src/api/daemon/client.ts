@@ -503,6 +503,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
                 name: t.name,
                 args: t.args,
                 description: t.description,
+                display: t.display,
                 lastProgress: t.last_progress,
               })),
               promptId: data.in_flight_turn.current_prompt_id,

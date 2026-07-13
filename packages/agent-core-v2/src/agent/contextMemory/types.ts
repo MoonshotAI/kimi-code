@@ -1,7 +1,12 @@
-import type { ContentPart, Message } from '#/app/llmProtocol/message';
+import type { ContentPart, Message, ToolCall } from '#/app/llmProtocol/message';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
-import type { CronJobOrigin, CronMissedOrigin, ShellCommandOrigin } from '@moonshot-ai/protocol';
+import type {
+  CronJobOrigin,
+  CronMissedOrigin,
+  ShellCommandOrigin,
+  ToolInputDisplay,
+} from '@moonshot-ai/protocol';
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
@@ -77,7 +82,20 @@ export type PromptOrigin =
   | HookResultOrigin
   | RetryOrigin;
 
-export type ContextMessage = Message & {
+export interface ContextApprovalResult {
+  readonly decision: 'approved' | 'rejected' | 'cancelled';
+  readonly scope?: 'session';
+  readonly feedback?: string;
+  readonly selectedLabel?: string;
+}
+
+export interface ContextToolCall extends ToolCall {
+  readonly display?: ToolInputDisplay;
+  approvalResult?: ContextApprovalResult;
+}
+
+export type ContextMessage = Omit<Message, 'toolCalls'> & {
+  readonly toolCalls: ContextToolCall[];
   /** Stable local message id (`msg_<ulid>`), assigned when the message enters context. */
   readonly id?: string;
   /** Provider-assigned response/message id (e.g. Anthropic `msg_…`, `chatcmpl-…`, `resp_…`). */

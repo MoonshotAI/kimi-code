@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { approvalResponseSchema } from './approval';
 import { isoDateTimeSchema } from './time';
 
 export const messageRoleSchema = z.enum(['user', 'assistant', 'tool', 'system']);
@@ -16,6 +17,14 @@ export const toolUseContentSchema = z.object({
   tool_call_id: z.string().min(1),
   tool_name: z.string().min(1),
   input: z.unknown(),
+  /**
+   * Optional immutable display snapshot captured when the tool call was
+   * prepared. Kept open-ended for forward compatibility with new display
+   * kinds, matching approval_request.tool_input_display.
+   */
+  tool_input_display: z.unknown().optional(),
+  /** Structured user decision for approval-gated calls, when one exists. */
+  approval_result: approvalResponseSchema.optional(),
 });
 export type ToolUseContent = z.infer<typeof toolUseContentSchema>;
 

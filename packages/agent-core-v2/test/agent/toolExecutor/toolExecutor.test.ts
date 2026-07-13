@@ -496,6 +496,61 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
+  it('records the immutable display before an approval hook resolves', async () => {
+    const hookEntered = deferred();
+    const releaseHook = deferred();
+    const tool = new TestTool('display', {
+      display: {
+        kind: 'generic',
+        summary: 'Display summary',
+        detail: { value: 1 },
+      },
+    });
+    registry.register(tool);
+    executor.hooks.onBeforeExecuteTool.register('wait-for-approval', async (_ctx, next) => {
+      hookEntered.resolve();
+      await releaseHook.promise;
+      await next();
+    });
+
+    const recorded: unknown[] = [];
+    const execution = (async () => {
+      for await (const _result of executor.execute(
+        [toolCall('call_display', 'display', {})],
+        {
+          turnId: 7,
+          signal: new AbortController().signal,
+          onToolCall: (payload) => recorded.push(payload),
+        },
+      )) {
+        void _result;
+      }
+    })();
+
+    await hookEntered.promise;
+    try {
+      expect(recorded).toEqual([
+        {
+          toolCallId: 'call_display',
+          name: 'display',
+          args: {},
+          display: {
+            kind: 'generic',
+            summary: 'Display summary',
+            detail: { value: 1 },
+          },
+        },
+      ]);
+      expect(protocolEvents.filter((event) => event.type === 'tool.call.started')).toEqual([]);
+    } finally {
+      releaseHook.resolve();
+      await execution;
+    }
+
+    expect(recorded).toHaveLength(1);
+    expect(protocolEvents.filter((event) => event.type === 'tool.call.started')).toHaveLength(1);
+  });
+
   it('captures tool execution failures as error results', async () => {
     const tool = new TestTool('fail', {
       execute: async () => {

@@ -15,6 +15,7 @@ import type {
   AppGoal,
   AppMessage,
   AppMessageContent,
+  AppPlanReviewOverlay,
   AppWarning,
   AppQuestionRequest,
   AppSession,
@@ -54,10 +55,12 @@ export interface KimiClientState {
   activeSessionId?: string;
   messagesBySession: Record<string, AppMessage[]>;
   approvalsBySession: Record<string, AppApprovalRequest[]>;
-  /** Preserved `plan_review` displays keyed by toolCallId. Plan content survives
-   *  approval resolution so the ExitPlanMode tool card can keep rendering the
-   *  plan (approved / rejected / revised) instead of losing it. */
-  planReviewByToolCallId: Record<string, { plan: string; path?: string }>;
+  /**
+   * Short-lived live-event overlays, isolated by session then approvalId.
+   * Durable plan history is owned by messages.toolUse.toolInputDisplay; these
+   * entries only bridge approval events that race ahead of message projection.
+   */
+  planReviewOverlayBySession: Record<string, Record<string, AppPlanReviewOverlay>>;
   questionsBySession: Record<string, AppQuestionRequest[]>;
   tasksBySession: Record<string, AppTask[]>;
   goalBySession: Record<string, AppGoal>;
@@ -77,7 +80,7 @@ export function createInitialState(): KimiClientState {
     activeSessionId: undefined,
     messagesBySession: {},
     approvalsBySession: {},
-    planReviewByToolCallId: {},
+    planReviewOverlayBySession: {},
     questionsBySession: {},
     tasksBySession: {},
     goalBySession: {},
@@ -104,7 +107,7 @@ function cloneState(s: KimiClientState): KimiClientState {
     sessions: s.sessions,
     messagesBySession: { ...s.messagesBySession },
     approvalsBySession: { ...s.approvalsBySession },
-    planReviewByToolCallId: { ...s.planReviewByToolCallId },
+    planReviewOverlayBySession: { ...s.planReviewOverlayBySession },
     questionsBySession: { ...s.questionsBySession },
     tasksBySession: { ...s.tasksBySession },
     goalBySession: { ...s.goalBySession },
@@ -225,6 +228,117 @@ function appendToolOutputToMessages(messages: AppMessage[], toolCallId: string, 
   return changed ? next : messages;
 }
 
+function setPlanReviewOverlay(
+  state: KimiClientState,
+  sessionId: string,
+  overlay: AppPlanReviewOverlay,
+): void {
+  state.planReviewOverlayBySession = {
+    ...state.planReviewOverlayBySession,
+    [sessionId]: {
+      ...(state.planReviewOverlayBySession[sessionId] ?? {}),
+      [overlay.approvalId]: overlay,
+    },
+  };
+}
+
+function planReviewDisplayIdentity(display: unknown): string | undefined {
+  if (typeof display !== 'object' || display === null) return undefined;
+  const value = display as Record<string, unknown>;
+  if (
+    value['kind'] !== 'plan_review' ||
+    typeof value['plan'] !== 'string' ||
+    value['plan'].length === 0
+  ) {
+    return undefined;
+  }
+  return JSON.stringify([
+    value['plan'],
+    typeof value['path'] === 'string' ? value['path'] : null,
+    Array.isArray(value['options']) ? value['options'] : null,
+  ]);
+}
+
+function findPlanReviewOverlay(
+  state: KimiClientState,
+  sessionId: string,
+  approvalId: string,
+  approvals: AppApprovalRequest[],
+): AppPlanReviewOverlay | undefined {
+  const prior = state.planReviewOverlayBySession[sessionId]?.[approvalId];
+  if (prior !== undefined) return prior;
+  const approval = approvals.find((item) => item.approvalId === approvalId);
+  if (
+    approval === undefined ||
+    planReviewDisplayIdentity(approval.display) === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    approvalId: approval.approvalId,
+    toolCallId: approval.toolCallId,
+    turnId: approval.turnId,
+    toolInputDisplay: approval.display,
+    renderSynthetic: true,
+  };
+}
+
+/**
+ * Reconcile only the plan tool_use carried by THIS incoming message event.
+ * A resolved overlay may have arrived first; copy its decision into the new
+ * content, then consume that approval-scoped overlay. Never scan or patch old
+ * transcript messages — toolCallId can be reused by a later turn.
+ */
+function consumeResolvedPlanReviewOverlay(
+  state: KimiClientState,
+  sessionId: string,
+  content: AppMessageContent[],
+): AppMessageContent[] {
+  const overlays = state.planReviewOverlayBySession[sessionId];
+  if (overlays === undefined) return content;
+
+  let changed = false;
+  const consumed = new Set<string>();
+  const nextContent = content.map((part): AppMessageContent => {
+    if (part.type !== 'toolUse') return part;
+    const identity = planReviewDisplayIdentity(part.toolInputDisplay);
+    if (identity === undefined) return part;
+    const overlay = Object.values(overlays).find(
+      (candidate) =>
+        !consumed.has(candidate.approvalId) &&
+        candidate.turnId !== undefined &&
+        part.turnId !== undefined &&
+        candidate.turnId === part.turnId &&
+        candidate.toolCallId === part.toolCallId &&
+        planReviewDisplayIdentity(candidate.toolInputDisplay) === identity &&
+        (candidate.approvalResult !== undefined || candidate.status === 'interrupted'),
+    );
+    if (overlay === undefined) return part;
+    consumed.add(overlay.approvalId);
+    const approvalResult = part.approvalResult ?? overlay.approvalResult;
+    const planReviewStatus = part.planReviewStatus ?? overlay.status;
+    if (
+      approvalResult === part.approvalResult &&
+      planReviewStatus === part.planReviewStatus
+    ) {
+      return part;
+    }
+    changed = true;
+    return { ...part, approvalResult, planReviewStatus };
+  });
+
+  if (consumed.size > 0) {
+    const remaining = Object.fromEntries(
+      Object.entries(overlays).filter(([approvalId]) => !consumed.has(approvalId)),
+    );
+    state.planReviewOverlayBySession = {
+      ...state.planReviewOverlayBySession,
+      [sessionId]: remaining,
+    };
+  }
+  return changed ? nextContent : content;
+}
+
 // ---------------------------------------------------------------------------
 // Reducer
 // ---------------------------------------------------------------------------
@@ -280,6 +394,7 @@ export function reduceAppEvent(
       delete next.tasksBySession[id];
       delete next.goalBySession[id];
       delete next.approvalsBySession[id];
+      delete next.planReviewOverlayBySession[id];
       delete next.questionsBySession[id];
       delete next.lastSeqBySession[id];
       if (next.activeSessionId === id) {
@@ -394,33 +509,41 @@ export function reduceAppEvent(
     // -------------------------------------------------------------------------
     case 'messageCreated': {
       const sid = event.message.sessionId;
+      const currentMessages = next.messagesBySession[sid] ?? [];
+      const alreadyExists = currentMessages.some((m) => m.id === event.message.id);
+      const content = alreadyExists
+        ? event.message.content
+        : consumeResolvedPlanReviewOverlay(next, sid, event.message.content);
+      const incomingMessage =
+        content === event.message.content
+          ? event.message
+          : { ...event.message, content };
       // A new message is activity on the session: bump its recency so it floats
       // to the top of its workspace group in the sidebar immediately. The daemon
       // does not always broadcast a fresh `session.updated` for message activity,
       // so we rely on the message's own timestamp (and never move it backwards).
-      const createdAt = event.message.createdAt;
+      const createdAt = incomingMessage.createdAt;
       next.sessions = next.sessions.map((s) =>
         s.id === sid && createdAt > s.updatedAt ? { ...s, updatedAt: createdAt } : s,
       );
       const msgs = next.messagesBySession[sid] ?? [];
-      const exists = msgs.some((m) => m.id === event.message.id);
-      if (!exists) {
+      if (!alreadyExists) {
         // Cron-injected user messages (origin cron_job/cron_missed) carry the
         // reminder's prompt as their text, which can coincide with a still-
         // optimistic user message. They must append as their own turn rather
         // than reconcile into (and replace) that optimistic echo — so skip the
         // echo lookup entirely for them.
-        if (event.message.role === 'user' && !isCronOriginMessage(event.message)) {
-          const optimisticIndex = findOptimisticUserEchoIndex(msgs, event.message);
+        if (incomingMessage.role === 'user' && !isCronOriginMessage(incomingMessage)) {
+          const optimisticIndex = findOptimisticUserEchoIndex(msgs, incomingMessage);
           if (optimisticIndex !== -1) {
             const updated = [...msgs];
             const optimistic = updated[optimisticIndex]!;
             updated[optimisticIndex] = {
-              ...event.message,
+              ...incomingMessage,
               id: optimistic.id,
-              promptId: event.message.promptId ?? optimistic.promptId,
+              promptId: incomingMessage.promptId ?? optimistic.promptId,
               metadata: {
-                ...event.message.metadata,
+                ...incomingMessage.metadata,
                 ...optimistic.metadata,
               },
             };
@@ -428,7 +551,7 @@ export function reduceAppEvent(
             break;
           }
         }
-        next.messagesBySession[sid] = [...msgs, event.message];
+        next.messagesBySession[sid] = [...msgs, incomingMessage];
       }
       break;
     }
@@ -437,11 +560,15 @@ export function reduceAppEvent(
     case 'messageUpdated': {
       const sid = event.sessionId;
       const msgs = next.messagesBySession[sid] ?? [];
+      const hasTarget = msgs.some((m) => m.id === event.messageId);
+      const content = hasTarget
+        ? consumeResolvedPlanReviewOverlay(next, sid, event.content)
+        : event.content;
       next.messagesBySession[sid] = msgs.map((m) => {
         if (m.id !== event.messageId) return m;
         return {
           ...m,
-          content: event.content,
+          content,
           durationMs: event.durationMs ?? m.durationMs,
         };
       });
@@ -503,30 +630,57 @@ export function reduceAppEvent(
       if (!exists) {
         next.approvalsBySession[sid] = [...list, event.approval];
       }
-      // Preserve a plan_review display so the plan stays visible in the
-      // ExitPlanMode tool card after the approval resolves.
-      const display = event.approval.display as
-        | { kind?: unknown; plan?: unknown; path?: unknown }
-        | null
-        | undefined;
-      if (display?.kind === 'plan_review' && typeof display.plan === 'string' && display.plan.length > 0) {
-        next.planReviewByToolCallId = {
-          ...next.planReviewByToolCallId,
-          [event.approval.toolCallId]: {
-            plan: display.plan,
-            path: typeof display.path === 'string' ? display.path : undefined,
-          },
-        };
+      // approval.requested may beat the projected tool_use. Keep an approval-
+      // scoped live overlay until the exact (turnId, toolCallId) message event
+      // arrives; durable snapshot/replay messages remain the history source.
+      if (planReviewDisplayIdentity(event.approval.display) !== undefined) {
+        const existingOverlay =
+          next.planReviewOverlayBySession[sid]?.[event.approval.approvalId];
+        setPlanReviewOverlay(next, sid, {
+          approvalId: event.approval.approvalId,
+          toolCallId: event.approval.toolCallId,
+          turnId: event.approval.turnId,
+          toolInputDisplay: event.approval.display,
+          renderSynthetic: existingOverlay?.renderSynthetic ?? true,
+          approvalResult: existingOverlay?.approvalResult,
+          status: existingOverlay?.status,
+        });
       }
       break;
     }
 
     // -------------------------------------------------------------------------
-    case 'approvalResolved':
+    case 'approvalResolved': {
+      const sid = event.sessionId;
+      const aid = event.approvalId;
+      const list = next.approvalsBySession[sid] ?? [];
+      const overlay = findPlanReviewOverlay(next, sid, aid, list);
+      if (overlay !== undefined) {
+        setPlanReviewOverlay(next, sid, {
+          ...overlay,
+          approvalResult: {
+            decision: event.decision,
+            scope: event.scope,
+            feedback: event.feedback,
+            selectedLabel: event.selectedLabel,
+          },
+        });
+      }
+      next.approvalsBySession[sid] = list.filter((a) => a.approvalId !== aid);
+      break;
+    }
+
     case 'approvalExpired': {
       const sid = event.sessionId;
       const aid = event.approvalId;
       const list = next.approvalsBySession[sid] ?? [];
+      const overlay = findPlanReviewOverlay(next, sid, aid, list);
+      if (overlay !== undefined) {
+        setPlanReviewOverlay(next, sid, {
+          ...overlay,
+          status: 'interrupted',
+        });
+      }
       next.approvalsBySession[sid] = list.filter((a) => a.approvalId !== aid);
       break;
     }

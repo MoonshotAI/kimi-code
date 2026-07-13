@@ -1,6 +1,19 @@
+/**
+ * Scenario: daemon events update the browser's session-scoped client state.
+ * Responsibilities: reconcile messages and bridge plan approvals without cross-session leakage.
+ * Wiring: real event reducer; no collaborators are stubbed.
+ * Run: pnpm --filter @moonshot-ai/kimi-web test -- event-reducer.test.ts
+ */
 import { describe, expect, it } from 'vitest';
 import { createInitialState, reduceAppEvent } from '../src/api/daemon/eventReducer';
-import type { AppMessage, AppSession, AppTask } from '../src/api/types';
+import type {
+  AppApprovalRequest,
+  AppMessage,
+  AppSession,
+  AppTask,
+  ApprovalResponse,
+} from '../src/api/types';
+import { messagesToTurns } from '../src/composables/messagesToTurns';
 
 function makeSession(id: string, updatedAt: string): AppSession {
   return {
@@ -47,6 +60,438 @@ function makeSubagentTask(id: string, sessionId: string): AppTask {
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
+
+function makePlanApproval(
+  sessionId: string,
+  approvalId: string,
+  toolCallId: string,
+): AppApprovalRequest {
+  return {
+    approvalId,
+    sessionId,
+    turnId: 7,
+    toolCallId,
+    toolName: 'ExitPlanMode',
+    action: 'Review plan',
+    display: {
+      kind: 'plan_review',
+      plan: `## Plan for ${sessionId}`,
+      path: `/workspace/${sessionId}.md`,
+    },
+    expiresAt: '2026-01-01T00:05:00.000Z',
+    createdAt: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function applyPlanToolUse(
+  state: ReturnType<typeof createInitialState>,
+  approval: AppApprovalRequest,
+  seq: number,
+): ReturnType<typeof createInitialState> {
+  const withAssistant = reduceAppEvent(
+    state,
+    {
+      type: 'messageCreated',
+      message: {
+        id: 'assistant-live',
+        sessionId: approval.sessionId,
+        role: 'assistant',
+        content: [],
+        createdAt: '2026-01-01T00:01:01.000Z',
+        promptId: 'prompt-1',
+      },
+    },
+    { sessionId: approval.sessionId, seq },
+  );
+  return reduceAppEvent(
+    withAssistant,
+    {
+      type: 'messageUpdated',
+      sessionId: approval.sessionId,
+      messageId: 'assistant-live',
+      content: [
+        {
+          type: 'toolUse',
+          toolCallId: approval.toolCallId,
+          toolName: approval.toolName,
+          input: {},
+          turnId: approval.turnId,
+          toolInputDisplay: approval.display,
+        },
+      ],
+      status: 'pending',
+    },
+    { sessionId: approval.sessionId, seq: seq + 1 },
+  );
+}
+
+function appendPlanToolResult(
+  state: ReturnType<typeof createInitialState>,
+  approval: AppApprovalRequest,
+  output: string,
+  isError: boolean,
+  seq: number,
+): ReturnType<typeof createInitialState> {
+  return reduceAppEvent(
+    state,
+    {
+      type: 'messageCreated',
+      message: {
+        id: 'tool-live',
+        sessionId: approval.sessionId,
+        role: 'tool',
+        content: [
+          {
+            type: 'toolResult',
+            toolCallId: approval.toolCallId,
+            output,
+            isError,
+          },
+        ],
+        createdAt: '2026-01-01T00:01:03.000Z',
+        promptId: 'prompt-1',
+      },
+    },
+    { sessionId: approval.sessionId, seq },
+  );
+}
+
+function runResolvedPlanSequence(
+  response: ApprovalResponse,
+  source: 'live' | 'snapshot',
+): {
+  planReview: NonNullable<ReturnType<typeof messagesToTurns>[number]['tools']>[number]['planReview'];
+  remainingOverlays: Record<string, unknown>;
+  pendingPlanCount: number;
+} {
+  const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
+  const requested =
+    source === 'live'
+      ? reduceAppEvent(
+          createInitialState(),
+          { type: 'approvalRequested', sessionId: 'session-a', approval },
+          { sessionId: 'session-a', seq: 1 },
+        )
+      : {
+          ...createInitialState(),
+          messagesBySession: {
+            'session-a': [
+              {
+                id: 'assistant-live',
+                sessionId: 'session-a',
+                role: 'assistant' as const,
+                content: [
+                  {
+                    type: 'toolUse' as const,
+                    toolCallId: 'call-1',
+                    toolName: 'ExitPlanMode',
+                    input: {},
+                    toolInputDisplay: approval.display,
+                  },
+                ],
+                createdAt: '2026-01-01T00:01:01.000Z',
+                promptId: 'prompt-1',
+              },
+            ],
+          },
+          planReviewOverlayBySession: {
+            'session-a': {
+              'approval-a': {
+                approvalId: 'approval-a',
+                toolCallId: 'call-1',
+                turnId: 7,
+                toolInputDisplay: approval.display,
+                renderSynthetic: false,
+              },
+            },
+          },
+        };
+  const pendingTurns = messagesToTurns(
+    requested.messagesBySession['session-a'] ?? [],
+    [],
+    undefined,
+    true,
+    requested.planReviewOverlayBySession['session-a'] ?? {},
+  );
+  const pendingPlanCount = pendingTurns
+    .flatMap((turn) => turn.tools ?? [])
+    .filter((tool) => tool.planReview?.status === 'pending').length;
+  // respondApproval removes the Dock item before the server's resolved event
+  // can arrive. The approval-scoped overlay must remain sufficient on its own.
+  const withoutPendingApproval = {
+    ...requested,
+    approvalsBySession: { ...requested.approvalsBySession, 'session-a': [] },
+  };
+  const resolved = reduceAppEvent(
+    withoutPendingApproval,
+    {
+      type: 'approvalResolved',
+      sessionId: 'session-a',
+      approvalId: 'approval-a',
+      decision: response.decision,
+      scope: response.scope,
+      feedback: response.feedback,
+      selectedLabel: response.selectedLabel,
+      resolvedAt: '2026-01-01T00:01:00.000Z',
+    },
+    { sessionId: 'session-a', seq: 2 },
+  );
+  const withToolUse = applyPlanToolUse(resolved, approval, 3);
+  const withToolResult = appendPlanToolResult(
+    withToolUse,
+    approval,
+    'Plan review completed.',
+    response.decision === 'rejected' &&
+      response.selectedLabel !== 'Revise' &&
+      !response.feedback,
+    5,
+  );
+  const planReview = messagesToTurns(
+    withToolResult.messagesBySession['session-a'] ?? [],
+    [],
+    undefined,
+    false,
+    withToolResult.planReviewOverlayBySession['session-a'] ?? {},
+  )[0]?.tools?.[0]?.planReview;
+  return {
+    planReview,
+    remainingOverlays: withToolResult.planReviewOverlayBySession['session-a'] ?? {},
+    pendingPlanCount,
+  };
+}
+
+describe('reduceAppEvent plan review overlays (live approval bridge)', () => {
+  it('stores a requested plan overlay only under the approval session', () => {
+    const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
+
+    const next = reduceAppEvent(
+      createInitialState(),
+      { type: 'approvalRequested', sessionId: 'session-a', approval },
+      { sessionId: 'session-a', seq: 1 },
+    );
+
+    expect(next.planReviewOverlayBySession['session-a']?.['approval-a']).toMatchObject({
+      approvalId: 'approval-a',
+      toolCallId: 'call-1',
+      turnId: 7,
+      toolInputDisplay: {
+        kind: 'plan_review',
+        plan: '## Plan for session-a',
+      },
+    });
+    expect(next.planReviewOverlayBySession['session-b']).toBeUndefined();
+  });
+
+  it('keeps the resolved plan decision in the overlay after removing the pending approval', () => {
+    const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
+    const requested = reduceAppEvent(
+      createInitialState(),
+      { type: 'approvalRequested', sessionId: 'session-a', approval },
+      { sessionId: 'session-a', seq: 1 },
+    );
+
+    const resolved = reduceAppEvent(
+      requested,
+      {
+        type: 'approvalResolved',
+        sessionId: 'session-a',
+        approvalId: 'approval-a',
+        decision: 'rejected',
+        selectedLabel: 'Revise',
+        feedback: 'Add rollback checks.',
+        resolvedAt: '2026-01-01T00:01:00.000Z',
+      },
+      { sessionId: 'session-a', seq: 2 },
+    );
+
+    expect(resolved.approvalsBySession['session-a']).toEqual([]);
+    expect(resolved.planReviewOverlayBySession['session-a']?.['approval-a']?.approvalResult).toEqual({
+      decision: 'rejected',
+      scope: undefined,
+      feedback: 'Add rollback checks.',
+      selectedLabel: 'Revise',
+    });
+  });
+
+  it('keeps an expired plan interrupted after its real message, duplicate, and result arrive', () => {
+    const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
+    const requested = reduceAppEvent(
+      createInitialState(),
+      { type: 'approvalRequested', sessionId: 'session-a', approval },
+      { sessionId: 'session-a', seq: 1 },
+    );
+    const expired = reduceAppEvent(
+      requested,
+      { type: 'approvalExpired', sessionId: 'session-a', approvalId: 'approval-a' },
+      { sessionId: 'session-a', seq: 2 },
+    );
+    const withToolUse = applyPlanToolUse(expired, approval, 3);
+    const withDurableDuplicate = reduceAppEvent(
+      withToolUse,
+      {
+        type: 'messageCreated',
+        message: {
+          id: 'assistant-durable',
+          sessionId: 'session-a',
+          role: 'assistant',
+          content: [
+            {
+              type: 'toolUse',
+              toolCallId: 'call-1',
+              toolName: 'ExitPlanMode',
+              input: {},
+              toolInputDisplay: approval.display,
+            },
+          ],
+          createdAt: '2026-01-01T00:01:02.000Z',
+          promptId: 'prompt-1',
+        },
+      },
+      { sessionId: 'session-a', seq: 5 },
+    );
+    const withToolResult = appendPlanToolResult(
+      withDurableDuplicate,
+      approval,
+      'Plan review expired.',
+      true,
+      6,
+    );
+
+    const turns = messagesToTurns(
+      withToolResult.messagesBySession['session-a'] ?? [],
+      [],
+      undefined,
+      false,
+      withToolResult.planReviewOverlayBySession['session-a'] ?? {},
+    );
+
+    expect(turns[0]?.tools?.[0]?.planReview).toMatchObject({
+      status: 'interrupted',
+      plan: '## Plan for session-a',
+    });
+    expect(withToolResult.planReviewOverlayBySession['session-a']).toEqual({});
+  });
+
+  it('projects a live requested and resolved rejection into the exact later tool event', () => {
+    const result = runResolvedPlanSequence(
+      {
+        decision: 'rejected',
+        selectedLabel: 'Reject and Exit',
+      },
+      'live',
+    );
+
+    expect(result.planReview).toMatchObject({
+      status: 'rejected',
+      plan: '## Plan for session-a',
+    });
+    expect(result.remainingOverlays).toEqual({});
+  });
+
+  it('does not consume a resolved overlay when a reused tool call id comes from another turn', () => {
+    const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
+    const requested = reduceAppEvent(
+      createInitialState(),
+      { type: 'approvalRequested', sessionId: 'session-a', approval },
+      { sessionId: 'session-a', seq: 1 },
+    );
+    const resolved = reduceAppEvent(
+      {
+        ...requested,
+        approvalsBySession: { ...requested.approvalsBySession, 'session-a': [] },
+      },
+      {
+        type: 'approvalResolved',
+        sessionId: 'session-a',
+        approvalId: 'approval-a',
+        decision: 'rejected',
+        selectedLabel: 'Reject and Exit',
+        resolvedAt: '2026-01-01T00:01:00.000Z',
+      },
+      { sessionId: 'session-a', seq: 2 },
+    );
+    const withOldMessage = reduceAppEvent(
+      resolved,
+      {
+        type: 'messageCreated',
+        message: {
+          id: 'old-plan',
+          sessionId: 'session-a',
+          role: 'assistant',
+          content: [],
+          createdAt: '2026-01-01T00:00:00.000Z',
+          promptId: 'old-prompt',
+        },
+      },
+      { sessionId: 'session-a', seq: 3 },
+    );
+
+    const oldTurnUpdated = reduceAppEvent(
+      withOldMessage,
+      {
+        type: 'messageUpdated',
+        sessionId: 'session-a',
+        messageId: 'old-plan',
+        content: [
+          {
+            type: 'toolUse',
+            toolCallId: 'call-1',
+            toolName: 'ExitPlanMode',
+            input: {},
+            turnId: 6,
+            toolInputDisplay: approval.display,
+          },
+        ],
+        status: 'completed',
+      },
+      { sessionId: 'session-a', seq: 4 },
+    );
+
+    const oldToolUse = oldTurnUpdated.messagesBySession['session-a']?.[0]?.content[0];
+    expect(oldToolUse).toMatchObject({ type: 'toolUse', turnId: 6 });
+    if (oldToolUse?.type !== 'toolUse') throw new Error('expected old tool use');
+    expect(oldToolUse.approvalResult).toBeUndefined();
+    expect(
+      oldTurnUpdated.planReviewOverlayBySession['session-a']?.['approval-a']?.approvalResult,
+    ).toMatchObject({ decision: 'rejected' });
+  });
+
+  it('projects snapshot rejection when the Dock item was already removed', () => {
+    const result = runResolvedPlanSequence(
+      {
+        decision: 'rejected',
+        selectedLabel: 'Reject and Exit',
+      },
+      'snapshot',
+    );
+
+    expect(result.pendingPlanCount).toBe(1);
+    expect(result.planReview).toMatchObject({
+      status: 'rejected',
+      plan: '## Plan for session-a',
+      selectedLabel: 'Reject and Exit',
+    });
+    expect(result.remainingOverlays).toEqual({});
+  });
+
+  it('projects snapshot revision feedback after approval resolution', () => {
+    const result = runResolvedPlanSequence(
+      {
+        decision: 'rejected',
+        selectedLabel: 'Revise',
+        feedback: 'Add rollback checks.',
+      },
+      'snapshot',
+    );
+
+    expect(result.pendingPlanCount).toBe(1);
+    expect(result.planReview).toMatchObject({
+      status: 'revision_requested',
+      feedback: 'Add rollback checks.',
+    });
+    expect(result.remainingOverlays).toEqual({});
+  });
+});
 
 describe('reduceAppEvent messageCreated', () => {
   it('bumps the session updatedAt so it floats to the top of the sidebar', () => {

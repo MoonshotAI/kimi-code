@@ -14,9 +14,9 @@
  * reference-equality gate stays quiet. `permission.rules.add` is live-only
  * because v1 does not persist permission rules; hosts re-supply them on resume,
  * while only `permission.record_approval_result` rides the wire log. The
- * legacy `toReplay: approval_result` projection is dropped — only `message`
- * records feed the transcript. Consumed by the Agent-scope
- * `permissionRulesService`.
+ * legacy `toReplay: approval_result` projection is dropped; the full message
+ * transcript correlates this persisted record directly with its tool call.
+ * Consumed by the Agent-scope `permissionRulesService`.
  */
 
 import { z } from 'zod';

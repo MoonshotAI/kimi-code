@@ -9,9 +9,28 @@
 // TOOL-role messages fold their toolResult content into the preceding assistant
 // group rather than becoming separate turns.
 
-import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
+import type {
+  AppApprovalRequest,
+  AppMessage,
+  AppPlanReviewOverlay,
+  AppTask,
+  ApprovalResponse,
+  CompactionMarkerMetadata,
+} from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
+import type {
+  AgentMember,
+  ApprovalBlock,
+  ChatTurn,
+  CronTurnData,
+  DiffLine,
+  PlanReviewHistory,
+  PlanReviewOption,
+  PlanReviewStatus,
+  ToolCall,
+  ToolMedia,
+  TurnBlock,
+} from '../types';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
@@ -38,6 +57,8 @@ const SYSTEM_DIMENSIONS_RE = /Original dimensions:\s*(\d+)x(\d+)\s*pixels/i;
 // example) is their own text, not harness metadata, so it survives untouched.
 const CAPTION_OPENING = '<system>Image compressed to fit model limits:';
 const CAPTION_PATTERN = /<system>Image compressed to fit model limits:[\s\S]*?<\/system>/g;
+const INTERRUPTED_TOOL_OUTPUT =
+  'Tool execution was interrupted before its result was recorded.';
 
 function stripImageCompressionCaptions(text: string): string {
   if (!text.includes(CAPTION_OPENING)) return text;
@@ -224,6 +245,84 @@ function buildDiffLines(oldText: string, newText: string): DiffLine[] {
   return lines;
 }
 
+interface ParsedPlanReviewDisplay {
+  plan: string;
+  path?: string;
+  options?: PlanReviewOption[];
+}
+
+function parsePlanReviewDisplay(display: unknown): ParsedPlanReviewDisplay | undefined {
+  if (typeof display !== 'object' || display === null) return undefined;
+  const value = display as Record<string, unknown>;
+  if (value['kind'] !== 'plan_review' || typeof value['plan'] !== 'string') return undefined;
+  if (value['plan'].trim().length === 0) return undefined;
+
+  const options = (Array.isArray(value['options']) ? value['options'] : [])
+    .map((item: unknown): PlanReviewOption | null => {
+      if (typeof item !== 'object' || item === null) return null;
+      const option = item as Record<string, unknown>;
+      if (typeof option['label'] !== 'string' || option['label'].length === 0) return null;
+      return {
+        label: option['label'],
+        description:
+          typeof option['description'] === 'string' ? option['description'] : undefined,
+      };
+    })
+    .filter((option): option is PlanReviewOption => option !== null);
+
+  return {
+    plan: value['plan'],
+    path: typeof value['path'] === 'string' ? value['path'] : undefined,
+    options: options.length > 0 ? options : undefined,
+  };
+}
+
+function planReviewStatusFromApproval(result: ApprovalResponse | undefined): PlanReviewStatus {
+  if (result === undefined) return 'pending';
+  if (result.decision === 'approved') return 'approved';
+  if (result.decision === 'cancelled') return 'dismissed';
+  const revisionRequested =
+    result.selectedLabel?.trim().toLowerCase() === 'revise' ||
+    (result.feedback?.trim().length ?? 0) > 0;
+  return revisionRequested ? 'revision_requested' : 'rejected';
+}
+
+function buildPlanReviewHistory(
+  display: unknown,
+  approvalResult?: ApprovalResponse,
+  statusOverride?: 'interrupted',
+): PlanReviewHistory | undefined {
+  const parsed = parsePlanReviewDisplay(display);
+  if (parsed === undefined) return undefined;
+  return {
+    ...parsed,
+    status: statusOverride ?? planReviewStatusFromApproval(approvalResult),
+    selectedLabel: approvalResult?.selectedLabel,
+    feedback: approvalResult?.feedback,
+  };
+}
+
+function isInterruptedToolResult(output: string[] | undefined): boolean {
+  return output?.some((line) => line.includes(INTERRUPTED_TOOL_OUTPUT)) === true;
+}
+
+function settlePlanReviewFromResult(
+  planReview: PlanReviewHistory,
+  isError: boolean,
+  output: string[] | undefined,
+): PlanReviewHistory {
+  if (isInterruptedToolResult(output)) return { ...planReview, status: 'interrupted' };
+  if (planReview.status === 'approved' && isError) return { ...planReview, status: 'failed' };
+  if (planReview.status !== 'pending') return planReview;
+  return { ...planReview, status: isError ? 'failed' : 'approved' };
+}
+
+function interruptPendingPlanReview(planReview: PlanReviewHistory | undefined): PlanReviewHistory | undefined {
+  return planReview?.status === 'pending'
+    ? { ...planReview, status: 'interrupted' }
+    : planReview;
+}
+
 function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
   const d = (a.display ?? {}) as Record<string, unknown>;
   const kind = typeof d['kind'] === 'string' ? d['kind'] : '';
@@ -310,19 +409,8 @@ function buildApprovalBlock(a: AppApprovalRequest): ApprovalBlock {
   }
 
   if (kind === 'plan_review') {
-    const plan = typeof d['plan'] === 'string' ? d['plan'] : '';
-    const path = typeof d['path'] === 'string' ? d['path'] : undefined;
-    const rawOptions = Array.isArray(d['options']) ? d['options'] : [];
-    const options = rawOptions
-      .map((item: unknown): { label: string; description?: string } | null => {
-        const it = (item ?? {}) as Record<string, unknown>;
-        const label = typeof it['label'] === 'string' ? it['label'] : '';
-        if (!label) return null;
-        const description = typeof it['description'] === 'string' ? it['description'] : undefined;
-        return { label, description };
-      })
-      .filter((o): o is { label: string; description?: string } => o !== null);
-    return { kind: 'plan_review', plan, path, options: options.length > 0 ? options : undefined };
+    const planReview = parsePlanReviewDisplay(a.display);
+    if (planReview !== undefined) return { kind: 'plan_review', ...planReview };
   }
 
   return { kind: 'generic', summary: a.action };
@@ -473,19 +561,6 @@ function continuesAssistantGroup(group: Group | null, promptId: string | undefin
 }
 
 
-/** Extract the plan file path from an ExitPlanMode tool result. The approved
- *  output contains `Plan saved to: <path>`; this survives a page reload (unlike
- *  the ephemeral plan_review approval display), so the tool card can still link
- *  to the plan file. */
-function parsePlanSavedPath(output: string[] | undefined): string | undefined {
-  if (!output || output.length === 0) return undefined;
-  const marker = 'Plan saved to: ';
-  for (const line of output) {
-    if (line.startsWith(marker)) return line.slice(marker.length).trim();
-  }
-  return undefined;
-}
-
 /**
  * Normalize an assistant message's content for duplicate detection. The same
  * logical reply reaches us as both a persisted transcript message and a
@@ -549,9 +624,13 @@ export function messagesToTurns(
    * spinning forever after the turn already finished.
    */
   sessionActive = true,
-  /** Preserved `plan_review` displays keyed by toolCallId — used to link the
-   *  ExitPlanMode tool card back to the plan file after the approval resolves. */
-  planReviewByToolCallId: Record<string, { plan: string; path?: string }> = {},
+  /**
+   * Session-scoped approval correlations keyed by approvalId. Live overlays
+   * marked renderSynthetic become standalone turns; snapshot correlations are
+   * data-only. Neither is merged into or suppressed by an arbitrary historical
+   * tool call with a reused toolCallId.
+   */
+  planReviewOverlayByApprovalId: Record<string, AppPlanReviewOverlay> = {},
 ): ChatTurn[] {
   const turns: ChatTurn[] = [];
   let no = 1;
@@ -559,6 +638,7 @@ export function messagesToTurns(
   // Build approval lookup by toolCallId
   const approvalByTool = new Map<string, AppApprovalRequest>();
   for (const a of approvals) {
+    if (parsePlanReviewDisplay(a.display) !== undefined) continue;
     approvalByTool.set(a.toolCallId, a);
   }
 
@@ -578,7 +658,11 @@ export function messagesToTurns(
       for (let i = 0; i < g.tools.length; i++) {
         const t = g.tools[i]!;
         if (t.status !== 'running') continue;
-        const updated: ToolCall = { ...t, status: 'ok' };
+        const updated: ToolCall = {
+          ...t,
+          status: 'ok',
+          planReview: interruptPendingPlanReview(t.planReview),
+        };
         g.tools[i] = updated;
         const blk = g.blocks.find((b) => b.kind === 'tool' && b.tool.id === updated.id);
         if (blk && blk.kind === 'tool') blk.tool = updated;
@@ -624,6 +708,16 @@ export function messagesToTurns(
         // the final result when expanded, while a subagent's live progress
         // streams in the right-side detail panel (sourced from the task).
         const pendingApproval = approvalByTool.get(c.toolCallId);
+        // Never backfill a real tool_use from the live overlay. Tool-call ids
+        // are not globally unique across turns on every backend, so doing so
+        // can attach a new plan to an older unrelated Bash call. The overlay
+        // renders as its own synthetic plan turn below until this tool_use
+        // carries its own display/result fields.
+        const planReview = buildPlanReviewHistory(
+          c.toolInputDisplay,
+          c.approvalResult,
+          c.planReviewStatus,
+        );
         const toolCall: ToolCall = {
           id: c.toolCallId,
           name: c.toolName,
@@ -632,7 +726,7 @@ export function messagesToTurns(
           // flushGroup settles dangling tools of finished turns back to 'ok'.
           status: 'running',
           output: c.outputLines,
-          planPath: c.toolName === 'ExitPlanMode' ? planReviewByToolCallId[c.toolCallId]?.path : undefined,
+          planReview,
         };
         g.tools.push(toolCall);
         g.blocks.push({ kind: 'tool', tool: toolCall });
@@ -646,18 +740,17 @@ export function messagesToTurns(
         const idx = g.tools.findIndex((t) => t.id === c.toolCallId);
         if (idx !== -1) {
           const tool = g.tools[idx]!;
+          const output = normalizeToolOutput(c.output);
           const updated: ToolCall = {
             ...tool,
             status: c.isError ? 'error' : 'ok',
-            output: normalizeToolOutput(c.output),
+            output,
             media: c.isError ? undefined : normalizeToolMedia(tool.name, c.output),
+            planReview:
+              tool.planReview === undefined
+                ? undefined
+                : settlePlanReviewFromResult(tool.planReview, c.isError === true, output),
           };
-          // ExitPlanMode: if the plan path wasn't captured from the (ephemeral)
-          // approval display, recover it from the result output so the file link
-          // survives a reload for approved plans.
-          if (updated.name === 'ExitPlanMode' && !updated.planPath) {
-            updated.planPath = parsePlanSavedPath(updated.output);
-          }
           g.tools[idx] = updated;
           const blk = g.blocks.find((b) => b.kind === 'tool' && b.tool.id === c.toolCallId);
           if (blk && blk.kind === 'tool') blk.tool = updated;
@@ -666,22 +759,44 @@ export function messagesToTurns(
     }
   }
 
-  /**
-   * Fold the volatile extras of a dropped duplicate into the group: a resync
-   * seed's tool cards carry live progress (`outputLines` from
-   * `in_flight_turn.running_tools[].last_progress`) that the persisted copy
-   * lacks — without this, a mid-tool refresh blanks the card's latest output
-   * until the next progress frame. Never overwrite output a tool result
-   * already settled.
-   */
+  /** Fold fields from a dropped duplicate into the existing tool card. A
+   * resync seed can carry live progress, while the later durable transcript
+   * copy can carry the plan display and approval result. Preserve both no
+   * matter which copy arrived first. */
   function mergeVolatileExtras(g: Group, content: AppMessage['content']): void {
     for (const c of content) {
-      if (c.type !== 'toolUse' || !c.outputLines?.length) continue;
+      if (c.type !== 'toolUse') continue;
       const idx = g.tools.findIndex((t) => t.id === c.toolCallId);
       if (idx === -1) continue;
       const tool = g.tools[idx]!;
-      if (tool.output !== undefined) continue;
-      const updated: ToolCall = { ...tool, output: c.outputLines };
+      const incomingPlan = buildPlanReviewHistory(
+        c.toolInputDisplay,
+        c.approvalResult,
+        c.planReviewStatus,
+      );
+      const settledIncomingPlan =
+        incomingPlan !== undefined && tool.status !== 'running'
+          ? settlePlanReviewFromResult(
+              incomingPlan,
+              tool.status === 'error',
+              tool.output,
+            )
+          : incomingPlan;
+      const mergedPlan =
+        settledIncomingPlan?.status === 'pending' &&
+        tool.planReview !== undefined &&
+        tool.planReview.status !== 'pending'
+          ? tool.planReview
+          : settledIncomingPlan ?? tool.planReview;
+      const updated: ToolCall = {
+        ...tool,
+        output:
+          tool.output === undefined && c.outputLines?.length
+            ? c.outputLines
+            : tool.output,
+        planReview: mergedPlan,
+      };
+      if (updated.output === tool.output && updated.planReview === tool.planReview) continue;
       g.tools[idx] = updated;
       const blk = g.blocks.find((b) => b.kind === 'tool' && b.tool.id === c.toolCallId);
       if (blk && blk.kind === 'tool') blk.tool = updated;
@@ -869,5 +984,42 @@ export function messagesToTurns(
   }
 
   flushGroup(true);
+
+  // A live approval can arrive before its assistant tool_use. Render a
+  // temporary plan turn whose identity is the approval — never the reusable
+  // toolCallId. The reducer consumes this overlay only while reconciling the
+  // exact newly-arrived (turnId, toolCallId) plan tool_use event.
+  for (const overlay of Object.values(planReviewOverlayByApprovalId)) {
+    if (!overlay.renderSynthetic) continue;
+    const projected = buildPlanReviewHistory(
+      overlay.toolInputDisplay,
+      overlay.approvalResult,
+      overlay.status,
+    );
+    if (projected === undefined) continue;
+    const planReview =
+      !sessionActive && projected.status === 'pending'
+        ? { ...projected, status: 'interrupted' as const }
+        : projected;
+    const failed =
+      planReview.status === 'rejected' ||
+      planReview.status === 'interrupted' ||
+      planReview.status === 'failed';
+    const tool: ToolCall = {
+      id: `plan-review-${overlay.approvalId}`,
+      name: 'ExitPlanMode',
+      arg: '',
+      status: planReview.status === 'pending' ? 'running' : failed ? 'error' : 'ok',
+      planReview,
+    };
+    turns.push({
+      id: `plan-review-${overlay.approvalId}`,
+      role: 'assistant',
+      no: no++,
+      text: '',
+      tools: [tool],
+      blocks: [{ kind: 'tool', tool }],
+    });
+  }
   return turns;
 }

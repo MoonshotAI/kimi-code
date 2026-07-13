@@ -71,6 +71,14 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
 
   blocks.forEach((block, sourceIndex) => {
     if (block.kind === 'tool') {
+      // A plan review is durable conversation content, not operational tool
+      // noise. Keep it as its own history card instead of folding it into a
+      // collapsed tool stack where the plan body would be hidden.
+      if (block.tool.planReview) {
+        flushToolRun();
+        rendered.push({ kind: 'tool', tool: block.tool, sourceIndex });
+        return;
+      }
       if (rendersToolCard(block)) {
         toolRun.push({ tool: block.tool, sourceIndex });
         return;

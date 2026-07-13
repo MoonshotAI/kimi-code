@@ -1,10 +1,92 @@
 /**
- * Web daemon projector contract for transcript isolation, task progress, and
- * client-visible error projection.
+ * Scenario: raw agent events become browser-visible transcript events.
+ * Responsibilities: isolate agents, preserve tool display, stream progress, and surface errors.
+ * Wiring: real agent event projector; no collaborators are stubbed.
+ * Run: pnpm --filter @moonshot-ai/kimi-web test -- agent-event-projector.test.ts
  */
 
 import { describe, expect, it } from 'vitest';
 import { classifyFrame, createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
+
+describe('main-agent tool display projection (live transcript)', () => {
+  it('includes the plan display when tool.call.started updates the assistant message', () => {
+    const projector = createAgentProjector();
+    projector.project('turn.started', { turnId: 1 }, 'session-1');
+    projector.project('turn.step.started', { turnId: 1, step: 1 }, 'session-1');
+
+    const events = projector.project(
+      'tool.call.started',
+      {
+        turnId: 1,
+        toolCallId: 'plan-call',
+        name: 'ExitPlanMode',
+        args: {},
+        display: {
+          kind: 'plan_review',
+          plan: '## Live plan\n\nVerify the real event path.',
+          path: '/workspace/live-plan.md',
+        },
+      },
+      'session-1',
+    );
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'messageUpdated',
+        content: expect.arrayContaining([
+          expect.objectContaining({
+            type: 'toolUse',
+            toolCallId: 'plan-call',
+            toolInputDisplay: {
+              kind: 'plan_review',
+              plan: '## Live plan\n\nVerify the real event path.',
+              path: '/workspace/live-plan.md',
+            },
+          }),
+        ]),
+      }),
+    );
+  });
+
+  it('includes the plan display when a refresh seeds an in-flight tool', () => {
+    const projector = createAgentProjector();
+
+    const events = projector.seedInFlight('session-1', {
+      turnId: 1,
+      assistantText: '',
+      thinkingText: '',
+      runningTools: [
+        {
+          toolCallId: 'plan-call',
+          name: 'ExitPlanMode',
+          args: {},
+          display: {
+            kind: 'plan_review',
+            plan: '## Refresh-safe live plan',
+          },
+        },
+      ],
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'messageCreated',
+        message: expect.objectContaining({
+          content: [
+            expect.objectContaining({
+              type: 'toolUse',
+              toolCallId: 'plan-call',
+              toolInputDisplay: {
+                kind: 'plan_review',
+                plan: '## Refresh-safe live plan',
+              },
+            }),
+          ],
+        }),
+      }),
+    );
+  });
+});
 
 describe('subagentProgressText', () => {
   it('drops turn.step.started as noise', () => {
@@ -274,7 +356,15 @@ describe('step-boundary delta alignment', () => {
     expect(message!.content).toEqual([
       { type: 'thinking', thinking: 'step two thinking' },
       { type: 'text', text: 'step two partial' },
-      { type: 'toolUse', toolCallId: 'tc_1', toolName: 'bash', input: { command: 'ls' } },
+      {
+        type: 'toolUse',
+        toolCallId: 'tc_1',
+        toolName: 'bash',
+        input: { command: 'ls' },
+        turnId: 7,
+        toolInputDisplay: undefined,
+        outputLines: undefined,
+      },
     ]);
 
     const dup = projector.project('assistant.delta', { turnId: 7, delta: 'two part' }, 's1', { offset: 5 });

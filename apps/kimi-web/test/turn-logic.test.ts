@@ -1,7 +1,16 @@
+/**
+ * Scenario: persisted and live message histories become user-visible chat turns.
+ * Responsibilities: preserve plan-review content and derive its durable status.
+ * Wiring: real wire mapper + messagesToTurns; no collaborators are stubbed.
+ * Run: pnpm --filter @moonshot-ai/kimi-web test -- turn-logic.test.ts
+ */
 import { describe, expect, it } from 'vitest';
 import type { AppMessage, AppMessageContent } from '../src/api/types';
+import { toAppMessage } from '../src/api/daemon/mappers';
+import type { WireApprovalResponse, WireMessage } from '../src/api/daemon/wire';
 import { latestTodos } from '../src/composables/latestTodos';
 import { messagesToTurns } from '../src/composables/messagesToTurns';
+import type { ToolCall } from '../src/types';
 
 function message(
   id: string,
@@ -18,6 +27,294 @@ function message(
     ...extra,
   };
 }
+
+const PLAN_DISPLAY = {
+  kind: 'plan_review',
+  plan: '## Release plan\n\n1. Update the server\n2. Verify the web replay',
+  path: '/workspace/plans/release.md',
+  options: [
+    { label: 'Safe rollout', description: 'Ship behind the existing boundary.' },
+    { label: 'Direct rollout', description: 'Ship in one step.' },
+  ],
+};
+
+function replayPlanTool(input: {
+  approvalResult?: WireApprovalResponse;
+  toolOutput?: unknown;
+  isError?: boolean;
+  sessionActive?: boolean;
+}): ToolCall {
+  const wireMessages: WireMessage[] = [
+    {
+      id: 'assistant-plan',
+      session_id: 'session-1',
+      role: 'assistant',
+      content: [
+        {
+          type: 'tool_use',
+          tool_call_id: 'plan-call',
+          tool_name: 'ExitPlanMode',
+          input: {},
+          tool_input_display: PLAN_DISPLAY,
+          approval_result: input.approvalResult,
+        },
+      ],
+      created_at: '2026-01-01T00:00:00.000Z',
+      prompt_id: 'prompt-1',
+    },
+  ];
+  if (input.toolOutput !== undefined) {
+    wireMessages.push({
+      id: 'tool-plan',
+      session_id: 'session-1',
+      role: 'tool',
+      content: [
+        {
+          type: 'tool_result',
+          tool_call_id: 'plan-call',
+          output: input.toolOutput,
+          is_error: input.isError,
+        },
+      ],
+      created_at: '2026-01-01T00:00:01.000Z',
+      prompt_id: 'prompt-1',
+    });
+  }
+
+  const turns = messagesToTurns(
+    wireMessages.map(toAppMessage),
+    [],
+    undefined,
+    input.sessionActive ?? false,
+  );
+  const tool = turns[0]?.tools?.[0];
+  if (tool === undefined) throw new Error('expected replayed plan tool');
+  return tool;
+}
+
+describe('plan review history (durable message projection)', () => {
+  it('keeps the plan pending when a live durable tool use has no decision yet', () => {
+    const tool = replayPlanTool({ sessionActive: true });
+
+    expect(tool.planReview).toEqual({
+      plan: '## Release plan\n\n1. Update the server\n2. Verify the web replay',
+      path: '/workspace/plans/release.md',
+      options: [
+        { label: 'Safe rollout', description: 'Ship behind the existing boundary.' },
+        { label: 'Direct rollout', description: 'Ship in one step.' },
+      ],
+      status: 'pending',
+      selectedLabel: undefined,
+      feedback: undefined,
+    });
+  });
+
+  it('keeps rejected plan content and feedback when replaying persisted messages', () => {
+    const tool = replayPlanTool({
+      approvalResult: {
+        decision: 'rejected',
+        selected_label: 'Reject and Exit',
+      },
+      toolOutput: 'Plan rejected by the user.',
+      isError: true,
+    });
+
+    expect(tool.planReview).toMatchObject({
+      status: 'rejected',
+      plan: '## Release plan\n\n1. Update the server\n2. Verify the web replay',
+      path: '/workspace/plans/release.md',
+      selectedLabel: 'Reject and Exit',
+    });
+  });
+
+  it('keeps approved plan content and selection when replaying persisted messages', () => {
+    const tool = replayPlanTool({
+      approvalResult: {
+        decision: 'approved',
+        selected_label: 'Safe rollout',
+      },
+      toolOutput: 'Plan saved to: /workspace/plans/release.md',
+    });
+
+    expect(tool.planReview).toMatchObject({
+      status: 'approved',
+      plan: '## Release plan\n\n1. Update the server\n2. Verify the web replay',
+      selectedLabel: 'Safe rollout',
+    });
+  });
+
+  it('marks a rejected plan as revision requested when persisted feedback asks for changes', () => {
+    const tool = replayPlanTool({
+      approvalResult: {
+        decision: 'rejected',
+        selected_label: 'Revise',
+        feedback: 'Add rollback verification.',
+      },
+      toolOutput: 'Plan revision requested.',
+      isError: true,
+    });
+
+    expect(tool.planReview).toMatchObject({
+      status: 'revision_requested',
+      feedback: 'Add rollback verification.',
+    });
+  });
+
+  it('marks a cancelled persisted review as dismissed', () => {
+    const tool = replayPlanTool({
+      approvalResult: { decision: 'cancelled' },
+      toolOutput: 'Plan review cancelled.',
+      isError: true,
+    });
+
+    expect(tool.planReview?.status).toBe('dismissed');
+  });
+
+  it('marks a result-less plan as interrupted when the recorded tool interruption arrives', () => {
+    const tool = replayPlanTool({
+      toolOutput: 'Tool execution was interrupted before its result was recorded.',
+      isError: true,
+    });
+
+    expect(tool.planReview?.status).toBe('interrupted');
+  });
+
+  it('marks an approved plan as failed when its tool result records an execution error', () => {
+    const tool = replayPlanTool({
+      approvalResult: { decision: 'approved' },
+      toolOutput: 'Could not save the plan.',
+      isError: true,
+    });
+
+    expect(tool.planReview?.status).toBe('failed');
+  });
+
+  it('marks an auto-approved plan as approved when its tool result succeeds', () => {
+    const tool = replayPlanTool({
+      toolOutput: 'Plan saved to: /workspace/plans/release.md',
+    });
+
+    expect(tool.planReview?.status).toBe('approved');
+  });
+
+  it('renders a live approval overlay as a synthetic pending plan before tool use arrives', () => {
+    const turns = messagesToTurns(
+      [],
+      [],
+      undefined,
+      true,
+      {
+        'approval-1': {
+          approvalId: 'approval-1',
+          toolCallId: 'plan-call',
+          turnId: 2,
+          toolInputDisplay: PLAN_DISPLAY,
+          renderSynthetic: true,
+        },
+      },
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.tools?.[0]?.planReview).toMatchObject({
+      status: 'pending',
+      plan: '## Release plan\n\n1. Update the server\n2. Verify the web replay',
+    });
+  });
+
+  it('does not attach a reused plan overlay id to an older tool from another turn', () => {
+    const turns = messagesToTurns(
+      [
+        message('old-assistant', 'assistant', [
+          {
+            type: 'toolUse',
+            toolCallId: 'call-1',
+            toolName: 'bash',
+            input: { command: 'pnpm test' },
+          },
+        ], { promptId: 'old-prompt' }),
+        message('old-result', 'tool', [
+          { type: 'toolResult', toolCallId: 'call-1', output: 'passed' },
+        ], { promptId: 'old-prompt' }),
+        message('next-user', 'user', [{ type: 'text', text: 'Review the new plan' }]),
+      ],
+      [],
+      undefined,
+      true,
+      {
+        'approval-new': {
+          approvalId: 'approval-new',
+          toolCallId: 'call-1',
+          turnId: 2,
+          toolInputDisplay: PLAN_DISPLAY,
+          renderSynthetic: true,
+        },
+      },
+    );
+
+    expect(turns[0]?.tools?.[0]).toMatchObject({ name: 'bash', status: 'ok' });
+    expect(turns[0]?.tools?.[0]?.planReview).toBeUndefined();
+    expect(turns.at(-1)?.tools?.[0]?.planReview).toMatchObject({
+      status: 'pending',
+      plan: '## Release plan\n\n1. Update the server\n2. Verify the web replay',
+    });
+  });
+
+  it('keeps a new pending plan when an older durable plan reused the same tool call id', () => {
+    const turns = messagesToTurns(
+      [
+        message('old-plan', 'assistant', [
+          {
+            type: 'toolUse',
+            toolCallId: 'call-1',
+            toolName: 'ExitPlanMode',
+            input: {},
+            toolInputDisplay: {
+              kind: 'plan_review',
+              plan: '## Old rejected plan',
+            },
+            approvalResult: {
+              decision: 'rejected',
+              selectedLabel: 'Reject and Exit',
+            },
+          },
+        ], { promptId: 'old-prompt' }),
+        message('old-plan-result', 'tool', [
+          {
+            type: 'toolResult',
+            toolCallId: 'call-1',
+            output: 'Old plan rejected.',
+            isError: true,
+          },
+        ], { promptId: 'old-prompt' }),
+        message('next-user', 'user', [{ type: 'text', text: 'Review a replacement plan' }]),
+      ],
+      [],
+      undefined,
+      true,
+      {
+        'approval-new': {
+          approvalId: 'approval-new',
+          toolCallId: 'call-1',
+          turnId: 2,
+          toolInputDisplay: {
+            kind: 'plan_review',
+            plan: '## New pending plan',
+          },
+          renderSynthetic: true,
+        },
+      },
+    );
+
+    expect(turns[0]?.tools?.[0]?.planReview).toMatchObject({
+      status: 'rejected',
+      plan: '## Old rejected plan',
+    });
+    expect(turns.at(-1)?.tools?.[0]?.planReview).toMatchObject({
+      status: 'pending',
+      plan: '## New pending plan',
+    });
+  });
+});
 
 describe('messagesToTurns', () => {
   it('merges an assistant turn and folds tool results into it', () => {
@@ -400,6 +697,50 @@ describe('messagesToTurns resync dedup', () => {
 
     expect(turns).toHaveLength(1);
     expect(turns[0]?.text).toBe('step one done\nstep two streami');
+  });
+
+  it('merges a later durable plan display into a display-less live seed', () => {
+    const turns = messagesToTurns(
+      [
+        message(
+          'seed',
+          'assistant',
+          [
+            {
+              type: 'toolUse',
+              toolCallId: 'plan-call',
+              toolName: 'ExitPlanMode',
+              input: {},
+            },
+          ],
+          { promptId: 'p1' },
+        ),
+        message(
+          'durable',
+          'assistant',
+          [
+            {
+              type: 'toolUse',
+              toolCallId: 'plan-call',
+              toolName: 'ExitPlanMode',
+              input: {},
+              toolInputDisplay: PLAN_DISPLAY,
+            },
+          ],
+          { promptId: 'p1' },
+        ),
+      ],
+      [],
+      undefined,
+      true,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.tools).toHaveLength(1);
+    expect(turns[0]?.tools?.[0]?.planReview).toMatchObject({
+      status: 'pending',
+      plan: '## Release plan\n\n1. Update the server\n2. Verify the web replay',
+    });
   });
 
   it('keeps a following step whose content differs', () => {

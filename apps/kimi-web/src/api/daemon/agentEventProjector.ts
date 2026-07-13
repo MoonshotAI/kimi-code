@@ -407,11 +407,21 @@ function appendToolUse(
   toolCallId: string,
   toolName: string,
   input: unknown,
+  turnId?: number,
+  toolInputDisplay?: unknown,
   outputLines?: string[],
 ): void {
   const msg = state.messages.find((m) => m.id === messageId);
   if (!msg) return;
-  msg.content.push({ type: 'toolUse', toolCallId, toolName, input, outputLines });
+  msg.content.push({
+    type: 'toolUse',
+    toolCallId,
+    toolName,
+    input,
+    turnId,
+    toolInputDisplay,
+    outputLines,
+  });
 }
 
 function toolProgressOutput(payload: Record<string, unknown>): { outputChunk: string; stream: 'stdout' | 'stderr' } | null {
@@ -569,6 +579,8 @@ export function createAgentProjector(): AgentProjector {
         toolCallId: tool.toolCallId,
         toolName: tool.name,
         input: tool.args ?? {},
+        turnId: turn.turnId,
+        toolInputDisplay: tool.display,
         outputLines,
       });
       s.toolStartTimes.set(tool.toolCallId, Date.now());
@@ -827,7 +839,7 @@ export function createAgentProjector(): AgentProjector {
         const toolName: string = p?.name ?? p?.toolName ?? '';
         const args = p?.args ?? p?.input ?? {};
 
-        appendToolUse(s, msgId, toolCallId, toolName, args);
+        appendToolUse(s, msgId, toolCallId, toolName, args, turnId, p?.display);
 
         const msg = getMsgById(s, msgId);
         const contentIndex = msg ? msg.content.length - 1 : 0;

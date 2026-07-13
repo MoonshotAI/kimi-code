@@ -39,6 +39,31 @@ describe('messageContentSchema variants', () => {
     expect(parsed.tool_name).toBe('Bash');
   });
 
+  it('parses optional tool display and approval result without requiring them from older servers', () => {
+    const parsed = toolUseContentSchema.parse({
+      type: 'tool_use',
+      tool_call_id: 'call_plan',
+      tool_name: 'ExitPlanMode',
+      input: {},
+      tool_input_display: {
+        kind: 'plan_review',
+        plan: '# Plan\n\nKeep the plan visible.',
+      },
+      approval_result: {
+        decision: 'rejected',
+        feedback: 'Add verification.',
+        selected_label: 'Revise',
+      },
+    });
+
+    expect(parsed.tool_input_display).toMatchObject({ kind: 'plan_review' });
+    expect(parsed.approval_result).toEqual({
+      decision: 'rejected',
+      feedback: 'Add verification.',
+      selected_label: 'Revise',
+    });
+  });
+
   it('parses tool_result content with is_error', () => {
     const parsed = toolResultContentSchema.parse({
       type: 'tool_result',

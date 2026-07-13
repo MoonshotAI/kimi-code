@@ -54,6 +54,7 @@ import type {
   AppNoticeDetail,
   AppMessage,
   AppModel,
+  AppPlanReviewOverlay,
   AppProvider,
   AppQuestionRequest,
   AppSession,
@@ -574,6 +575,7 @@ function forgetSession(sessionId: string): void {
   removeSession(sessionId);
   removeSessionMessages(sessionId);
   delete rawState.approvalsBySession[sessionId];
+  delete rawState.planReviewOverlayBySession[sessionId];
   delete rawState.questionsBySession[sessionId];
   delete rawState.tasksBySession[sessionId];
   delete rawState.goalBySession[sessionId];
@@ -787,7 +789,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     activeSessionId: rawState.activeSessionId,
     messagesBySession: rawState.messagesBySession,
     approvalsBySession: rawState.approvalsBySession,
-    planReviewByToolCallId: rawState.planReviewByToolCallId,
+    planReviewOverlayBySession: rawState.planReviewOverlayBySession,
     questionsBySession: rawState.questionsBySession,
     tasksBySession: rawState.tasksBySession,
     goalBySession: rawState.goalBySession,
@@ -803,7 +805,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   setActiveSessionId(next.activeSessionId);
   setMessagesBySession(next.messagesBySession);
   rawState.approvalsBySession = next.approvalsBySession;
-  rawState.planReviewByToolCallId = next.planReviewByToolCallId;
+  rawState.planReviewOverlayBySession = next.planReviewOverlayBySession;
   rawState.questionsBySession = next.questionsBySession;
   rawState.tasksBySession = next.tasksBySession;
   rawState.goalBySession = next.goalBySession;
@@ -1334,20 +1336,32 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       ...rawState.approvalsBySession,
       [sessionId]: snap.pendingApprovals,
     };
-    // Preserve plan_review paths from the snapshot so the ExitPlanMode tool
-    // card can link to the plan file even after a reload.
-    for (const a of snap.pendingApprovals) {
-      const display = a.display as { kind?: unknown; plan?: unknown; path?: unknown } | null | undefined;
-      if (display?.kind === 'plan_review' && typeof display.plan === 'string' && display.plan.length > 0) {
-        rawState.planReviewByToolCallId = {
-          ...rawState.planReviewByToolCallId,
-          [a.toolCallId]: {
-            plan: display.plan,
-            path: typeof display.path === 'string' ? display.path : undefined,
-          },
-        };
+    // Snapshot messages own the visible durable plan card. Keep a non-rendered
+    // approval-scoped correlation so a locally removed Dock item can still be
+    // resolved and merged into the exact later (turnId, toolCallId) live
+    // message event. Keying by approvalId avoids reused tool-call ids.
+    const planReviewCorrelations: Record<string, AppPlanReviewOverlay> = {};
+    for (const approval of snap.pendingApprovals) {
+      const display = approval.display as { kind?: unknown; plan?: unknown } | null | undefined;
+      if (
+        display?.kind !== 'plan_review' ||
+        typeof display.plan !== 'string' ||
+        display.plan.length === 0
+      ) {
+        continue;
       }
+      planReviewCorrelations[approval.approvalId] = {
+        approvalId: approval.approvalId,
+        toolCallId: approval.toolCallId,
+        turnId: approval.turnId,
+        toolInputDisplay: approval.display,
+        renderSynthetic: false,
+      };
     }
+    rawState.planReviewOverlayBySession = {
+      ...rawState.planReviewOverlayBySession,
+      [sessionId]: planReviewCorrelations,
+    };
     rawState.questionsBySession = {
       ...rawState.questionsBySession,
       [sessionId]: snap.pendingQuestions,
@@ -1859,7 +1873,7 @@ const turns = computed<ChatTurn[]>(() => {
     approvals,
     (fileId) => getKimiWebApi().getFileUrl(fileId),
     activity.value !== 'idle',
-    rawState.planReviewByToolCallId,
+    rawState.planReviewOverlayBySession[sid] ?? {},
   );
 });
 

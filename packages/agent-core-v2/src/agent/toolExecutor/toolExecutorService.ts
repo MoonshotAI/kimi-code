@@ -4,7 +4,9 @@
  * Resolves executable tools through `toolRegistry`, runs ordered tool hooks,
  * publishes tool lifecycle events through `event`, records telemetry through
  * `telemetry`, truncates oversized outputs through `toolResultTruncation`,
- * and logs parse diagnostics through `log`. Bound at Agent scope.
+ * and logs parse diagnostics through `log`. The immutable tool-call snapshot
+ * is recorded before permission hooks may wait, while the live started event
+ * is published only after those hooks resolve. Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -301,7 +303,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       output: string,
       displayFields?: ToolCallDisplayFields,
     ): { task: ToolExecutionTask } => {
-      this.dispatchToolCall(call, args, options, displayFields);
+      this.publishToolCallStarted(call, args, options, displayFields);
       return {
         task: makeResolvedTask(makeErrorToolResult(call, args, output)),
       };
@@ -316,7 +318,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       stopBatchAfterThis?: boolean;
     } => {
       const toolResult = this.normalizeAndMergeResult(result, call.toolName, undefined);
-      this.dispatchToolCall(call, args, options, displayFields);
+      this.publishToolCallStarted(call, args, options, displayFields);
       return {
         task: makeResolvedTask({
           toolCall: call.toolCall,
@@ -330,6 +332,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     };
 
     if (call.kind === 'rejected') {
+      this.recordToolCall(call, call.args, options);
       return settleError(call.args, call.output);
     }
 
@@ -341,10 +344,12 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         error instanceof PathSecurityError
           ? error.message
           : `Tool "${call.toolName}" failed to resolve execution: ${errorMessage(error)}`;
+      this.recordToolCall(call, call.args, options);
       return settleError(call.args, output);
     }
 
     const displayFields = toolCallDisplayFieldsFromExecution(execution);
+    this.recordToolCall(call, call.args, options, displayFields);
 
     if (options.signal.aborted) {
       return settleError(
@@ -379,7 +384,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
     const executionMetadata = decision?.executionMetadata;
 
-    this.dispatchToolCall(call, call.args, options, displayFields);
+    this.publishToolCallStarted(call, call.args, options, displayFields);
 
     return {
       task: {
@@ -396,7 +401,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     options: ToolExecutorExecuteOptions,
   ): ToolExecutionTask {
     const output = 'Tool skipped because a previous tool call stopped the turn.';
-    this.dispatchToolCall(call, call.args, options);
+    this.recordToolCall(call, call.args, options);
+    this.publishToolCallStarted(call, call.args, options);
     return makeResolvedTask(makeErrorToolResult(call, call.args, output));
   }
 
@@ -502,7 +508,21 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     };
   }
 
-  private dispatchToolCall(
+  private recordToolCall(
+    call: PreflightedToolCall,
+    args: unknown,
+    options: ToolExecutorExecuteOptions,
+    displayFields?: ToolCallDisplayFields,
+  ): void {
+    options.onToolCall?.({
+      toolCallId: call.toolCall.id,
+      name: call.toolName,
+      args,
+      display: displayFields?.display,
+    });
+  }
+
+  private publishToolCallStarted(
     call: PreflightedToolCall,
     args: unknown,
     options: ToolExecutorExecuteOptions,
@@ -516,11 +536,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       args,
       description: displayFields?.description,
       display: displayFields?.display,
-    });
-    options.onToolCall?.({
-      toolCallId: call.toolCall.id,
-      name: call.toolName,
-      args,
     });
   }
 
