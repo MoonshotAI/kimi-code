@@ -10,7 +10,7 @@ import {
 
 describe('originHost', () => {
   it('returns the host for a valid origin', () => {
-    expect(originHost('https://foo.com')).toBe('foo.com');
+    expect(originHost('https://foo.example.com')).toBe('foo.example.com');
   });
 
   it('drops the default port', () => {
@@ -36,11 +36,11 @@ describe('isOriginAllowed', () => {
   });
 
   it('denies cross-origin that is not whitelisted', () => {
-    expect(isOriginAllowed('http://evil.com', 'localhost:80', [])).toBe(false);
+    expect(isOriginAllowed('http://evil.example.test', 'localhost:80', [])).toBe(false);
   });
 
   it('allows cross-origin that is whitelisted', () => {
-    expect(isOriginAllowed('https://foo.com', 'localhost:80', ['https://foo.com'])).toBe(true);
+    expect(isOriginAllowed('https://foo.example.com', 'localhost:80', ['https://foo.example.com'])).toBe(true);
   });
 
   it('allows an absent origin', () => {
@@ -64,7 +64,7 @@ describe('isOriginAllowed', () => {
   });
 
   it('still denies a non-loopback cross-origin that is not whitelisted', () => {
-    expect(isOriginAllowed('http://evil.com', 'localhost:80', [])).toBe(false);
+    expect(isOriginAllowed('http://evil.example.test', 'localhost:80', [])).toBe(false);
   });
 
   it('does not widen to a public host even when the origin is loopback', () => {
@@ -74,10 +74,11 @@ describe('isOriginAllowed', () => {
 
 describe('parseCorsOrigins', () => {
   it('splits, trims, and drops empties', () => {
-    expect(parseCorsOrigins({ KIMI_CODE_CORS_ORIGINS: ' https://a.com, https://b.com, ' })).toEqual([
-      'https://a.com',
-      'https://b.com',
-    ]);
+    expect(
+      parseCorsOrigins({
+        KIMI_CODE_CORS_ORIGINS: ' https://a.example.com, https://b.example.com, ',
+      }),
+    ).toEqual(['https://a.example.com', 'https://b.example.com']);
   });
 
   it('returns [] when unset', () => {
@@ -90,7 +91,7 @@ describe('createOriginHook (onRequest hook)', () => {
 
   beforeEach(async () => {
     app = Fastify();
-    app.addHook('onRequest', createOriginHook({ allowedOrigins: ['https://foo.com'] }));
+    app.addHook('onRequest', createOriginHook({ allowedOrigins: ['https://foo.example.com'] }));
     app.get('/api/v1/probe', async () => ({ ok: true }));
     app.options('/api/v1/probe', async () => ({ ok: true }));
     await app.ready();
@@ -114,10 +115,10 @@ describe('createOriginHook (onRequest hook)', () => {
     const res = await app.inject({
       method: 'OPTIONS',
       url: '/api/v1/probe',
-      headers: { origin: 'https://foo.com', host: 'localhost:80' },
+      headers: { origin: 'https://foo.example.com', host: 'localhost:80' },
     });
     expect(res.statusCode).toBe(204);
-    expect(res.headers['access-control-allow-origin']).toBe('https://foo.com');
+    expect(res.headers['access-control-allow-origin']).toBe('https://foo.example.com');
     expect(res.headers['access-control-allow-methods']).toBe(
       'GET, POST, PUT, PATCH, DELETE, OPTIONS',
     );
@@ -127,7 +128,7 @@ describe('createOriginHook (onRequest hook)', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/v1/probe',
-      headers: { origin: 'http://evil.com', host: 'localhost:80' },
+      headers: { origin: 'http://evil.example.test', host: 'localhost:80' },
     });
     expect(res.statusCode).toBe(200);
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
@@ -137,7 +138,7 @@ describe('createOriginHook (onRequest hook)', () => {
     const res = await app.inject({
       method: 'OPTIONS',
       url: '/api/v1/probe',
-      headers: { origin: 'http://evil.com', host: 'localhost:80' },
+      headers: { origin: 'http://evil.example.test', host: 'localhost:80' },
     });
     expect(res.statusCode).toBe(204);
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
