@@ -123,6 +123,7 @@ import {
   type LivePaneState,
   type LoginProgressSpinnerHandle,
   type QueuedMessage,
+  type SteerInputItem,
   type TranscriptEntry,
   type TUIStartupOptions,
   type TUIStartupState,
@@ -236,6 +237,39 @@ interface SendMessageOptions {
   readonly parts?: readonly PromptPart[];
   readonly imageAttachmentIds?: readonly number[];
   readonly hasMedia?: boolean;
+}
+
+/**
+ * Flatten steer items into the payload `session.steer` expects: the
+ * historical `'\n\n'`-joined string when nothing carries media, or a
+ * merged part list when any item has extracted media parts (queued image
+ * messages, or the editor draft after placeholder extraction).
+ */
+function combineSteerInput(items: readonly SteerInputItem[]): string | PromptPart[] {
+  const hasMedia = items.some((item) => item.parts !== undefined && item.parts.length > 0);
+  if (!hasMedia) return items.map((item) => item.text).join('\n\n');
+  const parts: PromptPart[] = [];
+  for (const item of items) {
+    if (parts.length > 0) appendSteerText(parts, '\n\n');
+    if (item.parts !== undefined && item.parts.length > 0) {
+      for (const part of item.parts) {
+        if (part.type === 'text') appendSteerText(parts, part.text);
+        else parts.push(part);
+      }
+    } else {
+      appendSteerText(parts, item.text);
+    }
+  }
+  return parts;
+}
+
+function appendSteerText(parts: PromptPart[], text: string): void {
+  const last = parts.at(-1);
+  if (last?.type === 'text') {
+    parts[parts.length - 1] = { type: 'text', text: last.text + text };
+    return;
+  }
+  parts.push({ type: 'text', text });
 }
 
 /** How long the one-shot "moved to background" footer hint stays visible. */
@@ -1095,7 +1129,7 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  private validateMediaCapabilities(extraction: {
+  validateMediaCapabilities(extraction: {
     hasMedia: boolean;
     imageAttachmentIds: readonly number[];
     videoAttachmentIds: readonly number[];
@@ -1287,31 +1321,35 @@ export class KimiTUI {
     this.sendMessageInternal(session, input, options);
   }
 
-  steerMessage(session: Session, input: string[]): void {
+  steerMessage(session: Session, input: readonly SteerInputItem[]): void {
     if (this.deferUserMessages || this.state.appState.isCompacting) {
-      for (const part of input) {
-        this.enqueueMessage(part);
+      for (const item of input) {
+        this.enqueueMessage(item.text, item);
       }
       return;
     }
     if (this.state.appState.streamingPhase === 'idle') {
-      for (const part of input) {
-        this.sendMessageInternal(session, part);
+      for (const item of input) {
+        this.sendMessageInternal(session, item.text, item);
       }
       return;
     }
 
-    for (const part of input) {
+    for (const item of input) {
       this.appendTranscriptEntry({
         id: nextTranscriptId(),
         kind: 'user',
         turnId: this.streamingUI.getTurnContext().turnId,
         renderMode: 'plain',
-        content: part,
+        content: item.text,
+        imageAttachmentIds:
+          item.imageAttachmentIds !== undefined && item.imageAttachmentIds.length > 0
+            ? item.imageAttachmentIds
+            : undefined,
       });
     }
 
-    void session.steer(input.join('\n\n')).catch((error: unknown) => {
+    void session.steer(combineSteerInput(input)).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.showError(`Failed to steer: ${message}`);
     });
