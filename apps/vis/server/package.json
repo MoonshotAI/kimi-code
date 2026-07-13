@@ -5,10 +5,7 @@
   "license": "MIT",
   "type": "module",
   "imports": {
-    "#/*": [
-      "./src/*.ts",
-      "./src/*/index.ts"
-    ]
+    "#/*": "./src/*.ts"
   },
   "exports": {
     ".": {
