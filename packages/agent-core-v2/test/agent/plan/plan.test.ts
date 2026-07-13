@@ -15,7 +15,6 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ISessionProcessRunner } from '#/session/process/processRunner';
-import type { WireRecord } from '#/wire/record';
 import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
 import {
   createCommandRunner,
@@ -370,6 +369,66 @@ describe('Plan service', () => {
         ctx.allEvents.filter(
           (event) => event.type === '[rpc]' && event.event === 'tool.call.started',
         ),
+      ).toHaveLength(1);
+    });
+
+    it('persists an interrupted result when the turn is cancelled during plan approval', async () => {
+      const cwd = await makeTempDir('kimi-plan-cancel-approval-');
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
+      useTools(['ExitPlanMode']);
+      profile.update({ cwd });
+      await ctx.rpc.setPermission({ mode: 'manual' });
+      await plan.enter('cancelled-plan', false);
+
+      const planPath = await expectActivePlanPath();
+      files.set(planPath, '# Plan\n\n- Inspect\n- Change\n- Verify');
+      ctx.mockNextResponse(
+        { type: 'text', text: 'I will present the plan.' },
+        {
+          type: 'function',
+          id: 'call_exit_cancelled',
+          name: 'ExitPlanMode',
+          arguments: '{}',
+        },
+      );
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Show the plan' }] });
+
+      await ctx.takeApprovalRequest();
+      await ctx.rpc.cancel({});
+      await ctx.untilTurnEnd();
+
+      const records = await ctx.persistedRecords();
+      const transcript = reduceContextTranscript(records);
+      const calls = transcript.entries.flatMap((message) => message.toolCalls);
+      const results = transcript.entries.filter(
+        (message) => message.role === 'tool' && message.toolCallId === 'call_exit_cancelled',
+      );
+      const wireResults = records.filter((record) => {
+        if (record.type !== 'context.append_loop_event') return false;
+        const event = record['event'] as { readonly type?: string; readonly toolCallId?: string };
+        return event.type === 'tool.result' && event.toolCallId === 'call_exit_cancelled';
+      });
+      expect(calls.filter((call) => call.id === 'call_exit_cancelled')).toHaveLength(1);
+      expect(wireResults).toHaveLength(1);
+      expect(results).toEqual([
+        expect.objectContaining({
+          isError: true,
+          content: [
+            expect.objectContaining({
+              type: 'text',
+              text: expect.stringContaining('The user manually interrupted "ExitPlanMode"'),
+            }),
+          ],
+        }),
+      ]);
+      expect(
+        ctx.allEvents.filter(
+          (event) => event.type === '[rpc]' && event.event === 'tool.call.started',
+        ),
+      ).toHaveLength(1);
+      expect(
+        ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'tool.result'),
       ).toHaveLength(1);
     });
 

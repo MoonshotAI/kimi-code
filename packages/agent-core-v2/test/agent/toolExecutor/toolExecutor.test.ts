@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { userCancellationReason } from '#/_base/utils/abort';
 import {
   ToolAccesses,
   type ExecutableTool,
@@ -14,7 +15,10 @@ import {
   type ToolResult,
   type ToolUpdate,
 } from '#/tool/toolContract';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import {
+  IAgentToolExecutorService,
+  type ToolExecutionResult,
+} from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService, parseToolCallArguments } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -539,6 +543,150 @@ describe('AgentToolExecutorService', () => {
     expect(protocolEvents.filter((event) => event.type === 'tool.call.started')).toHaveLength(1);
   });
 
+  it('settles every prepared call before rethrowing an approval-hook abort', async () => {
+    const controller = new AbortController();
+    const approvalRequested = deferred();
+    const first = new TestTool('first');
+    const second = new TestTool('second');
+    const third = new TestTool('third');
+    registry.register(first);
+    registry.register(second);
+    registry.register(third);
+    executor.hooks.onBeforeExecuteTool.register('abort-second-approval', async (ctx, next) => {
+      if (ctx.toolCall.id !== 'call_second') {
+        await next();
+        return;
+      }
+      approvalRequested.resolve();
+      await waitForAbort(ctx.signal);
+    });
+
+    const recorded: string[] = [];
+    const yielded: ToolExecutionResult[] = [];
+    const execution = (async () => {
+      for await (const result of executor.execute(
+        [
+          toolCall('call_first', 'first', {}),
+          toolCall('call_second', 'second', {}),
+          toolCall('call_third', 'third', {}),
+        ],
+        {
+          turnId: 9,
+          signal: controller.signal,
+          onToolCall: ({ toolCallId }) => recorded.push(toolCallId),
+        },
+      )) {
+        yielded.push(result);
+      }
+    })();
+
+    await approvalRequested.promise;
+    const cancellation = userCancellationReason();
+    controller.abort(cancellation);
+
+    await expect(execution).rejects.toBe(cancellation);
+    expect(recorded).toEqual(['call_first', 'call_second']);
+    expect(first.calls).toEqual([]);
+    expect(second.calls).toEqual([]);
+    expect(third.calls).toEqual([]);
+    expect(yielded).toHaveLength(2);
+    expect(yielded.map((result) => result.toolCallId).toSorted()).toEqual([
+      'call_first',
+      'call_second',
+    ]);
+    expect(yielded.every((result) => result.result.isError === true)).toBe(true);
+    const paired = pairedToolCallIds();
+    expect(paired.calls).toEqual(['call_first', 'call_second']);
+    expect(paired.results).toHaveLength(2);
+    expect(paired.results.toSorted()).toEqual(['call_first', 'call_second']);
+  });
+
+  it('settles prepared calls before rethrowing an approval-hook failure', async () => {
+    const hookError = new Error('approval hook failed');
+    const first = new TestTool('first');
+    const second = new TestTool('second');
+    registry.register(first);
+    registry.register(second);
+    executor.hooks.onBeforeExecuteTool.register('fail-second-approval', async (ctx, next) => {
+      if (ctx.toolCall.id === 'call_second') throw hookError;
+      await next();
+    });
+
+    const yielded: ToolExecutionResult[] = [];
+    const execution = (async () => {
+      for await (const result of executor.execute(
+        [toolCall('call_first', 'first', {}), toolCall('call_second', 'second', {})],
+        { turnId: 3, signal: new AbortController().signal },
+      )) {
+        yielded.push(result);
+      }
+    })();
+
+    await expect(execution).rejects.toBe(hookError);
+    expect(first.calls).toEqual([]);
+    expect(second.calls).toEqual([]);
+    expect(yielded.toSorted((a, b) => a.toolCallId.localeCompare(b.toolCallId))).toEqual([
+      expect.objectContaining({
+        toolCallId: 'call_first',
+        result: expect.objectContaining({
+          output:
+            'Tool "first" was not executed because tool-call preparation failed: approval hook failed',
+          isError: true,
+        }),
+      }),
+      expect.objectContaining({
+        toolCallId: 'call_second',
+        result: expect.objectContaining({
+          output:
+            'Tool "second" was not executed because tool-call preparation failed: approval hook failed',
+          isError: true,
+        }),
+      }),
+    ]);
+    const paired = pairedToolCallIds();
+    expect(paired.calls).toEqual(['call_first', 'call_second']);
+    expect(paired.results).toHaveLength(2);
+    expect(paired.results.toSorted()).toEqual(['call_first', 'call_second']);
+  });
+
+  it('settles every call without running hooks or tools when already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort(userCancellationReason());
+    const first = new TestTool('first');
+    const second = new TestTool('second');
+    registry.register(first);
+    registry.register(second);
+    let hookCalls = 0;
+    executor.hooks.onBeforeExecuteTool.register('count-approval', async (_ctx, next) => {
+      hookCalls += 1;
+      await next();
+    });
+
+    const recorded: string[] = [];
+    const results: ToolExecutionResult[] = [];
+    for await (const result of executor.execute(
+      [toolCall('call_first', 'first', {}), toolCall('call_second', 'second', {})],
+      {
+        turnId: 4,
+        signal: controller.signal,
+        onToolCall: ({ toolCallId }) => recorded.push(toolCallId),
+      },
+    )) {
+      results.push(result);
+    }
+
+    expect(hookCalls).toBe(0);
+    expect(first.calls).toEqual([]);
+    expect(second.calls).toEqual([]);
+    expect(recorded).toEqual(['call_first', 'call_second']);
+    expect(results).toHaveLength(2);
+    expect(results.every((result) => result.result.isError === true)).toBe(true);
+    const paired = pairedToolCallIds();
+    expect(paired.calls).toEqual(['call_first', 'call_second']);
+    expect(paired.results).toHaveLength(2);
+    expect(paired.results.toSorted()).toEqual(['call_first', 'call_second']);
+  });
+
   it('captures tool execution failures as error results', async () => {
     const tool = new TestTool('fail', {
       execute: async () => {
@@ -841,6 +989,19 @@ function deferred<T = void>(): {
     reject = rejectPromise;
   });
   return { promise, resolve, reject };
+}
+
+async function waitForAbort(signal: AbortSignal): Promise<never> {
+  if (signal.aborted) throw signal.reason;
+  return new Promise<never>((_, reject) => {
+    signal.addEventListener(
+      'abort',
+      () => {
+        reject(signal.reason);
+      },
+      { once: true },
+    );
+  });
 }
 
 class TestTool implements ExecutableTool<Record<string, unknown>> {

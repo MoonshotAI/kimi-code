@@ -5,8 +5,8 @@
  * publishes tool lifecycle events through `event`, records telemetry through
  * `telemetry`, truncates oversized outputs through `toolResultTruncation`,
  * and logs parse diagnostics through `log`. The immutable tool-call snapshot
- * is recorded before permission hooks may wait, while the live started event
- * is published only after those hooks resolve. Bound at Agent scope.
+ * is recorded before permission hooks may wait, while live lifecycle events
+ * remain paired when those hooks resolve or fail. Bound at Agent scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -166,6 +166,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     }> = [];
 
     let stopBatch = false;
+    let fatalPreparation: { readonly reason: unknown } | undefined;
     for (const call of preflighted) {
       if (stopBatch) {
         preparedTasks.push({ task: this.prepareSkippedToolCall(call, options), call });
@@ -178,13 +179,30 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         call,
         stopBatchAfterThis: prepared.stopBatchAfterThis,
       });
+      if (prepared.fatal !== undefined) {
+        fatalPreparation = prepared.fatal;
+        break;
+      }
       if (prepared.stopBatchAfterThis === true) {
         stopBatch = true;
       }
     }
 
+    const executableTasks =
+      fatalPreparation === undefined
+        ? preparedTasks
+        : preparedTasks.map(({ call }) => ({
+            call,
+            task: makeResolvedTask(
+              makeErrorToolResult(
+                call,
+                call.args,
+                beforeHookFailureOutput(call.toolName, fatalPreparation.reason, options.signal),
+              ),
+            ),
+          }));
     const timedResults = this.executeBatch(
-      preparedTasks.map(({ task }) => task),
+      executableTasks.map(({ task }) => task),
       options.signal,
     )[Symbol.asyncIterator]();
     let nextTimed: Promise<IteratorResult<TimedToolResult>> | undefined = timedResults.next();
@@ -222,7 +240,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
           }
 
           const finalization = this.finalizeTimedResult(
-            preparedTasks[event.result.value.index]!,
+            executableTasks[event.result.value.index]!,
             event.result.value,
             options,
           ).then(
@@ -238,6 +256,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         if (event.settled.status === 'rejected') throw event.settled.reason;
         yield event.settled.value;
       }
+      if (fatalPreparation !== undefined) throw fatalPreparation.reason;
     } finally {
       await timedResults.return?.();
       await Promise.allSettled(finalizations);
@@ -294,6 +313,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
   ): Promise<{
     task: ToolExecutionTask;
     stopBatchAfterThis?: boolean;
+    fatal?: { readonly reason: unknown };
   }> {
     const settleError = (
       args: unknown,
@@ -361,7 +381,21 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     }
 
     const willCtx = buildWillExecuteContext(call, execution, allCalls, options);
-    await this.hooks.onBeforeExecuteTool.run(willCtx);
+    try {
+      await this.hooks.onBeforeExecuteTool.run(willCtx);
+    } catch (error) {
+      this.publishToolCallStarted(call, call.args, options, displayFields);
+      return {
+        task: makeResolvedTask(
+          makeErrorToolResult(
+            call,
+            call.args,
+            beforeHookFailureOutput(call.toolName, error, options.signal),
+          ),
+        ),
+        fatal: { reason: error },
+      };
+    }
 
     const decision = willCtx.decision;
     if (decision?.block === true) {
@@ -870,6 +904,15 @@ function abortedToolOutput(toolName: string, signal: AbortSignal): string {
     return `The user manually interrupted "${toolName}" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.`;
   }
   return `Tool "${toolName}" was aborted`;
+}
+
+function beforeHookFailureOutput(
+  toolName: string,
+  error: unknown,
+  signal: AbortSignal,
+): string {
+  if (isAbortError(error) || signal.aborted) return abortedToolOutput(toolName, signal);
+  return `Tool "${toolName}" was not executed because tool-call preparation failed: ${errorMessage(error)}`;
 }
 
 async function raceWithAbortGrace<Result>(
