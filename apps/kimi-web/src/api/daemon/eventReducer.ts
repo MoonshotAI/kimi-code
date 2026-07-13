@@ -236,7 +236,7 @@ function setPlanReviewOverlay(
   state.planReviewOverlayBySession = {
     ...state.planReviewOverlayBySession,
     [sessionId]: {
-      ...(state.planReviewOverlayBySession[sessionId] ?? {}),
+      ...state.planReviewOverlayBySession[sessionId],
       [overlay.approvalId]: overlay,
     },
   };
