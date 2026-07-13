@@ -39,6 +39,10 @@
     "#/tui/commands": "./src/tui/commands/index.ts",
     "#/cli/sub/server": "./src/cli/sub/server/index.ts",
     "#/cli/sub/server/*": "./src/cli/sub/server/*.ts",
+    "#/generated/vis-web-asset": [
+      "./src/generated/vis-web-asset.ts",
+      "./src/generated/vis-web-asset.d.ts"
+    ],
     "#/*": "./src/*.ts"
   },
   "publishConfig": {
