@@ -1836,6 +1836,65 @@ command = "vim"
     expect(session.steer).toHaveBeenCalledWith([imagePart(first.bytes), imagePart(second.bytes)]);
   });
 
+  it('steers a media item followed by plain text with a blank-line separator', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+    driver.state.queuedMessages = [
+      {
+        text: `look ${attachment.placeholder}`,
+        agentId: 'main',
+        parts: [
+          { type: 'text', text: 'look ' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+        ],
+        imageAttachmentIds: [attachment.id],
+      },
+      { text: 'focus on tests', agentId: 'main' },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    // The historical '\n\n' item separator merges into the following text
+    // part (legal for normalizePromptInput) instead of vanishing after a
+    // media part.
+    expect(session.steer).toHaveBeenCalledWith([
+      { type: 'text', text: 'look ' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+      { type: 'text', text: '\n\nfocus on tests' },
+    ]);
+  });
+
+  it('steers plain text followed by a media item with a blank-line separator', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+    driver.state.queuedMessages = [
+      { text: 'hello', agentId: 'main' },
+      {
+        text: attachment.placeholder,
+        agentId: 'main',
+        parts: [{ type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } }],
+        imageAttachmentIds: [attachment.id],
+      },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).toHaveBeenCalledWith([
+      { type: 'text', text: 'hello\n\n' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+    ]);
+  });
+
   it('recalls a queued bash command back into bash mode on Up', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';

@@ -245,16 +245,23 @@ interface SendMessageOptions {
  * merged part list when any item has extracted media parts (queued image
  * messages, or the editor draft after placeholder extraction).
  *
- * The item separator is only appended onto a trailing text part — never
- * as a standalone `{type:'text',text:'\n\n'}` between media parts, which
- * `normalizePromptInput` rejects as an empty text part.
+ * Items are separated by the historical `'\n\n'`, which merges into the
+ * adjacent text part. The one exception is two touching media parts: a
+ * standalone `{type:'text',text:'\n\n'}` between them would be rejected
+ * by `normalizePromptInput` as an empty text part, so the separator is
+ * dropped there (media parts are self-delimiting anyway).
  */
 function combineSteerInput(items: readonly SteerInputItem[]): string | PromptPart[] {
   const hasMedia = items.some((item) => item.parts !== undefined && item.parts.length > 0);
   if (!hasMedia) return items.map((item) => item.text).join('\n\n');
   const parts: PromptPart[] = [];
   for (const item of items) {
-    if (parts.at(-1)?.type === 'text') appendSteerText(parts, '\n\n');
+    const startsWithMedia =
+      item.parts !== undefined && item.parts.length > 0 && item.parts[0]?.type !== 'text';
+    const lastIsMedia = parts.length > 0 && parts.at(-1)?.type !== 'text';
+    if (parts.length > 0 && !(lastIsMedia && startsWithMedia)) {
+      appendSteerText(parts, '\n\n');
+    }
     if (item.parts !== undefined && item.parts.length > 0) {
       for (const part of item.parts) {
         if (part.type === 'text') appendSteerText(parts, part.text);
