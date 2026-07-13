@@ -130,11 +130,15 @@ test('compaction-race: heavy writes during compaction grow a WAL tail that survi
     compactThresholdBytes: 1 << 30,
   });
   try {
-    const N = 20_000;
+    // 10k keys span 5 writeSnapshot yield windows (yieldEvery=2000, src/snapshot.ts),
+    // so compaction is still in progress while the writes below land.
+    const N = 10_000;
     for (let i = 0; i < N; i++) await db.set('k' + i, { i });
 
     const cp = db.compact();
-    const M = 5000;
+    // ~55 B/frame × 2000 ≈ 110 KB post-fence tail > SMALL_DELTA (64 KiB,
+    // src/compaction.ts), so the pre-copy loop still drains a real WAL tail.
+    const M = 2000;
     const writes: Promise<void>[] = [];
     for (let i = 0; i < M; i++) writes.push(db.set('k' + i, { i, bumped: true }));
     await Promise.all(writes);
