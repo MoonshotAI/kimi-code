@@ -18,6 +18,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { makeHookRunner } from '../agent/externalHooks/runner-stub';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { ToolAccesses, type ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -201,6 +202,14 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
           return {
             _serviceBrand: undefined,
             status: () => ({ state: 'idle', pendingTurnIds: [], hasPendingRequests: false }),
+          } as never;
+        }
+        if (serviceId === IAgentPermissionModeService) {
+          return {
+            _serviceBrand: undefined,
+            mode: 'manual',
+            setMode: () => {},
+            onDidChangeMode: Event.None,
           } as never;
         }
         if (serviceId === IAgentToolRegistryService) {

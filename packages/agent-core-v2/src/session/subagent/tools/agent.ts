@@ -265,9 +265,9 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
           thinking: own.thinkingLevel,
           cwd: own.cwd,
         },
-        permissionMode: this.permissionMode.mode,
         labels: subagentLabels(this.callerAgentId),
       });
+      created.accessor.get(IAgentPermissionModeService).setMode(this.permissionMode.mode);
       created.accessor
         .get(IAgentUserToolService)
         .inheritUserTools(requester.accessor.get(IAgentUserToolService));

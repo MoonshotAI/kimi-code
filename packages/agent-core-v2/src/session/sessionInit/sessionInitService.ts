@@ -72,8 +72,8 @@ export class SessionInitService implements ISessionInitService {
           thinking: own.thinkingLevel,
           cwd: own.cwd,
         },
-        permissionMode,
       });
+      child.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
 
       emitAgentRunSpawned(main, child.id, {
         profileName: INIT_PROFILE_NAME,

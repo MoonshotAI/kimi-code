@@ -328,16 +328,6 @@ describe('AgentLifecycleService', () => {
     });
   });
 
-  it('applies permissionMode when provided on create', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-
-    await svc.create({ agentId: 'auto-child', permissionMode: 'auto' });
-    expect(permissionModeSetMode).toHaveBeenLastCalledWith('auto');
-
-    await svc.create({ agentId: 'yolo-child', permissionMode: 'yolo' });
-    expect(permissionModeSetMode).toHaveBeenLastCalledWith('yolo');
-  });
-
   it('leaves permission mode at the default when permissionMode is omitted', async () => {
     const svc = ix.get(IAgentLifecycleService);
 

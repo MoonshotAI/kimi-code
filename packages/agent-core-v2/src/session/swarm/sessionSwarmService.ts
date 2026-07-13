@@ -152,9 +152,11 @@ export class SessionSwarmService implements ISessionSwarmService {
         thinking: callerData.thinkingLevel,
         cwd: callerData.cwd,
       },
-      permissionMode: caller.accessor.get(IAgentPermissionModeService).mode,
       labels: subagentLabels(callerAgentId, { swarmItem: options.swarmItem }),
     });
+    child.accessor
+      .get(IAgentPermissionModeService)
+      .setMode(caller.accessor.get(IAgentPermissionModeService).mode);
     child.accessor
       .get(IAgentUserToolService)
       .inheritUserTools(caller.accessor.get(IAgentUserToolService));

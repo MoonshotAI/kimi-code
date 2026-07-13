@@ -266,12 +266,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (opts.binding !== undefined) {
       await handle.accessor.get(IAgentProfileService).bind(opts.binding);
     }
-    // Every fresh agent starts from the configured default permission posture
-    // unless the caller pins one (subagent dispatch inherits the caller's
-    // mode). On resume the wire replay overwrites this with the persisted mode.
-    const permissionMode =
-      opts.permissionMode ??
-      this.config.get<PermissionMode>(DEFAULT_PERMISSION_MODE_SECTION);
+    // Every fresh agent starts from the configured default permission posture;
+    // dispatchers that want a specific mode (subagent inheritance) set it on
+    // the child themselves after creation. On resume the wire replay
+    // overwrites this with the persisted mode.
+    const permissionMode = this.config.get<PermissionMode>(DEFAULT_PERMISSION_MODE_SECTION);
     if (permissionMode !== undefined) {
       handle.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
     }

@@ -65,7 +65,7 @@ describe('SessionInitService', () => {
     const profile = {
       data: () => ({ modelAlias: 'mock-model', thinkingLevel: 'off', cwd: WORK_DIR }),
     };
-    const permissionMode = { mode: 'auto' };
+    const permissionMode = { mode: 'auto', setMode: vi.fn() };
 
     handles['main'] = {
       id: 'main',
@@ -87,7 +87,7 @@ describe('SessionInitService', () => {
       id: 'agent-0',
       accessor: {
         get: (id: unknown) => {
-          if (id === IAgentContextSizeService) return undefined;
+          if (id === IAgentPermissionModeService) return permissionMode;
           return undefined;
         },
       },
@@ -128,7 +128,6 @@ describe('SessionInitService', () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]![0]).toMatchObject({
       binding: { profile: 'coder', model: 'mock-model', thinking: 'off', cwd: WORK_DIR },
-      permissionMode: 'auto',
     });
 
     expect(run).toHaveBeenCalledTimes(1);

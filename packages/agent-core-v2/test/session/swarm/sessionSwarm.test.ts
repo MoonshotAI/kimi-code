@@ -1004,7 +1004,6 @@ describe('SessionSwarmService metadata compatibility', () => {
           thinking: 'medium',
           cwd: '/repo',
         },
-        permissionMode: 'auto',
         labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
       }),
     );
