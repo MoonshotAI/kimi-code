@@ -70,6 +70,25 @@ export function turnEndReasonToStopReason(
   }
 }
 
+/** Error codes that indicate an authentication / authorization failure. */
+const AUTH_ERROR_CODES: ReadonlySet<string> = new Set([
+  'provider.auth_error',
+  'auth.login_required',
+  'auth.token_missing',
+  'auth.token_unauthorized',
+  'auth.provisioning_required',
+  'auth.model_not_resolved',
+]);
+
+/**
+ * Whether the given error (from a `turn.ended` event) is an auth failure that
+ * should surface as a JSON-RPC `auth_required` error so the ACP client
+ * triggers its re-auth flow.
+ */
+export function isAuthError(error?: { readonly code: string }): boolean {
+  return error !== undefined && AUTH_ERROR_CODES.has(error.code);
+}
+
 /**
  * Build the ACP `toolCallId` for a wire-level tool call.
  *
