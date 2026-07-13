@@ -161,12 +161,10 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   const spinner = host.showLoginProgressSpinner(`Fetching catalog from ${DEFAULT_CATALOG_URL}`);
   let catalog: Catalog | undefined;
   try {
-    catalog = await fetchCatalog(
-      DEFAULT_CATALOG_URL,
-      controller.signal,
-      fetch,
-      createKimiCodeUserAgent(),
-    );
+    catalog = await fetchCatalog(DEFAULT_CATALOG_URL, {
+      signal: controller.signal,
+      userAgent: createKimiCodeUserAgent(),
+    });
     spinner.stop({ ok: true, label: 'Catalog loaded.' });
   } catch (error) {
     if (controller.signal.aborted) {
@@ -282,7 +280,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
 
   let entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
   try {
-    entries = await fetchCustomRegistry(source, fetch, undefined, createKimiCodeUserAgent());
+    entries = await fetchCustomRegistry(source, { userAgent: createKimiCodeUserAgent() });
   } catch (error) {
     host.showError(`Failed to import registry: ${formatErrorMessage(error)}`);
     return false;

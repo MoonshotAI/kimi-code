@@ -23,6 +23,12 @@ export class CatalogFetchError extends Error {
   }
 }
 
+export interface FetchCatalogOptions {
+  readonly signal?: AbortSignal;
+  readonly fetchImpl?: typeof fetch;
+  readonly userAgent?: string;
+}
+
 /**
  * Fetches a models.dev-style catalog. Public endpoint, no credentials needed.
  * `userAgent` identifies the host product (e.g. `kimi-code-cli/1.2.3`); when
@@ -30,10 +36,9 @@ export class CatalogFetchError extends Error {
  */
 export async function fetchCatalog(
   url: string,
-  signal?: AbortSignal,
-  fetchImpl: typeof fetch = fetch,
-  userAgent?: string,
+  options: FetchCatalogOptions = {},
 ): Promise<Catalog> {
+  const { signal, fetchImpl = fetch, userAgent } = options;
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (userAgent !== undefined) headers['User-Agent'] = userAgent;
   const res = await fetchImpl(url, { headers, signal });

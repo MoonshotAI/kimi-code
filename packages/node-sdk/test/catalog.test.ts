@@ -35,21 +35,23 @@ describe('fetchCatalog', () => {
   it('fetches and returns the catalog map', async () => {
     const catalog = { anthropic: { id: 'anthropic', models: { x: { id: 'x', limit: { context: 1000 } } } } };
     const fetchMock = vi.fn(async () => catalogResponse(catalog));
-    const result = await fetchCatalog('https://x/api.json', undefined, fetchMock as unknown as typeof fetch);
+    const result = await fetchCatalog('https://x/api.json', {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
     expect(result).toEqual(catalog);
   });
 
   it('throws CatalogFetchError on HTTP error', async () => {
     const fetchMock = vi.fn(async () => catalogResponse('no', 500));
     await expect(
-      fetchCatalog('https://x', undefined, fetchMock as unknown as typeof fetch),
+      fetchCatalog('https://x', { fetchImpl: fetchMock as unknown as typeof fetch }),
     ).rejects.toBeInstanceOf(CatalogFetchError);
   });
 
   it('throws on a non-object payload', async () => {
     const fetchMock = vi.fn(async () => catalogResponse([1, 2]));
     await expect(
-      fetchCatalog('https://x', undefined, fetchMock as unknown as typeof fetch),
+      fetchCatalog('https://x', { fetchImpl: fetchMock as unknown as typeof fetch }),
     ).rejects.toThrow(/Unexpected catalog response/);
   });
 
@@ -58,9 +60,10 @@ describe('fetchCatalog', () => {
 
     await fetchCatalog(
       'https://x/api.json',
-      undefined,
-      fetchMock as unknown as typeof fetch,
-      'kimi-code-cli/1.2.3',
+      {
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        userAgent: 'kimi-code-cli/1.2.3',
+      },
     );
     const withUa = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const withUaHeaders = withUa[1].headers as Record<string, string>;
@@ -68,7 +71,9 @@ describe('fetchCatalog', () => {
     expect(withUaHeaders['Accept']).toBe('application/json');
 
     fetchMock.mockClear();
-    await fetchCatalog('https://x/api.json', undefined, fetchMock as unknown as typeof fetch);
+    await fetchCatalog('https://x/api.json', {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
     const withoutUa = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect((withoutUa[1].headers as Record<string, string>)['User-Agent']).toBeUndefined();
   });

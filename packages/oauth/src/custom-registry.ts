@@ -18,6 +18,12 @@ export interface CustomRegistrySource {
   readonly apiKey: string;
 }
 
+export interface FetchCustomRegistryOptions {
+  readonly signal?: AbortSignal;
+  readonly fetchImpl?: typeof fetch;
+  readonly userAgent?: string;
+}
+
 /**
  * The kosong `ProviderConfig` union (`packages/kosong/src/providers/index.ts`)
  * mirrors these literal values. `kimi` is included because the api.json schema
@@ -195,10 +201,9 @@ function toProviderEntry(value: unknown): CustomRegistryProviderEntry | undefine
  */
 export async function fetchCustomRegistry(
   source: CustomRegistrySource,
-  fetchImpl: typeof fetch = fetch,
-  signal?: AbortSignal,
-  userAgent?: string,
+  options: FetchCustomRegistryOptions = {},
 ): Promise<Record<string, CustomRegistryProviderEntry>> {
+  const { signal, fetchImpl = fetch, userAgent } = options;
   const headers: Record<string, string> = {
     Accept: 'application/json',
   };

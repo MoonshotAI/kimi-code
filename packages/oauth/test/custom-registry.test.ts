@@ -66,7 +66,7 @@ describe('fetchCustomRegistry', () => {
 
     const result = await fetchCustomRegistry(
       KOKUB_SOURCE,
-      fetchMock as unknown as typeof fetch,
+      { fetchImpl: fetchMock as unknown as typeof fetch },
     );
 
     expect(Object.keys(result)).toHaveLength(3);
@@ -101,7 +101,7 @@ describe('fetchCustomRegistry', () => {
 
     const result = await fetchCustomRegistry(
       KOKUB_SOURCE,
-      fetchMock as unknown as typeof fetch,
+      { fetchImpl: fetchMock as unknown as typeof fetch },
     );
 
     expect(result['registry_chat-completions']?.models['gpt-5.5']).toEqual({
@@ -117,7 +117,7 @@ describe('fetchCustomRegistry', () => {
 
     await fetchCustomRegistry(
       { kind: 'apiJson', url: KOKUB_SOURCE.url, apiKey: '' },
-      fetchMock as unknown as typeof fetch,
+      { fetchImpl: fetchMock as unknown as typeof fetch },
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -132,9 +132,10 @@ describe('fetchCustomRegistry', () => {
 
     await fetchCustomRegistry(
       KOKUB_SOURCE,
-      fetchMock as unknown as typeof fetch,
-      undefined,
-      'kimi-code-cli/1.2.3',
+      {
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        userAgent: 'kimi-code-cli/1.2.3',
+      },
     );
 
     const withUa = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
@@ -143,7 +144,9 @@ describe('fetchCustomRegistry', () => {
     );
 
     fetchMock.mockClear();
-    await fetchCustomRegistry(KOKUB_SOURCE, fetchMock as unknown as typeof fetch);
+    await fetchCustomRegistry(KOKUB_SOURCE, {
+      fetchImpl: fetchMock as unknown as typeof fetch,
+    });
 
     const withoutUa = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect((withoutUa[1].headers as Record<string, string>)['User-Agent']).toBeUndefined();
@@ -155,8 +158,10 @@ describe('fetchCustomRegistry', () => {
 
     await fetchCustomRegistry(
       KOKUB_SOURCE,
-      fetchMock as unknown as typeof fetch,
-      controller.signal,
+      {
+        fetchImpl: fetchMock as unknown as typeof fetch,
+        signal: controller.signal,
+      },
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -171,7 +176,7 @@ describe('fetchCustomRegistry', () => {
 
     const error = await fetchCustomRegistry(
       KOKUB_SOURCE,
-      fetchMock as unknown as typeof fetch,
+      { fetchImpl: fetchMock as unknown as typeof fetch },
     ).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(CustomRegistryApiError);
@@ -183,7 +188,9 @@ describe('fetchCustomRegistry', () => {
     const fetchMock = vi.fn(async () => makeJsonResponse(['not', 'an', 'object']));
 
     await expect(
-      fetchCustomRegistry(KOKUB_SOURCE, fetchMock as unknown as typeof fetch),
+      fetchCustomRegistry(KOKUB_SOURCE, {
+        fetchImpl: fetchMock as unknown as typeof fetch,
+      }),
     ).rejects.toThrow(/expected a JSON object/);
   });
 
@@ -208,7 +215,7 @@ describe('fetchCustomRegistry', () => {
     try {
       const result = await fetchCustomRegistry(
         KOKUB_SOURCE,
-        fetchMock as unknown as typeof fetch,
+        { fetchImpl: fetchMock as unknown as typeof fetch },
       );
 
       expect(Object.keys(result)).toEqual(['registry_chat-completions']);

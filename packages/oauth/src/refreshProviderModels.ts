@@ -126,7 +126,7 @@ async function fetchCustomRegistryFromSources(
   for (const source of sources) {
     try {
       return {
-        entries: await fetchCustomRegistry(source, fetch, undefined, userAgent),
+        entries: await fetchCustomRegistry(source, { userAgent }),
         source,
       };
     } catch (error) {
