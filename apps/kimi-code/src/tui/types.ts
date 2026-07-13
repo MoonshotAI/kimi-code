@@ -230,6 +230,10 @@ export interface LivePaneState {
   pendingQuestion: PendingQuestion | null;
 }
 
+export interface InlineSkillActivation {
+  readonly skillName: string;
+}
+
 export interface QueuedMessage {
   readonly text: string;
   readonly agentId?: string;
@@ -238,6 +242,8 @@ export interface QueuedMessage {
   /** `bash` for a `!` shell command queued while another command is running;
    *  undefined (=`prompt`) for a normal message. */
   readonly mode?: 'prompt' | 'bash';
+  /** Skills to activate before sending this queued message. */
+  readonly inlineSkillActivations?: readonly InlineSkillActivation[];
 }
 
 /**

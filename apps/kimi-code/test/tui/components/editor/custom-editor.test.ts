@@ -4,10 +4,31 @@ import type {
   AutocompleteSuggestions,
   TUI,
 } from '@moonshot-ai/pi-tui';
-import { describe, expect, it, vi } from 'vitest';
+import chalk, { type ColorSupportLevel } from 'chalk';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CustomEditor } from '#/tui/components/editor/custom-editor';
 import { FileMentionProvider } from '#/tui/components/editor/file-mention-provider';
+
+const ESC = String.fromCodePoint(0x1b);
+// oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
+const ANSI_SGR = /\u001B\[[0-9;]*m/g;
+
+function stripAnsi(line: string): string {
+  return line.replaceAll(ANSI_SGR, '');
+}
+
+function escapeRegExp(s: string): string {
+  return s.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function expectHighlightedToken(line: string, token: string): void {
+  expect(line).toMatch(new RegExp(`\\x1B\\[[0-9;]*m${escapeRegExp(token)}\\x1B\\[[0-9;]*m`));
+}
+
+function expectPlainContains(line: string, token: string): void {
+  expect(stripAnsi(line)).toContain(token);
+}
 
 function makeEditor(): CustomEditor {
   const tui = {
@@ -16,6 +37,14 @@ function makeEditor(): CustomEditor {
     terminal: { rows: 40, cols: 120 },
   } as unknown as TUI;
   return new CustomEditor(tui);
+}
+
+function getFirstContentLine(editor: CustomEditor, width = 120): string {
+  return editor.render(width)[1] ?? '';
+}
+
+function getSecondContentLine(editor: CustomEditor, width = 120): string {
+  return editor.render(width)[2] ?? '';
 }
 
 async function flushAutocomplete(): Promise<void> {
@@ -47,6 +76,27 @@ function providerRecordingForce(items: AutocompleteItem[]): {
 }
 
 describe('CustomEditor autocomplete Escape handling', () => {
+  it('escape closes a visible mid-input slash menu and keeps the typed text', async () => {
+    const editor = makeEditor();
+    const onEscape = vi.fn();
+    editor.onEscape = onEscape;
+    editor.setAutocompleteProvider(providerReturning([{ value: 'skill:review', label: 'skill:review' }]));
+
+    for (const char of 'hello /') {
+      editor.handleInput(char);
+    }
+    await flushAutocomplete();
+
+    expect(editor.isShowingAutocomplete()).toBe(true);
+    expect(editor.getText()).toBe('hello /');
+
+    editor.handleInput('\u001B');
+
+    expect(editor.isShowingAutocomplete()).toBe(false);
+    expect(editor.getText()).toBe('hello /');
+    expect(onEscape).not.toHaveBeenCalled();
+  });
+
   it('escape closes a visible slash command menu without firing app-level escape', async () => {
     const editor = makeEditor();
     const onEscape = vi.fn();
@@ -326,9 +376,6 @@ describe('CustomEditor Tab key handling', () => {
 });
 
 describe('CustomEditor slash argument hint', () => {
-  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
-  const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
-
   it('renders the argument hint after a command with a trailing space', () => {
     const editor = makeEditor();
     editor.setArgumentHints(new Map([['add-dir', '[list] | <path>']]));
@@ -408,9 +455,6 @@ describe('CustomEditor slash argument hint', () => {
 });
 
 describe('CustomEditor slash menu description wrapping', () => {
-  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
-  const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
-
   it('wraps long slash command descriptions to at most two lines with an ellipsis', async () => {
     const editor = makeEditor();
     const description = 'word '.repeat(60).trim();
@@ -641,9 +685,6 @@ describe('CustomEditor shortcut telemetry hooks', () => {
 });
 
 describe('CustomEditor bash mode border label', () => {
-  // oxlint-disable-next-line no-control-regex -- ESC (\u001B) is required to match ANSI SGR escape sequences
-  const stripAnsi = (s: string): string => s.replaceAll(/\u001B\[[0-9;]*m/g, '');
-
   it('shows "! shell mode" on the top border in bash mode', () => {
     const editor = makeEditor();
     editor.inputMode = 'bash';
@@ -786,5 +827,129 @@ describe('CustomEditor bash mode file completion', () => {
     // request force:true path completion.
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((call) => call.force === true)).toBe(true);
+  });
+});
+describe('CustomEditor inline skill token highlighting', () => {
+  let originalChalkLevel: ColorSupportLevel;
+
+  beforeEach(() => {
+    originalChalkLevel = chalk.level;
+    chalk.level = 3;
+  });
+
+  afterEach(() => {
+    chalk.level = originalChalkLevel;
+  });
+
+  function inputText(editor: CustomEditor, text: string): void {
+    for (const char of text) {
+      editor.handleInput(char);
+    }
+  }
+
+  it('highlights a known inline skill token', () => {
+    const editor = makeEditor();
+    editor.setSkillCommandNames(new Set(['skill:review']));
+
+    inputText(editor, 'use /skill:review on this');
+
+    const line = getFirstContentLine(editor);
+    expectHighlightedToken(line, '/skill:review');
+  });
+
+  it('does not highlight an unknown slash token', () => {
+    const editor = makeEditor();
+    editor.setSkillCommandNames(new Set(['skill:review']));
+
+    inputText(editor, 'use /unknown on this');
+
+    const line = getFirstContentLine(editor);
+    expectPlainContains(line, '/unknown');
+    // The only ANSI in the content line should be from the cursor block, not
+    // from colouring the unknown token.
+    expect((stripAnsi(line).match(/\/unknown/g) ?? []).length).toBe(1);
+  });
+
+  it('highlights multiple known inline skill tokens on one line', () => {
+    const editor = makeEditor();
+    editor.setSkillCommandNames(new Set(['skill:review', 'skill:security']));
+
+    inputText(editor, 'use /skill:review and /skill:security');
+
+    const line = getFirstContentLine(editor);
+    expectHighlightedToken(line, '/skill:review');
+    expectHighlightedToken(line, '/skill:security');
+  });
+
+  it('does not highlight slash tokens preceded by non-whitespace', () => {
+    const editor = makeEditor();
+    editor.setSkillCommandNames(new Set(['skill:review']));
+
+    inputText(editor, 'src/foo/skill:review');
+
+    const line = getFirstContentLine(editor);
+    expectPlainContains(line, 'src/foo/skill:review');
+  });
+
+  it('keeps leading slash command highlighting unchanged', () => {
+    const editor = makeEditor();
+    editor.setSkillCommandNames(new Set(['skill:review']));
+
+    inputText(editor, '/skill:review some text');
+
+    const line = getFirstContentLine(editor);
+    expectHighlightedToken(line, '/skill:review');
+  });
+
+  it('does not highlight inline skill tokens in bash mode', () => {
+    const editor = makeEditor();
+    editor.inputMode = 'bash';
+    editor.setSkillCommandNames(new Set(['skill:review']));
+
+    inputText(editor, 'ls /skill:review');
+
+    const line = getFirstContentLine(editor);
+    expectPlainContains(line, '/skill:review');
+  });
+
+  it('highlights inline skill tokens on the second prompt line', () => {
+    const editor = makeEditor();
+    editor.setSkillCommandNames(new Set(['skill:review']));
+
+    inputText(editor, 'hello\n/skill:review');
+
+    const firstLine = getFirstContentLine(editor);
+    const secondLine = getSecondContentLine(editor);
+    expectPlainContains(firstLine, 'hello');
+    expectHighlightedToken(secondLine, '/skill:review');
+  });
+
+  it('highlights inline skill tokens after whitespace on the second prompt line', () => {
+    const editor = makeEditor();
+    editor.setSkillCommandNames(new Set(['skill:review']));
+
+    inputText(editor, 'hello\nuse /skill:review');
+
+    const secondLine = getSecondContentLine(editor);
+    expectHighlightedToken(secondLine, '/skill:review');
+  });
+
+  it('opens the inline skill picker mid-input with the real FileMentionProvider', async () => {
+    const editor = makeEditor();
+    editor.setSkillCommandNames(new Set(['skill:review']));
+    const provider = new FileMentionProvider(
+      [{ name: 'skill:review', aliases: [], description: 'Review code' }],
+      process.cwd(),
+      null,
+      [],
+      () => 'prompt',
+      new Set(['skill:review']),
+    );
+    editor.setAutocompleteProvider(provider);
+
+    inputText(editor, 'hello /');
+    await flushAutocomplete();
+
+    expect(editor.isShowingAutocomplete()).toBe(true);
   });
 });

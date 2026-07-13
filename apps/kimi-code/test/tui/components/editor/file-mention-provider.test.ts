@@ -640,4 +640,200 @@ describe('FileMentionProvider', () => {
       expect(result?.items.map((item) => item.label)).toContain('shared/');
     });
   });
+
+  describe('inline skill selection', () => {
+    const SKILL_COMMANDS = [
+      { name: 'skill:review', aliases: [], description: 'Review code' },
+      { name: 'skill:security', aliases: [], description: 'Security check' },
+      { name: 'skill:agent-fleet', aliases: [], description: 'Agent fleet' },
+      { name: 'mcp-config', aliases: [], description: 'Builtin skill' },
+      { name: 'plugin:demo', aliases: [], description: 'Plugin command' },
+      { name: 'help', aliases: [], description: 'Show help' },
+      { name: 'new', aliases: [], description: 'New session' },
+    ];
+    const SKILL_COMMAND_NAMES = new Set(['skill:review', 'skill:security', 'skill:agent-fleet', 'mcp-config']);
+
+    it('returns skill-only suggestions for `/` after whitespace', async () => {
+      const provider = new FileMentionProvider(
+        SKILL_COMMANDS,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_COMMAND_NAMES,
+      );
+      const result = await provider.getSuggestions(['hello /'], 0, 7, { signal: ctrl() });
+      expect(result).not.toBeNull();
+      const values = result!.items.map((item) => item.value);
+      expect(values).toContain('skill:review');
+      expect(values).toContain('skill:security');
+      expect(values).toContain('mcp-config');
+      expect(values).not.toContain('help');
+      expect(values).not.toContain('new');
+      expect(values).not.toContain('plugin:demo');
+    });
+
+    it('excludes plugin commands from inline skill suggestions', async () => {
+      const provider = new FileMentionProvider(
+        SKILL_COMMANDS,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_COMMAND_NAMES,
+      );
+      const result = await provider.getSuggestions(['hello /'], 0, 7, { signal: ctrl() });
+      expect(result).not.toBeNull();
+      const values = result!.items.map((item) => item.value);
+      expect(values).not.toContain('plugin:demo');
+    });
+
+    it('fuzzy-matches skill names mid-input', async () => {
+      const provider = new FileMentionProvider(
+        SKILL_COMMANDS,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_COMMAND_NAMES,
+      );
+      const result = await provider.getSuggestions(['hello /rev'], 0, 9, { signal: ctrl() });
+      expect(result).not.toBeNull();
+      expect(result!.items.map((item) => item.value)).toEqual(['skill:review']);
+    });
+
+    it('does not trigger mid-input slash after non-whitespace', async () => {
+      const provider = new FileMentionProvider(
+        SKILL_COMMANDS,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_COMMAND_NAMES,
+      );
+      const result = await provider.getSuggestions(['hello/skill:review'], 0, 12, { signal: ctrl() });
+      expect(result).toBeNull();
+    });
+
+    it('triggers inline skill picker after a leading slash command', async () => {
+      const provider = new FileMentionProvider(
+        SKILL_COMMANDS,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_COMMAND_NAMES,
+      );
+      const result = await provider.getSuggestions(['/skill:agent-fleet args /'], 0, '/skill:agent-fleet args /'.length, { signal: ctrl() });
+      expect(result).not.toBeNull();
+      const values = result!.items.map((item) => item.value);
+      expect(values).toContain('skill:review');
+      expect(values).toContain('skill:security');
+      expect(values).toContain('mcp-config');
+    });
+
+    it('returns skill-only suggestions for `/` at the start of a non-first line', async () => {
+      const provider = new FileMentionProvider(
+        SKILL_COMMANDS,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_COMMAND_NAMES,
+      );
+      const result = await provider.getSuggestions(['hello', '/'], 1, 1, { signal: ctrl() });
+      expect(result).not.toBeNull();
+      const values = result!.items.map((item) => item.value);
+      expect(values).toContain('skill:review');
+      expect(values).toContain('skill:security');
+      expect(values).toContain('mcp-config');
+      expect(values).not.toContain('help');
+      expect(values).not.toContain('new');
+    });
+
+    it('keeps the full slash menu at the start of the first line', async () => {
+      const provider = new FileMentionProvider(
+        SKILL_COMMANDS,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_COMMAND_NAMES,
+      );
+      const result = await provider.getSuggestions(['/'], 0, 1, { signal: ctrl() });
+      expect(result).not.toBeNull();
+      const values = result!.items.map((item) => item.value);
+      expect(values).toContain('help');
+      expect(values).toContain('new');
+    });
+
+    it('does not trigger inline skill completion in bash mode', async () => {
+      const provider = new FileMentionProvider(
+        SKILL_COMMANDS,
+        workDir,
+        NO_FD,
+        [],
+        () => 'bash',
+        SKILL_COMMAND_NAMES,
+      );
+      const result = await provider.getSuggestions(['ls /'], 0, 4, { signal: ctrl() });
+      expect(result).not.toBeNull();
+      const values = result!.items.map((item) => item.value);
+      expect(values).not.toContain('skill:review');
+      expect(values).not.toContain('skill:security');
+      expect(values).not.toContain('mcp-config');
+    });
+
+    it('returns null for inline `/` when no skill command names are provided', async () => {
+      const provider = new FileMentionProvider(SKILL_COMMANDS, workDir, NO_FD, [], () => 'prompt');
+      const result = await provider.getSuggestions(['hello /'], 0, 7, { signal: ctrl() });
+      expect(result).toBeNull();
+    });
+
+    it('applyCompletion preserves the leading slash and adds a trailing space for inline skills', () => {
+      const provider = new FileMentionProvider(
+        SKILL_COMMANDS,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_COMMAND_NAMES,
+      );
+      const result = provider.applyCompletion(
+        ['hello /rev'],
+        0,
+        'hello /rev'.length,
+        { value: 'skill:review', label: 'skill:review', data: { inlineSkill: true } },
+        '/rev',
+      );
+      expect(result.lines[0]).toBe('hello /skill:review ');
+      expect(result.cursorCol).toBe('hello /skill:review '.length);
+    });
+
+    it('applyCompletion preserves the leading slash inside a known slash command argument area', () => {
+      const provider = new FileMentionProvider(
+        SKILL_COMMANDS,
+        workDir,
+        NO_FD,
+        [],
+        () => 'prompt',
+        SKILL_COMMAND_NAMES,
+      );
+      const result = provider.applyCompletion(
+        ['/skill:agent-fleet args /rev'],
+        0,
+        '/skill:agent-fleet args /rev'.length,
+        { value: 'skill:review', label: 'skill:review', data: { inlineSkill: true } },
+        '/rev',
+      );
+      expect(result.lines[0]).toBe('/skill:agent-fleet args /skill:review ');
+      expect(result.cursorCol).toBe('/skill:agent-fleet args /skill:review '.length);
+    });
+
+    it('applyCompletion keeps pi-tui slash-command behaviour for leading slash', () => {
+      const provider = new FileMentionProvider(SKILL_COMMANDS, workDir, NO_FD, [], () => 'prompt');
+      const result = provider.applyCompletion(['/rev'], 0, 4, { value: 'skill:review', label: 'skill:review' }, '/rev');
+      expect(result.lines[0]).toBe('/skill:review ');
+    });
+  });
 });

@@ -13,6 +13,7 @@ import type {
   ApprovalResponse,
   Event,
   GoalSnapshot,
+  Session,
 } from '@moonshot-ai/kimi-code-sdk';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -118,6 +119,8 @@ interface MessageDriver {
   handleUserInput(text: string): void;
   persistInputHistory(text: string): Promise<void>;
   sendQueuedMessage(session: unknown, item: QueuedMessage): void;
+  sendInlineSkillUserInput(session: Session, text: string, activations: { skillName: string }[]): void;
+  deferUserMessages: boolean;
   getCurrentSessionId(): string;
 }
 
@@ -177,6 +180,7 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     model: 'k2',
     summary: { title: null },
     prompt: vi.fn(async (_input: unknown) => {}),
+    promptWithSkills: vi.fn(async () => {}),
     compact: vi.fn(async () => {}),
     steer: vi.fn(async () => {}),
     init: vi.fn(async () => {}),
@@ -7024,5 +7028,95 @@ describe('transcript step and assistant folding', () => {
     // The conclusion stays mounted.
     const lastAssistant = assistants.at(-1)!;
     expect(stripSgr(lastAssistant.render(120).join('\n'))).toContain(`msg-${cycles - 1}`);
+  });
+});
+
+describe('KimiTUI inline skill prompt sending', () => {
+  it('submits one skill and the prompt atomically', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.sendInlineSkillUserInput(session as unknown as Session, 'use /skill:review on this', [
+      { skillName: 'review' },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('use /skill:review on this', [
+        { name: 'review' },
+      ]);
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+  });
+
+  it('submits multiple skills and the prompt atomically', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.sendInlineSkillUserInput(
+      session as unknown as Session,
+      'use /skill:review and /skill:security',
+      [{ skillName: 'review' }, { skillName: 'security' }],
+    );
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith(
+        'use /skill:review and /skill:security',
+        [{ name: 'review' }, { name: 'security' }],
+      );
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
+  });
+
+  it('surfaces an atomic skill prompt failure without a fallback prompt', async () => {
+    const session = makeSession({
+      promptWithSkills: vi.fn(async () => {
+        throw new Error('skill review not found');
+      }),
+    });
+    const { driver } = await makeDriver(session);
+
+    driver.sendInlineSkillUserInput(session as unknown as Session, 'use /skill:review on this', [
+      { skillName: 'review' },
+    ]);
+
+    await vi.waitFor(() => {
+      expect(driver.state.appState.streamingPhase).toBe('idle');
+    });
+    expect(session.promptWithSkills).toHaveBeenCalledWith('use /skill:review on this', [
+      { name: 'review' },
+    ]);
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
+    expect(driver.state.appState.streamingPhase).toBe('idle');
+  });
+
+  it('queues inline skill input when user messages are deferred', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+
+    driver.deferUserMessages = true;
+    driver.sendInlineSkillUserInput(session as unknown as Session, 'use /skill:review on this', [
+      { skillName: 'review' },
+    ]);
+
+    expect(driver.state.queuedMessages).toHaveLength(1);
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(session.promptWithSkills).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
+
+    const [queued] = driver.state.queuedMessages;
+    driver.state.queuedMessages = [];
+    driver.sendQueuedMessage(session as unknown as Session, queued!);
+
+    await vi.waitFor(() => {
+      expect(session.promptWithSkills).toHaveBeenCalledWith('use /skill:review on this', [
+        { name: 'review' },
+      ]);
+    });
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(session.prompt).not.toHaveBeenCalled();
   });
 });

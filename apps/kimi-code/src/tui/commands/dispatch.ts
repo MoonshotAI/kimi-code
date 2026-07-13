@@ -4,7 +4,7 @@ import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ColorToken, ThemeName } from '#/tui/theme';
 
-import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
+import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import type { AuthFlowController } from '../controllers/auth-flow';
 import type { BtwPanelController } from '../controllers/btw-panel';
 import type { StreamingUIController } from '../controllers/streaming-ui';
@@ -12,12 +12,7 @@ import type { TasksBrowserController } from '../controllers/tasks-browser';
 import { tryHandleDanceCommand } from '../easter-eggs/dance';
 import type { ResolvedTheme } from '../theme/colors';
 import type { TUIState } from '../tui-state';
-import type {
-  AppState,
-  LoginProgressSpinnerHandle,
-  QueuedMessage,
-  TranscriptEntry,
-} from '../types';
+import type { AppState, InlineSkillActivation, LoginProgressSpinnerHandle, QueuedMessage, TranscriptEntry } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
 import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
@@ -66,10 +61,14 @@ import { handleSwarmCommand } from './swarm';
 import { handleUndoCommand } from './undo';
 import { handleWebCommand } from './web';
 
+import { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
+
 // ---------------------------------------------------------------------------
 // Re-exports — keep existing consumers working
 // ---------------------------------------------------------------------------
 
+export type { InlineSkillActivation } from '../types';
+export { extractInlineSkillActivations } from '../utils/inline-skill-tokens';
 export { handleLoginCommand, handleLogoutCommand } from './auth';
 export { handleBtwCommand } from './btw';
 export { handleCopyCommand } from './copy';
@@ -190,6 +189,7 @@ export interface SlashCommandHost {
   createNewSession(): Promise<void>;
   showSessionPicker(): Promise<void>;
   sendNormalUserInput(text: string): void;
+  sendInlineSkillUserInput(session: Session, text: string, activations: InlineSkillActivation[]): void;
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void;
   activatePluginCommand(
     session: Session,
@@ -211,11 +211,78 @@ export interface SlashCommandHost {
 // Dispatch — entry point from handleUserInput
 // ---------------------------------------------------------------------------
 
-export function dispatchInput(host: SlashCommandHost, text: string): void {
-  if (parseSlashInput(text) !== null) {
-    void executeSlashCommand(host, text);
+export async function dispatchInput(host: SlashCommandHost, text: string): Promise<void> {
+  const parsedCommand = parseSlashInput(text);
+  if (parsedCommand !== null) {
+    const intent = resolveSlashCommandInput({
+      input: text,
+      skillCommandMap: host.skillCommandMap,
+      pluginCommandMap: host.pluginCommandMap,
+      isStreaming: host.state.appState.streamingPhase !== 'idle',
+      isCompacting: host.state.appState.isCompacting,
+    });
+
+    // If the user starts with a skill command and also references other skills
+    // later in the message, activate all of them as part of the same user
+    // submission so every skill is shown as activated.
+    if (intent.kind === 'skill') {
+      const allActivations = extractInlineSkillActivations(text, host.skillCommandMap, {
+        includeLeading: true,
+      });
+      if (allActivations.length > 1) {
+        const busyReason = slashCommandBusyReason({
+          isStreaming: host.state.appState.streamingPhase !== 'idle',
+          isCompacting: host.state.appState.isCompacting,
+        });
+        if (busyReason !== undefined) {
+          host.showError(slashBusyMessage('inline-skill', busyReason));
+          return;
+        }
+
+        const session = host.session;
+        if (host.state.appState.model.trim().length === 0) {
+          host.showError(LLM_NOT_SET_MESSAGE);
+          return;
+        }
+        if (session === undefined) {
+          host.showError(NO_ACTIVE_SESSION_MESSAGE);
+          return;
+        }
+
+        host.sendInlineSkillUserInput(session, text, allActivations);
+        return;
+      }
+    }
+
+    await executeSlashCommand(host, text);
     return;
   }
+
+  const inlineActivations = extractInlineSkillActivations(text, host.skillCommandMap);
+  if (inlineActivations.length > 0) {
+    const busyReason = slashCommandBusyReason({
+      isStreaming: host.state.appState.streamingPhase !== 'idle',
+      isCompacting: host.state.appState.isCompacting,
+    });
+    if (busyReason !== undefined) {
+      host.showError(slashBusyMessage('inline-skill', busyReason));
+      return;
+    }
+
+    const session = host.session;
+    if (host.state.appState.model.trim().length === 0) {
+      host.showError(LLM_NOT_SET_MESSAGE);
+      return;
+    }
+    if (session === undefined) {
+      host.showError(NO_ACTIVE_SESSION_MESSAGE);
+      return;
+    }
+
+    host.sendInlineSkillUserInput(session, text, inlineActivations);
+    return;
+  }
+
   host.sendNormalUserInput(text);
 }
 

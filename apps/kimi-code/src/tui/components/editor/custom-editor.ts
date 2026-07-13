@@ -18,6 +18,7 @@ import { createEditorTheme } from '#/tui/theme/pi-tui-theme';
 import { printableChar } from '#/tui/utils/printable-key';
 
 import { extractAtPrefix } from './file-mention-provider';
+import { findInlineSkillTokens } from '../../utils/inline-skill-tokens';
 import { WrappingSelectList } from './wrapping-select-list';
 
 // oxlint-disable-next-line no-control-regex -- ESC (\x1b) is required to match ANSI SGR escape sequences
@@ -162,9 +163,14 @@ export class CustomEditor extends Editor {
   private consumingPaste = false;
   private consumeBuffer = '';
   private argumentHints: ReadonlyMap<string, string> = new Map();
+  private skillCommandNames: ReadonlySet<string> = new Set();
 
   setArgumentHints(hints: ReadonlyMap<string, string>): void {
     this.argumentHints = hints;
+  }
+
+  setSkillCommandNames(names: ReadonlySet<string>): void {
+    this.skillCommandNames = names;
   }
 
   constructor(tui: TUI, options: CustomEditorOptions = {}) {
@@ -174,7 +180,7 @@ export class CustomEditor extends Editor {
     // content. The right side mirrors with 3 padding columns and the right
     // border at the last column.
     const theme = createEditorTheme();
-    super(tui, theme, { paddingX: 4, disablePasteBurst: options.disablePasteBurst });
+    super(tui, theme, { paddingX: 4, disablePasteBurst: options.disablePasteBurst, inlineSlashTrigger: true });
 
     // pi-tui keeps `createAutocompleteList` private; shadow it with an
     // instance property so slash command menus render descriptions wrapped
@@ -262,14 +268,47 @@ export class CustomEditor extends Editor {
     const firstContentIdx = 1;
     const isBash = this.inputMode === 'bash';
     const text = this.getText().trimStart();
-    if (text.startsWith('/') && !isBash) {
-      // Paint only the FIRST editor content line; multi-line slash commands
-      // are not a thing in practice.
+    if (!isBash) {
+      // Paint the leading slash command on the first editor content line only;
+      // start-of-line slash commands are not expected on subsequent lines.
       const original = lines[firstContentIdx];
       if (original !== undefined) {
-        const highlighted = highlightFirstSlashToken(original, 'primary');
-        if (highlighted !== undefined) {
+        const visible = stripSgr(original);
+        const leadingRange = text.startsWith('/') ? getLeadingSlashTokenRange(visible) : null;
+        let highlighted = original;
+        if (leadingRange !== null) {
+          const leadingHighlighted = highlightFirstSlashToken(highlighted, 'primary');
+          if (leadingHighlighted !== undefined) {
+            highlighted = leadingHighlighted;
+          }
+        }
+        const inlineHighlighted = highlightInlineSkillTokens(
+          highlighted,
+          this.skillCommandNames,
+          leadingRange,
+          'primary',
+        );
+        if (inlineHighlighted !== undefined) {
+          highlighted = inlineHighlighted;
+        }
+        if (highlighted !== original) {
           lines[firstContentIdx] = highlighted;
+        }
+      }
+
+      // Paint inline skill tokens on any subsequent content lines so multi-line
+      // prompts highlight skills on every line.
+      for (let i = firstContentIdx + 1; i < lines.length - 1; i++) {
+        const original = lines[i];
+        if (original === undefined) continue;
+        const inlineHighlighted = highlightInlineSkillTokens(
+          original,
+          this.skillCommandNames,
+          null,
+          'primary',
+        );
+        if (inlineHighlighted !== undefined) {
+          lines[i] = inlineHighlighted;
         }
       }
     }
@@ -569,12 +608,22 @@ export class CustomEditor extends Editor {
  */
 export function highlightFirstSlashToken(line: string, token: 'primary'): string | undefined {
   const visible = stripSgr(line);
+  const leadingRange = getLeadingSlashTokenRange(visible);
+  if (leadingRange === null) return undefined;
+  const ranges = [leadingRange];
+  if (visible.slice(leadingRange.start, leadingRange.end) === '/goal') {
+    ranges.push(...goalCommandPathRanges(visible, leadingRange.end));
+  }
+  return highlightVisibleRanges(line, ranges, token);
+}
+
+function getLeadingSlashTokenRange(visible: string): { start: number; end: number } | null {
   const slashIdx = visible.indexOf('/');
-  if (slashIdx < 0) return undefined;
+  if (slashIdx < 0) return null;
   // Guard: only paint when `/` is the first non-whitespace character
   // on the line (avoids colouring a mid-sentence slash).
   for (let i = 0; i < slashIdx; i++) {
-    if (visible[i] !== ' ' && visible[i] !== '\t') return undefined;
+    if (visible[i] !== ' ' && visible[i] !== '\t') return null;
   }
   // Token ends at the next whitespace (or the visible end).
   let endVisible = slashIdx + 1;
@@ -584,11 +633,35 @@ export function highlightFirstSlashToken(line: string, token: 'primary'): string
     endVisible++;
   }
   const visibleToken = visible.slice(slashIdx, endVisible);
-  if (visibleToken.slice(1).includes('/')) return undefined;
-  const ranges = [{ start: slashIdx, end: endVisible }];
-  if (visibleToken === '/goal') {
-    ranges.push(...goalCommandPathRanges(visible, endVisible));
-  }
+  if (visibleToken.slice(1).includes('/')) return null;
+  return { start: slashIdx, end: endVisible };
+}
+
+/**
+ * Highlight inline skill tokens in `line`. A token is highlighted only when it
+ * is a known skill name, starts with `/`, and is preceded by whitespace. The
+ * optional `leadingRange` is excluded so the leading slash command token
+ * (already highlighted by `highlightFirstSlashToken`) is not double-painted.
+ */
+function highlightInlineSkillTokens(
+  line: string,
+  skillCommandNames: ReadonlySet<string>,
+  leadingRange: { start: number; end: number } | null,
+  token: 'primary',
+): string | undefined {
+  if (skillCommandNames.size === 0) return undefined;
+  const visible = stripSgr(line);
+  const searchStart = leadingRange?.end ?? 0;
+
+  const inlineTokens = findInlineSkillTokens(visible.slice(searchStart), {
+    isKnownSkill: (commandName) => skillCommandNames.has(commandName),
+  });
+  if (inlineTokens.length === 0) return undefined;
+
+  const ranges = inlineTokens.map((t) => ({
+    start: t.start + searchStart,
+    end: t.end + searchStart,
+  }));
   return highlightVisibleRanges(line, ranges, token);
 }
 

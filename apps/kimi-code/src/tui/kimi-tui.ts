@@ -131,6 +131,7 @@ import { createTUIState, type TUIState } from './tui-state';
 import {
   INITIAL_LIVE_PANE,
   type AppState,
+  type InlineSkillActivation,
   type KimiTUIOptions,
   type LivePaneState,
   type LoginProgressSpinnerHandle,
@@ -475,12 +476,14 @@ export class KimiTUI {
           : {}),
       };
     });
+    const skillCommandNames = new Set(this.skillCommands.map((cmd) => cmd.name));
     const provider = new FileMentionProvider(
       slashCommands,
       this.state.appState.workDir,
       this.fdPath,
       this.state.appState.additionalDirs,
       () => this.state.appState.inputMode,
+      skillCommandNames,
     );
     this.state.editor.setAutocompleteProvider(provider);
 
@@ -493,6 +496,7 @@ export class KimiTUI {
       }
     }
     this.state.editor.setArgumentHints(argumentHints);
+    this.state.editor.setSkillCommandNames(skillCommandNames);
   }
 
   refreshSlashCommandAutocomplete(): void {
@@ -1116,7 +1120,7 @@ export class KimiTUI {
       void this.runShellCommandFromInput(text);
       return;
     }
-    slashCommands.dispatchInput(this, text);
+    void slashCommands.dispatchInput(this, text);
   }
 
   private async runShellCommandFromInput(command: string): Promise<void> {
@@ -1248,12 +1252,11 @@ export class KimiTUI {
     this.updateQueueDisplay();
   }
 
-  async sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void> {
-    if (this.btwPanelController.sendUserInput(text)) return;
-    if (this.state.appState.model.trim().length === 0) {
-      this.showError(LLM_NOT_SET_MESSAGE);
-      return;
-    }
+  private prepareUserInput(
+    text: string,
+    preExtracted?: ExtractionResult,
+  ): ReturnType<typeof extractMediaAttachments> | undefined {
+    if (this.btwPanelController.sendUserInput(text)) return undefined;
     let extraction: ReturnType<typeof extractMediaAttachments>;
     try {
       // Pasted videos are copied into the cache and expand to a `file://`
@@ -1268,9 +1271,19 @@ export class KimiTUI {
       // A video cache copy failed (unwritable cache dir, vanished source…);
       // nothing was dispatched.
       this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      return undefined;
+    }
+    if (!this.validateMediaCapabilities(extraction)) return undefined;
+    return extraction;
+  }
+
+  async sendNormalUserInput(text: string, preExtracted?: ExtractionResult): Promise<void> {
+    if (this.state.appState.model.trim().length === 0) {
+      this.showError(LLM_NOT_SET_MESSAGE);
       return;
     }
-    if (!this.validateMediaCapabilities(extraction)) return;
+    const extraction = this.prepareUserInput(text, preExtracted);
+    if (extraction === undefined) return;
     // Idle cache-hint interception sits before session creation; it is
     // synchronous unless a hint actually fires, keeping the send path
     // await-free up to sendMessage.
@@ -1295,6 +1308,57 @@ export class KimiTUI {
     }
     this.updateQueueDisplay();
     this.state.ui.requestRender();
+  }
+
+  sendInlineSkillUserInput(session: Session, text: string, activations: InlineSkillActivation[]): void {
+    const extraction = this.prepareUserInput(text);
+    if (extraction === undefined) return;
+
+    const options = extraction.hasMedia
+      ? {
+          hasMedia: true as const,
+          parts: extraction.parts,
+          imageAttachmentIds: extraction.imageAttachmentIds,
+        }
+      : undefined;
+
+    if (this.deferUserMessages) {
+      this.enqueueMessage(text, { ...options, inlineSkillActivations: activations });
+      this.updateQueueDisplay();
+      this.state.ui.requestRender();
+      return;
+    }
+
+    this.beginSessionRequest();
+    void this.runInlineSkillActivations(session, text, activations, extraction).catch((error: unknown) => {
+      const message = formatErrorMessage(error);
+      this.failSessionRequest(`Inline skill activation failed: ${message}`);
+    });
+  }
+
+  private async runInlineSkillActivations(
+    session: Session,
+    text: string,
+    activations: readonly InlineSkillActivation[],
+    extraction: ReturnType<typeof extractMediaAttachments>,
+  ): Promise<void> {
+    const imageAttachmentIds =
+      extraction.imageAttachmentIds.length > 0
+        ? extraction.imageAttachmentIds
+        : undefined;
+    this.appendTranscriptEntry({
+      id: nextTranscriptId(),
+      kind: 'user',
+      turnId: undefined,
+      renderMode: 'plain',
+      content: text,
+      imageAttachmentIds,
+    });
+
+    await session.promptWithSkills(
+      extraction.hasMedia ? extraction.parts : text,
+      activations.map((activation) => ({ name: activation.skillName })),
+    );
   }
 
   validateMediaCapabilities(extraction: {
@@ -1367,7 +1431,7 @@ export class KimiTUI {
 
   private enqueueMessage(
     text: string,
-    options?: SendMessageOptions,
+    options?: SendMessageOptions & { inlineSkillActivations?: readonly InlineSkillActivation[] },
     mode?: 'prompt' | 'bash',
   ): void {
     this.state.queuedMessages.push({
@@ -1379,6 +1443,7 @@ export class KimiTUI {
           ? options.imageAttachmentIds
           : undefined,
       mode,
+      inlineSkillActivations: options?.inlineSkillActivations,
     });
     this.track('input_queue');
   }
@@ -1410,6 +1475,18 @@ export class KimiTUI {
   sendQueuedMessage(session: Session, item: QueuedMessage): void {
     if (item.mode === 'bash') {
       void this.runShellCommandFromInput(item.text);
+      return;
+    }
+    if (item.inlineSkillActivations !== undefined && item.inlineSkillActivations.length > 0) {
+      const extraction = extractMediaAttachments(item.text, this.imageStore);
+      if (!this.validateMediaCapabilities(extraction)) return;
+      this.beginSessionRequest();
+      void this.runInlineSkillActivations(session, item.text, item.inlineSkillActivations, extraction).catch(
+        (error: unknown) => {
+          const message = formatErrorMessage(error);
+          this.failSessionRequest(`Inline skill activation failed: ${message}`);
+        },
+      );
       return;
     }
     this.harness.withInteractiveAgent(item.agentId ?? MAIN_AGENT_ID, () => {
