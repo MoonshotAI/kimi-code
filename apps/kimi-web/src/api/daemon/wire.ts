@@ -514,7 +514,8 @@ export interface WireServerHello {
   timestamp: string;
   payload: {
     server_id: string;
-    heartbeat_ms: number;
+    /** Advisory only — kap-server omits this since it sends no heartbeat. */
+    heartbeat_ms?: number;
     max_event_buffer_size: number;
     capabilities: {
       event_batching: boolean;

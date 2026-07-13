@@ -139,7 +139,7 @@ export function translateProviderError(error: unknown): Error2 {
   return new Error2(CoreErrors.codes.INTERNAL, String(error), { cause: error });
 }
 
-function sanitizeStatusErrorMessage(message: string): string {
+export function sanitizeStatusErrorMessage(message: string): string {
   const titleMatch = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(message);
   const extracted = titleMatch?.[1]?.trim();
   const normalized = extracted !== undefined && extracted.length > 0 ? extracted : message;

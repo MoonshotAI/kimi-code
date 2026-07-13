@@ -162,6 +162,7 @@ const DOMAIN_LAYER = new Map([
   // the domain to L4 beside the other agent-behaviour tools.
   ['edit', 4],
   ['llmRequester', 4],
+  ['faultInjection', 4],
   ['profile', 4],
   ['prompt', 4],
   // `shellCommand` orchestrates user `!` commands through `toolRegistry` (L3),

@@ -366,8 +366,8 @@ describe('AgentToolDedupeService', () => {
       registerRead(h);
       const last = await runStreak(h, 3);
       expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain('repeating the exact same tool call');
-      expect(last.output as string).not.toContain('repeated_times');
+      expect(last.output as string).toContain('what new information you expect');
+      expect(last.output as string).not.toContain('Choose exactly one');
     });
 
     it('keeps injecting reminder1 at 4 consecutive', async () => {
@@ -375,7 +375,7 @@ describe('AgentToolDedupeService', () => {
       registerRead(h);
       const last = await runStreak(h, 4);
       expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain('repeating the exact same tool call');
+      expect(last.output as string).toContain('what new information you expect');
     });
 
     it('injects reminder2 at exactly 5 consecutive', async () => {
@@ -383,9 +383,9 @@ describe('AgentToolDedupeService', () => {
       registerRead(h);
       const last = await runStreak(h, 5);
       expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain('repeated_times: 5');
-      expect(last.output as string).toContain('tool: Read');
-      expect(last.output as string).toContain('arguments:');
+      expect(last.output as string).toContain('issued 5 times in a row');
+      expect(last.output as string).toContain('Choose exactly one of the following');
+      expect(last.output as string).toContain('Falsification check');
     });
 
     it.each([6, 7])('keeps injecting reminder2 at %i consecutive', async (streak) => {
@@ -393,8 +393,8 @@ describe('AgentToolDedupeService', () => {
       registerRead(h);
       const last = await runStreak(h, streak);
       expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain(`repeated_times: ${String(streak)}`);
-      expect(last.output as string).toContain('tool: Read');
+      expect(last.output as string).toContain(`issued ${String(streak)} times in a row`);
+      expect(last.output as string).toContain('Choose exactly one of the following');
     });
 
     it('injects the dead-end reminder at exactly 8 consecutive', async () => {
@@ -402,7 +402,7 @@ describe('AgentToolDedupeService', () => {
       registerRead(h);
       const last = await runStreak(h, 8);
       expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain('stuck in a dead end');
+      expect(last.output as string).toContain('without any further tool calls');
     });
 
     it('resets streak when a different call is interleaved', async () => {
@@ -438,9 +438,9 @@ describe('AgentToolDedupeService', () => {
       expect(tool.calls.length).toBe(callsBefore + 1);
       const byId = new Map(results.map((result) => [result.toolCallId, result.result]));
       expect(byId.get('orig')!.output as string).toContain('<system-reminder>');
-      expect(byId.get('orig')!.output as string).toContain('repeating the exact same tool call');
+      expect(byId.get('orig')!.output as string).toContain('what new information you expect');
       expect(byId.get('dup')!.output as string).toContain('<system-reminder>');
-      expect(byId.get('dup')!.output as string).toContain('repeating the exact same tool call');
+      expect(byId.get('dup')!.output as string).toContain('what new information you expect');
     });
 
     it('same-step spam alone does not trigger reminder', async () => {
@@ -483,7 +483,7 @@ describe('AgentToolDedupeService', () => {
       }
       const [final] = await runStep(h, 1, 5, [toolCall('final', 'X', { a: 1 })]);
       // Text-only array is normalized to a joined string by the executor.
-      expect(final!.result.output).toBe('hello' + makeReminderText2('X', 5, { a: 1 }));
+      expect(final!.result.output).toBe('hello' + makeReminderText2(5));
     });
 
     it('pushes a new text part when trailing part is non-text', async () => {
@@ -626,8 +626,8 @@ describe('AgentToolDedupeService', () => {
       h.registry.register(new EchoTool('Read'));
       const last = await runStreak(h, 8);
       expect(last.output as string).toContain('<system-reminder>');
-      expect(last.output as string).toContain('stuck in a dead end');
-      expect(last.output as string).toContain('Stop all function calls immediately');
+      expect(last.output as string).toContain('Write your final response now');
+      expect(last.output as string).toContain('without any further tool calls');
       // 8 is the reminder threshold, not yet force-stop. The executor always
       // materializes `stopTurn` as a boolean, so a non-stopped result is `false`.
       expect(last.isError).toBeUndefined();
@@ -640,7 +640,7 @@ describe('AgentToolDedupeService', () => {
         const h = createHarness();
         h.registry.register(new EchoTool('Read'));
         const last = await runStreak(h, streak);
-        expect(last.output as string).toContain('stuck in a dead end');
+        expect(last.output as string).toContain('Write your final response now');
         expect(last.isError).toBeUndefined();
         expect(stopTurnOf(last)).toBeFalsy();
       },
@@ -650,7 +650,7 @@ describe('AgentToolDedupeService', () => {
       const h = createHarness();
       h.registry.register(new EchoTool('Read'));
       const last = await runStreak(h, 12);
-      expect(last.output as string).toContain('stuck in a dead end');
+      expect(last.output as string).toContain('Write your final response now');
       // The underlying tool succeeded — force-stop must not flip it to error.
       expect(last.isError).toBeUndefined();
       expect(stopTurnOf(last)).toBe(true);
@@ -682,7 +682,7 @@ describe('AgentToolDedupeService', () => {
       // The underlying tool was an error — that must survive force-stop.
       expect(last!.isError).toBe(true);
       expect(stopTurnOf(last!)).toBe(true);
-      expect(last!.output as string).toContain('stuck in a dead end');
+      expect(last!.output as string).toContain('Write your final response now');
     });
   });
 

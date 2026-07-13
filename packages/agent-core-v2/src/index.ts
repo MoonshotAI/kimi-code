@@ -195,6 +195,7 @@ export * from '#/agent/runtime/runtimeService';
 export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
 import '#/agent/toolSelect/flag';
+import '#/agent/faultInjection/flag';
 import '#/agent/toolSelect/tools/select-tools';
 export * from '#/agent/toolSelect/dynamicTools';
 export * from '#/agent/toolSelect/toolSelect';
@@ -308,6 +309,7 @@ export {
   buildImageCompressionCaption,
   compressBase64ForModel,
   compressImageForModel,
+  gateImageFormatParts,
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,
   READ_IMAGE_BYTE_BUDGET,
@@ -315,6 +317,17 @@ export {
   resolveReadImageByteBudget,
   type ImageCompressionTelemetry,
 } from '#/agent/media/image-compress';
+export {
+  MODEL_ACCEPTED_IMAGE_MIMES,
+  buildImageConversionGuidance,
+  buildUnsupportedImageNotice,
+  decodeBase64Prefix,
+  isModelAcceptedImageMime,
+  normalizeImageMime,
+  parseImageDataUrl,
+  resolveEffectiveImageMime,
+  unsupportedImageMimeFromUrl,
+} from '#/agent/media/image-format-policy';
 export {
   persistOriginalImage,
   sessionMediaOriginalsDir,
@@ -365,6 +378,8 @@ export * from '#/agent/fullCompaction/compactionOps';
 export * from '#/agent/fullCompaction/types';
 export * from '#/agent/llmRequester/llmRequester';
 export * from '#/agent/llmRequester/llmRequesterService';
+export * from '#/agent/faultInjection/faultInjection';
+export * from '#/agent/faultInjection/faultInjectionService';
 export * from '#/agent/llmRequester/llmRequestOps';
 export * from '#/_base/utils/retry';
 import '#/agent/loop/configSection';

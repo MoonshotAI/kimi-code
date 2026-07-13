@@ -25,6 +25,7 @@ import type { Message, PageResponse } from '@moonshot-ai/protocol';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
   reduceContextTranscript,
@@ -126,9 +127,40 @@ export class MessageLegacyService implements IMessageLegacyService {
     // live context, so the tail merge below can only append (mirrors v1).
     const transcript = this.readTranscript(agent);
     const contextMessages = agent.accessor.get(IAgentContextMemoryService).get();
-    const entries = mergeLiveTail(transcript, contextMessages);
+    const merged = mergeLiveTail(transcript, contextMessages);
+    const entries = await this.rehydrate(agent, merged.messages);
 
-    return entries.map((msg, index) => toProtocolMessage(sessionId, index, msg, summary.createdAt));
+    let previousMs = Number.NEGATIVE_INFINITY;
+    return entries.map((msg, index) => {
+      const baseMs = merged.times[index] ?? summary.createdAt + index;
+      const createdAtMs = Math.max(previousMs + 1, baseMs);
+      previousMs = createdAtMs;
+      return toProtocolMessage(sessionId, index, msg, summary.createdAt, createdAtMs);
+    });
+  }
+
+  /**
+   * Replace `blobref:` media URLs with `data:` URIs read from the agent's
+   * blob store (v1's `rehydrateBlobRefs`); unresolvable refs become the
+   * `[media missing]` placeholder, same as v1 and live replay.
+   */
+  private async rehydrate(
+    agent: IAgentScopeHandle,
+    messages: readonly ContextMessage[],
+  ): Promise<readonly ContextMessage[]> {
+    const blobs = agent.accessor.get(IAgentBlobService);
+    let changed = false;
+    const out: ContextMessage[] = [];
+    for (const msg of messages) {
+      const content = await blobs.loadParts(msg.content);
+      if (content === msg.content) {
+        out.push(msg);
+        continue;
+      }
+      changed = true;
+      out.push({ ...msg, content: [...content] });
+    }
+    return changed ? out : messages;
   }
 
   /** Reduce the main agent's in-memory record journal into the full transcript. */
@@ -145,14 +177,23 @@ export class MessageLegacyService implements IMessageLegacyService {
  * longer than the journal-derived `foldedLength`, the surplus is records that
  * have landed in the live context within the same dispatch but not yet in the
  * journal, and must be appended so a read on a live session does not trail
- * memory.
+ * memory. Tail entries have no source wire record, hence no record time.
  */
 function mergeLiveTail(
   transcript: ContextTranscript,
   contextMessages: readonly ContextMessage[],
-): readonly ContextMessage[] {
-  if (contextMessages.length <= transcript.foldedLength) return transcript.entries;
-  return [...transcript.entries, ...contextMessages.slice(transcript.foldedLength)];
+): {
+  readonly messages: readonly ContextMessage[];
+  readonly times: readonly (number | undefined)[];
+} {
+  if (contextMessages.length <= transcript.foldedLength) {
+    return { messages: transcript.entries, times: transcript.times };
+  }
+  const tail = contextMessages.slice(transcript.foldedLength);
+  return {
+    messages: [...transcript.entries, ...tail],
+    times: [...transcript.times, ...tail.map(() => undefined)],
+  };
 }
 
 registerScopedService(

@@ -51,7 +51,7 @@ export interface ProtocolProviderOptions {
  */
 export interface ProtocolAdapterConfig {
   readonly protocol: Protocol;
-  readonly baseUrl: string;
+  readonly baseUrl?: string;
   readonly modelName: string;
   readonly apiKey?: string;
   readonly defaultHeaders?: Readonly<Record<string, string>>;

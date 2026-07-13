@@ -246,20 +246,31 @@ export function createInstanceRegistry(options: InstanceRegistryOptions = {}): I
       // the latest port without re-reading the file.
       const state: { port: number; released: boolean } = { port: info.port, released: false };
 
+      // Count of writes that passed the `released` check but have not finished
+      // their atomic rename yet. `release()` must drain them before unlinking:
+      // a rename that lands after the unlink would recreate the file.
+      let inflightWrites = 0;
+      let onWritesDrained: (() => void) | null = null;
+
       const write = async (): Promise<void> => {
-        // Bail out once released so a heartbeat tick that was already in flight
-        // when `release()` ran cannot recreate the just-unlinked file.
+        // Bail out once released so no new write starts after `release()`.
         if (state.released) return;
-        const full: ServerInstanceInfo = {
-          serverId,
-          pid: info.pid,
-          host: info.host,
-          port: state.port,
-          startedAt: info.startedAt,
-          heartbeatAt: now(),
-          ...(info.hostVersion !== undefined ? { hostVersion: info.hostVersion } : {}),
-        };
-        await writeFileAtomic(filePath, encode(full));
+        inflightWrites += 1;
+        try {
+          const full: ServerInstanceInfo = {
+            serverId,
+            pid: info.pid,
+            host: info.host,
+            port: state.port,
+            startedAt: info.startedAt,
+            heartbeatAt: now(),
+            ...(info.hostVersion !== undefined ? { hostVersion: info.hostVersion } : {}),
+          };
+          await writeFileAtomic(filePath, encode(full));
+        } finally {
+          inflightWrites -= 1;
+          if (inflightWrites === 0) onWritesDrained?.();
+        }
       };
 
       await write();
@@ -282,6 +293,13 @@ export function createInstanceRegistry(options: InstanceRegistryOptions = {}): I
           if (state.released) return;
           state.released = true;
           clearInterval(timer);
+          // Wait for writes already in flight so their atomic rename cannot
+          // recreate the file after we unlink it.
+          if (inflightWrites > 0) {
+            await new Promise<void>((resolve) => {
+              onWritesDrained = resolve;
+            });
+          }
           try {
             await unlink(filePath);
           } catch (err) {

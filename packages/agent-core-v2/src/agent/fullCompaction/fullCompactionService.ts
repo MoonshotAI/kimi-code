@@ -670,7 +670,13 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         thinking_effort: this.profile.data().thinkingLevel,
         error_type: error instanceof Error ? error.name : 'Unknown',
       });
-      if (isError2(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;
+      if (
+        isError2(error) &&
+        (error.code === ErrorCodes.AUTH_LOGIN_REQUIRED ||
+          error.code === ErrorCodes.PROVIDER_AUTH_ERROR)
+      ) {
+        throw error;
+      }
       throw new Error2(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
     }
   }

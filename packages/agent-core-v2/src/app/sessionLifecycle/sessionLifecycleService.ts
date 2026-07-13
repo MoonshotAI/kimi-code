@@ -17,6 +17,9 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { join } from 'pathe';
+import { ulid } from 'ulid';
+
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable } from '#/_base/di/lifecycle';
@@ -26,6 +29,7 @@ import {
   LifecycleScope,
   registerScopedService,
 } from '#/_base/di/scope';
+import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Emitter, type Event } from '#/_base/event';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionActivityKernel } from '#/activity/activity';
@@ -39,6 +43,8 @@ import {
 } from '#/agent/wireRecord/wireRecord';
 import { WIRE_RECORD_FILENAME, wireRecordScope } from '#/agent/wireRecord/wireRecordService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
+import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import {
@@ -53,6 +59,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { createHooks } from '#/hooks';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -115,6 +122,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @ISessionIndex private readonly index: ISessionIndex,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
+    @ICronTaskPersistence private readonly cronStore: ICronTaskPersistence,
     @IWorkspaceRegistry private readonly workspaceRegistry: IWorkspaceRegistry,
     @IWorkspaceLocalConfigService
     private readonly workspaceLocalConfig: IWorkspaceLocalConfigService,
@@ -363,6 +372,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sourceHandle !== undefined
         ? await sourceHandle.accessor.get(ISessionActivityKernel).quiesce('fork')
         : undefined;
+    let targetId: string | undefined;
+    let target: ISessionScopeHandle | undefined;
+    let targetSessionDir: string | undefined;
     try {
       // 3. Resolve the work dir the fork inherits (same workspace as the source).
       const workspace = await this.workspaceRegistry.get(workspaceId);
@@ -377,7 +389,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           : await this.readMetaFromDisk(workspaceId, sourceId);
 
       // 5. Mint the target id and reject collisions.
-      const targetId = opts.newSessionId ?? createSessionId();
+      targetId = opts.newSessionId ?? createSessionId();
       if (this.sessions.has(targetId) || (await this.index.get(targetId)) !== undefined) {
         throw new Error2(
           ErrorCodes.SESSION_ALREADY_EXISTS,
@@ -386,16 +398,27 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
 
       // 6. Materialize the target session scope (fresh metadata + storage).
-      const target = await this.materializeSession({
+      target = await this.materializeSession({
         sessionId: targetId,
         workDir: workspace.root,
       });
       const targetCtx = target.accessor.get(ISessionContext);
+      targetSessionDir = targetCtx.sessionDir;
       const targetMeta = target.accessor.get(ISessionMetadata);
 
-      // 7. Copy every source agent's wire log into the target's per-agent log
+      // 7. Copy the source session's on-disk state into the target — per-agent
+      // `blobs/` and `plans/`, background-task output, and media originals.
+      // v1 achieved this with `cp -r` of the whole session dir; the wire logs
+      // (step 8) and `state.json` (step 9) are rewritten by the fork flow
+      // itself, and `logs/` is the source's debug log, so those are excluded.
+      await this.copySessionFiles(
+        this.bootstrap.sessionDir(workspaceId, sourceId),
+        targetCtx.sessionDir,
+      );
+
+      // 8. Copy every source agent's wire log into the target's per-agent log
       // (BEFORE the target agents are created, so the logs are in place when
-      // their AgentWireRecordService restores them in step 9).
+      // their AgentWireRecordService restores them in step 11).
       const sourceAgents = sourceMeta?.agents ?? {};
       const agentIds = Object.keys(sourceAgents);
       for (const agentId of agentIds) {
@@ -409,7 +432,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         });
       }
 
-      // 8. Rewrite the target metadata to reflect fork provenance.
+      // 9. Rewrite the target metadata to reflect fork provenance.
       const title = opts.title ?? `Fork: ${sourceMeta?.title || sourceId}`;
       await targetMeta.update({
         title,
@@ -420,7 +443,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
       });
 
-      // 9. Create the target agents (same ids) and restore each from its copied
+      // 10. Clone the source session's cron tasks for the target. v1 kept cron
+      // records inside the session dir so `cp -r` carried them; v2 persists
+      // them at workspace level tagged with the owning session id.
+      await this.duplicateCronTasks(workspaceId, sourceId, targetId);
+
+      // 11. Create the target agents (same ids) and restore each from its copied
       // log. Creating them registers fresh agent entries with TARGET homedirs.
       for (const agentId of agentIds) {
         const sourceAgent = sourceAgents[agentId]!;
@@ -443,6 +471,25 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       });
       await this.announceCreated({ sessionId: targetId, handle: target, source: 'fork' });
       return target;
+    } catch (error) {
+      // Roll back the half-fork, mirroring v1's `rm -rf` of the target dir:
+      // drop the materialized handle from the live registry (otherwise a
+      // retry with the same id trips SESSION_ALREADY_EXISTS on the in-memory
+      // check) and delete whatever was copied to disk.
+      if (targetId !== undefined) {
+        this.sessions.delete(targetId);
+      }
+      if (target !== undefined) {
+        try {
+          target.dispose();
+        } catch {
+          // best effort — the session dir is removed below regardless
+        }
+      }
+      if (targetSessionDir !== undefined) {
+        await this.hostFs.remove(targetSessionDir).catch(() => {});
+      }
+      throw error;
     } finally {
       quiesce?.dispose();
     }
@@ -529,6 +576,90 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     );
   }
 
+  /**
+   * Copy the source session's on-disk state into the target session dir —
+   * everything the fork flow does not regenerate itself: per-agent `blobs/`
+   * and `plans/`, background-task output, and session media originals. v1
+   * achieved this with `cp -r` of the whole session dir; these live under
+   * the v2 session dir too (per-agent scopes and hostFs paths), so the fork
+   * must carry them explicitly or the target's blob refs resolve to
+   * `[media missing]` and its active plan file is gone.
+   *
+   * A missing source dir means there is nothing on disk to carry over (the
+   * wire logs are read through the append-log store, not this walk).
+   */
+  private async copySessionFiles(sourceDir: string, targetDir: string): Promise<void> {
+    let entries: readonly HostDirEntry[];
+    try {
+      entries = await this.hostFs.readdir(sourceDir);
+    } catch (error) {
+      if (isMissingFileError(error)) return;
+      throw error;
+    }
+    await this.copySessionDirEntries(sourceDir, targetDir, entries, '');
+  }
+
+  private async copySessionDirEntries(
+    sourceDir: string,
+    targetDir: string,
+    entries: readonly HostDirEntry[],
+    relBase: string,
+  ): Promise<void> {
+    for (const entry of entries) {
+      const rel = relBase === '' ? entry.name : `${relBase}/${entry.name}`;
+      // `state.json` is rewritten with fork provenance, the per-agent wire
+      // logs are copied by `copyAgentWire` (with a fork boundary record), and
+      // `logs/` is the source's debug log — the fork writes its own.
+      if (rel === 'state.json' || rel === 'logs' || entry.name === WIRE_RECORD_FILENAME) {
+        continue;
+      }
+      // Never follow symlinks out of the session dir.
+      if (entry.isSymbolicLink === true) continue;
+      const sourcePath = join(sourceDir, entry.name);
+      const targetPath = join(targetDir, entry.name);
+      if (entry.isDirectory) {
+        let children: readonly HostDirEntry[];
+        try {
+          children = await this.hostFs.readdir(sourcePath);
+        } catch (error) {
+          if (isMissingFileError(error)) continue;
+          throw error;
+        }
+        await this.hostFs.mkdir(targetPath, { recursive: true });
+        await this.copySessionDirEntries(sourcePath, targetPath, children, rel);
+      } else if (entry.isFile) {
+        const data = await this.hostFs.readBytes(sourcePath);
+        await this.hostFs.mkdir(targetDir, { recursive: true });
+        await this.hostFs.writeBytes(targetPath, data);
+      }
+    }
+  }
+
+  /**
+   * Clone the source session's cron tasks for the fork. v1 kept cron records
+   * inside the session dir, so its `cp -r` fork carried them; v2 persists
+   * cron at workspace level keyed by a session-id tag, so fork duplicates
+   * the source's tasks with fresh ids pointing at the target. Fired
+   * one-shot tasks are already gone from the store (removed on delivery),
+   * so everything cloned here is still live.
+   */
+  private async duplicateCronTasks(
+    workspaceId: string,
+    sourceId: string,
+    targetId: string,
+  ): Promise<void> {
+    const tasks = await this.cronStore.list({ workspaceId });
+    for (const task of tasks) {
+      if (task.tags?.[CRON_SESSION_TAG] !== sourceId) continue;
+      const clone: CronTask = {
+        ...task,
+        id: ulid(),
+        tags: { ...task.tags, [CRON_SESSION_TAG]: targetId },
+      };
+      await this.cronStore.save(workspaceId, clone);
+    }
+  }
+
   private async readMetaFromDisk(
     workspaceId: string,
     sessionId: string,
@@ -552,6 +683,14 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   const items: T[] = [];
   for await (const item of iterable) items.push(item);
   return items;
+}
+
+/** hostFs wraps raw errnos in `HostFsError`; classify the unwrapped cause. */
+function isMissingFileError(error: unknown): boolean {
+  const unwrapped = unwrapErrorCause(error);
+  if (unwrapped === null || typeof unwrapped !== 'object') return false;
+  const code = (unwrapped as { readonly code?: unknown }).code;
+  return code === 'ENOENT';
 }
 
 /**
