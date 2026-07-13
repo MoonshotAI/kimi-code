@@ -1,16 +1,18 @@
 /**
- * `task` domain (L5) — `AgentTaskPersistence`, the per-session
+ * `task` domain (L5) — `AgentTaskPersistence`, the per-agent
  * persistence helper behind `AgentTaskService`.
  *
  * Persists task state (`<taskId>.json`) and raw task output (`output.log`)
  * through the `storage` access-pattern stores (`IAtomicDocumentStore` for
  * atomic whole-document state, `IFileSystemStorageService` byte primitives for ordered
- * output append), addressed under the session's storage scope so the domain
- * never touches the filesystem. Task ids are validated against the
- * `{prefix}-{8 hex}` shape before use as path segments (path-traversal and
- * legacy `bg_<hex>` guard), and legacy snake_case records are normalized to
- * the current shape on read. Not scope-bound; constructed by
- * `AgentTaskService`.
+ * output append), addressed under the owning agent's storage scope
+ * (`<sessionScope>/agents/<agentId>/tasks/…`) so the domain never touches the
+ * filesystem and each agent reads back exactly its own records — v1's
+ * per-agent `<sessionDir>/agents/<id>/tasks/` layout. Task ids are validated
+ * against the `{prefix}-{8 hex}` shape before use as path segments
+ * (path-traversal and legacy `bg_<hex>` guard), and legacy snake_case records
+ * are normalized to the current shape on read. Not scope-bound; constructed
+ * by `AgentTaskService`.
  */
 
 import { join } from 'pathe';
@@ -41,24 +43,24 @@ function validateTaskId(taskId: string): void {
 
 export class AgentTaskPersistence {
   constructor(
-    private readonly sessionDir: string,
-    private readonly sessionScope: string,
+    private readonly agentDir: string,
+    private readonly agentScope: string,
     private readonly docs: IAtomicDocumentStore,
     private readonly bytes: IFileSystemStorageService,
   ) {}
 
   private tasksScope(): string {
-    return `${this.sessionScope}/${TASKS_SCOPE}`;
+    return `${this.agentScope}/${TASKS_SCOPE}`;
   }
 
   private taskOutputScope(taskId: string): string {
     validateTaskId(taskId);
-    return `${this.sessionScope}/${TASKS_SCOPE}/${taskId}`;
+    return `${this.agentScope}/${TASKS_SCOPE}/${taskId}`;
   }
 
   taskOutputFile(taskId: string): string {
     validateTaskId(taskId);
-    return join(this.sessionDir, TASKS_SCOPE, taskId, OUTPUT_LOG_KEY);
+    return join(this.agentDir, TASKS_SCOPE, taskId, OUTPUT_LOG_KEY);
   }
 
   async writeTask(task: PersistedTask): Promise<void> {

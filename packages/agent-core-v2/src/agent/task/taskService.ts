@@ -3,7 +3,9 @@
  *
  * Owns the agent's registry of running and restored tasks:
  * registers and drives tasks to completion, retains a bounded output ring,
- * persists task state and output through task persistence, reads
+ * persists task state and output through task persistence rooted at the
+ * agent's own scope (v1's per-agent `<sessionDir>/agents/<id>/tasks/`
+ * layout), reads
  * limits through `config`, records lifecycle and broadcasts through `wire`
  * (`task.started` / `task.terminated` Ops into `TaskModel`, plus the matching
  * signals), restores ghosts through a single `wire.onRestored` handler (wire
@@ -21,6 +23,8 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { join } from 'pathe';
+
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
@@ -34,6 +38,7 @@ import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITaskService, type ITaskHandle, TERMINAL_TASK_STATES } from '#/app/task/task';
 import {
   TERMINAL_STATUSES,
@@ -226,6 +231,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAtomicDocumentStore atomicDocs: IAtomicDocumentStore,
     @IFileSystemStorageService byteStore: IFileSystemStorageService,
     @ISessionContext session: ISessionContext,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @ITaskService private readonly taskService: ITaskService,
     @IAgentWireRecordService wireRecord: IAgentWireRecordService,
     @IAgentWireService private readonly wire: IWireService,
@@ -234,9 +240,13 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentLoopService private readonly loop: IAgentLoopService,
   ) {
     super();
+    // Root task persistence at the owning agent's scope — v1's per-agent
+    // `<sessionDir>/agents/<id>/tasks/` layout. A shared session-level tasks
+    // dir instead would both hide v1's on-disk records and make every agent's
+    // restore load / mark-lost / re-notify every other agent's tasks.
     this.persistence = new AgentTaskPersistence(
-      session.sessionDir,
-      session.metaScope.replace(/\/session-meta$/, ''),
+      join(session.sessionDir, 'agents', scopeContext.agentId),
+      scopeContext.scope(),
       atomicDocs,
       byteStore,
     );

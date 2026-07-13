@@ -23,6 +23,7 @@ import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -34,9 +35,11 @@ import type { IWireService } from '#/wire/wireService';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ITaskService } from '#/app/task/task';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
 import { stubContextMemory, stubWireRecord } from '../contextMemory/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
+import type { TaskServiceTestManager } from './stubs';
 
 function fakeProcessTask(): AgentTask {
   return {
@@ -109,6 +112,12 @@ describe('AgentTaskService', () => {
       sessionDir: '/tmp/test-session',
       metaScope: 'sessions/test-ws/test-session/session-meta',
     });
+    ix.stub(IAgentScopeContext, 
+      makeAgentScopeContext({
+        agentId: 'main',
+        agentScope: 'sessions/test-ws/test-session/agents/main',
+      }),
+    );
     ix.stub(IAtomicDocumentStore, {
       get: async () => undefined,
       set: async () => {},
@@ -239,6 +248,120 @@ describe('AgentTaskService', () => {
     // The default 5s grace would make this test take five seconds; the
     // configured 20ms grace lands well under a second even on a loaded CI.
     expect(Date.now() - startedAt).toBeLessThan(1_000);
+  });
+
+  // ── Per-agent persistence isolation ────────────────────────────────────
+  //
+  // Each agent roots its task persistence at its own scope
+  // (`<sessionScope>/agents/<id>/tasks/`): one agent's restore must never
+  // load, mark-lost, or re-notify another agent's tasks.
+
+  function mapBackedDocs(): IAtomicDocumentStore {
+    const map = new Map<string, unknown>();
+    return {
+      _serviceBrand: undefined,
+      get: async <T,>(scope: string, key: string): Promise<T | undefined> =>
+        map.get(`${scope}/${key}`) as T | undefined,
+      set: async <T,>(scope: string, key: string, value: T): Promise<void> => {
+        map.set(`${scope}/${key}`, value);
+      },
+      delete: async (scope: string, key: string): Promise<void> => {
+        map.delete(`${scope}/${key}`);
+      },
+      list: async (scope: string, prefix = ''): Promise<readonly string[]> =>
+        [...map.keys()]
+          .filter((key) => key.startsWith(`${scope}/${prefix}`))
+          .map((key) => key.slice(scope.length + 1)),
+    } as unknown as IAtomicDocumentStore;
+  }
+
+  function buildAgentIx(
+    agentId: string,
+    docs: IAtomicDocumentStore,
+    bytes: IFileSystemStorageService,
+  ): TestInstantiationService {
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(IAgentWireRecordService, stubWireRecord());
+    ix.stub(IAgentWireService, stubWireService());
+    ix.stub(IEventBus, disposables.add(new EventBusService()));
+    ix.stub(IAgentContextInjectorService, {
+      register: () => toDisposable(() => {}),
+    });
+    ix.stub(ITaskService, {
+      run: () => {
+        throw new Error('ITaskService.run is not used by this test');
+      },
+      defer: () => {
+        throw new Error('ITaskService.defer is not used by this test');
+      },
+    });
+    ix.stub(IAgentContextMemoryService, stubContextMemory());
+    ix.stub(ITelemetryService, { track: () => {}, track2: () => {} });
+    ix.stub(IAgentLoopService, stubLoopWithHooks());
+    ix.stub(IConfigService, {
+      get: (() => undefined) as IConfigService['get'],
+    });
+    ix.stub(ISessionContext, {
+      sessionId: 'test-session',
+      workspaceId: 'test-ws',
+      sessionDir: '/tmp/test-session',
+      metaScope: 'sessions/test-ws/test-session/session-meta',
+    });
+    ix.stub(
+      IAgentScopeContext,
+      makeAgentScopeContext({
+        agentId,
+        agentScope: `sessions/test-ws/test-session/agents/${agentId}`,
+      }),
+    );
+    ix.stub(IAtomicDocumentStore, docs);
+    ix.stub(IFileSystemStorageService, bytes);
+    ix.set(IAgentTaskService, new SyncDescriptor(AgentTaskService));
+    return ix;
+  }
+
+  it('restore touches only the agent own task records', async () => {
+    const docs = mapBackedDocs();
+    const bytes = new InMemoryStorageService();
+    const subScope = 'sessions/test-ws/test-session/agents/agent-1';
+    // A still-running task from a previous run, persisted in the SUBAGENT's
+    // scope (v1 on-disk layout: <sessionDir>/agents/<id>/tasks/).
+    await docs.set(`${subScope}/tasks`, 'bash-abcdef01.json', {
+      taskId: 'bash-abcdef01',
+      kind: 'process',
+      command: 'sleep 60',
+      description: 'sub task',
+      pid: 4242,
+      startedAt: 1,
+      endedAt: null,
+      exitCode: null,
+      status: 'running',
+      detached: true,
+    });
+
+    const main = buildAgentIx('main', docs, bytes).get(
+      IAgentTaskService,
+    ) as TaskServiceTestManager;
+    await main.loadFromDisk();
+    const lost = await main.reconcile();
+
+    // The main agent must not see, mark lost, or notify for the subagent's task.
+    expect(lost).toEqual([]);
+    expect(main.list(false)).toEqual([]);
+    const untouched = await docs.get<{ status: string }>(
+      `${subScope}/tasks`,
+      'bash-abcdef01.json',
+    );
+    expect(untouched?.status).toBe('running');
+
+    // The subagent itself loads and reconciles its own record.
+    const sub = buildAgentIx('agent-1', docs, bytes).get(
+      IAgentTaskService,
+    ) as TaskServiceTestManager;
+    await sub.loadFromDisk();
+    const subLost = await sub.reconcile();
+    expect(subLost.map((info) => info.taskId)).toEqual(['bash-abcdef01']);
+    expect(subLost[0]?.status).toBe('lost');
   });
 
   function compactionSummary(text: string): ContextMessage {
