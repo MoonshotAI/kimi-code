@@ -666,7 +666,7 @@ describe('BashTool', () => {
         message: expect.stringContaining('timed out and moved to background'),
         brief: expect.stringContaining('after timeout'),
       });
-      const taskId = /^task_id: (\S+)/m.exec(String(result.output))?.[1];
+      const taskId = /^task_id: (\S+)/m.exec(result.output as string)?.[1];
       expect(taskId).toBeDefined();
       expect(manager.getTask(taskId!)).toMatchObject({ status: 'running', detached: true });
 
