@@ -174,6 +174,19 @@ describe('AgentTaskService', () => {
     });
   }
 
+  function stubTaskWrites(): AgentTaskInfo[] {
+    const writes: AgentTaskInfo[] = [];
+    ix.stub(IAtomicDocumentStore, {
+      get: async () => undefined,
+      set: async <T,>(_scope: string, _key: string, value: T) => {
+        writes.push(value as AgentTaskInfo);
+      },
+      delete: async () => {},
+      list: async () => [],
+    });
+    return writes;
+  }
+
   function abortObservingTask(onAbort: (reason: unknown) => void): AgentTask {
     return {
       ...fakeProcessTask(),
@@ -187,7 +200,8 @@ describe('AgentTaskService', () => {
     };
   }
 
-  it('stopAllOnExit suppresses notifications and marks every active task killed', async () => {
+  it('stopAllOnExit suppresses and persists terminal state for detached tasks', async () => {
+    const writes = stubTaskWrites();
     const svc = ix.get(IAgentTaskService);
     const first = svc.registerTask(fakeProcessTask());
     const second = svc.registerTask(fakeProcessTask());
@@ -200,7 +214,33 @@ describe('AgentTaskService', () => {
       expect(info?.status).toBe('killed');
       expect(info?.stopReason).toBe('Session closed');
       expect(info?.terminalNotificationSuppressed).toBe(true);
+      const persisted = writes.filter((write) => write.taskId === taskId);
+      expect(
+        persisted.some(
+          (write) =>
+            write.status === 'running' && write.terminalNotificationSuppressed === true,
+        ),
+      ).toBe(true);
+      expect(persisted.at(-1)).toMatchObject({
+        status: 'killed',
+        terminalNotificationSuppressed: true,
+      });
     }
+  });
+
+  it('stopAllOnExit does not persist a foreground-only task', async () => {
+    const writes = stubTaskWrites();
+    const svc = ix.get(IAgentTaskService);
+    const taskId = svc.registerTask(fakeProcessTask(), { detached: false });
+
+    await svc.stopAllOnExit('Session closed');
+
+    expect(writes).toEqual([]);
+    expect(svc.getTask(taskId)).toMatchObject({
+      status: 'killed',
+      detached: false,
+      terminalNotificationSuppressed: undefined,
+    });
   });
 
   it('stopAllOnExit leaves tasks running when keepAliveOnExit is set', async () => {
