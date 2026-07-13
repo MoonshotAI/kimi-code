@@ -9,8 +9,8 @@ import {
 import {
   applyAnthropicThinkingKeep,
   applyKimiEnvSamplingParams,
-  applyKimiEnvThinkingEffort,
   applyKimiEnvThinkingKeep,
+  resolveKimiEnvThinkingEffort,
 } from '#/config/kimi-env-params';
 
 import type { Agent } from '..';
@@ -31,6 +31,7 @@ export class ConfigState {
   private _cwd: string;
   private _modelAlias: string | undefined;
   private _profileName: string | undefined;
+  private _unforcedThinkingEffort: ThinkingEffort = 'off';
   private _thinkingEffort: ThinkingEffort = 'off';
   private _systemPrompt: string = '';
 
@@ -46,21 +47,27 @@ export class ConfigState {
     const targetProvider = this.tryResolvedProviderConfigFor(targetAlias);
     const targetModel = this.modelForThinking(targetAlias, targetProvider);
     const kimiProvider = targetProvider?.type === 'kimi';
+    let unforcedThinkingEffort: ThinkingEffort | undefined;
     let thinkingEffort: ThinkingEffort | undefined;
     if (changed.thinkingEffort !== undefined) {
-      thinkingEffort = resolveThinkingEffort(
+      unforcedThinkingEffort = resolveThinkingEffort(
         changed.thinkingEffort,
         this.agent.kimiConfig?.thinking,
         targetModel,
         kimiProvider,
       );
     } else if (changed.modelAlias !== undefined) {
-      thinkingEffort = resolveThinkingEffort(
-        this._modelAlias === undefined ? undefined : this._thinkingEffort,
+      unforcedThinkingEffort = resolveThinkingEffort(
+        this._modelAlias === undefined ? undefined : this._unforcedThinkingEffort,
         this.agent.kimiConfig?.thinking,
         targetModel,
         kimiProvider,
       );
+    }
+    if (unforcedThinkingEffort !== undefined) {
+      thinkingEffort =
+        resolveKimiEnvThinkingEffort(unforcedThinkingEffort, kimiProvider) ??
+        unforcedThinkingEffort;
     }
     const effectiveChanged =
       thinkingEffort === undefined ? changed : { ...changed, thinkingEffort };
@@ -83,7 +90,10 @@ export class ConfigState {
     if (changed.profileName) {
       this._profileName = changed.profileName;
     }
-    if (thinkingEffort !== undefined) this._thinkingEffort = thinkingEffort;
+    if (unforcedThinkingEffort !== undefined && thinkingEffort !== undefined) {
+      this._unforcedThinkingEffort = unforcedThinkingEffort;
+      this._thinkingEffort = thinkingEffort;
+    }
     if (changed.systemPrompt !== undefined) {
       this._systemPrompt = changed.systemPrompt;
     }
@@ -145,16 +155,16 @@ export class ConfigState {
     // from config.provider — the main loop AND full-history compaction — carries it:
     //   - withThinking: preserve thinking during compaction (#464)
     //   - sampling params: KIMI_MODEL_TEMPERATURE / KIMI_MODEL_TOP_P
-    //   - thinking.effort: KIMI_MODEL_THINKING_EFFORT (forces an effort, only while thinking is on)
+    //   - thinking.effort: the resolved ConfigState value, including the
+    //     KIMI_MODEL_THINKING_EFFORT override while thinking is on
     //   - thinking.keep: env KIMI_MODEL_THINKING_KEEP > config thinking.keep > default "all"
     //     (only while thinking is on). Drives Kimi's `thinking.keep` and, on the
     //     Anthropic path, a `context_management` `clear_thinking_20251015` edit.
     const provider = createProvider(this.providerConfig).withThinking(this.thinkingEffort);
     const withSampling = applyKimiEnvSamplingParams(provider);
-    const withEffort = applyKimiEnvThinkingEffort(withSampling, this.thinkingEffort);
     const configKeep = this.agent.kimiConfig?.thinking?.keep;
     const withKimiKeep = applyKimiEnvThinkingKeep(
-      withEffort,
+      withSampling,
       this.thinkingEffort,
       undefined,
       configKeep,
