@@ -5,7 +5,8 @@
  * registers and drives tasks to completion, retains a bounded output ring,
  * persists task state and output through task persistence rooted at the
  * agent's own scope (v1's per-agent `<sessionDir>/agents/<id>/tasks/`
- * layout), reads
+ * layout), lets only the main agent read through the previous v2
+ * session-level task root without writing back to it, reads
  * limits through `config`, records lifecycle and broadcasts through `wire`
  * (`task.started` / `task.terminated` Ops into `TaskModel`, plus the matching
  * signals), restores ghosts through a single `wire.onRestored` handler (wire
@@ -242,11 +243,16 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentLoopService private readonly loop: IAgentLoopService,
   ) {
     super();
+    const fallbackRoot =
+      scopeContext.agentId === 'main'
+        ? { dir: session.sessionDir, scope: session.scope() }
+        : undefined;
     this.persistence = new AgentTaskPersistence(
       join(session.sessionDir, 'agents', scopeContext.agentId),
       scopeContext.scope(),
       atomicDocs,
       byteStore,
+      fallbackRoot,
     );
     this._register(
       this.wire.onRestored(async () => {
@@ -527,18 +533,11 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
     const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
     const persistence = this.persistence;
-    if (await persistence.taskOutputExists(taskId)) {
-      const outputSizeBytes = await persistence.taskOutputSizeBytes(taskId);
-      const previewOffset = Math.max(0, outputSizeBytes - previewLimit);
-      const previewBytes = outputSizeBytes - previewOffset;
-      const preview = await persistence.readTaskOutputBytes(taskId, previewOffset, previewBytes);
+    const persisted = await persistence.readTaskOutputSnapshot(taskId, previewLimit);
+    if (persisted !== undefined) {
       return {
-        outputPath: persistence.taskOutputFile(taskId),
-        outputSizeBytes,
-        previewBytes,
-        truncated: previewOffset > 0,
+        ...persisted,
         fullOutputAvailable: true,
-        preview,
       };
     }
 

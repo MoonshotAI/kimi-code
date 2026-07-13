@@ -33,7 +33,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -60,7 +60,9 @@ function fakeProcessTask(): AgentTask {
   };
 }
 
-function stubWireService(): IWireService {
+type RestoreHandler = Parameters<IWireService['onRestored']>[0];
+
+function stubWireService(captureRestored?: (handler: RestoreHandler) => void): IWireService {
   return {
     _serviceBrand: undefined,
     dispatch: () => {},
@@ -68,10 +70,13 @@ function stubWireService(): IWireService {
     signal: () => {},
     flush: async () => {},
     attach: () => toDisposable(() => {}),
-    getModel: () => ({}),
+    getModel: () => new Map(),
     subscribe: () => toDisposable(() => {}),
     onEmission: () => toDisposable(() => {}),
-    onRestored: () => toDisposable(() => {}),
+    onRestored: (handler: RestoreHandler) => {
+      captureRestored?.(handler);
+      return toDisposable(() => {});
+    },
   } as unknown as IWireService;
 }
 
@@ -115,12 +120,16 @@ describe('AgentTaskService', () => {
     ix.stub(IConfigService, {
       get: (() => undefined) as IConfigService['get'],
     });
-    ix.stub(ISessionContext, {
-      sessionId: 'test-session',
-      workspaceId: 'test-ws',
-      sessionDir: '/tmp/test-session',
-      metaScope: 'sessions/test-ws/test-session/session-meta',
-    });
+    ix.stub(
+      ISessionContext,
+      makeSessionContext({
+        sessionId: 'test-session',
+        workspaceId: 'test-ws',
+        sessionDir: '/tmp/test-session',
+        sessionScope: 'sessions/test-ws/test-session',
+        cwd: '/tmp/test-session',
+      }),
+    );
     ix.stub(IAgentScopeContext, 
       makeAgentScopeContext({
         agentId: 'main',
@@ -311,10 +320,11 @@ describe('AgentTaskService', () => {
     agentId: string,
     docs: IAtomicDocumentStore,
     bytes: IFileSystemStorageService,
+    captureRestored?: (handler: RestoreHandler) => void,
   ): TestInstantiationService {
     const ix = disposables.add(new TestInstantiationService());
     ix.stub(IAgentWireRecordService, stubWireRecord());
-    ix.stub(IAgentWireService, stubWireService());
+    ix.stub(IAgentWireService, stubWireService(captureRestored));
     ix.stub(IEventBus, disposables.add(new EventBusService()));
     ix.stub(IAgentContextInjectorService, {
       register: () => toDisposable(() => {}),
@@ -333,12 +343,16 @@ describe('AgentTaskService', () => {
     ix.stub(IConfigService, {
       get: (() => undefined) as IConfigService['get'],
     });
-    ix.stub(ISessionContext, {
-      sessionId: 'test-session',
-      workspaceId: 'test-ws',
-      sessionDir: '/tmp/test-session',
-      metaScope: 'sessions/test-ws/test-session/session-meta',
-    });
+    ix.stub(
+      ISessionContext,
+      makeSessionContext({
+        sessionId: 'test-session',
+        workspaceId: 'test-ws',
+        sessionDir: '/tmp/test-session',
+        sessionScope: 'sessions/test-ws/test-session',
+        cwd: '/tmp/test-session',
+      }),
+    );
     ix.stub(
       IAgentScopeContext,
       makeAgentScopeContext({
@@ -390,6 +404,75 @@ describe('AgentTaskService', () => {
     const subLost = await sub.reconcile();
     expect(subLost.map((info) => info.taskId)).toEqual(['bash-abcdef01']);
     expect(subLost[0]?.status).toBe('lost');
+  });
+
+  it('main restore claims a previous v2 session task with its legacy output path', async () => {
+    const docs = mapBackedDocs();
+    const bytes = new InMemoryStorageService();
+    const sessionScope = 'sessions/test-ws/test-session';
+    const taskId = 'bash-legacy01';
+    await docs.set(`${sessionScope}/tasks`, `${taskId}.json`, {
+      taskId,
+      kind: 'process',
+      command: 'echo legacy',
+      description: 'legacy task',
+      pid: 4242,
+      startedAt: 1,
+      endedAt: 2,
+      exitCode: 0,
+      status: 'completed',
+      detached: true,
+    });
+    await bytes.write(
+      `${sessionScope}/tasks/${taskId}`,
+      'output.log',
+      new TextEncoder().encode('legacy output'),
+    );
+    let restore!: RestoreHandler;
+    const main = buildAgentIx('main', docs, bytes, (handler) => {
+      restore = handler;
+    }).get(IAgentTaskService);
+
+    await restore();
+
+    expect(main.list(false)).toEqual([
+      expect.objectContaining({ taskId, description: 'legacy task', status: 'completed' }),
+    ]);
+    expect(await main.getOutputSnapshot(taskId, 100)).toEqual({
+      outputPath: `/tmp/test-session/tasks/${taskId}/output.log`,
+      outputSizeBytes: 13,
+      previewBytes: 13,
+      truncated: false,
+      fullOutputAvailable: true,
+      preview: 'legacy output',
+    });
+  });
+
+  it('subagent restore does not claim previous v2 session tasks', async () => {
+    const docs = mapBackedDocs();
+    const bytes = new InMemoryStorageService();
+    const sessionScope = 'sessions/test-ws/test-session';
+    const taskId = 'bash-legacy02';
+    await docs.set(`${sessionScope}/tasks`, `${taskId}.json`, {
+      taskId,
+      kind: 'process',
+      command: 'echo legacy',
+      description: 'legacy task',
+      pid: 4242,
+      startedAt: 1,
+      endedAt: 2,
+      exitCode: 0,
+      status: 'completed',
+      detached: true,
+    });
+    let restore!: RestoreHandler;
+    const subagent = buildAgentIx('agent-1', docs, bytes, (handler) => {
+      restore = handler;
+    }).get(IAgentTaskService);
+
+    await restore();
+
+    expect(subagent.list(false)).toEqual([]);
   });
 
   function compactionSummary(text: string): ContextMessage {
