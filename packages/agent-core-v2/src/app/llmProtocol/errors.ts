@@ -36,12 +36,19 @@ export class APITimeoutError extends ChatProviderError {
 export class APIStatusError extends ChatProviderError {
   readonly statusCode: number;
   readonly requestId: string | null;
+  readonly retryAfterMs: number | null;
 
-  constructor(statusCode: number, message: string, requestId?: string | null) {
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
     super(message);
     this.name = 'APIStatusError';
     this.statusCode = statusCode;
     this.requestId = requestId ?? null;
+    this.retryAfterMs = retryAfterMs ?? null;
   }
 }
 
@@ -50,8 +57,13 @@ export class APIStatusError extends ChatProviderError {
  * context window.
  */
 export class APIContextOverflowError extends APIStatusError {
-  constructor(statusCode: number, message: string, requestId?: string | null) {
-    super(statusCode, message, requestId);
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
+    super(statusCode, message, requestId, retryAfterMs);
     this.name = 'APIContextOverflowError';
   }
 }
@@ -63,8 +75,13 @@ export class APIContextOverflowError extends APIStatusError {
  * size rejection is not — it needs media to be dropped or shrunk.
  */
 export class APIRequestTooLargeError extends APIStatusError {
-  constructor(statusCode: number, message: string, requestId?: string | null) {
-    super(statusCode, message, requestId);
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
+    super(statusCode, message, requestId, retryAfterMs);
     this.name = 'APIRequestTooLargeError';
   }
 }
@@ -74,8 +91,8 @@ export class APIRequestTooLargeError extends APIStatusError {
  * request.
  */
 export class APIProviderRateLimitError extends APIStatusError {
-  constructor(message: string, requestId?: string | null) {
-    super(429, message, requestId);
+  constructor(message: string, requestId?: string | null, retryAfterMs?: number | null) {
+    super(429, message, requestId, retryAfterMs);
     this.name = 'APIProviderRateLimitError';
   }
 }
@@ -87,8 +104,13 @@ export class APIProviderRateLimitError extends APIStatusError {
  * constraint, the provider is simply saturated — retry with backoff.
  */
 export class APIProviderOverloadedError extends APIStatusError {
-  constructor(statusCode: number, message: string, requestId?: string | null) {
-    super(statusCode, message, requestId);
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
+    super(statusCode, message, requestId, retryAfterMs);
     this.name = 'APIProviderOverloadedError';
   }
 }
@@ -124,9 +146,10 @@ export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIProviderOverloadedError) {
     return true;
   }
-  return (
-    error instanceof APIStatusError && [429, 500, 502, 503, 504, 529].includes(error.statusCode)
-  );
+  if (error instanceof APIStatusError) {
+    return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
+  }
+  return error instanceof ChatProviderError;
 }
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
@@ -200,22 +223,36 @@ export function normalizeAPIStatusError(
   statusCode: number,
   message: string,
   requestId?: string | null,
+  retryAfterMs?: number | null,
 ): APIStatusError {
   if (statusCode === 429) {
-    return new APIProviderRateLimitError(message, requestId);
+    return new APIProviderRateLimitError(message, requestId, retryAfterMs);
   }
   // Context overflow first: Vertex returns prompt-too-long as a 413, and a
   // token overflow must keep routing to compaction even on that status.
   if (isContextOverflowStatusError(statusCode, message)) {
-    return new APIContextOverflowError(statusCode, message, requestId);
+    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs);
   }
   if (isRequestTooLargeStatusError(statusCode, message)) {
-    return new APIRequestTooLargeError(statusCode, message, requestId);
+    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs);
   }
   if (isProviderOverloadStatusError(statusCode, message)) {
-    return new APIProviderOverloadedError(statusCode, message, requestId);
+    return new APIProviderOverloadedError(statusCode, message, requestId, retryAfterMs);
   }
-  return new APIStatusError(statusCode, message, requestId);
+  return new APIStatusError(statusCode, message, requestId, retryAfterMs);
+}
+
+export function parseRetryAfterMs(headers: unknown): number | null {
+  const raw =
+    headers !== null &&
+    typeof headers === 'object' &&
+    typeof (headers as { get?: unknown }).get === 'function'
+      ? (headers as { get(name: string): string | null }).get('retry-after')
+      : null;
+  if (raw === null || raw === undefined) return null;
+  const seconds = Number.parseInt(raw, 10);
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  return seconds * 1000;
 }
 
 export function isContextOverflowStatusError(statusCode: number, message: string): boolean {

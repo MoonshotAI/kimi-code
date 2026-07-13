@@ -57,6 +57,7 @@ const MAIN_AGENT_TRANSCRIPT_FRAMES = new Set<string>([
   'tool.result',
   'agent.status.updated',
   'prompt.completed',
+  'error',
 ]);
 
 // ---------------------------------------------------------------------------

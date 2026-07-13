@@ -1,3 +1,8 @@
+/**
+ * Web daemon projector contract for transcript isolation, task progress, and
+ * client-visible error projection.
+ */
+
 import { describe, expect, it } from 'vitest';
 import { classifyFrame, createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
 
@@ -58,6 +63,41 @@ describe('subagent streaming text', () => {
     const projector = createAgentProjector();
     const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: '' }, 's1');
     expect(events).toEqual([]);
+  });
+});
+
+describe('agent error projection', () => {
+  it('drops a subagent error instead of surfacing it as a session warning', () => {
+    const projector = createAgentProjector();
+
+    expect(
+      projector.project(
+        'error',
+        { agentId: 'sub-1', code: 'provider.rate_limit', message: 'Rate limited' },
+        's1',
+      ),
+    ).toEqual([]);
+  });
+
+  it('keeps a main-agent error visible to the session', () => {
+    const projector = createAgentProjector();
+
+    expect(
+      projector.project(
+        'error',
+        { agentId: 'main', code: 'provider.rate_limit', message: 'Rate limited' },
+        's1',
+      ),
+    ).toEqual([
+      {
+        type: 'unknown',
+        raw: {
+          _agentError: true,
+          code: 'provider.rate_limit',
+          message: 'Rate limited',
+        },
+      },
+    ]);
   });
 });
 
