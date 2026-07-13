@@ -45,6 +45,12 @@ export interface IAcpConnection {
   get(): IAcpFsClient;
   /** Whether a client connection has been bound. */
   readonly bound: boolean;
+  /** Bind the client's FS capabilities (from the `initialize` handshake). */
+  bindFsCapabilities(fs: { readTextFile?: boolean; writeTextFile?: boolean } | undefined): void;
+  /** Whether the client supports `fs.readTextFile`. */
+  readonly fsReadTextFile: boolean;
+  /** Whether the client supports `fs.writeTextFile`. */
+  readonly fsWriteTextFile: boolean;
 }
 
 export const IAcpConnection: ServiceIdentifier<IAcpConnection> =
@@ -54,6 +60,8 @@ export class AcpConnection implements IAcpConnection {
   declare readonly _serviceBrand: undefined;
 
   private client: IAcpFsClient | undefined;
+  private _fsReadTextFile = false;
+  private _fsWriteTextFile = false;
 
   bind(client: IAcpFsClient): void {
     this.client = client;
@@ -70,6 +78,19 @@ export class AcpConnection implements IAcpConnection {
 
   get bound(): boolean {
     return this.client !== undefined;
+  }
+
+  bindFsCapabilities(fs: { readTextFile?: boolean; writeTextFile?: boolean } | undefined): void {
+    this._fsReadTextFile = fs?.readTextFile === true;
+    this._fsWriteTextFile = fs?.writeTextFile === true;
+  }
+
+  get fsReadTextFile(): boolean {
+    return this._fsReadTextFile;
+  }
+
+  get fsWriteTextFile(): boolean {
+    return this._fsWriteTextFile;
   }
 }
 

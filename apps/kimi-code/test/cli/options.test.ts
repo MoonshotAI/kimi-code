@@ -462,6 +462,7 @@ describe('CLI options parsing', () => {
         'export',
         'provider',
         'acp',
+        'acp-v2',
         'server',
         'web',
         'login',
