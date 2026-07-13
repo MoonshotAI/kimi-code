@@ -51,6 +51,7 @@ import type { Protocol } from '#/app/protocol/protocol';
 import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentWireService } from '#/wire/tokens';
+import type { PayloadOf } from '#/wire/types';
 import type { IWireService } from '#/wire/wireService';
 import { THINKING_SECTION, type ThinkingConfig } from '#/agent/profile/configSection';
 import { resolveThinkingKeep } from '#/agent/profile/thinking';
@@ -68,7 +69,6 @@ import {
   LlmRequestTraceModel,
   llmRequest,
   llmToolsSnapshot,
-  type LlmRequestPayload,
   type LlmRequestToolSchema,
 } from './llmRequestOps';
 import { isAbortError } from '#/_base/utils/abort';
@@ -394,7 +394,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const models = this.config.get<ModelsSection>(MODELS_SECTION);
     const modelConfig =
       input.modelAlias === undefined ? undefined : models?.[input.modelAlias];
-    const payload: LlmRequestPayload = {
+    const payload: PayloadOf<typeof llmRequest> = {
       kind: requestKindForRecord(fields),
       provider: input.protocol,
       model: input.modelName,
@@ -488,7 +488,7 @@ function toolSignature(tools: readonly Tool[]): readonly LlmRequestToolSchema[] 
   return tools.map(({ name, description, parameters }) => ({ name, description, parameters }));
 }
 
-function requestKindForRecord(fields: LLMRequestLogFields): LlmRequestPayload['kind'] {
+function requestKindForRecord(fields: LLMRequestLogFields): PayloadOf<typeof llmRequest>['kind'] {
   if (fields['kind'] === 'compaction') return 'compaction';
   if (fields['requestKind'] === 'full_compaction') return 'compaction';
   return 'loop';

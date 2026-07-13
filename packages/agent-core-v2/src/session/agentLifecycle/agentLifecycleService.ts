@@ -66,8 +66,9 @@ import {
   AgentWireRecordService,
   WIRE_RECORD_FILENAME,
 } from '#/agent/wireRecord/wireRecordService';
-import { type WireMetadataPayload, wireMetadata } from '#/agent/wireRecord/metadataOps';
+import { wireMetadata } from '#/agent/wireRecord/metadataOps';
 import { IAgentWireService } from '#/wire/tokens';
+import type { PayloadOf } from '#/wire/types';
 import { WireService } from '#/wire/wireServiceImpl';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
@@ -487,7 +488,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 }
 
-function freshMetadataPayload(): WireMetadataPayload {
+function freshMetadataPayload(): PayloadOf<typeof wireMetadata> {
   return {
     protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
     created_at: Date.now(),

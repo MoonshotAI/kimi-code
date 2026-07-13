@@ -436,16 +436,9 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
 function stubAgentWire(flush: () => Promise<void> = async () => {}): IAgentWireRecordService {
   return {
     _serviceBrand: undefined,
-    restoring: null,
-    postRestoring: false,
     getRecords: () => [],
-    register: () => noopDisposable,
     restore: async () => ({}),
     flush,
     close: async () => {},
-    hooks: {
-      onDidRestoreRecord: { run: async () => {} },
-    } as unknown as IAgentWireRecordService['hooks'],
-    onDidFinishResume: noopEvent,
   };
 }

@@ -14,8 +14,9 @@
  * Consumed by the Agent-scope `agentActivityService` and (PR5) the projector.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 
 import type { AgentLane, BackgroundActivityRef, SessionLane } from './activity';
@@ -46,10 +47,17 @@ export const LaneModel = defineModel<LaneModelState>('activityLane', () => ({
   background: [],
 }));
 
-export const setLane = defineOp(LaneModel, 'activity.set_lane', {
+declare module '#/wire/types' {
+  interface TransientOpMap {
+    'activity.set_lane': typeof setLane;
+    'activity.set_session_lane': typeof setSessionLane;
+  }
+}
+
+export const setLane = LaneModel.defineOp('activity.set_lane', {
+  schema: z.object({ next: z.custom<LaneModelState>() }),
   persist: false,
-  apply: (s, p: { next: LaneModelState }): LaneModelState =>
-    laneEqual(s, p.next) ? s : p.next,
+  apply: (s, p) => (laneEqual(s, p.next) ? s : p.next),
 });
 
 export function laneEqual(a: LaneModelState, b: LaneModelState): boolean {
@@ -84,8 +92,8 @@ export const SessionLaneModel = defineModel<SessionLaneModelState>('sessionActiv
   activeLeases: 0,
 }));
 
-export const setSessionLane = defineOp(SessionLaneModel, 'activity.set_session_lane', {
+export const setSessionLane = SessionLaneModel.defineOp('activity.set_session_lane', {
+  schema: z.object({ next: z.custom<SessionLaneModelState>() }),
   persist: false,
-  apply: (s, p: { next: SessionLaneModelState }): SessionLaneModelState =>
-    s.lane === p.next.lane && s.activeLeases === p.next.activeLeases ? s : p.next,
+  apply: (s, p) => (s.lane === p.next.lane && s.activeLeases === p.next.activeLeases ? s : p.next),
 });

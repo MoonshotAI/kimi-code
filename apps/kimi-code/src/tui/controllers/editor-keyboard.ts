@@ -15,7 +15,8 @@ import {
 } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
-import type { PendingExit, QueuedMessage } from '../types';
+import { extractMediaAttachments } from '../utils/image-placeholder';
+import type { PendingExit, QueuedMessage, SteerInputItem } from '../types';
 import type { TUIState } from '../tui-state';
 import type { BtwPanelController } from './btw-panel';
 
@@ -32,7 +33,12 @@ export interface EditorKeyboardHost {
 
   handleUserInput(text: string): void;
   readonly btwPanelController: BtwPanelController;
-  steerMessage(session: Session, input: string[]): void;
+  steerMessage(session: Session, input: readonly SteerInputItem[]): void;
+  validateMediaCapabilities(extraction: {
+    hasMedia: boolean;
+    imageAttachmentIds: readonly number[];
+    videoAttachmentIds: readonly number[];
+  }): boolean;
   recallLastQueued(): QueuedMessage | undefined;
   showError(msg: string): void;
   track(event: string, props?: Record<string, unknown>): void;
@@ -250,22 +256,53 @@ export class EditorKeyboardController {
       // after the current task instead of being injected into the turn as text.
       const queued = host.state.queuedMessages;
       const steerable = queued.filter((m) => m.mode !== 'bash');
-      host.state.queuedMessages = queued.filter((m) => m.mode === 'bash');
 
-      const parts: string[] = [];
+      const items: SteerInputItem[] = [];
       for (const m of steerable) {
         const trimmed = m.text.trim();
-        if (trimmed.length > 0) parts.push(trimmed);
+        if (trimmed.length > 0) {
+          // Queued items carry the parts extracted when they were submitted
+          // (and were already capability-validated then).
+          items.push({ text: trimmed, parts: m.parts, imageAttachmentIds: m.imageAttachmentIds });
+        }
       }
-      if (!editorIsBash && text.length > 0) parts.push(text);
+      let editorExtraction: ReturnType<typeof extractMediaAttachments> | undefined;
+      if (!editorIsBash && text.length > 0) {
+        try {
+          editorExtraction = extractMediaAttachments(text, this.imageStore);
+        } catch (error) {
+          // Cache copy failed (e.g. the pasted video's source vanished) —
+          // leave the queue and the editor draft untouched.
+          host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+          return;
+        }
+        items.push({
+          text,
+          parts: editorExtraction.hasMedia ? editorExtraction.parts : undefined,
+          imageAttachmentIds:
+            editorExtraction.imageAttachmentIds.length > 0
+              ? editorExtraction.imageAttachmentIds
+              : undefined,
+        });
+      }
 
-      if (parts.length > 0) {
+      if (items.length > 0) {
+        // The editor draft is fresh input: gate it on the model's media
+        // capabilities before splicing the queue, so a rejection leaves the
+        // queue and the draft untouched.
+        if (
+          editorExtraction !== undefined &&
+          !host.validateMediaCapabilities(editorExtraction)
+        ) {
+          return;
+        }
+        host.state.queuedMessages = queued.filter((m) => m.mode === 'bash');
         if (!editorIsBash) editor.setText('');
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
           host.showError(LLM_NOT_SET_MESSAGE);
         } else {
-          host.steerMessage(session, parts);
+          host.steerMessage(session, items);
         }
       }
       host.updateQueueDisplay();

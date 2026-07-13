@@ -19,8 +19,9 @@
  * Agent-scope `taskService`.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 import type { AgentTaskInfo } from './types';
 
@@ -35,13 +36,19 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-export interface TaskInfoPayload {
-  readonly info: AgentTaskInfo;
+const taskInfoSchema = z.object({ info: z.custom<AgentTaskInfo>() });
+
+declare module '#/wire/types' {
+  interface TransientOpMap {
+    'task.started': typeof taskStarted;
+    'task.terminated': typeof taskTerminated;
+  }
 }
 
-export const taskStarted = defineOp(TaskModel, 'task.started', {
+export const taskStarted = TaskModel.defineOp('task.started', {
+  schema: taskInfoSchema,
   persist: false,
-  apply: (s, p: TaskInfoPayload): TaskModelState => {
+  apply: (s, p) => {
     const next = new Map(s);
     next.set(p.info.taskId, p.info);
     return next;
@@ -49,9 +56,10 @@ export const taskStarted = defineOp(TaskModel, 'task.started', {
   toEvent: (p) => ({ type: 'task.started' as const, info: p.info }),
 });
 
-export const taskTerminated = defineOp(TaskModel, 'task.terminated', {
+export const taskTerminated = TaskModel.defineOp('task.terminated', {
+  schema: taskInfoSchema,
   persist: false,
-  apply: (s, p: TaskInfoPayload): TaskModelState => {
+  apply: (s, p) => {
     const next = new Map(s);
     next.set(p.info.taskId, p.info);
     return next;

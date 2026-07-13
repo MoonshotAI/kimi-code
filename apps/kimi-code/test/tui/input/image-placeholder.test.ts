@@ -6,7 +6,10 @@ import { describe, it, expect } from 'vitest';
 
 import { KIMI_CODE_HOME_ENV } from '#/constant/app';
 import { ImageAttachmentStore } from '#/tui/utils/image-attachment-store';
-import { extractMediaAttachments } from '#/tui/utils/image-placeholder';
+import {
+  extractMediaAttachments,
+  rewriteMediaPlaceholders,
+} from '#/tui/utils/image-placeholder';
 import { getCacheDir } from '#/utils/paths';
 
 function storeWith(
@@ -219,5 +222,150 @@ describe('extractMediaAttachments', () => {
     const r = extractMediaAttachments(placeholder, store);
     expect(r.parts).toHaveLength(1);
     expect(r.parts[0]?.type).toBe('image_url');
+  });
+});
+
+describe('rewriteMediaPlaceholders', () => {
+  it('returns plain text untouched with hasMedia=false', () => {
+    const store = new ImageAttachmentStore();
+    const r = rewriteMediaPlaceholders('just some args', store);
+    expect(r.text).toBe('just some args');
+    expect(r.hasMedia).toBe(false);
+    expect(r.imageAttachmentIds).toEqual([]);
+    expect(r.videoAttachmentIds).toEqual([]);
+  });
+
+  it('rewrites an image placeholder into a cache-path image tag', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+      const { store, placeholder } = storeWith(bytes);
+      const r = rewriteMediaPlaceholders(`look at ${placeholder} please`, store);
+      expect(r.hasMedia).toBe(true);
+      expect(r.imageAttachmentIds).toEqual([1]);
+      const m = /^look at <image path="([^"]+)"><\/image> please$/.exec(r.text);
+      if (!m) throw new Error(`no image tag found in: ${r.text}`);
+      expect(m[1]!.startsWith(getCacheDir())).toBe(true);
+      expect(m[1]!.endsWith('.png')).toBe(true);
+      expect(new Uint8Array(readFileSync(m[1]!))).toEqual(bytes);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('rewrites a video placeholder into a cache-path video tag', () => {
+    const { cleanup } = setupTempCache();
+    const srcDir = makeTempDir();
+    try {
+      const srcVideo = join(srcDir, 'clip.mov');
+      writeFileSync(srcVideo, 'video-bytes');
+      const store = new ImageAttachmentStore();
+      const att = store.addVideo('video/quicktime', srcVideo);
+      const r = rewriteMediaPlaceholders(att.placeholder, store);
+      expect(r.hasMedia).toBe(true);
+      expect(r.videoAttachmentIds).toEqual([1]);
+      const m = /<video path="([^"]+)"><\/video>/.exec(r.text);
+      if (!m) throw new Error(`no video tag found in: ${r.text}`);
+      expect(m[1]!.startsWith(getCacheDir())).toBe(true);
+      expect(readFileSync(m[1]!, 'utf8')).toBe('video-bytes');
+    } finally {
+      cleanup();
+      rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves unresolved (typed by hand) placeholders as literal text', () => {
+    const store = new ImageAttachmentStore();
+    const text = 'try [image #999 (1×1)] and [video #42 clip.mov] now';
+    const r = rewriteMediaPlaceholders(text, store);
+    expect(r.text).toBe(text);
+    expect(r.hasMedia).toBe(false);
+  });
+
+  it('preserves surrounding text verbatim across multiple attachments', () => {
+    const { cleanup } = setupTempCache();
+    try {
+      const store = new ImageAttachmentStore();
+      const a = store.addImage(new Uint8Array([1]), 'image/png', 10, 10);
+      const b = store.addImage(new Uint8Array([2]), 'image/jpeg', 20, 20);
+      const r = rewriteMediaPlaceholders(
+        `first ${a.placeholder}   then ${b.placeholder} end`,
+        store,
+      );
+      expect(r.imageAttachmentIds).toEqual([1, 2]);
+      const tags = [...r.text.matchAll(/<image path="([^"]+)"><\/image>/g)];
+      expect(tags).toHaveLength(2);
+      expect(r.text.startsWith('first <image path=')).toBe(true);
+      expect(r.text).toContain('>   then <image path=');
+      expect(r.text.endsWith('> end')).toBe(true);
+      expect(new Uint8Array(readFileSync(tags[0]![1]!))).toEqual(new Uint8Array([1]));
+      expect(new Uint8Array(readFileSync(tags[1]![1]!))).toEqual(new Uint8Array([2]));
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rewrites an image placeholder into an escape-proof plain reference in 'plain' style", () => {
+    const { cleanup } = setupTempCache();
+    try {
+      const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+      const { store, placeholder } = storeWith(bytes);
+      const r = rewriteMediaPlaceholders(`look at ${placeholder}`, store, 'plain');
+      expect(r.hasMedia).toBe(true);
+      expect(r.imageAttachmentIds).toEqual([1]);
+      // Skill args pass through XML escaping, so the reference must not
+      // contain any tag/attribute boundary characters.
+      expect(r.text).not.toMatch(/[<>&"]/);
+      const m =
+        /^look at Attached image file: (\S+) \(open it with ReadMediaFile\)$/.exec(r.text);
+      if (!m) throw new Error(`no plain reference found in: ${r.text}`);
+      expect(m[1]!.startsWith(getCacheDir())).toBe(true);
+      expect(new Uint8Array(readFileSync(m[1]!))).toEqual(bytes);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("rewrites a video placeholder into an escape-proof plain reference in 'plain' style", () => {
+    const { cleanup } = setupTempCache();
+    const srcDir = makeTempDir();
+    try {
+      const srcVideo = join(srcDir, 'clip.mov');
+      writeFileSync(srcVideo, 'video-bytes');
+      const store = new ImageAttachmentStore();
+      const att = store.addVideo('video/quicktime', srcVideo);
+      const r = rewriteMediaPlaceholders(att.placeholder, store, 'plain');
+      expect(r.hasMedia).toBe(true);
+      expect(r.videoAttachmentIds).toEqual([1]);
+      expect(r.text).not.toMatch(/[<>&"]/);
+      const m = /^Attached video file: (\S+) \(open it with ReadMediaFile\)$/.exec(r.text);
+      if (!m) throw new Error(`no plain reference found in: ${r.text}`);
+      expect(readFileSync(m[1]!, 'utf8')).toBe('video-bytes');
+    } finally {
+      cleanup();
+      rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
+
+  it("sanitizes XML boundary chars out of plain-style video cache names", () => {
+    const { cleanup } = setupTempCache();
+    const srcDir = makeTempDir();
+    try {
+      // The video label keeps the original filename, and sanitizeVideoLabel
+      // allows `<>&"`; skill args are XML-escaped, so the plain reference
+      // would point at a path that no longer matches the file on disk.
+      const srcVideo = join(srcDir, 'clip<1>&.mov');
+      writeFileSync(srcVideo, 'video-bytes');
+      const store = new ImageAttachmentStore();
+      const att = store.addVideo('video/quicktime', srcVideo);
+      const r = rewriteMediaPlaceholders(att.placeholder, store, 'plain');
+      expect(r.text).not.toMatch(/[<>&"]/);
+      const m = /^Attached video file: (\S+) \(open it with ReadMediaFile\)$/.exec(r.text);
+      if (!m) throw new Error(`no plain reference found in: ${r.text}`);
+      expect(readFileSync(m[1]!, 'utf8')).toBe('video-bytes');
+    } finally {
+      cleanup();
+      rmSync(srcDir, { recursive: true, force: true });
+    }
   });
 });

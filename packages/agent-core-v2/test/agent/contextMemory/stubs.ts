@@ -7,10 +7,7 @@
  * `../contextMemory/stubs`).
  */
 
-import { toDisposable } from '#/_base/di/lifecycle';
 import type { ServiceRegistration } from '#/_base/di/test';
-import { Event } from '#/_base/event';
-import { createHooks } from '#/hooks';
 import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
 import {
   IAgentContextMemoryService,
@@ -24,20 +21,10 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 
-/**
- * A no-op `IAgentWireRecordService`. `register` returns a disposable so services that
- * `_register(wireRecord.register(...))` in their constructor can be disposed
- * cleanly.
- */
+/** A no-op `IAgentWireRecordService`. */
 export function stubWireRecord(): IAgentWireRecordService {
-  const hooks = createHooks(['onDidRestoreRecord']) as IAgentWireRecordService['hooks'];
   return {
     _serviceBrand: undefined,
-    restoring: null,
-    postRestoring: false,
-    hooks,
-    onDidFinishResume: Event.None as Event<void>,
-    register: () => toDisposable(() => {}),
     restore: () => Promise.resolve({}),
     flush: () => Promise.resolve(),
     close: () => Promise.resolve(),

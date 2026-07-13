@@ -5,8 +5,10 @@
  * dehydrate large inline media before persistence and rehydrate blob references
  * in its state after replay.
  *
- * A `ModelDef` is a stateless descriptor: it names a model and manufactures its
- * initial state via `initial`. It never holds state itself — per-scope state
+ * A `ModelDef` is a stateless descriptor: it names a model, manufactures its
+ * initial state via `initial`, and declares the model's Ops through
+ * `defineOp` (the model-bound form of the primitive in `op.ts`). It never
+ * holds state itself — per-scope state
  * instances are owned by `IWireService`, and domain services read them through
  * `wire.getModel(model)`. The optional `blobs` codec declares both directions
  * of the blob offload pipeline:
@@ -38,7 +40,9 @@
  * applied by `WireService` after every `apply`. Scope-agnostic.
  */
 
-import type { PersistedRecord } from './wireService';
+import { bindDefineOp, type DefineOpFn } from '#/wire/op';
+import type { ModelReducers } from '#/wire/types';
+import type { PersistedRecord } from '#/wire/wireService';
 
 export type PartsTransformer = (parts: readonly unknown[]) => Promise<readonly unknown[]>;
 
@@ -51,6 +55,11 @@ export interface ModelDef<S> {
   readonly name: string;
   readonly initial: () => S;
   readonly blobs?: ModelBlobCodec<S>;
+  /**
+   * Declare an Op on this model — `defineOp(model, ...)` with the model
+   * bound. Preferred call style: `MyModel.defineOp('my.op', { apply })`.
+   */
+  readonly defineOp: DefineOpFn<S>;
 }
 
 export interface ModelCrossReducerEntry {
@@ -67,13 +76,18 @@ export function defineModel<S>(
   initial: () => S,
   opts?: {
     blobs?: ModelBlobCodec<S>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    reducers?: Record<string, (state: S, payload: any) => S>;
+    reducers?: ModelReducers<S>;
   },
 ): ModelDef<S> {
-  const def: ModelDef<S> = { name, initial, blobs: opts?.blobs };
+  const def: ModelDef<S> = {
+    name,
+    initial,
+    blobs: opts?.blobs,
+    defineOp: bindDefineOp(() => def),
+  };
   if (opts?.reducers !== undefined) {
     for (const [opType, reducer] of Object.entries(opts.reducers)) {
+      if (reducer === undefined) continue;
       let list = MODEL_CROSS_REDUCERS.get(opType);
       if (list === undefined) {
         list = [];
@@ -88,20 +102,18 @@ export function defineModel<S>(
 export interface DerivedModelDef<S> {
   readonly name: string;
   readonly initial: () => S;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly reducers: Readonly<Record<string, (state: S, payload: any) => S>>;
+  readonly reducers: Readonly<ModelReducers<S>>;
   readonly blobs?: ModelBlobCodec<S>;
 }
 
 export function defineDerivedModel<S>(
   name: string,
   initial: () => S,
-  reducers: Record<string, (state: S, payload: any) => S>,
+  reducers: ModelReducers<S>,
   opts?: { blobs?: ModelBlobCodec<S> },
 ): DerivedModelDef<S> {
   return { name, initial, reducers, blobs: opts?.blobs };
 }
-
 
 export type DeepReadonly<T> = T extends (...args: infer A) => infer R
   ? (...args: A) => R

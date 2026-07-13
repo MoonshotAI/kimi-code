@@ -5,10 +5,11 @@
  * here — it exists purely to prove the scanner flags a planted duplicate.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 const FixtureModel = defineModel('fixture', () => ({}));
 
-defineOp(FixtureModel, 'fixture.planted', { apply: (s) => s });
-defineOp(FixtureModel, 'fixture.planted', { apply: (s) => s });
+FixtureModel.defineOp('fixture.planted', { schema: z.object({}), apply: (s) => s });
+FixtureModel.defineOp('fixture.planted', { schema: z.object({}), apply: (s) => s });

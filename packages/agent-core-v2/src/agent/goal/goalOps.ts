@@ -12,15 +12,17 @@
  * when leaving `active` and carried in the `goal.update` payload; and
  * `wallClockResumedAt` is a live-only service field (never persisted, reset on
  * replay). Each `apply` returns the same reference when nothing changes so the
- * wire's reference-equality gate stays quiet. The `goal.updated` signal is
- * emitted live through `wire.signal` (declared here via interface-merge);
- * `wire.replay` rebuilds the Model silently and the service's `wire.onRestored`
+ * wire's reference-equality gate stays quiet. The `goal.updated` fact is
+ * published live to `IEventBus` by the service (declared here via
+ * interface-merge); `wire.replay` rebuilds the Model silently and the
+ * service's `wire.onRestored`
  * forces a replayed `active` goal back to `paused`. Consumed by the Agent-scope
  * `goalService`.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 import type {
   GoalActor,
@@ -55,14 +57,22 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-export interface GoalCreatePayload {
-  readonly goalId: string;
-  readonly objective: string;
-  readonly completionCriterion?: string;
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'goal.create': typeof createGoal;
+    'goal.update': typeof updateGoal;
+    'goal.clear': typeof clearGoal;
+    forked: typeof forkGoal;
+  }
 }
 
-export const createGoal = defineOp(GoalModel, 'goal.create', {
-  apply: (_s, p: GoalCreatePayload): GoalModelState => ({
+export const createGoal = GoalModel.defineOp('goal.create', {
+  schema: z.object({
+    goalId: z.string(),
+    objective: z.string(),
+    completionCriterion: z.string().optional(),
+  }),
+  apply: (_s, p) => ({
     goalId: p.goalId,
     objective: p.objective,
     completionCriterion: p.completionCriterion,
@@ -74,18 +84,17 @@ export const createGoal = defineOp(GoalModel, 'goal.create', {
   }),
 });
 
-export interface GoalUpdatePayload {
-  readonly status?: GoalStatus;
-  readonly reason?: string;
-  readonly turnsUsed?: number;
-  readonly tokensUsed?: number;
-  readonly wallClockMs?: number;
-  readonly budgetLimits?: GoalBudgetLimits;
-  readonly actor?: GoalActor;
-}
-
-export const updateGoal = defineOp(GoalModel, 'goal.update', {
-  apply: (s, p: GoalUpdatePayload): GoalModelState => {
+export const updateGoal = GoalModel.defineOp('goal.update', {
+  schema: z.object({
+    status: z.custom<GoalStatus>().optional(),
+    reason: z.string().optional(),
+    turnsUsed: z.number().optional(),
+    tokensUsed: z.number().optional(),
+    wallClockMs: z.number().optional(),
+    budgetLimits: z.custom<GoalBudgetLimits>().optional(),
+    actor: z.custom<GoalActor>().optional(),
+  }),
+  apply: (s, p) => {
     if (s === null) return null;
     let next: GoalState | undefined;
     if (p.status !== undefined && p.status !== s.status) {
@@ -111,10 +120,12 @@ export const updateGoal = defineOp(GoalModel, 'goal.update', {
   },
 });
 
-export const clearGoal = defineOp(GoalModel, 'goal.clear', {
-  apply: (): GoalModelState => null,
+export const clearGoal = GoalModel.defineOp('goal.clear', {
+  schema: z.object({}),
+  apply: () => null,
 });
 
-export const forkGoal = defineOp(GoalModel, 'forked', {
-  apply: (): GoalModelState => null,
+export const forkGoal = GoalModel.defineOp('forked', {
+  schema: z.object({}),
+  apply: () => null,
 });

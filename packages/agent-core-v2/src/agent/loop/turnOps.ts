@@ -19,8 +19,9 @@
  * `activity` kernel (which reads the next turn id on admission).
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 import type { ContentPart } from '#/app/llmProtocol/message';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 
@@ -30,48 +31,43 @@ export interface TurnModelState {
 
 export const TurnModel = defineModel<TurnModelState>('turn', () => ({ nextTurnId: 0 }), {
   reducers: {
-    'context.append_loop_event': (s, p: { event?: { turnId?: unknown } }): TurnModelState => {
-      const raw = p?.event?.turnId;
-      if (typeof raw !== 'string' && typeof raw !== 'number') return s;
-      const turnId = Number.parseInt(String(raw), 10);
-      if (Number.isInteger(turnId) && turnId >= s.nextTurnId) {
-        return { nextTurnId: turnId + 1 };
+    'context.append_loop_event': (state, { event }) => {
+      if (event.type === 'tool.result' || event.turnId === undefined) {
+        return state;
       }
-      return s;
+
+      const turnId = Number.parseInt(event.turnId, 10);
+      return Number.isInteger(turnId) && turnId >= state.nextTurnId
+        ? { nextTurnId: turnId + 1 }
+        : state;
     },
   },
 });
 
-export interface PromptTurnPayload {
-  readonly input: readonly ContentPart[];
-  readonly origin: PromptOrigin;
-}
+const turnInputShape = {
+  input: z.custom<readonly ContentPart[]>(),
+  origin: z.custom<PromptOrigin>(),
+};
 
-export const promptTurn = defineOp(TurnModel, 'turn.prompt', {
-  apply: (s, _p: PromptTurnPayload): TurnModelState => ({ nextTurnId: s.nextTurnId + 1 }),
-});
-
-export interface SteerTurnPayload {
-  readonly input: readonly ContentPart[];
-  readonly origin: PromptOrigin;
-}
-
-export const steerTurn = defineOp(TurnModel, 'turn.steer', {
-  apply: (s, _p: SteerTurnPayload): TurnModelState => s,
-});
-
-export interface CancelTurnPayload {
-  readonly turnId?: number;
-}
-
-export const cancelTurn = defineOp(TurnModel, 'turn.cancel', {
-  apply: (s, _p: CancelTurnPayload): TurnModelState => s,
-});
-
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'turn.prompt': PromptTurnPayload;
-    'turn.steer': SteerTurnPayload;
-    'turn.cancel': CancelTurnPayload;
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'turn.prompt': typeof promptTurn;
+    'turn.steer': typeof steerTurn;
+    'turn.cancel': typeof cancelTurn;
   }
 }
+
+export const promptTurn = TurnModel.defineOp('turn.prompt', {
+  schema: z.object(turnInputShape),
+  apply: (s) => ({ nextTurnId: s.nextTurnId + 1 }),
+});
+
+export const steerTurn = TurnModel.defineOp('turn.steer', {
+  schema: z.object(turnInputShape),
+  apply: (s) => s,
+});
+
+export const cancelTurn = TurnModel.defineOp('turn.cancel', {
+  schema: z.object({ turnId: z.number().optional() }),
+  apply: (s) => s,
+});
