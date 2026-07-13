@@ -235,6 +235,13 @@ function formatResponsesErrorEvent(
   return `${codeText}: ${message}${paramText}`;
 }
 
+const EMBEDDED_STATUS_CODE_RE = /\bstatus_code\s*[:=]\s*(\d{3})\b/;
+
+function readEmbeddedStatusCode(message: string): number | undefined {
+  const match = EMBEDDED_STATUS_CODE_RE.exec(message);
+  return match === null ? undefined : Number(match[1]);
+}
+
 function errorFromOpenAIResponsesEvent(
   prefix: string,
   code: string | null,
@@ -246,7 +253,7 @@ function errorFromOpenAIResponsesEvent(
   if (isContextOverflowErrorCode(code)) {
     return new APIContextOverflowError(400, fullMessage);
   }
-  if (code === 'rate_limit_exceeded') {
+  if (code === 'rate_limit_exceeded' || readEmbeddedStatusCode(message) === 429) {
     return new APIProviderRateLimitError(fullMessage);
   }
   return new ChatProviderError(fullMessage);
