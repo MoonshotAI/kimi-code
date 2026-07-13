@@ -39,8 +39,8 @@ File tools handle reading, writing, and searching the local filesystem — the f
 
 - `command` (required): the shell command to execute
 - `cwd`: working directory
-- `timeout`: timeout in milliseconds; foreground default is 60 seconds, maximum is 5 minutes
-- `run_in_background`: whether to run as a background task; background tasks default to a 10-minute timeout
+- `timeout`: timeout in seconds; foreground default is 60 seconds, maximum is 5 minutes
+- `run_in_background`: whether to run as a background task; background tasks default to a 10-minute timeout, maximum is 24 hours
 - `description`: background task description; required when `run_in_background=true`
 - `disable_timeout`: whether to remove the timeout limit for background tasks
 
