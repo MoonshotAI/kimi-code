@@ -7,9 +7,20 @@
  * Run: pnpm --filter @moonshot-ai/kimi-web test -- chat-turn-rendering.test.ts
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
-import { createApp, nextTick } from 'vue';
+import { createApp, h, nextTick, ref, shallowRef, type VNode } from 'vue';
 import { createI18n } from 'vue-i18n';
+import {
+  createInitialState,
+  reduceAppEvent,
+  type KimiClientState,
+} from '../src/api/daemon/eventReducer';
 import type { ChatTurn, ToolCall, TurnBlock } from '../src/types';
+import type {
+  AppApprovalRequest,
+  AppEvent,
+  AppMessageContent,
+  ApprovalResponse,
+} from '../src/api/types';
 import type { WireApprovalResponse, WireMessage } from '../src/api/daemon/wire';
 import { toAppMessage } from '../src/api/daemon/mappers';
 import { messagesToTurns } from '../src/composables/messagesToTurns';
@@ -146,10 +157,10 @@ function replayedPlanTool(approvalResult: WireApprovalResponse, isError: boolean
   return projected;
 }
 
-function mountToolCall(toolCall: ToolCall): { host: HTMLElement; dispose: () => void } {
+function mountTestRoot(render: () => VNode): { host: HTMLElement; dispose: () => void } {
   const host = document.createElement('div');
   document.body.append(host);
-  const app = createApp(ToolCallView, { tool: toolCall });
+  const app = createApp({ setup: () => render });
   app.provide('resolveImage', async (src: string) => src);
   app.use(
     createI18n({
@@ -168,6 +179,124 @@ function mountToolCall(toolCall: ToolCall): { host: HTMLElement; dispose: () => 
   };
   mountCleanups.push(dispose);
   return { host, dispose };
+}
+
+function mountToolCall(toolCall: ToolCall): { host: HTMLElement; dispose: () => void } {
+  return mountTestRoot(() => h(ToolCallView, { tool: toolCall }));
+}
+
+function planToolContent(approval: AppApprovalRequest): AppMessageContent[] {
+  return [
+    {
+      type: 'toolUse',
+      toolCallId: approval.toolCallId,
+      toolName: approval.toolName,
+      input: {},
+      turnId: approval.turnId,
+      toolInputDisplay: approval.display,
+    },
+  ];
+}
+
+function mountReducerPlan(): {
+  host: HTMLElement;
+  resolve: (response: ApprovalResponse) => void;
+  projectToolUse: () => void;
+  updateCurrentMessage: () => void;
+} {
+  const sessionId = 'session-1';
+  const messageId = 'assistant-live';
+  const approval: AppApprovalRequest = {
+    approvalId: 'approval-live',
+    sessionId,
+    turnId: 7,
+    toolCallId: 'plan-call',
+    toolName: 'ExitPlanMode',
+    action: 'Review plan',
+    display: PLAN_DISPLAY,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    expiresAt: '2026-01-01T00:05:00.000Z',
+  };
+  const initialState = createInitialState();
+  const state = shallowRef<KimiClientState>({
+    ...initialState,
+    messagesBySession: {
+      [sessionId]: [
+        {
+          id: messageId,
+          sessionId,
+          role: 'assistant',
+          content: planToolContent(approval),
+          createdAt: '2026-01-01T00:00:01.000Z',
+          promptId: 'prompt-1',
+        },
+      ],
+    },
+    approvalsBySession: { [sessionId]: [approval] },
+    planReviewOverlayBySession: {
+      [sessionId]: {
+        [approval.approvalId]: {
+          approvalId: approval.approvalId,
+          toolCallId: approval.toolCallId,
+          turnId: approval.turnId,
+          toolInputDisplay: approval.display,
+          renderSynthetic: false,
+        },
+      },
+    },
+  });
+  const sessionActive = ref(true);
+  let seq = 1;
+  const mounted = mountTestRoot(() => {
+    const projected = messagesToTurns(
+      state.value.messagesBySession[sessionId] ?? [],
+      [],
+      undefined,
+      sessionActive.value,
+      state.value.planReviewOverlayBySession[sessionId] ?? {},
+    )[0]?.tools?.[0];
+    return projected === undefined ? h('div') : h(ToolCallView, { tool: projected });
+  });
+
+  const applyEvent = (event: AppEvent): void => {
+    state.value = reduceAppEvent(state.value, event, { sessionId, seq: seq++ });
+  };
+
+  return {
+    host: mounted.host,
+    resolve(response) {
+      sessionActive.value = false;
+      applyEvent({
+        type: 'approvalResolved',
+        sessionId,
+        approvalId: approval.approvalId,
+        decision: response.decision,
+        scope: response.scope,
+        feedback: response.feedback,
+        selectedLabel: response.selectedLabel,
+        resolvedAt: '2026-01-01T00:00:02.000Z',
+      });
+    },
+    projectToolUse() {
+      applyEvent({
+        type: 'messageUpdated',
+        sessionId,
+        messageId,
+        content: planToolContent(approval),
+        status: 'pending',
+      });
+    },
+    updateCurrentMessage() {
+      applyEvent({
+        type: 'messageUpdated',
+        sessionId,
+        messageId,
+        content: state.value.messagesBySession[sessionId]?.[0]?.content ?? [],
+        status: 'completed',
+        durationMs: 100,
+      });
+    },
+  };
 }
 
 async function settleAsyncComponents(): Promise<void> {
@@ -378,6 +507,64 @@ describe('ToolCall plan review rendering (real component entry)', () => {
     expect(revision.host.textContent).not.toContain('Selected approach');
   });
 
+  const terminalPlanCases = [
+    {
+      name: 'approved',
+      response: { decision: 'approved', selectedLabel: 'Safe rollout' },
+      label: 'Approved',
+    },
+    {
+      name: 'dismissed',
+      response: { decision: 'cancelled' },
+      label: 'Dismissed',
+    },
+  ] satisfies Array<{ name: string; response: ApprovalResponse; label: string }>;
+
+  it.each(terminalPlanCases)(
+    'collapses the same reducer-backed pending card when it becomes $name',
+    async ({ response, label }) => {
+      const plan = mountReducerPlan();
+      await settleAsyncComponents();
+      expect(await renderedPlanBody(plan.host)).toBeTruthy();
+
+      plan.resolve(response);
+      await settleAsyncComponents();
+      expect(plan.host.textContent).toContain('Interrupted');
+      expect(await renderedPlanBody(plan.host)).toBeTruthy();
+
+      plan.projectToolUse();
+      await settleAsyncComponents();
+
+      expect(plan.host.textContent).toContain(label);
+      expect(plan.host.querySelector('.markdown-renderer-test')).toBeNull();
+      expect(plan.host.querySelector('button[aria-label="Expand plan"]')).not.toBeNull();
+    },
+  );
+
+  it.each(terminalPlanCases)(
+    'keeps a user-expanded $name card open across an unrelated reducer update',
+    async ({ response }) => {
+      const plan = mountReducerPlan();
+      await settleAsyncComponents();
+      plan.resolve(response);
+      plan.projectToolUse();
+      await settleAsyncComponents();
+
+      const expand = plan.host.querySelector<HTMLButtonElement>(
+        'button[aria-label="Expand plan"]',
+      );
+      if (expand === null) throw new Error('expected plan expand control');
+      expand.click();
+      await settleAsyncComponents();
+      expect(await renderedPlanBody(plan.host)).toBeTruthy();
+
+      plan.updateCurrentMessage();
+      await settleAsyncComponents();
+
+      expect(await renderedPlanBody(plan.host)).toBeTruthy();
+    },
+  );
+
   it('reveals approved replay body when the user expands its low-noise history card', async () => {
     const approved = mountToolCall(
       replayedPlanTool(
@@ -400,7 +587,6 @@ describe('ToolCall plan review rendering (real component entry)', () => {
     );
     expect(approved.host.textContent).toContain('Safe rollout');
   });
-
 });
 
 describe('turnFinalText', () => {
