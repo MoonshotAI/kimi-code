@@ -136,16 +136,25 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     const failed = this.exitPlanMode();
     if (failed !== undefined) return failed;
 
-    // Reaching `execute` means no policy issued an interactive review ask —
-    // i.e. auto permission mode approved the plan without user involvement
-    // (mirrored by the `auto_approved` telemetry outcome). In manual / yolo
-    // modes the exit-plan-mode-review-ask policy intercepts the call and
-    // produces its own user-approved result, so this output never runs there.
-    this.agent.telemetry.track('plan_resolved', { outcome: 'auto_approved' });
+    // Reaching `execute` means no interactive review ask intercepted the
+    // call. In auto permission mode the approval is automatic, so the
+    // output must not read as if the user had approved the plan. In
+    // manual / yolo modes the review-ask policy owns the user-facing
+    // result; the only way `execute` still runs there is a configured or
+    // session allow/ask rule — an explicit user decision that keeps the
+    // user-approved wording.
+    if (this.agent.permission.mode === 'auto') {
+      this.agent.telemetry.track('plan_resolved', { outcome: 'auto_approved' });
+      return {
+        isError: false,
+        output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+      };
+    }
 
+    this.agent.telemetry.track('plan_resolved', { outcome: 'approved' });
     return {
       isError: false,
-      output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+      output: `Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
     };
   }
 
@@ -217,4 +226,9 @@ function normalizeOptionLabel(label: string): string {
 function formatAutoApprovedPlanForOutput(plan: string, path: string | undefined): string {
   const savedTo = path !== undefined ? `Plan saved to: ${path}\n\n` : '';
   return `Plan mode deactivated. All tools are now available.\nNote: this plan was auto-approved without user review — the user has NOT explicitly approved it. Follow the user's original instructions on whether to proceed with execution; if they asked you to stop, wait, or only summarize after planning, do not start executing.\n${savedTo}## Plan (auto-approved, not user-reviewed):\n${plan}`;
+}
+
+function formatPlanForOutput(plan: string, path: string | undefined): string {
+  const savedTo = path !== undefined ? `Plan saved to: ${path}\n\n` : '';
+  return `Plan mode deactivated. All tools are now available.\n${savedTo}## Approved Plan:\n${plan}`;
 }

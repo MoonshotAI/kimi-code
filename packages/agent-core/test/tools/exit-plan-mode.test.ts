@@ -47,6 +47,7 @@ function makeAgent(
         emit({ type: 'plan_mode.exit' });
       },
     },
+    permission: { mode: 'auto' },
     rpc: { requestApproval },
     telemetry: { track: vi.fn() },
     emit,
