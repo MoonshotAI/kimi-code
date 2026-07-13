@@ -1,17 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { ServicesAccessor } from '#/_base/di/instantiation';
 import {
   compileToolArgsValidator,
   validateToolArgs,
 } from '#/tool/args-validator';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
+import { CreateGoalTool } from '#/agent/goal/tools/create-goal';
+import { GetGoalTool } from '#/agent/goal/tools/get-goal';
 import { SetGoalBudgetTool } from '#/agent/goal/tools/set-goal-budget';
 import {
   UpdateGoalTool,
   UpdateGoalToolInputSchema,
 } from '#/agent/goal/tools/update-goal';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { getToolContributions } from '#/agent/toolRegistry/toolContribution';
 import { IEventBus } from '#/app/event/eventBus';
 
 import { agentService, createTestAgent, type TestAgentContext } from '../../../harness';
@@ -163,4 +168,31 @@ describe('goal tools', () => {
       signal: abortController.signal,
     });
   }
+});
+
+describe('goal tool main-agent gating', () => {
+  const gatedTools = [
+    ['CreateGoalTool', CreateGoalTool],
+    ['GetGoalTool', GetGoalTool],
+    ['SetGoalBudgetTool', SetGoalBudgetTool],
+    ['UpdateGoalTool', UpdateGoalTool],
+  ] as const;
+
+  function accessorFor(agentId: string): ServicesAccessor {
+    const scopeContext: IAgentScopeContext = {
+      _serviceBrand: undefined,
+      agentId,
+      scope: () => '',
+    };
+    return { get: () => scopeContext } as unknown as ServicesAccessor;
+  }
+
+  it.each(gatedTools)('%s is contributed with a main-agent-only guard', (name, ctor) => {
+    const contribution = getToolContributions().find((c) => c.ctor === ctor);
+    expect(contribution, `${name} contribution`).toBeDefined();
+    const when = contribution?.options.when;
+    expect(when, `${name} must gate on agent identity`).toBeDefined();
+    expect(when?.(accessorFor('main'))).toBe(true);
+    expect(when?.(accessorFor('sub-1'))).toBe(false);
+  });
 });

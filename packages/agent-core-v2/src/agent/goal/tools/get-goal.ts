@@ -7,6 +7,7 @@
 import { z } from 'zod';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
@@ -36,4 +37,7 @@ export class GetGoalTool implements BuiltinTool<GetGoalToolInput> {
   }
 }
 
-registerTool(GetGoalTool);
+// Goal tools are main-agent-only (v1 parity: `agent.type === 'main'`).
+registerTool(GetGoalTool, {
+  when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
+});

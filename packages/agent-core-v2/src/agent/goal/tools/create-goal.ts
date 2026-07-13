@@ -10,6 +10,7 @@ import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
@@ -80,4 +81,7 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
   }
 }
 
-registerTool(CreateGoalTool);
+// Goal tools are main-agent-only (v1 parity: `agent.type === 'main'`).
+registerTool(CreateGoalTool, {
+  when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
+});
