@@ -202,6 +202,54 @@ describe('detectEnvironment', () => {
     expect(env.shellPath).toBe('C:\\Users\\me\\scoop\\apps\\git\\current\\usr\\bin\\bash.exe');
   });
 
+  it('resolves MSYS2 ucrt64 native git through git --exec-path', async () => {
+    const gitExe = 'C:\\msys64\\ucrt64\\bin\\git.exe';
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'C:\\msys64\\ucrt64\\bin' },
+        execFileResults: {
+          [execFileKey(gitExe, ['--exec-path'])]: 'C:/msys64/ucrt64/libexec/git-core\n',
+        },
+        existingPaths: [gitExe, 'C:\\msys64\\usr\\bin\\bash.exe'],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('C:\\msys64\\usr\\bin\\bash.exe');
+  });
+
+  it('resolves MSYS2 clang64 native git through git --exec-path', async () => {
+    const gitExe = 'C:\\msys64\\clang64\\bin\\git.exe';
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'C:\\msys64\\clang64\\bin' },
+        execFileResults: {
+          [execFileKey(gitExe, ['--exec-path'])]: 'C:/msys64/clang64/libexec/git-core\n',
+        },
+        existingPaths: [gitExe, 'C:\\msys64\\usr\\bin\\bash.exe'],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('C:\\msys64\\usr\\bin\\bash.exe');
+  });
+
+  it('resolves MSYS2 clangarm64 native git through git --exec-path', async () => {
+    const gitExe = 'C:\\msys64\\clangarm64\\bin\\git.exe';
+    const env = await detectEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'C:\\msys64\\clangarm64\\bin' },
+        execFileResults: {
+          [execFileKey(gitExe, ['--exec-path'])]: 'C:/msys64/clangarm64/libexec/git-core\n',
+        },
+        existingPaths: [gitExe, 'C:\\msys64\\usr\\bin\\bash.exe'],
+      }),
+    );
+    expect(env.shellName).toBe('bash');
+    expect(env.shellPath).toBe('C:\\msys64\\usr\\bin\\bash.exe');
+  });
+
   it('does not treat shim-adjacent bash.exe as the Git installation shell', async () => {
     const gitExe = 'C:\\Users\\me\\scoop\\shims\\git.exe';
     const env = await detectEnvironment(

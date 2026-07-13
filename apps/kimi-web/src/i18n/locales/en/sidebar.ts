@@ -29,6 +29,7 @@ export default {
   signIn: 'Sign in',
   language: 'Language',
   daemon: 'Daemon',
+  backendTitle: 'Backend {backend} · {endpoint} — click to switch',
   noSessions: 'No conversations yet',
   showMore: 'Load {count} more conversations',
   showLess: 'Show less',
