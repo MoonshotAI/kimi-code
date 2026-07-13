@@ -426,7 +426,7 @@ describe('SessionLifecycleService', () => {
     expect(h.kind).toBe(LifecycleScope.Session);
   });
 
-  it('create appends the session to the legacy v1 session_index.jsonl', async () => {
+  it('create appends the session to the shared session_index.jsonl', async () => {
     const appended: unknown[] = [];
     const svc = build([
       stubPair(IAppendLogStore, {

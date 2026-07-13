@@ -125,7 +125,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
     const handle = await this.materializeSession({ ...opts, sessionId });
-    this.appendLegacySessionIndexEntry(sessionId, opts.workDir);
+    this.appendSessionIndexEntry(sessionId, opts.workDir);
     if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
       const main = await ensureMainAgent(handle);
       await main.accessor.get(IAgentPlanService).enter();
@@ -195,14 +195,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   /**
-   * Append the session to v1's legacy `session_index.jsonl` so v1 clients (TUI,
+   * Append the session to the shared `session_index.jsonl` so v1 clients (TUI,
    * export, etc.) can discover sessions created by the v2 engine. The index is
    * append-only JSONL; later entries for the same id override earlier ones, so
    * redundant appends on resume/fork are safe. A failure here must not fail
    * session creation — the v2 read model (`ISessionIndex`) remains the
    * authoritative index for v2 itself.
    */
-  private appendLegacySessionIndexEntry(sessionId: string, workDir: string): void {
+  private appendSessionIndexEntry(sessionId: string, workDir: string): void {
     const workspaceId = encodeWorkDirKey(workDir);
     const sessionDir = this.bootstrap.sessionDir(workspaceId, sessionId);
     this.appendLogStore.append('', 'session_index.jsonl', {
@@ -395,7 +395,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         sessionId: targetId,
         workDir: workspace.root,
       });
-      this.appendLegacySessionIndexEntry(targetId, workspace.root);
+      this.appendSessionIndexEntry(targetId, workspace.root);
       const targetCtx = target.accessor.get(ISessionContext);
       const targetMeta = target.accessor.get(ISessionMetadata);
 
