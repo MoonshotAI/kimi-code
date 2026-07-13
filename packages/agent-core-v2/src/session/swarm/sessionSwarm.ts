@@ -52,6 +52,25 @@ export interface SessionSwarmRunResult<T = unknown> {
   readonly error?: string;
 }
 
+export type SessionSwarmStopResult =
+  | {
+      readonly kind: 'stopping';
+      readonly agentId: string;
+    }
+  | {
+      readonly kind: 'stopped';
+      readonly agentId: string;
+    }
+  | {
+      readonly kind: 'already_terminal';
+      readonly agentId: string;
+      readonly status: SessionSwarmRunResult['status'];
+    }
+  | {
+      readonly kind: 'not_found';
+      readonly agentId: string;
+    };
+
 export interface ISessionSwarmService {
   readonly _serviceBrand: undefined;
 
@@ -60,6 +79,7 @@ export interface ISessionSwarmService {
     readonly agentId: string;
   }): Promise<string | undefined>;
   run<T>(args: SessionSwarmRunArgs<T>): Promise<readonly SessionSwarmRunResult<T>[]>;
+  stopAgent(agentId: string): SessionSwarmStopResult;
   cancel(args: { readonly callerAgentId: string }): void;
 }
 

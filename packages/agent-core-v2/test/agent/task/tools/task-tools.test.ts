@@ -158,6 +158,12 @@ class FakeTaskService implements IAgentTaskService {
     return this.entries.get(taskId)?.info;
   }
 
+  getAgentTask(agentId: string): AgentTaskInfo | undefined {
+    return Array.from(this.entries.values(), (entry) => entry.info)
+      .filter((info) => info.kind === 'agent' && info.agentId === agentId)
+      .toSorted((left, right) => right.startedAt - left.startedAt)[0];
+  }
+
   list(activeOnly = true, limit?: number): readonly AgentTaskInfo[] {
     const result: AgentTaskInfo[] = [];
     for (const entry of this.entries.values()) {

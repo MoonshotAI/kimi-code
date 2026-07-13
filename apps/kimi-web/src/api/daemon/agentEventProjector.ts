@@ -1065,9 +1065,10 @@ export function createAgentProjector(): AgentProjector {
 
       case 'subagent.failed': {
         const outputPreview = typeof p?.error === 'string' ? p.error : undefined;
+        const status = p?.cancelled === true ? 'cancelled' : 'failed';
         const task = patchSubagent(s, sessionId, p?.subagentId, {
           subagentPhase: 'failed',
-          status: 'failed',
+          status,
           completedAt: new Date().toISOString(),
           outputPreview,
         });
@@ -1076,7 +1077,7 @@ export function createAgentProjector(): AgentProjector {
           type: 'taskCompleted',
           sessionId,
           taskId: p?.subagentId ?? '',
-          status: 'failed',
+          status,
           outputPreview,
         });
         break;
@@ -1152,7 +1153,7 @@ export function createAgentProjector(): AgentProjector {
               : typeof info.taskId === 'number'
                 ? String(info.taskId)
                 : '',
-          status: failed ? 'failed' : 'completed',
+          status: info.status === 'killed' ? 'cancelled' : failed ? 'failed' : 'completed',
           // Do NOT set outputPreview here. The command is already kept on the
           // task as `command`; setting outputPreview to `$ <command>` would
           // clobber any real output captured by polling and prevents the UI

@@ -66,6 +66,59 @@ describe('subagent streaming text', () => {
   });
 });
 
+describe('subagent cancellation', () => {
+  it('projects an explicitly cancelled subagent as cancelled', () => {
+    const projector = createAgentProjector();
+    projector.project(
+      'subagent.spawned',
+      { agentId: 'main', subagentId: 'agent-child', runInBackground: false },
+      's1',
+    );
+
+    const events = projector.project(
+      'subagent.failed',
+      {
+        agentId: 'main',
+        subagentId: 'agent-child',
+        error: 'Aborted by the user',
+        cancelled: true,
+      },
+      's1',
+    );
+
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'taskCompleted',
+        taskId: 'agent-child',
+        status: 'cancelled',
+      }),
+    );
+  });
+
+  it('maps a killed task termination to cancelled', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'task.terminated',
+      {
+        agentId: 'main',
+        info: {
+          taskId: 'task-1',
+          status: 'killed',
+        },
+      },
+      's1',
+    );
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: 'taskCompleted',
+        taskId: 'task-1',
+        status: 'cancelled',
+      }),
+    ]);
+  });
+});
+
 describe('agent error projection', () => {
   it('drops a subagent error instead of surfacing it as a session warning', () => {
     const projector = createAgentProjector();

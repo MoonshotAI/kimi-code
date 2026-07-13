@@ -19,10 +19,17 @@
  * completed / failed` and telemetry still tracks `subagent_created` so existing
  * session recordings and dashboards stay valid. Rename lives on a separate
  * wire-cleanup PR.
+ * Explicit cancellation remains observable as `subagent.failed` with the
+ * optional cancellation marker even when retry-related failures are hidden.
  */
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { userCancellationReason } from '#/_base/utils/abort';
+import {
+  isAbortError,
+  isUserCancellation,
+  type UserCancellationError,
+  userCancellationReason,
+} from '#/_base/utils/abort';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { isProviderRateLimitError } from '#/app/llmProtocol/errors';
 import { type TokenUsage } from '#/app/llmProtocol/usage';
@@ -34,7 +41,6 @@ import type {
   SubagentStartedEvent,
 } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
-import { isAbortError } from '#/_base/utils/abort';
 
 import { type AgentRunHandle, IAgentLifecycleService } from './agentLifecycle';
 
@@ -65,7 +71,6 @@ export interface MirrorAgentRunOptions {
    * retry turns, which skip the hook.
    */
   readonly prompt?: string;
-  /** Skip the requester-side `subagent.failed` record for provider-rate-limit / aborted failures. */
   readonly suppressRateLimitFailureEvent?: boolean;
   /** The requester's cancellation signal (passed through to the start hook slot). */
   readonly signal: AbortSignal;
@@ -114,11 +119,30 @@ export async function mirrorAgentRun(
 ): Promise<{ summary: string; usage?: TokenUsage }> {
   const eventBus = requester.accessor.get(IEventBus);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
+  let cancellationPublished = false;
+  const resolveCancellation = (reason: unknown): UserCancellationError | undefined =>
+    isUserCancellation(reason)
+      ? reason
+      : isUserCancellation(options.signal.reason)
+        ? options.signal.reason
+        : undefined;
+  const publishCancellation = (reason: UserCancellationError): void => {
+    if (cancellationPublished) return;
+    cancellationPublished = true;
+    eventBus?.publish({
+      type: 'subagent.failed',
+      subagentId: run.agentId,
+      error: errorMessage(reason),
+      cancelled: true,
+    });
+  };
+  void run.completion.catch(() => {});
   eventBus?.publish({ type: 'subagent.started', subagentId: run.agentId });
   if (options.prompt !== undefined) {
     const cancelAndRethrow = (reason: unknown): never => {
+      const cancellationReason = resolveCancellation(reason);
+      if (cancellationReason !== undefined) publishCancellation(cancellationReason);
       options.cancel?.(reason);
-      void run.completion.catch(() => {});
       throw reason;
     };
     try {
@@ -150,7 +174,10 @@ export async function mirrorAgentRun(
     });
     return result;
   } catch (error) {
-    if (!isAbortError(error) && !shouldSuppressFailure(options, error)) {
+    const cancellationReason = resolveCancellation(error);
+    if (cancellationReason !== undefined) {
+      publishCancellation(cancellationReason);
+    } else if (!isAbortError(error) && !shouldSuppressFailure(options, error)) {
       eventBus?.publish({
         type: 'subagent.failed',
         subagentId: run.agentId,

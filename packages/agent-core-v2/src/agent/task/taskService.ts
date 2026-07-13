@@ -24,7 +24,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { ContentPart } from '#/app/llmProtocol/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { abortable } from '#/_base/utils/abort';
+import { abortable, userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
@@ -455,6 +455,17 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     return entry === undefined ? this.ghosts.get(taskId) : this.toInfo(entry);
   }
 
+  getAgentTask(agentId: string): AgentTaskInfo | undefined {
+    let found: AgentTaskInfo | undefined;
+    for (const entry of this.tasks.values()) {
+      found = newerAgentTaskForAgent(found, this.toInfo(entry), agentId);
+    }
+    for (const ghost of this.ghosts.values()) {
+      found = newerAgentTaskForAgent(found, ghost, agentId);
+    }
+    return found;
+  }
+
   list(activeOnly = true, limit?: number): readonly AgentTaskInfo[] {
     const result: AgentTaskInfo[] = [];
     for (const entry of this.tasks.values()) {
@@ -648,7 +659,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     const normalized = normalizeReason(reason);
     return this.terminateWithGrace(entry, {
       stopReason: normalized,
-      abortReason: normalized,
+      abortReason: userCancellationReason(),
       finalStatus: 'killed',
     });
   }
@@ -1209,6 +1220,23 @@ function newerRestoredTask(
   if (existing.endedAt !== null) return existing;
   if (loaded.endedAt !== null) return loaded;
   return loaded;
+}
+
+function newerAgentTaskForAgent(
+  current: AgentTaskInfo | undefined,
+  candidate: AgentTaskInfo,
+  agentId: string,
+): AgentTaskInfo | undefined {
+  if (candidate.kind !== 'agent' || candidate.agentId !== agentId) return current;
+  if (current === undefined) return candidate;
+
+  const currentActive = !isAgentTaskTerminal(current.status);
+  const candidateActive = !isAgentTaskTerminal(candidate.status);
+  if (currentActive !== candidateActive) return candidateActive ? candidate : current;
+
+  const currentTimestamp = current.endedAt ?? current.startedAt;
+  const candidateTimestamp = candidate.endedAt ?? candidate.startedAt;
+  return candidateTimestamp >= currentTimestamp ? candidate : current;
 }
 
 type TaskNotificationOrigin = Pick<TaskOrigin, 'taskId' | 'status' | 'notificationId'>;

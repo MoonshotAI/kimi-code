@@ -759,6 +759,8 @@ export interface SubagentFailedEvent {
   readonly type: 'subagent.failed';
   readonly subagentId: string;
   readonly error: string;
+  /** True when the run ended through an explicit user cancellation. */
+  readonly cancelled?: boolean;
 }
 
 export interface CompactionStartedEvent {
@@ -1599,6 +1601,7 @@ export const subagentFailedEventSchema = z.object({
   type: z.literal('subagent.failed'),
   subagentId: z.string(),
   error: z.string(),
+  cancelled: z.boolean().optional(),
 }) satisfies z.ZodType<SubagentFailedEvent>;
 
 export const compactionStartedEventSchema = z.object({

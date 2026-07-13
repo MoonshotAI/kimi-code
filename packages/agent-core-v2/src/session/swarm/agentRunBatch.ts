@@ -5,15 +5,20 @@
  * loop used by `SessionSwarmService`; drives each attempt through a
  * `AgentRunBatchLauncher` and surfaces requeues via `suspended`. Pure scheduling
  * logic — owns no scoped state. Not part of the public surface: only
- * `SessionSwarmService` imports it.
+ * `SessionSwarmService` imports it. Supports cancellation of one identified
+ * member without stopping unrelated work in the batch.
  */
 
 import { isProviderRateLimitError } from '#/app/llmProtocol/errors';
 import { type TokenUsage } from '#/app/llmProtocol/usage';
 import * as retry from 'retry';
 
-import { isUserCancellation } from '#/_base/utils/abort';
-import type { SessionSwarmRunResult, SessionSwarmTask } from './sessionSwarm';
+import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
+import type {
+  SessionSwarmRunResult,
+  SessionSwarmStopResult,
+  SessionSwarmTask,
+} from './sessionSwarm';
 
 // ── Launcher contract ────────────────────────────────────────────────
 //
@@ -31,6 +36,7 @@ export interface AgentRunAttemptOptions {
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
   readonly signal: AbortSignal;
+  readonly onAgentIdentified?: (agentId: string) => void;
   readonly onReady?: () => void;
   readonly suppressRateLimitFailureEvent?: boolean;
 }
@@ -210,6 +216,49 @@ export class AgentRunBatch<T> {
     });
   }
 
+  stopAgent(agentId: string): SessionSwarmStopResult {
+    const terminal = this.results.find((result) => result?.agentId === agentId);
+    if (terminal !== undefined) {
+      return {
+        kind: 'already_terminal',
+        agentId,
+        status: terminal.status,
+      };
+    }
+
+    const active = Array.from(this.active).find(
+      (attempt) => attempt.state.agentId === agentId,
+    );
+    if (active !== undefined) {
+      if (!active.controller.signal.aborted) {
+        active.controller.abort(userCancellationReason());
+      }
+      return { kind: 'stopping', agentId };
+    }
+
+    const suspendedIndex = this.pending.findIndex(
+      (state) => state.agentId === agentId && state.retryAgentId === agentId,
+    );
+    if (suspendedIndex !== -1) {
+      const [state] = this.pending.splice(suspendedIndex, 1);
+      if (state === undefined) return { kind: 'not_found', agentId };
+      this.results[state.index] = {
+        task: state.task,
+        agentId,
+        status: 'aborted',
+        state: 'started',
+        error: 'The user manually interrupted this subagent batch.',
+      };
+      this.schedule();
+      return {
+        kind: 'stopped',
+        agentId,
+      };
+    }
+
+    return { kind: 'not_found', agentId };
+  }
+
   private schedule(): void {
     if (this.finished) return;
     if (this.finishIfComplete()) return;
@@ -316,6 +365,11 @@ export class AgentRunBatch<T> {
       swarmIndex: task.swarmIndex,
       runInBackground: task.runInBackground,
       signal: attempt.controller.signal,
+      onAgentIdentified: (agentId) => {
+        if (!this.finished && this.active.has(attempt)) {
+          attempt.state.agentId = agentId;
+        }
+      },
       onReady: () => {
         this.markAttemptReady(attempt);
       },
@@ -352,6 +406,9 @@ export class AgentRunBatch<T> {
         usage: completion.usage,
       };
     } catch (error) {
+      if (attempt.controller.signal.aborted) {
+        return this.failedAttemptOutcome(attempt, error);
+      }
       if (isProviderRateLimitError(error)) {
         return {
           type: 'rate_limited',
@@ -397,7 +454,6 @@ export class AgentRunBatch<T> {
   private handleAttemptOutcome(attempt: ActiveAttempt<T>, outcome: AttemptOutcome<T>): void {
     if (!this.releaseAttempt(attempt)) return;
     if (this.finished) return;
-
     if ('status' in outcome) {
       this.results[attempt.state.index] = outcome;
     } else if (this.isOnlyUnfinishedTask(attempt.state)) {
@@ -687,5 +743,3 @@ export function resolveSwarmMaxConcurrency(
   }
   return value;
 }
-
-

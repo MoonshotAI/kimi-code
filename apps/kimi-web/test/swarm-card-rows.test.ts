@@ -64,7 +64,7 @@ describe('buildSwarmCardRows', () => {
       [member('a', '子任务 A', { text: 'streaming' })],
       null,
     );
-    expect(rows).toEqual([{ id: 'a', name: '子任务 A', activity: 'streaming', phase: 'working', body: 'streaming' }]);
+    expect(rows).toEqual([{ id: 'a', name: '子任务 A', activity: 'streaming', phase: 'working', body: 'streaming', canStop: true }]);
   });
 
   it('builds rows from result subagents when no members are present', () => {
@@ -77,6 +77,7 @@ describe('buildSwarmCardRows', () => {
     );
     expect(rows.map((r) => r.name)).toEqual(['A', 'B']);
     expect(rows.map((r) => r.phase)).toEqual(['completed', 'failed']);
+    expect(rows.every((r) => r.canStop === false)).toBe(true);
   });
 
   it('appends result-only aborted not_started rows on top of live members', () => {
@@ -94,6 +95,7 @@ describe('buildSwarmCardRows', () => {
     expect(rows.map((r) => r.id)).toEqual(['a1', 'a2', 'C']);
     expect(rows[2]?.phase).toBe('failed');
     expect(rows[2]?.body).toBe('C never started');
+    expect(rows[2]?.canStop).toBe(false);
   });
 
   it('does not duplicate a result row that a live member already covers', () => {

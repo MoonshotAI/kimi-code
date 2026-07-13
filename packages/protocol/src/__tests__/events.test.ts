@@ -143,6 +143,23 @@ describe('events / display re-exports', () => {
     expect((parsed as { info: { detached?: boolean } }).info.detached).toBe(false);
   });
 
+  it('preserves explicit subagent cancellation', () => {
+    const parsed = eventSchema.parse({
+      type: 'subagent.failed',
+      agentId: 'main',
+      sessionId: 'sess_1',
+      subagentId: 'agent_1',
+      error: 'Aborted by the user',
+      cancelled: true,
+    });
+
+    expect(parsed).toMatchObject({
+      type: 'subagent.failed',
+      subagentId: 'agent_1',
+      cancelled: true,
+    });
+  });
+
   it('validates event.session.created events', () => {
     const parsed = eventSchema.parse({
       type: 'event.session.created',

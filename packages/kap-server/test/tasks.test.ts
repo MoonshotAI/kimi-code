@@ -3,13 +3,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  IEventBus,
   IAgentLifecycleService,
+  IAgentProfileService,
   IAgentTaskService,
   ISessionLifecycleService,
+  ISessionSwarmService,
   IModelResolver,
   type AgentTask,
+  type DomainEvent,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
@@ -67,6 +71,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
   });
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (server !== undefined) {
       await server.close();
       server = undefined;
@@ -103,6 +108,15 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     return body.data.id;
   }
 
+  function cancelTask<T = { cancelled: boolean }>(
+    sessionId: string,
+    taskOrAgentId: string,
+  ): Promise<{ status: number; body: Envelope<T> }> {
+    return postJson<T>(
+      `/api/v1/sessions/${sessionId}/tasks/${encodeURIComponent(taskOrAgentId)}:cancel`,
+    );
+  }
+
   // The main agent scope is not created automatically on session creation
   // (server-v2 gap G10); create it here, then register fake tasks
   // directly into its IAgentTaskService to bypass the tool loop.
@@ -115,13 +129,24 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     return agent.accessor.get(IAgentTaskService);
   }
 
+  async function sessionSwarm(sessionId: string): Promise<ISessionSwarmService> {
+    await mainAgentTasks(sessionId);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    if (session === undefined) throw new Error(`session ${sessionId} not found`);
+    return session.accessor.get(ISessionSwarmService);
+  }
+
   // Let the `registerTask` microtask run `start` (which appends output) before
   // the next request.
   async function flush(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 
-  function fakeTask(kind: 'process' | 'agent' | 'question', output?: string): AgentTask {
+  function fakeTask(
+    kind: 'process' | 'agent' | 'question',
+    output?: string,
+    agentId = 'sub-1',
+  ): AgentTask {
     return {
       idPrefix: 'test',
       kind,
@@ -134,10 +159,19 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
           case 'process':
             return { ...base, kind: 'process', command: 'echo hi', pid: 0, exitCode: null };
           case 'agent':
-            return { ...base, kind: 'agent', agentId: 'sub-1', subagentType: 'explore' };
+            return { ...base, kind: 'agent', agentId, subagentType: 'explore' };
           case 'question':
             return { ...base, kind: 'question', questionCount: 1 };
         }
+      },
+    };
+  }
+
+  function completedAgentTask(agentId: string): AgentTask {
+    return {
+      ...fakeTask('agent', undefined, agentId),
+      start: async (sink) => {
+        await sink.settle({ status: 'completed' });
       },
     };
   }
@@ -227,6 +261,32 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     expect(missing.body.code).toBe(40406);
   });
 
+  it('cancels an Agent task by its stable Agent id', async () => {
+    const id = await createSession();
+    const tasks = await mainAgentTasks(id);
+    const taskId = tasks.registerTask(fakeTask('agent', undefined, 'agent-ui'));
+    await flush();
+
+    const cancelled = await cancelTask(id, 'agent-ui');
+    expect(cancelled.body).toMatchObject({ code: 0, data: { cancelled: true } });
+    expect(tasks.getTask(taskId)).toMatchObject({ status: 'killed' });
+  });
+
+  it('reports an Agent task as already finished when its alias is cancelled twice', async () => {
+    const id = await createSession();
+    const tasks = await mainAgentTasks(id);
+    tasks.registerTask(fakeTask('agent', undefined, 'agent-ui'));
+    await flush();
+
+    await cancelTask(id, 'agent-ui');
+    const repeated = await cancelTask(id, 'agent-ui');
+    expect(repeated.body).toMatchObject({
+      code: 40904,
+      data: { cancelled: false },
+      details: { current_status: 'cancelled' },
+    });
+  });
+
   it('includes output_preview / output_bytes when with_output is set', async () => {
     const id = await createSession();
     const tasks = await mainAgentTasks(id);
@@ -253,17 +313,13 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     const taskId = tasks.registerTask(fakeTask('process'));
     await flush();
 
-    const cancelled = await postJson<{ cancelled: boolean }>(
-      `/api/v1/sessions/${id}/tasks/${taskId}:cancel`,
-    );
+    const cancelled = await cancelTask(id, taskId);
     expect(cancelled.body.code).toBe(0);
     expect(cancelled.body.data).toEqual({ cancelled: true });
 
     // The task is now terminal (killed → cancelled); a second cancel is a
     // conflict with the idempotent envelope shape.
-    const again = await postJson<{ cancelled: boolean }>(
-      `/api/v1/sessions/${id}/tasks/${taskId}:cancel`,
-    );
+    const again = await cancelTask(id, taskId);
     expect(again.body.code).toBe(40904);
     expect(again.body.data).toEqual({ cancelled: false });
     expect(again.body.details).toEqual({ current_status: 'cancelled' });
@@ -272,8 +328,180 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
   it('cancelling an unknown task returns 40406', async () => {
     const id = await createSession();
     await mainAgentTasks(id);
-    const { body } = await postJson<null>(`/api/v1/sessions/${id}/tasks/nope:cancel`);
+    const { body } = await cancelTask<null>(id, 'nope');
     expect(body.code).toBe(40406);
+  });
+
+  it('cancels a swarm member by Agent id and keeps repeated stop idempotent', async () => {
+    const id = await createSession();
+    const swarm = await sessionSwarm(id);
+    const stopAgent = vi
+      .spyOn(swarm, 'stopAgent')
+      .mockReturnValueOnce({
+        kind: 'stopping',
+        agentId: 'agent-swarm',
+      })
+      .mockReturnValueOnce({
+        kind: 'already_terminal',
+        agentId: 'agent-swarm',
+        status: 'aborted',
+      });
+
+    const cancelled = await cancelTask(id, 'agent-swarm');
+    expect(cancelled.body).toMatchObject({ code: 0, data: { cancelled: true } });
+    expect(stopAgent).toHaveBeenLastCalledWith('agent-swarm');
+
+    const again = await cancelTask(id, 'agent-swarm');
+    expect(again.body).toMatchObject({
+      code: 40904,
+      data: { cancelled: false },
+      details: { current_status: 'cancelled' },
+    });
+  });
+
+  it('publishes one cancellation when REST stops a non-main swarm during its start hook', async () => {
+    const id = await createSession();
+    const swarm = await sessionSwarm(id);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const caller = await lifecycle.create({ agentId: 'agent-caller' });
+    caller.accessor.get(IAgentProfileService).update({ modelAlias: 'test-model' });
+    await lifecycle.create({
+      agentId: 'agent-owned-child',
+      labels: { parentAgentId: caller.id },
+    });
+
+    let enterHook: () => void = () => {};
+    const hookEntered = new Promise<void>((resolve) => {
+      enterHook = resolve;
+    });
+    let releaseHook: () => void = () => {};
+    const hookReleased = new Promise<void>((resolve) => {
+      releaseHook = resolve;
+    });
+    const hookRegistration = lifecycle.hooks.onWillStartAgentTask.register(
+      'tasks-test-deferred-start',
+      async (_context, next) => {
+        enterHook();
+        await hookReleased;
+        await next();
+      },
+    );
+    const failures: Array<DomainEvent<'subagent.failed'>> = [];
+    const eventRegistration = caller.accessor
+      .get(IEventBus)
+      .subscribe('subagent.failed', (event) => {
+        if (event.subagentId === 'agent-owned-child') failures.push(event);
+      });
+
+    let rejectCompletion: (reason?: unknown) => void = () => {};
+    const completion = new Promise<{ summary: string }>((_resolve, reject) => {
+      rejectCompletion = reject;
+    });
+    let runSignal: AbortSignal | undefined;
+    const runAgent = vi.spyOn(lifecycle, 'run').mockImplementation(
+      async (agentId, _request, options) => {
+        runSignal = options.signal;
+        options.signal.addEventListener(
+          'abort',
+          () => {
+            rejectCompletion(options.signal.reason);
+          },
+          { once: true },
+        );
+        options.onReady?.();
+        return { agentId, turn: {} as never, completion };
+      },
+    );
+    const running = swarm.run({
+      callerAgentId: caller.id,
+      tasks: [
+        {
+          kind: 'resume',
+          data: undefined,
+          profileName: 'subagent',
+          parentToolCallId: 'call_non_main_swarm',
+          prompt: 'Continue',
+          description: 'Continue child',
+          runInBackground: false,
+          resumeAgentId: 'agent-owned-child',
+        },
+      ],
+    });
+    await vi.waitFor(() => {
+      expect(runAgent).toHaveBeenCalledOnce();
+    });
+    await hookEntered;
+
+    const cancelled = await cancelTask(id, 'agent-owned-child');
+
+    expect(cancelled.body).toMatchObject({ code: 0, data: { cancelled: true } });
+    expect(runSignal?.aborted).toBe(true);
+    expect(failures).toEqual([]);
+    releaseHook();
+    await expect(running).resolves.toMatchObject([
+      { agentId: 'agent-owned-child', status: 'aborted' },
+    ]);
+    expect(failures).toEqual([
+      expect.objectContaining({
+        subagentId: 'agent-owned-child',
+        cancelled: true,
+      }),
+    ]);
+    const repeated = await cancelTask(id, 'agent-owned-child');
+    expect(repeated.body).toMatchObject({
+      code: 40904,
+      data: { cancelled: false },
+      details: { current_status: 'cancelled' },
+    });
+    expect(failures).toHaveLength(1);
+    eventRegistration.dispose();
+    hookRegistration.dispose();
+  });
+
+  it('keeps resumed swarm cancellation authoritative over terminal task history', async () => {
+    const id = await createSession();
+    const tasks = await mainAgentTasks(id);
+    const historicalTaskId = tasks.registerTask(completedAgentTask('agent-resumed'));
+    expect(await tasks.wait(historicalTaskId)).toMatchObject({ status: 'completed' });
+    expect(tasks.getAgentTask('agent-resumed')).toMatchObject({
+      taskId: historicalTaskId,
+      status: 'completed',
+    });
+
+    const swarm = await sessionSwarm(id);
+    const stopAgent = vi.spyOn(swarm, 'stopAgent').mockReturnValue({
+      kind: 'stopping',
+      agentId: 'agent-resumed',
+    });
+
+    const cancelled = await cancelTask(id, 'agent-resumed');
+
+    expect(cancelled.body).toMatchObject({ code: 0, data: { cancelled: true } });
+    expect(stopAgent).toHaveBeenCalledWith('agent-resumed');
+  });
+
+  it('reports an exact terminal task id before a matching active swarm member', async () => {
+    const id = await createSession();
+    const tasks = await mainAgentTasks(id);
+    const historicalTaskId = tasks.registerTask(completedAgentTask('agent-history'));
+    await tasks.wait(historicalTaskId);
+
+    const swarm = await sessionSwarm(id);
+    const stopAgent = vi.spyOn(swarm, 'stopAgent').mockReturnValue({
+      kind: 'stopping',
+      agentId: historicalTaskId,
+    });
+
+    const cancelled = await cancelTask(id, historicalTaskId);
+
+    expect(cancelled.body).toMatchObject({
+      code: 40904,
+      data: { cancelled: false },
+      details: { current_status: 'completed' },
+    });
+    expect(stopAgent).not.toHaveBeenCalled();
   });
 
   it('rejects a bare POST without the :cancel suffix (40001)', async () => {
@@ -293,7 +521,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     const got = await getJson<null>('/api/v1/sessions/nope/tasks/tid');
     expect(got.body.code).toBe(40401);
 
-    const cancelled = await postJson<null>('/api/v1/sessions/nope/tasks/tid:cancel');
+    const cancelled = await cancelTask<null>('nope', 'tid');
     expect(cancelled.body.code).toBe(40401);
   });
 });

@@ -562,15 +562,18 @@ describe('useWorkspaceState — cancelTask', () => {
     expect(state.tasksBySession['sess_1']?.[0]?.status).toBe('running');
   });
 
-  it('marks the task cancelled on success', async () => {
+  it('sends the displayed Agent id and marks the subagent cancelled on success', async () => {
     apiMock.cancelTask.mockResolvedValue({ cancelled: true });
     const state = createState();
-    state.tasksBySession = { sess_1: [task('t_1', 'running')] };
+    state.tasksBySession = {
+      sess_1: [{ ...task('agent_1', 'running'), kind: 'subagent' }],
+    };
     const deps = createDeps();
     const ws = useWorkspaceState(state, deps);
 
-    await ws.cancelTask('t_1');
+    await ws.cancelTask('agent_1');
 
+    expect(apiMock.cancelTask).toHaveBeenCalledWith('sess_1', 'agent_1');
     expect(state.tasksBySession['sess_1']?.[0]?.status).toBe('cancelled');
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
   });

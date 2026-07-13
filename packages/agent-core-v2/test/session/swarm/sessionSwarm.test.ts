@@ -42,7 +42,11 @@ import {
   type AgentSpawnAttemptOptions,
   type QueuedAgentRunTask,
 } from '#/session/swarm/agentRunBatch';
-import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
+import {
+  ISessionSwarmService,
+  type SessionSwarmStopResult,
+  type SessionSwarmTask,
+} from '#/session/swarm/sessionSwarm';
 import { SessionSwarmService } from '#/session/swarm/sessionSwarmService';
 
 import { stubLog } from '../../_base/log/stubs';
@@ -210,6 +214,144 @@ describe('AgentRunBatch scheduling contract', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('stops one active member without cancelling its sibling', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts, stopAgent } = createMockAgentRunBatchRunner();
+      const running = runBatch([queuedAgentRunTask(1), queuedAgentRunTask(2)]);
+
+      await vi.advanceTimersByTimeAsync(0);
+      expect(attempts).toHaveLength(2);
+      expect(stopAgent('agent-1')).toEqual({
+        kind: 'stopping',
+        agentId: 'agent-1',
+      });
+
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'sibling completed',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(running).resolves.toMatchObject([
+        { agentId: 'agent-1', status: 'aborted', state: 'started' },
+        { agentId: 'agent-2', status: 'completed', result: 'sibling completed' },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('stops a suspended member without retrying it and closes the parent batch', async () => {
+    vi.useFakeTimers();
+    try {
+      const suspended: AgentRunSuspendedEvent[] = [];
+      const { runBatch, attempts, stopAgent } = createMockAgentRunBatchRunner({
+        onSuspended: (event) => suspended.push(event),
+      });
+      const running = runBatch([queuedAgentRunTask(1), queuedAgentRunTask(2)]);
+
+      await vi.advanceTimersByTimeAsync(0);
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(suspended).toHaveLength(1);
+
+      expect(stopAgent('agent-1')).toEqual({
+        kind: 'stopped',
+        agentId: 'agent-1',
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(attempts).toHaveLength(2);
+
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'sibling completed',
+      });
+      await vi.advanceTimersByTimeAsync(0);
+
+      await expect(running).resolves.toMatchObject([
+        { agentId: 'agent-1', status: 'aborted', state: 'started' },
+        { agentId: 'agent-2', status: 'completed' },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets a targeted stop win a provider-rate-limit race', async () => {
+    vi.useFakeTimers();
+    try {
+      const suspended: AgentRunSuspendedEvent[] = [];
+      const { runBatch, attempts, stopAgent } = createMockAgentRunBatchRunner({
+        onSuspended: (event) => suspended.push(event),
+      });
+      const running = runBatch([queuedAgentRunTask(1), queuedAgentRunTask(2)]);
+
+      await vi.advanceTimersByTimeAsync(0);
+      attempts[0]!.outcome.reject(new APIProviderRateLimitError('Rate limited'));
+      // Settle the attempt completion with the 429, but stop the member before
+      // AgentRunBatch handles that rejection.
+      await Promise.resolve();
+      expect(stopAgent('agent-1').kind).toBe('stopping');
+      await vi.advanceTimersByTimeAsync(0);
+
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'sibling completed',
+      });
+      await vi.advanceTimersByTimeAsync(3_000);
+
+      await expect(running).resolves.toMatchObject([
+        { agentId: 'agent-1', status: 'aborted' },
+        { agentId: 'agent-2', status: 'completed' },
+      ]);
+      expect(suspended).toEqual([]);
+      expect(attempts).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('can stop a spawned member before its launcher returns the run handle', async () => {
+    const identified = createControlledPromise<void>();
+    const releaseSpawn = createControlledPromise<void>();
+    const launcher: AgentRunBatchLauncher = {
+      spawn: async (options) => {
+        options.onAgentIdentified?.('agent-race');
+        identified.resolve();
+        await releaseSpawn;
+        options.signal.throwIfAborted();
+        return {
+          agentId: 'agent-race',
+          profileName: options.profileName,
+          completion: Promise.resolve({ result: 'unexpected' }),
+        };
+      },
+      resume: async () => {
+        throw new Error('unexpected resume');
+      },
+      retry: async () => {
+        throw new Error('unexpected retry');
+      },
+    };
+    const batch = new AgentRunBatch(launcher, [queuedAgentRunTask(1)]);
+    const running = batch.run();
+
+    await identified;
+    expect(batch.stopAgent('agent-race').kind).toBe('stopping');
+    releaseSpawn.resolve();
+
+    await expect(running).resolves.toMatchObject([
+      { agentId: 'agent-race', status: 'aborted', state: 'started' },
+    ]);
   });
 
   it('normal phase keeps processing completions while waiting for the next launch', async () => {
@@ -836,7 +978,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   let agents: Record<string, AgentMeta>;
   let handles: Map<string, IAgentScopeHandle>;
   let lifecycle: IAgentLifecycleService;
-  let createAgent: ReturnType<typeof vi.fn>;
+  let createAgent: ReturnType<typeof vi.fn<IAgentLifecycleService['create']>>;
   let runAgent: ReturnType<typeof vi.fn>;
   let eventBus: IEventBus;
 
@@ -847,7 +989,7 @@ describe('SessionSwarmService metadata compatibility', () => {
     handles = new Map();
     eventBus = eventBusStub();
     lifecycle = lifecycleStub(handles, eventBus);
-    createAgent = lifecycle.create as ReturnType<typeof vi.fn>;
+    createAgent = lifecycle.create as ReturnType<typeof vi.fn<IAgentLifecycleService['create']>>;
     runAgent = lifecycle.run as ReturnType<typeof vi.fn>;
     handles.set('main', agentHandle('main', lifecycle, eventBus));
 
@@ -902,6 +1044,45 @@ describe('SessionSwarmService metadata compatibility', () => {
   afterEach(() => {
     disposables.dispose();
   });
+
+  function registerResumableAgent(agentId: string): void {
+    agents[agentId] = {
+      homedir: `/tmp/kimi/s1/agents/${agentId}`,
+      labels: { parentAgentId: 'main' },
+    };
+    handles.set(agentId, agentHandle(agentId, lifecycle, eventBus));
+  }
+
+  function controlledResumableRuns(...agentIds: string[]) {
+    const completions = new Map(
+      agentIds.map(
+        (agentId) =>
+          [agentId, createControlledPromise<{ summary: string }>()] as const,
+      ),
+    );
+    const signals = new Map<string, AbortSignal>();
+    const started = createControlledPromise<void>();
+    agentIds.forEach(registerResumableAgent);
+    runAgent.mockImplementation((agentId, _request, options) => {
+      const signal = options?.signal;
+      const completion = completions.get(agentId);
+      if (signal === undefined || completion === undefined) {
+        throw new Error(`Unexpected swarm run for ${agentId}`);
+      }
+      signals.set(agentId, signal);
+      signal.addEventListener(
+        'abort',
+        () => {
+          completion.reject(signal.reason);
+        },
+        { once: true },
+      );
+      options.onReady?.();
+      if (signals.size === agentIds.length) started.resolve();
+      return { agentId, turn: {} as never, completion };
+    });
+    return { completions, signals, started };
+  }
 
   it('reads swarm items from caller-owned v2 labels and legacy v1 metadata', async () => {
     agents['v2-child'] = {
@@ -1013,7 +1194,7 @@ describe('SessionSwarmService metadata compatibility', () => {
         [IAgentUserToolService, parentUserTools],
       ])),
     );
-    createAgent.mockImplementationOnce((opts: CreateAgentOptions = {}) => {
+    createAgent.mockImplementationOnce(async (opts: CreateAgentOptions = {}) => {
       const id = opts.agentId ?? 'agent-new';
       const handle = agentHandle(
         id,
@@ -1151,6 +1332,323 @@ describe('SessionSwarmService metadata compatibility', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('publishes a cancelled lifecycle event when a suspended member is stopped', async () => {
+    vi.useFakeTimers();
+    try {
+      ['agent-rate-limited', 'agent-sibling'].forEach(registerResumableAgent);
+      const rateLimited = createControlledPromise<{ summary: string }>();
+      const sibling = createControlledPromise<{ summary: string }>();
+      const published: DomainEvent[] = [];
+      (eventBus.publish as ReturnType<typeof vi.fn>).mockImplementation((event: DomainEvent) => {
+        published.push(event);
+      });
+      runAgent.mockImplementation((agentId, _request, options) => {
+        options?.onReady?.();
+        return {
+          agentId,
+          turn: {} as never,
+          completion: agentId === 'agent-rate-limited' ? rateLimited : sibling,
+        };
+      });
+      const service = ix.get(ISessionSwarmService);
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [
+          resumeSessionTask('agent-rate-limited'),
+          resumeSessionTask('agent-sibling'),
+        ],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      rateLimited.reject(new APIProviderRateLimitError('Rate limited'));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(
+        service.stopAgent('agent-rate-limited'),
+      ).toMatchObject({ kind: 'stopped' });
+      expect(published).toContainEqual(
+        expect.objectContaining({
+          type: 'subagent.failed',
+          subagentId: 'agent-rate-limited',
+          cancelled: true,
+        }),
+      );
+
+      sibling.resolve({ summary: 'sibling summary' });
+      await vi.advanceTimersByTimeAsync(0);
+      await expect(running).resolves.toMatchObject([
+        { agentId: 'agent-rate-limited', status: 'aborted' },
+        { agentId: 'agent-sibling', status: 'completed' },
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a stopped member terminal after its batch has been cleaned up', async () => {
+    const completion = createControlledPromise<{ summary: string }>();
+    runAgent.mockImplementation((agentId, _request, options) => {
+      options?.onReady?.();
+      options?.signal.addEventListener(
+        'abort',
+        () => {
+          completion.reject(options.signal.reason);
+        },
+        { once: true },
+      );
+      return { agentId, turn: {} as never, completion };
+    });
+    const service = ix.get(ISessionSwarmService);
+    const running = service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/a.ts')],
+    });
+    await vi.waitFor(() => {
+      expect(runAgent).toHaveBeenCalledOnce();
+    });
+
+    expect(service.stopAgent('agent-new')).toEqual({
+      kind: 'stopping',
+      agentId: 'agent-new',
+    });
+    await expect(running).resolves.toMatchObject([
+      { agentId: 'agent-new', status: 'aborted', state: 'started' },
+    ]);
+
+    expect(service.stopAgent('agent-new')).toEqual({
+      kind: 'already_terminal',
+      agentId: 'agent-new',
+      status: 'aborted',
+    });
+    expect(lifecycle.getHandle('agent-new')).toBeDefined();
+  });
+
+  it('stops only the targeted member when one caller has concurrent batches', async () => {
+    const runs = controlledResumableRuns('agent-first-batch', 'agent-second-batch');
+    const service = ix.get(ISessionSwarmService);
+    const firstRunning = service.run({
+      callerAgentId: 'main',
+      tasks: [resumeSessionTask('agent-first-batch')],
+    });
+    const secondRunning = service.run({
+      callerAgentId: 'main',
+      tasks: [resumeSessionTask('agent-second-batch')],
+    });
+    await runs.started;
+
+    expect(
+      service.stopAgent('agent-first-batch'),
+    ).toEqual({
+      kind: 'stopping',
+      agentId: 'agent-first-batch',
+    });
+    expect(runs.signals.get('agent-second-batch')?.aborted).toBe(false);
+    runs.completions
+      .get('agent-second-batch')!
+      .resolve({ summary: 'second batch completed' });
+
+    await expect(firstRunning).resolves.toMatchObject([
+      { agentId: 'agent-first-batch', status: 'aborted' },
+    ]);
+    await expect(secondRunning).resolves.toMatchObject([
+      {
+        agentId: 'agent-second-batch',
+        status: 'completed',
+        result: 'second batch completed',
+      },
+    ]);
+  });
+
+  it('keeps the first batch ownership when the same agent is resumed concurrently', async () => {
+    const runs = controlledResumableRuns('agent-shared');
+    const service = ix.get(ISessionSwarmService);
+    const firstRunning = service.run({
+      callerAgentId: 'main',
+      tasks: [resumeSessionTask('agent-shared')],
+    });
+    await runs.started;
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask('agent-shared')],
+      }),
+    ).resolves.toMatchObject([
+      {
+        status: 'failed',
+        state: 'not_started',
+        error: 'Agent instance "agent-shared" is already owned by a running swarm batch',
+      },
+    ]);
+    expect(runAgent).toHaveBeenCalledOnce();
+    expect(service.stopAgent('agent-shared')).toEqual({
+      kind: 'stopping',
+      agentId: 'agent-shared',
+    });
+    await expect(firstRunning).resolves.toMatchObject([
+      { agentId: 'agent-shared', status: 'aborted' },
+    ]);
+  });
+
+  it('cancels every concurrent batch owned by one caller', async () => {
+    const runs = controlledResumableRuns('agent-cancel-first', 'agent-cancel-second');
+    const service = ix.get(ISessionSwarmService);
+    const firstRunning = service.run({
+      callerAgentId: 'main',
+      tasks: [resumeSessionTask('agent-cancel-first')],
+    });
+    const secondRunning = service.run({
+      callerAgentId: 'main',
+      tasks: [resumeSessionTask('agent-cancel-second')],
+    });
+    await runs.started;
+
+    service.cancel({ callerAgentId: 'main' });
+
+    expect(runs.signals.get('agent-cancel-first')?.aborted).toBe(true);
+    expect(runs.signals.get('agent-cancel-second')?.aborted).toBe(true);
+    await expect(firstRunning).resolves.toMatchObject([
+      { agentId: 'agent-cancel-first', status: 'aborted' },
+    ]);
+    await expect(secondRunning).resolves.toMatchObject([
+      { agentId: 'agent-cancel-second', status: 'aborted' },
+    ]);
+  });
+
+  it('removes a child created after its batch was cancelled before emitting spawned', async () => {
+    const createStarted = createControlledPromise<void>();
+    const releaseCreate = createControlledPromise<void>();
+    createAgent.mockImplementationOnce(async () => {
+      createStarted.resolve();
+      await releaseCreate;
+      const child = agentHandle('agent-created-after-cancel', lifecycle, eventBus);
+      handles.set(child.id, child);
+      return child;
+    });
+    const service = ix.get(ISessionSwarmService);
+    const running = service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/cancelled.ts')],
+    });
+    await createStarted;
+
+    service.cancel({ callerAgentId: 'main' });
+    releaseCreate.resolve();
+
+    await expect(running).resolves.toMatchObject([{ status: 'aborted' }]);
+    expect(lifecycle.getHandle('agent-created-after-cancel')).toBeUndefined();
+    expect(runAgent).not.toHaveBeenCalled();
+    expect(eventBus.publish).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'subagent.spawned',
+        subagentId: 'agent-created-after-cancel',
+      }),
+    );
+  });
+
+  it('forgets the oldest terminal member after retaining 128 recent members', async () => {
+    for (let index = 0; index < 129; index += 1) {
+      registerResumableAgent(`agent-terminal-${String(index)}`);
+    }
+    const service = ix.get(ISessionSwarmService);
+
+    for (let index = 0; index < 129; index += 1) {
+      await service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask(`agent-terminal-${String(index)}`)],
+      });
+    }
+
+    expect(
+      service.stopAgent('agent-terminal-0'),
+    ).toEqual({ kind: 'not_found', agentId: 'agent-terminal-0' });
+    expect(
+      service.stopAgent('agent-terminal-128'),
+    ).toEqual({
+      kind: 'already_terminal',
+      agentId: 'agent-terminal-128',
+      status: 'completed',
+    });
+  });
+
+  it('retains a recently accessed terminal member when the LRU reaches capacity', async () => {
+    for (let index = 0; index < 129; index += 1) {
+      registerResumableAgent(`agent-lru-${String(index)}`);
+    }
+    const service = ix.get(ISessionSwarmService);
+    for (let index = 0; index < 128; index += 1) {
+      await service.run({
+        callerAgentId: 'main',
+        tasks: [resumeSessionTask(`agent-lru-${String(index)}`)],
+      });
+    }
+    expect(
+      service.stopAgent('agent-lru-0'),
+    ).toEqual({
+      kind: 'already_terminal',
+      agentId: 'agent-lru-0',
+      status: 'completed',
+    });
+
+    await service.run({
+      callerAgentId: 'main',
+      tasks: [resumeSessionTask('agent-lru-128')],
+    });
+
+    expect(
+      service.stopAgent('agent-lru-1'),
+    ).toEqual({ kind: 'not_found', agentId: 'agent-lru-1' });
+    expect(
+      service.stopAgent('agent-lru-0'),
+    ).toEqual({
+      kind: 'already_terminal',
+      agentId: 'agent-lru-0',
+      status: 'completed',
+    });
+  });
+
+  it('stops an in-flight member through its recorded caller ownership', async () => {
+    const completion = createControlledPromise<{ summary: string }>();
+    let runSignal: AbortSignal | undefined;
+    const otherEventBus = eventBusStub();
+    handles.set('other', agentHandle('other', lifecycle, otherEventBus));
+    runAgent.mockImplementation((agentId, _request, options) => {
+      runSignal = options?.signal;
+      options?.signal.addEventListener(
+        'abort',
+        () => {
+          completion.reject(options.signal.reason);
+        },
+        { once: true },
+      );
+      options?.onReady?.();
+      return { agentId, turn: {} as never, completion };
+    });
+    const service = ix.get(ISessionSwarmService);
+    const running = service.run({
+      callerAgentId: 'other',
+      tasks: [spawnSessionTask('src/a.ts')],
+    });
+    await vi.waitFor(() => {
+      expect(runAgent).toHaveBeenCalledOnce();
+    });
+
+    expect(service.stopAgent('agent-new')).toEqual({
+      kind: 'stopping',
+      agentId: 'agent-new',
+    });
+    expect(runSignal?.aborted).toBe(true);
+    await expect(running).resolves.toMatchObject([
+      { agentId: 'agent-new', status: 'aborted' },
+    ]);
+    expect(otherEventBus.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'subagent.failed',
+        subagentId: 'agent-new',
+        cancelled: true,
+      }),
+    );
   });
 
   it('rejects resume of an already running child before launching or emitting spawned', async () => {
@@ -1367,9 +1865,11 @@ function createMockAgentRunBatchRunner(
     options?: { readonly signal?: AbortSignal },
   ) => Promise<Array<AgentRunResult<T>>>;
   readonly attempts: MockAgentRunAttemptRecord[];
+  readonly stopAgent: (agentId: string) => SessionSwarmStopResult;
 } {
   const attempts: MockAgentRunAttemptRecord[] = [];
-  let activeTasks: readonly QueuedAgentRunTask<unknown>[] = [];
+  let activeTasks: readonly QueuedAgentRunTask[] = [];
+  let activeBatch: AgentRunBatch<unknown> | undefined;
 
   const createHandle = <T,>(
     runOptions: AgentRunAttemptOptions,
@@ -1425,16 +1925,20 @@ function createMockAgentRunBatchRunner(
         ...task,
         signal: task.signal ?? runOptions?.signal,
       }));
-      return new AgentRunBatch(launcher, activeTasks as readonly QueuedAgentRunTask<T>[], {
+      const batch = new AgentRunBatch(launcher, activeTasks as readonly QueuedAgentRunTask<T>[], {
         maxConcurrency: options.maxConcurrency,
-      }).run();
+      });
+      activeBatch = batch as AgentRunBatch<unknown>;
+      return batch.run();
     },
     attempts,
+    stopAgent: (agentId) =>
+      activeBatch?.stopAgent(agentId) ?? { kind: 'not_found', agentId },
   };
 }
 
 function findMockAgentRunTask<T>(
-  tasks: readonly QueuedAgentRunTask<unknown>[],
+  tasks: readonly QueuedAgentRunTask[],
   options: AgentRunAttemptOptions,
 ): QueuedAgentRunTask<T> {
   const task = tasks.find(
@@ -1448,7 +1952,7 @@ function findMockAgentRunTask<T>(
   return task as QueuedAgentRunTask<T>;
 }
 
-function mockAgentRunId(task: QueuedAgentRunTask<unknown>, attemptIndex: number): string {
+function mockAgentRunId(task: QueuedAgentRunTask, attemptIndex: number): string {
   if (typeof task.data === 'number') return `agent-${String(task.data)}`;
   return `agent-${String(attemptIndex + 1)}`;
 }

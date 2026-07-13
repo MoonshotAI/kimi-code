@@ -71,6 +71,7 @@ provide(
   'resolveSwarmMembers',
   (toolCallId: string): SwarmMember[] => client.swarmMembersByToolCallId.value.get(toolCallId) ?? [],
 );
+provide('cancelSubagent', (agentId: string): Promise<void> => client.cancelTask(agentId));
 const { t } = useI18n();
 
 // KAP/daemon debug panel — opt-in via ?debug=1 or localStorage kimi-web.debug=1.

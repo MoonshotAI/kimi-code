@@ -17,6 +17,7 @@ import { toolLabel } from '../../../lib/toolMeta';
 import { parseSwarmResult } from '../../../lib/parseSwarmResult';
 import { buildSwarmCardRows, type SwarmCardRow } from '../../../lib/swarmCardRows';
 import Icon from '../../ui/Icon.vue';
+import IconButton from '../../ui/IconButton.vue';
 import StatusDot from '../../ui/StatusDot.vue';
 import Tooltip from '../../ui/Tooltip.vue';
 
@@ -60,6 +61,7 @@ function parseInput(arg: string): SwarmInput {
 
 const resolveSwarmMembers =
   inject<(toolCallId: string) => SwarmMember[] | undefined>('resolveSwarmMembers');
+const cancelSubagent = inject<(agentId: string) => Promise<void>>('cancelSubagent');
 
 const input = computed(() => parseInput(props.tool.arg));
 const label = computed(() => toolLabel(props.tool.name));
@@ -151,6 +153,10 @@ function isRowOpen(id: string): boolean {
 function phaseLabel(phase: AppSubagentPhase): string {
   return t(`tools.swarm.phase${phase[0]!.toUpperCase()}${phase.slice(1)}`);
 }
+
+function stopSubagent(agentId: string): void {
+  void cancelSubagent?.(agentId);
+}
 </script>
 
 <template>
@@ -201,22 +207,33 @@ function phaseLabel(phase: AppSubagentPhase): string {
           class="member"
           :class="[`phase-${row.phase}`, { open: isRowOpen(row.id) }]"
         >
-          <button
-            class="member-head"
-            type="button"
-            :aria-expanded="isRowOpen(row.id)"
-            @click="toggleRow(row.id)"
-          >
-            <StatusDot class="row-dot" :status="row.phase" />
-            <Tooltip :text="row.name">
-              <span class="mname">{{ row.name }}</span>
-            </Tooltip>
-            <Tooltip v-if="row.activity" :text="row.activity">
-              <span class="mact">{{ row.activity }}</span>
-            </Tooltip>
-            <span class="mphase">{{ phaseLabel(row.phase) }}</span>
-            <Icon class="mcar" :name="isRowOpen(row.id) ? 'chevron-down' : 'chevron-right'" size="sm" />
-          </button>
+          <div class="member-line">
+            <button
+              class="member-head"
+              type="button"
+              :aria-expanded="isRowOpen(row.id)"
+              @click="toggleRow(row.id)"
+            >
+              <StatusDot class="row-dot" :status="row.phase" />
+              <Tooltip :text="row.name">
+                <span class="mname">{{ row.name }}</span>
+              </Tooltip>
+              <Tooltip v-if="row.activity" :text="row.activity">
+                <span class="mact">{{ row.activity }}</span>
+              </Tooltip>
+              <span class="mphase">{{ phaseLabel(row.phase) }}</span>
+              <Icon class="mcar" :name="isRowOpen(row.id) ? 'chevron-down' : 'chevron-right'" size="sm" />
+            </button>
+            <IconButton
+              v-if="cancelSubagent && row.canStop"
+              class="member-stop"
+              size="sm"
+              :label="t('tasks.stop')"
+              @click="stopSubagent(row.id)"
+            >
+              <Icon name="stop" size="sm" />
+            </IconButton>
+          </div>
           <div v-show="isRowOpen(row.id)" class="member-body">{{ row.body }}</div>
         </div>
       </template>
@@ -395,11 +412,16 @@ function phaseLabel(phase: AppSubagentPhase): string {
 .member:last-child {
   border-bottom: none;
 }
+.member-line {
+  display: flex;
+  align-items: center;
+}
 .member-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: 32px;
   padding: 0 11px;
   border: none;
@@ -455,6 +477,9 @@ function phaseLabel(phase: AppSubagentPhase): string {
   margin-left: 4px;
   color: var(--color-text-faint);
   flex: none;
+}
+.member-stop {
+  margin-right: var(--space-1);
 }
 .member-body {
   padding: 4px 11px 10px 31px;

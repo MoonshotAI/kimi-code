@@ -654,6 +654,7 @@ export function swarmServices(
           _serviceBrand: undefined,
           getSwarmItem: async () => undefined,
           run: swarmService,
+          stopAgent: (agentId) => ({ kind: 'not_found', agentId }),
           cancel: () => {},
         } satisfies ISessionSwarmService
       : swarmService;

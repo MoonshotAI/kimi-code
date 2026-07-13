@@ -513,6 +513,54 @@ describe('AgentTaskService', () => {
     expect(isUserCancellation(subagentController.signal.reason)).toBe(true);
   });
 
+  it('stops an Agent task with a user-cancellation signal', async () => {
+    const { manager } = createAgentTaskService();
+    const subagentController = new AbortController();
+    const completion = new Promise<{ result: string }>((_resolve, reject) => {
+      subagentController.signal.addEventListener(
+        'abort',
+        () => reject(subagentController.signal.reason),
+        { once: true },
+      );
+    });
+    const taskId = manager.registerTask(
+      agentTask(completion, 'background agent', { abortController: subagentController }),
+    );
+
+    await manager.stop(taskId, 'Stopped from the web');
+
+    expect(isUserCancellation(subagentController.signal.reason)).toBe(true);
+    expect(manager.getTask(taskId)).toMatchObject({
+      status: 'killed',
+      stopReason: 'Stopped from the web',
+    });
+  });
+
+  it('resolves an Agent task by its stable Agent id after it stops', async () => {
+    const { manager } = createAgentTaskService();
+    const subagentController = new AbortController();
+    const completion = new Promise<{ result: string }>((_resolve, reject) => {
+      subagentController.signal.addEventListener(
+        'abort',
+        () => reject(subagentController.signal.reason),
+        { once: true },
+      );
+    });
+    const taskId = manager.registerTask(
+      agentTask(completion, 'background agent', {
+        agentId: 'agent-stable',
+        abortController: subagentController,
+      }),
+    );
+
+    expect(manager.getAgentTask('agent-stable')?.taskId).toBe(taskId);
+    await manager.stop(taskId);
+    expect(manager.getAgentTask('agent-stable')).toMatchObject({
+      taskId,
+      status: 'killed',
+    });
+  });
+
   it('does not count foreground tasks against the detached task limit', () => {
     const { manager } = createAgentTaskService({ maxRunningTasks: 1 });
     manager.registerTask(agentTask(new Promise(() => {}), 'foreground agent'), {

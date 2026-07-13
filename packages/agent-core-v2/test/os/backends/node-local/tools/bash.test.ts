@@ -571,6 +571,12 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
       return entry === undefined ? undefined : entryToInfo(entry);
     },
 
+    getAgentTask(agentId: string): AgentTaskInfo | undefined {
+      return Array.from(tasks.values(), entryToInfo)
+        .filter((info) => info.kind === 'agent' && info.agentId === agentId)
+        .toSorted((left, right) => right.startedAt - left.startedAt)[0];
+    },
+
     list(activeOnly = true): readonly AgentTaskInfo[] {
       const result: AgentTaskInfo[] = [];
       for (const entry of tasks.values()) {

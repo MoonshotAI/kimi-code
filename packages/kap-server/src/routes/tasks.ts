@@ -9,13 +9,16 @@
  *                                                               output_bytes?} data: Task
  *   POST /sessions/{session_id}/tasks/{task_id}:cancel body: empty            data: {cancelled:true}
  *
- * **Thin wrapper over `IAgentTaskService`**: the main agent's
+ * **Thin wrapper over existing task domains**: the main agent's
  * `IAgentTaskService` is already exposed at Agent scope (`tasks:*` in the RPC
  * action map). These REST routes borrow it by interface and project its
  * `AgentTaskInfo` (camelCase + ms timestamps + agent-core literal sets)
- * into the protocol's `Task` shape (snake_case + ISO + spec literal
- * sets) — the same field/literal mapping v1 performs in
- * `packages/agent-core/src/services/task/task.ts`.
+ * into the protocol's `Task` shape (snake_case + ISO + spec literal sets).
+ * Cancel accepts Agent ids as compatibility aliases for Agent tasks. Swarm
+ * members are not task-service entries, so cancellation falls through to the
+ * Session-scoped `ISessionSwarmService`, which owns member isolation. Cancel
+ * resolution prefers an exact task id, then an active Agent-task alias, then a
+ * swarm member, and only then terminal Agent-task history.
  *
  * **Resolution**: `core` → `ISessionIndex` (existence, → 40401) →
  * `ISessionLifecycleService` (live session handle) → `IAgentLifecycleService`
@@ -42,7 +45,9 @@ import {
   IAgentTaskService,
   ISessionIndex,
   ISessionLifecycleService,
+  ISessionSwarmService,
   type AgentTaskInfo,
+  type SessionSwarmStopResult,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
@@ -241,22 +246,39 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      // Pre-fetch so we can distinguish 40406 (not found) from 40904 (already
-      // finished) deterministically — `IAgentTaskService.stop` does not
-      // surface this distinction on its own.
-      const found = resolved.tasks?.getTask(task_id);
-      if (found === undefined) {
-        reply.send(taskNotFound(session_id, task_id, req.id));
-        return;
-      }
-      const wireStatus = toWireTask(session_id, found).status;
-      if (isTerminalStatus(wireStatus)) {
-        reply.send(taskAlreadyFinished(session_id, task_id, wireStatus, req.id));
+      const target = resolveCancelTarget(resolved, task_id);
+      if (target.kind === 'agent_task') {
+        const wireStatus = toWireTask(session_id, target.task).status;
+        if (isTerminalStatus(wireStatus)) {
+          reply.send(taskAlreadyFinished(session_id, task_id, wireStatus, req.id));
+          return;
+        }
+
+        await resolved.tasks?.stop(target.task.taskId);
+        reply.send(okEnvelope({ cancelled: true as const }, req.id));
         return;
       }
 
-      await resolved.tasks?.stop(task_id);
-      reply.send(okEnvelope({ cancelled: true as const }, req.id));
+      if (
+        target.kind === 'swarm' &&
+        (target.result.kind === 'stopping' || target.result.kind === 'stopped')
+      ) {
+        reply.send(okEnvelope({ cancelled: true as const }, req.id));
+        return;
+      }
+      if (target.kind === 'swarm' && target.result.kind === 'already_terminal') {
+        reply.send(
+          taskAlreadyFinished(
+            session_id,
+            task_id,
+            mapSwarmStatus(target.result.status),
+            req.id,
+          ),
+        );
+        return;
+      }
+
+      reply.send(taskNotFound(session_id, task_id, req.id));
     },
   );
   app.post(cancelRoute.path, cancelRoute.options, cancelRoute.handler as Parameters<TasksRouteHost['post']>[2]);
@@ -271,17 +293,53 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
 
 type ResolvedTasks =
   | { readonly kind: 'not_found' }
-  | { readonly kind: 'resolved'; readonly tasks: IAgentTaskService | undefined };
+  | {
+      readonly kind: 'resolved';
+      readonly tasks: IAgentTaskService | undefined;
+      readonly swarm: ISessionSwarmService | undefined;
+    };
 
 async function resolveSessionTasks(core: Scope, sid: string): Promise<ResolvedTasks> {
   const summary = await core.accessor.get(ISessionIndex).get(sid);
   if (summary === undefined) return { kind: 'not_found' };
 
   const session = core.accessor.get(ISessionLifecycleService).get(sid);
-  if (session === undefined) return { kind: 'resolved', tasks: undefined };
+  if (session === undefined) {
+    return { kind: 'resolved', tasks: undefined, swarm: undefined };
+  }
   const agent = await ensureMainAgent(session);
   const tasks = agent.accessor.get(IAgentTaskService);
-  return { kind: 'resolved', tasks };
+  const swarm = session.accessor.get(ISessionSwarmService);
+  return { kind: 'resolved', tasks, swarm };
+}
+
+type SwarmCancelResult = Exclude<SessionSwarmStopResult, { readonly kind: 'not_found' }>;
+
+type CancelTarget =
+  | { readonly kind: 'agent_task'; readonly task: AgentTaskInfo }
+  | { readonly kind: 'swarm'; readonly result: SwarmCancelResult }
+  | { readonly kind: 'not_found' };
+
+function resolveCancelTarget(
+  resolved: Extract<ResolvedTasks, { readonly kind: 'resolved' }>,
+  taskOrAgentId: string,
+): CancelTarget {
+  const exactTask = resolved.tasks?.getTask(taskOrAgentId);
+  if (exactTask !== undefined) return { kind: 'agent_task', task: exactTask };
+
+  const agentTask = resolved.tasks?.getAgentTask(taskOrAgentId);
+  if (agentTask !== undefined && !isTerminalStatus(mapStatus(agentTask.status))) {
+    return { kind: 'agent_task', task: agentTask };
+  }
+
+  const swarmResult = resolved.swarm?.stopAgent(taskOrAgentId);
+  if (swarmResult !== undefined && swarmResult.kind !== 'not_found') {
+    return { kind: 'swarm', result: swarmResult };
+  }
+
+  return agentTask === undefined
+    ? { kind: 'not_found' }
+    : { kind: 'agent_task', task: agentTask };
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +389,10 @@ function mapStatus(s: AgentTaskInfo['status']): TaskStatus {
     case 'lost':
       return 'failed';
   }
+}
+
+function mapSwarmStatus(status: 'completed' | 'failed' | 'aborted'): TaskStatus {
+  return status === 'aborted' ? 'cancelled' : status;
 }
 
 const TERMINAL_WIRE_STATUSES: ReadonlySet<TaskStatus> = new Set([

@@ -5,7 +5,9 @@
  * detached work. Task execution adapters implement the generic `AgentTask`
  * contract from this domain's type module; this service owns registration,
  * output retention, persistence, detach/stop/wait, and terminal notifications.
- * Bound at Agent scope.
+ * Agent tasks can also be resolved by their stable Agent id so protocol edges
+ * do not have to confuse that identity with the generated task id. Bound at
+ * Agent scope.
  */
 
 import { createDecorator } from '#/_base/di/instantiation';
@@ -108,6 +110,7 @@ export interface IAgentTaskService {
   /** @deprecated Use `taskService.run()` + `track()` instead. */
   registerTask(task: AgentTask, options?: RegisterAgentTaskOptions): string;
   getTask(taskId: string): AgentTaskInfo | undefined;
+  getAgentTask(agentId: string): AgentTaskInfo | undefined;
   list(activeOnly?: boolean, limit?: number): readonly AgentTaskInfo[];
   persistOutput(taskId: string): void;
   getOutputSnapshot(

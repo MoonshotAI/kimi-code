@@ -14,6 +14,8 @@ export interface SwarmCardRow {
   activity: string;
   phase: AppSubagentPhase;
   body: string;
+  /** Only live, non-terminal members have an Agent id accepted by stop. */
+  canStop: boolean;
 }
 
 function lastNonEmptyLine(text: string | undefined): string {
@@ -53,6 +55,7 @@ function resultRow(sub: SwarmResultSubagent, index: number): SwarmCardRow {
     activity: sub.body.split('\n')[0] ?? '',
     phase: outcomeToPhase(sub.outcome),
     body: sub.body,
+    canStop: false,
   };
 }
 
@@ -85,6 +88,7 @@ export function buildSwarmCardRows(members: SwarmMember[], result: SwarmResult |
     activity: swarmMemberActivity(m),
     phase: m.phase,
     body: swarmMemberBody(m),
+    canStop: m.phase === 'queued' || m.phase === 'working' || m.phase === 'suspended',
   }));
   if (!result) return memberRows;
 

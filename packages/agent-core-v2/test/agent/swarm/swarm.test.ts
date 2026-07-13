@@ -53,7 +53,13 @@ function mockSwarmHost({
   readonly getSwarmItem?: (...args: any[]) => any;
 } = {}) {
   return {
-    swarmService: { _serviceBrand: undefined, getSwarmItem, run, cancel: vi.fn() },
+    swarmService: {
+      _serviceBrand: undefined,
+      getSwarmItem,
+      run,
+      stopAgent: (agentId: string) => ({ kind: 'not_found' as const, agentId }),
+      cancel: vi.fn(),
+    },
     callerAgentId: 'main',
   };
 }
@@ -84,6 +90,7 @@ describe('AgentSwarmService', () => {
     ix.stub(ISessionSwarmService, {
       getSwarmItem: async () => undefined,
       run: async () => [],
+      stopAgent: (agentId) => ({ kind: 'not_found', agentId }),
       cancel: () => {},
     });
     ix.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
