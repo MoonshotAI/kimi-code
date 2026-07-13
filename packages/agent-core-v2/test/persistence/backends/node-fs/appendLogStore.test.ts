@@ -122,10 +122,12 @@ describe('AppendLogStore', () => {
 
     const rewrite = record.rewrite<Rec>(SCOPE, KEY, replacement);
     await writeStarted;
+    const flushed = record.flush();
     releaseWrite();
-    await rewrite;
+    await flushed;
 
     expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 2 }]);
+    await rewrite;
   });
 
   it('appends that arrive during a rewrite land after the replaced content', async () => {
