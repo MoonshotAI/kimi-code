@@ -188,11 +188,6 @@ export class AgentPromptService implements IAgentPromptService {
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
       void turn.result.then((result) => this.settle(item, result));
     } catch {
-      // Every caller fires `void this.startNext()`, so a launch failure (a
-      // throwing hook, or the loop rejecting the turn — e.g. the activity
-      // lane still `initializing` or already `disposed`) must never escape
-      // as an unhandled rejection. Settle the prompt as failed so
-      // `enqueue`'s waiters resolve and the queue keeps draining.
       item.state = 'failed';
       item.launchedDeferred.resolve(undefined);
       item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'failed' });

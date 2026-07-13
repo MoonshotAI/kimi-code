@@ -19,9 +19,11 @@
  * - The main agent is an ordinary agent whose only distinction is
  *   `agentId === 'main'`. Business operations (create / fork / run / lookup)
  *   treat it uniformly; the only main-specific surface is the
- *   `onDidCreateMain` event, fired via `notifyMainCreated` by the main
- *   bootstrapper so main-only capabilities subscribe without filtering every
- *   `onDidCreate`.
+ *   `onDidCreateMain` event, fired idempotently via `notifyMainCreated` by the
+ *   main bootstrapper so main-only capabilities subscribe without filtering
+ *   every `onDidCreate`.
+ * - Creation is single-flight per explicit agent id, and readiness lookups
+ *   return only settled handles.
  * - `forkedFrom` is provenance only (a recorded value); business logic must
  *   not branch on it.
  */
@@ -148,15 +150,6 @@ export interface IAgentLifecycleService {
   readonly onDidDispose: Event<string>;
   /** Create an agent from zero (empty context). */
   create(opts?: CreateAgentOptions): Promise<IAgentScopeHandle>;
-  /**
-   * Await any in-flight `create(agentId)` bootstrap and return the settled
-   * handle (`undefined` when the agent does not exist, or its creation
-   * failed). `create` registers the handle before its async bootstrap
-   * finishes, so a concurrent `getHandle` can observe a half-initialized
-   * agent whose activity lane is still `initializing`; callers that
-   * auto-materialize an agent (e.g. `ensureMainAgent`) must resolve through
-   * here instead.
-   */
   whenReady(agentId: string): Promise<IAgentScopeHandle | undefined>;
   /**
    * Resolve the session/plugin MCP config and wait for the initial connection
@@ -164,12 +157,6 @@ export interface IAgentLifecycleService {
    * rather than rejecting this promise.
    */
   ensureMcpReady(): Promise<void>;
-  /**
-   * Idempotently fire {@link onDidCreateMain} for the given handle after
-   * main-only wirings are attached, so main-only capabilities can subscribe
-   * without filtering every {@link onDidCreate}. No caller other than the
-   * main-agent bootstrapper (`ensureMainAgent`) should invoke it.
-   */
   notifyMainCreated(handle: IAgentScopeHandle): void;
   /**
    * Fire {@link onDidStopAgentTask} for a mirrored run that has stopped.
