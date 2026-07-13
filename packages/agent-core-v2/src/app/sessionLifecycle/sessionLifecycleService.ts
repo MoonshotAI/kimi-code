@@ -10,7 +10,9 @@
  * through `telemetry`. Materializes the session's initial metadata on
  * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
  * sessions are discovered through the `sessionIndex` read model, and workspace
- * roots are remembered through `workspaceRegistry`.
+ * roots are remembered through `workspaceRegistry`. On create / fork the
+ * session is also appended to the shared `session_index.jsonl` so v1 clients
+ * (TUI, export) can discover sessions created by the v2 engine.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -125,7 +127,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
     const handle = await this.materializeSession({ ...opts, sessionId });
-    this.appendSessionIndexEntry(sessionId, opts.workDir);
+    await this.appendSessionIndexEntry(sessionId, opts.workDir);
     if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
       const main = await ensureMainAgent(handle);
       await main.accessor.get(IAgentPlanService).enter();
@@ -194,15 +196,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  /**
-   * Append the session to the shared `session_index.jsonl` so v1 clients (TUI,
-   * export, etc.) can discover sessions created by the v2 engine. The index is
-   * append-only JSONL; later entries for the same id override earlier ones, so
-   * redundant appends on resume/fork are safe. A failure here must not fail
-   * session creation — the v2 read model (`ISessionIndex`) remains the
-   * authoritative index for v2 itself.
-   */
-  private appendSessionIndexEntry(sessionId: string, workDir: string): void {
+  private async appendSessionIndexEntry(sessionId: string, workDir: string): Promise<void> {
     const workspaceId = encodeWorkDirKey(workDir);
     const sessionDir = this.bootstrap.sessionDir(workspaceId, sessionId);
     this.appendLogStore.append('', 'session_index.jsonl', {
@@ -210,6 +204,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       sessionDir,
       workDir,
     });
+    await this.appendLogStore.flush();
   }
 
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
@@ -395,7 +390,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         sessionId: targetId,
         workDir: workspace.root,
       });
-      this.appendSessionIndexEntry(targetId, workspace.root);
       const targetCtx = target.accessor.get(ISessionContext);
       const targetMeta = target.accessor.get(ISessionMetadata);
 
@@ -441,6 +435,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         await agentHandle.accessor.get(IAgentWireService).replay(...forkRecords);
       }
 
+      await this.appendSessionIndexEntry(targetId, workspace.root);
       this._onDidForkSession.fire({
         sourceSessionId: sourceId,
         sessionId: targetId,
