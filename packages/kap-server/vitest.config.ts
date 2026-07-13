@@ -9,6 +9,5 @@ export default defineConfig({
   test: {
     name: 'kap-server',
     include: ['test/**/*.{test,e2e}.ts'],
-    fileParallelism: false,
   },
 });
