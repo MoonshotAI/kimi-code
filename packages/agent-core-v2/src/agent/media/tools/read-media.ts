@@ -36,14 +36,18 @@ import { z } from 'zod';
 
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
-import { resolvePathAccessPath } from '#/_base/tools/policies/path-access';
+import {
+  ToolAccesses,
+  type BuiltinTool,
+  type ExecutableToolResult,
+  type ToolExecution,
+} from '#/tool/toolContract';
+import { resolvePathAccessPath, type WorkspaceConfig } from '#/tool/path-access';
 import {
   MEDIA_SNIFF_BYTES,
   detectFileType,
   sniffImageDimensions,
-} from '#/_base/tools/support/file-type';
+} from '#/agent/media/file-type';
 import {
   IMAGE_BYTE_BUDGET,
   resolveReadImageByteBudget,
@@ -52,10 +56,13 @@ import {
   formatByteSize,
   type ImageCompressionTelemetry,
   type ImageCropRegion,
-} from '#/_base/tools/support/image-compress';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { literalRulePattern, matchesPathRuleSubject } from '#/_base/tools/support/rule-match';
-import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
+} from '#/agent/media/image-compress';
+import {
+  buildImageConversionGuidance,
+  isModelAcceptedImageMime,
+} from '#/agent/media/image-format-policy';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import readMediaDescriptionHead from './read-media.md?raw';
 
@@ -219,45 +226,6 @@ function buildMediaNote(input: {
 
 // ── Implementation ───────────────────────────────────────────────────
 
-/**
- * Refusal message for HEIC/HEIF with a conversion command matching the
- * execution environment (where Bash actually runs, so SSH/container sessions
- * get the right command too). macOS converts with the built-in `sips`; Linux
- * and Windows have no built-in HEIC decoder, so the guidance names the common
- * tools and how to get them.
- */
-function buildHeicConversionGuidance(path: string, mimeType: string, osKind: string): string {
-  const converted = path.replace(/\.[^./\\]+$/, '') + '.jpg';
-  return (
-    `"${path}" is a ${mimeType} image, which the provider does not accept. ` +
-    'Convert it to JPEG first, then read the converted file. ' +
-    heicConversionCommand(path, converted, osKind)
-  );
-}
-
-function heicConversionCommand(path: string, converted: string, osKind: string): string {
-  switch (osKind) {
-    case 'macOS':
-      return `On macOS: sips -s format jpeg "${path}" --out "${converted}"`;
-    case 'Linux':
-      return (
-        `On Linux: heif-convert "${path}" "${converted}" (package libheif-examples), ` +
-        `or with ImageMagick: magick "${path}" "${converted}"`
-      );
-    case 'Windows':
-      return (
-        `On Windows, with ImageMagick: magick "${path}" "${converted}" ` +
-        '(install it first if missing: winget install ImageMagick.ImageMagick)'
-      );
-    default:
-      return (
-        `Options: sips -s format jpeg "${path}" --out "${converted}" (macOS), ` +
-        `heif-convert "${path}" "${converted}" (Linux, package libheif-examples), ` +
-        `or magick "${path}" "${converted}" (ImageMagick)`
-      );
-  }
-}
-
 export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
   readonly name = 'ReadMediaFile' as const;
   readonly description: string;
@@ -340,15 +308,18 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             'Tell the user to use a model with image input capability.',
         };
       }
-      // HEIC/HEIF must never reach the provider: no provider accepts them,
-      // and once the image_url lands in the history every subsequent request
-      // in the session is rejected. Refuse with a conversion command for the
-      // execution environment instead — the model can run it through Bash
-      // (under the normal permission flow) and read the converted file.
-      if (fileType.mimeType === 'image/heic' || fileType.mimeType === 'image/heif') {
+      // Formats outside the provider-accepted set (AVIF, HEIC, BMP, TIFF,
+      // ICO, …) must never reach the model: once the image_url lands in the
+      // history every subsequent request in the session is rejected. Refuse
+      // with a conversion command for the execution environment instead —
+      // the model can run it through Bash (under the normal permission flow)
+      // and read the converted file. The accepted set and guidance live in
+      // media/image-format-policy, the single source of truth every
+      // ingestion point shares.
+      if (fileType.kind === 'image' && !isModelAcceptedImageMime(fileType.mimeType)) {
         return {
           isError: true,
-          output: buildHeicConversionGuidance(args.path, fileType.mimeType, this.env.osKind),
+          output: buildImageConversionGuidance(args.path, fileType.mimeType, this.env.osKind),
         };
       }
       if (fileType.kind === 'video' && !this.capabilities.video_in) {

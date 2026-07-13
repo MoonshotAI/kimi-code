@@ -1,7 +1,7 @@
 /**
  * `/api/v1/ws` connection — speaks the v1 WebSocket protocol
  * (`server_hello` / `client_hello` / `subscribe` / `unsubscribe` / `ack` /
- * `resync_required` / `ping` / `pong` / event envelopes).
+ * `resync_required` / event envelopes).
  *
  * Each connection is a {@link BroadcastTarget}: sequenced envelopes from the
  * {@link SessionEventBroadcaster} are forwarded to the socket. On
@@ -9,7 +9,10 @@
  * `{seq, epoch}` cursor, or sends `resync_required` when the gap cannot be
  * served incrementally.
  *
- * Mirrors v1's `WsConnection` (`packages/server/src/ws/connection.ts`).
+ * The server never initiates a disconnect: unlike v1's `WsConnection`
+ * (`packages/server/src/ws/connection.ts`) there is no ping/pong heartbeat —
+ * a connection stays open until the client closes it or the process shuts
+ * down.
  */
 
 import { WS_PROTOCOL_VERSION, type SessionCursor } from '@moonshot-ai/protocol';
@@ -24,7 +27,6 @@ import {
 } from './sessionEventJournal';
 import {
   buildAck,
-  buildPing,
   buildResyncRequired,
   buildServerHello,
 } from './protocol';
@@ -36,8 +38,6 @@ import {
 } from './sessionEventBroadcaster';
 import { FsWatchBridge } from './fsWatchBridge';
 
-const DEFAULT_PING_INTERVAL_MS = 30_000;
-const DEFAULT_PONG_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_BUFFER_SIZE = 1000;
 
 // Outbound send buffer — coalesces a burst of frames (notably high-frequency
@@ -71,8 +71,6 @@ export interface WsConnectionV1Options {
   readonly remoteAddress: string | null;
   readonly userAgent: string | null;
   readonly logger?: JournalLogger;
-  readonly pingIntervalMs?: number;
-  readonly pongTimeoutMs?: number;
   readonly maxBufferSize?: number;
   /** Delay before a buffered batch is flushed; coalesces frames within the window. */
   readonly flushIntervalMs?: number;
@@ -92,8 +90,6 @@ export class WsConnectionV1 implements BroadcastTarget {
   private readonly broadcaster: SessionEventBroadcaster;
   private readonly fsWatchBridge?: FsWatchBridge;
   private readonly validateCredential?: CredentialValidator;
-  private readonly pingIntervalMs: number;
-  private readonly pongTimeoutMs: number;
   private readonly maxBufferSize: number;
   private readonly flushIntervalMs: number;
   private readonly maxBatchSize: number;
@@ -104,9 +100,6 @@ export class WsConnectionV1 implements BroadcastTarget {
   private gotClientHello = false;
   /** Per-session subscription state, with each session's optional agent allowlist. */
   readonly subscriptions = new Map<string, AgentFilter>();
-
-  private pingTimer?: ReturnType<typeof setInterval>;
-  private pongTimer?: ReturnType<typeof setTimeout>;
 
   /** Outbound frames awaiting the next flush. */
   private outbound: unknown[] = [];
@@ -125,8 +118,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.fsWatchBridge = opts.fsWatchBridge;
     this.validateCredential = opts.validateCredential;
     this.logger = opts.logger;
-    this.pingIntervalMs = opts.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
-    this.pongTimeoutMs = opts.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS;
     this.maxBufferSize = opts.maxBufferSize ?? DEFAULT_MAX_BUFFER_SIZE;
     this.flushIntervalMs = opts.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
     this.maxBatchSize = opts.maxBatchSize ?? DEFAULT_MAX_BATCH_SIZE;
@@ -137,12 +128,10 @@ export class WsConnectionV1 implements BroadcastTarget {
     this.socket.on('error', () => this.onClose());
 
     opts.connectionRegistry.add(this);
-    this.startHeartbeat();
     this.sendFrame(
       buildServerHello({
         ws_connection_id: this.id,
         protocol_version: WS_PROTOCOL_VERSION,
-        heartbeat_ms: this.pingIntervalMs,
         max_event_buffer_size: this.maxBufferSize,
         capabilities: { event_batching: false, compression: false },
       }),
@@ -187,9 +176,6 @@ export class WsConnectionV1 implements BroadcastTarget {
         return;
       case 'watch_fs_remove':
         void this.onWatchFs(frame, false);
-        return;
-      case 'pong':
-        this.onPong();
         return;
       default:
         // Unknown / not-yet-implemented control frame (e.g. terminal_*, abort)
@@ -380,31 +366,6 @@ export class WsConnectionV1 implements BroadcastTarget {
     return true;
   }
 
-  private onPong(): void {
-    if (this.pongTimer !== undefined) {
-      clearTimeout(this.pongTimer);
-      this.pongTimer = undefined;
-    }
-  }
-
-  private startHeartbeat(): void {
-    this.pingTimer = setInterval(() => {
-      if (this.closed) return;
-      this.sendFrame(buildPing());
-      if (this.pongTimer !== undefined) clearTimeout(this.pongTimer);
-      this.pongTimer = setTimeout(() => {
-        if (this.closed) return;
-        try {
-          this.socket.terminate();
-        } catch {
-          // ignore
-        }
-      }, this.pongTimeoutMs);
-      this.pongTimer.unref?.();
-    }, this.pingIntervalMs);
-    this.pingTimer.unref?.();
-  }
-
   private sendFrame(msg: unknown): void {
     if (this.closed) return;
     this.outbound.push(msg);
@@ -495,8 +456,6 @@ export class WsConnectionV1 implements BroadcastTarget {
   private onClose(): void {
     if (this.closed) return;
     this.closed = true;
-    if (this.pingTimer !== undefined) clearInterval(this.pingTimer);
-    if (this.pongTimer !== undefined) clearTimeout(this.pongTimer);
     if (this.flushTimer !== undefined) clearTimeout(this.flushTimer);
     if (this.backpressureRetryTimer !== undefined) clearTimeout(this.backpressureRetryTimer);
     this.outbound = [];

@@ -15,7 +15,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
 import { UNKNOWN_CAPABILITY } from '#/app/llmProtocol/capability';
-import { APIConnectionError, APIContextOverflowError, APIStatusError } from '#/app/llmProtocol/errors';
+import {
+  APIConnectionError,
+  APIContextOverflowError,
+  APIRequestTooLargeError,
+  APIStatusError,
+} from '#/app/llmProtocol/errors';
 import { type Message, type StreamedMessagePart, type ToolCall } from '#/app/llmProtocol/message';
 import { generate as runKosongGenerate } from '#/app/llmProtocol/generate';
 import type { ChatProvider, StreamedMessage } from '#/app/llmProtocol/provider';
@@ -628,6 +633,100 @@ describe('FullCompaction', () => {
         retry_count: 1,
       }),
     });
+    await ctx.expectResumeMatches();
+  });
+
+  it('recovers from an image-format rejection with a media-stripped resend', async () => {
+    // A poisoned image in the history makes the provider reject every request
+    // with a deterministic image-format 400 — the summarizer request included.
+    // The compaction must not fail: the requester resends once with every
+    // media part replaced by a text marker (read-side only — the stored
+    // history keeps its media), the only projection guaranteed to carry no
+    // poison.
+    let attempts = 0;
+    let sawMedia = false;
+    let sawStrippedResend = false;
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      attempts += 1;
+      const hasMedia = history.some((message) =>
+        message.content.some((part) => part.type === 'image_url' || part.type === 'video_url'),
+      );
+      if (hasMedia) {
+        sawMedia = true;
+        throw new APIStatusError(400, 'unsupported image format: image/avif');
+      }
+      sawStrippedResend = true;
+      return textResult('Recovered compacted summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    // Seeds an image_url and a video_url part — the poison the provider
+    // rejects on every request until the media-stripped resend.
+    ctx.appendRichToolExchange();
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('full_compaction.complete');
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+    await completed;
+
+    expect(attempts).toBe(2);
+    expect(sawMedia).toBe(true);
+    expect(sawStrippedResend).toBe(true);
+    await ctx.expectResumeMatches();
+  });
+
+  it('recovers from a request-body 413 with a media-degraded resend', async () => {
+    // A history bloated by accumulated base64 media gets rejected with HTTP
+    // 413 — a body-size rejection, not a token overflow, so token-driven
+    // recovery never fires. The requester resends once with the
+    // media-degraded projection (all but the most recent media replaced by
+    // text markers), which is enough to fit under the provider's byte limit.
+    let attempts = 0;
+    let sawFullMedia = false;
+    let sawDegradedResend = false;
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      attempts += 1;
+      const mediaCount = history.reduce(
+        (count, message) =>
+          count +
+          message.content.filter((part) => part.type === 'image_url' || part.type === 'video_url')
+            .length,
+        0,
+      );
+      if (mediaCount > 2) {
+        sawFullMedia = true;
+        throw new APIRequestTooLargeError(413, 'Request Entity Too Large');
+      }
+      sawDegradedResend = true;
+      return textResult('Recovered compacted summary.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    // Two rich exchanges seed four media parts; the degraded projection keeps
+    // only the two most recent.
+    ctx.appendRichToolExchange();
+    ctx.appendRichToolExchange();
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const compacted = ctx.once('full_compaction.complete');
+    const completed = ctx.once('compaction.completed');
+
+    await ctx.rpc.beginCompaction({});
+    await compacted;
+    await completed;
+
+    expect(attempts).toBe(2);
+    expect(sawFullMedia).toBe(true);
+    expect(sawDegradedResend).toBe(true);
     await ctx.expectResumeMatches();
   });
 

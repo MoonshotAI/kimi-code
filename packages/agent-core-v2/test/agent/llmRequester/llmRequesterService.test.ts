@@ -1,26 +1,22 @@
 /**
- * Scenario: LLM requester uses bounded recovery projections after a
+ * Scenario: LLM requester retries once with a recovery projection after a
  * deterministic provider rejection — strict projection for tool-use
- * adjacency, degraded media followed by full stripping for body-size 413s,
- * and media stripping for image-format rejections.
+ * adjacency / structural rejections, media-stripped projection for
+ * image-format rejections (with per-turn stickiness).
  *
- * Responsibilities: assert retry eligibility, projection order and bounds,
- * per-turn recovery stickiness, request recording, and usage accounting.
- * Wiring: real AgentLLMRequesterService with stubbed context memory,
- * projector, context sizing, profile, model, telemetry, and wire/log services. Run:
- * pnpm test -- test/agent/llmRequester/llmRequesterService.test.ts
+ * Responsibilities: assert retry eligibility, strict/stripped-history
+ * rebuilding, request recording, and usage accounting. Wiring: real
+ * AgentLLMRequesterService with stubbed context memory, projector, context
+ * sizing, profile, model, telemetry, and wire/log services. Run:
+ * ../../node_modules/.bin/vitest run test/llmRequester/strict-resend.test.ts
  */
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
+import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import {
-  IAgentContextProjectorService,
-  type MediaStripSnapshot,
-} from '#/agent/contextProjector/contextProjector';
-import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
+import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { IFaultInjectionService } from '#/agent/faultInjection/faultInjection';
 import { FaultInjectionService } from '#/agent/faultInjection/faultInjectionService';
 import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
@@ -31,22 +27,17 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
-import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import { APIRequestTooLargeError, APIStatusError } from '#/app/llmProtocol/errors';
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import type { Message } from '#/app/llmProtocol/message';
-import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import type { ModelCapability } from '#/app/llmProtocol/capability';
-import type { LLMEvent, LLMRequestInput, Model } from '#/app/model/modelInstance';
+import type { LLMEvent, Model } from '#/app/model/modelInstance';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
-import { Error2, ErrorCodes } from '#/errors';
-import { IWireService } from '#/wire/wire';
-import type { WireRecord } from '#/wire/record';
+import { IAgentWireService } from '#/wire/tokens';
+import { WireService } from '#/wire/wireServiceImpl';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-
-import { recordingWireLog, registerTestAgentWire } from '../../wire/stubs';
 
 const capabilities: ModelCapability = {
   image_in: false,
@@ -61,12 +52,7 @@ const history: Message[] = [
   { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
 ];
 
-function createModel(
-  calls: { value: number },
-  firstCallError?: Error | null,
-  subsequentCallErrors: readonly Error[] = [],
-  capturedInputs?: LLMRequestInput[],
-): Model {
+function createModel(calls: { value: number }, firstCallError?: Error | null): Model {
   const build = (): Model => ({
     id: 'm',
     name: 'wire-model',
@@ -85,17 +71,11 @@ function createModel(
     withGenerationKwargs: () => build(),
     withProviderOptions: () => build(),
     withThinkingKeep: () => build(),
-    request: async function* (input) {
+    request: async function* () {
       calls.value += 1;
-      capturedInputs?.push(input);
-      const error =
-        calls.value === 1
-          ? firstCallError === null
-            ? undefined
-            : (firstCallError ??
-              new APIStatusError(400, 'messages: `tool_use` ids must be unique'))
-          : subsequentCallErrors[calls.value - 2];
-      if (error !== undefined) throw error;
+      if (calls.value === 1 && firstCallError !== null) {
+        throw firstCallError ?? new APIStatusError(400, 'messages: `tool_use` ids must be unique');
+      }
       yield {
         type: 'finish',
         message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
@@ -118,31 +98,18 @@ afterEach(() => disposables.dispose());
 
 function createService(
   model: Model,
-  projector:
-    | (Pick<IAgentContextProjectorService, 'project' | 'projectStrict'> &
-        Partial<
-          Pick<
-            IAgentContextProjectorService,
-            | 'captureMediaStripSnapshot'
-            | 'projectMediaDegraded'
-            | 'projectMediaStripped'
-          >
-        >)
-    | undefined,
-  options: {
-    readonly flagEnabled?: boolean;
-    readonly thinkingLevel?: ThinkingEffort;
-  } = {},
+  projector: Pick<IAgentContextProjectorService, 'project' | 'projectStrict'> &
+    Partial<Pick<IAgentContextProjectorService, 'projectMediaDegraded' | 'projectMediaStripped'>>,
+  options: { readonly flagEnabled?: boolean } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
-  const thinkingLevel = options.thinkingLevel ?? 'off';
   const profile: Partial<IAgentProfileService> = {
     resolveModelContext: () => ({
       modelAlias: 'm',
       modelCapabilities: capabilities,
       maxOutputSize: undefined,
       alwaysThinking: undefined,
-      thinkingLevel,
+      thinkingLevel: 'off',
       reservedContextSize: undefined,
       compactionTriggerRatio: undefined,
     }),
@@ -152,7 +119,7 @@ function createService(
       cwd: '',
       modelAlias: 'm',
       modelCapabilities: capabilities,
-      thinkingLevel,
+      thinkingLevel: 'off',
       systemPrompt: 'system',
     }),
     isToolActive: () => true,
@@ -175,29 +142,10 @@ function createService(
     shapeHistory: (messages) => messages,
   };
   const flagEnabled = options.flagEnabled ?? true;
-  const testSnapshot = Object.freeze({}) as MediaStripSnapshot;
-  const events: DomainEvent[] = [];
-  const eventBus: IEventBus = {
-    _serviceBrand: undefined,
-    publish: (event) => events.push(event),
-    subscribe: () => toDisposable(() => {}),
-  };
 
   ix.stub(IAgentContextMemoryService, context);
   ix.stub(IAgentToolSelectService, toolSelect);
-  if (projector === undefined) {
-    ix.set(
-      IAgentContextProjectorService,
-      new SyncDescriptor(AgentContextProjectorService),
-    );
-  } else {
-    ix.stub(IAgentContextProjectorService, {
-      captureMediaStripSnapshot: () => testSnapshot,
-      projectMediaDegraded: projector.project,
-      projectMediaStripped: projector.project,
-      ...projector,
-    });
-  }
+  ix.stub(IAgentContextProjectorService, projector);
   ix.stub(IFlagService, { enabled: () => flagEnabled });
   ix.stub(IAgentContextSizeService, contextSize);
   ix.stub(IAgentToolRegistryService, tools);
@@ -206,45 +154,18 @@ function createService(
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
-  const records: WireRecord[] = [];
-  registerTestAgentWire(ix, 'wire/llm-requester', {
-    log: recordingWireLog(records),
-    eventBus,
-  });
+  ix.set(
+    IAgentWireService,
+    new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: 'strict-resend' }]),
+  );
   ix.set(IFaultInjectionService, new SyncDescriptor(FaultInjectionService));
   ix.set(IAgentLLMRequesterService, new SyncDescriptor(AgentLLMRequesterService));
 
   return {
     service: ix.get(IAgentLLMRequesterService),
     faultInjection: ix.get(IFaultInjectionService),
-    wire: ix.get(IWireService),
-    records,
-    events,
   };
 }
-
-describe('AgentLLMRequesterService Anthropic effort diagnostics', () => {
-  it('warns and sends when the effort is not listed by the model', async () => {
-    const calls = { value: 0 };
-    const model = createModel(calls, null);
-    Object.defineProperty(model, 'supportEfforts', { value: ['max'] });
-    Object.defineProperty(model, 'withMaxCompletionTokens', { value: () => model });
-    const { service, events } = createService(model, undefined, { thinkingLevel: 'high' });
-
-    const result = await service.request();
-
-    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
-    expect(calls.value).toBe(1);
-    expect(events.filter((event) => event.type === 'warning')).toEqual([
-      {
-        type: 'warning',
-        code: 'anthropic-thinking-effort-not-listed',
-        message:
-          'Thinking effort "high" is not listed for model "wire-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
-      },
-    ]);
-  });
-});
 
 describe('AgentLLMRequesterService strict resend', () => {
   it('resends once with strict projection after a recoverable structural 400', async () => {
@@ -350,11 +271,15 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
       },
     });
 
+    // Step 1: normal projection rejected, media-stripped resend recovers.
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
     expect(calls.value).toBe(2);
     expect(projectCalls).toBe(1);
     expect(strippedCalls).toBe(1);
 
+    // Step 2 of the same turn: the poison is still in the full history, so
+    // the request builds from the stripped projection directly — no fresh
+    // rejection, no normal projection.
     await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
     expect(calls.value).toBe(3);
     expect(projectCalls).toBe(1);
@@ -390,29 +315,21 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     let projectCalls = 0;
     let degradedCalls = 0;
     let strippedCalls = 0;
-    const { service } = createService(
-      createModel(
-        calls,
-        new Error2(ErrorCodes.PROVIDER_API_ERROR, 'Provider request failed', {
-          cause: BODY_TOO_LARGE_413,
-        }),
-      ),
-      {
-        project: (messages: readonly ContextMessage[]) => {
-          projectCalls += 1;
-          return messages;
-        },
-        projectStrict: (messages: readonly ContextMessage[]) => messages,
-        projectMediaDegraded: (messages: readonly ContextMessage[]) => {
-          degradedCalls += 1;
-          return messages;
-        },
-        projectMediaStripped: (messages: readonly ContextMessage[]) => {
-          strippedCalls += 1;
-          return messages;
-        },
+    const { service } = createService(createModel(calls, BODY_TOO_LARGE_413), {
+      project: (messages: readonly ContextMessage[]) => {
+        projectCalls += 1;
+        return messages;
       },
-    );
+      projectStrict: (messages: readonly ContextMessage[]) => messages,
+      projectMediaDegraded: (messages: readonly ContextMessage[]) => {
+        degradedCalls += 1;
+        return messages;
+      },
+      projectMediaStripped: (messages: readonly ContextMessage[]) => {
+        strippedCalls += 1;
+        return messages;
+      },
+    });
 
     const result = await service.request();
 
@@ -421,135 +338,6 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     expect(projectCalls).toBe(1);
     expect(degradedCalls).toBe(1);
     expect(strippedCalls).toBe(0);
-  });
-
-  it('falls back to media-stripped when the media-degraded request still receives 413', async () => {
-    const calls = { value: 0 };
-    let projectCalls = 0;
-    let degradedCalls = 0;
-    let strippedCalls = 0;
-    const { service } = createService(
-      createModel(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
-      {
-        project: (messages: readonly ContextMessage[]) => {
-          projectCalls += 1;
-          return messages;
-        },
-        projectStrict: (messages: readonly ContextMessage[]) => messages,
-        projectMediaDegraded: (messages: readonly ContextMessage[]) => {
-          degradedCalls += 1;
-          return messages;
-        },
-        projectMediaStripped: (messages: readonly ContextMessage[]) => {
-          strippedCalls += 1;
-          return messages;
-        },
-      },
-    );
-
-    const result = await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
-
-    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
-    expect(calls.value).toBe(3);
-    expect(projectCalls).toBe(1);
-    expect(degradedCalls).toBe(1);
-    expect(strippedCalls).toBe(1);
-  });
-
-  it('records repeated-413 recovery projections on the sticky later request', async () => {
-    const calls = { value: 0 };
-    const { service, wire, records } = createService(
-      createModel(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
-      {
-        project: (messages: readonly ContextMessage[]) => messages,
-        projectStrict: (messages: readonly ContextMessage[]) => messages,
-        projectMediaDegraded: (messages: readonly ContextMessage[]) => messages,
-        projectMediaStripped: (messages: readonly ContextMessage[]) => messages,
-      },
-    );
-
-    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
-    await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
-    await wire.flush();
-
-    expect(
-      records
-        .filter((record) => record.type === 'llm.request')
-        .map((record) => record['projection']),
-    ).toEqual([undefined, 'media-degraded', 'media-stripped', 'media-stripped']);
-  });
-
-  it('keeps new recovery media visible on later snapshot-stripped steps', async () => {
-    const calls = { value: 0 };
-    const capturedInputs: LLMRequestInput[] = [];
-    const oldUrl = 'data:image/png;base64,REJECTED';
-    const newUrl = 'data:image/png;base64,SMALL';
-    const imageMessage = (url: string, id: string): Message => ({
-      role: 'user',
-      content: [{ type: 'image_url', imageUrl: { url, id } }],
-      toolCalls: [],
-    });
-    const { service } = createService(
-      createModel(
-        calls,
-        BODY_TOO_LARGE_413,
-        [BODY_TOO_LARGE_413],
-        capturedInputs,
-      ),
-      undefined,
-    );
-
-    await service.request({
-      messages: [imageMessage(oldUrl, 'rejected-id')],
-      source: { type: 'turn', turnId: 1, step: 1 },
-    });
-    await service.request({
-      messages: [
-        imageMessage(oldUrl, 'rejected-id'),
-        imageMessage(newUrl, 'recovery-id'),
-      ],
-      source: { type: 'turn', turnId: 1, step: 2 },
-    });
-
-    const visibleUrls = capturedInputs
-      .at(-1)
-      ?.messages.flatMap((message) => message.content)
-      .filter((part) => part.type === 'image_url')
-      .map((part) => part.imageUrl.url);
-    expect(visibleUrls).toEqual([newUrl]);
-  });
-
-  it('stops after the media-stripped request also receives 413', async () => {
-    const calls = { value: 0 };
-    let projectCalls = 0;
-    let degradedCalls = 0;
-    let strippedCalls = 0;
-    const { service } = createService(
-      createModel(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413, BODY_TOO_LARGE_413]),
-      {
-        project: (messages: readonly ContextMessage[]) => {
-          projectCalls += 1;
-          return messages;
-        },
-        projectStrict: (messages: readonly ContextMessage[]) => messages,
-        projectMediaDegraded: (messages: readonly ContextMessage[]) => {
-          degradedCalls += 1;
-          return messages;
-        },
-        projectMediaStripped: (messages: readonly ContextMessage[]) => {
-          strippedCalls += 1;
-          return messages;
-        },
-      },
-    );
-
-    await expect(
-      service.request({ source: { type: 'turn', turnId: 1, step: 1 } }),
-    ).rejects.toBe(BODY_TOO_LARGE_413);
-    expect(calls.value).toBe(3);
-    expect(projectCalls).toBe(1);
-    expect(degradedCalls).toBe(1);
-    expect(strippedCalls).toBe(1);
   });
 
   it('keeps later steps of the same turn on the degraded projection', async () => {
@@ -568,11 +356,14 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
       },
     });
 
+    // Step 1: normal projection rejected with 413, degraded resend recovers.
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
     expect(calls.value).toBe(2);
     expect(projectCalls).toBe(1);
     expect(degradedCalls).toBe(1);
 
+    // Step 2 of the same turn: the accumulated media is still in the full
+    // history, so the request builds from the degraded projection directly.
     await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
     expect(calls.value).toBe(3);
     expect(projectCalls).toBe(1);
@@ -624,6 +415,8 @@ describe('AgentLLMRequesterService fault injection (experimental)', () => {
 
     const result = await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
 
+    // The fault fired before the provider was contacted, so the model only
+    // ever saw the degraded resend.
     expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
     expect(calls.value).toBe(1);
     expect(projectCalls).toBe(1);
@@ -651,6 +444,7 @@ describe('AgentLLMRequesterService fault injection (experimental)', () => {
     expect(strippedCalls).toBe(1);
     expect(faultInjection.status().fired).toEqual(['image-format']);
 
+    // One-shot: the next request fires nothing and builds normally.
     const result = await service.request({ source: { type: 'turn', turnId: 2, step: 1 } });
     expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
     expect(faultInjection.status().fired).toEqual(['image-format']);
