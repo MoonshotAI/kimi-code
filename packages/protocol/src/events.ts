@@ -220,6 +220,7 @@ export type KimiErrorCode =
   | 'session.undo_unavailable'
   | 'session.export_not_found'
   | 'session.export_missing_version'
+  | 'session.export_output_conflict'
   | 'session.export_too_large'
   | 'session.closed'
   | 'session.permission_mode_invalid'
@@ -1121,6 +1122,7 @@ export const kimiErrorCodeSchema = z.enum([
   'session.undo_unavailable',
   'session.export_not_found',
   'session.export_missing_version',
+  'session.export_output_conflict',
   'session.export_too_large',
   'session.closed',
   'session.permission_mode_invalid',

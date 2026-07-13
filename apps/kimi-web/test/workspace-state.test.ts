@@ -291,7 +291,6 @@ describe('useWorkspaceState — exportSession', () => {
   let revokeObjectURL: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
-    vi.useFakeTimers();
     apiMock.exportSession.mockReset();
     clearTrace();
     anchor = { href: '', download: '', click: vi.fn(), remove: vi.fn() };
@@ -307,8 +306,6 @@ describe('useWorkspaceState — exportSession', () => {
 
   afterEach(() => {
     clearTrace();
-    vi.clearAllTimers();
-    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -326,7 +323,6 @@ describe('useWorkspaceState — exportSession', () => {
     const workspace = useWorkspaceState(createState(), createDeps());
 
     await workspace.exportSession();
-    vi.runAllTimers();
 
     const webLog = apiMock.exportSession.mock.calls[0]?.[1] as string;
     expect(webLog).toContain('prompt:start');
@@ -337,7 +333,10 @@ describe('useWorkspaceState — exportSession', () => {
     expect(append).toHaveBeenCalledWith(anchor);
     expect(anchor.click).toHaveBeenCalledOnce();
     expect(anchor.remove).toHaveBeenCalledOnce();
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledOnce();
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
   });
 
   it('keeps one request targeted at the session selected when export started', async () => {
@@ -355,6 +354,9 @@ describe('useWorkspaceState — exportSession', () => {
     const second = workspace.exportSession();
     resolveExport({ blob: new Blob(['zip']), fileName: 'sess_1.zip' });
     await Promise.all([first, second]);
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
 
     expect(apiMock.exportSession).toHaveBeenCalledTimes(1);
     expect(apiMock.exportSession).toHaveBeenCalledWith('sess_1', expect.any(String));
@@ -369,10 +371,12 @@ describe('useWorkspaceState — exportSession', () => {
     const workspace = useWorkspaceState(createState(), deps);
 
     await workspace.exportSession();
-    vi.runAllTimers();
 
     expect(anchor.remove).toHaveBeenCalledOnce();
-    expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledOnce();
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
     expect(deps.pushOperationFailure).toHaveBeenCalledWith(
       'exportSession',
       expect.any(Error),

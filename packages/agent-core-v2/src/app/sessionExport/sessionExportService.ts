@@ -6,7 +6,7 @@
  * packages diagnostic files through the local zip writer. Bound at App scope.
  */
 
-import { resolve } from 'pathe';
+import { join, resolve } from 'pathe';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -31,6 +31,7 @@ import {
 import { scanSessionWire } from './wire-scan';
 import {
   type ExtraZipEntry,
+  type SessionZipEntry,
   collectFilesRecursive,
   writeExportZip,
 } from './zip';
@@ -164,49 +165,58 @@ export async function exportSessionDirectory(input: {
 }): Promise<ExportSessionResult> {
   input.signal?.throwIfAborted();
   const sessionDir = input.summary.sessionDir;
-  const sessionFiles = await collectFilesRecursive(sessionDir);
-  if (sessionFiles.length === 0) {
-    throw new Error2(
-      ErrorCodes.SESSION_EXPORT_NOT_FOUND,
-      `Session "${input.summary.id}" has no exportable directory at "${sessionDir}"`,
-      { details: { sessionId: input.summary.id, sessionDir } },
-    );
-  }
-
-  const sessionScan = await scanSessionWire(sessionDir, input.signal);
-  const hasSessionLog = sessionFiles.some((f) =>
-    f.endsWith(`/${SESSION_LOG_REL}`) || f.endsWith(`\\${SESSION_LOG_REL.replaceAll('/', '\\')}`),
-  );
-
-  const bundledWebLog = input.webLog !== undefined;
-  const baseManifest = buildExportManifest({
-    summary: input.summary,
-    now: new Date(),
-    version: input.request.version,
-    sessionScan,
-    sessionLogPath: hasSessionLog ? SESSION_LOG_REL : undefined,
-    webLogPath: bundledWebLog ? WEB_LOG_REL : undefined,
-    installSource: input.request.installSource,
-    shellEnv: input.request.shellEnv,
-  });
-  const outputPath =
-    input.request.outputPath !== undefined
-      ? resolve(input.request.outputPath)
-      : resolve(`${input.summary.id}.zip`);
-
-  const extras: ExtraZipEntry[] = [];
-  if (input.webLog !== undefined) {
-    extras.push({ data: Buffer.from(input.webLog, 'utf8'), target: WEB_LOG_REL });
-  }
+  const sessionLogPath = join(sessionDir, SESSION_LOG_REL);
+  let sessionLogSource: ZipSource | undefined;
+  let sessionLogSourceTransferred = false;
   let globalSource: ZipSource | undefined;
   let globalSourceTransferred = false;
 
   try {
+    sessionLogSource = await openOptionalZipSource(sessionLogPath, input.signal);
     if (input.request.includeGlobalLog === true && input.globalLogPath !== undefined) {
       globalSource = await openOptionalZipSource(input.globalLogPath, input.signal);
-      if (globalSource !== undefined) {
-        extras.push({ source: globalSource, target: GLOBAL_LOG_REL });
-      }
+    }
+    const sessionFiles = await collectFilesRecursive(sessionDir);
+    if (sessionFiles.length === 0 && sessionLogSource === undefined) {
+      throw new Error2(
+        ErrorCodes.SESSION_EXPORT_NOT_FOUND,
+        `Session "${input.summary.id}" has no exportable directory at "${sessionDir}"`,
+        { details: { sessionId: input.summary.id, sessionDir } },
+      );
+    }
+
+    const sessionScan = await scanSessionWire(sessionDir, input.signal);
+    const stableSessionLog = sessionLogSource;
+    const selectedSessionFiles: SessionZipEntry[] = sessionFiles.filter(
+      (file) => file !== sessionLogPath,
+    );
+    if (stableSessionLog !== undefined) {
+      selectedSessionFiles.push({ path: sessionLogPath, source: stableSessionLog });
+      selectedSessionFiles.sort((left, right) =>
+        sessionZipEntryPath(left).localeCompare(sessionZipEntryPath(right)),
+      );
+    }
+    const bundledWebLog = input.webLog !== undefined;
+    const baseManifest = buildExportManifest({
+      summary: input.summary,
+      now: new Date(),
+      version: input.request.version,
+      sessionScan,
+      sessionLogPath: stableSessionLog === undefined ? undefined : SESSION_LOG_REL,
+      webLogPath: bundledWebLog ? WEB_LOG_REL : undefined,
+      installSource: input.request.installSource,
+      shellEnv: input.request.shellEnv,
+    });
+    const outputPath =
+      input.request.outputPath !== undefined
+        ? resolve(input.request.outputPath)
+        : resolve(`${input.summary.id}.zip`);
+    const extras: ExtraZipEntry[] = [];
+    if (input.webLog !== undefined) {
+      extras.push({ data: Buffer.from(input.webLog, 'utf8'), target: WEB_LOG_REL });
+    }
+    if (globalSource !== undefined) {
+      extras.push({ source: globalSource, target: GLOBAL_LOG_REL });
     }
     const manifest =
       globalSource === undefined
@@ -217,11 +227,12 @@ export async function exportSessionDirectory(input: {
       outputPath,
       manifest,
       sessionDir,
-      sessionFiles,
+      sessionFiles: selectedSessionFiles,
       extraEntries: extras,
       signal: input.signal,
       maxArchiveBytes: input.maxArchiveBytes,
     });
+    sessionLogSourceTransferred = sessionLogSource !== undefined;
     globalSourceTransferred = globalSource !== undefined;
     const entries = await writing;
 
@@ -232,10 +243,17 @@ export async function exportSessionDirectory(input: {
       manifest,
     };
   } finally {
+    if (sessionLogSource !== undefined && !sessionLogSourceTransferred) {
+      await sessionLogSource.close().catch(() => {});
+    }
     if (globalSource !== undefined && !globalSourceTransferred) {
       await globalSource.close().catch(() => {});
     }
   }
+}
+
+function sessionZipEntryPath(entry: SessionZipEntry): string {
+  return typeof entry === 'string' ? entry : entry.path;
 }
 
 async function openOptionalZipSource(
@@ -244,10 +262,20 @@ async function openOptionalZipSource(
 ): Promise<ZipSource | undefined> {
   try {
     return await openZipSource(path, signal);
-  } catch {
+  } catch (error) {
     signal?.throwIfAborted();
-    return undefined;
+    if (isMissingPath(error)) return undefined;
+    throw error;
   }
+}
+
+function isMissingPath(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as NodeJS.ErrnoException).code === 'ENOENT'
+  );
 }
 
 registerScopedService(

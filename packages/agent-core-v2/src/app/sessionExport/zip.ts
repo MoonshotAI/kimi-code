@@ -7,16 +7,20 @@
  */
 
 import { createWriteStream } from 'node:fs';
-import { mkdir, readdir } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, rename, rm, stat } from 'node:fs/promises';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
-import { dirname, join, relative } from 'pathe';
+import { dirname, join, relative, resolve } from 'pathe';
 import { ZipFile, type ReadStreamOptions } from 'yazl';
 
 import { ErrorCodes, Error2 } from '#/errors';
 
-import { openZipSource, type ZipSource } from './file-source';
+import {
+  openZipSource,
+  type ZipSource,
+  type ZipSourceIdentity,
+} from './file-source';
 import type { ExportSessionManifest } from './sessionExport';
 
 export async function collectFilesRecursive(root: string): Promise<string[]> {
@@ -36,18 +40,23 @@ export type ExtraZipEntry =
   | { readonly source: ZipSource; readonly target: string }
   | { readonly data: Buffer; readonly target: string };
 
+export type SessionZipEntry = string | { readonly path: string; readonly source: ZipSource };
+
 export async function writeExportZip(args: {
   readonly outputPath: string;
   readonly manifest: ExportSessionManifest;
   readonly sessionDir: string;
-  readonly sessionFiles: readonly string[];
+  readonly sessionFiles: readonly SessionZipEntry[];
   readonly extraEntries?: readonly ExtraZipEntry[];
   readonly signal?: AbortSignal;
   readonly maxArchiveBytes?: number;
 }): Promise<readonly string[]> {
-  const unusedSources = new Set(
-    (args.extraEntries ?? []).flatMap((entry) => ('source' in entry ? [entry.source] : [])),
-  );
+  const unusedSources = new Set<ZipSource>([
+    ...args.sessionFiles.flatMap((entry) => (typeof entry === 'string' ? [] : [entry.source])),
+    ...(args.extraEntries ?? []).flatMap((entry) =>
+      'source' in entry ? [entry.source] : [],
+    ),
+  ]);
   const pendingOpens = new Set<Promise<void>>();
   let activeSource: ZipSource | undefined;
   let releaseActive: (() => void) | undefined;
@@ -57,6 +66,7 @@ export async function writeExportZip(args: {
   let stopped: Error | undefined;
   let failure: { readonly error: unknown } | undefined;
   let onAbort: (() => void) | undefined;
+  let tempDir: string | undefined;
 
   const getStopError = (): Error | undefined => stopped;
   const stop = (error: Error): void => {
@@ -73,8 +83,18 @@ export async function writeExportZip(args: {
   };
 
   try {
+    const conflictingSource = await findConflictingSource(args);
+    if (conflictingSource !== undefined) {
+      throw new Error2(
+        ErrorCodes.SESSION_EXPORT_OUTPUT_CONFLICT,
+        `Session export output conflicts with selected source "${conflictingSource}".`,
+        { details: { outputPath: args.outputPath, source: conflictingSource } },
+      );
+    }
     await mkdir(dirname(args.outputPath), { recursive: true });
     args.signal?.throwIfAborted();
+    tempDir = await mkdtemp(join(dirname(args.outputPath), '.kimi-session-export-'));
+    const tempOutputPath = join(tempDir, 'archive.zip');
 
     const zip = new ZipFile() as LazyZipFile;
     output = zip.outputStream as unknown as Readable;
@@ -89,7 +109,7 @@ export async function writeExportZip(args: {
     };
     args.signal?.addEventListener('abort', onAbort, { once: true });
 
-    const destination = createWriteStream(args.outputPath);
+    const destination = createWriteStream(tempOutputPath, { flags: 'wx' });
     writing =
       args.maxArchiveBytes === undefined
         ? pipeline(output, destination, { signal: args.signal })
@@ -152,9 +172,18 @@ export async function writeExportZip(args: {
 
     zip.addBuffer(Buffer.from(JSON.stringify(args.manifest, null, 2), 'utf8'), 'manifest.json');
 
-    for (const source of args.sessionFiles) {
-      const target = relative(args.sessionDir, source).split(/[\\/]/).join('/');
-      addLazySource(target, {}, () => openZipSource(source, args.signal));
+    for (const entry of args.sessionFiles) {
+      const sourcePath = sessionEntryPath(entry);
+      const target = relative(args.sessionDir, sourcePath).split(/[\\/]/).join('/');
+      if (typeof entry === 'string') {
+        addLazySource(target, {}, () => openZipSource(entry, args.signal));
+      } else {
+        addLazySource(
+          target,
+          { size: entry.source.size, mtime: entry.source.mtime, mode: entry.source.mode },
+          async () => entry.source,
+        );
+      }
     }
 
     for (const extra of args.extraEntries ?? []) {
@@ -171,6 +200,14 @@ export async function writeExportZip(args: {
 
     zip.end();
     await writing;
+    await Promise.allSettled(pendingOpens);
+    await closing;
+    if (onAbort !== undefined) {
+      args.signal?.removeEventListener('abort', onAbort);
+      onAbort = undefined;
+    }
+    args.signal?.throwIfAborted();
+    await rename(tempOutputPath, args.outputPath);
   } catch (error) {
     failure = { error };
     stop(asError(error));
@@ -186,14 +223,21 @@ export async function writeExportZip(args: {
     } catch (error) {
       failure ??= { error };
     }
+    if (tempDir !== undefined) {
+      try {
+        await rm(tempDir, { recursive: true, force: true });
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
   }
 
   if (failure !== undefined) throw failure.error;
   if (stopped !== undefined) throw stopped;
   return [
     'manifest.json',
-    ...args.sessionFiles.map((source) =>
-      relative(args.sessionDir, source).split(/[\\/]/).join('/'),
+    ...args.sessionFiles.map((entry) =>
+      relative(args.sessionDir, sessionEntryPath(entry)).split(/[\\/]/).join('/'),
     ),
     ...(args.extraEntries ?? []).map((entry) => entry.target),
   ];
@@ -237,6 +281,72 @@ function createArchiveLimit(maxArchiveBytes: number): Transform {
       callback(null, chunk);
     },
   });
+}
+
+async function findConflictingSource(args: {
+  readonly outputPath: string;
+  readonly sessionFiles: readonly SessionZipEntry[];
+  readonly extraEntries?: readonly ExtraZipEntry[];
+  readonly signal?: AbortSignal;
+}): Promise<string | undefined> {
+  args.signal?.throwIfAborted();
+  const outputPath = resolve(args.outputPath);
+  for (const entry of args.sessionFiles) {
+    const sourcePath = sessionEntryPath(entry);
+    if (resolve(sourcePath) === outputPath) return sourcePath;
+  }
+  for (const entry of args.extraEntries ?? []) {
+    if (
+      'source' in entry &&
+      entry.source.sourcePath !== undefined &&
+      resolve(entry.source.sourcePath) === outputPath
+    ) {
+      return entry.target;
+    }
+  }
+
+  const output = await statExisting(outputPath);
+  if (output === undefined) return undefined;
+
+  for (const entry of args.sessionFiles) {
+    args.signal?.throwIfAborted();
+    const input =
+      typeof entry === 'string' ? await statExisting(entry) : entry.source.identity;
+    if (input !== undefined && sameFile(output, input)) return sessionEntryPath(entry);
+  }
+  for (const entry of args.extraEntries ?? []) {
+    args.signal?.throwIfAborted();
+    if ('source' in entry && sameFile(output, entry.source.identity)) return entry.target;
+  }
+  return undefined;
+}
+
+async function statExisting(
+  path: string,
+): Promise<ZipSourceIdentity | undefined> {
+  try {
+    const file = await stat(path, { bigint: true });
+    return { device: file.dev, inode: file.ino };
+  } catch (error) {
+    if (!isMissingPath(error)) throw error;
+    return undefined;
+  }
+}
+
+function sameFile(
+  left: ZipSourceIdentity,
+  right: ZipSourceIdentity,
+): boolean {
+  return (
+    left.inode !== 0n &&
+    right.inode !== 0n &&
+    left.device === right.device &&
+    left.inode === right.inode
+  );
+}
+
+function sessionEntryPath(entry: SessionZipEntry): string {
+  return typeof entry === 'string' ? entry : entry.path;
 }
 
 function isMissingPath(error: unknown): boolean {
