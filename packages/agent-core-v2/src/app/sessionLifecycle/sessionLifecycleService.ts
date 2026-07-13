@@ -47,6 +47,10 @@ import {
   ISessionIndex,
   PARENT_SESSION_ID_KEY,
 } from '#/app/sessionIndex/sessionIndex';
+import {
+  LEGACY_SESSION_INDEX_KEY,
+  LEGACY_SESSION_INDEX_SCOPE,
+} from '#/app/sessionIndex/legacySessionIndex';
 import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
 import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -82,6 +86,12 @@ import {
 type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly sessionId: string;
   readonly workspaceId?: string;
+  /**
+   * Append a v1-compatible `session_index.jsonl` line once the session is
+   * materialized. Set for brand-new sessions (create / fork target); resume
+   * must not re-append (v1 only writes on create/fork).
+   */
+  readonly legacyIndex?: boolean;
 };
 
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
@@ -126,7 +136,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
-    const handle = await this.materializeSession({ ...opts, sessionId });
+    const handle = await this.materializeSession({ ...opts, sessionId, legacyIndex: true });
     await this.appendSessionIndexEntry(sessionId, opts.workDir);
     if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
       const main = await ensureMainAgent(handle);
@@ -193,6 +203,21 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     void handle.accessor.get(ISessionSkillCatalog).ready;
     await handle.accessor.get(IAgentLifecycleService).ensureMcpReady();
     handle.accessor.get(ISessionExternalHooksService);
+    if (opts.legacyIndex === true) {
+      // Project the new session into v1's global index so a v1 CLI sharing
+      // this homeDir can discover it. `AppendLogStore` framing is
+      // byte-identical to v1's `JSON.stringify(entry) + '\n'`; the explicit
+      // flush makes the line durable before create/fork returns. Placed at
+      // the materialization point (not fork completion) because v2 does not
+      // roll back a failed fork's directory — the tree is the index, so the
+      // file line matches on-disk reality.
+      this.appendLogStore.append(LEGACY_SESSION_INDEX_SCOPE, LEGACY_SESSION_INDEX_KEY, {
+        sessionId: opts.sessionId,
+        sessionDir,
+        workDir: opts.workDir,
+      });
+      await this.appendLogStore.flush();
+    }
     return handle;
   }
 
@@ -389,6 +414,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       const target = await this.materializeSession({
         sessionId: targetId,
         workDir: workspace.root,
+        legacyIndex: true,
       });
       const targetCtx = target.accessor.get(ISessionContext);
       const targetMeta = target.accessor.get(ISessionMetadata);

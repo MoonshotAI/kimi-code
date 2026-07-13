@@ -90,6 +90,13 @@ describe('FileSessionIndex (legacy)', () => {
     await fsp.mkdir(join(sessionsDir, wsId, sessionId), { recursive: true });
   }
 
+  async function seedIndexLine(
+    entry: { sessionId: string; sessionDir: string; workDir: string } | string,
+  ): Promise<void> {
+    const line = typeof entry === 'string' ? entry : JSON.stringify(entry);
+    await fsp.appendFile(join(homeDir, 'session_index.jsonl'), `${line}\n`);
+  }
+
   it('list returns non-archived sessions by default', async () => {
     await seedSession('active', { createdAt: 1, updatedAt: 2 });
     await seedSession('archived', { archived: true });
@@ -188,6 +195,83 @@ describe('FileSessionIndex (legacy)', () => {
     const store = build();
     expect(await store.countActive(workspaceId)).toBe(2);
     expect(await store.countActive('wd_unknown')).toBe(0);
+  });
+
+  it('get locates a session through the legacy index file', async () => {
+    await seedSession('indexed', { title: 'via index' });
+    await seedIndexLine({
+      sessionId: 'indexed',
+      sessionDir: join(sessionsDir, workspaceId, 'indexed'),
+      workDir: WORK_DIR,
+    });
+
+    const store = build();
+    const summary = await store.get('indexed');
+    expect(summary?.id).toBe('indexed');
+    expect(summary?.workspaceId).toBe(workspaceId);
+    expect(summary?.title).toBe('via index');
+  });
+
+  it('get ignores index lines that fail v1 validation', async () => {
+    await seedSession('valid', { title: 'ok' });
+    // Non-absolute sessionDir.
+    await seedIndexLine({ sessionId: 'rel', sessionDir: 'relative/path/rel', workDir: WORK_DIR });
+    // Outside sessionsDir.
+    await seedIndexLine({
+      sessionId: 'outside',
+      sessionDir: join(homeDir, 'elsewhere', 'outside'),
+      workDir: WORK_DIR,
+    });
+    // Basename does not match sessionId.
+    await seedIndexLine({
+      sessionId: 'mismatch',
+      sessionDir: join(sessionsDir, workspaceId, 'other-name'),
+      workDir: WORK_DIR,
+    });
+    // Corrupt line.
+    await seedIndexLine('{ not json');
+
+    const store = build();
+    expect(await store.get('rel')).toBeUndefined();
+    expect(await store.get('outside')).toBeUndefined();
+    expect(await store.get('mismatch')).toBeUndefined();
+    // A corrupt file never breaks unrelated lookups.
+    expect((await store.get('valid'))?.title).toBe('ok');
+  });
+
+  it('later index lines override earlier ones for the same session', async () => {
+    const otherWs = 'wd_other';
+    await seedSession('moved', { title: 'old location' });
+    await seedSession('moved', { title: 'new location' }, otherWs);
+    await seedIndexLine({
+      sessionId: 'moved',
+      sessionDir: join(sessionsDir, workspaceId, 'moved'),
+      workDir: WORK_DIR,
+    });
+    await seedIndexLine({
+      sessionId: 'moved',
+      sessionDir: join(sessionsDir, otherWs, 'moved'),
+      workDir: '/other',
+    });
+
+    const store = build();
+    const summary = await store.get('moved');
+    expect(summary?.workspaceId).toBe(otherWs);
+    expect(summary?.title).toBe('new location');
+  });
+
+  it('get falls back to the directory scan when the index line is stale', async () => {
+    await seedSession('real', { title: 'on disk' });
+    // Valid-looking line, but the directory was never created.
+    await seedIndexLine({
+      sessionId: 'ghost',
+      sessionDir: join(sessionsDir, workspaceId, 'ghost'),
+      workDir: WORK_DIR,
+    });
+
+    const store = build();
+    expect(await store.get('ghost')).toBeUndefined();
+    expect((await store.get('real'))?.title).toBe('on disk');
   });
 });
 
@@ -362,5 +446,23 @@ describe('FileSessionIndex (read model)', () => {
     } finally {
       await lockHolder.close();
     }
+  });
+
+  it('cold get backfills through the legacy index locator', async () => {
+    await seedSession('indexed', { title: 'cold', createdAt: 1, updatedAt: 2 });
+    await fsp.appendFile(
+      join(homeDir, 'session_index.jsonl'),
+      `${JSON.stringify({
+        sessionId: 'indexed',
+        sessionDir: join(sessionsDir, workspaceId, 'indexed'),
+        workDir: WORK_DIR,
+      })}\n`,
+    );
+
+    const store = build();
+    const got = await store.get('indexed');
+    expect(got?.title).toBe('cold');
+    // The cold read backfilled the read model.
+    expect(await queryStore.get(SESSION_COLLECTION, 'indexed')).toMatchObject({ title: 'cold' });
   });
 });

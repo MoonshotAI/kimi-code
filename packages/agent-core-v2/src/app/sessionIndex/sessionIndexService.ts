@@ -7,6 +7,12 @@
  * session ids are enumerated via `IFileSystemStorageService.list`, and each session's
  * metadata document is read via `IAtomicDocumentStore` to build its summary.
  *
+ * Point lookups (`get`) first consult v1's legacy `<homeDir>/session_index.jsonl`
+ * (format defined in `./legacySessionIndex`) to locate a session's workspace in
+ * O(1), falling back to the directory scan when the file has no line for the id
+ * or the line is stale. Listings never trust the file: the tree stays
+ * authoritative.
+ *
  * The session metadata document lives at `<sessionDir>/state.json`, a layout
  * shared by v1 and v2; the `version` field distinguishes them (`2` = v2,
  * epoch-ms timestamps; absent = v1, ISO-string timestamps). The reader also
@@ -48,11 +54,19 @@ import {
   type SessionListQuery,
   type SessionSummary,
 } from './sessionIndex';
+import {
+  LEGACY_SESSION_INDEX_KEY,
+  LEGACY_SESSION_INDEX_SCOPE,
+  parseLegacySessionIndexLine,
+  validateLegacySessionIndexEntry,
+} from './legacySessionIndex';
 
 const META_SCOPE = 'session-meta';
 const META_KEY = 'state.json';
 const SESSION_COLLECTION = 'session';
 const READ_MODEL_FLAG = 'persistence_minidb_readmodel';
+
+const textDecoder = new TextDecoder();
 
 /** Accept both v2 (epoch ms number) and v1 (ISO string) timestamps. */
 function parseTime(value: unknown): number {
@@ -194,7 +208,14 @@ export class FileSessionIndex implements ISessionIndex {
   private async getFromReadModel(id: string): Promise<SessionSummary | undefined> {
     const cached = await this.queryStore.get<SessionSummary>(SESSION_COLLECTION, id);
     if (cached !== undefined) return cached;
-    // Cold miss: locate the session on disk, then read + backfill.
+    // Cold miss: locate the session on disk, then read + backfill. Prefer the
+    // legacy index (O(1)) over the per-workspace scan; a stale line falls
+    // through to the scan.
+    const located = (await this.readLegacyIndex()).get(id);
+    if (located !== undefined) {
+      const summary = await this.getCachedSummary(located, id);
+      if (summary !== undefined) return summary;
+    }
     for (const workspaceId of await this.listWorkspaceIds()) {
       if (!(await this.hasSession(workspaceId, id))) continue;
       return this.getCachedSummary(workspaceId, id);
@@ -275,12 +296,42 @@ export class FileSessionIndex implements ISessionIndex {
   }
 
   private async getLegacy(id: string): Promise<SessionSummary | undefined> {
+    // Prefer the legacy index (O(1)) over the per-workspace scan; a stale line
+    // (deleted dir / unreadable metadata) falls through to the scan.
+    const located = (await this.readLegacyIndex()).get(id);
+    if (located !== undefined) {
+      const summary = await this.readSummary(located, id);
+      if (summary !== undefined) return summary;
+    }
     for (const workspaceId of await this.listWorkspaceIds()) {
       if (!(await this.hasSession(workspaceId, id))) continue;
       const summary = await this.readSummary(workspaceId, id);
       if (summary !== undefined) return summary;
     }
     return undefined;
+  }
+
+  /**
+   * Read v1's global session index (`<homeDir>/session_index.jsonl`) as a
+   * sessionId → workspaceId locator. Entries are validated with v1's rules
+   * (absolute sessionDir inside `sessionsDir`, basename === sessionId) and
+   * later lines override earlier ones. Returns an empty map when the file is
+   * missing or unreadable.
+   */
+  private async readLegacyIndex(): Promise<Map<string, string>> {
+    const result = new Map<string, string>();
+    const bytes = await this.storage.read(LEGACY_SESSION_INDEX_SCOPE, LEGACY_SESSION_INDEX_KEY);
+    if (bytes === undefined) return result;
+    for (const line of textDecoder.decode(bytes).split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (trimmed === '') continue;
+      const entry = parseLegacySessionIndexLine(trimmed);
+      if (entry === undefined) continue;
+      const located = validateLegacySessionIndexEntry(entry, this.bootstrap.sessionsDir);
+      if (located === undefined) continue;
+      result.set(entry.sessionId, located.workspaceId);
+    }
+    return result;
   }
 
   private async countActiveLegacy(workspaceId: string): Promise<number> {

@@ -34,6 +34,7 @@ import { ISessionActivity } from '#/session/sessionActivity/sessionActivity';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
+import { parseLegacySessionIndexLine } from '#/app/sessionIndex/legacySessionIndex';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
@@ -217,6 +218,20 @@ function appendLogStoreStub(): IAppendLogStore {
     close: () => Promise.resolve(),
     acquire: () => ({ dispose: () => {} }),
   };
+}
+
+function recordingAppendLogStore(): {
+  store: IAppendLogStore;
+  appends: { scope: string; key: string; record: unknown }[];
+} {
+  const appends: { scope: string; key: string; record: unknown }[] = [];
+  const store: IAppendLogStore = {
+    ...appendLogStoreStub(),
+    append: (scope, key, record) => {
+      appends.push({ scope, key, record });
+    },
+  };
+  return { store, appends };
 }
 
 function atomicDocumentStoreStub(): IAtomicDocumentStore {
@@ -972,6 +987,83 @@ describe('SessionLifecycleService', () => {
 
       expect(create).not.toHaveBeenCalled();
       expect(enter).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('legacy session index projection', () => {
+    it('create appends one v1-compatible line to session_index.jsonl', async () => {
+      const { store, appends } = recordingAppendLogStore();
+      const svc = build([stubPair(IAppendLogStore, store)]);
+
+      await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+      expect(appends).toEqual([
+        {
+          scope: '',
+          key: 'session_index.jsonl',
+          record: {
+            sessionId: 's1',
+            sessionDir: '/tmp/sessions/wd_stub/s1',
+            workDir: '/tmp/proj',
+          },
+        },
+      ]);
+      // The appended record round-trips through v1's line format.
+      const record = appends[0]!.record;
+      expect(parseLegacySessionIndexLine(JSON.stringify(record))).toEqual(record);
+    });
+
+    it('resume does not append to the legacy index', async () => {
+      const { store, appends } = recordingAppendLogStore();
+      const svc = build([
+        stubPair(IAppendLogStore, store),
+        stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj')),
+        stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
+      ]);
+
+      await svc.resume('s1');
+
+      expect(appends).toEqual([]);
+    });
+
+    it('fork appends a line for the target session', async () => {
+      const { store, appends } = recordingAppendLogStore();
+      const svc = build([
+        stubPair(IAppendLogStore, store),
+        stubPair(ISessionActivity, {
+          _serviceBrand: undefined,
+          status: () => 'idle' as const,
+          isIdle: () => true,
+        }),
+        stubPair(IWorkspaceRegistry, {
+          ...workspaceRegistryStub(),
+          get: () =>
+            Promise.resolve({
+              id: 'wd_stub',
+              root: '/tmp/proj',
+              name: 'stub',
+              createdAt: 0,
+              lastOpenedAt: 0,
+            }),
+        }),
+      ]);
+
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      expect(appends.map((a) => (a.record as { sessionId: string }).sessionId)).toEqual([
+        'src',
+        'dst',
+      ]);
+      expect(appends[1]).toMatchObject({
+        scope: '',
+        key: 'session_index.jsonl',
+        record: {
+          sessionId: 'dst',
+          sessionDir: '/tmp/sessions/wd_stub/dst',
+          workDir: '/tmp/proj',
+        },
+      });
     });
   });
 });

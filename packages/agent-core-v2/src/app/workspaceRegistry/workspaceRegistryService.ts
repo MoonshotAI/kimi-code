@@ -22,6 +22,11 @@ import { basename, isAbsolute } from 'pathe';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
+import {
+  LEGACY_SESSION_INDEX_KEY,
+  LEGACY_SESSION_INDEX_SCOPE,
+  parseLegacySessionIndexLine,
+} from '#/app/sessionIndex/legacySessionIndex';
 import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -29,18 +34,7 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IWorkspaceRegistry, type Workspace, type WorkspaceUpdate } from './workspaceRegistry';
 import { IWorkspacePersistence } from './workspacePersistence';
 
-// Legacy v1 session index, read only for the one-shot rebuild. Empty scope
-// resolves to `<homeDir>/<key>` (join skips empty segments).
-const SESSION_INDEX_SCOPE = '';
-const SESSION_INDEX_KEY = 'session_index.jsonl';
-
 const textDecoder = new TextDecoder();
-
-interface SessionIndexLine {
-  readonly sessionId: string;
-  readonly sessionDir: string;
-  readonly workDir: string;
-}
 
 export class WorkspaceRegistryService implements IWorkspaceRegistry {
   declare readonly _serviceBrand: undefined;
@@ -146,13 +140,13 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
 
   private async rebuildFromSessionIndex(): Promise<Map<string, Workspace>> {
     const result = new Map<string, Workspace>();
-    const bytes = await this.storage.read(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
+    const bytes = await this.storage.read(LEGACY_SESSION_INDEX_SCOPE, LEGACY_SESSION_INDEX_KEY);
     if (bytes === undefined) return result;
     const now = Date.now();
     for (const line of textDecoder.decode(bytes).split(/\r?\n/)) {
       const trimmed = line.trim();
       if (trimmed === '') continue;
-      const entry = parseSessionIndexLine(trimmed);
+      const entry = parseLegacySessionIndexLine(trimmed);
       if (entry === undefined) continue;
       if (!isAbsolute(entry.workDir)) continue;
       const id = encodeWorkDirKey(entry.workDir);
@@ -175,28 +169,6 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
       () => {},
     );
     return next;
-  }
-}
-
-function parseSessionIndexLine(line: string): SessionIndexLine | undefined {
-  try {
-    const parsed = JSON.parse(line) as unknown;
-    if (typeof parsed !== 'object' || parsed === null) return undefined;
-    const entry = parsed as Partial<SessionIndexLine>;
-    if (
-      typeof entry.sessionId !== 'string' ||
-      typeof entry.sessionDir !== 'string' ||
-      typeof entry.workDir !== 'string'
-    ) {
-      return undefined;
-    }
-    return {
-      sessionId: entry.sessionId,
-      sessionDir: entry.sessionDir,
-      workDir: entry.workDir,
-    };
-  } catch {
-    return undefined;
   }
 }
 
