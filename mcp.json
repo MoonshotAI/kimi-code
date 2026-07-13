@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "ddev": {
+      "command": "npx",
+      "args": ["ddev-mcp"],
+      "env": {
+        "DDEV_MCP_LOG_LEVEL": "INFO",
+        "ALLOW_DANGEROUS_COMMANDS": "false"
+      }
+    }
+  }
+}
