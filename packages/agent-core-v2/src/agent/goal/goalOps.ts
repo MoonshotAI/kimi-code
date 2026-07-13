@@ -12,9 +12,10 @@
  * when leaving `active` and carried in the `goal.update` payload; and
  * `wallClockResumedAt` is a live-only service field (never persisted, reset on
  * replay). Each `apply` returns the same reference when nothing changes so the
- * wire's reference-equality gate stays quiet. The `goal.updated` signal is
- * emitted live through `wire.signal` (declared here via interface-merge);
- * `wire.replay` rebuilds the Model silently and the service's `wire.onRestored`
+ * wire's reference-equality gate stays quiet. The `goal.updated` fact is
+ * published live to `IEventBus` by the service (declared here via
+ * interface-merge); `wire.replay` rebuilds the Model silently and the
+ * service's `wire.onRestored`
  * forces a replayed `active` goal back to `paused`. Consumed by the Agent-scope
  * `goalService`.
  */

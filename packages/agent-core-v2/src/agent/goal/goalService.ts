@@ -3,8 +3,8 @@
  *
  * Owns the per-agent goal lifecycle; persists the goal in the `wire`
  * `GoalModel` (`GoalState | null`) through the `goal.create` / `goal.update` /
- * `goal.clear` Ops (`wire.dispatch`), reads it through `wire.getModel`, emits
- * `goal.updated` live through `wire.signal`, and forces a replayed `active`
+ * `goal.clear` Ops (`wire.dispatch`), reads it through `wire.getModel`,
+ * publishes `goal.updated` live to `IEventBus`, and forces a replayed `active`
  * goal back to `paused` via `wire.onRestored`. The accumulated `wallClockMs`
  * lives in the Model (set from each Op payload, never by `Date.now()` inside
  * `apply`); the `wallClockResumedAt` cursor is a live-only field, reset on

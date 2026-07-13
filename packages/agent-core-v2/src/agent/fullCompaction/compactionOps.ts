@@ -27,10 +27,9 @@
  * `wire.onRestored` handler (mirroring `goal`'s post-replay normalization).
  *
  * The `compaction.*` events publish to `IEventBus` (`compaction.started` via the
- * `begin` Op's `toEvent`; the rest directly) and also emit live through
- * `wire.signal` (legacy channel, until Phase 3); they are declared here via
- * interface-merge (`error` is already declared by `mcp`, so it is not
- * re-declared). The `full_compaction.*` record shapes are registered in
+ * `begin` Op's `toEvent`; the rest directly from the service); they are
+ * declared here via interface-merge (`error` is already declared by `mcp`, so
+ * it is not re-declared). The `full_compaction.*` record shapes are registered in
  * `PersistedOpMap` (`#/wire/types`, below) because the records still
  * ride the per-agent `wire.jsonl` log read by `wireRecord.restore()` /
  * `getRecords()`. Consumed by the Agent-scope `fullCompactionService`.

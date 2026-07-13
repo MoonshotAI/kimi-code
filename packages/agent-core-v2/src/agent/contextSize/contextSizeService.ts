@@ -4,9 +4,9 @@
  * Owns the last measured context token count in the wire `ContextSizeModel`
  * (`{ length, tokens }`): reads it through `wire.getModel`, writes it through
  * `wire.dispatch(contextSizeMeasured(...))` (called by `llmRequester` after each
- * measured exchange), and emits the `contextTokens` slice of
- * `agent.status.updated` live through `wire.signal` when the measured value
- * changes. `get(start?, end?)` returns `{ size, measured, estimated }` for the
+ * measured exchange), and derives the `contextTokens` slice of
+ * `agent.status.updated` from the Op's `toEvent` (published to `IEventBus` on
+ * dispatch) when the measured value changes. `get(start?, end?)` returns `{ size, measured, estimated }` for the
  * context-message range `[start, end)`, resolved like `Array.prototype.slice`
  * (defaulting to the whole context; negative indices count back from the end;
  * an inverted range is empty): `measured`
