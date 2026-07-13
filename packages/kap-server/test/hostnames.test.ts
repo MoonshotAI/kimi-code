@@ -50,7 +50,7 @@ describe('isAllowedHost (default allow set)', () => {
     });
   }
 
-  const deny = ['evil.com', 'evil.com:80', '127.0.0.1.evil.com'];
+  const deny = ['evil.example.test', 'evil.example.test:80', '127.0.0.1.evil.example.test'];
 
   for (const host of deny) {
     it(`denies ${host}`, () => {
@@ -97,13 +97,16 @@ describe('isAllowedHost (extra)', () => {
 
 describe('isAllowedHost (disable)', () => {
   it('allows everything when disabled', () => {
-    expect(isAllowedHost('evil.com', { disable: true })).toBe(true);
+    expect(isAllowedHost('evil.example.test', { disable: true })).toBe(true);
   });
 });
 
 describe('parseAllowedHosts', () => {
   it('splits, trims, and drops empties', () => {
-    expect(parseAllowedHosts({ KIMI_CODE_ALLOWED_HOSTS: ' a, .b.com, ' })).toEqual(['a', '.b.com']);
+    expect(parseAllowedHosts({ KIMI_CODE_ALLOWED_HOSTS: ' a, .b.example.com, ' })).toEqual([
+      'a',
+      '.b.example.com',
+    ]);
   });
 
   it('returns [] when unset', () => {
@@ -139,13 +142,13 @@ describe('createHostCheck (onRequest hook)', () => {
     const res = await app.inject({
       method: 'GET',
       url: '/api/v1/probe',
-      headers: { host: 'evil.com' },
+      headers: { host: 'evil.example.test' },
     });
     expect(res.statusCode).toBe(403);
     const body = res.json() as Record<string, unknown>;
     expect(body['code']).toBe(40301);
     expect(body['msg']).toBe(
-      "Invalid Host header: evil.com; allow this host with KIMI_CODE_ALLOWED_HOSTS=evil.com or 'kimi server run --allowed-host evil.com'.",
+      "Invalid Host header: evil.example.test; allow this host with KIMI_CODE_ALLOWED_HOSTS=evil.example.test or 'kimi server run --allowed-host evil.example.test'.",
     );
     expect(body['data']).toBeNull();
     expect(typeof body['request_id']).toBe('string');

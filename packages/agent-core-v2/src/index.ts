@@ -249,7 +249,12 @@ export * from '#/session/sessionActivity/sessionActivityService';
 
 import '#/session/approval/approval';
 import '#/session/approval/approvalService';
-export { ISessionApprovalService } from '#/session/approval/approval';
+export {
+  ISessionApprovalService,
+  type ApprovalDecision,
+  type ApprovalRequest as SessionApprovalRequest,
+  type ApprovalResponse as SessionApprovalResponse,
+} from '#/session/approval/approval';
 export * from '#/session/question/question';
 export * from '#/session/question/questionService';
 import '#/agent/questionTools/tools/ask-user';

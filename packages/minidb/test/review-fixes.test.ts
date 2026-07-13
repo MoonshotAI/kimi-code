@@ -107,8 +107,8 @@ test('batch() rejects intra-batch unique violations', async () => {
     await db.createIndex('byMail', { field: 'email', unique: true });
     await assert.rejects(
       db.batch([
-        { op: 'set', key: 'a', value: { email: 'dup@x.com' } },
-        { op: 'set', key: 'b', value: { email: 'dup@x.com' } },
+        { op: 'set', key: 'a', value: { email: 'duplicate@example.test' } },
+        { op: 'set', key: 'b', value: { email: 'duplicate@example.test' } },
       ]),
       /unique/i,
     );
@@ -150,11 +150,11 @@ test('concurrent sets cannot both commit the same unique value', async () => {
     const db = await MiniDb.open({ dir, valueCodec: 'json' });
     await db.createIndex('byMail', { field: 'email', unique: true });
     const results = await Promise.allSettled([
-      db.set('a', { email: 'same@x.com' }),
-      db.set('b', { email: 'same@x.com' }),
+      db.set('a', { email: 'shared@example.test' }),
+      db.set('b', { email: 'shared@example.test' }),
     ]);
     const committed = results.filter((r) => r.status === 'fulfilled').length;
-    const hits = db.findEq('byMail', 'same@x.com');
+    const hits = db.findEq('byMail', 'shared@example.test');
     await db.close();
     assert.ok(committed <= 1, `both committed: ${JSON.stringify(hits)}`);
     assert.ok(hits.length <= 1, `unique violated: ${JSON.stringify(hits)}`);

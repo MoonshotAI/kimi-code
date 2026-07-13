@@ -83,6 +83,7 @@
   },
   "devDependencies": {
     "@moonshot-ai/acp-adapter": "workspace:^",
+    "@moonshot-ai/acp-server": "workspace:^",
     "@moonshot-ai/agent-core-v2": "workspace:^",
     "@moonshot-ai/kap-server": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",

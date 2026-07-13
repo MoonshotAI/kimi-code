@@ -106,8 +106,8 @@ await db.createIndex('byCity', { field: 'city' });                 // equality
 await db.createIndex('byAge',  { field: 'age',  type: 'range' });  // range (skip list)
 await db.createIndex('byMail', { field: 'email', unique: true });  // unique
 
-await db.set('u1', { name: 'Ann', city: 'Paris', age: 30, email: 'a@x.com' });
-await db.set('u2', { name: 'Bob', city: 'Paris', age: 41, email: 'b@x.com' });
+await db.set('u1', { name: 'Ann', city: 'Paris', age: 30, email: 'ann@example.com' });
+await db.set('u2', { name: 'Bob', city: 'Paris', age: 41, email: 'bob@example.com' });
 
 db.findEq('byCity', 'Paris');          // [{ key:'u1', value:{...} }, { key:'u2', ... }]
 db.findRange('byAge', { min: 30, max: 40, count: 10 });

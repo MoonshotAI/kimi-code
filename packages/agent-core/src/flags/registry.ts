@@ -32,6 +32,15 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'acp-v2',
+    title: 'ACP server v2 (agent-core-v2 engine)',
+    description:
+      'Expose the `kimi acp-v2` sub-command that runs the Agent Client Protocol server over the experimental agent-core-v2 engine.',
+    env: 'KIMI_CODE_EXPERIMENTAL_ACP_V2',
+    default: false,
+    surface: 'core',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */
