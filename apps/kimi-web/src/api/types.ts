@@ -270,6 +270,8 @@ export interface AppPlanReviewOverlay {
   toolInputDisplay: unknown;
   /** Live race bridges render a card; snapshot correlations stay data-only. */
   renderSynthetic: boolean;
+  /** Exact client-side card owned by a snapshot correlation. */
+  snapshotTarget?: { messageId: string; contentIndex: number };
   approvalResult?: ApprovalResponse;
   status?: 'interrupted';
 }

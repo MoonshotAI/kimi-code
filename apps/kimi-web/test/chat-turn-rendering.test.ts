@@ -11,9 +11,11 @@ import { createApp, h, nextTick, ref, shallowRef, type VNode } from 'vue';
 import { createI18n } from 'vue-i18n';
 import {
   createInitialState,
+  planReviewOverlaysFromSnapshot,
   reduceAppEvent,
   type KimiClientState,
 } from '../src/api/daemon/eventReducer';
+import { createAgentProjector } from '../src/api/daemon/agentEventProjector';
 import type { ChatTurn, ToolCall, TurnBlock } from '../src/types';
 import type {
   AppApprovalRequest,
@@ -198,10 +200,33 @@ function planToolContent(approval: AppApprovalRequest): AppMessageContent[] {
   ];
 }
 
+function snapshotPlanMessage(approval: AppApprovalRequest): ReturnType<typeof toAppMessage> {
+  const wire: WireMessage = {
+    id: 'assistant-live',
+    session_id: approval.sessionId,
+    role: 'assistant',
+    content: [
+      {
+        type: 'tool_use',
+        tool_call_id: approval.toolCallId,
+        tool_name: approval.toolName,
+        input: {},
+        tool_input_display: approval.display,
+      },
+    ],
+    created_at: '2026-01-01T00:00:01.000Z',
+  };
+  return toAppMessage(wire);
+}
+
 function mountReducerPlan(): {
   host: HTMLElement;
+  replaceSnapshotContent: (replacement: 'text' | 'toolUse') => void;
+  expire: () => void;
   resolve: (response: ApprovalResponse) => void;
   projectToolUse: () => void;
+  projectDroppedToolUse: () => void;
+  appendToolResult: (isError: boolean) => void;
   updateCurrentMessage: () => void;
 } {
   const sessionId = 'session-1';
@@ -218,34 +243,20 @@ function mountReducerPlan(): {
     expiresAt: '2026-01-01T00:05:00.000Z',
   };
   const initialState = createInitialState();
+  const snapshotMessages = [snapshotPlanMessage(approval)];
   const state = shallowRef<KimiClientState>({
     ...initialState,
     messagesBySession: {
-      [sessionId]: [
-        {
-          id: messageId,
-          sessionId,
-          role: 'assistant',
-          content: planToolContent(approval),
-          createdAt: '2026-01-01T00:00:01.000Z',
-          promptId: 'prompt-1',
-        },
-      ],
+      [sessionId]: snapshotMessages,
     },
     approvalsBySession: { [sessionId]: [approval] },
     planReviewOverlayBySession: {
-      [sessionId]: {
-        [approval.approvalId]: {
-          approvalId: approval.approvalId,
-          toolCallId: approval.toolCallId,
-          turnId: approval.turnId,
-          toolInputDisplay: approval.display,
-          renderSynthetic: false,
-        },
-      },
+      [sessionId]: planReviewOverlaysFromSnapshot(snapshotMessages, [approval]),
     },
   });
   const sessionActive = ref(true);
+  const lateAttachProjector = createAgentProjector();
+  lateAttachProjector.reset(sessionId);
   let seq = 1;
   const mounted = mountTestRoot(() => {
     const projected = messagesToTurns(
@@ -254,16 +265,49 @@ function mountReducerPlan(): {
       undefined,
       sessionActive.value,
       state.value.planReviewOverlayBySession[sessionId] ?? {},
-    )[0]?.tools?.[0];
-    return projected === undefined ? h('div') : h(ToolCallView, { tool: projected });
+    ).flatMap((turn) =>
+      (turn.tools ?? [])
+        .filter((tool) => tool.planReview !== undefined)
+        .map((tool) => ({ turnId: turn.id, tool })),
+    );
+    return h(
+      'div',
+      projected.map(({ turnId, tool }) =>
+        h(ToolCallView, { key: `${turnId}:${tool.id}`, tool }),
+      ),
+    );
   });
 
   const applyEvent = (event: AppEvent): void => {
     state.value = reduceAppEvent(state.value, event, { sessionId, seq: seq++ });
   };
+  const applyProjectedEvents = (rawType: string, payload: unknown): void => {
+    for (const event of lateAttachProjector.project(rawType, payload, sessionId)) {
+      applyEvent(event);
+    }
+  };
 
   return {
     host: mounted.host,
+    replaceSnapshotContent(replacement) {
+      applyEvent({
+        type: 'messageUpdated',
+        sessionId,
+        messageId,
+        content:
+          replacement === 'toolUse'
+            ? snapshotPlanMessage(approval).content
+            : [{ type: 'text', text: 'Snapshot content was replaced.' }],
+        status: 'pending',
+      });
+    },
+    expire() {
+      applyEvent({
+        type: 'approvalExpired',
+        sessionId,
+        approvalId: approval.approvalId,
+      });
+    },
     resolve(response) {
       sessionActive.value = false;
       applyEvent({
@@ -284,6 +328,23 @@ function mountReducerPlan(): {
         messageId,
         content: planToolContent(approval),
         status: 'pending',
+      });
+    },
+    projectDroppedToolUse() {
+      applyProjectedEvents('tool.call.started', {
+        turnId: approval.turnId,
+        toolCallId: approval.toolCallId,
+        name: approval.toolName,
+        args: {},
+        display: approval.display,
+      });
+    },
+    appendToolResult(isError) {
+      applyProjectedEvents('tool.result', {
+        turnId: approval.turnId,
+        toolCallId: approval.toolCallId,
+        output: isError ? 'Plan review rejected.' : 'Plan review completed.',
+        isError,
       });
     },
     updateCurrentMessage() {
@@ -529,8 +590,9 @@ describe('ToolCall plan review rendering (real component entry)', () => {
 
       plan.resolve(response);
       await settleAsyncComponents();
-      expect(plan.host.textContent).toContain('Interrupted');
-      expect(await renderedPlanBody(plan.host)).toBeTruthy();
+      expect(plan.host.textContent).toContain(label);
+      expect(plan.host.querySelector('.markdown-renderer-test')).toBeNull();
+      expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
 
       plan.projectToolUse();
       await settleAsyncComponents();
@@ -538,6 +600,7 @@ describe('ToolCall plan review rendering (real component entry)', () => {
       expect(plan.host.textContent).toContain(label);
       expect(plan.host.querySelector('.markdown-renderer-test')).toBeNull();
       expect(plan.host.querySelector('button[aria-label="Expand plan"]')).not.toBeNull();
+      expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
     },
   );
 
@@ -564,6 +627,131 @@ describe('ToolCall plan review rendering (real component entry)', () => {
       expect(await renderedPlanBody(plan.host)).toBeTruthy();
     },
   );
+
+  const lateAttachPlanCases = [
+    {
+      name: 'approval',
+      response: {
+        decision: 'approved',
+        selectedLabel: 'Safe rollout',
+      },
+      label: 'Approved',
+      feedback: undefined,
+      isError: false,
+    },
+    {
+      name: 'rejection',
+      response: {
+        decision: 'rejected',
+        selectedLabel: 'Reject and Exit',
+      },
+      label: 'Rejected',
+      feedback: undefined,
+      isError: true,
+    },
+    {
+      name: 'revision request',
+      response: {
+        decision: 'rejected',
+        selectedLabel: 'Revise',
+        feedback: 'Add rollback verification.',
+      },
+      label: 'Revision requested',
+      feedback: 'Add rollback verification.',
+      isError: false,
+    },
+  ] satisfies Array<{
+    name: string;
+    response: ApprovalResponse;
+    label: string;
+    feedback: string | undefined;
+    isError: boolean;
+  }>;
+
+  it.each(lateAttachPlanCases)(
+    'keeps one visible $name card when a late snapshot has no in-flight tool projection',
+    async ({ response, label, feedback, isError }) => {
+      const plan = mountReducerPlan();
+      await settleAsyncComponents();
+      expect(plan.host.textContent).toContain('Awaiting review');
+      expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
+
+      plan.resolve(response);
+      plan.projectDroppedToolUse();
+      await settleAsyncComponents();
+
+      expect(plan.host.textContent).toContain(label);
+      if (feedback !== undefined) expect(plan.host.textContent).toContain(feedback);
+      expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
+
+      plan.appendToolResult(isError);
+      await settleAsyncComponents();
+
+      expect(plan.host.textContent).toContain(label);
+      if (feedback !== undefined) expect(plan.host.textContent).toContain(feedback);
+      expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
+    },
+  );
+
+  it('lets a resolved revision replace an interrupted snapshot card', async () => {
+    const plan = mountReducerPlan();
+    await settleAsyncComponents();
+    plan.expire();
+    await settleAsyncComponents();
+    expect(plan.host.textContent).toContain('Interrupted');
+
+    plan.resolve({
+      decision: 'rejected',
+      selectedLabel: 'Revise',
+      feedback: 'Add rollback verification.',
+    });
+    await settleAsyncComponents();
+
+    expect(plan.host.textContent).toContain('Revision requested');
+    expect(plan.host.textContent).toContain('Add rollback verification.');
+    expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
+  });
+
+  it('falls back to one synthetic revision card when the snapshot target is replaced', async () => {
+    const plan = mountReducerPlan();
+    await settleAsyncComponents();
+
+    plan.replaceSnapshotContent('text');
+    plan.resolve({
+      decision: 'rejected',
+      selectedLabel: 'Revise',
+      feedback: 'Add rollback verification.',
+    });
+    await settleAsyncComponents();
+
+    expect(plan.host.textContent).toContain('Revision requested');
+    expect(plan.host.textContent).toContain('Add rollback verification.');
+    expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
+
+    plan.projectToolUse();
+    await settleAsyncComponents();
+
+    expect(plan.host.textContent).toContain('Revision requested');
+    expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
+  });
+
+  it('keeps one resolved card after a wire-shaped update overwrites the snapshot tool', async () => {
+    const plan = mountReducerPlan();
+    await settleAsyncComponents();
+    plan.resolve({
+      decision: 'rejected',
+      selectedLabel: 'Revise',
+      feedback: 'Add rollback verification.',
+    });
+    await settleAsyncComponents();
+
+    plan.replaceSnapshotContent('toolUse');
+    await settleAsyncComponents();
+
+    expect(plan.host.textContent).toContain('Revision requested');
+    expect(plan.host.textContent).toContain('Add rollback verification.');
+    expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
+  });
 
   it('reveals approved replay body when the user expands its low-noise history card', async () => {
     const approved = mountToolCall(
