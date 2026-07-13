@@ -2,6 +2,8 @@
  * SetGoalBudgetTool — lets the model record a user-stated hard runtime limit
  * for the current goal. The tool accepts one limit at a time, converts supported
  * time units to milliseconds, and rejects obviously unreasonable time limits.
+ * Registered for the main agent only, mirroring v1's `agent.type === 'main'`
+ * gate.
  */
 
 import { z } from 'zod';
@@ -90,7 +92,6 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
   }
 }
 
-// Goal tools are main-agent-only (v1 parity: `agent.type === 'main'`).
 registerTool(SetGoalBudgetTool, {
   when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
 });

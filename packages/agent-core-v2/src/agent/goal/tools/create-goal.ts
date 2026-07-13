@@ -1,7 +1,8 @@
 /**
  * CreateGoalTool — lets the main agent start an explicit goal on the user's
  * behalf. The goal becomes durable, structured state owned by the agent's
- * goal service, not text parsed from a slash command.
+ * goal service, not text parsed from a slash command. Registered for the main
+ * agent only, mirroring v1's `agent.type === 'main'` gate.
  */
 
 import { z } from 'zod';
@@ -81,7 +82,6 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
   }
 }
 
-// Goal tools are main-agent-only (v1 parity: `agent.type === 'main'`).
 registerTool(CreateGoalTool, {
   when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
 });

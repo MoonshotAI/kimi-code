@@ -156,12 +156,14 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     expect(await runRegisteredInjection()).toBeUndefined();
   });
 
-  it('adopts a reminder already live in restored history instead of duplicating it', async () => {
+  it('re-announces auto mode on a fresh instance even with a live reminder in history (restore)', async () => {
     svc.setMode('auto');
 
     // Simulate a fresh engine instance after session restore: no in-memory
-    // lastMode, but history still carries the live reminder from before the
-    // restart (the injector re-syncs positions on restore).
+    // lastMode, but history still carries a live reminder from before the
+    // restart (the injector re-syncs positions on restore). Positions are
+    // content-agnostic, so the survivor may even be a stale EXIT reminder —
+    // auto mode must still be announced, exactly as v1 does.
     let restoredProvider: ContextInjectionProvider | undefined;
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IAgentContextInjectorService, {
@@ -182,8 +184,8 @@ describe('AgentPermissionModeService (wire-backed)', () => {
         isNewTurn: true,
       });
 
+    expect(await run()).toContain('Auto permission mode is active');
     expect(await run()).toBeUndefined();
-    // Adoption must also seed lastMode, so a later mode switch still emits EXIT.
     svc.setMode('manual');
     expect(await run()).toContain('Auto permission mode is no longer active');
   });

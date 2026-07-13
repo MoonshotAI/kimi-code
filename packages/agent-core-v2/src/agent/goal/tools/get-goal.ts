@@ -1,7 +1,8 @@
 /**
  * GetGoalTool — returns the current goal snapshot (objective, status, budgets,
  * and usage counters) so the model can decide whether to continue, report
- * completion via UpdateGoal, report a blocker, or respect a pause.
+ * completion via UpdateGoal, report a blocker, or respect a pause. Registered
+ * for the main agent only, mirroring v1's `agent.type === 'main'` gate.
  */
 
 import { z } from 'zod';
@@ -37,7 +38,6 @@ export class GetGoalTool implements BuiltinTool<GetGoalToolInput> {
   }
 }
 
-// Goal tools are main-agent-only (v1 parity: `agent.type === 'main'`).
 registerTool(GetGoalTool, {
   when: (accessor) => accessor.get(IAgentScopeContext).agentId === 'main',
 });
