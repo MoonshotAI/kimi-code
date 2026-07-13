@@ -136,11 +136,16 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     const failed = this.exitPlanMode();
     if (failed !== undefined) return failed;
 
+    // Reaching `execute` means no policy issued an interactive review ask —
+    // i.e. auto permission mode approved the plan without user involvement
+    // (mirrored by the `auto_approved` telemetry outcome). In manual / yolo
+    // modes the exit-plan-mode-review-ask policy intercepts the call and
+    // produces its own user-approved result, so this output never runs there.
     this.agent.telemetry.track('plan_resolved', { outcome: 'auto_approved' });
 
     return {
       isError: false,
-      output: `Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+      output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
     };
   }
 
@@ -209,7 +214,7 @@ function normalizeOptionLabel(label: string): string {
   return label.trim().toLowerCase();
 }
 
-function formatPlanForOutput(plan: string, path: string | undefined): string {
+function formatAutoApprovedPlanForOutput(plan: string, path: string | undefined): string {
   const savedTo = path !== undefined ? `Plan saved to: ${path}\n\n` : '';
-  return `Plan mode deactivated. All tools are now available.\n${savedTo}## Approved Plan:\n${plan}`;
+  return `Plan mode deactivated. All tools are now available.\nNote: this plan was auto-approved without user review — the user has NOT explicitly approved it. Follow the user's original instructions on whether to proceed with execution; if they asked you to stop, wait, or only summarize after planning, do not start executing.\n${savedTo}## Plan (auto-approved, not user-reviewed):\n${plan}`;
 }

@@ -162,6 +162,21 @@ describe('ExitPlanMode option output', () => {
     expect(result.output).toContain('Exited plan mode');
   });
 
+  it('marks the direct-execution output as auto-approved, not user-reviewed', async () => {
+    const { agent } = makeAgent({ plan: '# Plan' });
+
+    const result = await execute(new ExitPlanModeTool(agent), {});
+
+    expect(result.isError).toBeFalsy();
+    // The direct-execution path is only reached when no interactive review
+    // happens (auto permission mode), so the output must not read as if the
+    // user had approved the plan.
+    expect(result.output).toContain('## Plan (auto-approved, not user-reviewed):');
+    expect(result.output).not.toContain('## Approved Plan:');
+    expect(result.output).toContain('the user has NOT explicitly approved it');
+    expect(result.output).toContain('# Plan');
+  });
+
   it('does not use inline plan fallback for option approval when no plan file exists', async () => {
     const { agent, requestApproval, emit } = makeAgent({
       plan: null,

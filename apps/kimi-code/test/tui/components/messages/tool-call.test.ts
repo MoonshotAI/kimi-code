@@ -570,6 +570,34 @@ describe('ToolCallComponent', () => {
     expect(header).toContain('Current plan · Approved: Pragmatic refactor');
   });
 
+  it('header chips Auto-approved when ExitPlanMode was auto-approved without user review', () => {
+    const component = new ToolCallComponent(
+      {
+        id: 'call_exit_auto',
+        name: 'ExitPlanMode',
+        args: {},
+      },
+      {
+        tool_call_id: 'call_exit_auto',
+        output:
+          'Exited plan mode. Plan mode deactivated. All tools are now available.\n' +
+          'Note: this plan was auto-approved without user review — the user has NOT explicitly approved it.\n' +
+          'Plan saved to: /tmp/plan.md\n\n' +
+          '## Plan (auto-approved, not user-reviewed):\n# Auto Plan\n\n1. Do the thing.',
+        is_error: false,
+      },
+    );
+
+    const out = strip(component.render(100).join('\n'));
+    const header = out.split('\n')[1] ?? '';
+    expect(header).toMatch(/Current plan · Auto-approved\s*$/);
+    // The plan body renders from the auto-approved marker; the engine-side
+    // note above the marker must not leak into the rendered plan box.
+    expect(out).toContain('Auto Plan');
+    expect(out).toContain('1. Do the thing.');
+    expect(out).not.toContain('Note: this plan was auto-approved');
+  });
+
   it('renders Rejected in the plan box title and keeps revise feedback visible', () => {
     const component = new ToolCallComponent(
       {

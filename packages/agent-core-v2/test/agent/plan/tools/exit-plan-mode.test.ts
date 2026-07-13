@@ -147,6 +147,26 @@ describe('ExitPlanMode option output', () => {
     expect(result.output).toContain('Exited plan mode');
   });
 
+  it('marks the direct-execution output as auto-approved, not user-reviewed', async () => {
+    const telemetry = recordingTelemetry();
+
+    const result = await executeTool(new ExitPlanModeTool(planService(), telemetry), {
+      turnId: 7,
+      toolCallId: 'call_exit_plan_auto',
+      args: {},
+      signal,
+    });
+
+    expect(result.isError).toBeFalsy();
+    // The direct-execution path is only reached when no interactive review
+    // happens (auto permission mode), so the output must not read as if the
+    // user had approved the plan.
+    expect(result.output).toContain('## Plan (auto-approved, not user-reviewed):');
+    expect(result.output).not.toContain('## Approved Plan:');
+    expect(result.output).toContain('the user has NOT explicitly approved it');
+    expect(result.output).toContain('# Plan');
+  });
+
   it('returns success without a "User feedback:" prefix when revise has no feedback', async () => {
     const telemetry = recordingTelemetry();
 
