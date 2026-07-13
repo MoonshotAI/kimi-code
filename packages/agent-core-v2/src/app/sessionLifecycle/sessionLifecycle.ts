@@ -17,6 +17,7 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import type { Event } from '#/_base/event';
+import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import type { Hooks } from '#/hooks';
 
 export interface CreateSessionOptions {
@@ -29,6 +30,13 @@ export interface CreateSessionOptions {
   readonly workDir: string;
   /** Extra workspace roots for this session; relative paths resolve against workDir. */
   readonly additionalDirs?: readonly string[];
+  /**
+   * Caller-supplied MCP servers for this session (v1's
+   * `CreateSessionPayload.mcpServers`): merged over the file config and under
+   * plugin servers when the session's MCP connections are established. Only
+   * `create` carries them; resumes and forks connect from the file config alone.
+   */
+  readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
 }
 
 export interface ForkSessionOptions {

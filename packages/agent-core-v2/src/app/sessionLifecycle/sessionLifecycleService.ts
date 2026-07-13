@@ -200,7 +200,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
     void handle.accessor.get(ISessionSkillCatalog).ready;
-    await handle.accessor.get(IAgentLifecycleService).ensureMcpReady();
+    // First `ensureMcpReady` call for the session — it starts the initial MCP
+    // load, so the caller-supplied servers must ride on it (later calls, e.g.
+    // from agent creation, only await the in-flight load).
+    await handle.accessor.get(IAgentLifecycleService).ensureMcpReady(opts.mcpServers);
     handle.accessor.get(ISessionExternalHooksService);
     return handle;
   }
