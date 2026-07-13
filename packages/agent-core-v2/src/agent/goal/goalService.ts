@@ -35,6 +35,7 @@ import {
   IAgentLoopService,
   type AfterStepContext,
   type BeforeStepContext,
+  type EnqueueReceipt,
 } from '#/agent/loop/loop';
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
@@ -56,7 +57,7 @@ import { defineDerivedModel } from '#/wire/model';
 import type { IWireService } from '#/wire/wireService';
 import { IEventBus } from '#/app/event/eventBus';
 
-import { IAgentGoalService, type GoalReasonInput } from './goal';
+import { IAgentGoalService, type GoalReasonInput, type ResumeGoalInput } from './goal';
 import { clearGoal, createGoal, GoalModel, updateGoal, type GoalState } from './goalOps';
 import type {
   CreateGoalInput,
@@ -153,6 +154,11 @@ interface GoalForkNoticeState {
   readonly reminderPending: boolean;
 }
 
+interface PendingContinuation {
+  readonly receipt: EnqueueReceipt;
+  turnId?: number;
+}
+
 // Derived (never persisted) fork bookkeeping, folded over the same records on
 // dispatch and replay: a `forked` boundary that clears a copied goal marks the
 // fork-cleared reminder as pending. The live reminder append is its own
@@ -193,7 +199,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private readonly goalOutcomeToolResultTurns = new Set<number>();
   private readonly goalOutcomeContinuationTurns = new Set<number>();
   private readonly budgetGraceTurns = new Set<number>();
-  private pendingContinuation: import('#/agent/loop/loop').EnqueueReceipt | undefined;
+  private pendingContinuation?: PendingContinuation;
 
   constructor(
     @IAgentWireService private readonly wire: IWireService,
@@ -348,7 +354,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return this.applyLifecycle(state, 'paused', input.reason, actor);
   }
 
-  async resumeGoal(input: GoalReasonInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
+  async resumeGoal(input: ResumeGoalInput = {}, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
     const state = this.requireState();
     if (state.status === 'active') return this.toSnapshot(state);
     if (state.status !== 'paused' && state.status !== 'blocked') {
@@ -357,8 +363,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         `Cannot resume a goal in status "${state.status}"`,
       );
     }
+    const shouldContinue =
+      state.status === 'blocked' && input.continueIfBlocked === true && actor === 'user';
     const snapshot = this.applyLifecycle(state, 'active', input.reason, actor);
-    if (actor === 'user' && this.shouldLaunchContinuationAfterResume()) {
+    if (shouldContinue && this.canLaunchContinuation()) {
       try {
         this.launchContinuationTurn();
       } catch (error) {
@@ -576,6 +584,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private clearTurnTracking(turnId: number): boolean {
+    if (this.pendingContinuation?.turnId === turnId) this.pendingContinuation = undefined;
     if (this.liveTurnId === turnId) this.liveTurnId = undefined;
     const starterTurn = this.goalStarterTurns.delete(turnId);
     this.goalDrivenTurns.delete(turnId);
@@ -634,29 +643,28 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       admission: 'newTurn',
     });
     const receipt = this.loopService.enqueue(request);
-    this.pendingContinuation = receipt;
-    void receipt.assigned.then(({ turn }) => turn.result).finally(() => {
-      if (this.pendingContinuation === receipt) this.pendingContinuation = undefined;
-    });
+    const pending: PendingContinuation = { receipt };
+    this.pendingContinuation = pending;
+    void receipt.assigned
+      .then(({ turn }) => {
+        if (this.pendingContinuation === pending) pending.turnId = turn.id;
+        return turn.result;
+      })
+      .finally(() => {
+        if (this.pendingContinuation === pending) this.pendingContinuation = undefined;
+      });
   }
 
-  /**
-   * Return whether a user-resumed goal needs a fresh continuation turn.
-   *
-   * A live turn, an already queued continuation, or any other pending loop
-   * request owns the next scheduling decision. Only an idle loop with no
-   * pending work may admit the goal continuation here.
-   */
-  private shouldLaunchContinuationAfterResume(): boolean {
+  private canLaunchContinuation(): boolean {
     if (this.liveTurnId !== undefined || this.pendingContinuation !== undefined) return false;
     const status = this.loopService.status();
     return status.state === 'idle' && !status.hasPendingRequests;
   }
 
   private cancelPendingContinuation(): void {
-    const receipt = this.pendingContinuation;
+    const pending = this.pendingContinuation;
     this.pendingContinuation = undefined;
-    receipt?.abort();
+    pending?.receipt.abort();
   }
 
   private normalizeAfterReplay(): void {

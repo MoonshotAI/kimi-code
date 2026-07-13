@@ -1,10 +1,24 @@
+/**
+ * Scenario: v1-compatible session routes, including blocked-goal Web resume.
+ * Responsibilities: verify HTTP envelopes, persisted reads, and session actions.
+ * Wiring: real kap-server; goal-resume cases observe the agent event stream.
+ * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/sessions.test.ts`.
+ */
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { IEventService, ISessionLifecycleService } from '@moonshot-ai/agent-core-v2';
+import {
+  type DomainEvent,
+  IAgentGoalService,
+  IAgentLifecycleService,
+  IEventBus,
+  IEventService,
+  ISessionLifecycleService,
+  type ServiceIdentifier,
+} from '@moonshot-ai/agent-core-v2';
 import { sessionWarningsResponseSchema } from '@moonshot-ai/protocol';
 
 import { type RunningServer, startServer } from '../src/start';
@@ -38,6 +52,23 @@ interface SessionWire {
 interface PageWire {
   items: SessionWire[];
   has_more: boolean;
+}
+
+function agentRpc(
+  service: ServiceIdentifier<unknown>,
+  method: string,
+  sessionId: string,
+): string {
+  return `/api/v2/session/${sessionId}/agent/main/${String(service)}/${method}`;
+}
+
+function goalContinuationStarts(events: readonly DomainEvent[]): readonly DomainEvent[] {
+  return events.filter(
+    (event) =>
+      event.type === 'turn.started' &&
+      event.origin.kind === 'system_trigger' &&
+      event.origin.name === 'goal_continuation',
+  );
 }
 
 describe('server-v2 /api/v1/sessions', () => {
@@ -97,6 +128,42 @@ describe('server-v2 /api/v1/sessions', () => {
       headers: authHeaders(server as RunningServer),
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  async function createBlockedGoalRig() {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
+      agent_config: { goal_objective: 'finish the migration' },
+    });
+    const session = (server as RunningServer).core.accessor
+      .get(ISessionLifecycleService)
+      .get(id);
+    if (session === undefined) throw new Error('expected a live session');
+    const agent = session.accessor.get(IAgentLifecycleService).getHandle('main');
+    if (agent === undefined) throw new Error('expected a live main agent');
+
+    const eventBus = agent.accessor.get(IEventBus);
+    const events: DomainEvent[] = [];
+    const subscription = eventBus.subscribe((event) => events.push(event));
+
+    const blocked = await postJson<{ status: string }>(agentRpc(IAgentGoalService, 'markBlocked', id), {
+      reason: 'need credentials',
+    });
+    if (blocked.body.data.status !== 'blocked') throw new Error('expected a blocked goal');
+
+    return {
+      id,
+      eventBus,
+      events,
+      cancel: async () => {
+        subscription.dispose();
+        await postJson<SessionWire>(`/api/v1/sessions/${id}/profile`, {
+          agent_config: { goal_control: 'cancel' },
+        });
+      },
+    };
   }
 
   it('creates a session from metadata.cwd', async () => {
@@ -347,6 +414,38 @@ describe('server-v2 /api/v1/sessions', () => {
     );
     expect(after.body.data?.objective).toBe('fix all lint warnings');
     expect(after.body.data?.status).toBe('active');
+  });
+
+  it('starts one continuation when the Web profile resumes a blocked goal', async () => {
+    const rig = await createBlockedGoalRig();
+    try {
+      const resumed = await postJson<SessionWire>(`/api/v1/sessions/${rig.id}/profile`, {
+        agent_config: { goal_control: 'resume' },
+      });
+
+      expect(resumed.body.code).toBe(0);
+      expect(goalContinuationStarts(rig.events)).toHaveLength(1);
+    } finally {
+      await rig.cancel();
+    }
+  });
+
+  it('returns the active goal when the Web refreshes after blocked-goal resume', async () => {
+    const rig = await createBlockedGoalRig();
+    try {
+      rig.eventBus.publish({ type: 'turn.started', turnId: 999, origin: { kind: 'user' } });
+      await postJson<SessionWire>(`/api/v1/sessions/${rig.id}/profile`, {
+        agent_config: { goal_control: 'resume' },
+      });
+
+      const refreshed = await getJson<{ status: string } | null>(
+        `/api/v1/sessions/${rig.id}/goal`,
+      );
+
+      expect(refreshed.body.data?.status).toBe('active');
+    } finally {
+      await rig.cancel();
+    }
   });
 
   it('archives a session via :archive and reflects archived flag on get', async () => {

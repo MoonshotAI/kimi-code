@@ -2,4 +2,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Resume blocked goals by sending a continuation turn when the agent loop is idle.
+web: Continue blocked goals after the user resumes them from the goal controls.
