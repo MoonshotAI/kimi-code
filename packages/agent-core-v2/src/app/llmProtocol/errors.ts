@@ -136,6 +136,18 @@ export class APIEmptyResponseError extends ChatProviderError {
   }
 }
 
+const DETERMINISTIC_PROVIDER_VALIDATION_MESSAGE_PATTERNS = [
+  /unsupported media type for base64 image/,
+  /invalid data url for image/,
+] as const;
+
+function isDeterministicProviderValidationError(error: ChatProviderError): boolean {
+  const lowerMessage = error.message.toLowerCase();
+  return DETERMINISTIC_PROVIDER_VALIDATION_MESSAGE_PATTERNS.some((pattern) =>
+    pattern.test(lowerMessage),
+  );
+}
+
 export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
     return true;
@@ -149,7 +161,9 @@ export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIStatusError) {
     return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
   }
-  return error instanceof ChatProviderError;
+  return (
+    error instanceof ChatProviderError && !isDeterministicProviderValidationError(error)
+  );
 }
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
