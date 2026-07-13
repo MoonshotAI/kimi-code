@@ -15,6 +15,7 @@ import {
 } from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
+import { mergeSnapshotSubagents } from '../lib/taskMerge';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
@@ -1314,6 +1315,17 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       sessionId,
       mergeSnapshotMessages(rawState.messagesBySession[sessionId] ?? [], snap.messages),
     );
+    // Seed the live subagent roster so swarm cards survive a page refresh
+    // (their member rows otherwise only exist from non-replayed WS events).
+    // loadTasksForSession's keepLiveSubagents preserves these across REST
+    // reloads; the roster stays authoritative until then.
+    rawState.tasksBySession = {
+      ...rawState.tasksBySession,
+      [sessionId]: mergeSnapshotSubagents(
+        snap.subagents,
+        rawState.tasksBySession[sessionId] ?? [],
+      ),
+    };
     rawState.messagesHasMoreBySession = {
       ...rawState.messagesHasMoreBySession,
       [sessionId]: snap.hasMoreMessages,

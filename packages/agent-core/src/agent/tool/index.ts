@@ -701,6 +701,8 @@ export class ToolManager {
         new b.GlobTool(kaos, workspace, this.agent.telemetry),
         new b.BashTool(kaos, cwd, background, {
           allowBackground,
+          autoBackgroundOnTimeout:
+            this.agent.kimiConfig?.background?.bashAutoBackgroundOnTimeout ?? true,
         }),
         (modelCapabilities.image_in || modelCapabilities.video_in) &&
           new b.ReadMediaFileTool(
