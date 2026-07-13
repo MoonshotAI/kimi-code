@@ -55,7 +55,11 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
 
 /**
  * Build the protocol-shaped `Message.content[]` for one history entry:
- *   1. `tool` role → a single `tool_result` part.
+ *   1. `tool` role → a single `tool_result` part. A result carrying media
+ *      parts (e.g. ReadMediaFile) passes the raw kosong content-part array
+ *      through — the same shape the live `tool.result` event stream carries —
+ *      so REST consumers can still render the media; other results flatten
+ *      to joined text. `is_error` mirrors `ContextMessage.isError`.
  *   2. other roles → each mapped content part, then one `tool_use` part per
  *      `ToolCall` (assistant only).
  */
@@ -113,19 +117,21 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
 
 /**
  * Convert one history entry into the protocol's `Message` shape. `created_at`
- * is synthesized from the session's `createdAt` plus the entry index so it
- * increases monotonically across the array.
+ * defaults to the session's `createdAt` plus the entry index; callers that
+ * know the real record time pass `createdAtMsOverride` (v1: the wire record
+ * time, nudged to stay strictly increasing).
  */
 export function toProtocolMessage(
   sessionId: string,
   index: number,
   msg: ContextMessage,
   sessionCreatedAtMs: number,
+  createdAtMsOverride?: number,
 ): Message {
   const id = msg.id ?? deriveMessageId(sessionId, index);
   const role = toProtocolRole(msg.role);
   const content = buildProtocolContent(msg);
-  const createdAtMs = sessionCreatedAtMs + index;
+  const createdAtMs = createdAtMsOverride ?? sessionCreatedAtMs + index;
   const metadata = msg.origin !== undefined ? { origin: msg.origin } : undefined;
   return {
     id,
