@@ -535,7 +535,7 @@ describe('mergeSnapshotMessages', () => {
     expect(mergeSnapshotMessages(snapshot, [])).toEqual([]);
   });
 
-  function optimisticUser(id: string, createdAt: string, text: string, promptId?: string): AppMessage {
+  function optimisticUser(id: string, createdAt: string, text: string, promptId: string): AppMessage {
     return {
       id,
       sessionId: 's1',
@@ -547,32 +547,25 @@ describe('mergeSnapshotMessages', () => {
     };
   }
 
-  function realUser(id: string, createdAt: string, text: string, promptId?: string): AppMessage {
+  function realUser(id: string, createdAt: string, text: string): AppMessage {
     return {
       id,
       sessionId: 's1',
       role: 'user',
       content: [{ type: 'text', text }],
       createdAt,
-      promptId,
     };
   }
 
-  it('drops an optimistic user message the snapshot already covers by promptId', () => {
-    const loaded = [optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'p1')];
-    const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'hello', 'p1')];
-    expect(mergeSnapshotMessages(loaded, snapshot).map((m) => m.id)).toEqual(['msg_9']);
-  });
-
-  it('drops an unstamped optimistic user message matching a snapshot user message shape', () => {
-    const loaded = [optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello')];
+  it('drops an optimistic user message when its promptId is the snapshot message id', () => {
+    const loaded = [optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'msg_9')];
     const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'hello')];
     expect(mergeSnapshotMessages(loaded, snapshot).map((m) => m.id)).toEqual(['msg_9']);
   });
 
-  it('keeps an optimistic user message the snapshot does not cover', () => {
-    const loaded = [optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'p1')];
-    const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'world', 'p2')];
+  it('keeps an optimistic user message when a different snapshot message repeats its content', () => {
+    const loaded = [optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'msg_8')];
+    const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'hello')];
     expect(mergeSnapshotMessages(loaded, snapshot).map((m) => m.id)).toEqual(['msg_opt_1', 'msg_9']);
   });
 });
