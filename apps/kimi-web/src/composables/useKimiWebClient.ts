@@ -660,14 +660,19 @@ async function refreshSessionGoal(sessionId: string): Promise<void> {
   // A live `goal.updated` arriving during the request is newer than whatever
   // the server read when handling it — never let this recovery write override
   // such an event (it would resurrect a finished goal until the next reload).
-  const before = rawState.goalBySession[sessionId];
+  // Track the per-session goal event version, not the goal entry itself:
+  // clear/complete events DELETE the entry, which would leave an
+  // undefined === undefined comparison blind to exactly the race that matters.
+  const versionBefore = rawState.goalVersionBySession[sessionId] ?? 0;
   let goal: AppGoal | null;
   try {
     goal = await getKimiWebApi().getSessionGoal(sessionId);
   } catch {
     return; // goal endpoint missing/unreachable — keep what we have.
   }
-  if (rawState.goalBySession[sessionId] !== before) return; // a live goal event won the race
+  if ((rawState.goalVersionBySession[sessionId] ?? 0) !== versionBefore) {
+    return; // a live goal event won the race
+  }
   // Mirror the reducer's goalUpdated branch: null (or a completed goal) clears
   // the card, anything else replaces it.
   const nextGoals = { ...rawState.goalBySession };
@@ -785,6 +790,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     questionsBySession: rawState.questionsBySession,
     tasksBySession: rawState.tasksBySession,
     goalBySession: rawState.goalBySession,
+    goalVersionBySession: rawState.goalVersionBySession,
     lastSeqBySession: rawState.lastSeqBySession,
     compactionBySession: rawState.compactionBySession,
     config: rawState.config,
@@ -800,6 +806,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   rawState.questionsBySession = next.questionsBySession;
   rawState.tasksBySession = next.tasksBySession;
   rawState.goalBySession = next.goalBySession;
+  rawState.goalVersionBySession = next.goalVersionBySession;
   rawState.lastSeqBySession = next.lastSeqBySession;
   rawState.compactionBySession = next.compactionBySession;
   rawState.config = next.config ?? null;
