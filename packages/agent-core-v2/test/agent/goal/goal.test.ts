@@ -688,6 +688,46 @@ describe('AgentGoalService core workflow hooks', () => {
     });
   });
 
+  it.each(['turn', 'token', 'wall-clock'] as const)(
+    'keeps a goal blocked when its %s budget is exhausted before resume',
+    async (budget) => {
+      if (budget === 'wall-clock') {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      }
+      try {
+        await goals.createGoal({ objective: 'finish the task' });
+        if (budget === 'turn') {
+          await goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } }, 'model');
+        } else if (budget === 'token') {
+          await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 1 } }, 'model');
+        } else {
+          await goals.setBudgetLimits({ budgetLimits: { wallClockBudgetMs: 1 } }, 'model');
+          vi.advanceTimersByTime(1);
+        }
+
+        const turn = makeTurn(101);
+        eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+        if (budget === 'token') {
+          recordStepUsage(usageService, goals, turn, { ...zeroUsage, output: 1 });
+        } else {
+          await runGoalStep(loopService, turn);
+        }
+        endTurn(eventBus, turn);
+        expect(loopService.status()).toMatchObject({ state: 'idle', hasPendingRequests: false });
+
+        const resumed = await goals.resumeGoal({ continueIfBlocked: true });
+
+        expect(resumed.status).toBe('blocked');
+        expect(resumed.budget.overBudget).toBe(true);
+        expect(resumed.terminalReason).toMatch(/^Blocked after goal budget reached:/);
+        expect(loopService.launches).toEqual([]);
+      } finally {
+        if (budget === 'wall-clock') vi.useRealTimers();
+      }
+    },
+  );
+
   it('does not launch another turn when a user resumes a blocked goal during a live turn', async () => {
     await goals.createGoal({ objective: 'finish the task' });
 

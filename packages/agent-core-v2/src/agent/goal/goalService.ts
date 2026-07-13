@@ -366,7 +366,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const shouldContinue =
       state.status === 'blocked' && input.continueIfBlocked === true && actor === 'user';
     const snapshot = this.applyLifecycle(state, 'active', input.reason, actor);
-    if (shouldContinue && this.canLaunchContinuation()) {
+    if (!shouldContinue) return snapshot;
+    const budgetBlocked = this.blockIfBudgetReached(this.requireState());
+    if (budgetBlocked !== null) return budgetBlocked;
+    if (this.canLaunchContinuation()) {
       try {
         this.launchContinuationTurn();
       } catch (error) {
