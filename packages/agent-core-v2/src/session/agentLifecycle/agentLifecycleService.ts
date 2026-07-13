@@ -1,10 +1,11 @@
 /**
  * `agentLifecycle` domain (L6) — `IAgentLifecycleService` implementation.
  *
- * Creates and tracks the session's agents as child scopes in a flat registry.
- * Seeds each agent's identity through `agent` scopeContext, wires per-agent
- * wire records and the wire state machine, the blob store, and MCP, and
- * registers the agent in the session registry. Bound at Session scope.
+ * Creates and tracks the session's agents as child scopes in a flat registry,
+ * serializing same-id bootstrap and dropping incomplete handles after startup
+ * failure. Seeds each agent's identity through `agent` scopeContext, wires
+ * per-agent wire records and the wire state machine, the blob store, and MCP,
+ * and registers the agent in the session registry. Bound at Session scope.
  *
  * No agent id is special here: the main agent is created by its bootstrappers
  * as `create({ agentId: 'main' })` (see `mainAgent.ts`), and `fork` requires
@@ -252,18 +253,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       handle.accessor.get(IAgentActivityService).markReady();
       return handle;
     } catch (error) {
-      // A failed bootstrap must not strand a half-initialized agent in the
-      // registry: its activity lane never leaves `initializing`, so every
-      // later lookup would hand out an agent that rejects all turns. Drop the
-      // broken handle (and dispose its scope best-effort) so the next
-      // creation attempt starts clean.
       if (this.handles.get(agentId) === handle) this.handles.delete(agentId);
       try {
         handle.dispose();
-      } catch {
-        // Disposal of a partially constructed scope must not mask the
-        // bootstrap failure.
-      }
+      } catch {}
       this.onDidDisposeEmitter.fire(agentId);
       throw error;
     }

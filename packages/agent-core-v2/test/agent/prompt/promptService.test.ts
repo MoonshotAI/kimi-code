@@ -1,3 +1,11 @@
+/**
+ * Scenario: per-agent prompt scheduling and launch-failure settlement.
+ *
+ * Exercises `IAgentPromptService` through DI with controlled context, loop,
+ * wire, compaction, and tool-execution collaborators.
+ * Run: `pnpm exec vitest run packages/agent-core-v2/test/agent/prompt/promptService.test.ts`.
+ */
+
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -110,10 +118,6 @@ describe('AgentPromptService', () => {
 
   it('settles the prompt as failed when the loop throws on launch', async () => {
     const { prompt, loop } = harness();
-    // The loop rejects a launch synchronously when the activity lane is not
-    // idle (e.g. `initializing` before bootstrap finished, or `disposed`).
-    // The failure must settle the prompt instead of escaping the
-    // fire-and-forget `startNext` as an unhandled rejection.
     vi.spyOn(loop, 'enqueue').mockImplementation(() => {
       throw new Error2(ErrorCodes.ACTIVITY_INITIALIZING, 'Agent is still restoring');
     });
