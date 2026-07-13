@@ -74,6 +74,7 @@ import { WireService } from '#/wire/wireServiceImpl';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks';
+import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 
 import { createHooks } from '#/hooks';
@@ -324,6 +325,14 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     // ReadMediaFile / MCP / prompt ingestion honor `[image] max_edge_px` and
     // `read_byte_budget` (and their env overrides) through the implicit default.
     handle.accessor.get(IImageConfigBridge);
+    // Tool-call dedupe plugin: self-wiring — its constructor registers the
+    // loop step hooks and the executor's onBefore/onDidExecuteTool handlers,
+    // and no other service injects it. Must be ignited BEFORE the external
+    // hooks service below: that get transitively constructs the permission
+    // gate, and `toolDedupe` has to sit ahead of `permission` on
+    // `onBeforeExecuteTool` so same-step duplicates are suppressed before
+    // authorization runs (v1 ran dedup in prepare, before authorize).
+    handle.accessor.get(IAgentToolDedupeService);
     // External hook adapter: registers listeners on the agent's domain hooks
     // before the first turn. No business service injects it directly; it
     // observes their hooks instead.

@@ -23,6 +23,7 @@ import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleSe
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import '#/activity/agentActivityService';
+import '#/agent/toolDedupe/toolDedupeService';
 import { IAgentActivityService, ISessionActivityKernel } from '#/activity/activity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -36,6 +37,8 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { AGENT_WIRE_PROTOCOL_VERSION, type PersistedWireRecord } from '#/agent/wireRecord/wireRecord';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { _clearToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
@@ -131,6 +134,8 @@ describe('AgentLifecycleService', () => {
   let registerAgent: ReturnType<typeof vi.fn<ISessionMetadata['registerAgent']>>;
   let atomicDocs: Map<string, unknown>;
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
+  let beforeExecuteHookIds: string[];
+  let didExecuteHookIds: string[];
 
   beforeEach(() => {
     // The unit under test force-instantiates the builtin-tools registrar per
@@ -213,13 +218,37 @@ describe('AgentLifecycleService', () => {
     ix.stub(IAgentMediaToolsRegistrar, {
       _serviceBrand: undefined,
     } as IAgentMediaToolsRegistrar);
+    beforeExecuteHookIds = [];
+    didExecuteHookIds = [];
     ix.stub(IAgentToolExecutorService, {
       _serviceBrand: undefined,
       hooks: {
-        onBeforeExecuteTool: { register: () => ({ dispose: () => {} }) },
-        onDidExecuteTool: { register: () => ({ dispose: () => {} }) },
+        onBeforeExecuteTool: {
+          register: (id: string) => {
+            beforeExecuteHookIds.push(id);
+            return { dispose: () => {} };
+          },
+        },
+        onDidExecuteTool: {
+          register: (id: string) => {
+            didExecuteHookIds.push(id);
+            return { dispose: () => {} };
+          },
+        },
       },
     } as unknown as IAgentToolExecutorService);
+    ix.stub(IAgentLoopService, {
+      _serviceBrand: undefined,
+      hooks: {
+        onWillBeginStep: { register: () => ({ dispose: () => {} }) },
+        onDidFinishStep: { register: () => ({ dispose: () => {} }) },
+      },
+      registerLoopErrorHandler: () => ({ dispose: () => {} }),
+    } as unknown as IAgentLoopService);
+    ix.stub(ITelemetryService, {
+      _serviceBrand: undefined,
+      track2: () => {},
+    } as unknown as ITelemetryService);
     permissionModeSetMode = vi.fn();
     ix.stub(IAgentPermissionModeService, {
       _serviceBrand: undefined,
@@ -242,6 +271,17 @@ describe('AgentLifecycleService', () => {
     expect(svc.list()).toEqual([main]);
     await svc.remove('main');
     expect(svc.getHandle('main')).toBeUndefined();
+  });
+
+  it('ignites the self-wiring toolDedupe plugin so its hooks exist before the first turn', async () => {
+    // `AgentToolDedupeService` only acts through the loop/executor hooks its
+    // constructor registers; nothing injects it, so agent creation must ignite
+    // it explicitly (its ordering ahead of `permission` is enforced by the
+    // ignition order in `igniteEagerServices`).
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+    expect(beforeExecuteHookIds).toContain('toolDedupe');
+    expect(didExecuteHookIds).toContain('toolDedupe');
   });
 
   it('seeds metadata into an empty agent wire before the first business op', async () => {

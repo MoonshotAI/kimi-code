@@ -30,6 +30,7 @@ import { IAgentPromptService } from '#/agent/prompt/prompt';
 import type { AgentAPI } from '#/agent/rpc/core-api';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { AgentSkillService } from '#/agent/skill/skillService';
+import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import type {
   ExecutableToolOutput as ToolOutput,
   ExecutableToolResult,
@@ -1202,6 +1203,11 @@ export class AgentTestContext {
     // `Bash`/etc. land in the per-agent registry the same way they would
     // under a real Agent scope (see `AgentLifecycleService.create`).
     this.get(IAgentBuiltinToolsRegistrar);
+    // The tool-call dedupe plugin is self-wiring too and nothing injects it.
+    // Ignite it BEFORE external hooks (whose construction transitively builds
+    // the permission gate) so `toolDedupe` stays ahead of `permission` on
+    // `onBeforeExecuteTool`, matching `AgentLifecycleService`.
+    this.get(IAgentToolDedupeService);
     this.get(IAgentExternalHooksService);
     // The step-retry plugin registers its loop error handler at construction;
     // nothing pulls it lazily, so ignite it the way `AgentLifecycleService`
