@@ -9,7 +9,7 @@ import type {
   ExecutableToolContext,
   ExecutableToolResult,
   ToolExecution,
-} from '#/agent/tool/toolContract';
+} from '#/tool/toolContract';
 import {
   AgentBuiltinToolsRegistrar,
   IAgentBuiltinToolsRegistrar,
@@ -23,9 +23,11 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { PathClass } from '#/_base/execEnv/environmentProbe';
-import { PathSecurityError } from '#/_base/tools/policies/path-access';
-import { SENSITIVE_DOT_VARIANT_SUFFIXES } from '#/_base/tools/policies/sensitive';
-import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
+import {
+  PathSecurityError,
+  SENSITIVE_DOT_VARIANT_SUFFIXES,
+  type WorkspaceConfig,
+} from '#/tool/path-access';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';

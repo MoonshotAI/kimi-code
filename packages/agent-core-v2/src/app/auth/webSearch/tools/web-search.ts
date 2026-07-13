@@ -13,16 +13,16 @@
 
 import { z } from 'zod';
 
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { literalRulePattern, matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type {
-  BuiltinTool,
-  ExecutableToolContext,
-  ExecutableToolResult,
-  ToolExecution,
-} from '#/agent/tool/toolContract';
-import { ToolResultBuilder } from '#/agent/tool/result-builder';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
+import {
+  ToolAccesses,
+  type BuiltinTool,
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
+} from '#/tool/toolContract';
+import { ToolResultBuilder } from '#/tool/result-builder';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IWebSearchProviderService } from '../webSearch';

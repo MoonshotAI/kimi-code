@@ -17,7 +17,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
-import { sessionMediaOriginalsDir } from '#/_base/tools/support/image-originals';
+import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import {
   createScopedChildHandle,
@@ -231,10 +231,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     readonly agentScope: string;
     readonly mcpManager: McpConnectionManager;
   }): ScopeSeed {
-    const { agentId, agentHomedir, agentScope, mcpManager } = input;
+    const { agentId, agentScope, mcpManager } = input;
     return [
       [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })],
-      [IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService, [{ homedir: agentHomedir }])],
+      [IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService)],
       [
         IAgentWireService,
         new SyncDescriptor(WireService, [

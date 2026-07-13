@@ -10,7 +10,7 @@
 
 import { createDecorator } from '#/_base/di/instantiation';
 import { type IDisposable } from '#/_base/di/lifecycle';
-import type { ExecutableTool, ToolInfo, ToolSource } from '#/agent/tool/toolContract';
+import type { ExecutableTool, ToolInfo, ToolSource } from '#/tool/toolContract';
 
 export interface ToolRegistrationOptions {
   readonly source?: ToolSource;

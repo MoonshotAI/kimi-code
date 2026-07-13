@@ -1,4 +1,6 @@
 /**
+ * `media` domain (L4) — image compression for model ingestion.
+ *
  * Shrink oversized images before they reach the model.
  *
  * A multimodal request carries each image as a base64 data URL; an unbounded

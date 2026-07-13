@@ -33,7 +33,7 @@ import { AgentSkillService } from '#/agent/skill/skillService';
 import type {
   ExecutableToolOutput as ToolOutput,
   ExecutableToolResult,
-} from '#/agent/tool/toolContract';
+} from '#/tool/toolContract';
 import type {
   PersistedWireRecord,
   WireRecordRestoreOptions,
@@ -1056,7 +1056,7 @@ export class AgentTestContext {
           (reg) => {
             reg.defineDescriptor(
               IAgentWireRecordService,
-              new SyncDescriptor(AgentWireRecordService, [{}]),
+              new SyncDescriptor(AgentWireRecordService),
             );
             reg.defineDescriptor(
               IAgentWireService,

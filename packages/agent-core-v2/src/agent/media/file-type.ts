@@ -1,5 +1,9 @@
 /**
- * file-type — magic-byte + extension detection. No npm dependency.
+ * `media` domain (L4) — magic-byte + extension file-type detection.
+ *
+ * Classifies a file as text / image / video from its first bytes and
+ * extension, and resolves a MIME type, with no npm dependency. Pure helper;
+ * no scoped service.
  */
 
 export const MEDIA_SNIFF_BYTES = 512;

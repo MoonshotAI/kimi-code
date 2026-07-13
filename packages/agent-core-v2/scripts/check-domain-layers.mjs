@@ -298,10 +298,6 @@ const ALLOWED_EXCEPTIONS = new Set([
   // auth-independent `web` domain.
   'auth>tool',
   'auth>toolRegistry',
-  // path-access (base tool policy) needs the `IHostEnvironment` type to stay
-  // host-aware (path class, home dir). Structural type dependency only —
-  // path-access does not construct or resolve the service.
-  '_base>os/interface',
   'permissionGate>approval',
   'userTool>interaction',
   'permissionPolicy>plan',

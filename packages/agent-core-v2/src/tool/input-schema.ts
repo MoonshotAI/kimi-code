@@ -1,4 +1,6 @@
 /**
+ * `tool` domain (L3) — tool-parameter JSON Schema rendering.
+ *
  * Shared helper for deriving the JSON Schema that a tool advertises to the
  * model for its parameters.
  *

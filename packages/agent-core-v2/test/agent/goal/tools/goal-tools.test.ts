@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   compileToolArgsValidator,
   validateToolArgs,
-} from '#/_base/tools/args-validator';
+} from '#/tool/args-validator';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { SetGoalBudgetTool } from '#/agent/goal/tools/set-goal-budget';

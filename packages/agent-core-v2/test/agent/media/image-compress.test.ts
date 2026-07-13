@@ -50,8 +50,8 @@ import {
   setConfiguredMaxImageEdgePx,
   setConfiguredReadImageByteBudget,
   type ImageCompressionTelemetryClient,
-} from '#/_base/tools/support/image-compress';
-import { sniffImageDimensions } from '#/_base/tools/support/file-type';
+} from '#/agent/media/image-compress';
+import { sniffImageDimensions } from '#/agent/media/file-type';
 
 // ── fixtures ─────────────────────────────────────────────────────────
 

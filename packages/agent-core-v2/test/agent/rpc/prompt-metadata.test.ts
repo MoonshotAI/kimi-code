@@ -12,7 +12,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { promptMetadataTextFromPayload } from '#/agent/rpc/prompt-metadata';
-import { buildImageCompressionCaption } from '#/_base/tools/support/image-compress';
+import { buildImageCompressionCaption } from '#/agent/media/image-compress';
 
 const CAPTION = buildImageCompressionCaption({
   original: { width: 3264, height: 666, byteLength: 344 * 1024, mimeType: 'image/png' },

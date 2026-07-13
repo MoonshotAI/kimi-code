@@ -1,9 +1,9 @@
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { describe, expect, it } from 'vitest';
 
-import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { DefaultToolApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/default-tool-approve';
-import { ToolAccesses } from '#/agent/tool/tool-access';
+import { ToolAccesses } from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 

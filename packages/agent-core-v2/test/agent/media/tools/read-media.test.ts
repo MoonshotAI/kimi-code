@@ -22,14 +22,18 @@ import {
 import { createVideoUploader, registerMediaTools } from '#/agent/media/registerMediaTools';
 import { AgentMediaToolsRegistrar } from '#/agent/media/mediaToolsRegistrar';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
-import { ToolAccesses } from '#/agent/tool/tool-access';
+import {
+  ToolAccesses,
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
+} from '#/tool/toolContract';
 import { EventBusService } from '#/app/event/eventBusService';
 import type { IAgentProfileService } from '#/agent/profile/profile';
 import type { Model } from '#/app/model/modelInstance';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
-import { sniffImageDimensions } from '#/_base/tools/support/file-type';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import type { WorkspaceConfig } from '#/tool/path-access';
+import { sniffImageDimensions } from '#/agent/media/file-type';
 
 const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: [] };
 

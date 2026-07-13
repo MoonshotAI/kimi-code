@@ -1,17 +1,17 @@
 /**
- * `tool` domain (L3) — tool-execution hook contexts.
+ * `toolExecutor` domain (L3) — tool-execution hook contexts.
  *
  * Defines the context objects passed through `IAgentToolExecutorService`'s
  * `onBeforeExecuteTool` / `onDidExecuteTool` hooks and the decision results
- * handlers may return. Owned by `tool` because they describe tool execution,
- * not the turn lifecycle or the loop: participants such as `permission`,
- * `toolDedupe`, and `externalHooks` consume them without reaching upward into
- * `loop` / `turn`. Pure contract (types only); no scoped service.
+ * handlers may return. Participants such as `permissionGate`,
+ * `permissionPolicy`, `toolDedupe`, `externalHooks`, `goal`, and `prompt`
+ * register through the executor's hook slots. Pure contract (types only);
+ * no scoped service.
  */
 
 import type { ToolCall } from '#/app/llmProtocol/message';
 
-import type { ExecutableTool, ExecutableToolResult, RunnableToolExecution } from './toolContract';
+import type { ExecutableTool, ExecutableToolResult, RunnableToolExecution } from '#/tool/toolContract';
 
 export interface ToolExecutionHookContext {
   readonly turnId: number;

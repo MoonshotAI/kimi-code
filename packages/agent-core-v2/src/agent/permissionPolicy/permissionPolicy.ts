@@ -2,7 +2,7 @@ import { createDecorator } from "#/_base/di/instantiation";
 import { type IDisposable } from "#/_base/di/lifecycle";
 import type {
   ResolvedToolExecutionHookContext
-} from '#/agent/tool/toolHooks';
+} from '#/agent/toolExecutor/toolHooks';
 import type { PermissionPolicy, PermissionPolicyResult } from './types';
 
 

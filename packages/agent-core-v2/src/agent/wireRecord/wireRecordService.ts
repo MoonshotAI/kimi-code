@@ -3,7 +3,7 @@ import { relative } from 'pathe';
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
@@ -29,18 +29,16 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
   private readonly wireScope: string;
 
   constructor(
-    options: { readonly homedir?: string } = {},
-    @IBootstrapService bootstrap: IBootstrapService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAppendLogStore private readonly log?: IAppendLogStore,
     @IAgentWireService private readonly wire?: IWireService,
   ) {
     super();
-    // Each agent scope seeds its own `homedir` (`<homeDir>/sessions/<ws>/<sid>/
-    // agents/<aid>`); the wire log is the fixed `wire.jsonl` beneath it. The
-    // `IAppendLogStore` is App-scoped (shared, rooted at `homeDir`), so the
-    // store `scope` is the homedir made relative to `homeDir` — keeping every
-    // agent's records in its own file instead of one shared log.
-    this.wireScope = relative(bootstrap.homeDir, options.homedir ?? bootstrap.homeDir);
+    // The agent scope carries its persistence scope (`sessions/<ws>/<sid>/
+    // agents/<aid>`); the wire log is the fixed `wire.jsonl` beneath it —
+    // the same scope `WireService` appends to, so `restore()` reads back
+    // what live dispatch wrote.
+    this.wireScope = scopeContext.scope();
     if (this.log !== undefined) {
       this._register(this.log.acquire(this.wireScope, WIRE_RECORD_FILENAME));
     }

@@ -25,7 +25,7 @@ import {
   NON_TEXT_SUFFIXES,
   type FileType,
   type ImageDimensions,
-} from '#/_base/tools/support/file-type';
+} from '#/agent/media/file-type';
 
 describe('sniffMediaFromMagic', () => {
   it('recognises PNG magic bytes', () => {
