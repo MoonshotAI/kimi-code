@@ -5,7 +5,11 @@
  * Run: pnpm --filter @moonshot-ai/kimi-web test -- event-reducer.test.ts
  */
 import { describe, expect, it } from 'vitest';
-import { createInitialState, reduceAppEvent } from '../src/api/daemon/eventReducer';
+import {
+  createInitialState,
+  planReviewOverlaysFromSnapshot,
+  reduceAppEvent,
+} from '../src/api/daemon/eventReducer';
 import type {
   AppApprovalRequest,
   AppMessage,
@@ -13,6 +17,8 @@ import type {
   AppTask,
   ApprovalResponse,
 } from '../src/api/types';
+import { toAppMessage, toWireApprovalResponse } from '../src/api/daemon/mappers';
+import type { WireMessage } from '../src/api/daemon/wire';
 import { messagesToTurns } from '../src/composables/messagesToTurns';
 
 function makeSession(id: string, updatedAt: string): AppSession {
@@ -81,6 +87,31 @@ function makePlanApproval(
     expiresAt: '2026-01-01T00:05:00.000Z',
     createdAt: '2026-01-01T00:00:00.000Z',
   };
+}
+
+function makeSnapshotPlanMessage(
+  approval: AppApprovalRequest,
+  id = 'assistant-snapshot',
+  approvalResult?: ApprovalResponse,
+): AppMessage {
+  const wire: WireMessage = {
+    id,
+    session_id: approval.sessionId,
+    role: 'assistant',
+    content: [
+      {
+        type: 'tool_use',
+        tool_call_id: approval.toolCallId,
+        tool_name: approval.toolName,
+        input: {},
+        tool_input_display: approval.display,
+        approval_result:
+          approvalResult === undefined ? undefined : toWireApprovalResponse(approvalResult),
+      },
+    ],
+    created_at: '2026-01-01T00:01:01.000Z',
+  };
+  return toAppMessage(wire);
 }
 
 function applyPlanToolUse(
@@ -165,6 +196,7 @@ function runResolvedPlanSequence(
   pendingPlanCount: number;
 } {
   const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
+  const snapshotMessages = [makeSnapshotPlanMessage(approval)];
   const requested =
     source === 'live'
       ? reduceAppEvent(
@@ -174,36 +206,10 @@ function runResolvedPlanSequence(
         )
       : {
           ...createInitialState(),
-          messagesBySession: {
-            'session-a': [
-              {
-                id: 'assistant-live',
-                sessionId: 'session-a',
-                role: 'assistant' as const,
-                content: [
-                  {
-                    type: 'toolUse' as const,
-                    toolCallId: 'call-1',
-                    toolName: 'ExitPlanMode',
-                    input: {},
-                    toolInputDisplay: approval.display,
-                  },
-                ],
-                createdAt: '2026-01-01T00:01:01.000Z',
-                promptId: 'prompt-1',
-              },
-            ],
-          },
+          messagesBySession: { 'session-a': snapshotMessages },
+          approvalsBySession: { 'session-a': [approval] },
           planReviewOverlayBySession: {
-            'session-a': {
-              'approval-a': {
-                approvalId: 'approval-a',
-                toolCallId: 'call-1',
-                turnId: 7,
-                toolInputDisplay: approval.display,
-                renderSynthetic: false,
-              },
-            },
+            'session-a': planReviewOverlaysFromSnapshot(snapshotMessages, [approval]),
           },
         };
   const pendingTurns = messagesToTurns(
@@ -261,6 +267,23 @@ function runResolvedPlanSequence(
 }
 
 describe('reduceAppEvent plan review overlays (live approval bridge)', () => {
+  it('keeps a snapshot approval visible when no exact durable plan card exists', () => {
+    const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
+    const turns = messagesToTurns(
+      [],
+      [],
+      undefined,
+      true,
+      planReviewOverlaysFromSnapshot([], [approval]),
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.tools?.[0]?.planReview).toMatchObject({
+      status: 'pending',
+      plan: '## Plan for session-a',
+    });
+  });
+
   it('stores a requested plan overlay only under the approval session', () => {
     const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
 
@@ -454,6 +477,61 @@ describe('reduceAppEvent plan review overlays (live approval bridge)', () => {
     expect(
       oldTurnUpdated.planReviewOverlayBySession['session-a']?.['approval-a']?.approvalResult,
     ).toMatchObject({ decision: 'rejected' });
+  });
+
+  it('settles the latest snapshot plan when an older settled plan reused its tool call id', () => {
+    const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
+    const snapshotMessages = [
+      makeSnapshotPlanMessage(
+        approval,
+        'old-plan',
+        { decision: 'rejected', selectedLabel: 'Reject and Exit' },
+      ),
+      makeMessage('session-a', '2026-01-01T00:01:00.000Z'),
+      makeSnapshotPlanMessage(approval, 'current-plan'),
+    ];
+    const snapshotState = {
+      ...createInitialState(),
+      messagesBySession: { 'session-a': snapshotMessages },
+      approvalsBySession: { 'session-a': [approval] },
+      planReviewOverlayBySession: {
+        'session-a': planReviewOverlaysFromSnapshot(snapshotMessages, [approval]),
+      },
+    };
+
+    const resolved = reduceAppEvent(
+      snapshotState,
+      {
+        type: 'approvalResolved',
+        sessionId: 'session-a',
+        approvalId: 'approval-a',
+        decision: 'rejected',
+        selectedLabel: 'Revise',
+        feedback: 'Add rollback checks.',
+        resolvedAt: '2026-01-01T00:01:02.000Z',
+      },
+      { sessionId: 'session-a', seq: 2 },
+    );
+    const planReviews = messagesToTurns(
+      resolved.messagesBySession['session-a'] ?? [],
+      [],
+      undefined,
+      false,
+      resolved.planReviewOverlayBySession['session-a'] ?? {},
+    ).flatMap((turn) => (turn.tools ?? []).flatMap((tool) => tool.planReview ?? []));
+
+    expect(planReviews).toHaveLength(2);
+    expect(planReviews).toEqual([
+      expect.objectContaining({
+        status: 'rejected',
+        selectedLabel: 'Reject and Exit',
+      }),
+      expect.objectContaining({
+        status: 'revision_requested',
+        selectedLabel: 'Revise',
+        feedback: 'Add rollback checks.',
+      }),
+    ]);
   });
 
   it('projects snapshot rejection when the Dock item was already removed', () => {

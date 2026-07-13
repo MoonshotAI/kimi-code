@@ -54,7 +54,6 @@ import type {
   AppNoticeDetail,
   AppMessage,
   AppModel,
-  AppPlanReviewOverlay,
   AppProvider,
   AppQuestionRequest,
   AppSession,
@@ -67,7 +66,13 @@ import type {
   KimiEventConnection,
   ThinkingLevel,
 } from '../api/types';
-import { createInitialState, reduceAppEvent, type CompactionStatus, type KimiClientState } from '../api/daemon/eventReducer';
+import {
+  createInitialState,
+  planReviewOverlaysFromSnapshot,
+  reduceAppEvent,
+  type CompactionStatus,
+  type KimiClientState,
+} from '../api/daemon/eventReducer';
 import { isPlaceholderSessionUsage, toAppEvent } from '../api/daemon/mappers';
 
 import { messagesToTurns } from './messagesToTurns';
@@ -1336,28 +1341,13 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       ...rawState.approvalsBySession,
       [sessionId]: snap.pendingApprovals,
     };
-    // Snapshot messages own the visible durable plan card. Keep a non-rendered
-    // approval-scoped correlation so a locally removed Dock item can still be
-    // resolved and merged into the exact later (turnId, toolCallId) live
-    // message event. Keying by approvalId avoids reused tool-call ids.
-    const planReviewCorrelations: Record<string, AppPlanReviewOverlay> = {};
-    for (const approval of snap.pendingApprovals) {
-      const display = approval.display as { kind?: unknown; plan?: unknown } | null | undefined;
-      if (
-        display?.kind !== 'plan_review' ||
-        typeof display.plan !== 'string' ||
-        display.plan.length === 0
-      ) {
-        continue;
-      }
-      planReviewCorrelations[approval.approvalId] = {
-        approvalId: approval.approvalId,
-        toolCallId: approval.toolCallId,
-        turnId: approval.turnId,
-        toolInputDisplay: approval.display,
-        renderSynthetic: false,
-      };
-    }
+    // Hide the synthetic card only after binding this approval to one exact
+    // snapshot message/content slot. The overlay keeps that stable local target
+    // while the live projector catches up (or drops the started event).
+    const planReviewCorrelations = planReviewOverlaysFromSnapshot(
+      rawState.messagesBySession[sessionId] ?? [],
+      snap.pendingApprovals,
+    );
     rawState.planReviewOverlayBySession = {
       ...rawState.planReviewOverlayBySession,
       [sessionId]: planReviewCorrelations,

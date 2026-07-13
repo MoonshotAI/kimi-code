@@ -297,7 +297,10 @@ function buildPlanReviewHistory(
   if (parsed === undefined) return undefined;
   return {
     ...parsed,
-    status: statusOverride ?? planReviewStatusFromApproval(approvalResult),
+    status:
+      approvalResult === undefined
+        ? statusOverride ?? 'pending'
+        : planReviewStatusFromApproval(approvalResult),
     selectedLabel: approvalResult?.selectedLabel,
     feedback: approvalResult?.feedback,
   };
