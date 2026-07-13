@@ -295,7 +295,7 @@ export interface ExtendedState extends KimiClientState {
   dangerousBypassAuth: boolean;
   /**
    * Engine generation of the connected server: `'v2'` = kap-server /
-   * agent-core-v2, `'v1'` = legacy @moonshot-ai/server. Read from `/meta`
+   * agent-core-v2, `'v1'` = an older (legacy) server binary. Read from `/meta`
    * (`backend` field; older servers omit it ⇒ v1). Drives the dev-mode
    * backend badge in the Sidebar.
    */

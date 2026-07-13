@@ -240,6 +240,7 @@ function agentLifecycleStub(): IAgentLifecycleService {
     onDidCreateMain: () => ({ dispose: () => {} }),
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.reject(new Error('not implemented')),
+    whenReady: () => Promise.resolve(undefined),
     notifyMainCreated: () => {},
     notifyAgentTaskStopped: () => {},
     ensureMcpReady: () => Promise.resolve(),
@@ -267,6 +268,7 @@ function agentLifecycleWithMainStub(): IAgentLifecycleService {
   return {
     ...agentLifecycleStub(),
     getHandle: (id) => (id === MAIN_AGENT_ID ? main : undefined),
+    whenReady: (id) => Promise.resolve(id === MAIN_AGENT_ID ? main : undefined),
   };
 }
 
@@ -311,6 +313,7 @@ function agentLifecycleCapturingPlanSpy(opts: { mainPreexists?: boolean } = {}):
   const lifecycle: IAgentLifecycleService = {
     ...agentLifecycleStub(),
     getHandle: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
+    whenReady: (id: string) => Promise.resolve(id === MAIN_AGENT_ID ? mainHandle : undefined),
     create,
   };
   return { lifecycle, enter, create };

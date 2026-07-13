@@ -14,7 +14,6 @@
     "dev:desktop": "pnpm -C apps/kimi-desktop run dev",
     "dev:server": "pnpm -C apps/kimi-code run dev:server",
     "dev:kap-server": "pnpm -C apps/kimi-code run dev:kap-server",
-    "dev:v1": "pnpm -C apps/kimi-code run dev:server",
     "dev:v2": "pnpm -C apps/kimi-code run dev:kap-server:multi",
     "build:plugin-marketplace": "pnpm -C apps/kimi-code run build:plugin-marketplace",
     "vis": "pnpm -C apps/vis run dev",

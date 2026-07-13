@@ -273,6 +273,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       };
     }),
     getHandle: vi.fn((agentId) => handles.get(agentId)),
+    whenReady: vi.fn((agentId: string) => Promise.resolve(handles.get(agentId))),
     list: vi.fn(() => [...handles.values()]),
     remove: vi.fn(async (agentId) => {
       handles.delete(agentId);

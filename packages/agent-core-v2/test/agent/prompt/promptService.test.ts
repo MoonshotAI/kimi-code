@@ -1,4 +1,12 @@
-import { describe, expect, it, onTestFinished } from 'vitest';
+/**
+ * Scenario: per-agent prompt scheduling and launch-failure settlement.
+ *
+ * Exercises `IAgentPromptService` through DI with controlled context, loop,
+ * wire, compaction, and tool-execution collaborators.
+ * Run: `pnpm exec vitest run packages/agent-core-v2/test/agent/prompt/promptService.test.ts`.
+ */
+
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
@@ -14,6 +22,7 @@ import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminde
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+import { ErrorCodes, Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
 import { IAgentWireService } from '#/wire/tokens';
 
@@ -105,5 +114,17 @@ describe('AgentPromptService', () => {
     prompt.hooks.onBeforeSubmitPrompt.register('block', async (ctx, next) => { ctx.block = true; await next(); });
     const handle = await prompt.enqueue({ message: message('blocked') });
     await expect(handle.completion).resolves.toMatchObject({ state: 'blocked' });
+  });
+
+  it('settles the prompt as failed when the loop throws on launch', async () => {
+    const { prompt, loop } = harness();
+    vi.spyOn(loop, 'enqueue').mockImplementation(() => {
+      throw new Error2(ErrorCodes.ACTIVITY_INITIALIZING, 'Agent is still restoring');
+    });
+    const handle = await prompt.enqueue({ id: 'prompt-x', message: message('hello') });
+    expect(handle.state).toBe('failed');
+    await expect(handle.launched).resolves.toBeUndefined();
+    await expect(handle.completion).resolves.toMatchObject({ state: 'failed', result: undefined });
+    expect(prompt.list()).toEqual({ active: undefined, pending: [] });
   });
 });

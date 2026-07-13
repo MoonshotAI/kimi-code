@@ -1,10 +1,11 @@
 /**
  * `agentLifecycle` domain (L6) — `IAgentLifecycleService` implementation.
  *
- * Creates and tracks the session's agents as child scopes in a flat registry.
- * Seeds each agent's identity through `agent` scopeContext, wires per-agent
- * wire records and the wire state machine, the blob store, and MCP, and
- * registers the agent in the session registry. Bound at Session scope.
+ * Creates and tracks the session's agents as child scopes in a flat registry,
+ * serializing same-id bootstrap and dropping incomplete handles after startup
+ * failure. Seeds each agent's identity through `agent` scopeContext, wires
+ * per-agent wire records and the wire state machine, the blob store, and MCP,
+ * and registers the agent in the session registry. Bound at Session scope.
  *
  * No agent id is special here: the main agent is created by its bootstrappers
  * as `create({ agentId: 'main' })` (see `mainAgent.ts`), and `fork` requires
@@ -104,6 +105,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   private mcpManager: McpConnectionManager | undefined;
   private mcpInitialLoad: Promise<void> | undefined;
   private readonly interactionBusDisposables = new Map<string, IDisposable>();
+  private readonly creating = new Map<string, Promise<IAgentScopeHandle>>();
+  private readonly mainCreatedHandles = new WeakSet<IAgentScopeHandle>();
 
   get onDidCreate() {
     return this.onDidCreateEmitter.event;
@@ -170,8 +173,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 
   async create(opts: CreateAgentOptions = {}): Promise<IAgentScopeHandle> {
-    this.assertCanCreate();
     const agentId = opts.agentId ?? `agent-${nextAgentId++}`;
+    const creating = this.creating.get(agentId);
+    if (creating !== undefined) return creating;
+    this.assertCanCreate();
     const mcpManager = this.getMcpManager();
     const mcpReady = this.ensureMcpReady();
     // Per-agent homedir → the wire-record persistence key (`hashKey(homedir)`).
@@ -194,25 +199,67 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       { extra: this.buildAgentScopeExtras({ agentId, agentHomedir, agentScope, mcpManager }) },
     ) as IAgentScopeHandle;
     this.handles.set(agentId, handle);
-    // Record the agent in the session registry so a closed-session fork can
-    // enumerate every agent and relocate its wire log.
-    await this.sessionMetadata.registerAgent(agentId, {
-      homedir: agentHomedir,
-      type: agentId === 'main' ? 'main' : 'sub',
-      parentAgentId: agentId === 'main' ? undefined : 'main',
-      forkedFrom: opts.forkedFrom,
-      labels: opts.labels,
+    const created = this.bootstrapAgent(handle, agentId, opts, {
+      agentHomedir,
+      agentScope,
+      mcpReady,
     });
-    this.onDidCreateEmitter.fire(handle);
-    this.igniteEagerServices(handle);
-    await mcpReady;
-    await this.ensureWireMetadata(handle, agentScope);
-    await this.bindBootstrap(handle, opts);
-    // Bootstrap (eager tool / hook / MCP setup, wire metadata, profile binding)
-    // is complete: drive the activity kernel `initializing → idle` so the agent
-    // can admit turns. Until this point `begin` rejects with `activity.initializing`.
-    handle.accessor.get(IAgentActivityService).markReady();
-    return handle;
+    this.creating.set(agentId, created);
+    try {
+      return await created;
+    } finally {
+      if (this.creating.get(agentId) === created) this.creating.delete(agentId);
+    }
+  }
+
+  async whenReady(agentId: string): Promise<IAgentScopeHandle | undefined> {
+    const creating = this.creating.get(agentId);
+    if (creating === undefined) return this.handles.get(agentId);
+    try {
+      return await creating;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async bootstrapAgent(
+    handle: IAgentScopeHandle,
+    agentId: string,
+    opts: CreateAgentOptions,
+    bootstrap: {
+      readonly agentHomedir: string;
+      readonly agentScope: string;
+      readonly mcpReady: Promise<void>;
+    },
+  ): Promise<IAgentScopeHandle> {
+    try {
+      // Record the agent in the session registry so a closed-session fork can
+      // enumerate every agent and relocate its wire log.
+      await this.sessionMetadata.registerAgent(agentId, {
+        homedir: bootstrap.agentHomedir,
+        type: agentId === 'main' ? 'main' : 'sub',
+        parentAgentId: agentId === 'main' ? undefined : 'main',
+        forkedFrom: opts.forkedFrom,
+        labels: opts.labels,
+      });
+      this.onDidCreateEmitter.fire(handle);
+      this.igniteEagerServices(handle);
+      await bootstrap.mcpReady;
+      await this.ensureWireMetadata(handle, bootstrap.agentScope);
+      await this.bindBootstrap(handle, opts);
+      // Bootstrap (eager tool / hook / MCP setup, wire metadata, profile binding)
+      // is complete: drive the activity kernel `initializing → idle` so the agent
+      // can admit turns. Until this point `begin` rejects with `activity.initializing`.
+      handle.accessor.get(IAgentActivityService).markReady();
+      return handle;
+    } catch (error) {
+      if (this.handles.get(agentId) === handle) this.handles.delete(agentId);
+      try {
+        handle.dispose();
+      } catch {}
+      this.onDidDisposeEmitter.fire(agentId);
+      throw error;
+    }
   }
 
   private assertCanCreate(): void {
@@ -355,6 +402,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 
   notifyMainCreated(handle: IAgentScopeHandle): void {
+    if (this.mainCreatedHandles.has(handle)) return;
+    this.mainCreatedHandles.add(handle);
     this.onDidCreateMainEmitter.fire(handle);
   }
 

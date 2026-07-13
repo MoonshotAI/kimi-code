@@ -3,8 +3,8 @@
  * `KimiCore` (and synthetic events from daemon-side services) to all
  * in-process subscribers. Transport-agnostic: this interface does NOT know
  * about WS fan-out, ring buffers, sequence numbers, or replay — those are
- * daemon transport concerns, handled by `IWSBroadcastService` in
- * `@moonshot-ai/server`.
+ * daemon transport concerns, handled by kap-server's session event
+ * broadcaster (`transport/ws/v1/sessionEventBroadcaster.ts`).
  *
  * The service sits on the receive-end of the in-process RPC adapter: when an
  * agent step emits an event, `CoreProcessService`'s `BridgeClientAPI.emitEvent`

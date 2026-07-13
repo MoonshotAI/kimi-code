@@ -16,7 +16,7 @@
 
 import type { Command } from 'commander';
 
-import { getLiveLock, type LockContents } from '@moonshot-ai/server';
+import { getLiveLock, type LockContents } from '@moonshot-ai/kap-server';
 
 import { getDataDir } from '#/utils/paths';
 

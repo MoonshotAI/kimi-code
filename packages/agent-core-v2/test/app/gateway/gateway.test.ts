@@ -91,6 +91,7 @@ describe('RestGateway', () => {
         throw new Error('not implemented in test');
       },
       getHandle: (id) => (id === 'main' ? agentHandle : undefined),
+      whenReady: (id) => Promise.resolve(id === 'main' ? agentHandle : undefined),
       list: () => [agentHandle],
       remove: () => Promise.resolve(),
     };
