@@ -34,9 +34,11 @@ interface Envelope<T> {
 }
 
 async function v1<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  headers.set('content-type', 'application/json');
   const res = await fetch(`${BASE}/api/v1${path}`, {
     ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    headers,
   });
   const env = (await res.json()) as Envelope<T>;
   if (env.code !== 0) throw new Error(`${path} failed: ${JSON.stringify(env)}`);
@@ -137,7 +139,7 @@ async function main(): Promise<void> {
     const detached = await waitFor(
       'task auto-backgrounded (detached, still running)',
       async () => {
-        const list = await tasks.list(false);
+        const list = tasks.list(false);
         return list.find(
           (t) => t.kind === 'process' && t.detached === true && t.status === 'running',
         );
@@ -181,7 +183,7 @@ async function main(): Promise<void> {
     const terminal = await waitFor(
       'backgrounded task completed after sleep exited',
       async () => {
-        const info = await tasks.getTask(detached.taskId);
+        const info = tasks.getTask(detached.taskId);
         return info?.status === 'completed' ? info : undefined;
       },
       30_000,
