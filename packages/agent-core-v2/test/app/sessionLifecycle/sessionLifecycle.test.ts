@@ -1528,6 +1528,168 @@ describe('SessionLifecycleService', () => {
       });
     }
 
+    it('waits for a creating source to publish before forking it', async () => {
+      const mcpStarted = deferred();
+      const mcpReady = deferred();
+      let mcpAttempts = 0;
+      const indexGet = vi.fn(() => Promise.resolve(undefined));
+      const svc = build([
+        workspaceGetStub(),
+        stubPair(ISessionIndex, { ...sessionIndexStub(), get: indexGet }),
+        stubPair(IAgentLifecycleService, {
+          ...agentLifecycleStub(),
+          ensureMcpReady: () => {
+            mcpAttempts += 1;
+            if (mcpAttempts === 1) {
+              mcpStarted.resolve();
+              return mcpReady.promise;
+            }
+            return Promise.resolve();
+          },
+        }),
+      ]);
+
+      const creating = svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      await mcpStarted.promise;
+      const forked = svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      expect(indexGet).not.toHaveBeenCalled();
+      mcpReady.resolve();
+      const source = await creating;
+      const target = await forked;
+
+      expect(svc.get('src')).toBe(source);
+      expect(target.id).toBe('dst');
+    });
+
+    it('waits for a resuming source to publish before forking it', async () => {
+      const mcpStarted = deferred();
+      const mcpReady = deferred();
+      let mcpAttempts = 0;
+      const sourceIndex = sessionIndexWithSummary('src', '/tmp/proj', 'wd_stub');
+      const indexGet = vi.fn(sourceIndex.get.bind(sourceIndex));
+      const svc = build([
+        workspaceGetStub(),
+        stubPair(ISessionIndex, { ...sourceIndex, get: indexGet }),
+        stubPair(IAgentLifecycleService, {
+          ...agentLifecycleWithMainStub(),
+          ensureMcpReady: () => {
+            mcpAttempts += 1;
+            if (mcpAttempts === 1) {
+              mcpStarted.resolve();
+              return mcpReady.promise;
+            }
+            return Promise.resolve();
+          },
+        }),
+      ]);
+
+      const resuming = svc.resume('src');
+      await mcpStarted.promise;
+      const indexCallsBeforeFork = indexGet.mock.calls.length;
+      const forked = svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      expect(indexGet).toHaveBeenCalledTimes(indexCallsBeforeFork);
+      mcpReady.resolve();
+      const source = await resuming;
+      const target = await forked;
+
+      expect(svc.get('src')).toBe(source);
+      expect(target.id).toBe('dst');
+    });
+
+    it('does not fork a source whose initialization fails', async () => {
+      const mcpStarted = deferred();
+      const mcpReady = deferred();
+      const failure = new Error('source MCP initialization failed');
+      const indexGet = vi.fn(() => Promise.resolve(undefined));
+      const svc = build([
+        workspaceGetStub(),
+        stubPair(ISessionIndex, { ...sessionIndexStub(), get: indexGet }),
+        stubPair(IAgentLifecycleService, {
+          ...agentLifecycleStub(),
+          ensureMcpReady: () => {
+            mcpStarted.resolve();
+            return mcpReady.promise;
+          },
+        }),
+      ]);
+
+      const creating = svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      await mcpStarted.promise;
+      const forked = svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+      const createRejected = expect(creating).rejects.toBe(failure);
+      const forkRejected = expect(forked).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_NOT_FOUND,
+      });
+
+      expect(indexGet).not.toHaveBeenCalled();
+      mcpReady.reject(failure);
+      await createRejected;
+      await forkRejected;
+
+      expect(svc.get('src')).toBeUndefined();
+      expect(svc.get('dst')).toBeUndefined();
+      expect(svc.list()).toEqual([]);
+    });
+
+    it('waits for source close to settle before using the persisted fallback', async () => {
+      const createHookStarted = deferred();
+      const finishCreateHook = deferred();
+      const closeHookStarted = deferred();
+      const finishCloseHook = deferred();
+      const sourceIndex = sessionIndexWithSummary('src', '/tmp/proj', 'wd_stub');
+      const indexGet = vi.fn(sourceIndex.get.bind(sourceIndex));
+      const svc = build([
+        workspaceGetStub(),
+        stubPair(ISessionIndex, { ...sourceIndex, get: indexGet }),
+      ]);
+      const createHook = svc.hooks.onDidCreateSession.register(
+        'hold-created-source',
+        async (event, next) => {
+          if (event.sessionId === 'src') {
+            createHookStarted.resolve();
+            await finishCreateHook.promise;
+          }
+          await next();
+        },
+      );
+      const closeHook = svc.hooks.onWillCloseSession.register(
+        'hold-closing-source',
+        async (event, next) => {
+          if (event.sessionId === 'src') {
+            closeHookStarted.resolve();
+            await finishCloseHook.promise;
+          }
+          await next();
+        },
+      );
+
+      const creating = svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      const createRejected = expect(creating).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_CLOSED,
+      });
+      await createHookStarted.promise;
+      const closing = svc.close('src');
+      await closeHookStarted.promise;
+      const indexCallsBeforeFork = indexGet.mock.calls.length;
+      const forked = svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      expect(indexGet).toHaveBeenCalledTimes(indexCallsBeforeFork);
+      finishCreateHook.resolve();
+      await createRejected;
+      expect(indexGet).toHaveBeenCalledTimes(indexCallsBeforeFork);
+
+      finishCloseHook.resolve();
+      await closing;
+      const target = await forked;
+
+      expect(target.id).toBe('dst');
+      expect(svc.get('src')).toBeUndefined();
+      createHook.dispose();
+      closeHook.dispose();
+    });
+
     it('copies blobs, plans, background tasks, and media originals into the fork', async () => {
       const root = await makeTmpRoot();
       const svc = build([

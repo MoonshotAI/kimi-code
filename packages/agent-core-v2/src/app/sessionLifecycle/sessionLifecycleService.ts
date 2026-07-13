@@ -611,6 +611,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return { handle, claim: initialization };
   }
 
+  private async forkSourceHandle(sessionId: string): Promise<ISessionScopeHandle | undefined> {
+    let initialization = this.initializations.get(sessionId);
+    while (initialization !== undefined) {
+      await initialization.settled;
+      initialization = this.initializations.get(sessionId);
+    }
+    return this.sessions.get(sessionId);
+  }
+
   private async rollbackFailedFork(
     sessionId: string,
     handle: ISessionScopeHandle,
@@ -633,7 +642,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
     // 1. Resolve the source: prefer a live handle, otherwise fall back to the
     // persisted index (so a closed session can still be forked, like v1).
-    const sourceHandle = this.sessions.get(sourceId);
+    const sourceHandle = await this.forkSourceHandle(sourceId);
     const indexSummary = await this.index.get(sourceId);
     if (sourceHandle === undefined && indexSummary === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sourceId} does not exist`);
