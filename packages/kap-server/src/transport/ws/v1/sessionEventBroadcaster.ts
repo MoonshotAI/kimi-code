@@ -416,7 +416,18 @@ export class SessionEventBroadcaster {
    * (e.g. `session.meta.updated`); `isGlobalEvent` keeps the fan-out global.
    */
   private async dispatchSessionEvent(sessionId: string, event: Event): Promise<void> {
-    const state = await this.ensureState(sessionId);
+    let state: SessionState | undefined;
+    try {
+      state = await this.ensureState(sessionId);
+    } catch (error) {
+      // The session's core scope can be disposed mid-dispatch during shutdown;
+      // the event is moot once its session is gone. Same guard as ensureState
+      // applies around attach*, extended to the accessor reads above it.
+      if (error instanceof Error && error.message === 'InstantiationService has been disposed') {
+        return;
+      }
+      throw error;
+    }
     if (state === undefined) return;
     state.queue = state.queue
       .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))

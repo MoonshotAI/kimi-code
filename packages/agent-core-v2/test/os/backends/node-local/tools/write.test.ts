@@ -13,12 +13,12 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { PathSecurityError } from '#/_base/tools/policies/path-access';
+import { PathSecurityError } from '#/tool/path-access';
 import type { HostFileStat, IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import { type WriteInput, WriteInputSchema, WriteTool } from '#/os/backends/node-local/tools/write';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');

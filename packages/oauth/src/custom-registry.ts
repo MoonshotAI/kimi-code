@@ -18,6 +18,12 @@ export interface CustomRegistrySource {
   readonly apiKey: string;
 }
 
+export interface FetchCustomRegistryOptions {
+  readonly signal?: AbortSignal;
+  readonly fetchImpl?: typeof fetch;
+  readonly userAgent?: string;
+}
+
 /**
  * The kosong `ProviderConfig` union (`packages/kosong/src/providers/index.ts`)
  * mirrors these literal values. `kimi` is included because the api.json schema
@@ -189,15 +195,21 @@ function toProviderEntry(value: unknown): CustomRegistryProviderEntry | undefine
  * Fetches and validates an api.json document. The returned record is keyed by
  * the top-level provider key in the document (which may differ from
  * `entry.id`); callers should iterate `Object.values` to apply each entry.
+ *
+ * `userAgent` identifies the host product (e.g. `kimi-code-cli/1.2.3`); when
+ * omitted the request falls back to the runtime default (`User-Agent: node`).
  */
 export async function fetchCustomRegistry(
   source: CustomRegistrySource,
-  fetchImpl: typeof fetch = fetch,
-  signal?: AbortSignal,
+  options: FetchCustomRegistryOptions = {},
 ): Promise<Record<string, CustomRegistryProviderEntry>> {
+  const { signal, fetchImpl = fetch, userAgent } = options;
   const headers: Record<string, string> = {
     Accept: 'application/json',
   };
+  if (userAgent !== undefined) {
+    headers['User-Agent'] = userAgent;
+  }
   if (source.apiKey.length > 0) {
     headers['Authorization'] = `Bearer ${source.apiKey}`;
   }

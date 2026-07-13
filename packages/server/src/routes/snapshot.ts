@@ -169,6 +169,7 @@ async function readViaLegacyAssembly(ix: IInstantiationService, sid: string) {
       session: session!,
       messages: { items, has_more: hasMore },
       in_flight_turn: inFlightTurn,
+      subagents: snapState.subagents,
       pending_approvals: approvals.listPending(sid),
       pending_questions: questions.listPending(sid),
     };

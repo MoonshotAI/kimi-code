@@ -1,6 +1,6 @@
 import picomatch from 'picomatch';
 
-import type { RunnableToolExecution } from '#/agent/tool/toolContract';
+import type { RunnableToolExecution } from '#/tool/toolContract';
 import type { PermissionRule } from './permissionRules';
 
 /**

@@ -1,4 +1,4 @@
-import { InstantiationService, resolveConfigPath, resolveKimiHome, setUnexpectedErrorHandler, IApprovalService, IAuthSummaryService, IEnvironmentService, IEventService, ICoreProcessService, IModelCatalogService, IMcpService, IMessageService, IOAuthService, IFileStore, IFsGitService, IFsSearchService, IFsService, IFsWatcher, ILogService, IPromptService, IQuestionService, ISessionService, ISkillService, ITaskService, ITerminalService, IToolService, IWorkspaceFsService, IWorkspaceRegistry, FsPathEscapesError, FsWatchLimitError, FsWatcherService, SessionNotFoundError, SessionStore, createConnectionLookup, resolveSafePath, type ServiceIdentifier, type CoreProcessServiceOptions } from '@moonshot-ai/agent-core';
+import { InstantiationService, resolveConfigPath, resolveKimiHome, setUnexpectedErrorHandler, IApprovalService, IAuthSummaryService, IEnvironmentService, IEventService, ICoreProcessService, IModelCatalogService, IMcpService, IMessageService, IOAuthService, IFileStore, IFsGitService, IFsSearchService, IFsService, IFsWatcher, ILogService, IPromptService, IQuestionService, ISessionService, ISkillService, ITaskService, ITerminalService, IToolService, IWorkspaceFsService, IWorkspaceRegistry, FsPathEscapesError, FsWatchLimitError, FsWatcherService, SessionNotFoundError, SessionStore, createConnectionLookup, resolveSafePath, type ServiceIdentifier, type CoreProcessServiceOptions, type FsWatcherServiceOptions } from '@moonshot-ai/agent-core';
 import { ErrorCode, createAsyncApiDocument } from '@moonshot-ai/protocol';
 import Fastify from 'fastify';
 import { promises as fspPromises } from 'node:fs';
@@ -60,6 +60,13 @@ export interface ServerStartOptions {
   coreProcessOptions?: CoreProcessServiceOptions;
 
   wsGatewayOptions?: WSGatewayOptions;
+
+  /**
+   * Overrides for the fs watch aggregator (debounce window, per-window
+   * change cap, per-connection path cap). Unset keeps the production
+   * defaults; intended for tests that need deterministic overflow.
+   */
+  fsWatcherOptions?: FsWatcherServiceOptions;
 
   debugEndpoints?: boolean;
 
@@ -504,7 +511,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       const fsWatcher = ix.createInstance(
         FsWatcherService,
         createConnectionLookup((id) => registry.get(id)),
-        {},
+        opts.fsWatcherOptions ?? {},
       );
       services.set(IFsWatcher, fsWatcher);
       a.get(IFsWatcher);

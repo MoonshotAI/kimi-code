@@ -10,7 +10,7 @@ import {
   type ApprovalResponse,
 } from '#/session/approval/approval';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';

@@ -7,7 +7,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
-import { createKimiDefaultHeaders, type KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
+import { createKimiDefaultHeaders, createKimiUserAgent, type KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
 
 import { CLI_USER_AGENT_PRODUCT } from '#/constant/app';
 
@@ -53,6 +53,14 @@ export function createKimiCodeHostIdentity(version = getVersion()): KimiHostIden
     userAgentProduct: CLI_USER_AGENT_PRODUCT,
     version,
   };
+}
+
+/**
+ * Product User-Agent (`kimi-code-cli/<version>`) for ad-hoc outbound fetches
+ * that don't go through the provider pipeline (registry / catalog imports).
+ */
+export function createKimiCodeUserAgent(version = getVersion()): string {
+  return createKimiUserAgent(createKimiCodeHostIdentity(version));
 }
 
 export function buildKimiDefaultHeaders(version: string): Record<string, string> {

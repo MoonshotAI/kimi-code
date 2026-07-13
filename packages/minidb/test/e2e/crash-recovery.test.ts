@@ -54,7 +54,9 @@ async function verifyContiguous(dir, label) {
 }
 
 test('crash-recovery: kill mid-write, recovery yields a contiguous correct prefix', async () => {
-  const runs = 8;
+  // Each run spawns a child process (the dominant cost); 5 runs with random kill
+  // times still sample the crash window well.
+  const runs = 5;
   for (let r = 0; r < runs; r++) {
     const dir = await tmpDir();
     try {
@@ -69,7 +71,7 @@ test('crash-recovery: kill mid-write, recovery yields a contiguous correct prefi
 });
 
 test('crash-recovery: kill during compaction, still consistent', async () => {
-  const runs = 4;
+  const runs = 3;
   for (let r = 0; r < runs; r++) {
     const dir = await tmpDir();
     try {

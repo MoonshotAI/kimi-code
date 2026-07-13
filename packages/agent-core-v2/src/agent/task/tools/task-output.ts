@@ -14,9 +14,9 @@
 
 import { z } from 'zod';
 
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
-import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { matchesGlobRuleSubject } from '#/tool/rule-match';
+import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';
@@ -45,7 +45,9 @@ export const TaskOutputInputSchema = z.object({
   block: z
     .boolean()
     .default(false)
-    .describe('Whether to wait for the task to finish before returning.')
+    .describe(
+      'Whether to wait for the task to finish before returning. Discouraged — background tasks notify automatically on completion; use only when the user explicitly asked you to wait.',
+    )
     .optional(),
   timeout: z
     .number()
@@ -147,6 +149,11 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
         fullOutputTool:
           output.fullOutputAvailable && output.outputPath !== undefined ? 'Read' : undefined,
         fullOutputHint: fullOutputHint(output),
+        // Nudge at the exact point of misuse: a blocking wait that timed out.
+        nextStep:
+          args.block === true && !TERMINAL_STATUSES.has(current.status)
+            ? 'The task is still running after waiting. Do not block on it again — continue with other work or hand back to the user; you will be notified automatically when it completes.'
+            : undefined,
       }),
       '',
     ];

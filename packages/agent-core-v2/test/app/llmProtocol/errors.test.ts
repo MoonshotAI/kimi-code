@@ -1,3 +1,8 @@
+/**
+ * `llmProtocol` error contract — provider error classification, normalization,
+ * and retry metadata shared by generation and swarm recovery.
+ */
+
 import {
   APIConnectionError,
   APIContextOverflowError,
@@ -13,6 +18,7 @@ import {
   isRetryableGenerateError,
   isToolExchangeAdjacencyError,
   normalizeAPIStatusError,
+  parseRetryAfterMs,
 } from '#/app/llmProtocol/errors';
 import { describe, expect, it } from 'vitest';
 
@@ -67,6 +73,15 @@ describe('APIStatusError', () => {
     const err = new APIStatusError(502, 'bad gateway');
     expect(err.statusCode).toBe(502);
     expect(err.requestId).toBeNull();
+  });
+
+  it('preserves a provider-requested retry delay', () => {
+    const err = new APIStatusError(429, 'rate limited', 'req-abc', 12_500);
+    expect(err.retryAfterMs).toBe(12_500);
+  });
+
+  it('defaults the provider-requested retry delay to null', () => {
+    expect(new APIStatusError(429, 'rate limited').retryAfterMs).toBeNull();
   });
 });
 
@@ -149,9 +164,12 @@ describe('isRetryableGenerateError', () => {
     expect(isRetryableGenerateError(new APIEmptyResponseError('empty'))).toBe(true);
   });
 
-  it.each([429, 500, 502, 503, 504, 529])('treats HTTP %i as retryable', (statusCode) => {
-    expect(isRetryableGenerateError(new APIStatusError(statusCode, 'retryable'))).toBe(true);
-  });
+  it.each([408, 409, 429, 500, 502, 503, 504, 529])(
+    'treats HTTP %i as retryable',
+    (statusCode) => {
+      expect(isRetryableGenerateError(new APIStatusError(statusCode, 'retryable'))).toBe(true);
+    },
+  );
 
   it('treats provider overload as retryable', () => {
     expect(isRetryableGenerateError(new APIProviderOverloadedError(529, 'Overloaded'))).toBe(true);
@@ -170,6 +188,19 @@ describe('isRetryableGenerateError', () => {
     ).toBe(false);
     expect(isRetryableGenerateError(new Error('boom'))).toBe(false);
     expect(isRetryableGenerateError('boom')).toBe(false);
+  });
+
+  it('retries an unclassified provider error as a transient fallback', () => {
+    expect(isRetryableGenerateError(new ChatProviderError('upstream failure'))).toBe(true);
+  });
+
+  it.each([
+    ['Invalid data URL for image: data:image/png;base64'],
+    [
+      'Unsupported media type for base64 image: image/avif, url: data:image/avif;base64,AAAA',
+    ],
+  ])('does not retry deterministic provider validation error: %s', (message) => {
+    expect(isRetryableGenerateError(new ChatProviderError(message))).toBe(false);
   });
 });
 
@@ -214,6 +245,11 @@ describe('normalizeAPIStatusError', () => {
     expect(error).toBeInstanceOf(APIProviderRateLimitError);
     expect(error.statusCode).toBe(429);
     expect(error.requestId).toBe('req-rate');
+  });
+
+  it('propagates the provider-requested retry delay through normalization', () => {
+    const error = normalizeAPIStatusError(429, 'Too many requests', 'req-rate', 7_000);
+    expect(error.retryAfterMs).toBe(7_000);
   });
 
   it.each([
@@ -322,6 +358,24 @@ describe('normalizeAPIStatusError', () => {
     expect(error).toBeInstanceOf(APIStatusError);
     expect(error).not.toBeInstanceOf(APIRequestTooLargeError);
     expect(error).not.toBeInstanceOf(APIContextOverflowError);
+  });
+});
+
+describe('parseRetryAfterMs', () => {
+  it('converts integer retry-after seconds to milliseconds', () => {
+    expect(parseRetryAfterMs(new Headers({ 'retry-after': '12' }))).toBe(12_000);
+  });
+
+  it('ignores an HTTP-date retry-after value', () => {
+    expect(
+      parseRetryAfterMs(new Headers({ 'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT' })),
+    ).toBeNull();
+  });
+
+  it('ignores missing or malformed header containers', () => {
+    expect(parseRetryAfterMs(new Headers())).toBeNull();
+    expect(parseRetryAfterMs({})).toBeNull();
+    expect(parseRetryAfterMs(null)).toBeNull();
   });
 });
 

@@ -7,9 +7,9 @@
 
 import { z } from 'zod';
 
-import type { BuiltinTool, ToolExecution } from '#/agent/tool/toolContract';
+import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
+import { toInputJsonSchema } from '#/tool/input-schema';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import DESCRIPTION from './enter-plan-mode.md?raw';

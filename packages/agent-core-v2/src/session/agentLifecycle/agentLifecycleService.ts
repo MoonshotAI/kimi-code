@@ -17,7 +17,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
-import { sessionMediaOriginalsDir } from '#/_base/tools/support/image-originals';
+import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import {
   createScopedChildHandle,

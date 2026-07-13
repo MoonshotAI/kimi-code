@@ -40,8 +40,8 @@ import {
 } from '#/agent/prompt/prompt';
 import type { HookResultEvent, TurnEndedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
-import type { ExecutableToolResult } from '#/agent/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/tool/toolHooks';
+import type { ExecutableToolResult } from '#/tool/toolContract';
+import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';

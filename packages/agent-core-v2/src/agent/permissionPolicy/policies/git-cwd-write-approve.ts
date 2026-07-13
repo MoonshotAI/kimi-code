@@ -1,5 +1,5 @@
-import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
-import { isWithinWorkspace } from '#/_base/tools/policies/path-access';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
+import { isWithinWorkspace } from '#/tool/path-access';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import type { IHostEnvironment as HostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';

@@ -15,7 +15,7 @@ import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { PathSecurityError } from '#/_base/tools/policies/path-access';
+import { PathSecurityError } from '#/tool/path-access';
 import { stubWorkspaceContext } from '../../../session/workspaceContext/stub-workspace-context';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices } from '#/_base/di/test';
@@ -27,7 +27,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');

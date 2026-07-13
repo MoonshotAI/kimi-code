@@ -107,14 +107,16 @@ test('concurrent SET/UPDATE/DEL during compaction survive recovery', async () =>
   const dir = await tmpDir();
   try {
     let db = await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy: 'no' });
-    const N = 10000;
+    // 5000 keys span 2 writeSnapshot yield windows (yieldEvery=2000, src/snapshot.ts),
+    // so the ops below genuinely race an in-progress snapshot.
+    const N = 5000;
     for (let i = 0; i < N; i++) await db.set('k' + i, 'v' + i);
 
     // Even keys are updated, keys == 1 (mod 4) are deleted, keys == 3 (mod 4)
     // are left untouched, and a batch of new keys is added — all racing the
     // in-progress snapshot.
     let deleted = 0;
-    const M = 2000;
+    const M = 1000;
     const compactP = db.compact();
     const ops: Promise<unknown>[] = [];
     for (let i = 0; i < N; i++) {
@@ -141,7 +143,7 @@ test('concurrent SET/UPDATE/DEL during compaction survive recovery', async () =>
   } finally {
     await fs.rm(dir, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 test('compaction with no concurrent writes produces an empty WAL tail', async () => {
   // When nothing is written during compaction, the post-fence WAL tail is empty

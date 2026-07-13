@@ -16,8 +16,10 @@
  * `node:child_process`.
  *
  * Hardening:
- *   - `args.timeout` (seconds) and the ambient `signal` both stop the
- *     manager-owned process task on either edge.
+ *   - `args.timeout` (seconds) arms the manager-owned deadline; a foreground
+ *     command whose deadline fires is moved to the background instead of
+ *     being killed (unless disabled via config), while the ambient `signal`
+ *     always stops the task.
  *   - stdin is closed immediately so interactive commands (`cat`, `read`,
  *     `python -c 'input()'`) receive EOF instead of hanging.
  *   - Two-phase kill is owned by `IAgentTaskService`: SIGTERM → grace → SIGKILL.
@@ -33,18 +35,20 @@
 import { z } from 'zod';
 
 import { IAgentTaskService } from '#/agent/task/task';
+import { resolveAgentTaskConfig } from '#/agent/task/configSection';
+import { IConfigService } from '#/app/config/config';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionProcessRunner, type IProcess } from '#/session/process/processRunner';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import type { BuiltinTool, ExecutableToolResult, ToolExecution, ToolUpdate } from '#/agent/tool/toolContract';
+import type { BuiltinTool, ExecutableToolResult, ToolExecution, ToolUpdate } from '#/tool/toolContract';
 import {
   type ExecutableToolResultBuilderResult,
   ToolResultBuilder,
-} from '#/agent/tool/result-builder';
+} from '#/tool/result-builder';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { literalRulePattern, matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import bashDescriptionTemplate from './bash.md?raw';
 import { ProcessTask } from './process-task';
@@ -153,13 +157,25 @@ function withoutBackgroundDescription(description: string): string {
       '\n\nBackground execution is disabled for this agent. Do not set `run_in_background=true`.',
     )
     .replace(
-      ` For possibly long-running foreground commands, set the \`timeout\` argument in seconds. Foreground commands default to ${String(DEFAULT_TIMEOUT_S)}s and allow up to ${String(MAX_TIMEOUT_S)}s.`,
-      ` For possibly long-running commands, set the \`timeout\` argument in seconds. The default is ${String(DEFAULT_TIMEOUT_S)}s; foreground commands allow up to ${String(MAX_TIMEOUT_S)}s.`,
+      ` For possibly long-running foreground commands, set the \`timeout\` argument in seconds. Foreground commands default to ${String(DEFAULT_TIMEOUT_S)}s and allow up to ${String(MAX_TIMEOUT_S)}s. When a foreground command hits its timeout it is moved to the background instead of being killed, and you will be automatically notified when it completes.`,
+      ` For possibly long-running commands, set the \`timeout\` argument in seconds. The default is ${String(DEFAULT_TIMEOUT_S)}s; foreground commands allow up to ${String(MAX_TIMEOUT_S)}s; a foreground command that hits its timeout is killed.`,
     )
     .replace(
       /\r?\n- Prefer `run_in_background=true`[\s\S]*?conversation to continue before the command finishes\./,
       '\n- Do not set `run_in_background=true`; background task management tools are not available.',
     );
+}
+
+/**
+ * Strip the auto-background-on-timeout promise when the config disabled it
+ * (`task.bash_auto_background_on_timeout = false`): timed-out foreground
+ * commands are killed in that configuration, and the description must say so.
+ */
+function withoutAutoBackgroundOnTimeout(description: string): string {
+  return description.replace(
+    ' When a foreground command hits its timeout it is moved to the background instead of being killed, and you will be automatically notified when it completes.',
+    ' A foreground command that hits its timeout is killed.',
+  );
 }
 
 export class BashTool implements BuiltinTool<BashInput> {
@@ -176,6 +192,7 @@ export class BashTool implements BuiltinTool<BashInput> {
     @ISessionContext private readonly ctx: ISessionContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IConfigService private readonly config: IConfigService,
   ) {
     this.isWindowsBash = this.env.osKind === 'Windows';
     this.renderedDescription = renderBashDescription(this.env.shellName);
@@ -189,10 +206,16 @@ export class BashTool implements BuiltinTool<BashInput> {
     );
   }
 
+  private autoBackgroundOnTimeout(): boolean {
+    return resolveAgentTaskConfig(this.config)?.bashAutoBackgroundOnTimeout ?? true;
+  }
+
   get description(): string {
-    return this.allowBackground()
-      ? this.renderedDescription
-      : withoutBackgroundDescription(this.renderedDescription);
+    if (!this.allowBackground()) return withoutBackgroundDescription(this.renderedDescription);
+    if (!this.autoBackgroundOnTimeout()) {
+      return withoutAutoBackgroundOnTimeout(this.renderedDescription);
+    }
+    return this.renderedDescription;
   }
 
   resolveExecution(args: BashInput): ToolExecution {
@@ -297,6 +320,11 @@ export class BashTool implements BuiltinTool<BashInput> {
           // give it the background timeout so it is not still bounded by the
           // shorter foreground deadline.
           detachTimeoutMs: DEFAULT_BACKGROUND_TIMEOUT_S * MS_PER_SECOND,
+          // A foreground command that hits its timeout is moved to the
+          // background (re-armed to detachTimeoutMs) instead of being killed —
+          // unless disabled via config, or background tooling is unavailable
+          // for this agent.
+          autoBackgroundOnTimeout: this.allowBackground() && this.autoBackgroundOnTimeout(),
           signal: startsInBackground ? undefined : signal,
         },
       );
@@ -323,16 +351,23 @@ export class BashTool implements BuiltinTool<BashInput> {
 
     try {
       const release = await this.tasks.waitForForegroundRelease(taskId);
-      if (release === 'detached') {
+      if (release === 'detached' || release === 'timeout_detached') {
         collectForegroundOutput = false;
+        const labels =
+          release === 'timeout_detached'
+            ? {
+                title: 'Command timed out and moved to background',
+                brief: `Backgrounded ${taskId} after timeout`,
+              }
+            : {
+                title: 'Task moved to background',
+                brief: `Backgrounded ${taskId}`,
+              };
         return this.backgroundStartedResult(
           taskId,
           proc,
           description,
-          {
-            title: 'Task moved to background',
-            brief: `Backgrounded ${taskId}`,
-          },
+          labels,
           builder,
           'foreground_detached',
         );

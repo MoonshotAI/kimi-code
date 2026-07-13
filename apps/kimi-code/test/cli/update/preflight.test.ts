@@ -227,6 +227,10 @@ async function flushBackgroundInstall(): Promise<void> {
 
 describe('runUpdatePreflight', () => {
   beforeEach(() => {
+    // Pin the experimental flag off so rollout gating is deterministic
+    // regardless of the host environment (the flag bypasses batch holds).
+    // Tests that exercise the bypass opt back in with `vi.stubEnv(..., '1')`.
+    vi.stubEnv('KIMI_CODE_EXPERIMENTAL_FLAG', '');
     mocks.readUpdateInstallState.mockResolvedValue(emptyUpdateInstallState());
     mocks.writeUpdateInstallState.mockResolvedValue(undefined);
     mocks.loadTuiConfig.mockResolvedValue(tuiConfig());

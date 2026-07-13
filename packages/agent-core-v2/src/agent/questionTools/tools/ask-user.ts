@@ -11,7 +11,7 @@ import { z } from 'zod';
 
 import { CoreErrors } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
+import { toInputJsonSchema } from '#/tool/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -21,7 +21,7 @@ import type {
   ExecutableToolContext,
   ExecutableToolResult,
   ToolExecution,
-} from '#/agent/tool/toolContract';
+} from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { ISessionQuestionService } from '#/session/question/question';

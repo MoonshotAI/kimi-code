@@ -140,14 +140,20 @@ describe('real password path (verifyPassword)', () => {
 
 describe('auth-failure rate limit on a real bind', () => {
   it('returns 429 on the 11th bad token', async () => {
-    process.env['KIMI_CODE_PASSWORD'] = 'test-pw';
     const home = await tmpHome();
+    // Inject a fast token-only auth service: this test exercises the rate
+    // limiter, not bcrypt — 12 sequential cost-12 compares would take seconds.
     const server = await startServer({
       host: '0.0.0.0',
       port: 0,
       homeDir: home,
       logLevel: 'silent',
       insecureNoTls: true,
+      authTokenService: {
+        _serviceBrand: undefined,
+        getToken: () => 'persistent-token',
+        isValid: async (candidate) => candidate === 'persistent-token',
+      },
     });
     running.push(server);
     const url = `http://127.0.0.1:${server.port}/api/v1/sessions`;

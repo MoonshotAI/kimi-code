@@ -16,7 +16,7 @@ import { Readable, type Writable } from 'node:stream';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ensureRgPath, type RgProbe } from '#/os/backends/node-local/tools/rgLocator';
-import { PathSecurityError, type PathClass } from '#/_base/tools/policies/path-access';
+import { PathSecurityError, type PathClass } from '#/tool/path-access';
 import { noopTelemetryService } from '#/app/telemetry/telemetry';
 import type { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
@@ -34,7 +34,7 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import { HostProcessService } from '#/os/backends/node-local/hostProcessService';
 import { probeHostEnvironmentFromNode } from '#/_base/execEnv/environmentProbe';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 // The ripgrep binary locator is mocked out for unit tests so they assert on
 // argument building and output parsing without probing a real `rg`. The

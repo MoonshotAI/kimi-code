@@ -7,7 +7,7 @@ import {
   ExitPlanModeTool,
   type ExitPlanModeInput,
 } from '#/agent/plan/tools/exit-plan-mode';
-import type { ToolResult } from '#/agent/tool/toolContract';
+import type { ToolResult } from '#/tool/toolContract';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 

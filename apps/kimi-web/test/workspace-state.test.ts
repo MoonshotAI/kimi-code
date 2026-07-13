@@ -123,6 +123,7 @@ function createDeps(): UseWorkspaceStateDeps {
     subscribeToSessionEvents: vi.fn(),
     hasLoadedMessages: vi.fn(),
     refreshSessionStatus: vi.fn(),
+    refreshSessionGoal: vi.fn(),
     persistSessionProfile: vi.fn(),
     mergedWorkspaces: computed(() => []),
     workspacesView: computed(() => []),
@@ -1216,5 +1217,56 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     await pendingSubmit;
     expect(ws.localTurnStartState('sess_1').pending).toBe(false);
     expect(retrySnapshot).toHaveBeenCalledOnce();
+  });
+});
+
+// Regression: a search-triggered full session-list reload must not clobber the
+// live usage (context ring) with the list endpoint's all-zero placeholder.
+describe('useWorkspaceState — loadAllSessions usage preservation', () => {
+  beforeEach(() => {
+    apiMock.listSessions.mockReset();
+  });
+
+  function liveUsage() {
+    return {
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      totalCostUsd: 0,
+      contextTokens: 28772,
+      contextLimit: 1048576,
+      turnCount: 3,
+    };
+  }
+
+  it('keeps the cached live usage when the reloaded row carries the placeholder', async () => {
+    const state = createState();
+    state.sessions = [{ ...createSession(), usage: liveUsage() }];
+    apiMock.listSessions.mockResolvedValue({
+      items: [{ ...createSession(), title: 'Fresh from server' }],
+      hasMore: false,
+    });
+    const setSessions = vi.fn();
+    const ws = useWorkspaceState(state, { ...createDeps(), setSessions });
+
+    await ws.loadAllSessions();
+
+    expect(setSessions).toHaveBeenCalledOnce();
+    const next = setSessions.mock.calls[0][0];
+    expect(next[0].title).toBe('Fresh from server');
+    expect(next[0].usage).toEqual(liveUsage());
+  });
+
+  it('takes the server row as-is when there is no live usage to preserve', async () => {
+    const state = createState();
+    apiMock.listSessions.mockResolvedValue({ items: [createSession()], hasMore: false });
+    const setSessions = vi.fn();
+    const ws = useWorkspaceState(state, { ...createDeps(), setSessions });
+
+    await ws.loadAllSessions();
+
+    const next = setSessions.mock.calls[0][0];
+    expect(next[0].usage.contextTokens).toBe(0);
   });
 });

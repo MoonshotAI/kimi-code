@@ -1,5 +1,5 @@
 /**
- * `_base` retry helpers — exponential backoff schedule, abortable retry
+ * `_base` retry helpers — exponential and server-directed backoff, abortable
  * sleeps, and error-field extraction shared by retry policies (the loop's
  * `stepRetry` plugin, full-compaction's self-managed resends).
  */
@@ -8,9 +8,10 @@ import { abortable } from '#/_base/utils/abort';
 
 export const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
 
-const RETRY_MIN_TIMEOUT_MS = 300;
-const RETRY_MAX_TIMEOUT_MS = 5000;
+const BASE_DELAY_MS = 500;
+const MAX_DELAY_MS = 32_000;
 const RETRY_FACTOR = 2;
+const JITTER_FACTOR = 0.25;
 
 export interface RetryErrorFields {
   readonly errorName: string;
@@ -19,13 +20,19 @@ export interface RetryErrorFields {
 }
 
 export function retryBackoffDelays(maxAttempts: number): number[] {
-  return Array.from({ length: Math.max(maxAttempts - 1, 0) }, (_unused, index) => {
-    const baseDelay = Math.min(
-      RETRY_MAX_TIMEOUT_MS,
-      RETRY_MIN_TIMEOUT_MS * RETRY_FACTOR ** index,
-    );
-    return Math.round(baseDelay * (1 + Math.random()));
-  });
+  const count = Math.max(maxAttempts - 1, 0);
+  const delays: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const base = Math.min(BASE_DELAY_MS * Math.pow(RETRY_FACTOR, i), MAX_DELAY_MS);
+    delays.push(base + Math.random() * JITTER_FACTOR * base);
+  }
+  return delays;
+}
+
+export function readRetryAfterMs(error: unknown): number | null {
+  if (typeof error !== 'object' || error === null) return null;
+  const value = (error as { retryAfterMs?: unknown }).retryAfterMs;
+  return typeof value === 'number' && value > 0 ? value : null;
 }
 
 export async function sleepForRetry(delayMs: number, signal?: AbortSignal): Promise<void> {

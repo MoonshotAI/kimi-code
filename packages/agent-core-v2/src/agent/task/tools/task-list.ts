@@ -4,9 +4,9 @@
 
 import { z } from 'zod';
 
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
-import type { BuiltinTool, ToolExecution } from '#/agent/tool/toolContract';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { matchesGlobRuleSubject } from '#/tool/rule-match';
+import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';

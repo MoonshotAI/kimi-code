@@ -9,9 +9,9 @@
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 import { z } from 'zod';
 
-import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
+import { toInputJsonSchema } from '#/tool/input-schema';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import type { PlanData } from '#/agent/plan/plan';

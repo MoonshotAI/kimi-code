@@ -85,7 +85,7 @@ describe('runHook process runner', () => {
       hostProcess,
       nodeCommand('setTimeout(() => {}, 10000);'),
       { tool_name: 'Bash' },
-      { timeout: 1 },
+      { timeout: 0.05 },
     );
 
     expect(result.action).toBe('allow');

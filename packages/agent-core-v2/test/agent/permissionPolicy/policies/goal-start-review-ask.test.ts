@@ -2,10 +2,10 @@ import type { ToolCall } from '#/app/llmProtocol/message';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 import { describe, expect, it } from 'vitest';
 
-import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { GoalStartReviewAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/goal-start-review-ask';
-import { ToolAccesses } from '#/agent/tool/tool-access';
+import { ToolAccesses } from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 type PermissionMode = IAgentPermissionModeService['mode'];
