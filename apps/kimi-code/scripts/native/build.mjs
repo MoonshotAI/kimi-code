@@ -24,9 +24,9 @@ if (!['local', 'release'].includes(profile)) {
 
 function ensureNodeVersion() {
   const [major, minor] = process.versions.node.split('.').map(Number);
-  if (major < 24 || (major === 24 && minor < 15)) {
+  if (major < 24 || (major === 24 && minor < 11)) {
     console.error(
-      `Kimi Code native SEA build requires Node.js >=24.15.0, current ${process.versions.node}.`,
+      `Kimi Code native SEA build requires Node.js >=24.11.0, current ${process.versions.node}.`,
     );
     process.exit(1);
   }

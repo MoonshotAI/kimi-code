@@ -11,6 +11,7 @@ import { SseMcpClient } from './client-sse';
 import type { UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from './oauth';
+import { sanitizeMcpSchema } from './schema-sanitize';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
 
 export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
@@ -397,11 +398,14 @@ export class McpConnectionManager {
     const mcpTools = await client.listTools();
     return {
       rawTools: mcpTools,
-      tools: mcpTools.map((mcpTool) => ({
-        name: mcpTool.name,
-        description: mcpTool.description,
-        parameters: assertMcpInputSchema(mcpTool.name, mcpTool.inputSchema),
-      })),
+      tools: mcpTools.map((mcpTool) => {
+        const validated = assertMcpInputSchema(mcpTool.name, mcpTool.inputSchema);
+        return {
+          name: mcpTool.name,
+          description: mcpTool.description,
+          parameters: sanitizeMcpSchema(validated),
+        };
+      }),
     };
   }
 

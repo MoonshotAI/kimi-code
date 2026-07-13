@@ -228,6 +228,28 @@ describe('loadMcpServers', () => {
     });
   });
 
+  it('translates standard disabled=true into enabled=false', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        disabledServer: { command: 'node', disabled: true },
+        enabledServer: { command: 'node', disabled: false },
+      },
+    });
+    const servers = await loadMcpServers({ cwd, homeDir: home });
+    expect(servers['disabledServer']).toEqual({
+      transport: 'stdio',
+      command: 'node',
+      enabled: false,
+    });
+    expect(servers['enabledServer']).toEqual({
+      transport: 'stdio',
+      command: 'node',
+      enabled: true,
+    });
+  });
+
   it('infers transport=http when an entry omits transport but has url', async () => {
     const home = makeTempDir();
     const cwd = makeTempDir();

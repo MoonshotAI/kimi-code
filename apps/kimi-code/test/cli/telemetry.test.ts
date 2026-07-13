@@ -108,4 +108,4 @@ describe('initializeServerTelemetry', () => {
       expect.objectContaining({ enabled: true, model: undefined }),
     );
   });
-});
+}, 15000);

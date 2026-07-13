@@ -25,6 +25,7 @@ import {
 import { type RunningServer, startServer } from '@moonshot-ai/kap-server';
 import { Klient } from '@moonshot-ai/klient';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import WebSocket from 'ws';
 
 import { HttpClient } from '../../src/http.js';
 
@@ -36,6 +37,7 @@ describe('Klient (server-v2 smoke)', () => {
   let wsOpened = false;
 
   beforeEach(async () => {
+    globalThis.WebSocket = WebSocket as any;
     home = await mkdtemp(join(tmpdir(), 'kimi-sdk-smoke-'));
     server = await startServer({ host: '127.0.0.1', port: 0, homeDir: home, logLevel: 'silent' });
     const baseUrl = `http://127.0.0.1:${server.port}`;
