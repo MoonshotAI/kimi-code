@@ -17,8 +17,10 @@
  * the user), silently appends restored notifications through `contextMemory`,
  * re-surfaces active tasks through `contextInjector` after compaction, and
  * stops every owned task on session close (`stopAllOnExit` — v1's
- * `stopBackgroundTasksOnExit`, gated by `keepAliveOnExit`), with a last-resort
- * abort in `dispose` for scope-disposal paths that bypass the graceful close.
+ * `stopBackgroundTasksOnExit`, gated by `keepAliveOnExit`) with configurable
+ * SIGTERM grace and SIGKILL escalation. Scope disposal paths that bypass
+ * graceful close synchronously cancel/abort work and immediately attempt a
+ * best-effort force-stop to reduce the risk of surviving child processes.
  * Bound at Agent scope.
  */
 
@@ -240,10 +242,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @IAgentLoopService private readonly loop: IAgentLoopService,
   ) {
     super();
-    // Root task persistence at the owning agent's scope — v1's per-agent
-    // `<sessionDir>/agents/<id>/tasks/` layout. A shared session-level tasks
-    // dir instead would both hide v1's on-disk records and make every agent's
-    // restore load / mark-lost / re-notify every other agent's tasks.
     this.persistence = new AgentTaskPersistence(
       join(session.sessionDir, 'agents', scopeContext.agentId),
       scopeContext.scope(),
@@ -667,19 +665,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     });
   }
 
-  /**
-   * Manager-driven teardown shared by every termination path: explicit `stop`,
-   * the wall-clock `timeoutMs` deadline, and the post-detach `detachTimeoutMs`
-   * deadline. It sends SIGTERM (or `handle.cancel()`), gives the task up to
-   * `[task] killGracePeriodMs` (default `SIGTERM_GRACE_MS`) to settle,
-   * escalates to `forceStop` (SIGKILL) when it is still alive, and records
-   * `finalStatus`.
-   *
-   * This mirrors v1's `settlementForOutcome`, where timeout and stop always
-   * shared the same grace + force-stop sequence. Routing the deadline paths
-   * through here is what keeps a runaway process that ignores SIGTERM from
-   * leaking when its deadline fires.
-   */
   private async terminateWithGrace(
     entry: ManagedTask,
     options: {
@@ -693,7 +678,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       return this.toInfo(entry);
     }
 
-    // Disarm a pending wall-clock deadline so it cannot re-enter teardown.
     if (entry.timeoutHandle !== undefined) {
       clearTimeout(entry.timeoutHandle);
       entry.timeoutHandle = undefined;
@@ -762,21 +746,12 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
   async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
     if (this.keepAliveOnExit()) return [];
-    // Suppress BEFORE stopping so a task settling during teardown cannot
-    // enqueue a terminal notification that steers the closing agent into a
-    // new turn (v1 did the same in `stopBackgroundTasksOnExit`).
     const active = this.list(true);
     await Promise.all(active.map((task) => this.suppressTerminalNotification(task.taskId)));
     return this.stopAll(reason);
   }
 
   override dispose(): void {
-    // Last-resort reclamation for scope-disposal paths that bypass
-    // `stopAllOnExit` (root-scope dispose on server shutdown, fork rollback,
-    // bootstrap failure): disarm every live task's deadline and abort it so no
-    // abortController / timeoutHandle / child process outlives the scope.
-    // Honors the same keepAliveOnExit opt-in — when set, tasks are left
-    // running by design.
     if (!this.keepAliveOnExit()) {
       for (const entry of this.tasks.values()) {
         if (TERMINAL_STATUSES.has(entry.status)) continue;
@@ -789,16 +764,22 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         } else {
           entry.abortController.abort(SESSION_CLOSED_REASON);
         }
+        this.forceStopOnDispose(entry);
       }
     }
     super.dispose();
   }
 
-  /**
-   * The `keepAliveOnExit` opt-out shared by the graceful (`stopAllOnExit`)
-   * and last-resort (`dispose`) teardown paths: when set, background work is
-   * deliberately left running across session close (v1 parity).
-   */
+  private forceStopOnDispose(entry: ManagedTask): void {
+    const forceStop =
+      entry.forceStopFn ??
+      (entry.task === undefined ? undefined : entry.task.forceStop?.bind(entry.task));
+    if (forceStop === undefined) return;
+    try {
+      void forceStop().catch(() => {});
+    } catch {}
+  }
+
   private keepAliveOnExit(): boolean {
     return resolveAgentTaskConfig(this.config)?.keepAliveOnExit === true;
   }

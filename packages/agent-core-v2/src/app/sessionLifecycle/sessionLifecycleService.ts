@@ -12,7 +12,9 @@
  * sessions are discovered through the `sessionIndex` read model, and workspace
  * roots are remembered through `workspaceRegistry`. On create / fork the
  * session is also appended to the shared `session_index.jsonl` so v1 clients
- * (TUI, export) can discover sessions created by the v2 engine.
+ * (TUI, export) can discover sessions created by the v2 engine. Fork flushes
+ * live agent logs and rejects non-empty logs without a protocol metadata
+ * envelope instead of stamping legacy data as current.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -561,11 +563,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       ),
     );
     // Ensure the log starts with a metadata envelope (restore() requires it).
-    // An empty log is brand new and gets a fresh envelope; a non-empty log
-    // without one predates protocol versioning (or is corrupt) — fail loudly
-    // like restore() does instead of fabricating a current-version envelope
-    // over legacy records (which would skip every migration and reinterpret
-    // them as the new format).
     if (records.length === 0) {
       records.push(freshMetadataRecord());
     } else if (records[0]?.type !== 'metadata') {

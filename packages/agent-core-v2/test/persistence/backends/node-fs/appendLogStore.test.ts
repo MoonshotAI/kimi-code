@@ -1,3 +1,12 @@
+/**
+ * Scenario: JSONL append-log ordering, durability, rewrite serialization, and decoding.
+ *
+ * Resolves the real `AppendLogStore` by interface over in-memory storage;
+ * controlled storage promises expose write ordering without wall-clock waits.
+ * Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/persistence/backends/node-fs/appendLogStore.test.ts`.
+ */
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -94,8 +103,6 @@ describe('AppendLogStore', () => {
   });
 
   it('appends that arrive during a rewrite land after the replaced content', async () => {
-    // Gate `storage.write` so the whole-file replace is in flight when the
-    // live append arrives: the append must not be wiped by the replace.
     let releaseWrite!: () => void;
     const writeGate = new Promise<void>((resolve) => {
       releaseWrite = resolve;
@@ -132,10 +139,53 @@ describe('AppendLogStore', () => {
     const rewrite = record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }]);
     const flushed = record.flush();
     releaseWrite();
-    // `flush()` alone must cover the rewrite: once it resolves, the replaced
-    // content is durable without awaiting the rewrite call itself.
     await flushed;
     expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }]);
+    await rewrite;
+  });
+
+  it('flush() stays pending until an append made during rewrite is durable', async () => {
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend!: () => void;
+    const appendGate = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (...args) => {
+      await writeGate;
+      return originalWrite(...args);
+    };
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      markAppendStarted();
+      await appendGate;
+      return originalAppend(...args);
+    };
+
+    const rewrite = record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }]);
+    record.append<Rec>(SCOPE, KEY, { n: 2 });
+    const flushed = record.flush();
+    let flushSettled = false;
+    void flushed.then(() => {
+      flushSettled = true;
+    });
+
+    releaseWrite();
+    await appendStarted;
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(flushSettled).toBe(false);
+
+    releaseAppend();
+    await flushed;
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 2 }]);
     await rewrite;
   });
 

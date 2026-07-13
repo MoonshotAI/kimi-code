@@ -329,9 +329,6 @@ describe('AgentLifecycleService', () => {
       'WireRecord restore expected metadata as the first record',
     );
 
-    // The legacy log must be left untouched: fabricating a current-version
-    // envelope would stamp legacy records as the current protocol and skip
-    // every migration (v1 rejects the same file outright).
     expect(log.appended).toEqual([]);
     expect(log.rewritten).toBeUndefined();
   });

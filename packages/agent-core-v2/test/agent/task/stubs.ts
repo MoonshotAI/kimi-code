@@ -1,3 +1,10 @@
+/**
+ * Scenario: shared Agent task test wiring and per-agent persistence addressing.
+ *
+ * Exposes the test manager contract and builds persistence beneath the main
+ * agent scope so fixtures cannot accidentally seed session-wide task records.
+ */
+
 import { join } from 'pathe';
 
 import {
@@ -15,11 +22,6 @@ export type TaskServiceTestManager = IAgentTaskService & {
 
 export const TASK_TEST_SESSION_SCOPE = 'sessions/test-workspace/test-session';
 
-/**
- * Scope the test harness's main agent roots its task persistence at
- * (`<sessionScope>/agents/main`). Task records must be seeded here — the
- * session root no longer carries them.
- */
 export const TASK_TEST_AGENT_SCOPE = `${TASK_TEST_SESSION_SCOPE}/agents/main`;
 
 export function createAgentTaskPersistence(homedir: string): AgentTaskPersistence {

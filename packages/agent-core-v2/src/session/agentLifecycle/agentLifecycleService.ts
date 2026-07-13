@@ -5,7 +5,10 @@
  * serializing same-id bootstrap and dropping incomplete handles after startup
  * failure. Seeds each agent's identity through `agent` scopeContext, wires
  * per-agent wire records and the wire state machine, the blob store, and MCP,
- * and registers the agent in the session registry. Bound at Session scope.
+ * and registers the agent in the session registry. New logs receive a metadata
+ * envelope while non-empty unversioned logs are rejected. Removal awaits the
+ * agent task manager's graceful exit policy before draining activity and
+ * disposing the child scope. Bound at Session scope.
  *
  * No agent id is special here: the main agent is created by its bootstrappers
  * as `create({ agentId: 'main' })` (see `mainAgent.ts`), and `fork` requires
@@ -385,18 +388,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       break;
     }
     if (firstRecord === undefined) {
-      // Brand-new log: seed the metadata envelope through the live dispatch
-      // path so it orders ahead of every record the agent persists from here.
       handle.accessor.get(IAgentWireService).dispatch(wireMetadata(freshMetadataPayload()));
       return;
     }
     if (firstRecord.type === 'metadata') return;
-    // A non-empty log without a leading metadata envelope predates protocol
-    // versioning (or is corrupt). v1's replay rejects the same file outright
-    // (`records/index.ts`); never paper over the gap by prepending a
-    // current-version envelope — that would stamp legacy records as the
-    // current protocol, skip every migration, and reinterpret them as the
-    // new format.
     throw missingWireMetadataError();
   }
 
@@ -539,11 +534,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const handle = this.handles.get(agentId);
     if (handle === undefined) return;
     this.handles.delete(agentId);
-    // Stop the agent's background tasks before disposal — v1's
-    // `stopBackgroundTasksOnExit` (suppress terminal notifications, then
-    // SIGTERM → grace → SIGKILL, gated by `keepAliveOnExit`). Without this
-    // their processes leak past the scope (the server stays up) and reconcile
-    // as `lost` instead of `killed` on the next resume.
     await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
     // Drive the agent activity kernel through disposal: reject new begins and
     // abort any in-flight turn / background activity, then wait for it to drain

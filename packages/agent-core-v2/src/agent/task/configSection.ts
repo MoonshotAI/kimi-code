@@ -3,7 +3,9 @@
  *
  * Owns the `[task]` configuration section (task limits and lifecycle tuning).
  * The legacy `[background]` section is registered with the same schema so old
- * configs continue to load while callers migrate. `keepAliveOnExit` also
+ * configs continue to load while callers migrate; effective values use legacy
+ * fields as the base and let `[task]` override matching fields.
+ * `keepAliveOnExit` also
  * accepts the v1 env override `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT`
  * (applied live by the config env overlay, never persisted). Self-registered
  * at module load via `registerConfigSection`, so the `config` domain never
@@ -33,23 +35,14 @@ export const AgentTaskConfigSchema = z.object({
 
 export type AgentTaskConfig = z.infer<typeof AgentTaskConfigSchema>;
 
-/**
- * Read the effective task config, falling back to the legacy `[background]`
- * section when `[task]` is unset.
- */
 export function resolveAgentTaskConfig(config: IConfigService): AgentTaskConfig | undefined {
-  return (
-    config.get<AgentTaskConfig | undefined>(TASK_SECTION) ??
-    config.get<AgentTaskConfig | undefined>(LEGACY_BACKGROUND_SECTION)
-  );
+  const legacy = config.get<AgentTaskConfig | undefined>(LEGACY_BACKGROUND_SECTION);
+  const current = config.get<AgentTaskConfig | undefined>(TASK_SECTION);
+  if (legacy === undefined) return current;
+  if (current === undefined) return legacy;
+  return { ...legacy, ...current };
 }
 
-/**
- * v1 parity: `KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT` overrides
- * `[task] keepAliveOnExit` (and the legacy `[background]` spelling) so
- * operators can keep background work running across session close without
- * editing `config.toml`.
- */
 export const KEEP_ALIVE_ON_EXIT_ENV = 'KIMI_CODE_BACKGROUND_KEEP_ALIVE_ON_EXIT';
 
 export const taskEnvBindings: EnvBindings<AgentTaskConfig> = envBindings(AgentTaskConfigSchema, {

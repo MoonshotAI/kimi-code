@@ -1,11 +1,14 @@
 /**
- * `AppendLogStore` — node-fs backend for `IAppendLogStore`.
+ * `storage` domain (L1) — node-fs backend for `IAppendLogStore`.
  *
  * Sits on top of `IFileSystemStorageService` and turns a byte stream into an ordered
  * sequence of typed JSON records. Owns the concerns the storage service
  * deliberately ignores: line framing (one JSON value per line, a.k.a. JSONL),
  * batching of appends into a single durable `append`, and crash-tolerant
  * decoding (a torn final line is dropped; corruption anywhere else throws).
+ * Serializes whole-log rewrites with live appends and keeps the shared flush
+ * pending until records appended during a rewrite are durably drained. Bound
+ * at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -96,37 +99,15 @@ export class AppendLogStore implements IAppendLogStore {
 
   async rewrite<R>(scope: string, key: string, records: readonly R[]): Promise<void> {
     const state = this.state(scope, key);
-    // Snapshot `pending` synchronously: records appended before this call
-    // belong to the pre-rewrite log (the replace supersedes them — drain them
-    // first, mirroring the old flush-then-write), while anything appended
-    // from here on must survive the replace.
     const preExisting = state.pending.splice(0);
-    // Chain behind any in-flight flush, then hold the log's `flushPromise`
-    // across the whole-file replace: appends arriving while the replace runs
-    // stay parked in `pending` (`scheduleFlush` sees a flush in flight) and
-    // drain only AFTER the new content has landed, so a live append can never
-    // be wiped by the replace. `read()` / `flush()` on this log also await
-    // the rewrite through the shared promise.
     const prior = state.flushPromise ?? Promise.resolve();
-    const promise = prior
-      .then(async () => {
-        if (preExisting.length > 0) {
-          await this.storage.append(scope, key, encodeBatch(preExisting), { durable: true });
-        }
-        await this.storage.write(scope, key, encodeBatch(records), { atomic: true });
-      })
-      .finally(() => {
-        if (state.flushPromise === promise) {
-          state.flushPromise = undefined;
-        }
-        // Records appended during the replace must be drained now that it has
-        // settled — they were never part of the replaced content.
-        if (state.pending.length > 0) {
-          void this.flushLog(scope, key);
-        }
-      });
-    state.flushPromise = promise;
-    await promise;
+    const rewrite = prior.then(async () => {
+      if (preExisting.length > 0) {
+        await this.storage.append(scope, key, encodeBatch(preExisting), { durable: true });
+      }
+      await this.storage.write(scope, key, encodeBatch(records), { atomic: true });
+    });
+    await this.ownFlush(scope, key, state, rewrite);
   }
 
   async flush(): Promise<void> {
@@ -169,18 +150,47 @@ export class AppendLogStore implements IAppendLogStore {
   private flushLog(scope: string, key: string): Promise<void> {
     const state = this.state(scope, key);
     if (state.flushPromise !== undefined) return state.flushPromise;
+    return this.ownFlush(scope, key, state, this.drain(scope, key, state));
+  }
 
-    const promise = this.drain(scope, key, state).finally(() => {
-      if (state.flushPromise === promise) {
-        state.flushPromise = undefined;
+  private ownFlush(
+    scope: string,
+    key: string,
+    state: LogState,
+    operation: Promise<void>,
+  ): Promise<void> {
+    let owned!: Promise<void>;
+    owned = this.finishOwnedFlush(scope, key, state, operation, () => owned);
+    state.flushPromise = owned;
+    return owned;
+  }
+
+  private async finishOwnedFlush(
+    scope: string,
+    key: string,
+    state: LogState,
+    operation: Promise<void>,
+    owner: () => Promise<void>,
+  ): Promise<void> {
+    let failure: { readonly error: unknown } | undefined;
+    try {
+      await operation;
+    } catch (error) {
+      failure = { error };
+    }
+    const owned = owner();
+    if (state.flushPromise === owned) {
+      try {
+        while (state.pending.length > 0) {
+          await this.drain(scope, key, state);
+        }
+      } finally {
+        if (state.flushPromise === owned) {
+          state.flushPromise = undefined;
+        }
       }
-      // Records appended during the drain must be drained too.
-      if (state.pending.length > 0) {
-        void this.flushLog(scope, key);
-      }
-    });
-    state.flushPromise = promise;
-    return promise;
+    }
+    if (failure !== undefined) throw failure.error;
   }
 
   private async drain(scope: string, key: string, state: LogState): Promise<void> {

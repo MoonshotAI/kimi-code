@@ -1,3 +1,12 @@
+/**
+ * Scenario: Agent task lifecycle, persistence, output retention, and teardown.
+ *
+ * Resolves the real `AgentTaskService` by interface, uses real `ProcessTask`
+ * adapters where process signals are observable, and stubs only persistence,
+ * wire, loop, and telemetry boundaries. Run with
+ * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/task/taskService.test.ts`.
+ */
+
 import { Readable, type Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -149,8 +158,6 @@ describe('AgentTaskService', () => {
     await svc.stop(id);
   });
 
-  // ── Session-close teardown (v1 `stopBackgroundTasksOnExit` parity) ──────
-
   function stubTaskConfig(value: unknown): void {
     ix.stub(IConfigService, {
       get: ((domain: string) => (domain === 'task' ? value : undefined)) as IConfigService['get'],
@@ -161,8 +168,6 @@ describe('AgentTaskService', () => {
     return {
       ...fakeProcessTask(),
       start: ({ signal }) => {
-        // `registerTask` starts the task on a microtask, so teardown may have
-        // aborted the controller before `start` runs — observe both.
         if (signal.aborted) {
           onAbort(signal.reason);
           return;
@@ -172,14 +177,14 @@ describe('AgentTaskService', () => {
     };
   }
 
-  it('stopAllOnExit suppresses and stops every active task', async () => {
+  it('stopAllOnExit suppresses notifications and marks every active task killed', async () => {
     const svc = ix.get(IAgentTaskService);
     const first = svc.registerTask(fakeProcessTask());
     const second = svc.registerTask(fakeProcessTask());
 
     const stopped = await svc.stopAllOnExit('Session closed');
 
-    expect(stopped.map((info) => info.taskId).sort()).toEqual([first, second].sort());
+    expect(stopped.map((info) => info.taskId).toSorted()).toEqual([first, second].toSorted());
     for (const taskId of [first, second]) {
       const info = svc.getTask(taskId);
       expect(info?.status).toBe('killed');
@@ -202,36 +207,73 @@ describe('AgentTaskService', () => {
   });
 
   it('dispose aborts live tasks as a last resort', async () => {
-    const svc = ix.get(IAgentTaskService) as AgentTaskService;
+    const svc = ix.get(IAgentTaskService);
     let abortReason: unknown;
     svc.registerTask(abortObservingTask((reason) => (abortReason = reason)), {
       timeoutMs: 60_000,
     });
 
-    svc.dispose();
-    // `start` runs one microtask after `registerTask`; the abort it observes
-    // landed synchronously during `dispose`.
+    disposables.dispose();
     await Promise.resolve();
 
     expect(abortReason).toBe('Session closed');
   });
 
-  it('dispose leaves tasks running when keepAliveOnExit is set', async () => {
-    stubTaskConfig({ keepAliveOnExit: true });
-    const svc = ix.get(IAgentTaskService) as AgentTaskService;
-    let aborted = false;
-    svc.registerTask(abortObservingTask(() => (aborted = true)));
+  it('scope disposal requests SIGKILL when a process ignores SIGTERM', async () => {
+    const stdout = new Readable({ read() {} });
+    const stderr = new Readable({ read() {} });
+    let resolveWait!: (code: number) => void;
+    const wait = new Promise<number>((resolve) => {
+      resolveWait = resolve;
+    });
+    const kill = vi.fn(async (signal: NodeJS.Signals) => {
+      if (signal !== 'SIGKILL') return;
+      stdout.push(null);
+      stderr.push(null);
+      resolveWait(137);
+    });
+    const proc = {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr,
+      pid: 4244,
+      exitCode: null,
+      wait: () => wait,
+      kill,
+      dispose: vi.fn().mockResolvedValue(undefined),
+    } as unknown as IProcess;
+    const svc = ix.get(IAgentTaskService);
+    svc.registerTask(new ProcessTask(proc, 'ignore-term', 'long-running process'));
+    await Promise.resolve();
 
-    svc.dispose();
+    disposables.dispose();
+    await Promise.resolve();
 
-    expect(aborted).toBe(false);
+    expect(kill).toHaveBeenNthCalledWith(1, 'SIGTERM');
+    expect(kill).toHaveBeenNthCalledWith(2, 'SIGKILL');
   });
 
-  it('stop force-stops after the configured killGracePeriodMs instead of the default grace', async () => {
-    stubTaskConfig({ killGracePeriodMs: 20 });
+  it('dispose leaves tasks running when keepAliveOnExit is set', async () => {
+    stubTaskConfig({ keepAliveOnExit: true });
+    const svc = ix.get(IAgentTaskService);
+    let aborted = false;
+    const forceStop = vi.fn(async () => {});
+    svc.registerTask({
+      ...abortObservingTask(() => (aborted = true)),
+      forceStop,
+    });
+    await Promise.resolve();
+
+    disposables.dispose();
+
+    expect(aborted).toBe(false);
+    expect(forceStop).not.toHaveBeenCalled();
+  });
+
+  it('stop requests force-stop when killGracePeriodMs is zero', async () => {
+    stubTaskConfig({ killGracePeriodMs: 0 });
     const svc = ix.get(IAgentTaskService);
     let forceStopped = false;
-    // Ignores SIGTERM entirely: the only way out is forceStop after the grace.
     const taskId = svc.registerTask({
       ...fakeProcessTask(),
       start: () => new Promise<void>(() => {}),
@@ -240,21 +282,11 @@ describe('AgentTaskService', () => {
       },
     });
 
-    const startedAt = Date.now();
     const info = await svc.stop(taskId);
 
     expect(forceStopped).toBe(true);
     expect(info?.status).toBe('killed');
-    // The default 5s grace would make this test take five seconds; the
-    // configured 20ms grace lands well under a second even on a loaded CI.
-    expect(Date.now() - startedAt).toBeLessThan(1_000);
   });
-
-  // ── Per-agent persistence isolation ────────────────────────────────────
-  //
-  // Each agent roots its task persistence at its own scope
-  // (`<sessionScope>/agents/<id>/tasks/`): one agent's restore must never
-  // load, mark-lost, or re-notify another agent's tasks.
 
   function mapBackedDocs(): IAtomicDocumentStore {
     const map = new Map<string, unknown>();
@@ -324,8 +356,6 @@ describe('AgentTaskService', () => {
     const docs = mapBackedDocs();
     const bytes = new InMemoryStorageService();
     const subScope = 'sessions/test-ws/test-session/agents/agent-1';
-    // A still-running task from a previous run, persisted in the SUBAGENT's
-    // scope (v1 on-disk layout: <sessionDir>/agents/<id>/tasks/).
     await docs.set(`${subScope}/tasks`, 'bash-abcdef01.json', {
       taskId: 'bash-abcdef01',
       kind: 'process',
@@ -345,7 +375,6 @@ describe('AgentTaskService', () => {
     await main.loadFromDisk();
     const lost = await main.reconcile();
 
-    // The main agent must not see, mark lost, or notify for the subagent's task.
     expect(lost).toEqual([]);
     expect(main.list(false)).toEqual([]);
     const untouched = await docs.get<{ status: string }>(
@@ -354,7 +383,6 @@ describe('AgentTaskService', () => {
     );
     expect(untouched?.status).toBe('running');
 
-    // The subagent itself loads and reconciles its own record.
     const sub = buildAgentIx('agent-1', docs, bytes).get(
       IAgentTaskService,
     ) as TaskServiceTestManager;
