@@ -346,4 +346,26 @@ describe('rewriteMediaPlaceholders', () => {
       rmSync(srcDir, { recursive: true, force: true });
     }
   });
+
+  it("sanitizes XML boundary chars out of plain-style video cache names", () => {
+    const { cleanup } = setupTempCache();
+    const srcDir = makeTempDir();
+    try {
+      // The video label keeps the original filename, and sanitizeVideoLabel
+      // allows `<>&"`; skill args are XML-escaped, so the plain reference
+      // would point at a path that no longer matches the file on disk.
+      const srcVideo = join(srcDir, 'clip<1>&.mov');
+      writeFileSync(srcVideo, 'video-bytes');
+      const store = new ImageAttachmentStore();
+      const att = store.addVideo('video/quicktime', srcVideo);
+      const r = rewriteMediaPlaceholders(att.placeholder, store, 'plain');
+      expect(r.text).not.toMatch(/[<>&"]/);
+      const m = /^Attached video file: (\S+) \(open it with ReadMediaFile\)$/.exec(r.text);
+      if (!m) throw new Error(`no plain reference found in: ${r.text}`);
+      expect(readFileSync(m[1]!, 'utf8')).toBe('video-bytes');
+    } finally {
+      cleanup();
+      rmSync(srcDir, { recursive: true, force: true });
+    }
+  });
 });

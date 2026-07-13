@@ -153,7 +153,7 @@ export function rewriteMediaPlaceholders(
     if (attachment.kind !== kind) continue;
     out += text.slice(cursor, match.index);
     if (attachment.kind === 'video') {
-      const path = materializeVideoToCache(attachment);
+      const path = materializeVideoToCache(attachment, style === 'plain');
       out += style === 'plain' ? formatMediaReference('video', path) : formatMediaTag('video', path);
       videoAttachmentIds.push(id);
     } else {
@@ -195,10 +195,14 @@ function imagePartForAttachment(att: ImageAttachment): PromptPart {
   };
 }
 
-function materializeVideoToCache(att: VideoAttachment): string {
+function materializeVideoToCache(att: VideoAttachment, escapeProofName = false): string {
   const cacheDir = getCacheDir();
   mkdirSync(cacheDir, { recursive: true });
-  const target = join(cacheDir, `${randomUUID()}-${att.label}`);
+  // The label permits XML boundary chars (`<>&"`); plain references go
+  // through skill-arg escaping, where they would no longer match the file
+  // on disk, so strip them from the cache name in that mode.
+  const label = escapeProofName ? att.label.replaceAll(/[<>&"]/g, '_') : att.label;
+  const target = join(cacheDir, `${randomUUID()}-${label}`);
   copyFileSync(att.sourcePath, target);
   return target;
 }
@@ -249,8 +253,9 @@ function formatMediaTag(tag: 'image' | 'video', path: string): string {
 
 /**
  * Plain-text media reference for channels that XML-escape args (`/skill`).
- * Stays free of `& < > "` in practice (UUID image names; sanitized video
- * labels) so it survives `escapeXml`/`escapeXmlTags` untouched.
+ * Free of `& < > "` (UUID image names; boundary chars stripped from video
+ * cache names — see materializeVideoToCache) so it survives
+ * `escapeXml`/`escapeXmlTags` untouched.
  */
 function formatMediaReference(kind: 'image' | 'video', path: string): string {
   return `Attached ${kind} file: ${path} (open it with ReadMediaFile)`;
