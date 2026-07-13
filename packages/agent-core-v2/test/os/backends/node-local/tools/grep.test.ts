@@ -31,6 +31,7 @@ import {
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSystem';
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   type GrepInput,
@@ -297,6 +298,12 @@ describe('GrepTool', () => {
           reg.defineInstance(IHostEnvironment, createTestEnv(kaos));
           reg.defineInstance(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
           reg.defineInstance(ITelemetryService, noopTelemetryService);
+          // Registered at Session scope in production (the strict container
+          // throws on unresolvable deps, so the stub mirrors that).
+          reg.defineInstance(ISessionSkillCatalog, {
+            _serviceBrand: undefined,
+            catalog: { getSkillRoots: () => [] },
+          } as unknown as ISessionSkillCatalog);
           reg.define(IAgentToolRegistryService, AgentToolRegistryService);
           reg.define(IAgentBuiltinToolsRegistrar, AgentBuiltinToolsRegistrar);
         },

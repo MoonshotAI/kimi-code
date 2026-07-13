@@ -6,6 +6,9 @@
  * Read/Write/Edit/Grep/Glob — canonicalization, workspace containment,
  * sensitive-file detection (env / credential / SSH key patterns with
  * explicit exemptions like `.env.example`) — and `PathSecurityError`.
+ * `extendWorkspaceWithSkillRoots` merges skill-catalog roots into a tool
+ * workspace so skill directories outside the cwd (e.g. `~/.kimi-code/skills`)
+ * stay reachable — the v2 port of v1's `skill/scanner.ts` helper.
  * Canonicalization is **lexical** only (no `realpath` / symlink following).
  * The guard stays host-aware: callers pass the active `IHostEnvironment`
  * path class so SSH paths stay POSIX even when the host Node process is
@@ -240,6 +243,31 @@ export function isWithinWorkspace(
     if (isWithinDirectory(candidate, dir, pathClass)) return true;
   }
   return false;
+}
+
+/**
+ * Merge skill-catalog roots into a tool workspace's `additionalDirs` so the
+ * file tools (Read/Write/Edit/Grep/Glob/ReadMediaFile) can reach skill
+ * directories outside the cwd (e.g. `~/.kimi-code/skills`). Roots already
+ * inside the workspace or an existing additional dir are skipped. Returns
+ * `workspace` unchanged when nothing was added. Port of v1's
+ * `skill/scanner.ts` helper — v1 applied it once at builtin-tool construction;
+ * v2 tools call it per execution so roots from late-loading skill sources
+ * (plugin reloads, ad-hoc contributions) are picked up.
+ */
+export function extendWorkspaceWithSkillRoots<T extends WorkspaceConfig>(
+  workspace: T,
+  skillRoots: readonly string[],
+  pathClass: PathClass = DEFAULT_PATH_CLASS,
+): T {
+  const additionalDirs = [...workspace.additionalDirs];
+  for (const root of skillRoots) {
+    if (isWithinDirectory(root, workspace.workspaceDir, pathClass)) continue;
+    if (additionalDirs.some((dir) => isWithinDirectory(root, dir, pathClass))) continue;
+    additionalDirs.push(root);
+  }
+  if (additionalDirs.length === workspace.additionalDirs.length) return workspace;
+  return { ...workspace, additionalDirs };
 }
 
 export interface AssertPathOptions {
