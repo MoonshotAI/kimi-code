@@ -132,7 +132,7 @@ import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
-import { extractMediaAttachments } from './utils/image-placeholder';
+import { extractMediaAttachments, rewriteMediaPlaceholdersAsTags } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -1095,9 +1095,11 @@ export class KimiTUI {
     this.state.ui.requestRender();
   }
 
-  private validateMediaCapabilities(
-    extraction: ReturnType<typeof extractMediaAttachments>,
-  ): boolean {
+  private validateMediaCapabilities(extraction: {
+    hasMedia: boolean;
+    imageAttachmentIds: readonly number[];
+    videoAttachmentIds: readonly number[];
+  }): boolean {
     if (!extraction.hasMedia) return true;
     if (
       extraction.imageAttachmentIds.length > 0 &&
@@ -1243,8 +1245,13 @@ export class KimiTUI {
   }
 
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void {
+    // Args are a plain-text channel, so pasted media can't ride along as
+    // inline parts. Rewrite placeholders into cache-file tags the model
+    // can open with ReadMediaFile instead of leaving dead placeholder text.
+    const rewrite = rewriteMediaPlaceholdersAsTags(skillArgs, this.imageStore);
+    if (!this.validateMediaCapabilities(rewrite)) return;
     this.beginSessionRequest();
-    void session.activateSkill(skillName, skillArgs).catch((error: unknown) => {
+    void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
       const message = formatErrorMessage(error);
       this.failSessionRequest(`Skill "${skillName}" failed: ${message}`);
     });
@@ -1256,11 +1263,16 @@ export class KimiTUI {
     commandName: string,
     args: string,
   ): void {
+    // Same plain-text constraint as skill args — see sendSkillActivation.
+    const rewrite = rewriteMediaPlaceholdersAsTags(args, this.imageStore);
+    if (!this.validateMediaCapabilities(rewrite)) return;
     this.beginSessionRequest();
-    void session.activatePluginCommand(pluginId, commandName, args).catch((error: unknown) => {
-      const message = formatErrorMessage(error);
-      this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
-    });
+    void session
+      .activatePluginCommand(pluginId, commandName, rewrite.text)
+      .catch((error: unknown) => {
+        const message = formatErrorMessage(error);
+        this.failSessionRequest(`Command "${pluginId}:${commandName}" failed: ${message}`);
+      });
   }
 
   private sendMessage(session: Session, input: string, options?: SendMessageOptions): void {
