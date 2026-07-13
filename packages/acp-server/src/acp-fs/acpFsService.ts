@@ -60,7 +60,10 @@ export class AcpHostFileSystem implements IHostFileSystem {
     @IAcpConnection private readonly connection: IAcpConnection,
   ) {}
 
-  async readText(path: string, _options?: ReadTextOptions): Promise<string> {
+  async readText(path: string, options?: ReadTextOptions): Promise<string> {
+    if (!this.connection.fsReadTextFile) {
+      return this.inner.readText(path, options);
+    }
     // ACP `fs.readTextFile` returns already-decoded UTF-8 text, so the
     // `encoding`/`errors` decode options are a no-op here.
     const { content } = await this.connection
@@ -70,9 +73,16 @@ export class AcpHostFileSystem implements IHostFileSystem {
   }
 
   async writeText(path: string, data: string): Promise<void> {
+    if (!this.connection.fsWriteTextFile) {
+      return this.inner.writeText(path, data);
+    }
     await this.connection
       .get()
       .writeTextFile({ sessionId: this.ctx.sessionId, path, content: data });
+  }
+
+  appendText(path: string, data: string): Promise<void> {
+    return this.inner.appendText(path, data);
   }
 
   async *readLines(path: string, options?: ReadTextOptions): AsyncGenerator<string> {

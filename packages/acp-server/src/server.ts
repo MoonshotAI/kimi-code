@@ -58,9 +58,13 @@ import {
 } from '@moonshot-ai/agent-core-v2';
 
 import { buildTerminalAuthMethod, TERMINAL_AUTH_METHOD } from './auth-methods';
+import { IAcpConnection } from './acp-fs';
 import { log } from './log';
 import { isAcpModeId } from './modes';
 import { AcpSession } from './session';
+
+/** The ACP protocol version this server implements. */
+const PROTOCOL_VERSION = 1;
 
 export interface AcpServerOptions {
   /** Agent identity advertised in `initialize.agentInfo`. */
@@ -118,6 +122,7 @@ export class AcpServer implements Agent {
 
   async initialize(params: InitializeRequest): Promise<InitializeResponse> {
     this.clientCapabilities = params.clientCapabilities;
+    this.core.accessor.get(IAcpConnection).bindFsCapabilities(params.clientCapabilities?.fs);
 
     const agentCapabilities: AgentCapabilities = {
       loadSession: true,
@@ -125,10 +130,6 @@ export class AcpServer implements Agent {
         image: true,
         audio: false,
         embeddedContext: true,
-      },
-      mcpCapabilities: {
-        http: true,
-        sse: true,
       },
       sessionCapabilities: {
         list: {},
@@ -138,7 +139,7 @@ export class AcpServer implements Agent {
     };
 
     return {
-      protocolVersion: params.protocolVersion,
+      protocolVersion: PROTOCOL_VERSION,
       agentCapabilities,
       authMethods: [
         this.terminalAuthEnv !== undefined || this.terminalAuthLegacyCommand !== undefined
@@ -168,6 +169,7 @@ export class AcpServer implements Agent {
     await this.ensureAuthed();
     const handle = await this.resumeHandle(params.sessionId);
     const acpSession = await this.wireSession(handle, params.sessionId);
+    this.sessions.get(params.sessionId)?.dispose();
     this.sessions.set(params.sessionId, acpSession);
     // Replay the persisted history as an ordered batch of `session/update`
     // notifications BEFORE settling, so the client re-renders prior turns
@@ -182,6 +184,7 @@ export class AcpServer implements Agent {
     await this.ensureAuthed();
     const handle = await this.resumeHandle(params.sessionId);
     const acpSession = await this.wireSession(handle, params.sessionId);
+    this.sessions.get(params.sessionId)?.dispose();
     this.sessions.set(params.sessionId, acpSession);
     void acpSession.emitAvailableCommandsUpdate();
     return { configOptions: acpSession.configOptions() };

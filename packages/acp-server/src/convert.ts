@@ -206,7 +206,7 @@ export function toolResultToAcpContent(event: ToolResultEvent): ToolCallContent[
   try {
     text = JSON.stringify(out);
   } catch {
-    text = typeof out === 'object' && out !== null ? '[object]' : String(out);
+    text = '[object]';
   }
   if (!text) return [];
   return [{ type: 'content', content: { type: 'text', text } }];

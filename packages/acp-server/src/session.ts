@@ -61,7 +61,7 @@ import { detectSlashIntent } from './slash';
 
 /** Minimal handle to the in-flight turn, captured so `cancel` can abort it. */
 interface ActiveTurn {
-  readonly abortController: AbortController;
+  cancel(reason?: unknown): boolean;
 }
 
 /** The turn handle returned by the prompt / skill-activation drivers. */
@@ -224,7 +224,7 @@ export class AcpSession {
       origin: { kind: 'user' },
     };
     return this.driveTurn(() =>
-      this.mainAgent.accessor.get(IAgentPromptService).prompt(message),
+      this.mainAgent.accessor.get(IAgentPromptService).inject(message),
     );
   }
 
@@ -342,7 +342,7 @@ export class AcpSession {
   /** Cancel the in-flight turn, if any. Idempotent. */
   cancel(): void {
     if (this.activeTurn !== undefined) {
-      this.activeTurn.abortController.abort();
+      this.activeTurn.cancel();
       this.activeTurn = undefined;
     }
   }
