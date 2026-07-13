@@ -59,6 +59,7 @@ function makeBridge(state: FakeState): ICoreProcessService {
   return {
     rpc: rpc as CoreRPC,
     ready: async () => undefined,
+    closeAllSessions: async () => undefined,
     dispose: () => undefined,
     _serviceBrand: undefined,
   };

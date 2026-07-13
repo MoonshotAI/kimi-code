@@ -201,6 +201,7 @@ function makeFakeBridge(state: FakeBridgeState): ICoreProcessService {
   return {
     rpc: rpc as CoreRPC,
     ready: async () => undefined,
+    closeAllSessions: async () => undefined,
     dispose: () => undefined,
     _serviceBrand: undefined,
   };

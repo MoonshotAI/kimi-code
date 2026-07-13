@@ -81,6 +81,9 @@ export interface ICoreProcessService {
    */
   ready(): Promise<void>;
 
+  /** Gracefully close every live in-process session before disposal. */
+  closeAllSessions(): Promise<void>;
+
   /**
    * Tear down the adapter. After dispose, `rpc.<method>(...)` rejects with a
    * "core process disposed" error before reaching `KimiCore`. Idempotent.
