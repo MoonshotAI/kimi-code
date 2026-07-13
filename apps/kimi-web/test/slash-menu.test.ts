@@ -50,10 +50,10 @@ describe('useSlashMenu — update', () => {
   });
 
   it('filters to matching commands', () => {
-    const { slash } = setup('/mod');
+    const { slash } = setup('/com');
     slash.update();
     expect(slash.open.value).toBe(true);
-    expect(slash.items.value.map((i) => i.name)).toContain('/model');
+    expect(slash.items.value.map((i) => i.name)).toContain('/compact');
   });
 
   it('closes when nothing matches', () => {
@@ -98,11 +98,11 @@ describe('useSlashMenu — update', () => {
 
 describe('useSlashMenu — select', () => {
   it('non-acceptsInput: clears text, pushes history, emits the command', () => {
-    const { text, emitted, pushed, slash } = setup('/model');
-    slash.select({ name: '/model', desc: '' });
+    const { text, emitted, pushed, slash } = setup('/new');
+    slash.select({ name: '/new', desc: '' });
     expect(text.value).toBe('');
-    expect(pushed).toEqual(['/model']);
-    expect(emitted).toEqual(['/model']);
+    expect(pushed).toEqual(['/new']);
+    expect(emitted).toEqual(['/new']);
     expect(slash.open.value).toBe(false);
   });
 
