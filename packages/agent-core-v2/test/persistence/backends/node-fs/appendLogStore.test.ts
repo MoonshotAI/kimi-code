@@ -93,6 +93,43 @@ describe('AppendLogStore', () => {
     expect(spy.count).toBe(1);
   });
 
+  it('later flush reports an ambiguous auto-flush failure without retrying the batch', async () => {
+    const failure = new Error('append failed after commit');
+    let markAppendStarted!: () => void;
+    const appendStarted = new Promise<void>((resolve) => {
+      markAppendStarted = resolve;
+    });
+    let releaseAppend!: () => void;
+    const appendGate = new Promise<void>((resolve) => {
+      releaseAppend = resolve;
+    });
+    let reportFailure!: (error: unknown) => void;
+    const reportedFailure = new Promise<unknown>((resolve) => {
+      reportFailure = resolve;
+    });
+    let appendAttempts = 0;
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      appendAttempts++;
+      markAppendStarted();
+      await appendGate;
+      await originalAppend(...args);
+      throw failure;
+    };
+
+    record.append(SCOPE, KEY, { n: 1 }, { onError: reportFailure });
+    record.append(SCOPE, KEY, { n: 2 });
+    await appendStarted;
+    releaseAppend();
+    expect(await reportedFailure).toBe(failure);
+
+    await expect(record.flush()).rejects.toBe(failure);
+    expect(appendAttempts).toBe(1);
+    expect(new TextDecoder().decode(await storage.read(SCOPE, KEY))).toBe(
+      '{"n":1}\n{"n":2}\n',
+    );
+  });
+
   it('rewrite atomically replaces the whole log', async () => {
     record.append<Rec>(SCOPE, KEY, { n: 1 });
     record.append<Rec>(SCOPE, KEY, { n: 2 });
