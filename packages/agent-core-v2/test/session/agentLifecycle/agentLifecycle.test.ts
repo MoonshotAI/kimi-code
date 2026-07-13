@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { type McpServerConfig } from '#/agent/mcp/config-schema';
@@ -19,8 +20,10 @@ import { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
+import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
+import { ISessionCronService } from '#/session/cron/sessionCronService';
 import '#/activity/agentActivityService';
-import { ISessionActivityKernel } from '#/activity/activity';
+import { IAgentActivityService, ISessionActivityKernel } from '#/activity/activity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
@@ -125,7 +128,7 @@ function stubBlobPassThrough(ix: TestInstantiationService): void {
 describe('AgentLifecycleService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let registerAgent: ReturnType<typeof vi.fn>;
+  let registerAgent: ReturnType<typeof vi.fn<ISessionMetadata['registerAgent']>>;
   let atomicDocs: Map<string, unknown>;
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
 
@@ -139,7 +142,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IAppendLogStore, recordingAppendLog().store);
     ix.stub(ISessionActivityKernel, stubSessionActivityKernel());
     stubBlobPassThrough(ix);
-    registerAgent = vi.fn(() => Promise.resolve());
+    registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
     atomicDocs = new Map();
     ix.stub(ISessionContext, {
       _serviceBrand: undefined,
@@ -156,7 +159,7 @@ describe('AgentLifecycleService', () => {
       update: () => Promise.resolve(),
       setTitle: () => Promise.resolve(),
       setArchived: () => Promise.resolve(),
-      registerAgent: registerAgent as ISessionMetadata['registerAgent'],
+      registerAgent,
     });
     ix.stub(IBootstrapService, {
       _serviceBrand: undefined,
@@ -418,6 +421,81 @@ describe('AgentLifecycleService', () => {
     resolveConnect?.();
     await create;
     expect(settled).toBe(true);
+  });
+
+  it('whenReady waits for an in-flight creation to finish bootstrap', async () => {
+    let releaseRegister!: () => void;
+    registerAgent.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRegister = resolve;
+        }),
+    );
+    const svc = ix.get(IAgentLifecycleService);
+    const create = svc.create({ agentId: 'main' });
+
+    const early = svc.getHandle('main');
+    expect(early).toBeDefined();
+    expect(early!.accessor.get(IAgentActivityService).lane()).toBe('initializing');
+
+    const ready = svc.whenReady('main');
+    await expect(
+      Promise.race([ready.then(() => 'ready'), Promise.resolve('pending')]),
+    ).resolves.toBe('pending');
+
+    releaseRegister();
+    const handle = await ready;
+    await create;
+    expect(handle).toBe(early);
+    expect(handle!.accessor.get(IAgentActivityService).lane()).toBe('idle');
+  });
+
+  it('ensureMainAgent returns one handle when calls start concurrently', async () => {
+    ix.stub(ISessionCronService, { _serviceBrand: undefined });
+    const session: ISessionScopeHandle = {
+      id: 'sess_test',
+      kind: LifecycleScope.Session,
+      accessor: ix,
+      dispose: () => {},
+    };
+
+    const [first, second] = await Promise.all([
+      ensureMainAgent(session),
+      ensureMainAgent(session),
+    ]);
+
+    expect(first).toBe(second);
+    expect(registerAgent).toHaveBeenCalledTimes(1);
+    expect(ix.get(IAgentLifecycleService).list()).toEqual([first]);
+  });
+
+  it('notifyMainCreated emits once when the same handle is announced repeatedly', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    const main = await svc.create({ agentId: 'main' });
+    const announced: string[] = [];
+    disposables.add(svc.onDidCreateMain((handle) => announced.push(handle.id)));
+
+    svc.notifyMainCreated(main);
+    svc.notifyMainCreated(main);
+
+    expect(announced).toEqual(['main']);
+  });
+
+  it('whenReady resolves undefined for an unknown agent', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await expect(svc.whenReady('missing')).resolves.toBeUndefined();
+  });
+
+  it('drops the handle when creation bootstrap fails so the next create starts clean', async () => {
+    registerAgent.mockRejectedValueOnce(new Error('bootstrap boom'));
+    const svc = ix.get(IAgentLifecycleService);
+
+    await expect(svc.create({ agentId: 'main' })).rejects.toThrow('bootstrap boom');
+    expect(svc.getHandle('main')).toBeUndefined();
+    await expect(svc.whenReady('main')).resolves.toBeUndefined();
+
+    const main = await svc.create({ agentId: 'main' });
+    expect(main.id).toBe('main');
   });
 
   it('fork throws when the source agent does not exist', async () => {

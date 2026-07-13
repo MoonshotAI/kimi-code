@@ -44,7 +44,10 @@ function buildService(opts: {
     accessor: {
       get: (token: unknown): unknown => {
         if (token === IAgentLifecycleService) {
-          return { getHandle: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined) };
+          return {
+            getHandle: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
+            whenReady: (id: string) => Promise.resolve(id === MAIN_AGENT_ID ? mainHandle : undefined),
+          };
         }
         if (token === ISessionCronService) return {};
         throw new Error('unexpected session service access');
