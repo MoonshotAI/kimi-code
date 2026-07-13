@@ -6,7 +6,10 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { resolveKimiCodeRuntimeAuth } from '@moonshot-ai/kimi-code-oauth';
+import {
+  clearManagedKimiCodeConfig,
+  resolveKimiCodeRuntimeAuth,
+} from '@moonshot-ai/kimi-code-oauth';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
@@ -462,7 +465,7 @@ describe('OAuthService', () => {
   });
 
   it('logout removes managed web services while preserving unrelated services', async () => {
-    services = {
+    services = ServicesConfigSchema.parse({
       moonshotSearch: {
         baseUrl: 'https://api.example.com/search',
         apiKey: '',
@@ -476,7 +479,7 @@ describe('OAuthService', () => {
       customService: {
         baseUrl: 'https://service.example.com',
       },
-    };
+    });
     const svc = createService();
 
     await expect(svc.logout(OAUTH_PROVIDER)).resolves.toEqual({
@@ -854,10 +857,12 @@ describe('services config section', () => {
       registry.validate(SERVICES_SECTION, {
         moonshotSearch: { baseUrl: 'https://api.example.com/search', apiKey: 'search-key' },
         moonshotFetch: { baseUrl: 'https://api.example.com/fetch' },
+        customService: { baseUrl: 'https://service.example.com', retries: 3 },
       }),
     ).toEqual({
       moonshotSearch: { baseUrl: 'https://api.example.com/search', apiKey: 'search-key' },
       moonshotFetch: { baseUrl: 'https://api.example.com/fetch' },
+      customService: { baseUrl: 'https://service.example.com', retries: 3 },
     });
     expect(() =>
       registry.validate(SERVICES_SECTION, { moonshotSearch: { baseUrl: 42 } }),
@@ -911,6 +916,34 @@ describe('services config section', () => {
         oauth: { storage: 'file', key: 'oauth/kimi-code', oauth_host: 'https://auth.example.com' },
       },
       custom_service: { base_url: 'https://service.example.com' },
+    });
+  });
+
+  it('preserves unknown services when managed services are removed', () => {
+    const rawServices = {
+      moonshot_search: {
+        base_url: 'https://api.example.com/search',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+      moonshot_fetch: {
+        base_url: 'https://api.example.com/fetch',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+      custom_service: {
+        base_url: 'https://service.example.com',
+        retries: 3,
+      },
+    };
+    const services = ServicesConfigSchema.parse(servicesFromToml(rawServices));
+    const config = { providers: {}, services };
+
+    clearManagedKimiCodeConfig(config);
+
+    expect(servicesToToml(config.services, rawServices)).toEqual({
+      custom_service: {
+        base_url: 'https://service.example.com',
+        retries: 3,
+      },
     });
   });
 });

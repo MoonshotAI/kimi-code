@@ -41,10 +41,12 @@ export const MoonshotServiceConfigSchema = z.object({
 
 export type MoonshotServiceConfig = z.infer<typeof MoonshotServiceConfigSchema>;
 
-export const ServicesConfigSchema = z.object({
-  moonshotSearch: MoonshotServiceConfigSchema.optional(),
-  moonshotFetch: MoonshotServiceConfigSchema.optional(),
-});
+export const ServicesConfigSchema = z
+  .object({
+    moonshotSearch: MoonshotServiceConfigSchema.optional(),
+    moonshotFetch: MoonshotServiceConfigSchema.optional(),
+  })
+  .passthrough();
 
 export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
 
