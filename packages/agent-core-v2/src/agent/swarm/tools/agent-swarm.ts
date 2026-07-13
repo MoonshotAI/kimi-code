@@ -10,10 +10,15 @@
 
 import { z } from 'zod';
 
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type { BuiltinTool, ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import {
+  ToolAccesses,
+  type BuiltinTool,
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
+} from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
+import { toInputJsonSchema } from '#/tool/input-schema';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';

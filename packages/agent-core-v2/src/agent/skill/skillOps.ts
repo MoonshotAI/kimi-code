@@ -12,8 +12,9 @@
  * Consumed by the Agent-scope `skillService`.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 import type { SkillActivationOrigin, SkillSource } from '#/agent/contextMemory/types';
 
@@ -32,9 +33,16 @@ declare module '#/app/event/eventBus' {
 
 export const SkillModel = defineModel<null>('skill', () => null);
 
-export const skillActivate = defineOp(SkillModel, 'skill.activate', {
+declare module '#/wire/types' {
+  interface TransientOpMap {
+    'skill.activate': typeof skillActivate;
+  }
+}
+
+export const skillActivate = SkillModel.defineOp('skill.activate', {
+  schema: z.object({ origin: z.custom<SkillActivationOrigin>() }),
   persist: false,
-  apply: (s, _p: { origin: SkillActivationOrigin }) => s,
+  apply: (s) => s,
   toEvent: (p) => ({
     type: 'skill.activated' as const,
     activationId: p.origin.activationId,

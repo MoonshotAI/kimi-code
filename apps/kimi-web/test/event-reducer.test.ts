@@ -265,6 +265,47 @@ describe('reduceAppEvent taskProgress', () => {
       text: 'partial',
     });
   });
+
+  it('keeps the roster-seeded description when a re-projected task carries the placeholder', () => {
+    // After a page refresh the snapshot roster seeds the real description; a
+    // later subagent.* lifecycle event re-projects the task with the
+    // projector's skeleton default ('Sub Agent') — it must not clobber it.
+    const state = {
+      ...createInitialState(),
+      tasksBySession: {
+        's1': [{ ...makeSubagentTask('t1', 's1'), description: 'explore the auth flow' }],
+      },
+    };
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: { ...makeSubagentTask('t1', 's1'), description: 'Sub Agent' },
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.tasksBySession['s1']?.[0]?.description).toBe('explore the auth flow');
+  });
+
+  it('takes the incoming description when it is a real one', () => {
+    const state = {
+      ...createInitialState(),
+      tasksBySession: {
+        's1': [{ ...makeSubagentTask('t1', 's1'), description: 'Sub Agent' }],
+      },
+    };
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: { ...makeSubagentTask('t1', 's1'), description: 'write the tests' },
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.tasksBySession['s1']?.[0]?.description).toBe('write the tests');
+  });
 });
 
 describe('reduceAppEvent sessions reference stability', () => {

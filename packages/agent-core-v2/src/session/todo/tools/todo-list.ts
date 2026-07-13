@@ -18,9 +18,9 @@
 
 import { z } from 'zod';
 
-import type { BuiltinTool, ToolExecution } from '#/agent/tool/toolContract';
+import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
+import { toInputJsonSchema } from '#/tool/input-schema';
 
 import { ISessionTodoService } from '#/session/todo/sessionTodo';
 import {

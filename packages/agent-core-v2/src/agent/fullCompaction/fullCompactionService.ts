@@ -56,7 +56,6 @@ import {
   fullCompactionBegin,
   fullCompactionCancel,
   fullCompactionComplete,
-  type FullCompactionCompletePayload,
 } from './compactionOps';
 import {
   type CompactionBeginData,
@@ -64,19 +63,6 @@ import {
 } from './types';
 import { Emitter, type Event } from '#/_base/event';
 import { OrderedHookSlot } from '#/hooks';
-
-// The `full_compaction.*` record shapes stay declared in `WireRecordMap`
-// because the records still ride the per-agent `wire.jsonl` log read by
-// `wireRecord.restore()` / `getRecords()`. fullCompaction itself no longer
-// registers resumers here — its state rebuilds from the same log via
-// `wire.replay` into `CompactionModel`.
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'full_compaction.begin': CompactionBeginData;
-    'full_compaction.cancel': {};
-    'full_compaction.complete': FullCompactionCompletePayload;
-  }
-}
 
 export const MAX_COMPACTION_RETRY_ATTEMPTS = 5;
 const DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS = 128 * 1024;
@@ -684,7 +670,13 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         thinking_effort: this.profile.data().thinkingLevel,
         error_type: error instanceof Error ? error.name : 'Unknown',
       });
-      if (isError2(error) && error.code === ErrorCodes.AUTH_LOGIN_REQUIRED) throw error;
+      if (
+        isError2(error) &&
+        (error.code === ErrorCodes.AUTH_LOGIN_REQUIRED ||
+          error.code === ErrorCodes.PROVIDER_AUTH_ERROR)
+      ) {
+        throw error;
+      }
       throw new Error2(ErrorCodes.COMPACTION_FAILED, String(error), { cause: error });
     }
   }

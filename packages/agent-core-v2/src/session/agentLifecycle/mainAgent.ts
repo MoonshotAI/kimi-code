@@ -47,7 +47,7 @@ export async function ensureMainAgent(
 ): Promise<IAgentScopeHandle> {
   const agents = session.accessor.get(IAgentLifecycleService);
   session.accessor.get(ISessionCronService);
-  const existing = agents.getHandle(MAIN_AGENT_ID);
+  const existing = await agents.whenReady(MAIN_AGENT_ID);
   if (existing !== undefined) return existing;
   const permissionMode =
     opts?.permissionMode ??

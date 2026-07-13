@@ -9,6 +9,7 @@ import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { mergeSnapshotMessages } from '../src/lib/snapshotMessages';
+import { mergeSnapshotSubagents } from '../src/lib/taskMerge';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 import { collapsePrompt, humanizeCron } from '../src/lib/cronHumanize';
 import {
@@ -25,7 +26,7 @@ import {
   modelThinkingAvailability,
   segmentsFor,
 } from '../src/lib/modelThinking';
-import type { AppMessage, AppModel } from '../src/api/types';
+import type { AppMessage, AppModel, AppTask } from '../src/api/types';
 import { resolveToolRenderer } from '../src/components/chat/tool-calls/toolRegistry';
 import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
 import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
@@ -532,5 +533,95 @@ describe('mergeSnapshotMessages', () => {
     const snapshot = [msg('m0', '2026-01-03T00:00:00.000Z')];
     expect(mergeSnapshotMessages([], snapshot)).toBe(snapshot);
     expect(mergeSnapshotMessages(snapshot, [])).toEqual([]);
+  });
+
+  function optimisticUser(id: string, createdAt: string, text: string, promptId: string): AppMessage {
+    return {
+      id,
+      sessionId: 's1',
+      role: 'user',
+      content: [{ type: 'text', text }],
+      createdAt,
+      promptId,
+      metadata: { 'kimiWeb.optimisticUserMessage': true },
+    };
+  }
+
+  function realUser(id: string, createdAt: string, text: string): AppMessage {
+    return {
+      id,
+      sessionId: 's1',
+      role: 'user',
+      content: [{ type: 'text', text }],
+      createdAt,
+    };
+  }
+
+  it('drops an optimistic user message when its promptId is the snapshot message id', () => {
+    const loaded = [optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'msg_9')];
+    const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'hello')];
+    expect(mergeSnapshotMessages(loaded, snapshot).map((m) => m.id)).toEqual(['msg_9']);
+  });
+
+  it('keeps an optimistic user message when a different snapshot message repeats its content', () => {
+    const loaded = [optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'msg_8')];
+    const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'hello')];
+    expect(mergeSnapshotMessages(loaded, snapshot).map((m) => m.id)).toEqual(['msg_opt_1', 'msg_9']);
+  });
+});
+
+describe('mergeSnapshotSubagents', () => {
+  function subagent(id: string, overrides: Partial<AppTask> = {}): AppTask {
+    return {
+      id,
+      sessionId: 's1',
+      kind: 'subagent',
+      description: `task ${id}`,
+      status: 'running',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('seeds an empty store from the roster', () => {
+    const roster = [
+      subagent('a1', { subagentPhase: 'working', swarmIndex: 0, parentToolCallId: 'call-1' }),
+      subagent('a2', { subagentPhase: 'queued', swarmIndex: 1, parentToolCallId: 'call-1' }),
+    ];
+    expect(mergeSnapshotSubagents(roster, [])).toEqual(roster);
+  });
+
+  it('keeps reducer-owned accumulated output from an already-live task', () => {
+    const live = subagent('a1', {
+      subagentPhase: 'queued',
+      outputLines: ['line 1'],
+      text: 'partial answer',
+    });
+    const roster = [subagent('a1', { subagentPhase: 'working' })];
+    const [merged] = mergeSnapshotSubagents(roster, [live]);
+    // Roster is authoritative for identity/status/phase…
+    expect(merged?.subagentPhase).toBe('working');
+    // …but the accumulated output survives the seed.
+    expect(merged?.outputLines).toEqual(['line 1']);
+    expect(merged?.text).toBe('partial answer');
+  });
+
+  it('keeps tasks the roster does not know about', () => {
+    const background: AppTask = {
+      id: 'bash-1',
+      sessionId: 's1',
+      kind: 'bash',
+      description: 'npm test',
+      status: 'running',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    const roster = [subagent('a1')];
+    const merged = mergeSnapshotSubagents(roster, [background, subagent('a1')]);
+    expect(merged.map((t) => t.id)).toEqual(['a1', 'bash-1']);
+  });
+
+  it('returns the existing list untouched when the roster is empty', () => {
+    const existing = [subagent('a1')];
+    expect(mergeSnapshotSubagents([], existing)).toBe(existing);
   });
 });

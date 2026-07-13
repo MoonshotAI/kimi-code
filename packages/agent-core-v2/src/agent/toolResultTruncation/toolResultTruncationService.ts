@@ -12,7 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import type { ExecutableToolResult } from '#/agent/tool/toolContract';
+import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { ContentPart } from '#/app/llmProtocol/message';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';

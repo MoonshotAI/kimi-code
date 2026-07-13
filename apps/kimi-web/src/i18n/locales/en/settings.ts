@@ -48,6 +48,7 @@ export default {
   advanced: 'Advanced',
   build: 'Build',
   serverVersion: 'Server version',
+  backend: 'Backend',
   exportLog: 'Troubleshooting log',
   logHint: 'Enable with ?debug=1 to capture',
   exportLogBtn: 'Export log',

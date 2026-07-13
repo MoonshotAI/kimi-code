@@ -31,6 +31,12 @@ const OPTIMISTIC_USER_MESSAGE_METADATA_KEY = 'kimiWeb.optimisticUserMessage';
  *  in full (small synthesized lines). */
 const MAX_BACKGROUND_OUTPUT_LINES = 40;
 
+/** Skeleton description used by `patchSubagent` in agentEventProjector.ts when
+ *  a lifecycle event re-projects a subagent the projector never saw spawn
+ *  (e.g. after a page refresh, where the snapshot roster — not the WS stream —
+ *  carried the real description). */
+const PLACEHOLDER_SUBAGENT_DESCRIPTION = 'Sub Agent';
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
@@ -55,6 +61,10 @@ export interface KimiClientState {
   questionsBySession: Record<string, AppQuestionRequest[]>;
   tasksBySession: Record<string, AppTask[]>;
   goalBySession: Record<string, AppGoal>;
+  /** Monotonic per-session counter bumped on EVERY `goalUpdated` event —
+   *  including delete/clear ones — so an async recovery read can detect that a
+   *  live event won the race even when the goal entry stayed absent. */
+  goalVersionBySession: Record<string, number>;
   lastSeqBySession: Record<string, number>;
   compactionBySession: Record<string, CompactionStatus>;
   config?: AppConfig | null;
@@ -71,6 +81,7 @@ export function createInitialState(): KimiClientState {
     questionsBySession: {},
     tasksBySession: {},
     goalBySession: {},
+    goalVersionBySession: {},
     lastSeqBySession: {},
     compactionBySession: {},
     warnings: [],
@@ -97,6 +108,7 @@ function cloneState(s: KimiClientState): KimiClientState {
     questionsBySession: { ...s.questionsBySession },
     tasksBySession: { ...s.tasksBySession },
     goalBySession: { ...s.goalBySession },
+    goalVersionBySession: { ...s.goalVersionBySession },
     lastSeqBySession: { ...s.lastSeqBySession },
     compactionBySession: { ...s.compactionBySession },
     warnings: [...s.warnings],
@@ -558,6 +570,14 @@ export function reduceAppEvent(
           ...event.task,
           outputLines: previous.outputLines,
           text: previous.text,
+          // A post-refresh lifecycle event re-projects the task with skeleton
+          // metadata; don't let its placeholder clobber the roster-seeded
+          // description.
+          description:
+            event.task.description === PLACEHOLDER_SUBAGENT_DESCRIPTION &&
+            previous.description !== PLACEHOLDER_SUBAGENT_DESCRIPTION
+              ? previous.description
+              : event.task.description,
           swarmIndex: event.task.swarmIndex ?? previous.swarmIndex,
           parentToolCallId: event.task.parentToolCallId ?? previous.parentToolCallId,
           subagentType: event.task.subagentType ?? previous.subagentType,
@@ -613,6 +633,9 @@ export function reduceAppEvent(
     // -------------------------------------------------------------------------
     case 'goalUpdated': {
       const sid = event.sessionId;
+      // Bump on every goal event — including clears — so refreshSessionGoal's
+      // recovery read can detect any live event that landed mid-flight.
+      next.goalVersionBySession[sid] = (next.goalVersionBySession[sid] ?? 0) + 1;
       if (event.goal === null || event.goal.status === 'complete') {
         delete next.goalBySession[sid];
       } else {

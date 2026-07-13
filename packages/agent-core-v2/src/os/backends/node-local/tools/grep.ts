@@ -21,9 +21,13 @@
 import { normalize } from 'pathe';
 import { z } from 'zod';
 
-import { ToolResultBuilder } from '#/agent/tool/result-builder';
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import { ToolResultBuilder } from '#/tool/result-builder';
+import {
+  ToolAccesses,
+  type BuiltinTool,
+  type ExecutableToolResult,
+  type ToolExecution,
+} from '#/tool/toolContract';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -34,14 +38,12 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import {
   resolvePathAccessPath,
   type PathClass,
-} from '#/_base/tools/policies/path-access';
-import {
   isSensitiveFile,
   SENSITIVE_DOT_VARIANT_SUFFIXES,
-} from '#/_base/tools/policies/sensitive';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { literalRulePattern, matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
-import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
+  type WorkspaceConfig,
+} from '#/tool/path-access';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
   ensureRgPath,
   rgUnavailableMessage,

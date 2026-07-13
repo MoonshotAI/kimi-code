@@ -14,10 +14,11 @@
  * each dispatch (never on replay). Consumed by the Agent-scope `usageService`.
  */
 
+import { z } from 'zod';
+
 import { addUsage, type TokenUsage } from '#/app/llmProtocol/usage';
 import type { AgentPhase } from '#/agent/runtime/runtime';
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 import type { UsageStatus } from './usage';
 
@@ -45,14 +46,19 @@ export interface UsageModelState {
 
 export const UsageModel = defineModel<UsageModelState>('usage', () => ({ byModel: {} }));
 
-export interface UsageRecordPayload {
-  readonly model: string;
-  readonly usage: TokenUsage;
-  readonly usageScope?: UsageRecordScope;
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'usage.record': typeof recordUsage;
+  }
 }
 
-export const recordUsage = defineOp(UsageModel, 'usage.record', {
-  apply: (s, p: UsageRecordPayload): UsageModelState => {
+export const recordUsage = UsageModel.defineOp('usage.record', {
+  schema: z.object({
+    model: z.string(),
+    usage: z.custom<TokenUsage>(),
+    usageScope: z.custom<UsageRecordScope>().optional(),
+  }),
+  apply: (s, p) => {
     const current = s.byModel[p.model];
     return {
       byModel: {

@@ -49,11 +49,17 @@ export interface RegisterAgentTaskOptions {
   readonly timeoutMs?: number;
   /** Deadline to apply if a foreground task is detached. `0` and `undefined` do not arm a timer. */
   readonly detachTimeoutMs?: number;
+  /**
+   * When true, a foreground task whose deadline fires is detached to the
+   * background (re-armed to `detachTimeoutMs`) instead of being killed.
+   * Only meaningful for non-detached registrations.
+   */
+  readonly autoBackgroundOnTimeout?: boolean;
   /** Foreground caller signal. Ignored for tasks created already detached. */
   readonly signal?: AbortSignal;
 }
 
-export type ForegroundTaskReleaseReason = 'detached' | 'terminal';
+export type ForegroundTaskReleaseReason = 'detached' | 'timeout_detached' | 'terminal';
 
 /**
  * Options for tracking a TaskHandle with the Agent task service.

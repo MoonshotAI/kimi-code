@@ -17,8 +17,8 @@ import { z } from 'zod';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { isUserCancellation } from '#/_base/utils/abort';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
   IAgentTaskService,
   type RegisterAgentTaskOptions,
@@ -29,13 +29,13 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { isAbortError } from '#/_base/utils/abort';
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type {
-  BuiltinTool,
-  ExecutableToolContext,
-  ExecutableToolResult,
-  ToolExecution,
-} from '#/agent/tool/toolContract';
+import {
+  ToolAccesses,
+  type BuiltinTool,
+  type ExecutableToolContext,
+  type ExecutableToolResult,
+  type ToolExecution,
+} from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { IAgentProfileCatalogService, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';

@@ -60,21 +60,23 @@ import { IHostProcessService } from '#/os/interface/hostProcess';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import {
+  ToolAccesses,
+  type BuiltinTool,
+  type ExecutableToolResult,
+  type ToolExecution,
+} from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import {
   isWithinDirectory,
   resolvePathAccessPath,
   type PathClass,
-} from '#/_base/tools/policies/path-access';
-import {
   isSensitiveFile,
   SENSITIVE_DOT_VARIANT_SUFFIXES,
-} from '#/_base/tools/policies/sensitive';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { literalRulePattern, matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
-import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
+  type WorkspaceConfig,
+} from '#/tool/path-access';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import globDescription from './glob.md?raw';
 
 export const GlobInputSchema = z.object({

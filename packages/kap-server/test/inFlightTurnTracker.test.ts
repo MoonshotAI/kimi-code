@@ -77,4 +77,50 @@ describe('InFlightTurnTracker', () => {
     t.apply(SID, ev({ type: 'tool.result', turnId: 1, toolCallId: 'tc1' }));
     expect(t.get(SID)?.running_tools).toEqual([]);
   });
+
+  it('resets text accumulation at step boundaries (step-relative in-flight text)', () => {
+    const t = new InFlightTurnTracker();
+    t.apply(SID, ev({ type: 'turn.started', turnId: 1 }));
+    t.apply(SID, ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    t.apply(SID, ev({ type: 'thinking.delta', turnId: 1, delta: 'think-1' }));
+    t.apply(SID, ev({ type: 'assistant.delta', turnId: 1, delta: 'text-1' }));
+    t.apply(SID, ev({ type: 'turn.step.completed', turnId: 1, step: 1 }));
+
+    t.apply(SID, ev({ type: 'turn.step.started', turnId: 1, step: 2 }));
+    t.apply(SID, ev({ type: 'assistant.delta', turnId: 1, delta: 'text-2' }));
+
+    expect(t.get(SID)).toMatchObject({ assistant_text: 'text-2', thinking_text: '' });
+  });
+
+  it('reports step-relative offsets that restart at 0 each step', () => {
+    const t = new InFlightTurnTracker();
+    t.apply(SID, ev({ type: 'turn.started', turnId: 1 }));
+    t.apply(SID, ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    expect(t.apply(SID, ev({ type: 'assistant.delta', turnId: 1, delta: 'ab' }))).toEqual({ offset: 0 });
+    expect(t.apply(SID, ev({ type: 'assistant.delta', turnId: 1, delta: 'cd' }))).toEqual({ offset: 2 });
+
+    t.apply(SID, ev({ type: 'turn.step.started', turnId: 1, step: 2 }));
+    expect(t.apply(SID, ev({ type: 'assistant.delta', turnId: 1, delta: 'x' }))).toEqual({ offset: 0 });
+  });
+
+  it('keeps running tools across step boundaries while resetting text', () => {
+    const t = new InFlightTurnTracker();
+    t.apply(SID, ev({ type: 'turn.started', turnId: 1 }));
+    t.apply(SID, ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    t.apply(SID, ev({ type: 'tool.call.started', turnId: 1, toolCallId: 'tc1', name: 'bash' }));
+    t.apply(SID, ev({ type: 'assistant.delta', turnId: 1, delta: 'text-1' }));
+
+    t.apply(SID, ev({ type: 'turn.step.started', turnId: 1, step: 2 }));
+
+    expect(t.get(SID)?.assistant_text).toBe('');
+    expect(t.get(SID)?.running_tools).toEqual([{ tool_call_id: 'tc1', name: 'bash' }]);
+  });
+
+  it('ignores step boundaries for a mismatched turn', () => {
+    const t = new InFlightTurnTracker();
+    t.apply(SID, ev({ type: 'turn.started', turnId: 1 }));
+    t.apply(SID, ev({ type: 'assistant.delta', turnId: 1, delta: 'keep' }));
+    t.apply(SID, ev({ type: 'turn.step.started', turnId: 99, step: 2 }));
+    expect(t.get(SID)?.assistant_text).toBe('keep');
+  });
 });

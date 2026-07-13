@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -10,7 +11,6 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService, PersistedRecord } from '#/wire/wireService';
 import { WireService } from '#/wire/wireServiceImpl';
@@ -28,19 +28,23 @@ const KEY = 'store-event-test';
 const CounterModel = defineModel('store-event.counter', () => ({ value: 0 }));
 const OtherModel = defineModel('store-event.other', () => ({ value: 0 }));
 
-const addWithEvent = defineOp(CounterModel, 'store-event.counter.add', {
-  apply: (s, p: { by: number }) => ({ value: s.value + p.by }),
+const addWithEvent = CounterModel.defineOp('store-event.counter.add', {
+  schema: z.object({ by: z.number() }),
+  apply: (s, p) => ({ value: s.value + p.by }),
   toEvent: (_p, state) => ({ type: 'store-event.added' as const, value: state.value }),
 });
-const addNoEvent = defineOp(CounterModel, 'store-event.counter.addNoEvent', {
-  apply: (s, p: { by: number }) => ({ value: s.value + p.by }),
+const addNoEvent = CounterModel.defineOp('store-event.counter.addNoEvent', {
+  schema: z.object({ by: z.number() }),
+  apply: (s, p) => ({ value: s.value + p.by }),
 });
-const addUndefinedEvent = defineOp(CounterModel, 'store-event.counter.addUndef', {
-  apply: (s, p: { by: number }) => ({ value: s.value + p.by }),
+const addUndefinedEvent = CounterModel.defineOp('store-event.counter.addUndef', {
+  schema: z.object({ by: z.number() }),
+  apply: (s, p) => ({ value: s.value + p.by }),
   toEvent: () => undefined,
 });
-const otherSet = defineOp(OtherModel, 'store-event.other.set', {
-  apply: (_s, p: { value: number }) => ({ value: p.value }),
+const otherSet = OtherModel.defineOp('store-event.other.set', {
+  schema: z.object({ value: z.number() }),
+  apply: (_s, p) => ({ value: p.value }),
   toEvent: (p) => ({ type: 'store-event.otherSet' as const, value: p.value }),
 });
 

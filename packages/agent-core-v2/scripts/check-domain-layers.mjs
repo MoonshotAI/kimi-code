@@ -162,6 +162,7 @@ const DOMAIN_LAYER = new Map([
   // the domain to L4 beside the other agent-behaviour tools.
   ['edit', 4],
   ['llmRequester', 4],
+  ['faultInjection', 4],
   ['profile', 4],
   ['prompt', 4],
   // `shellCommand` orchestrates user `!` commands through `toolRegistry` (L3),
@@ -298,10 +299,6 @@ const ALLOWED_EXCEPTIONS = new Set([
   // auth-independent `web` domain.
   'auth>tool',
   'auth>toolRegistry',
-  // path-access (base tool policy) needs the `IHostEnvironment` type to stay
-  // host-aware (path class, home dir). Structural type dependency only —
-  // path-access does not construct or resolve the service.
-  '_base>os/interface',
   'permissionGate>approval',
   'userTool>interaction',
   'permissionPolicy>plan',

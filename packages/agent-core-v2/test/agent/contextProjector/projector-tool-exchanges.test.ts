@@ -327,6 +327,26 @@ describe('projector tool-exchange normalization', () => {
     ]);
   });
 
+  it('passes raw media parts through as the tool_result output', () => {
+    // ReadMediaFile-style result: the live tool.result event carries the raw
+    // kosong content-part array, so the protocol projection must emit the same
+    // shape — otherwise media rendering is lost after reload/resume.
+    const result: ContextMessage = {
+      role: 'tool',
+      content: [
+        { type: 'text', text: 'image result' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+      ],
+      toolCalls: [],
+      toolCallId: 'call_media',
+    };
+
+    const protocol = toProtocolMessage('session_1', 0, result, 0);
+    expect(protocol.content).toEqual([
+      { type: 'tool_result', tool_call_id: 'call_media', output: result.content },
+    ]);
+  });
+
   it('renders v1 tool-result status at the model projection boundary', () => {
     const history = [
       assistant('', ['call_error', 'call_empty']),
@@ -506,6 +526,100 @@ describe('projector tool-exchange normalization', () => {
       project([user('go'), assistant('', ['c1']), toolResult('c1', 'one'), user('next')]);
       project([user('go'), assistant('', ['c1'])]);
       expect(telemetryRecords).toEqual([]);
+    });
+  });
+
+  describe('projectMediaDegraded', () => {
+    function imageMessage(url: string): ContextMessage {
+      return {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      };
+    }
+
+    it('keeps the two most recent media parts and replaces older ones with markers', () => {
+      const projected = projector.projectMediaDegraded([
+        imageMessage('data:image/png;base64,OLD1'),
+        user('middle'),
+        imageMessage('data:image/png;base64,OLD2'),
+        imageMessage('data:image/png;base64,KEEP1'),
+        imageMessage('data:image/png;base64,KEEP2'),
+      ]);
+
+      const urls = projected
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url')
+        .map((part) => part.imageUrl.url);
+      expect(urls).toEqual(['data:image/png;base64,KEEP1', 'data:image/png;base64,KEEP2']);
+      const markers = projected
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'text')
+        .map((part) => part.text);
+      expect(
+        markers.filter((text) => text.includes('dropped to fit the provider request size limit')),
+      ).toHaveLength(2);
+    });
+
+    it('returns the projected messages untouched when media fits within keep-recent', () => {
+      const projected = projector.projectMediaDegraded([
+        user('text'),
+        imageMessage('data:image/png;base64,AAAA'),
+      ]);
+      const allParts = projected.flatMap((message) => message.content);
+      expect(allParts.some((part) => part.type === 'image_url')).toBe(true);
+    });
+  });
+
+  describe('projectMediaStripped', () => {
+    function imageMessage(url: string): ContextMessage {
+      return {
+        role: 'user',
+        content: [{ type: 'image_url', imageUrl: { url } }],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      };
+    }
+
+    it('replaces every media part with a text marker, keeping the surrounding text', () => {
+      const projected = projector.projectMediaStripped([
+        user('look at these'),
+        imageMessage('data:image/png;base64,AAAA'),
+        {
+          role: 'tool',
+          content: [
+            { type: 'text', text: '<image path="/tmp/shot.png">' },
+            { type: 'image_url', imageUrl: { url: 'data:image/avif;base64,BBBB' } },
+            { type: 'text', text: '</image>' },
+          ],
+          toolCalls: [],
+          toolCallId: 'c1',
+        },
+        {
+          role: 'user',
+          content: [{ type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,CCCC' } }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+      ]);
+
+      const allParts = projected.flatMap((message) => message.content);
+      expect(allParts.some((part) => part.type === 'image_url')).toBe(false);
+      expect(allParts.some((part) => part.type === 'video_url')).toBe(false);
+      // The strip is full — the poisoned image could be anywhere — but the
+      // text around it survives, including the ReadMediaFile wrapper the
+      // model needs to re-read the file for conversion guidance.
+      const texts = allParts.filter((part) => part.type === 'text').map((part) => part.text);
+      expect(texts).toContain('look at these');
+      expect(texts).toContain('<image path="/tmp/shot.png">');
+      expect(texts.some((text) => text.includes('the provider rejected this image'))).toBe(true);
+      expect(texts.some((text) => text.includes('dropped along with a rejected image'))).toBe(true);
+    });
+
+    it('returns the projected messages untouched when there is no media', () => {
+      const projected = projector.projectMediaStripped([user('just text')]);
+      expect(projected).toEqual(project([user('just text')]));
     });
   });
 });

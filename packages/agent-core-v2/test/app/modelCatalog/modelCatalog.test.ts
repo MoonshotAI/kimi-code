@@ -22,6 +22,7 @@ import { MODEL_CATALOG_SECTION } from '#/app/modelCatalog/configSection';
 import { IModelCatalogService } from '#/app/modelCatalog/modelCatalog';
 import { ModelCatalogService } from '#/app/modelCatalog/modelCatalogService';
 import { IModelService, type ModelAlias } from '#/app/model/model';
+import { HostRequestHeaders, IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
 import { ModelService } from '#/app/model/modelService';
 import { IProviderService, type ProviderConfig } from '#/app/provider/provider';
 import { ProviderService } from '#/app/provider/providerService';
@@ -118,6 +119,10 @@ describe('ModelCatalogService', () => {
         reg.define(IModelService, ModelService);
         reg.define(IProviderService, ProviderService);
         reg.define(IModelCatalogService, ModelCatalogService);
+        reg.defineInstance(
+          IHostRequestHeaders,
+          new HostRequestHeaders({ 'User-Agent': 'kimi-code-cli/test' }),
+        );
       },
     });
   });
@@ -313,5 +318,44 @@ describe('ModelCatalogService', () => {
     // chain holds the second run until the first finishes, so the peak stays 1.
     expect(maxInFlight).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshProviderModels sends the host User-Agent on custom-registry fetches', async () => {
+    backing.providers = {
+      acme: {
+        type: 'openai',
+        apiKey: 'sk-acme',
+        source: {
+          kind: 'apiJson',
+          url: 'https://registry.example.test/api.json',
+          apiKey: 'sk-registry',
+        },
+      },
+    };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            acme: {
+              id: 'acme',
+              name: 'Acme',
+              api: 'https://acme.example.test/v1',
+              type: 'openai',
+              models: { m1: { id: 'm1', name: 'M1' } },
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await catalog().refreshProviderModels({ scope: 'all' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://registry.example.test/api.json',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'User-Agent': 'kimi-code-cli/test' }),
+      }),
+    );
   });
 });

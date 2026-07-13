@@ -37,15 +37,6 @@ import { TodoModel, todoSet } from './todoOps';
 import { TODO_LIST_TOOL_NAME, type TodoItem } from './todoItem';
 import { TODO_LIST_REMINDER_VARIANT, todoListStaleReminder } from './todoListReminder';
 
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'tools.update_store': {
-      key: string;
-      value: unknown;
-    };
-  }
-}
-
 const MAIN_AGENT_ID = 'main';
 
 export class SessionTodoService extends Disposable implements ISessionTodoService {

@@ -15,6 +15,7 @@ import {
 } from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
+import { mergeSnapshotSubagents } from '../lib/taskMerge';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
 import {
   loadUnread,
@@ -66,7 +67,7 @@ import type {
   ThinkingLevel,
 } from '../api/types';
 import { createInitialState, reduceAppEvent, type CompactionStatus, type KimiClientState } from '../api/daemon/eventReducer';
-import { toAppEvent } from '../api/daemon/mappers';
+import { isPlaceholderSessionUsage, toAppEvent } from '../api/daemon/mappers';
 
 import { messagesToTurns } from './messagesToTurns';
 import { latestTodos } from './latestTodos';
@@ -292,6 +293,13 @@ export interface ExtendedState extends KimiClientState {
    * prompt and connects without a credential.
    */
   dangerousBypassAuth: boolean;
+  /**
+   * Engine generation of the connected server: `'v2'` = kap-server /
+   * agent-core-v2, `'v1'` = an older (legacy) server binary. Read from `/meta`
+   * (`backend` field; older servers omit it ⇒ v1). Drives the dev-mode
+   * backend badge in the Sidebar.
+   */
+  backend: 'v1' | 'v2';
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
@@ -364,6 +372,7 @@ const rawState: ExtendedState = reactive({
   connected: false,
   serverVersion: '',
   dangerousBypassAuth: false,
+  backend: 'v1',
   workspaceName: 'kimi-web',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
@@ -641,6 +650,38 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
   rawState.planModeBySession = { ...rawState.planModeBySession, [sessionId]: st.planMode };
 }
 
+/**
+ * Fetch GET /sessions/{id}/goal and fold the result into goalBySession — the
+ * recovery channel for the goal card after a full-page reload (the snapshot +
+ * WS-replay path never carries the historical `goal.updated`, since its seq is
+ * ≤ the snapshot watermark). Never throws — an old daemon without the /goal
+ * endpoint keeps any live-event state.
+ */
+async function refreshSessionGoal(sessionId: string): Promise<void> {
+  // A live `goal.updated` arriving during the request is newer than whatever
+  // the server read when handling it — never let this recovery write override
+  // such an event (it would resurrect a finished goal until the next reload).
+  // Track the per-session goal event version, not the goal entry itself:
+  // clear/complete events DELETE the entry, which would leave an
+  // undefined === undefined comparison blind to exactly the race that matters.
+  const versionBefore = rawState.goalVersionBySession[sessionId] ?? 0;
+  let goal: AppGoal | null;
+  try {
+    goal = await getKimiWebApi().getSessionGoal(sessionId);
+  } catch {
+    return; // goal endpoint missing/unreachable — keep what we have.
+  }
+  if ((rawState.goalVersionBySession[sessionId] ?? 0) !== versionBefore) {
+    return; // a live goal event won the race
+  }
+  // Mirror the reducer's goalUpdated branch: null (or a completed goal) clears
+  // the card, anything else replaces it.
+  const nextGoals = { ...rawState.goalBySession };
+  if (goal === null || goal.status === 'complete') delete nextGoals[sessionId];
+  else nextGoals[sessionId] = goal;
+  rawState.goalBySession = nextGoals;
+}
+
 /** Persist runtime controls to a session via POST /profile, then re-read
  *  /status. `sessionId` overrides the active session — used when creating a
  *  session and immediately persisting its draft modes, so a concurrent session
@@ -750,6 +791,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     questionsBySession: rawState.questionsBySession,
     tasksBySession: rawState.tasksBySession,
     goalBySession: rawState.goalBySession,
+    goalVersionBySession: rawState.goalVersionBySession,
     lastSeqBySession: rawState.lastSeqBySession,
     compactionBySession: rawState.compactionBySession,
     config: rawState.config,
@@ -765,6 +807,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   rawState.questionsBySession = next.questionsBySession;
   rawState.tasksBySession = next.tasksBySession;
   rawState.goalBySession = next.goalBySession;
+  rawState.goalVersionBySession = next.goalVersionBySession;
   rawState.lastSeqBySession = next.lastSeqBySession;
   rawState.compactionBySession = next.compactionBySession;
   rawState.config = next.config ?? null;
@@ -965,7 +1008,13 @@ function connectEventsIfNeeded(): void {
       // auto-dismiss timer: iOS Safari freezes timers while a tab is
       // backgrounded, so the toast would otherwise linger until a manual
       // refresh even though the reconnect already succeeded.
-      if (connected) dismissWsError();
+      if (connected) {
+        dismissWsError();
+        // A (re)connect can mean the backend was restarted — or switched, when
+        // the dev proxy was moved to the other engine. Re-read /meta so
+        // serverVersion / backend never go stale.
+        void workspaceState.refreshServerMeta();
+      }
     },
   });
 }
@@ -1248,12 +1297,17 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       return 'ok';
     }
 
+    const snapUsagePlaceholder = isPlaceholderSessionUsage(snap.session.usage);
     updateSession(sessionId, (s) => ({
       ...snap.session,
       model:
         snap.session.model && snap.session.model.length > 0
           ? snap.session.model
           : s.model,
+      // The wire session's usage is a placeholder (both engines return zeros
+      // for the heavy fields); keep the live usage folded in from /status and
+      // the WS status stream instead of zeroing it on every snapshot sync.
+      usage: snapUsagePlaceholder ? s.usage : snap.session.usage,
     }));
     // The snapshot only carries the most recent page; keep any older pages the
     // user already loaded so reopening does not reset scrollback.
@@ -1261,6 +1315,17 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       sessionId,
       mergeSnapshotMessages(rawState.messagesBySession[sessionId] ?? [], snap.messages),
     );
+    // Seed the live subagent roster so swarm cards survive a page refresh
+    // (their member rows otherwise only exist from non-replayed WS events).
+    // loadTasksForSession's keepLiveSubagents preserves these across REST
+    // reloads; the roster stays authoritative until then.
+    rawState.tasksBySession = {
+      ...rawState.tasksBySession,
+      [sessionId]: mergeSnapshotSubagents(
+        snap.subagents,
+        rawState.tasksBySession[sessionId] ?? [],
+      ),
+    };
     rawState.messagesHasMoreBySession = {
       ...rawState.messagesHasMoreBySession,
       [sessionId]: snap.hasMoreMessages,
@@ -1311,6 +1376,12 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       retainWsSubscription(sessionId);
     }
     sessionsWithStaleCursor.delete(sessionId);
+    // The snapshot carries placeholder usage, so a preserved cached value may
+    // itself be stale — resync / stale-socket recovery reach here without
+    // selectSession's sidecar refresh, and the volatile status frames that
+    // would update it were exactly what the resync replaced. Re-read /status
+    // so the ring converges on the live value.
+    if (snapUsagePlaceholder) void refreshSessionStatus(sessionId);
     void pullSessionWarnings(sessionId);
     return 'ok';
   } catch (err) {
@@ -1842,6 +1913,7 @@ const loadMoreMessagesError = computed<boolean>(() => {
   return sid ? rawState.messagesLoadMoreErrorBySession[sid] ?? false : false;
 });
 const serverVersion = computed<string>(() => rawState.serverVersion);
+const backend = computed<'v1' | 'v2'>(() => rawState.backend);
 const dangerousBypassAuth = computed<boolean>(() => rawState.dangerousBypassAuth);
 
 /**
@@ -2379,6 +2451,7 @@ const workspaceState = useWorkspaceState(rawState, {
   reopenSession,
   hasLoadedMessages,
   refreshSessionStatus,
+  refreshSessionGoal,
   persistSessionProfile,
   mergedWorkspaces,
   workspacesView,
@@ -2563,6 +2636,7 @@ export function useKimiWebClient() {
     hasMoreMessages,
     loadMoreMessagesError,
     serverVersion,
+    backend,
     dangerousBypassAuth,
     clearDangerousBypassAuth,
     initialized,

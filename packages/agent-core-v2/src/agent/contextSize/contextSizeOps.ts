@@ -22,8 +22,9 @@
  * `contextSizeService`.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 export interface ContextSizeState {
   readonly length: number;
@@ -35,14 +36,16 @@ export const ContextSizeModel = defineModel<ContextSizeState>('contextSize', () 
   tokens: 0,
 }));
 
-export interface ContextSizeMeasuredPayload {
-  readonly length: number;
-  readonly tokens: number;
+declare module '#/wire/types' {
+  interface TransientOpMap {
+    'context_size.measured': typeof contextSizeMeasured;
+  }
 }
 
-export const contextSizeMeasured = defineOp(ContextSizeModel, 'context_size.measured', {
+export const contextSizeMeasured = ContextSizeModel.defineOp('context_size.measured', {
+  schema: z.object({ length: z.number(), tokens: z.number() }),
   persist: false,
-  apply: (s, p: ContextSizeMeasuredPayload): ContextSizeState => {
+  apply: (s, p) => {
     const length = normalizeMeasuredLength(p.length);
     const tokens = Math.max(0, p.tokens);
     if (s.length === length && s.tokens === tokens) return s;

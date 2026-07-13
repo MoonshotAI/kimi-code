@@ -87,7 +87,7 @@ export interface Model {
   /** Free-form routing aliases; a name-based lookup matches these. */
   readonly aliases: readonly string[];
   readonly protocol: Protocol;
-  readonly baseUrl: string;
+  readonly baseUrl?: string;
   readonly headers: Readonly<Record<string, string>>;
 
   readonly capabilities: ModelCapability;

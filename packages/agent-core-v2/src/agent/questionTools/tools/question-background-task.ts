@@ -16,7 +16,7 @@ import {
   type AgentTaskInfoBase,
   type AgentTaskSink,
 } from '#/agent/task/types';
-import type { ExecutableToolResult } from '#/agent/tool/toolContract';
+import type { ExecutableToolResult } from '#/tool/toolContract';
 
 export interface QuestionTaskInfo extends AgentTaskInfoBase {
   readonly kind: 'question';

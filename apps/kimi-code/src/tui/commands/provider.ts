@@ -16,6 +16,7 @@ import {
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import { createKimiCodeUserAgent } from '#/cli/version';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import {
   CustomRegistryImportDialogComponent,
@@ -165,6 +166,11 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   try {
     catalog = await fetchCatalog(DEFAULT_CATALOG_URL, controller.signal);
     spinner.stop({ ok: true, label: t('tui.statusMessages.catalogLoaded') });
+    catalog = await fetchCatalog(DEFAULT_CATALOG_URL, {
+      signal: controller.signal,
+      userAgent: createKimiCodeUserAgent(),
+    });
+    spinner.stop({ ok: true, label: 'Catalog loaded.' });
   } catch (error) {
     if (controller.signal.aborted) {
       spinner.stop({ ok: false, label: t('tui.statusMessages.catalogAborted') });
@@ -279,7 +285,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
 
   let entries: Awaited<ReturnType<typeof fetchCustomRegistry>>;
   try {
-    entries = await fetchCustomRegistry(source);
+    entries = await fetchCustomRegistry(source, { userAgent: createKimiCodeUserAgent() });
   } catch (error) {
     host.showError(t('tui.statusMessages.failedToImportRegistry', { error: formatErrorMessage(error) }));
     return false;

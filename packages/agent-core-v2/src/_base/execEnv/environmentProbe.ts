@@ -7,10 +7,10 @@
  * same suite runs identically on any host OS. `probeHostEnvironmentFromNode()`
  * bundles the Node defaults for production callers and memoises the promise.
  *
- * On Windows the probe expects Git Bash (the canonical POSIX shell that ships
- * with Git for Windows). If it cannot be located the function throws a plain
- * `Error` with the checked paths in the message; the App-scope host-environment
- * service catches that at first resolution. Set `KIMI_SHELL_PATH` to override.
+ * On Windows the probe expects bash from Git for Windows or MSYS2. If it
+ * cannot be located the function throws a plain `Error` with the checked paths
+ * in the message; the App-scope host-environment service catches that at first
+ * resolution. Set `KIMI_SHELL_PATH` to override.
  *
  * Vendored from `@moonshot-ai/kaos` `environment.ts` — kept as a pure helper
  * with no DI dependencies.
@@ -56,6 +56,14 @@ export interface HostEnvironmentProbeDeps {
 }
 
 const GIT_EXEC_PATH_TIMEOUT_MS = 5_000;
+
+const MINGW_PREFIX_SET: ReadonlySet<string> = new Set([
+  'mingw32',
+  'mingw64',
+  'ucrt64',
+  'clang64',
+  'clangarm64',
+]);
 
 function resolveOsKind(platform: string): OsKind {
   switch (platform) {
@@ -222,7 +230,7 @@ function gitBashCandidatesFromGitExecPath(execPath: string): readonly string[] {
   const parts = normalized.split('\\');
   for (let i = parts.length - 1; i >= 0; i -= 1) {
     const segment = parts[i]?.toLowerCase();
-    if (segment === 'mingw32' || segment === 'mingw64') {
+    if (segment !== undefined && MINGW_PREFIX_SET.has(segment)) {
       const root = parts.slice(0, i).join('\\');
       if (root.length > 0) {
         return gitBashCandidatesFromGitRoot(root);

@@ -2,7 +2,7 @@
  * `media` domain (L4) — bridge from the `image` config section into the
  * compression support module's resolver seam.
  *
- * `image-compress` (`#/_base/tools/support/image-compress`) is deliberately
+ * `image-compress` (`#/agent/media/image-compress`) is deliberately
  * config-agnostic so foundational code never imports the config domain: it
  * exposes `setConfiguredMaxImageEdgePx` / `setConfiguredReadImageByteBudget`
  * and resolves its defaults as `configured ?? built-in`. This bridge is the
@@ -26,7 +26,7 @@ import { IConfigService } from '#/app/config/config';
 import {
   setConfiguredMaxImageEdgePx,
   setConfiguredReadImageByteBudget,
-} from '#/_base/tools/support/image-compress';
+} from '#/agent/media/image-compress';
 
 import { IMAGE_SECTION, type ImageConfig } from './configSection';
 

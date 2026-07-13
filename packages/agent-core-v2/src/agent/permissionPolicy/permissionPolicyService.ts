@@ -1,6 +1,6 @@
 import { IInstantiationService } from "#/_base/di/instantiation";
 import { Disposable, type IDisposable } from "#/_base/di/lifecycle";
-import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { AgentSwarmExclusiveDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/agent-swarm-exclusive-deny';
 import { AutoModeApprovePermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-approve';
 import { AutoModeAskUserQuestionDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/auto-mode-ask-user-question-deny';

@@ -36,12 +36,19 @@ export class APITimeoutError extends ChatProviderError {
 export class APIStatusError extends ChatProviderError {
   readonly statusCode: number;
   readonly requestId: string | null;
+  readonly retryAfterMs: number | null;
 
-  constructor(statusCode: number, message: string, requestId?: string | null) {
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
     super(message);
     this.name = 'APIStatusError';
     this.statusCode = statusCode;
     this.requestId = requestId ?? null;
+    this.retryAfterMs = retryAfterMs ?? null;
   }
 }
 
@@ -50,8 +57,13 @@ export class APIStatusError extends ChatProviderError {
  * context window.
  */
 export class APIContextOverflowError extends APIStatusError {
-  constructor(statusCode: number, message: string, requestId?: string | null) {
-    super(statusCode, message, requestId);
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
+    super(statusCode, message, requestId, retryAfterMs);
     this.name = 'APIContextOverflowError';
   }
 }
@@ -63,8 +75,13 @@ export class APIContextOverflowError extends APIStatusError {
  * size rejection is not — it needs media to be dropped or shrunk.
  */
 export class APIRequestTooLargeError extends APIStatusError {
-  constructor(statusCode: number, message: string, requestId?: string | null) {
-    super(statusCode, message, requestId);
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
+    super(statusCode, message, requestId, retryAfterMs);
     this.name = 'APIRequestTooLargeError';
   }
 }
@@ -74,8 +91,8 @@ export class APIRequestTooLargeError extends APIStatusError {
  * request.
  */
 export class APIProviderRateLimitError extends APIStatusError {
-  constructor(message: string, requestId?: string | null) {
-    super(429, message, requestId);
+  constructor(message: string, requestId?: string | null, retryAfterMs?: number | null) {
+    super(429, message, requestId, retryAfterMs);
     this.name = 'APIProviderRateLimitError';
   }
 }
@@ -87,8 +104,13 @@ export class APIProviderRateLimitError extends APIStatusError {
  * constraint, the provider is simply saturated — retry with backoff.
  */
 export class APIProviderOverloadedError extends APIStatusError {
-  constructor(statusCode: number, message: string, requestId?: string | null) {
-    super(statusCode, message, requestId);
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
+    super(statusCode, message, requestId, retryAfterMs);
     this.name = 'APIProviderOverloadedError';
   }
 }
@@ -114,6 +136,80 @@ export class APIEmptyResponseError extends ChatProviderError {
   }
 }
 
+// Client-side image rejections thrown before the request is sent (the
+// provider adapter's own media whitelist).
+const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
+  /unsupported media type for base64 image/,
+  /invalid data url for image/,
+] as const;
+
+// Server-side image rejections that are safe to recover by stripping media:
+// an unsupported/invalid media type or undecodable image data. These are
+// deliberately narrow and grounded in the documented messages of the major
+// providers (Anthropic, OpenAI, Moonshot/Kimi, Gemini) — image COUNT/SIZE
+// limits or image-input-disabled errors also mention "image", but stripping
+// media either over-recovers or hides a real configuration problem the user
+// should see; only format/data rejections are guaranteed to be fixed by
+// removing the offending image.
+//
+// Matching on provider message text is inherently best-effort: these strings
+// are not a stable contract, so a novel phrasing is missed and the error
+// propagates (the pre-recovery behavior). The entry-point format gate is the
+// structural defense; this recovery only backstops the residue.
+// Every pattern mentions "image" literally, and MEDIA_TYPE_FIELD_PATTERN is
+// separately gated on an "image" anchor — so audio/video media rejections
+// ("unsupported media type", "invalid media type") can never be classified
+// as image errors here. All documented provider image rejections mention
+// "image", so the restriction costs no known match.
+const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
+  // Unsupported format — OpenAI / Moonshot "unsupported image …".
+  /unsupported image (?:url|format|type)/,
+  // Undecodable / corrupt image data.
+  /does not represent a valid image/,
+  /could not (?:process|decode) (?:the |input )?image/,
+  /unable to process (?:the |input )?image/,
+  /failed to decode (?:the )?image/,
+  /invalid image(?: data| type| format)?/,
+] as const;
+
+// Anthropic `media_type` & Gemini `mime_type` enum violations name the field
+// — recoverable only when the message is about an IMAGE. A video/audio
+// `media_type` rejection must surface instead of being blindly
+// media-stripped: unlike images there is no conversion-guidance path for
+// video today, so dropping the user's video silently would hide the real
+// error. Every documented image media_type message also mentions "image",
+// so the anchor costs nothing on the known cases.
+const MEDIA_TYPE_FIELD_PATTERN = /(?:media|mime)_?type/;
+
+/**
+ * Whether the provider rejected an IMAGE in the request because of its
+ * FORMAT or DATA — an unsupported media type or undecodable image bytes.
+ * The rejection is deterministic for a given history (the same image is
+ * re-sent on every request, so the session would fail every turn), and the
+ * only recovery is to resend once with all media stripped (see the
+ * media-stripped resend in `llmRequester`). Body-size (413), context
+ * overflow, image count/size limits, image-input-disabled rejections, and
+ * non-image (audio/video) media rejections are excluded — the first two
+ * have their own recoveries, and the rest are not fixed by stripping media.
+ */
+export function isImageFormatError(error: unknown): boolean {
+  if (error instanceof APIStatusError) {
+    if (error instanceof APIContextOverflowError) return false;
+    if (error instanceof APIRequestTooLargeError) return false;
+    if (error.statusCode !== 400) return false;
+    const lowerMessage = error.message.toLowerCase();
+    return (
+      IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage)) ||
+      (MEDIA_TYPE_FIELD_PATTERN.test(lowerMessage) && lowerMessage.includes('image'))
+    );
+  }
+  if (error instanceof ChatProviderError) {
+    const lowerMessage = error.message.toLowerCase();
+    return IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+  }
+  return false;
+}
+
 export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
     return true;
@@ -124,9 +220,17 @@ export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIProviderOverloadedError) {
     return true;
   }
-  return (
-    error instanceof APIStatusError && [429, 500, 502, 503, 504, 529].includes(error.statusCode)
-  );
+  if (error instanceof APIStatusError) {
+    return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
+  }
+  // Fallback safety net: an unclassified provider failure — typically an
+  // upstream gateway that forwards the original error only as text, with no
+  // usable HTTP status — lands here as a base `ChatProviderError`. Retrying
+  // beats failing the run on the first transient blip. Image-format
+  // rejections are excluded: they are deterministic per history and recovered
+  // by the media-stripped resend (see isImageFormatError), so retrying the
+  // identical request first would only burn the retry budget.
+  return error instanceof ChatProviderError && !isImageFormatError(error);
 }
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
@@ -200,22 +304,36 @@ export function normalizeAPIStatusError(
   statusCode: number,
   message: string,
   requestId?: string | null,
+  retryAfterMs?: number | null,
 ): APIStatusError {
   if (statusCode === 429) {
-    return new APIProviderRateLimitError(message, requestId);
+    return new APIProviderRateLimitError(message, requestId, retryAfterMs);
   }
   // Context overflow first: Vertex returns prompt-too-long as a 413, and a
   // token overflow must keep routing to compaction even on that status.
   if (isContextOverflowStatusError(statusCode, message)) {
-    return new APIContextOverflowError(statusCode, message, requestId);
+    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs);
   }
   if (isRequestTooLargeStatusError(statusCode, message)) {
-    return new APIRequestTooLargeError(statusCode, message, requestId);
+    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs);
   }
   if (isProviderOverloadStatusError(statusCode, message)) {
-    return new APIProviderOverloadedError(statusCode, message, requestId);
+    return new APIProviderOverloadedError(statusCode, message, requestId, retryAfterMs);
   }
-  return new APIStatusError(statusCode, message, requestId);
+  return new APIStatusError(statusCode, message, requestId, retryAfterMs);
+}
+
+export function parseRetryAfterMs(headers: unknown): number | null {
+  const raw =
+    headers !== null &&
+    typeof headers === 'object' &&
+    typeof (headers as { get?: unknown }).get === 'function'
+      ? (headers as { get(name: string): string | null }).get('retry-after')
+      : null;
+  if (raw === null || raw === undefined) return null;
+  const seconds = Number.parseInt(raw, 10);
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  return seconds * 1000;
 }
 
 export function isContextOverflowStatusError(statusCode: number, message: string): boolean {

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -14,7 +15,6 @@ import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageSe
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 import { IAgentWireService } from '#/wire/tokens';
 import type { PersistedRecord } from '#/wire/wireService';
 import { WireService } from '#/wire/wireServiceImpl';
@@ -25,11 +25,13 @@ const KEY = 'round-trip';
 const CounterModel = defineModel('compat.counter', () => ({ value: 0 }));
 const TagsModel = defineModel('compat.tags', () => ({ tags: [] as string[] }));
 
-const counterSet = defineOp(CounterModel, 'compat.counter.set', {
-  apply: (_s, p: { value: number }) => ({ value: p.value }),
+const counterSet = CounterModel.defineOp('compat.counter.set', {
+  schema: z.object({ value: z.number() }),
+  apply: (_s, p) => ({ value: p.value }),
 });
-const tagsAdd = defineOp(TagsModel, 'compat.tags.add', {
-  apply: (s, p: { tag: string }) => ({ tags: [...s.tags, p.tag] }),
+const tagsAdd = TagsModel.defineOp('compat.tags.add', {
+  schema: z.object({ tag: z.string() }),
+  apply: (s, p) => ({ tags: [...s.tags, p.tag] }),
 });
 
 const cleanups: string[] = [];

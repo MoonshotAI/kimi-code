@@ -180,6 +180,7 @@ function makeLifecycleStub(handles: readonly IAgentScopeHandle[] = []): Lifecycl
     onDidCreateMain: onDidCreateMain.event,
     onDidDispose: onDidDispose.event,
     getHandle: (id: string) => byId.get(id),
+    whenReady: (id: string) => Promise.resolve(byId.get(id)),
     list: () => [...byId.values()],
     create: async () => {
       throw new Error('not implemented');

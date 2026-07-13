@@ -183,6 +183,7 @@ function agentsStub(): AgentsStub {
       throw new Error('not implemented');
     },
     getHandle: (id) => (id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
+    whenReady: (id) => Promise.resolve(id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
     list: () => [],
     remove: () => Promise.resolve(),
     setMain: (present) => {

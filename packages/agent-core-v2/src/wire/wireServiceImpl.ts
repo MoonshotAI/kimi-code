@@ -174,13 +174,14 @@ export class WireService extends Disposable implements IWireService {
     this._register(inst.emitter);
     this.derivedModels.set(model, inst);
 
-    for (const opType of Object.keys(model.reducers)) {
+    for (const [opType, reducer] of Object.entries(model.reducers)) {
+      if (reducer === undefined) continue;
       let list = this.reducerIndex.get(opType);
       if (list === undefined) {
         list = [];
         this.reducerIndex.set(opType, list);
       }
-      list.push({ inst, reducer: model.reducers[opType]! });
+      list.push({ inst, reducer });
     }
 
     return {

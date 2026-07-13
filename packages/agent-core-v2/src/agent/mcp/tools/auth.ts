@@ -30,8 +30,8 @@ import {
   type ExecutableTool,
   type ExecutableToolContext,
   type ExecutableToolResult,
-} from '#/agent/tool/toolContract';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
+} from '#/tool/toolContract';
+import { toInputJsonSchema } from '#/tool/input-schema';
 import {
   MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE,
   type McpOAuthAuthorizationUrlUpdateData,

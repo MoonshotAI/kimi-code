@@ -2,7 +2,8 @@
  * `prompt` domain (L4) — the `StepRequest` types `AgentPromptService` sends.
  *
  * `PromptStepRequest` / `SteerStepRequest` carry an already-built user
- * `ContextMessage` (image-compression captions pre-split) and materialize it
+ * `ContextMessage` (image-compression captions pre-split), apply the image
+ * format gate as the last funnel before the history, and materialize it
  * at pop time — caption reminders first, message second, mirroring the old
  * `appendPrompt` ordering. `PromptStepRequest` uses `newTurn`, seeding the
  * `turn.prompt` record from its message. `SteerStepRequest` uses
@@ -16,16 +17,26 @@
 
 import { USER_PROMPT_ORIGIN, type ContextMessage } from '#/agent/contextMemory/types';
 import { StepRequest, type StepRequestOptions, type TurnSeed } from '#/agent/loop/stepRequest';
+import { gateImageFormatParts } from '#/agent/media/image-compress';
 import type { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 
 abstract class UserMessageStepRequest extends StepRequest {
+  protected readonly message: ContextMessage;
+
   constructor(
-    protected readonly message: ContextMessage,
+    message: ContextMessage,
     private readonly captions: readonly string[],
     private readonly reminders: IAgentSystemReminderService,
     options?: StepRequestOptions,
   ) {
     super(options);
+    // The last funnel before a prompt lands in the session history: images
+    // in formats providers reject (AVIF, HEIC, …) become text notices here,
+    // so no caller — REST, RPC, or tool-delivered inject — can poison the
+    // session. Upstream ingestion points already gate; this is the backstop,
+    // applied to both the recorded turn seed and the appended context
+    // message (v1 parity: the turn.prompt/steer gate).
+    this.message = { ...message, content: gateImageFormatParts(message.content) };
   }
 
   override get turnSeed(): TurnSeed {

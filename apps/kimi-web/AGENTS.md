@@ -52,10 +52,13 @@ All via `pnpm --filter @moonshot-ai/kimi-web …`:
 - `check:style` — design-system §06 anti-pattern guard (`scripts/check-style.mjs`).
 - There is **no `lint` script** in this package; linting runs at the repo root via oxlint.
 
+Debugging against kap-server instances: start one from the repo root with `pnpm dev:server` (port 58627), optionally a second with `pnpm dev:v2` (`KIMI_CODE_EXPERIMENTAL_MULTI_SERVER=1`, port 58628 — both can run at once). The dev server proxies `/api/v1` to the `default` preset; the Sidebar brand row carries a dev-only backend pill (engine generation `v1`/`v2` from `GET /api/v1/meta`'s `backend` field + endpoint) whose menu repoints the proxy at runtime — no Vite restart. Presets default to `http://127.0.0.1:58627` / `:58628`, overridable via `KIMI_BACKEND_DEFAULT_URL` / `KIMI_BACKEND_MULTI_URL`; the switcher endpoints (`GET/POST /__kimi-dev/backend`, dev-only, see `backendSwitcherPlugin` in `vite.config.ts`) drive the menu.
+
 ## Gotchas / hard rules
 
 - **Do not depend on `@moonshot-ai/agent-core`** (mirrors the CLI/SDK rule). The web app is decoupled from core/protocol; wire types are re-implemented locally in `src/api/daemon/wire.ts`. Keep it that way.
 - **Same-origin by default:** the browser only talks to its own origin; Vite proxies `/api/v1` for both HTTP and WS. Set `VITE_KIMI_SERVER_HTTP_URL` only when you intentionally want direct (CORS) mode.
-- Vite-injected globals (`__KIMI_DEV_PROXY_TARGET__`, `__KIMI_WEB_VERSION__`, `__KIMI_WEB_COMMIT__`) are declared in `src/env.d.ts` and defined in `vite.config.ts`. Do not hand-edit `dist/`.
+- Vite-injected globals (`__KIMI_DEV_PROXY_TARGET__`, `__KIMI_DEV_BACKENDS__`, `__KIMI_WEB_VERSION__`, `__KIMI_WEB_COMMIT__`) are declared in `src/env.d.ts` and defined in `vite.config.ts`. Do not hand-edit `dist/`.
 - **Theming:** the root element carries `data-color-scheme` (`light` | `dark` | `system`); react to it through `useIsDark()`, not by reading the DOM directly.
-- Keep the Vite **dev** proxy and **`preview`** proxy in sync — both are defined in `vite.config.ts`.
+- Keep the Vite **dev** proxy and **`preview`** proxy in sync — both are defined in `vite.config.ts` (shared `apiProxyOptions`).
+- The shared proxy strips the browser `Origin` header on forwarded requests: `changeOrigin` rewrites `Host` to the server but leaves `Origin` pointing at the Vite origin, and kap-server's WS upgrade path rejects that mismatch with 403. An Origin-less request is treated as a non-browser client. If you add another proxied path, route it through the same options.

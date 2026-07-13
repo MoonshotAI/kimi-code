@@ -6,8 +6,8 @@
  * (tick / coalesce / jitter / cursor), persists mutations through the
  * App-scoped `ICronTaskPersistence`, mirrors mutations as `cron.add` /
  * `cron.delete` / `cron.cursor` Ops on the main agent's `wire` (cross-scope
- * borrow) so `wire.replay` can rebuild the `CronModel`, fires `cron.fired`
- * through the main agent's `wire` signal channel, steers the main agent
+ * borrow) so `wire.replay` can rebuild the `CronModel`, publishes `cron.fired`
+ * to the main agent's `IEventBus`, steers the main agent
  * through `IAgentPromptService` when a task fires, and registers the cron
  * tools (`CronCreate` / `CronList` / `CronDelete`) into the main agent's
  * `IAgentToolRegistryService` once `IAgentLifecycleService` signals
@@ -30,7 +30,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { type ClockSources, resolveClockSources, SYSTEM_CLOCKS } from '#/app/cron/clock';
 import { type CronConfig, CRON_SECTION } from '#/app/cron/configSection';
 import { computeNextCronRun, parseCronExpression, type ParsedCronExpression } from '#/app/cron/cron-expr';
-import { type CronTask, type CronTaskInit } from '#/app/cron/cronTask';
+import { CRON_SESSION_TAG, type CronTask, type CronTaskInit } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { renderCronFireXml } from '#/app/cron/format';
 import { jitteredNextCronRunMs, oneShotJitteredNextCronRunMs } from '#/app/cron/jitter';
@@ -56,27 +56,11 @@ export const CRON_FIRED = 'cron_fired' as const;
 export const CRON_MISSED = 'cron_missed' as const;
 export const CRON_DELETED = 'cron_deleted' as const;
 
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'cron.add': {
-      task: CronTask;
-    };
-    'cron.delete': {
-      ids: readonly string[];
-    };
-    'cron.cursor': {
-      id: string;
-      lastFiredAt: number;
-    };
-  }
-}
-
 const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
 const MAX_COALESCE_ITERATIONS = 10_000;
 const CRON_ID_REGEX: RegExp = /^(?:[0-9a-f]{8}|[0-9A-HJKMNP-TV-Z]{26})$/i;
 const MAX_ID_ATTEMPTS = 8;
-const SESSION_TAG = 'sessionId';
 
 export class SessionCronServiceImpl extends Disposable implements ISessionCronService {
   declare readonly _serviceBrand: undefined;
@@ -193,7 +177,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
       ...init,
       id: this.generateUniqueId(),
       createdAt: this.clocks.wallNow(),
-      tags: { ...init.tags, [SESSION_TAG]: this.ctx.sessionId },
+      tags: { ...init.tags, [CRON_SESSION_TAG]: this.ctx.sessionId },
     };
     this.tasks.set(task.id, task);
     this.dispatchCron(cronAdd({ task }));
@@ -255,7 +239,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     }
     const allTasks = await this.store.list({ workspaceId: this.ctx.workspaceId });
     for (const task of allTasks) {
-      const owner = task.tags?.[SESSION_TAG];
+      const owner = task.tags?.[CRON_SESSION_TAG];
       if (owner !== undefined && owner !== this.ctx.sessionId) continue;
       if (owner === undefined) {
         // Legacy / hand-edited task whose shape is valid but which carries no
@@ -265,7 +249,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
         // so future resumes filter by tag as usual).
         const claimed: CronTask = {
           ...task,
-          tags: { ...task.tags, [SESSION_TAG]: this.ctx.sessionId },
+          tags: { ...task.tags, [CRON_SESSION_TAG]: this.ctx.sessionId },
         };
         this.adopt(claimed);
         this.persistEnqueue(claimed.id, () =>

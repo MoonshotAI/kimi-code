@@ -1,11 +1,7 @@
 export default {
-  help: { desc: '显示可用命令列表' },
   new: { desc: '创建新会话' },
   clear: { desc: '清空并新建会话' },
-  model: { desc: '切换模型' },
-  provider: { desc: '管理提供商 (添加/删除/刷新)' },
   login: { desc: '在浏览器中登录 Kimi' },
-  permission: { desc: '切换审批模式 (manual/auto/yolo)' },
   plan: { desc: '切换计划模式 开/关' },
   swarm: { desc: '切换 swarm 模式；/swarm <任务> 直接在 swarm 下执行' },
   goal: { desc: '创建/控制目标：/goal <目标>、/goal pause|resume|cancel' },
@@ -15,7 +11,6 @@ export default {
   thinking: { desc: '设置思考强度' },
   compact: { desc: '压缩会话历史' },
   fork: { desc: '把当前会话 fork 出一个新会话' },
-  undoNotImplemented: 'daemon 尚未支持 /undo',
   status: { desc: '查看会话状态' },
   undo: { desc: '撤销上一条消息' },
 };

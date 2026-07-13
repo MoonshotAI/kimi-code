@@ -12,6 +12,7 @@ import type { Command } from 'commander';
 import { t } from '#/i18n';
 
 import { getLiveLock } from '@moonshot-ai/server';
+import { getLiveLock } from '@moonshot-ai/kap-server';
 
 import { getDataDir } from '#/utils/paths';
 

@@ -25,7 +25,7 @@ import type {
   ExecutableTool,
   ExecutableToolContext,
   ExecutableToolResult,
-} from '#/agent/tool/toolContract';
+} from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IAgentWireService } from '#/wire/tokens';

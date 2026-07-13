@@ -23,14 +23,21 @@ import {
   validateToolArgs,
   type JsonType,
   type ToolArgsValidator,
-} from '#/_base/tools/args-validator';
-import { PathSecurityError } from '#/_base/tools/policies/path-access';
+} from '#/tool/args-validator';
+import { PathSecurityError } from '#/tool/path-access';
 import { isUserCancellation } from "#/_base/utils/abort";
 import { isAbortError } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type { ExecutableTool, ExecutableToolResult, RunnableToolExecution, ToolExecution, ToolResult, ToolUpdate } from '#/agent/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/tool/toolHooks';
+import {
+  ToolAccesses,
+  type ExecutableTool,
+  type ExecutableToolResult,
+  type RunnableToolExecution,
+  type ToolExecution,
+  type ToolResult,
+  type ToolUpdate,
+} from '#/tool/toolContract';
+import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { ILogService } from '#/_base/log/log';

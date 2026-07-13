@@ -24,6 +24,7 @@ import {
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
   fetchManagedKimiCodeModels,
+  resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
   type BearerTokenProvider,
@@ -85,6 +86,8 @@ interface FlowState {
   readonly provider: string;
   readonly controller: AbortController;
   readonly oauthRef: OAuthRef | undefined;
+  /** Base URL of the environment the login targeted (env-aware); drives the provisioned provider entry. */
+  readonly loginBaseUrl: string | undefined;
   device: DeviceAuthorization | undefined;
   status: OAuthFlowStatus;
   expiresAt: number;
@@ -121,10 +124,12 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   async startLogin(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthFlowStart> {
     this.log.info('oauth startLogin: enter', { provider });
-    const oauthRef = this.resolveOAuthRef(provider);
-    this.log.info('oauth startLogin: resolved oauthRef', {
+    const loginAuth = this.resolveLoginAuth(provider);
+    this.log.info('oauth startLogin: resolved login auth', {
       provider,
-      hasOAuthRef: oauthRef !== undefined,
+      hasOAuthRef: loginAuth.oauthRef !== undefined,
+      hasBaseUrl: loginAuth.baseUrl !== undefined,
+      hasOAuthHost: loginAuth.oauthHost !== undefined,
     });
     this.abortExisting(provider);
 
@@ -132,7 +137,8 @@ export class OAuthService extends Disposable implements IOAuthService {
       flowId: `oauth_${randomUUID()}`,
       provider,
       controller: new AbortController(),
-      oauthRef,
+      oauthRef: loginAuth.oauthRef,
+      loginBaseUrl: loginAuth.baseUrl,
       device: undefined,
       status: 'pending',
       expiresAt: Date.now() + DEFAULT_DEVICE_EXPIRES_IN_SEC * 1000,
@@ -152,7 +158,9 @@ export class OAuthService extends Disposable implements IOAuthService {
     this.log.info('oauth startLogin: calling toolkit.login', { provider });
     const loginPromise = this.toolkit.login(provider, {
       signal: state.controller.signal,
-      oauthRef,
+      oauthRef: loginAuth.oauthRef,
+      baseUrl: loginAuth.baseUrl,
+      oauthHost: loginAuth.oauthHost,
       onDeviceCode: (auth) => {
         this.log.info('oauth startLogin: onDeviceCode fired', { provider });
         state.device = auth;
@@ -226,7 +234,12 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   async logout(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthLogoutResponse> {
-    const oauthRef = this.readOAuthRefOptional(provider);
+    // Delete the token from the slot the runtime actually reads (v1 parity):
+    // env-aware for kimi-code, so an env-scoped login's token is removed too.
+    const oauthRef =
+      provider === KIMI_CODE_PROVIDER_NAME
+        ? this.resolveRuntimeOAuthRef(provider)
+        : this.readOAuthRefOptional(provider);
     const result = await this.toolkit.logout(provider, oauthRef);
     this.abortExisting(provider);
     await this.deprovisionProvider(provider);
@@ -367,11 +380,44 @@ export class OAuthService extends Disposable implements IOAuthService {
     };
   }
 
-  private resolveOAuthRef(provider: string): OAuthRef | undefined {
+  /**
+   * Resolve the environment the login should target (v1's
+   * `managedAuth.login`): env-aware via `resolveKimiCodeLoginAuth`, so
+   * `KIMI_CODE_BASE_URL` / `KIMI_CODE_OAUTH_HOST` steer the credential slot
+   * the token is written to the same way they steer the runtime token reads
+   * (`resolveKimiCodeRuntimeAuth`). A mismatched slot is the "login succeeds
+   * but every call 401s" bug.
+   */
+  private resolveLoginAuth(provider: string): {
+    readonly oauthRef: OAuthRef | undefined;
+    readonly baseUrl: string | undefined;
+    readonly oauthHost: string | undefined;
+  } {
     const config = this.providerService.get(provider);
-    if (config?.oauth !== undefined) return config.oauth;
-    if (provider !== KIMI_CODE_PROVIDER_NAME) return undefined;
-    return resolveKimiCodeOAuthRef({ baseUrl: config?.baseUrl });
+    if (provider !== KIMI_CODE_PROVIDER_NAME) {
+      return { oauthRef: config?.oauth, baseUrl: undefined, oauthHost: undefined };
+    }
+    const loginAuth = resolveKimiCodeLoginAuth({
+      configuredBaseUrl: config?.baseUrl,
+      configuredOAuthRef: config?.oauth,
+    });
+    // Always resolve to a concrete ref for kimi-code: when the login env
+    // overrides the configured one, the provisioned entry must record the
+    // env-scoped slot explicitly (v1's `provisionManagedKimiCodeConfig`
+    // writes the login (oauthKey, oauthHost)) — not only so the runtime can
+    // find it, but so `isKimiOAuthProvider` still holds and the post-login
+    // model refresh runs.
+    const oauthRef =
+      loginAuth.oauthRef ??
+      resolveKimiCodeOAuthRef({
+        oauthHost: loginAuth.oauthHost,
+        baseUrl: loginAuth.baseUrl,
+      });
+    return {
+      oauthRef,
+      baseUrl: loginAuth.baseUrl,
+      oauthHost: loginAuth.oauthHost,
+    };
   }
 
   private readOAuthRefOptional(provider: string): OAuthRef | undefined {
@@ -425,7 +471,7 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   private async finalizeAuthentication(state: FlowState): Promise<void> {
     try {
-      await this.provisionProvider(state.provider, state.oauthRef);
+      await this.provisionProvider(state.provider, state.oauthRef, state.loginBaseUrl);
       if (state.status !== 'pending') return;
       if (state.provider === KIMI_CODE_PROVIDER_NAME) {
         await this.refreshOAuthProviderModelsBestEffort(state.provider);
@@ -443,9 +489,18 @@ export class OAuthService extends Disposable implements IOAuthService {
     }
   }
 
-  private async provisionProvider(provider: string, oauthRef: OAuthRef | undefined): Promise<void> {
-    if (oauthRef === undefined) return;
-    const baseUrl = this.providerService.get(provider)?.baseUrl ?? kimiCodeBaseUrl();
+  private async provisionProvider(
+    provider: string,
+    oauthRef: OAuthRef | undefined,
+    loginBaseUrl: string | undefined,
+  ): Promise<void> {
+    // `baseUrl` comes from the login environment (env-aware), not a stale
+    // configured one, and `oauth` records the login credential slot — v1
+    // parity: `provisionManagedKimiCodeConfig` rewrites both from the login
+    // auth. Non-kimi providers without a ref keep the old skip.
+    if (oauthRef === undefined && provider !== KIMI_CODE_PROVIDER_NAME) return;
+    const baseUrl =
+      loginBaseUrl ?? this.providerService.get(provider)?.baseUrl ?? kimiCodeBaseUrl();
     await this.providerService.set(provider, {
       type: 'kimi',
       baseUrl,

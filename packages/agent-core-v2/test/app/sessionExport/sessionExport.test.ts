@@ -428,6 +428,7 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
       throw new Error('run should not be called by session export');
     },
     getHandle: (agentId) => agents.find((agent) => agent.id === agentId),
+    whenReady: (agentId) => Promise.resolve(agents.find((agent) => agent.id === agentId)),
     list: () => agents,
     remove: async () => {},
   };
@@ -436,16 +437,9 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
 function stubAgentWire(flush: () => Promise<void> = async () => {}): IAgentWireRecordService {
   return {
     _serviceBrand: undefined,
-    restoring: null,
-    postRestoring: false,
     getRecords: () => [],
-    register: () => noopDisposable,
     restore: async () => ({}),
     flush,
     close: async () => {},
-    hooks: {
-      onDidRestoreRecord: { run: async () => {} },
-    } as unknown as IAgentWireRecordService['hooks'],
-    onDidFinishResume: noopEvent,
   };
 }

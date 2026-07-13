@@ -150,6 +150,7 @@ export class ModelCatalogService
       setConfig: (patch) => this.core.rpc.setKimiConfig(patch as Record<string, unknown>),
       resolveOAuthToken: (providerName, oauthRef) =>
         this._resolveOAuthToken(providerName, oauthRef),
+      userAgent: this.core.kimiRequestHeaders?.['User-Agent'],
     };
   }
 

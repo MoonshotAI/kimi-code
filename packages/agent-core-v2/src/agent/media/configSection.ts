@@ -13,7 +13,7 @@
  * `raw`/`rawSnake` are always env-free (the env overlay lands only in
  * `effective`), so an env override can never be written to `config.toml`.
  *
- * The compression support module (`#/_base/tools/support/image-compress`) stays
+ * The compression support module (`#/agent/media/image-compress`) stays
  * config-agnostic: `ImageConfigBridge` reads this env-resolved section and
  * pushes the two values into that module's resolver seam, so callers that rely
  * on the implicit default (MCP results, prompt ingestion in the apps) honor
