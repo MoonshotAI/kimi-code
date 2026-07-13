@@ -174,6 +174,7 @@ describe('AppendLogStore file persistence', () => {
       input: [{ type: 'text', text: 'old' }],
       origin: { kind: 'user' },
     });
+    await log.flush();
     await log.rewrite(SCOPE, KEY, [
       {
         type: 'metadata',
@@ -274,6 +275,7 @@ describe('wire record append-log persistence', () => {
       input: [{ type: 'text', text: 'one' }],
       origin: { kind: 'user' },
     });
+    await log.flush();
     await log.rewrite<PersistedWireRecord>(SCOPE, KEY, [
       {
         type: 'metadata',

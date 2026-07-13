@@ -102,6 +102,32 @@ describe('AppendLogStore', () => {
     expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 8 }]);
   });
 
+  it('rewrite preserves an append accepted after the replacement snapshot', async () => {
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (...args) => {
+      markWriteStarted();
+      await writeGate;
+      return originalWrite(...args);
+    };
+    const replacement = [{ n: 9 }];
+    record.append<Rec>(SCOPE, KEY, { n: 2 });
+
+    const rewrite = record.rewrite<Rec>(SCOPE, KEY, replacement);
+    await writeStarted;
+    releaseWrite();
+    await rewrite;
+
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 9 }, { n: 2 }]);
+  });
+
   it('appends that arrive during a rewrite land after the replaced content', async () => {
     let releaseWrite!: () => void;
     const writeGate = new Promise<void>((resolve) => {
@@ -136,6 +162,7 @@ describe('AppendLogStore', () => {
     };
 
     record.append<Rec>(SCOPE, KEY, { n: 1 });
+    await record.flush();
     const rewrite = record.rewrite<Rec>(SCOPE, KEY, [{ n: 9 }]);
     const flushed = record.flush();
     releaseWrite();

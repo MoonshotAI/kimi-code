@@ -6,9 +6,9 @@
  * deliberately ignores: line framing (one JSON value per line, a.k.a. JSONL),
  * batching of appends into a single durable `append`, and crash-tolerant
  * decoding (a torn final line is dropped; corruption anywhere else throws).
- * Serializes whole-log rewrites with live appends and keeps the shared flush
- * pending until records appended during a rewrite are durably drained. Bound
- * at App scope.
+ * Serializes whole-log rewrites with live appends, preserves queued records
+ * across the atomic replacement, and keeps the shared flush pending until the
+ * post-rewrite drain is durable. Bound at App scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -99,14 +99,10 @@ export class AppendLogStore implements IAppendLogStore {
 
   async rewrite<R>(scope: string, key: string, records: readonly R[]): Promise<void> {
     const state = this.state(scope, key);
-    const preExisting = state.pending.splice(0);
     const prior = state.flushPromise ?? Promise.resolve();
-    const rewrite = prior.then(async () => {
-      if (preExisting.length > 0) {
-        await this.storage.append(scope, key, encodeBatch(preExisting), { durable: true });
-      }
-      await this.storage.write(scope, key, encodeBatch(records), { atomic: true });
-    });
+    const rewrite = prior.then(() =>
+      this.storage.write(scope, key, encodeBatch(records), { atomic: true }),
+    );
     await this.ownFlush(scope, key, state, rewrite);
   }
 
