@@ -14,8 +14,8 @@
  * session is also appended to the shared `session_index.jsonl` so v1 clients
  * (TUI, export) can discover sessions created by the v2 engine.
  * Failed materialization, creation, resume, and fork attempts release only the
- * Session handle they created. Fork rollback keeps the target id reserved
- * until its partial directory has been removed.
+ * Session handle they created. Per-session initialization claims prevent
+ * overlapping create, resume, and fork attempts from sharing persistence.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -92,13 +92,19 @@ import {
 type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
   readonly sessionId: string;
   readonly workspaceId?: string;
+  readonly claim: SessionInitializationClaim;
   readonly forkDestination?: boolean;
+};
+
+interface SessionInitializationClaim {
+  readonly settled: Promise<void>;
+  release(): void;
 };
 
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
   private readonly sessions = new Map<string, ISessionScopeHandle>();
-  private readonly forkRollbacks = new Map<string, Promise<void>>();
+  private readonly initializations = new Map<string, SessionInitializationClaim>();
   private readonly _onDidCreateSession = this._register(new Emitter<SessionCreatedEvent>());
   readonly onDidCreateSession: Event<SessionCreatedEvent> = this._onDidCreateSession.event;
   private readonly _onDidCloseSession = this._register(new Emitter<SessionClosedEvent>());
@@ -140,9 +146,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
+    const claim = this.claimInitialization(sessionId);
     let handle: ISessionScopeHandle | undefined;
     try {
-      handle = await this.materializeSession({ ...opts, sessionId });
+      handle = await this.materializeSession({ ...opts, sessionId, claim });
       await this.appendSessionIndexEntry(sessionId, opts.workDir);
       if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
         const main = await ensureMainAgent(handle);
@@ -155,6 +162,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         await this.disposeFailedSession(sessionId, handle);
       }
       throw error;
+    } finally {
+      claim.release();
     }
   }
 
@@ -206,7 +215,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       if (additionalDirs.length > 0) {
         handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
       }
-      await this.registerSessionHandle(opts.sessionId, handle, opts.forkDestination === true);
+      this.registerSessionHandle(opts.sessionId, handle, opts.claim);
       await handle.accessor.get(ISessionMetadata).ready;
       void handle.accessor.get(ISessionSkillCatalog).ready;
       await handle.accessor.get(IAgentLifecycleService).ensureMcpReady();
@@ -214,7 +223,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       return handle;
     } catch (error) {
       if (opts.forkDestination === true) {
-        await this.rollbackFailedFork(opts.sessionId, handle, ctx.sessionDir);
+        await this.rollbackFailedFork(opts.sessionId, handle, ctx.sessionDir, opts.claim);
       } else {
         await this.disposeFailedSession(opts.sessionId, handle);
       }
@@ -244,12 +253,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   get(sessionId: string): ISessionScopeHandle | undefined {
-    // A session mid-resume is already materialized in `this.sessions` (so
-    // close/archive can still find it) but its main agent has not finished
-    // restore + replay — exposing it would hand callers a half-initialized
-    // handle. Hide it until `resume` settles; callers that need the handle
-    // should `await resume(sessionId)`.
-    if (this.resuming.has(sessionId)) return undefined;
+    if (this.initializations.has(sessionId) || this.resuming.has(sessionId)) return undefined;
     return this.sessions.get(sessionId);
   }
 
@@ -262,8 +266,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     // to complete.
     const inflight = this.resuming.get(sessionId);
     if (inflight !== undefined) return inflight;
-    const live = this.sessions.get(sessionId);
-    if (live !== undefined) return Promise.resolve(live);
+    if (!this.initializations.has(sessionId)) {
+      const live = this.sessions.get(sessionId);
+      if (live !== undefined) return Promise.resolve(live);
+    }
     const promise = this.doResume(sessionId)
       .catch((error: unknown) => {
         this.telemetry.track2('session_load_failed', {
@@ -281,41 +287,60 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async doResume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
-    // Re-check after the serialized entry: a prior `resume` for the same id may
-    // have already materialized the session while this call was queued.
-    const live = this.sessions.get(sessionId);
-    if (live !== undefined) return live;
-
-    const summary = await this.index.get(sessionId);
-    if (summary === undefined) return undefined;
-    const workspace =
-      summary.cwd === undefined ? await this.workspaceRegistry.get(summary.workspaceId) : undefined;
-    const workDir = summary.cwd ?? workspace?.root;
-    if (workDir === undefined) return undefined;
-
-    let handle: ISessionScopeHandle | undefined;
-    try {
-      handle = await this.materializeSession({
-        sessionId,
-        workDir,
-        workspaceId: summary.workspaceId,
-      });
-      const agents = handle.accessor.get(IAgentLifecycleService);
-      if (agents.getHandle(MAIN_AGENT_ID) === undefined) {
-        const main = await ensureMainAgent(handle);
-        main.accessor.get(IAgentContextMemoryService);
-        const mainWireRecord = main.accessor.get(IAgentWireRecordService);
-        await mainWireRecord.restore();
-        const records = mainWireRecord.getRecords() as readonly PersistedRecord[];
-        await main.accessor.get(IAgentWireService).replay(...records);
+    while (true) {
+      const initialization = this.initializations.get(sessionId);
+      if (initialization !== undefined) {
+        await initialization.settled;
+        continue;
       }
-      await this.announceCreated({ sessionId, handle, source: 'resume' });
-      return handle;
-    } catch (error) {
-      if (handle !== undefined) {
-        await this.disposeFailedSession(sessionId, handle);
+
+      const live = this.sessions.get(sessionId);
+      if (live !== undefined) return live;
+
+      const summary = await this.index.get(sessionId);
+      const workspace =
+        summary !== undefined && summary.cwd === undefined
+          ? await this.workspaceRegistry.get(summary.workspaceId)
+          : undefined;
+      const workDir = summary?.cwd ?? workspace?.root;
+
+      const racedInitialization = this.initializations.get(sessionId);
+      if (racedInitialization !== undefined) {
+        await racedInitialization.settled;
+        continue;
       }
-      throw error;
+      const racedLive = this.sessions.get(sessionId);
+      if (racedLive !== undefined) return racedLive;
+      if (summary === undefined || workDir === undefined) return undefined;
+
+      const claim = this.claimInitialization(sessionId);
+      let handle: ISessionScopeHandle | undefined;
+      try {
+        handle = await this.materializeSession({
+          sessionId,
+          workDir,
+          workspaceId: summary.workspaceId,
+          claim,
+        });
+        const agents = handle.accessor.get(IAgentLifecycleService);
+        if (agents.getHandle(MAIN_AGENT_ID) === undefined) {
+          const main = await ensureMainAgent(handle);
+          main.accessor.get(IAgentContextMemoryService);
+          const mainWireRecord = main.accessor.get(IAgentWireRecordService);
+          await mainWireRecord.restore();
+          const records = mainWireRecord.getRecords() as readonly PersistedRecord[];
+          await main.accessor.get(IAgentWireService).replay(...records);
+        }
+        await this.announceCreated({ sessionId, handle, source: 'resume' });
+        return handle;
+      } catch (error) {
+        if (handle !== undefined) {
+          await this.disposeFailedSession(sessionId, handle);
+        }
+        throw error;
+      } finally {
+        claim.release();
+      }
     }
   }
 
@@ -324,7 +349,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     // exists but is not yet restored, so it must not be observable.
     const ready: ISessionScopeHandle[] = [];
     for (const [id, handle] of this.sessions) {
-      if (!this.resuming.has(id)) ready.push(handle);
+      if (!this.initializations.has(id) && !this.resuming.has(id)) ready.push(handle);
     }
     return ready;
   }
@@ -398,51 +423,56 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     } catch {}
   }
 
-  private async registerSessionHandle(
+  private claimInitialization(sessionId: string): SessionInitializationClaim {
+    if (this.sessions.has(sessionId) || this.initializations.has(sessionId)) {
+      throw sessionAlreadyExistsError(sessionId);
+    }
+    let released = false;
+    let settle!: () => void;
+    const settled = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const claim: SessionInitializationClaim = {
+      settled,
+      release: () => {
+        if (released) return;
+        released = true;
+        if (this.initializations.get(sessionId) === claim) {
+          this.initializations.delete(sessionId);
+        }
+        settle();
+      },
+    };
+    this.initializations.set(sessionId, claim);
+    return claim;
+  }
+
+  private registerSessionHandle(
     sessionId: string,
     handle: ISessionScopeHandle,
-    exclusive: boolean,
-  ): Promise<void> {
-    while (true) {
-      const rollback = this.forkRollbacks.get(sessionId);
-      if (rollback === undefined) {
-        if (exclusive && this.sessions.has(sessionId)) {
-          throw new Error2(
-            ErrorCodes.SESSION_ALREADY_EXISTS,
-            `Session "${sessionId}" already exists`,
-          );
-        }
-        this.sessions.set(sessionId, handle);
-        return;
-      }
-      await rollback;
+    claim: SessionInitializationClaim,
+  ): void {
+    if (this.initializations.get(sessionId) !== claim || this.sessions.has(sessionId)) {
+      throw sessionAlreadyExistsError(sessionId);
     }
+    this.sessions.set(sessionId, handle);
   }
 
   private async rollbackFailedFork(
     sessionId: string,
     handle: ISessionScopeHandle,
     sessionDir: string | undefined,
+    claim: SessionInitializationClaim,
   ): Promise<void> {
-    if (this.sessions.get(sessionId) !== handle || sessionDir === undefined) {
+    if (this.initializations.get(sessionId) !== claim || sessionDir === undefined) {
       await this.disposeFailedSession(sessionId, handle);
       return;
     }
-    let release!: () => void;
-    const rollback = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    this.forkRollbacks.set(sessionId, rollback);
-    this.sessions.delete(sessionId);
-    try {
-      await this.disposeFailedSession(sessionId, handle);
-      await this.hostFs.remove(sessionDir).catch(() => {});
-    } finally {
-      if (this.forkRollbacks.get(sessionId) === rollback) {
-        this.forkRollbacks.delete(sessionId);
-      }
-      release();
+    if (this.sessions.get(sessionId) === handle) {
+      this.sessions.delete(sessionId);
     }
+    await this.disposeFailedSession(sessionId, handle);
+    await this.hostFs.remove(sessionDir).catch(() => {});
   }
 
   async fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle> {
@@ -471,6 +501,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     let targetId: string | undefined;
     let target: ISessionScopeHandle | undefined;
     let targetSessionDir: string | undefined;
+    let targetClaim: SessionInitializationClaim | undefined;
     try {
       // 3. Resolve the work dir the fork inherits (same workspace as the source).
       const workspace = await this.workspaceRegistry.get(workspaceId);
@@ -487,16 +518,15 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       // 5. Mint the target id and reject collisions.
       targetId = opts.newSessionId ?? createSessionId();
       if (this.sessions.has(targetId) || (await this.index.get(targetId)) !== undefined) {
-        throw new Error2(
-          ErrorCodes.SESSION_ALREADY_EXISTS,
-          `Session "${targetId}" already exists`,
-        );
+        throw sessionAlreadyExistsError(targetId);
       }
+      targetClaim = this.claimInitialization(targetId);
 
       // 6. Materialize the target session scope (fresh metadata + storage).
       target = await this.materializeSession({
         sessionId: targetId,
         workDir: workspace.root,
+        claim: targetClaim,
         forkDestination: true,
       });
       const targetCtx = target.accessor.get(ISessionContext);
@@ -569,11 +599,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       await this.announceCreated({ sessionId: targetId, handle: target, source: 'fork' });
       return target;
     } catch (error) {
-      if (targetId !== undefined && target !== undefined) {
-        await this.rollbackFailedFork(targetId, target, targetSessionDir);
+      if (targetId !== undefined && target !== undefined && targetClaim !== undefined) {
+        await this.rollbackFailedFork(targetId, target, targetSessionDir, targetClaim);
       }
       throw error;
     } finally {
+      targetClaim?.release();
       quiesce?.dispose();
     }
   }
@@ -786,6 +817,13 @@ function isMissingFileError(error: unknown): boolean {
  */
 function createSessionId(): string {
   return `session_${randomUUID()}`;
+}
+
+function sessionAlreadyExistsError(sessionId: string): Error2 {
+  return new Error2(
+    ErrorCodes.SESSION_ALREADY_EXISTS,
+    `Session "${sessionId}" already exists`,
+  );
 }
 
 function freshMetadataRecord(): PersistedWireRecord {

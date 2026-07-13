@@ -1,5 +1,6 @@
 ---
 "@moonshot-ai/agent-core-v2": patch
+"@moonshot-ai/kimi-code": patch
 ---
 
-Release partially initialized session scopes after creation or resume fails so the same session ID can be retried safely.
+Release failed session initializations, hide half-initialized handles, and block overlapping same-ID attempts from writing the same session files.

@@ -99,17 +99,17 @@ export interface ISessionLifecycleService {
   create(opts: CreateSessionOptions): Promise<ISessionScopeHandle>;
   /**
    * Return the live handle for `sessionId`, or `undefined` when it is not open.
-   * A session whose cold {@link resume} is still in flight is intentionally NOT
-   * returned — its main agent has not finished restore + replay, so the handle
-   * is half-initialized. Callers that must obtain the handle should
+   * A session whose create, fork, or cold {@link resume} initialization is
+   * still in flight is intentionally NOT returned. Its metadata, agents, or
+   * replay may be incomplete. Callers that must obtain the handle should
    * `await resume(sessionId)` instead. This invisibility is a service
-   * invariant, not caller discipline: every read path (`get` / {@link list} /
-   * {@link resume}) agrees a resuming session is not yet observable.
+   * invariant: every read path (`get` / {@link list} / {@link resume}) agrees
+   * an initializing session is not yet observable.
    */
   get(sessionId: string): ISessionScopeHandle | undefined;
   /**
    * Snapshot of every fully-initialized live session. Excludes sessions still
-   * mid-{@link resume} for the same reason as {@link get}.
+   * initializing for the same reason as {@link get}.
    */
   list(): readonly ISessionScopeHandle[];
   /**
