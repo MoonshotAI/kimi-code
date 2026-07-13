@@ -1,9 +1,10 @@
 import type { AvailableCommand } from '@agentclientprotocol/sdk';
 
 /**
- * ACP-owned built-in slash commands. These are advertised in the
- * `available_commands_update` and (in a later phase) executed locally by the
- * host rather than forwarded to the model.
+ * ACP-owned built-in slash commands. Recognized by slash detection (see
+ * `./slash`) but not yet advertised in `available_commands_update` — in a
+ * later phase they will be advertised and executed locally by the host rather
+ * than forwarded to the model.
  */
 export const ACP_BUILTIN_SLASH_COMMANDS = [
   {

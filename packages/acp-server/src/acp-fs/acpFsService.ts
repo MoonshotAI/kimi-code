@@ -81,6 +81,8 @@ export class AcpHostFileSystem implements IHostFileSystem {
       .writeTextFile({ sessionId: this.ctx.sessionId, path, content: data });
   }
 
+  // ACP protocol has no append RPC. Read-modify-write emulation would break
+  // O_APPEND atomicity, so appends always go to the local filesystem.
   appendText(path: string, data: string): Promise<void> {
     return this.inner.appendText(path, data);
   }
