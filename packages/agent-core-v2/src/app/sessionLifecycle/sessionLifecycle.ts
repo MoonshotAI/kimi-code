@@ -99,26 +99,29 @@ export interface ISessionLifecycleService {
   create(opts: CreateSessionOptions): Promise<ISessionScopeHandle>;
   /**
    * Return the live handle for `sessionId`, or `undefined` when it is not open.
-   * A session whose create, fork, or cold {@link resume} initialization is
-   * still in flight is intentionally NOT returned. Its metadata, agents, or
-   * replay may be incomplete. Callers that must obtain the handle should
-   * `await resume(sessionId)` instead. This invisibility is a service
-   * invariant: every read path (`get` / {@link list} / {@link resume}) agrees
-   * an initializing session is not yet observable.
+   * A session whose create, fork, or cold {@link resume} initialization has not
+   * published its metadata, MCP readiness, and any required main-agent restore
+   * is intentionally NOT returned. Once that core state is ready, the handle
+   * is visible while creation hooks finish, unless an explicit close/archive
+   * has taken ownership of teardown. Callers that must wait for publication
+   * should `await resume(sessionId)` instead.
    */
   get(sessionId: string): ISessionScopeHandle | undefined;
   /**
-   * Snapshot of every fully-initialized live session. Excludes sessions still
-   * initializing for the same reason as {@link get}.
+   * Snapshot of every published live session. Excludes sessions whose core
+   * initialization has not reached the publication point described by
+   * {@link get}.
    */
   list(): readonly ISessionScopeHandle[];
   /**
    * Load a persisted session into the live scope tree and restore its main
-   * agent from the persisted wire log. Returns the existing handle when the
-   * session is already live (a no-op in that case — live agents are never
-   * re-restored). Returns `undefined` when the session is unknown to the index
-   * or neither the persisted session summary nor the workspace registry can
-   * provide a workdir (mirrors the cold-source limitation of `fork`).
+   * agent from the persisted wire log. Returns the existing published handle
+   * when the session is already live, and waits for an unpublished same-id
+   * initialization to publish or fail before retrying the lookup. An
+   * initializing session already claimed by close/archive is unavailable.
+   * Returns `undefined` when the session is unknown to the index or neither the
+   * persisted session summary nor the workspace registry can provide a workdir
+   * (mirrors the cold-source limitation of `fork`).
    *
    * Lets the read edges (snapshot / messages) serve cold sessions — created by
    * a previous process or by v1 — without requiring a prior `create` in this

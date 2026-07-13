@@ -396,10 +396,6 @@ function deferred<T = void>(): {
   return { promise, resolve, reject };
 }
 
-function tick(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
-}
-
 class NoopSessionExternalHooksService implements ISessionExternalHooksService {
   declare readonly _serviceBrand: undefined;
 }
@@ -783,6 +779,209 @@ describe('SessionLifecycleService', () => {
     expect(recordedSessionHookEvents).toEqual(['create:startup:s1', 'close:exit:s1']);
   });
 
+  it('publishes a created handle to read APIs before the create hook completes', async () => {
+    const svc = build();
+    let resumed: Awaited<ReturnType<ISessionLifecycleService['resume']>>;
+    let fetched: ReturnType<ISessionLifecycleService['get']>;
+    let listed: ReturnType<ISessionLifecycleService['list']> = [];
+    const hook = svc.hooks.onDidCreateSession.register('read-live-session', async (event, next) => {
+      resumed = await svc.resume(event.sessionId);
+      fetched = svc.get(event.sessionId);
+      listed = svc.list();
+      await next();
+    });
+
+    const created = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+    expect(resumed!).toBe(created);
+    expect(fetched!).toBe(created);
+    expect(listed).toEqual([created]);
+    hook.dispose();
+  });
+
+  it('rejects create when its creation hook closes the published session', async () => {
+    const svc = build();
+    const closed: string[] = [];
+    svc.onDidCloseSession((event) => closed.push(event.sessionId));
+    const hook = svc.hooks.onDidCreateSession.register(
+      'close-created-session',
+      async (event, next) => {
+        await svc.close(event.sessionId);
+        await next();
+      },
+    );
+
+    await expect(
+      svc.create({ sessionId: 's1', workDir: '/tmp/proj' }),
+    ).rejects.toMatchObject({ code: ErrorCodes.SESSION_CLOSED });
+
+    expect(closed).toEqual(['s1']);
+    expect(svc.get('s1')).toBeUndefined();
+    hook.dispose();
+  });
+
+  it('does not share a disposed handle with a second resume during the creation hook', async () => {
+    const hookStarted = deferred();
+    const finishHook = deferred();
+    const svc = build([
+      stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj')),
+      stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
+    ]);
+    const hook = svc.hooks.onDidCreateSession.register(
+      'hold-created-session',
+      async (_event, next) => {
+        hookStarted.resolve();
+        await finishHook.promise;
+        await next();
+      },
+    );
+
+    const firstResume = svc.resume('s1');
+    const firstRejected = expect(firstResume).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_CLOSED,
+    });
+    await hookStarted.promise;
+    await svc.close('s1');
+    const secondResume = svc.resume('s1');
+    finishHook.resolve();
+
+    await expect(secondResume).resolves.toBeUndefined();
+    await firstRejected;
+    expect(svc.get('s1')).toBeUndefined();
+    hook.dispose();
+  });
+
+  it('hides a session while close waits for its lifecycle hook', async () => {
+    const createHookStarted = deferred();
+    const finishCreateHook = deferred();
+    const closeHookStarted = deferred();
+    const finishCloseHook = deferred();
+    const svc = build();
+    const createHook = svc.hooks.onDidCreateSession.register(
+      'hold-created-session',
+      async (_event, next) => {
+        createHookStarted.resolve();
+        await finishCreateHook.promise;
+        await next();
+      },
+    );
+    const closeHook = svc.hooks.onWillCloseSession.register(
+      'hold-closing-session',
+      async (_event, next) => {
+        closeHookStarted.resolve();
+        await finishCloseHook.promise;
+        await next();
+      },
+    );
+    const closed: string[] = [];
+    svc.onDidCloseSession((event) => closed.push(event.sessionId));
+
+    const create = svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    const createRejected = expect(create).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_CLOSED,
+    });
+    await createHookStarted.promise;
+    const close = svc.close('s1');
+    await closeHookStarted.promise;
+    finishCreateHook.resolve();
+    await createRejected;
+
+    expect(svc.get('s1')).toBeUndefined();
+    expect(svc.list()).toEqual([]);
+    await expect(svc.resume('s1')).resolves.toBeUndefined();
+    expect(closed).toEqual([]);
+
+    finishCloseHook.resolve();
+    await close;
+    expect(closed).toEqual(['s1']);
+    createHook.dispose();
+    closeHook.dispose();
+  });
+
+  it('does not expose an initializing session after its close hook fails', async () => {
+    const createHookStarted = deferred();
+    const finishCreateHook = deferred();
+    const failure = new Error('close hook failed');
+    const svc = build();
+    const createHook = svc.hooks.onDidCreateSession.register(
+      'hold-created-session',
+      async (_event, next) => {
+        createHookStarted.resolve();
+        await finishCreateHook.promise;
+        await next();
+      },
+    );
+    const closeHook = svc.hooks.onWillCloseSession.register('fail-close', () => {
+      throw failure;
+    });
+
+    const create = svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    const createRejected = expect(create).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_CLOSED,
+    });
+    await createHookStarted.promise;
+    await expect(svc.close('s1')).rejects.toBe(failure);
+
+    expect(svc.get('s1')).toBeUndefined();
+    expect(svc.list()).toEqual([]);
+    await expect(svc.resume('s1')).resolves.toBeUndefined();
+
+    finishCreateHook.resolve();
+    await createRejected;
+    expect(svc.get('s1')).toBeUndefined();
+    createHook.dispose();
+    closeHook.dispose();
+  });
+
+  it('ignores close while archive owns initialization shutdown', async () => {
+    const createHookStarted = deferred();
+    const finishCreateHook = deferred();
+    const archiveStarted = deferred();
+    const finishArchive = deferred();
+    const archivedValues: boolean[] = [];
+    const svc = build([
+      stubPair(ISessionMetadata, {
+        ...metadataStub(),
+        setArchived: (value) => {
+          archivedValues.push(value);
+          archiveStarted.resolve();
+          return finishArchive.promise;
+        },
+      }),
+    ]);
+    const createHook = svc.hooks.onDidCreateSession.register(
+      'hold-created-session',
+      async (_event, next) => {
+        createHookStarted.resolve();
+        await finishCreateHook.promise;
+        await next();
+      },
+    );
+    const closed: string[] = [];
+    const archived: string[] = [];
+    svc.onDidCloseSession((event) => closed.push(event.sessionId));
+    svc.onDidArchiveSession((event) => archived.push(event.sessionId));
+
+    const create = svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    const createRejected = expect(create).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_CLOSED,
+    });
+    await createHookStarted.promise;
+    const archive = svc.archive('s1');
+    await archiveStarted.promise;
+    await svc.close('s1');
+    finishCreateHook.resolve();
+    await createRejected;
+
+    expect(archivedValues).toEqual([true]);
+    expect(closed).toEqual([]);
+
+    finishArchive.resolve();
+    await archive;
+    expect(archived).toEqual(['s1']);
+    createHook.dispose();
+  });
+
   it('keeps an initializing create private until it is published', async () => {
     const mcpStarted = deferred();
     const mcpReady = deferred();
@@ -796,24 +995,17 @@ describe('SessionLifecycleService', () => {
       }),
     ]);
 
-    const completionOrder: string[] = [];
-    const create = svc.create({ sessionId: 's1', workDir: '/tmp/proj' }).then((handle) => {
-      completionOrder.push('create');
-      return handle;
-    });
+    const create = svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
     await mcpStarted.promise;
-    const resume = svc.resume('s1').then((handle) => {
-      completionOrder.push('resume');
-      return handle;
-    });
+    const resume = svc.resume('s1');
 
     expect(svc.get('s1')).toBeUndefined();
     expect(svc.list()).toEqual([]);
 
     mcpReady.resolve();
+    const resumed = await resume;
     const created = await create;
-    await expect(resume).resolves.toBe(created);
-    expect(completionOrder).toEqual(['create', 'resume']);
+    expect(resumed).toBe(created);
     expect(svc.get('s1')).toBe(created);
     expect(svc.list()).toEqual([created]);
   });
@@ -843,7 +1035,7 @@ describe('SessionLifecycleService', () => {
     expect(svc.get('s1')).toBeUndefined();
   });
 
-  it('honors close while session initialization is still in flight', async () => {
+  it('honors close after an in-flight session reaches publication', async () => {
     const firstMcpStarted = deferred();
     const firstMcp = deferred();
     let attempts = 0;
@@ -865,14 +1057,120 @@ describe('SessionLifecycleService', () => {
 
     const create = svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
     await firstMcpStarted.promise;
-    await svc.close('s1');
-    expect(closed).toEqual(['s1']);
-
-    const rejected = expect(create).rejects.toThrow(/disposed/);
+    const close = svc.close('s1');
+    const rejected = expect(create).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_CLOSED,
+    });
     firstMcp.resolve();
     await rejected;
+    await close;
+    expect(closed).toEqual(['s1']);
     const retried = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
     expect(svc.get('s1')).toBe(retried);
+  });
+
+  it('honors close requested while workspace registration blocks handle creation', async () => {
+    const workspaceStarted = deferred();
+    const workspaceReady = deferred<Workspace>();
+    const registry = workspaceRegistryStub();
+    const svc = build([
+      stubPair(IWorkspaceRegistry, {
+        ...registry,
+        createOrTouch: () => {
+          workspaceStarted.resolve();
+          return workspaceReady.promise;
+        },
+      }),
+    ]);
+    const closed: string[] = [];
+    svc.onDidCloseSession((event) => closed.push(event.sessionId));
+
+    const create = svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    await workspaceStarted.promise;
+    const close = svc.close('s1');
+    const rejected = expect(create).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_CLOSED,
+    });
+    expect(closed).toEqual([]);
+    expect(svc.get('s1')).toBeUndefined();
+    workspaceReady.resolve({
+      id: 'wd_stub',
+      root: '/tmp/proj',
+      name: 'stub',
+      createdAt: 0,
+      lastOpenedAt: 0,
+    });
+
+    await close;
+    await rejected;
+    expect(closed).toEqual(['s1']);
+    expect(svc.get('s1')).toBeUndefined();
+  });
+
+  it('honors archive requested while the host environment blocks handle creation', async () => {
+    const localConfigRead = deferred();
+    const hostReady = deferred();
+    const archivedValues: boolean[] = [];
+    const localConfig = workspaceLocalConfigStub();
+    const svc = build([
+      stubPair(IHostEnvironment, { ...hostEnvironmentStub(), ready: hostReady.promise }),
+      stubPair(IWorkspaceLocalConfigService, {
+        ...localConfig,
+        resolveAdditionalDirs: (baseDir, dirs) => {
+          localConfigRead.resolve();
+          return localConfig.resolveAdditionalDirs(baseDir, dirs);
+        },
+      }),
+      stubPair(ISessionMetadata, {
+        ...metadataStub(),
+        setArchived: (value) => {
+          archivedValues.push(value);
+          return Promise.resolve();
+        },
+      }),
+    ]);
+    const archived: string[] = [];
+    svc.onDidArchiveSession((event) => archived.push(event.sessionId));
+
+    const create = svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    await localConfigRead.promise;
+    const archive = svc.archive('s1');
+    const rejected = expect(create).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_CLOSED,
+    });
+    hostReady.resolve();
+
+    await archive;
+    await rejected;
+    expect(archivedValues).toEqual([true]);
+    expect(archived).toEqual(['s1']);
+    expect(svc.get('s1')).toBeUndefined();
+  });
+
+  it('settles a pre-handle close when session initialization fails', async () => {
+    const workspaceStarted = deferred();
+    const workspaceReady = deferred<Workspace>();
+    const failure = new Error('workspace registration failed');
+    const registry = workspaceRegistryStub();
+    const svc = build([
+      stubPair(IWorkspaceRegistry, {
+        ...registry,
+        createOrTouch: () => {
+          workspaceStarted.resolve();
+          return workspaceReady.promise;
+        },
+      }),
+    ]);
+
+    const create = svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+    await workspaceStarted.promise;
+    const close = svc.close('s1');
+    const rejected = expect(create).rejects.toBe(failure);
+    workspaceReady.reject(failure);
+
+    await rejected;
+    await expect(close).resolves.toBeUndefined();
+    expect(svc.get('s1')).toBeUndefined();
   });
 
   it('allows only one same-id create initialization until failed cleanup releases the id', async () => {
@@ -995,6 +1293,7 @@ describe('SessionLifecycleService', () => {
   });
 
   it('hides a session from get/list until its resume finishes', async () => {
+    const mcpStarted = deferred();
     let resolveMcpReady: (() => void) | undefined;
     const mcpReady = new Promise<void>((resolve) => {
       resolveMcpReady = resolve;
@@ -1003,12 +1302,15 @@ describe('SessionLifecycleService', () => {
       stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj')),
       stubPair(IAgentLifecycleService, {
         ...agentLifecycleWithMainStub(),
-        ensureMcpReady: () => mcpReady,
+        ensureMcpReady: () => {
+          mcpStarted.resolve();
+          return mcpReady;
+        },
       }),
     ]);
 
     const resumed = svc.resume('s1');
-    await tick();
+    await mcpStarted.promise;
 
     // materialize has registered the handle in `sessions` and is now blocked on
     // ensureMcpReady with `resuming` set — the handle must not be observable yet.
@@ -1365,6 +1667,62 @@ describe('SessionLifecycleService', () => {
 
       const retried = await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
       expect(retried.id).toBe('dst');
+    });
+
+    it('keeps a published fork resumable when close waits during initialization', async () => {
+      const root = await makeTmpRoot();
+      const bootstrap = tmpBootstrapStub(root);
+      const storage = new FileStorageService(root);
+      const targetMcpStarted = deferred();
+      const targetMcp = deferred();
+      let mcpAttempts = 0;
+      registerScopedService(
+        LifecycleScope.Session,
+        ISessionMetadata,
+        SessionMetadata,
+        InstantiationType.Delayed,
+        'sessionMetadata',
+      );
+      const svc = build([
+        stubPair(IBootstrapService, bootstrap),
+        workspaceGetStub(),
+        stubPair(IFileSystemStorageService, storage),
+        [IAtomicDocumentStore, new SyncDescriptor(JsonAtomicDocumentStore)],
+        stubPair(IQueryStore, stubQueryStore()),
+        stubPair(IFlagService, stubFlag(false)),
+        stubPair(ILogService, stubLog()),
+        [ISessionIndex, new SyncDescriptor(FileSessionIndex)],
+        stubPair(IAgentLifecycleService, {
+          ...agentLifecycleWithMainStub(),
+          ensureMcpReady: () => {
+            mcpAttempts += 1;
+            if (mcpAttempts === 2) {
+              targetMcpStarted.resolve();
+              return targetMcp.promise;
+            }
+            return Promise.resolve();
+          },
+        }),
+      ]);
+      const index = host!.app.accessor.get(ISessionIndex);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+      const forked = svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+      await targetMcpStarted.promise;
+      const close = svc.close('dst');
+      const forkRejected = expect(forked).rejects.toMatchObject({
+        code: ErrorCodes.SESSION_CLOSED,
+      });
+      targetMcp.resolve();
+      await forkRejected;
+      await close;
+
+      await expect(index.get('dst')).resolves.toMatchObject({ id: 'dst' });
+      await expect(
+        stat(join(root, 'sessions', 'wd_stub', 'dst', 'state.json')),
+      ).resolves.toBeDefined();
+      const resumed = await svc.resume('dst');
+      expect(resumed?.id).toBe('dst');
     });
 
     it('preserves a same-id session that registers during the fork collision check', async () => {

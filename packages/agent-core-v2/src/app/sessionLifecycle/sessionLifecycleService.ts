@@ -14,8 +14,10 @@
  * session is also appended to the shared `session_index.jsonl` so v1 clients
  * (TUI, export) can discover sessions created by the v2 engine.
  * Failed materialization, creation, resume, and fork attempts release only the
- * Session handle they created. Per-session initialization claims prevent
- * overlapping create, resume, and fork attempts from sharing persistence.
+ * Session handle they created. Per-session initialization claims keep writers
+ * exclusive while publishing only core-ready handles and preserving explicit
+ * close/archive requests made before a handle exists. The same claim keeps an
+ * initializing handle private while explicit teardown is in progress.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -97,9 +99,20 @@ type MaterializeSessionOptions = Omit<CreateSessionOptions, 'sessionId'> & {
 };
 
 interface SessionInitializationClaim {
+  readonly published: boolean;
+  readonly closing: boolean;
+  readonly publishedOrSettled: Promise<void>;
   readonly settled: Promise<void>;
+  markPublished(): void;
+  startLifecycleAction(): boolean;
+  finishLifecycleAction(): void;
   release(): void;
 };
+
+interface SessionLifecycleAction {
+  readonly handle: ISessionScopeHandle;
+  readonly claim?: SessionInitializationClaim;
+}
 
 export class SessionLifecycleService extends Disposable implements ISessionLifecycleService {
   declare readonly _serviceBrand: undefined;
@@ -117,12 +130,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     'onDidCreateSession',
     'onWillCloseSession',
   ]);
-  /** In-flight `resume` promises, keyed by session id. De-dupes concurrent cold
-   *  loads so a hot read path (e.g. snapshot retry) cannot materialize the same
-   *  session twice and leak a handle — and doubles as the visibility gate for
-   *  `get` / `list`: while an id is present here its materialized handle is
-   *  half-initialized (main agent not yet restored + replayed) and must not be
-   *  observable. */
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
 
   constructor(
@@ -155,10 +162,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         const main = await ensureMainAgent(handle);
         await main.accessor.get(IAgentPlanService).enter();
       }
-      await this.announceCreated({ sessionId, handle, source: 'startup' });
+      this.publishSessionHandle(sessionId, handle, claim);
+      await this.announceCreated({ sessionId, handle, source: 'startup' }, claim);
+      this.assertSessionHandleOwned(sessionId, handle, claim);
       return handle;
     } catch (error) {
-      if (handle !== undefined) {
+      if (handle !== undefined && !claim.closing) {
         await this.disposeFailedSession(sessionId, handle);
       }
       throw error;
@@ -222,10 +231,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       handle.accessor.get(ISessionExternalHooksService);
       return handle;
     } catch (error) {
-      if (opts.forkDestination === true) {
-        await this.rollbackFailedFork(opts.sessionId, handle, ctx.sessionDir, opts.claim);
-      } else {
-        await this.disposeFailedSession(opts.sessionId, handle);
+      if (!opts.claim.closing) {
+        if (opts.forkDestination === true) {
+          await this.rollbackFailedFork(opts.sessionId, handle, ctx.sessionDir, opts.claim);
+        } else {
+          await this.disposeFailedSession(opts.sessionId, handle);
+        }
       }
       throw error;
     }
@@ -242,8 +253,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     await this.appendLogStore.flush();
   }
 
-  private async announceCreated(event: SessionCreatedEvent): Promise<void> {
+  private async announceCreated(
+    event: SessionCreatedEvent,
+    claim: SessionInitializationClaim,
+  ): Promise<void> {
     await this.hooks.onDidCreateSession.run(event);
+    this.assertSessionHandleOwned(event.sessionId, event.handle, claim);
     this._onDidCreateSession.fire(event);
     // Deliberately broader than v1: resumes also emit, with `resumed: true` —
     // the flag exists precisely to distinguish them (v1's resume path never
@@ -253,23 +268,31 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   get(sessionId: string): ISessionScopeHandle | undefined {
-    if (this.initializations.has(sessionId) || this.resuming.has(sessionId)) return undefined;
+    const initialization = this.initializations.get(sessionId);
+    if (
+      initialization !== undefined &&
+      (!initialization.published || initialization.closing)
+    ) {
+      return undefined;
+    }
     return this.sessions.get(sessionId);
   }
 
   resume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
-    // Check in-flight resumes FIRST: `materializeSession` adds the session to
-    // `this.sessions` before `doResume` finishes restore/replay, so a concurrent
-    // caller that checks `sessions` first would get a half-initialized handle
-    // whose main agent has no context. Checking `resuming` first ensures
-    // concurrent callers wait for the full resume (including restore + replay)
-    // to complete.
+    const initialization = this.initializations.get(sessionId);
+    if (initialization !== undefined) {
+      if (initialization.closing) return Promise.resolve(undefined);
+      if (initialization.published) {
+        const live = this.sessions.get(sessionId);
+        if (live !== undefined) return Promise.resolve(live);
+        return Promise.resolve(undefined);
+      }
+      return initialization.publishedOrSettled.then(() => this.resume(sessionId));
+    }
+    const live = this.sessions.get(sessionId);
+    if (live !== undefined) return Promise.resolve(live);
     const inflight = this.resuming.get(sessionId);
     if (inflight !== undefined) return inflight;
-    if (!this.initializations.has(sessionId)) {
-      const live = this.sessions.get(sessionId);
-      if (live !== undefined) return Promise.resolve(live);
-    }
     const promise = this.doResume(sessionId)
       .catch((error: unknown) => {
         this.telemetry.track2('session_load_failed', {
@@ -290,7 +313,9 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     while (true) {
       const initialization = this.initializations.get(sessionId);
       if (initialization !== undefined) {
-        await initialization.settled;
+        if (initialization.closing) return undefined;
+        if (initialization.published) return this.sessions.get(sessionId);
+        await initialization.publishedOrSettled;
         continue;
       }
 
@@ -306,14 +331,22 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
       const racedInitialization = this.initializations.get(sessionId);
       if (racedInitialization !== undefined) {
-        await racedInitialization.settled;
+        if (racedInitialization.closing) return undefined;
+        if (racedInitialization.published) return this.sessions.get(sessionId);
+        await racedInitialization.publishedOrSettled;
         continue;
       }
       const racedLive = this.sessions.get(sessionId);
       if (racedLive !== undefined) return racedLive;
       if (summary === undefined || workDir === undefined) return undefined;
 
-      const claim = this.claimInitialization(sessionId);
+      let claim: SessionInitializationClaim;
+      try {
+        claim = this.claimInitialization(sessionId);
+      } catch (error) {
+        if (isError2(error) && error.code === ErrorCodes.SESSION_ALREADY_EXISTS) continue;
+        throw error;
+      }
       let handle: ISessionScopeHandle | undefined;
       try {
         handle = await this.materializeSession({
@@ -331,10 +364,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
           const records = mainWireRecord.getRecords() as readonly PersistedRecord[];
           await main.accessor.get(IAgentWireService).replay(...records);
         }
-        await this.announceCreated({ sessionId, handle, source: 'resume' });
+        this.publishSessionHandle(sessionId, handle, claim);
+        await this.announceCreated({ sessionId, handle, source: 'resume' }, claim);
+        this.assertSessionHandleOwned(sessionId, handle, claim);
         return handle;
       } catch (error) {
-        if (handle !== undefined) {
+        if (handle !== undefined && !claim.closing) {
           await this.disposeFailedSession(sessionId, handle);
         }
         throw error;
@@ -345,41 +380,65 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   list(): readonly ISessionScopeHandle[] {
-    // Exclude sessions still mid-resume for the same reason as `get`: the handle
-    // exists but is not yet restored, so it must not be observable.
     const ready: ISessionScopeHandle[] = [];
     for (const [id, handle] of this.sessions) {
-      if (!this.initializations.has(id) && !this.resuming.has(id)) ready.push(handle);
+      const initialization = this.initializations.get(id);
+      if (
+        initialization === undefined ||
+        (initialization.published && !initialization.closing)
+      ) {
+        ready.push(handle);
+      }
     }
     return ready;
   }
 
   async close(sessionId: string): Promise<void> {
-    const handle = this.sessions.get(sessionId);
-    if (handle === undefined) return;
-    await this.announceWillClose({ sessionId, handle, reason: 'exit' });
-    this.sessions.delete(sessionId);
-    handle.accessor.get(ISessionActivityKernel).beginClosing();
-    await this.drainAgents(handle);
-    handle.dispose();
-    this._onDidCloseSession.fire({ sessionId });
+    const action = await this.handleForLifecycleAction(sessionId);
+    if (action === undefined) return;
+    const { handle } = action;
+    try {
+      await this.announceWillClose({ sessionId, handle, reason: 'exit' });
+      this.sessions.delete(sessionId);
+      handle.accessor.get(ISessionActivityKernel).beginClosing();
+      await this.drainAgents(handle);
+      handle.dispose();
+      this._onDidCloseSession.fire({ sessionId });
+    } catch (error) {
+      if (action.claim !== undefined) {
+        await this.disposeFailedSession(sessionId, handle);
+      }
+      throw error;
+    } finally {
+      action.claim?.finishLifecycleAction();
+    }
   }
 
   async archive(sessionId: string): Promise<void> {
-    const handle = this.sessions.get(sessionId);
-    if (handle === undefined) return;
-    const meta = handle.accessor.get(ISessionMetadata);
-    await meta.setArchived(true);
-    handle.accessor.get(ISessionActivityKernel).beginClosing();
-    await this.drainAgents(handle);
-    this.event.publish({
-      type: 'event.session.archived',
-      payload: { sessionId },
-    });
-    await this.announceWillClose({ sessionId, handle, reason: 'exit' });
-    this.sessions.delete(sessionId);
-    handle.dispose();
-    this._onDidArchiveSession.fire({ sessionId });
+    const action = await this.handleForLifecycleAction(sessionId);
+    if (action === undefined) return;
+    const { handle } = action;
+    try {
+      const meta = handle.accessor.get(ISessionMetadata);
+      await meta.setArchived(true);
+      handle.accessor.get(ISessionActivityKernel).beginClosing();
+      await this.drainAgents(handle);
+      this.event.publish({
+        type: 'event.session.archived',
+        payload: { sessionId },
+      });
+      await this.announceWillClose({ sessionId, handle, reason: 'exit' });
+      this.sessions.delete(sessionId);
+      handle.dispose();
+      this._onDidArchiveSession.fire({ sessionId });
+    } catch (error) {
+      if (action.claim !== undefined) {
+        await this.disposeFailedSession(sessionId, handle);
+      }
+      throw error;
+    } finally {
+      action.claim?.finishLifecycleAction();
+    }
   }
 
   async restore(sessionId: string): Promise<ISessionScopeHandle | undefined> {
@@ -427,20 +486,65 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (this.sessions.has(sessionId) || this.initializations.has(sessionId)) {
       throw sessionAlreadyExistsError(sessionId);
     }
-    let released = false;
+    let writerReleased = false;
+    let published = false;
+    let lifecycleActionStarted = false;
+    let lifecycleActionFinished = false;
+    let claimSettled = false;
+    let resolvePublishedOrSettled!: () => void;
     let settle!: () => void;
+    const publishedOrSettled = new Promise<void>((resolve) => {
+      resolvePublishedOrSettled = resolve;
+    });
     const settled = new Promise<void>((resolve) => {
       settle = resolve;
     });
+    const trySettle = (): void => {
+      if (
+        claimSettled ||
+        !writerReleased ||
+        (lifecycleActionStarted && !lifecycleActionFinished)
+      ) {
+        return;
+      }
+      claimSettled = true;
+      if (this.initializations.get(sessionId) === claim) {
+        this.initializations.delete(sessionId);
+      }
+      resolvePublishedOrSettled();
+      settle();
+    };
     const claim: SessionInitializationClaim = {
+      get published() {
+        return published;
+      },
+      get closing() {
+        return lifecycleActionStarted && published;
+      },
+      publishedOrSettled,
       settled,
-      release: () => {
-        if (released) return;
-        released = true;
-        if (this.initializations.get(sessionId) === claim) {
-          this.initializations.delete(sessionId);
+      markPublished: () => {
+        if (writerReleased || published) return;
+        published = true;
+        resolvePublishedOrSettled();
+      },
+      startLifecycleAction: () => {
+        if (claimSettled || writerReleased || lifecycleActionStarted) {
+          return false;
         }
-        settle();
+        lifecycleActionStarted = true;
+        return true;
+      },
+      finishLifecycleAction: () => {
+        if (!lifecycleActionStarted || lifecycleActionFinished) return;
+        lifecycleActionFinished = true;
+        trySettle();
+      },
+      release: () => {
+        if (writerReleased) return;
+        writerReleased = true;
+        resolvePublishedOrSettled();
+        trySettle();
       },
     };
     this.initializations.set(sessionId, claim);
@@ -456,6 +560,55 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       throw sessionAlreadyExistsError(sessionId);
     }
     this.sessions.set(sessionId, handle);
+  }
+
+  private publishSessionHandle(
+    sessionId: string,
+    handle: ISessionScopeHandle,
+    claim: SessionInitializationClaim,
+  ): void {
+    this.assertSessionHandleOwned(sessionId, handle, claim);
+    claim.markPublished();
+    this.assertSessionHandleOwned(sessionId, handle, claim);
+  }
+
+  private assertSessionHandleOwned(
+    sessionId: string,
+    handle: ISessionScopeHandle,
+    claim: SessionInitializationClaim,
+  ): void {
+    if (
+      this.initializations.get(sessionId) !== claim ||
+      this.sessions.get(sessionId) !== handle ||
+      claim.closing
+    ) {
+      throw new Error2(
+        ErrorCodes.SESSION_CLOSED,
+        `Session "${sessionId}" closed during initialization`,
+      );
+    }
+  }
+
+  private async handleForLifecycleAction(
+    sessionId: string,
+  ): Promise<SessionLifecycleAction | undefined> {
+    const initialization = this.initializations.get(sessionId);
+    if (initialization === undefined) {
+      const handle = this.sessions.get(sessionId);
+      return handle === undefined ? undefined : { handle };
+    }
+    if (!initialization.startLifecycleAction()) return undefined;
+    if (!initialization.published) await initialization.publishedOrSettled;
+    const handle = this.sessions.get(sessionId);
+    if (
+      this.initializations.get(sessionId) !== initialization ||
+      !initialization.published ||
+      handle === undefined
+    ) {
+      initialization.finishLifecycleAction();
+      return undefined;
+    }
+    return { handle, claim: initialization };
   }
 
   private async rollbackFailedFork(
@@ -591,15 +744,25 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       }
 
       await this.appendSessionIndexEntry(targetId, workspace.root);
+      this.publishSessionHandle(targetId, target, targetClaim);
       this._onDidForkSession.fire({
         sourceSessionId: sourceId,
         sessionId: targetId,
         handle: target,
       });
-      await this.announceCreated({ sessionId: targetId, handle: target, source: 'fork' });
+      await this.announceCreated(
+        { sessionId: targetId, handle: target, source: 'fork' },
+        targetClaim,
+      );
+      this.assertSessionHandleOwned(targetId, target, targetClaim);
       return target;
     } catch (error) {
-      if (targetId !== undefined && target !== undefined && targetClaim !== undefined) {
+      if (
+        targetId !== undefined &&
+        target !== undefined &&
+        targetClaim !== undefined &&
+        !targetClaim.closing
+      ) {
         await this.rollbackFailedFork(targetId, target, targetSessionDir, targetClaim);
       }
       throw error;
