@@ -382,6 +382,66 @@ describe('Plan service', () => {
       ).toHaveLength(1);
     });
 
+    it('persists an interrupted result when the turn is cancelled during plan approval', async () => {
+      const cwd = await makeTempDir('kimi-plan-cancel-approval-');
+      const { files, fakes } = createPlanFileFakes();
+      useFakes(fakes);
+      useTools(['ExitPlanMode']);
+      profile.update({ cwd });
+      await ctx.rpc.setPermission({ mode: 'manual' });
+      await plan.enter('cancelled-plan', false);
+
+      const planPath = await expectActivePlanPath();
+      files.set(planPath, '# Plan\n\n- Inspect\n- Change\n- Verify');
+      ctx.mockNextResponse(
+        { type: 'text', text: 'I will present the plan.' },
+        {
+          type: 'function',
+          id: 'call_exit_cancelled',
+          name: 'ExitPlanMode',
+          arguments: '{}',
+        },
+      );
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Show the plan' }] });
+
+      await ctx.takeApprovalRequest();
+      await ctx.rpc.cancel({});
+      await ctx.untilTurnEnd();
+
+      const records = ctx.wireRecord.getRecords() as readonly PersistedRecord[];
+      const transcript = reduceContextTranscript(records);
+      const calls = transcript.entries.flatMap((message) => message.toolCalls);
+      const results = transcript.entries.filter(
+        (message) => message.role === 'tool' && message.toolCallId === 'call_exit_cancelled',
+      );
+      const wireResults = records.filter((record) => {
+        if (record.type !== 'context.append_loop_event') return false;
+        const event = record['event'] as { readonly type?: string; readonly toolCallId?: string };
+        return event.type === 'tool.result' && event.toolCallId === 'call_exit_cancelled';
+      });
+      expect(calls.filter((call) => call.id === 'call_exit_cancelled')).toHaveLength(1);
+      expect(wireResults).toHaveLength(1);
+      expect(results).toEqual([
+        expect.objectContaining({
+          isError: true,
+          content: [
+            expect.objectContaining({
+              type: 'text',
+              text: expect.stringContaining('The user manually interrupted "ExitPlanMode"'),
+            }),
+          ],
+        }),
+      ]);
+      expect(
+        ctx.allEvents.filter(
+          (event) => event.type === '[rpc]' && event.event === 'tool.call.started',
+        ),
+      ).toHaveLength(1);
+      expect(
+        ctx.allEvents.filter((event) => event.type === '[rpc]' && event.event === 'tool.result'),
+      ).toHaveLength(1);
+    });
+
     it('does not execute later tool calls in the same batch after plan rejection', async () => {
       const exec = vi.fn(() => {
         throw new Error('Bash should not execute after plan rejection');
