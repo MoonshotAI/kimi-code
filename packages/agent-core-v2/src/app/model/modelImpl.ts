@@ -15,6 +15,11 @@
  * wire I/O to `IProtocolAdapterRegistry.createChatProvider(...)` + kosong's
  * `generate(...)`. Phase 8 replaces the wire with native adapters; only this
  * file changes.
+ *
+ * Provider error translation also lives here: a 401 that survives a forced
+ * token refresh means the provider rejected the account itself, so it is
+ * surfaced as `PROVIDER_AUTH_ERROR` carrying the provider's message instead
+ * of a misleading re-login prompt.
  */
 
 import { AsyncEventQueue } from '#/_base/asyncEventQueue';
@@ -347,12 +352,6 @@ function isUnauthorizedStatusError(error: unknown): error is APIStatusError {
   return error instanceof APIStatusError && error.statusCode === 401;
 }
 
-/**
- * A 401 that survives a forced token refresh means the provider rejected the
- * account itself (plan or model unavailable), not an expired token — surface
- * the provider's message as `PROVIDER_AUTH_ERROR` instead of misleading the
- * user into re-running /login.
- */
 function toProviderAuthError(error: APIStatusError): Error2 {
   const reason = sanitizeStatusErrorMessage(error.message);
   return new Error2(
