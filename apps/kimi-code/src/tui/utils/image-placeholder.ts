@@ -102,7 +102,7 @@ export function extractMediaAttachments(
 }
 
 export interface MediaTagRewriteResult {
-  /** Input text with resolved placeholders replaced by media path tags. */
+  /** Input text with resolved placeholders replaced by media references. */
   text: string;
   hasMedia: boolean;
   imageAttachmentIds: number[];
@@ -110,19 +110,31 @@ export interface MediaTagRewriteResult {
 }
 
 /**
+ * How a resolved placeholder is rendered into command args:
+ *  - `'tag'`: the `<image|video path="…"></…>` convention, for channels
+ *    that pass args through verbatim (plugin commands).
+ *  - `'plain'`: a plain-text file reference with no XML tag/attribute
+ *    boundary characters, for channels that XML-escape args (`/skill`
+ *    args are escaped by both `renderSkillAttributes` and
+ *    `expandSkillParameters`, which would mangle the tag form).
+ */
+export type MediaReferenceStyle = 'tag' | 'plain';
+
+/**
  * Rewrite media placeholders in slash-command args (`/skill:foo …`,
- * plugin commands) into `<image|video path="…"></…>` tags pointing at
- * cache-dir copies. Command args are a plain-text channel — unlike
- * `extractMediaAttachments`, which inlines image parts for the prompt
- * endpoint — so the model reaches the media through `ReadMediaFile`
- * instead, the same way it already handles pasted videos.
+ * plugin commands) into references pointing at cache-dir copies. Command
+ * args are a plain-text channel — unlike `extractMediaAttachments`, which
+ * inlines image parts for the prompt endpoint — so the model reaches the
+ * media through `ReadMediaFile` instead, the same way it already handles
+ * pasted videos.
  *
  * Surrounding text is preserved verbatim (args are user content, not
  * LLM parts), and unresolved placeholders stay literal.
  */
-export function rewriteMediaPlaceholdersAsTags(
+export function rewriteMediaPlaceholders(
   text: string,
   store: ImageAttachmentStore,
+  style: MediaReferenceStyle = 'tag',
 ): MediaTagRewriteResult {
   const imageAttachmentIds: number[] = [];
   const videoAttachmentIds: number[] = [];
@@ -141,10 +153,12 @@ export function rewriteMediaPlaceholdersAsTags(
     if (attachment.kind !== kind) continue;
     out += text.slice(cursor, match.index);
     if (attachment.kind === 'video') {
-      out += formatMediaTag('video', materializeVideoToCache(attachment));
+      const path = materializeVideoToCache(attachment);
+      out += style === 'plain' ? formatMediaReference('video', path) : formatMediaTag('video', path);
       videoAttachmentIds.push(id);
     } else {
-      out += formatMediaTag('image', materializeImageToCache(attachment));
+      const path = materializeImageToCache(attachment);
+      out += style === 'plain' ? formatMediaReference('image', path) : formatMediaTag('image', path);
       imageAttachmentIds.push(id);
     }
     cursor = match.index + literal.length;
@@ -231,6 +245,15 @@ function captionForCompressedImage(att: ImageAttachment): string {
 
 function formatMediaTag(tag: 'image' | 'video', path: string): string {
   return `<${tag} path="${escapeAttribute(path)}"></${tag}>`;
+}
+
+/**
+ * Plain-text media reference for channels that XML-escape args (`/skill`).
+ * Stays free of `& < > "` in practice (UUID image names; sanitized video
+ * labels) so it survives `escapeXml`/`escapeXmlTags` untouched.
+ */
+function formatMediaReference(kind: 'image' | 'video', path: string): string {
+  return `Attached ${kind} file: ${path} (open it with ReadMediaFile)`;
 }
 
 function escapeAttribute(value: string): string {

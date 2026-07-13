@@ -133,7 +133,7 @@ import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
-import { extractMediaAttachments, rewriteMediaPlaceholdersAsTags } from './utils/image-placeholder';
+import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
 import { hasPatchChanges } from './utils/object-patch';
 import { sessionRowsForPicker } from './utils/session-picker-rows';
 import { formatBashOutputForDisplay } from './utils/shell-output';
@@ -1291,9 +1291,10 @@ export class KimiTUI {
 
   sendSkillActivation(session: Session, skillName: string, skillArgs: string): void {
     // Args are a plain-text channel, so pasted media can't ride along as
-    // inline parts. Rewrite placeholders into cache-file tags the model
-    // can open with ReadMediaFile instead of leaving dead placeholder text.
-    const rewrite = rewriteMediaPlaceholdersAsTags(skillArgs, this.imageStore);
+    // inline parts. Skill args are XML-escaped on render (renderSkillAttributes
+    // + expandSkillParameters), so rewrite placeholders into escape-proof
+    // plain-text file references the model can open with ReadMediaFile.
+    const rewrite = rewriteMediaPlaceholders(skillArgs, this.imageStore, 'plain');
     if (!this.validateMediaCapabilities(rewrite)) return;
     this.beginSessionRequest();
     void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
@@ -1308,8 +1309,10 @@ export class KimiTUI {
     commandName: string,
     args: string,
   ): void {
-    // Same plain-text constraint as skill args — see sendSkillActivation.
-    const rewrite = rewriteMediaPlaceholdersAsTags(args, this.imageStore);
+    // Plugin command args are expanded verbatim (no XML escaping), so the
+    // standard <image|video path> tag convention works — see
+    // sendSkillActivation for the escaped-channel variant.
+    const rewrite = rewriteMediaPlaceholders(args, this.imageStore, 'tag');
     if (!this.validateMediaCapabilities(rewrite)) return;
     this.beginSessionRequest();
     void session
