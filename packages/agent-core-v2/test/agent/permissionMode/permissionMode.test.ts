@@ -8,6 +8,7 @@ import {
   type ContextInjectionProvider,
 } from '#/agent/contextInjector/contextInjector';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
 import { AgentPermissionModeService } from '#/agent/permissionMode/permissionModeService';
 import { PermissionModeModel } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -46,9 +47,12 @@ let disposables: DisposableStore;
 let ix: TestInstantiationService;
 let log: IAppendLogStore;
 let svc: IAgentPermissionModeService;
+/** Whether the last returned reminder is still live in (simulated) history. */
+let reminderLive = false;
 
 beforeEach(() => {
   registeredInjection = undefined;
+  reminderLive = false;
   disposables = new DisposableStore();
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
@@ -74,14 +78,21 @@ async function runRegisteredInjection(): Promise<string | undefined> {
   const provider = registeredInjection?.provider;
   if (provider === undefined) throw new Error('expected permission mode injection provider');
   const content = await provider({
-    injectedPositions: [],
-    lastInjectedAt: null,
+    injectedPositions: reminderLive ? [0] : [],
+    lastInjectedAt: reminderLive ? 0 : null,
     isNewTurn: true,
   });
   if (typeof content !== 'string' && content !== undefined) {
     throw new Error('expected permission mode injection provider to return text');
   }
+  // The injector appends returned content to history, so it is live afterwards.
+  if (content !== undefined) reminderLive = true;
   return content;
+}
+
+/** Simulate compaction / undo splicing the live reminder out of history. */
+function spliceReminderOut(): void {
+  reminderLive = false;
 }
 
 describe('AgentPermissionModeService (wire-backed)', () => {
@@ -126,6 +137,57 @@ describe('AgentPermissionModeService (wire-backed)', () => {
 
     svc.setMode('manual');
     expect(await runRegisteredInjection()).toContain('Auto permission mode is no longer active');
+  });
+
+  it('re-announces auto mode after the live reminder is spliced out (compaction / undo)', async () => {
+    svc.setMode('auto');
+    expect(await runRegisteredInjection()).toContain('Auto permission mode is active');
+    expect(await runRegisteredInjection()).toBeUndefined();
+
+    spliceReminderOut();
+    expect(await runRegisteredInjection()).toContain('Auto permission mode is active');
+    expect(await runRegisteredInjection()).toBeUndefined();
+  });
+
+  it('announces nothing after compaction when the current mode carries no reminder', async () => {
+    expect(await runRegisteredInjection()).toBeUndefined();
+
+    spliceReminderOut();
+    expect(await runRegisteredInjection()).toBeUndefined();
+  });
+
+  it('re-announces auto mode on a fresh instance even with a live reminder in history (restore)', async () => {
+    svc.setMode('auto');
+
+    // Simulate a fresh engine instance after session restore: no in-memory
+    // lastMode, but history still carries a live reminder from before the
+    // restart (the injector re-syncs positions on restore). Positions are
+    // content-agnostic, so the survivor may even be a stale EXIT reminder —
+    // auto mode must still be announced, exactly as v1 does.
+    let restoredProvider: ContextInjectionProvider | undefined;
+    const ix2 = disposables.add(new TestInstantiationService());
+    ix2.stub(IAgentContextInjectorService, {
+      _serviceBrand: undefined,
+      register: (_name, provider) => {
+        restoredProvider = provider;
+        return { dispose: () => {} };
+      },
+      injectAfterCompaction: async () => {},
+    });
+    disposables.add(ix2.createInstance(PermissionModeInjection, svc));
+    if (restoredProvider === undefined) throw new Error('expected restored provider');
+
+    const run = () =>
+      restoredProvider!({
+        injectedPositions: [3],
+        lastInjectedAt: 3,
+        isNewTurn: true,
+      });
+
+    expect(await run()).toContain('Auto permission mode is active');
+    expect(await run()).toBeUndefined();
+    svc.setMode('manual');
+    expect(await run()).toContain('Auto permission mode is no longer active');
   });
 
   it('replay rebuilds mode from a persisted record on a fresh WireService (silent)', async () => {

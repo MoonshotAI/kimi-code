@@ -12,8 +12,8 @@ import {
   literalRulePattern,
   matchesGlobRuleSubject,
   matchesPathRuleSubject,
-} from '#/_base/tools/support/rule-match';
-import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+} from '#/tool/rule-match';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IHostEnvironment, type IHostEnvironment as HostEnvironmentService } from '#/os/interface/hostEnvironment';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentPermissionPolicyService, type PermissionPolicyEvaluation } from '#/agent/permissionPolicy/permissionPolicy';
@@ -30,7 +30,7 @@ import {
 import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/agent/tool/tool-access';
+import { ToolAccesses, type ToolAccesses as ToolAccessList } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import { stubPermissionModeService } from '../permissionMode/stubs';

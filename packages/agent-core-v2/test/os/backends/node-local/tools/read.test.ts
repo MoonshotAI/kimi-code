@@ -19,8 +19,8 @@
 
 import { describe, expect, it, vi } from 'vitest';
 
-import { PathSecurityError } from '#/_base/tools/policies/path-access';
-import { MEDIA_SNIFF_BYTES } from '#/_base/tools/support/file-type';
+import { PathSecurityError } from '#/tool/path-access';
+import { MEDIA_SNIFF_BYTES } from '#/agent/media/file-type';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
@@ -32,7 +32,7 @@ import {
   ReadTool,
 } from '#/os/backends/node-local/tools/read';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
 const signal = new AbortController().signal;
 const PERMISSIVE_WORKSPACE = stubWorkspaceContext('/');

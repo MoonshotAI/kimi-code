@@ -206,6 +206,18 @@ export interface QueuedMessage {
   readonly mode?: 'prompt' | 'bash';
 }
 
+/**
+ * One unit of Ctrl-S steer input: a queued message or the editor draft,
+ * with the media parts extracted at submit/paste time so images and video
+ * tags survive the steer path (which accepts full prompt parts, not just
+ * text).
+ */
+export interface SteerInputItem {
+  readonly text: string;
+  readonly parts?: readonly PromptPart[];
+  readonly imageAttachmentIds?: readonly number[];
+}
+
 export const INITIAL_LIVE_PANE: LivePaneState = {
   mode: 'idle',
   pendingApproval: null,

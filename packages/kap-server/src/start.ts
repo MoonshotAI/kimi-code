@@ -9,6 +9,7 @@
 
 import {
   bootstrap,
+  hostRequestHeadersSeed,
   IConfigService,
   IModelCatalogService,
   logSeed,
@@ -218,6 +219,11 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // the session index — all persist to disk.
   const { app: core } = bootstrap({ homeDir, configPath }, [
     ...logSeed(logging),
+    // Default host identity so outbound requests (model, WebSearch, registry
+    // refresh) carry a product User-Agent even when the embedding host did not
+    // seed its own headers. Hosts like the CLI pass full Kimi identity headers
+    // through `opts.seeds`, which override this entry (last seed wins).
+    ...hostRequestHeadersSeed({ 'User-Agent': `kimi-code-cli/${hostVersion}` }),
     ...(opts.seeds ?? []),
   ]);
 

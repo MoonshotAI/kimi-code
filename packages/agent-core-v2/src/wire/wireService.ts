@@ -13,7 +13,7 @@
  * `tokens`, each seeded with its own persistence key. `PersistedRecord` is the
  * on-the-wire append-log shape (`wire.jsonl`): intentionally flat
  * (`{ type, ...payload }`, optional `time`) so it stays byte-compatible with the
- * existing `WireRecord` journal (`{ type, time?, ...fields }`) — payload fields
+ * existing wire journal (`{ type, time?, ...fields }`) — payload fields
  * sit at the top level next to `type`, never nested under a `payload` key; the
  * index signature keeps it scope-agnostic and domains narrow via their Op
  * payload types. Scope-agnostic.

@@ -32,9 +32,10 @@
  *   data that was compacted away during the session.
  */
 
+import { z } from 'zod';
+
 import type { ContentPart } from '#/app/llmProtocol/message';
 import { defineModel, type PartsTransformer } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 import type { PersistedRecord } from '#/wire/wireService';
 
 import {
@@ -120,63 +121,71 @@ function popSwarmModeReminder(state: ContextMessage[], _payload: unknown): Conte
   return resetFold(state.slice(0, -1)) as ContextMessage[];
 }
 
-export interface ContextMessagePayload {
-  readonly message: ContextMessage;
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'context.append_message': typeof contextAppendMessage;
+    'context.append_loop_event': typeof contextAppendLoopEvent;
+    'context.clear': typeof contextClear;
+    'context.apply_compaction': typeof contextApplyCompaction;
+    'context.undo': typeof contextUndo;
+  }
 }
 
-export const contextAppendMessage = defineOp(ContextModel, 'context.append_message', {
-  apply: (state, p: ContextMessagePayload): ContextMessage[] =>
-    foldAppendMessage(state, p.message) as ContextMessage[],
+// `ContextMessage` / `LoopRecordedEvent` are large domain unions owned by
+// sibling modules; `z.custom` keeps their exact types without restating them.
+const contextMessageSchema = z.custom<ContextMessage>();
+const loopRecordedEventSchema = z.custom<LoopRecordedEvent>();
+
+export const contextAppendMessage = ContextModel.defineOp('context.append_message', {
+  schema: z.object({ message: contextMessageSchema }),
+  apply: (state, p) => foldAppendMessage(state, p.message) as ContextMessage[],
 });
 
-export interface ContextLoopEventPayload {
-  readonly event: LoopRecordedEvent;
-}
-
-export const contextAppendLoopEvent = defineOp(ContextModel, 'context.append_loop_event', {
-  apply: (state, p: ContextLoopEventPayload): ContextMessage[] =>
-    foldLoopEvent(state, p.event) as ContextMessage[],
+export const contextAppendLoopEvent = ContextModel.defineOp('context.append_loop_event', {
+  schema: z.object({ event: loopRecordedEventSchema }),
+  apply: (state, p) => foldLoopEvent(state, p.event) as ContextMessage[],
 });
 
-export const contextClear = defineOp(ContextModel, 'context.clear', {
-  apply: (state): ContextMessage[] =>
-    state.length === 0 ? state : (resetFold([]) as ContextMessage[]),
+export const contextClear = ContextModel.defineOp('context.clear', {
+  schema: z.object({}),
+  apply: (state) => (state.length === 0 ? state : (resetFold([]) as ContextMessage[])),
 });
 
-interface ContextCompactionBasePayload {
-  readonly tokensBefore?: number;
-  readonly tokensAfter?: number;
-  readonly keptUserMessageCount?: number;
-  readonly keptHeadUserMessageCount?: number;
-  readonly droppedCount?: number;
-  readonly legacyTail?: boolean;
-}
+const contextCompactionBaseShape = {
+  tokensBefore: z.number().optional(),
+  tokensAfter: z.number().optional(),
+  keptUserMessageCount: z.number().optional(),
+  keptHeadUserMessageCount: z.number().optional(),
+  droppedCount: z.number().optional(),
+  legacyTail: z.boolean().optional(),
+};
 
-export interface TextSummaryCompactionPayload extends ContextCompactionBasePayload {
-  readonly summary: string;
-  readonly compactedCount: number;
-  readonly contextSummary?: string;
-}
+const contextApplyCompactionSchema = z.union([
+  z.object({
+    ...contextCompactionBaseShape,
+    summary: z.string(),
+    compactedCount: z.number(),
+    contextSummary: z.string().optional(),
+  }),
+  z.object({
+    ...contextCompactionBaseShape,
+    contextSummary: z.string(),
+    compactedCount: z.number(),
+    summary: z.string().optional(),
+  }),
+  z.object({
+    ...contextCompactionBaseShape,
+    summary: contextMessageSchema,
+    count: z.number(),
+    compactedCount: z.number().optional(),
+  }),
+]);
 
-interface ContextSummaryCompactionPayload extends ContextCompactionBasePayload {
-  readonly contextSummary: string;
-  readonly compactedCount: number;
-  readonly summary?: string;
-}
+type ContextCompactionPayload = z.infer<typeof contextApplyCompactionSchema>;
 
-interface LegacyMessageSummaryCompactionPayload extends ContextCompactionBasePayload {
-  readonly summary: ContextMessage;
-  readonly count: number;
-  readonly compactedCount?: number;
-}
-
-export type ContextCompactionPayload =
-  | TextSummaryCompactionPayload
-  | ContextSummaryCompactionPayload
-  | LegacyMessageSummaryCompactionPayload;
-
-export const contextApplyCompaction = defineOp(ContextModel, 'context.apply_compaction', {
-  apply: (state, p: ContextCompactionPayload): ContextMessage[] => {
+export const contextApplyCompaction = ContextModel.defineOp('context.apply_compaction', {
+  schema: contextApplyCompactionSchema,
+  apply: (state, p) => {
     const result = buildContextCompactionShape(state, readContextCompactionShapeInput(p));
     return resetFold([...result.messages]) as ContextMessage[];
   },
@@ -279,10 +288,6 @@ function isContextMessage(value: unknown): value is ContextMessage {
   return typeof message.role === 'string' && Array.isArray(message.content);
 }
 
-export interface ContextUndoPayload {
-  readonly count: number;
-}
-
 export interface UndoCut {
   readonly cutIndex: number;
   readonly removedCount: number;
@@ -370,8 +375,9 @@ export function formatUndoUnavailableMessage(
   }
 }
 
-export const contextUndo = defineOp(ContextModel, 'context.undo', {
-  apply: (state, p: ContextUndoPayload): ContextMessage[] => {
+export const contextUndo = ContextModel.defineOp('context.undo', {
+  schema: z.object({ count: z.number() }),
+  apply: (state, p) => {
     if (p.count <= 0 || state.length === 0) return state;
     const cut = computeUndoCut(state, p.count);
     if (!isFullyUndoable(cut, p.count)) return state;

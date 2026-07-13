@@ -36,14 +36,18 @@ import { z } from 'zod';
 
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
-import { resolvePathAccessPath } from '#/_base/tools/policies/path-access';
+import {
+  ToolAccesses,
+  type BuiltinTool,
+  type ExecutableToolResult,
+  type ToolExecution,
+} from '#/tool/toolContract';
+import { resolvePathAccessPath, type WorkspaceConfig } from '#/tool/path-access';
 import {
   MEDIA_SNIFF_BYTES,
   detectFileType,
   sniffImageDimensions,
-} from '#/_base/tools/support/file-type';
+} from '#/agent/media/file-type';
 import {
   IMAGE_BYTE_BUDGET,
   resolveReadImageByteBudget,
@@ -52,10 +56,9 @@ import {
   formatByteSize,
   type ImageCompressionTelemetry,
   type ImageCropRegion,
-} from '#/_base/tools/support/image-compress';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { literalRulePattern, matchesPathRuleSubject } from '#/_base/tools/support/rule-match';
-import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
+} from '#/agent/media/image-compress';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
 import readMediaDescriptionHead from './read-media.md?raw';
 

@@ -16,85 +16,82 @@
 import {
   contextAppendMessage,
   contextApplyCompaction,
-  type ContextCompactionPayload,
-  type ContextMessagePayload,
 } from '#/agent/contextMemory/contextOps';
 import {
   fullCompactionBegin,
   fullCompactionCancel,
   fullCompactionComplete,
-  type FullCompactionBeginPayload,
-  type FullCompactionCompletePayload,
 } from '#/agent/fullCompaction/compactionOps';
-import {
-  clearGoal,
-  createGoal,
-  updateGoal,
-  type GoalCreatePayload,
-  type GoalUpdatePayload,
-} from '#/agent/goal/goalOps';
-import {
-  planModeCancel,
-  planModeEnter,
-  planModeExit,
-  type PlanModeEnterPayload,
-  type PlanModeIdPayload,
-} from '#/agent/plan/planOps';
-import { configUpdate, type ConfigUpdatePayload } from '#/agent/profile/profileOps';
+import { clearGoal, createGoal, updateGoal } from '#/agent/goal/goalOps';
+import { planModeCancel, planModeEnter, planModeExit } from '#/agent/plan/planOps';
+import { configUpdate } from '#/agent/profile/profileOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { setMode } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionApprovalResultRecord } from '#/agent/permissionRules/permissionRules';
 import { recordApprovalResult } from '#/agent/permissionRules/permissionRulesOps';
 import { type DerivedModelDef, defineDerivedModel } from '#/wire/model';
+import type { ModelReducers, OpPayload, OpType, PayloadOf } from '#/wire/types';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function defineDerivedTimeline<M extends Record<string, (payload: any) => any>>(
+type TimelineMapperMap = {
+  [K in OpType]?: (payload: OpPayload<K>) => unknown;
+};
+
+type TimelineEntry<M> = {
+  [K in keyof M]: M[K] extends (...args: never[]) => infer E ? E : never;
+}[keyof M];
+
+type ErasedTimelineMapper<E> = (payload: unknown) => E;
+
+function defineDerivedTimeline<const M extends TimelineMapperMap>(
   name: string,
-  mappers: M,
-): DerivedModelDef<readonly ReturnType<M[keyof M]>[]> {
-  type E = ReturnType<M[keyof M]>;
-  const reducers: Record<string, (s: readonly E[], p: unknown) => readonly E[]> = {};
-  for (const opType of Object.keys(mappers)) {
-    reducers[opType] = (s, p) => [...s, mappers[opType]!(p)];
-  }
+  mappers: M & Record<Exclude<keyof M, OpType>, never>,
+): DerivedModelDef<readonly TimelineEntry<M>[]> {
+  type E = TimelineEntry<M>;
+  const entries = Object.entries(mappers) as [OpType, ErasedTimelineMapper<E>][];
+  const reducers = Object.fromEntries(
+    entries.map(
+      ([opType, mapper]) =>
+        [opType, (state: readonly E[], payload: unknown) => [...state, mapper(payload)]] as const,
+    ),
+  ) as ModelReducers<readonly E[]>;
   return defineDerivedModel(name, () => [], reducers);
 }
 
 export const ReplayTimelineModel = defineDerivedTimeline('agent.replayTimeline', {
-  [contextAppendMessage.type]: (p: ContextMessagePayload) =>
+  [contextAppendMessage.type]: (p: PayloadOf<typeof contextAppendMessage>) =>
     ({ type: contextAppendMessage.type, payload: p }) as const,
 
-  [contextApplyCompaction.type]: (p: ContextCompactionPayload) =>
+  [contextApplyCompaction.type]: (p: PayloadOf<typeof contextApplyCompaction>) =>
     ({ type: contextApplyCompaction.type, payload: p }) as const,
 
-  [fullCompactionBegin.type]: (p: FullCompactionBeginPayload) =>
+  [fullCompactionBegin.type]: (p: PayloadOf<typeof fullCompactionBegin>) =>
     ({ type: fullCompactionBegin.type, payload: p }) as const,
 
   [fullCompactionCancel.type]: () =>
     ({ type: fullCompactionCancel.type }) as const,
 
-  [fullCompactionComplete.type]: (p: FullCompactionCompletePayload) =>
+  [fullCompactionComplete.type]: (p: PayloadOf<typeof fullCompactionComplete>) =>
     ({ type: fullCompactionComplete.type, payload: p }) as const,
 
-  [createGoal.type]: (p: GoalCreatePayload) =>
+  [createGoal.type]: (p: PayloadOf<typeof createGoal>) =>
     ({ type: createGoal.type, payload: p }) as const,
 
-  [updateGoal.type]: (p: GoalUpdatePayload) =>
+  [updateGoal.type]: (p: PayloadOf<typeof updateGoal>) =>
     ({ type: updateGoal.type, payload: p }) as const,
 
   [clearGoal.type]: () =>
     ({ type: clearGoal.type }) as const,
 
-  [planModeEnter.type]: (p: PlanModeEnterPayload) =>
+  [planModeEnter.type]: (p: PayloadOf<typeof planModeEnter>) =>
     ({ type: planModeEnter.type, payload: p }) as const,
 
-  [planModeCancel.type]: (p: PlanModeIdPayload) =>
+  [planModeCancel.type]: (p: PayloadOf<typeof planModeCancel>) =>
     ({ type: planModeCancel.type, payload: p }) as const,
 
-  [planModeExit.type]: (p: PlanModeIdPayload) =>
+  [planModeExit.type]: (p: PayloadOf<typeof planModeExit>) =>
     ({ type: planModeExit.type, payload: p }) as const,
 
-  [configUpdate.type]: (p: ConfigUpdatePayload) =>
+  [configUpdate.type]: (p: PayloadOf<typeof configUpdate>) =>
     ({ type: configUpdate.type, payload: p }) as const,
 
   [setMode.type]: (p: { mode: PermissionMode }) =>

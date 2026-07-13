@@ -19,8 +19,9 @@
  * Consumed by the Agent-scope `planService`.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 export interface PlanState {
   readonly active: boolean;
@@ -29,26 +30,28 @@ export interface PlanState {
 
 export const PlanModel = defineModel<PlanState>('plan', () => ({ active: false }));
 
-export interface PlanModeEnterPayload {
-  readonly id: string;
-}
-
-export const planModeEnter = defineOp(PlanModel, 'plan_mode.enter', {
-  apply: (s, p: PlanModeEnterPayload): PlanState =>
-    s.active && s.id === p.id ? s : { active: true, id: p.id },
+export const planModeEnter = PlanModel.defineOp('plan_mode.enter', {
+  schema: z.object({ id: z.string() }),
+  apply: (s, p) => (s.active && s.id === p.id ? s : { active: true, id: p.id }),
   toEvent: () => ({ type: 'agent.status.updated' as const, planMode: true }),
 });
 
-export interface PlanModeIdPayload {
-  readonly id?: string;
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'plan_mode.enter': typeof planModeEnter;
+    'plan_mode.cancel': typeof planModeCancel;
+    'plan_mode.exit': typeof planModeExit;
+  }
 }
 
-export const planModeCancel = defineOp(PlanModel, 'plan_mode.cancel', {
-  apply: (s, _p: PlanModeIdPayload): PlanState => (s.active === false ? s : { active: false }),
+export const planModeCancel = PlanModel.defineOp('plan_mode.cancel', {
+  schema: z.object({ id: z.string().optional() }),
+  apply: (s) => (s.active === false ? s : { active: false }),
   toEvent: () => ({ type: 'agent.status.updated' as const, planMode: false }),
 });
 
-export const planModeExit = defineOp(PlanModel, 'plan_mode.exit', {
-  apply: (s, _p: PlanModeIdPayload): PlanState => (s.active === false ? s : { active: false }),
+export const planModeExit = PlanModel.defineOp('plan_mode.exit', {
+  schema: z.object({ id: z.string().optional() }),
+  apply: (s) => (s.active === false ? s : { active: false }),
   toEvent: () => ({ type: 'agent.status.updated' as const, planMode: false }),
 });

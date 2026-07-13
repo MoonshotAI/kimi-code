@@ -16,7 +16,7 @@ The Kimi Code server. It hosts `agent-core` sessions and exposes them over REST 
 
 - Top level: `start.ts`, `index.ts`, `envelope.ts`, `error-handler.ts`, `lock.ts`, `request-id.ts`, `version.ts`.
 - `routes/` — REST domain modules, the `registerApiV1Routes.ts` aggregator, `webAssets.ts`, and `action-suffix.ts`.
-- `services/` — server-owned DI adapters: `approval/`, `question/`, `gateway/` (`rest`/`ws`/`broadcast`/`connectionRegistry`/`sessionClients`/`sessionEventJournal`/`inFlightTurnTracker`), `pinoLoggerService.ts`, `serviceCollection.ts`.
+- `services/` — server-owned DI adapters: `approval/`, `question/`, `gateway/` (`rest`/`ws`/`broadcast`/`connectionRegistry`/`sessionClients`/`sessionEventJournal`/`inFlightTurnTracker`/`subagentRosterTracker`), `pinoLoggerService.ts`, `serviceCollection.ts`.
 - `ws/` — `connection.ts` (`WsConnection`), `protocol.ts` (frame builders), `rawData.ts`.
 - `middleware/` — `defineRoute.ts`, `schema.ts`, `validate.ts`. `openapi/transforms.ts`.
 - `svc/` — OS service managers (launchd / systemd / schtasks) backing `kimi server install/start`.

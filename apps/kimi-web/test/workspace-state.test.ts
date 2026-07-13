@@ -66,6 +66,8 @@ function createState(): ExtendedState {
     activeSessionId: 'sess_1',
     connected: true,
     serverVersion: '',
+    dangerousBypassAuth: false,
+    backend: 'v1',
     workspaceName: 'kimi-web',
     connection: 'connected',
     permission: 'manual',
@@ -121,6 +123,7 @@ function createDeps(): UseWorkspaceStateDeps {
     subscribeToSessionEvents: vi.fn(),
     hasLoadedMessages: vi.fn(),
     refreshSessionStatus: vi.fn(),
+    refreshSessionGoal: vi.fn(),
     persistSessionProfile: vi.fn(),
     mergedWorkspaces: computed(() => []),
     workspacesView: computed(() => []),
@@ -984,6 +987,7 @@ describe('useWorkspaceState — first-load auth gate', () => {
       serverVersion: '0.0.0',
       openInApps: [],
       dangerousBypassAuth: false,
+      backend: 'v1',
     });
     apiMock.getConfig.mockReset().mockResolvedValue({});
     apiMock.listWorkspaces.mockReset().mockResolvedValue([]);
@@ -1087,6 +1091,44 @@ describe('useWorkspaceState — first-load auth gate', () => {
   );
 });
 
+// /meta re-read on every WS (re)connect — keeps version / backend truthful
+// across backend restarts and dev-proxy backend switches.
+describe('useWorkspaceState — refreshServerMeta', () => {
+  beforeEach(() => {
+    apiMock.getMeta.mockReset();
+  });
+
+  it('applies the meta payload including the v2 backend marker', async () => {
+    apiMock.getMeta.mockResolvedValue({
+      serverVersion: '9.9.9',
+      openInApps: ['finder'],
+      dangerousBypassAuth: true,
+      backend: 'v2',
+    });
+    const state = createState();
+    const ws = useWorkspaceState(state, createDeps());
+
+    await ws.refreshServerMeta();
+
+    expect(state.serverVersion).toBe('9.9.9');
+    expect(state.availableOpenInApps).toEqual(['finder']);
+    expect(state.dangerousBypassAuth).toBe(true);
+    expect(state.backend).toBe('v2');
+  });
+
+  it('keeps the previous meta when /meta fails', async () => {
+    apiMock.getMeta.mockRejectedValue(new Error('connection refused'));
+    const state = createState();
+    state.backend = 'v2';
+    const ws = useWorkspaceState(state, createDeps());
+
+    await ws.refreshServerMeta();
+
+    expect(state.backend).toBe('v2');
+    expect(state.serverVersion).toBe('');
+  });
+});
+
 // Regression coverage for wake/reconnect snapshot recovery.
 describe('useWorkspaceState — snapshot prompt recovery', () => {
   function promptDeps(overrides: Partial<UseWorkspaceStateDeps> = {}): UseWorkspaceStateDeps {
@@ -1175,5 +1217,56 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     await pendingSubmit;
     expect(ws.localTurnStartState('sess_1').pending).toBe(false);
     expect(retrySnapshot).toHaveBeenCalledOnce();
+  });
+});
+
+// Regression: a search-triggered full session-list reload must not clobber the
+// live usage (context ring) with the list endpoint's all-zero placeholder.
+describe('useWorkspaceState — loadAllSessions usage preservation', () => {
+  beforeEach(() => {
+    apiMock.listSessions.mockReset();
+  });
+
+  function liveUsage() {
+    return {
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      totalCostUsd: 0,
+      contextTokens: 28772,
+      contextLimit: 1048576,
+      turnCount: 3,
+    };
+  }
+
+  it('keeps the cached live usage when the reloaded row carries the placeholder', async () => {
+    const state = createState();
+    state.sessions = [{ ...createSession(), usage: liveUsage() }];
+    apiMock.listSessions.mockResolvedValue({
+      items: [{ ...createSession(), title: 'Fresh from server' }],
+      hasMore: false,
+    });
+    const setSessions = vi.fn();
+    const ws = useWorkspaceState(state, { ...createDeps(), setSessions });
+
+    await ws.loadAllSessions();
+
+    expect(setSessions).toHaveBeenCalledOnce();
+    const next = setSessions.mock.calls[0][0];
+    expect(next[0].title).toBe('Fresh from server');
+    expect(next[0].usage).toEqual(liveUsage());
+  });
+
+  it('takes the server row as-is when there is no live usage to preserve', async () => {
+    const state = createState();
+    apiMock.listSessions.mockResolvedValue({ items: [createSession()], hasMore: false });
+    const setSessions = vi.fn();
+    const ws = useWorkspaceState(state, { ...createDeps(), setSessions });
+
+    await ws.loadAllSessions();
+
+    const next = setSessions.mock.calls[0][0];
+    expect(next[0].usage.contextTokens).toBe(0);
   });
 });

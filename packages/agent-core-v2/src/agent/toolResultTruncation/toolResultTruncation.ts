@@ -9,7 +9,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { ExecutableToolResult } from '#/agent/tool/toolContract';
+import type { ExecutableToolResult } from '#/tool/toolContract';
 
 export interface ToolResultTruncationInput<
   T extends ExecutableToolResult = ExecutableToolResult,

@@ -7,7 +7,7 @@ import { IAgentLLMRequesterService, type LLMStreamTiming } from '#/agent/llmRequ
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
-import type { ExecutableTool } from '#/agent/tool/toolContract';
+import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IEventBus } from '#/app/event/eventBus';

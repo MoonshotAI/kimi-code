@@ -11,7 +11,7 @@ import type { ContentPart } from '#/app/llmProtocol/message';
 import type { IEventService } from '#/app/event/event';
 import type { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
-import { extractImageCompressionCaptions } from '#/_base/tools/support/image-compress';
+import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 
 import type {
   ActivatePluginCommandPayload,

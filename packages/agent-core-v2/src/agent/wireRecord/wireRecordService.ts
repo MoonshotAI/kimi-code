@@ -1,16 +1,12 @@
 import { relative } from 'pathe';
 
 import { InstantiationType } from '#/_base/di/extensions';
+import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { Disposable, toDisposable } from "#/_base/di/lifecycle";
-import { Emitter, type Event } from '#/_base/event';
-import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
-import { OrderedHookSlot } from '#/hooks';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
-import type { WireRecord, WireRecordMap } from './wireRecord';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
   applyWireMigrations,
@@ -22,49 +18,27 @@ import {
 import {
   IAgentWireRecordService,
   type PersistedWireRecord,
-  type WireRecordBlobSelector,
   type WireRecordMetadata,
-  type WireRecordRegisterOptions,
-  type WireRecordRestoredContext,
   type WireRecordRestoreOptions,
   type WireRecordRestoreResult,
-  type WireRecordServiceOptions,
 } from './wireRecord';
-
-type Resumer<T extends keyof WireRecordMap> = (data: WireRecord<T>) => void | Promise<void>;
-type BlobSelector<T extends keyof WireRecordMap> = WireRecordBlobSelector<WireRecord<T>>;
 
 export class AgentWireRecordService extends Disposable implements IAgentWireRecordService {
   declare readonly _serviceBrand: undefined;
-  private readonly records: WireRecord[] = [];
-  private readonly resumers = new Map<keyof WireRecordMap, Set<Resumer<keyof WireRecordMap>>>();
-  private readonly blobSelectors = new Map<
-    keyof WireRecordMap,
-    BlobSelector<keyof WireRecordMap>[]
-  >();
+  private readonly records: PersistedWireRecord[] = [];
   private readonly wireScope: string;
-  private _restoring: { time?: number } | null = null;
-  private _postRestoring = false;
-  readonly hooks = {
-    onDidRestoreRecord: new OrderedHookSlot<WireRecordRestoredContext>(),
-  };
-  private readonly _onDidFinishResume = this._register(new Emitter<void>());
-  readonly onDidFinishResume: Event<void> = this._onDidFinishResume.event;
 
   constructor(
-    private readonly options: WireRecordServiceOptions = {},
-    @IBootstrapService bootstrap: IBootstrapService,
-    @IAgentBlobService private readonly blobStore?: IAgentBlobService,
+    @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAppendLogStore private readonly log?: IAppendLogStore,
     @IAgentWireService private readonly wire?: IWireService,
   ) {
     super();
-    // Each agent scope seeds its own `homedir` (`<homeDir>/sessions/<ws>/<sid>/
-    // agents/<aid>`); the wire log is the fixed `wire.jsonl` beneath it. The
-    // `IAppendLogStore` is App-scoped (shared, rooted at `homeDir`), so the
-    // store `scope` is the homedir made relative to `homeDir` — keeping every
-    // agent's records in its own file instead of one shared log.
-    this.wireScope = relative(bootstrap.homeDir, options.homedir ?? bootstrap.homeDir);
+    // The agent scope carries its persistence scope (`sessions/<ws>/<sid>/
+    // agents/<aid>`); the wire log is the fixed `wire.jsonl` beneath it —
+    // the same scope `WireService` appends to, so `restore()` reads back
+    // what live dispatch wrote.
+    this.wireScope = scopeContext.scope();
     if (this.log !== undefined) {
       this._register(this.log.acquire(this.wireScope, WIRE_RECORD_FILENAME));
     }
@@ -79,46 +53,15 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
       this._register(
         wire.onEmission((emission) => {
           if (emission.type === 'record' && emission.record.type !== 'metadata') {
-            this.records.push(emission.record as WireRecord);
+            this.records.push(emission.record as PersistedWireRecord);
           }
         }),
       );
     }
   }
 
-  get restoring() {
-    return this._restoring;
-  }
-
-  get postRestoring() {
-    return this._postRestoring;
-  }
-
   getRecords(): readonly PersistedWireRecord[] {
     return [...this.records];
-  }
-
-  register<T extends keyof WireRecordMap>(
-    type: T,
-    resumer: (data: WireRecord<T>) => void | Promise<void>,
-    options?: WireRecordRegisterOptions<T>,
-  ) {
-    const typed = resumer as unknown as Resumer<keyof WireRecordMap>;
-    let set = this.resumers.get(type);
-    if (set === undefined) {
-      set = new Set();
-      this.resumers.set(type, set);
-    }
-    set.add(typed);
-    const blobSelector = options?.blobs as BlobSelector<keyof WireRecordMap> | undefined;
-    const blobSet = this.registerBlobSelector(type, blobSelector);
-    return toDisposable(() => {
-      set?.delete(typed);
-      if (blobSelector !== undefined) {
-        const index = blobSet?.indexOf(blobSelector) ?? -1;
-        if (index !== -1) blobSet?.splice(index, 1);
-      }
-    });
   }
 
   async restore(
@@ -132,7 +75,6 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
         ? this.log.read<PersistedWireRecord>(this.wireScope, WIRE_RECORD_FILENAME)
         : undefined);
     if (source === undefined) {
-      this.fireResumeEnded();
       return {};
     }
 
@@ -144,11 +86,10 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
       fromPersistence && this.log !== undefined;
     let migrations: readonly WireMigration[] = [];
     let shouldRewrite = false;
-    let completed = true;
     let warning: string | undefined;
     const sourceRecords: PersistedWireRecord[] = [];
 
-    for await (const record of toAsyncIterable(source)) {
+    for await (const record of source) {
       sourceRecords.push(record);
     }
 
@@ -184,31 +125,19 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
       }
       restoredRecords?.push(migratedRecord);
       if (migratedRecord.type === 'metadata') continue;
-
-      if (await this.restoreRecord(await this.rehydrateRecord(migratedRecord as WireRecord))) {
-        completed = false;
-        break;
-      }
+      this.records.push(migratedRecord);
     }
 
-    if (
-      completed &&
-      shouldRewrite &&
-      restoredRecords !== undefined &&
-      this.log !== undefined
-    ) {
+    if (shouldRewrite && restoredRecords !== undefined && this.log !== undefined) {
       void this.log.rewrite(this.wireScope, WIRE_RECORD_FILENAME, restoredRecords);
       await this.log.flush();
-    }
-    if (completed) {
-      this.fireResumeEnded();
     }
     return warning === undefined ? {} : { warning };
   }
 
   async flush(): Promise<void> {
-    // Drain the wire service's async persist pipeline first: with a blob
-    // service registered, appends are queued on a microtask chain and only
+    // Drain the wire service's async persist pipeline first: with a model blob
+    // codec, appends are queued on a microtask chain and only
     // reach the log store once that queue settles. Flushing the log alone
     // would miss records still in flight.
     await this.wire?.flush();
@@ -217,84 +146,6 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
 
   async close(): Promise<void> {
     await this.log?.close();
-  }
-
-  private async restoreRecord(record: WireRecord): Promise<boolean> {
-    this.records.push(record);
-    this._restoring = { time: record.time ?? Date.now() };
-    try {
-      const resumers = this.resumers.get(record.type);
-      if (resumers !== undefined) {
-        const currentResumers = Array.from(resumers);
-        for (const resumer of currentResumers) {
-          await resumer(record);
-        }
-      }
-      const context: WireRecordRestoredContext = { record, stop: false };
-      await this.hooks.onDidRestoreRecord.run(context);
-      return context.stop;
-    } finally {
-      this._restoring = null;
-    }
-  }
-
-  private fireResumeEnded(): void {
-    this._postRestoring = true;
-    try {
-      this._onDidFinishResume.fire();
-    } finally {
-      this._postRestoring = false;
-    }
-  }
-
-  private registerBlobSelector<T extends keyof WireRecordMap>(
-    type: T,
-    selector: BlobSelector<keyof WireRecordMap> | undefined,
-  ): BlobSelector<keyof WireRecordMap>[] | undefined {
-    if (selector === undefined) return undefined;
-
-    let selectors = this.blobSelectors.get(type);
-    if (selectors === undefined) {
-      selectors = [];
-      this.blobSelectors.set(type, selectors);
-    }
-    selectors.push(selector);
-    return selectors;
-  }
-
-  private async rehydrateRecord<T extends keyof WireRecordMap>(
-    record: WireRecord<T>,
-  ): Promise<WireRecord<T>> {
-    return this.applyBlobSelectors(record);
-  }
-
-  private async applyBlobSelectors<T extends keyof WireRecordMap>(
-    record: WireRecord<T>,
-  ): Promise<WireRecord<T>> {
-    const blobStore = this.blobStore;
-    if (blobStore === undefined) return record;
-
-    const selectors = this.blobSelectors.get(record.type);
-    if (selectors === undefined) return record;
-
-    let current = record;
-    for (const selector of [...selectors] as BlobSelector<T>[]) {
-      for (const target of selector(current)) {
-        const parts = await blobStore.loadParts(target.parts);
-        if (parts !== target.parts) {
-          current = target.replace(current, parts);
-        }
-      }
-    }
-    return current;
-  }
-}
-
-async function* toAsyncIterable<T>(
-  source: Iterable<T> | AsyncIterable<T>,
-): AsyncIterable<T> {
-  for await (const item of source) {
-    yield item;
   }
 }
 

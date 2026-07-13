@@ -692,9 +692,9 @@ describe('ReadMediaFileTool', () => {
 
   it('downsamples an oversized image but reports original dimensions', async () => {
     const big = Buffer.from(
-      await new Jimp({ width: 3600, height: 3600, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 2200, height: 2200, color: 0x3366ccff }).getBuffer('image/png'),
     );
-    expect(sniffImageDimensions(big)).toEqual({ width: 3600, height: 3600 });
+    expect(sniffImageDimensions(big)).toEqual({ width: 2200, height: 2200 });
 
     const tool = makeReadMediaTool({
       stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: big.length }),
@@ -719,18 +719,18 @@ describe('ReadMediaFileTool', () => {
 
     // The <system> note keeps the ORIGINAL size so coordinate mapping holds.
     const systemText = noteText(result);
-    expect(systemText).toContain('3600x3600');
+    expect(systemText).toContain('2200x2200');
     expect(systemText).toContain(`${String(big.length)} bytes`);
   });
 
   it('reports an EXIF-rotated original in the decoded coordinate space', async () => {
-    // Orientation 6 (rotate 90° CW): the header says 3600x1800, but jimp
-    // decodes to 1800x3600 — the space the sent image and any region
+    // Orientation 6 (rotate 90° CW): the header says 2200x1100, but jimp
+    // decodes to 1100x2200 — the space the sent image and any region
     // readback live in. The note's original size must match that space,
     // not the pre-rotation header sniff.
     const portrait = withExifOrientation(
       new Uint8Array(
-        await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/jpeg', {
+        await new Jimp({ width: 2200, height: 1100, color: 0x3366ccff }).getBuffer('image/jpeg', {
           quality: 90,
         }),
       ),
@@ -749,7 +749,7 @@ describe('ReadMediaFileTool', () => {
     });
 
     const systemText = noteText(result);
-    expect(systemText).toContain('Original dimensions: 1800x3600');
+    expect(systemText).toContain('Original dimensions: 1100x2200');
     expect(systemText).toMatch(/downsampled to 1000x2000/);
   });
 
@@ -814,7 +814,7 @@ describe('ReadMediaFileTool', () => {
       track: (event, props) => events.push({ event, props: props ?? {} }),
     };
     const big = Buffer.from(
-      await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
+      await new Jimp({ width: 2200, height: 1100, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const tool = makeReadMediaTool({
       stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: big.length }),
@@ -885,7 +885,7 @@ describe('ReadMediaFileTool', () => {
     });
 
     it('announces a downsampled delivery and the region readback in the <system> block', async () => {
-      const big = await bigPng(3600, 3600);
+      const big = await bigPng(2200, 2200);
       const result = await executeTool(toolFor(big), {
         turnId: 't1',
         toolCallId: 'c_note',
@@ -894,7 +894,7 @@ describe('ReadMediaFileTool', () => {
       });
 
       const systemText = noteText(result);
-      expect(systemText).toContain('3600x3600');
+      expect(systemText).toContain('2200x2200');
       // Wording must not depend on serialization order: some providers keep
       // the note inline after the media, others flatten tool text and
       // re-attach the image after it — so no "above"/"below".
@@ -923,7 +923,10 @@ describe('ReadMediaFileTool', () => {
     });
 
     it('reads a region crop at native resolution', async () => {
-      const big = await bigPng(2600, 2600);
+      // Over the 2000px edge cap on purpose: region reads must crop from the
+      // original coordinate space, which a sub-cap fixture cannot distinguish
+      // from cropping the downsampled delivery.
+      const big = await bigPng(2100, 2100);
       const result = await executeTool(toolFor(big), {
         turnId: 't1',
         toolCallId: 'c_crop',
@@ -938,14 +941,16 @@ describe('ReadMediaFileTool', () => {
       expect(sentDims).toEqual({ width: 400, height: 300 });
 
       const systemText = noteText(result);
-      expect(systemText).toContain('2600x2600');
+      expect(systemText).toContain('2100x2100');
       expect(systemText).toMatch(/region \(x=100, y=50, width=400, height=300\)/);
       expect(systemText).toMatch(/native resolution/);
       expect(systemText).toContain('offset');
     });
 
     it('rejects a region outside the image with the original size in the error', async () => {
-      const big = await bigPng(2600, 2600);
+      // Over the edge cap so "original size" is distinguishable from any
+      // downsampled delivery size.
+      const big = await bigPng(2100, 2100);
       const result = await executeTool(toolFor(big), {
         turnId: 't1',
         toolCallId: 'c_crop_oob',
@@ -953,11 +958,11 @@ describe('ReadMediaFileTool', () => {
         signal,
       });
       expect(result.isError).toBe(true);
-      expect(result.output).toContain('2600x2600');
+      expect(result.output).toContain('2100x2100');
     });
 
     it('serves full_resolution when the bytes fit the per-image budget', async () => {
-      const big = await bigPng(3900, 1950); // over the edge cap, tiny in bytes
+      const big = await bigPng(2100, 1050); // over the edge cap, tiny in bytes
       const result = await executeTool(toolFor(big), {
         turnId: 't1',
         toolCallId: 'c_fullres',
@@ -1187,7 +1192,7 @@ describe('ReadMediaFileTool', () => {
       async () => {
         const budget = 64 * 1024;
         const limits = new ImageLimits(process.env, { readByteBudget: budget });
-        const data = await noisePng(1200, 1200);
+        const data = await noisePng(400, 400);
         expect(data.length).toBeGreaterThan(budget);
 
         const result = await executeTool(toolFor(data, limits), {
@@ -1206,7 +1211,7 @@ describe('ReadMediaFileTool', () => {
 
     it('full_resolution ignores the read budget (per-image provider limit applies)', async () => {
       const limits = new ImageLimits(process.env, { readByteBudget: 64 * 1024 });
-      const data = await noisePng(600, 600);
+      const data = await noisePng(300, 300);
       expect(data.length).toBeGreaterThan(64 * 1024);
 
       const result = await executeTool(toolFor(data, limits), {
@@ -1226,7 +1231,7 @@ describe('ReadMediaFileTool', () => {
       'region reads ignore the read budget so detail readback stays full-fidelity',
       async () => {
         const limits = new ImageLimits(process.env, { readByteBudget: 16 * 1024 });
-        const data = await noisePng(800, 800);
+        const data = await noisePng(500, 500);
 
         const result = await executeTool(toolFor(data, limits), {
           turnId: 't1',
@@ -1246,7 +1251,7 @@ describe('ReadMediaFileTool', () => {
     it(
       'two tools honor their own limits independently (no shared process state)',
       async () => {
-        const data = await noisePng(1200, 1200);
+        const data = await noisePng(512, 512);
         const tight = toolFor(data, new ImageLimits(process.env, { readByteBudget: 48 * 1024 }));
         const roomy = toolFor(data, new ImageLimits(process.env, { maxEdgePx: 1200 }));
 

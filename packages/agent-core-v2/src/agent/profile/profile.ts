@@ -6,7 +6,7 @@ import type { Model } from '#/app/model/modelInstance';
 import { createDecorator } from "#/_base/di/instantiation";
 import type { ErrorCode } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
-import type { ToolSource } from '#/agent/tool/toolContract';
+import type { ToolSource } from '#/tool/toolContract';
 
 import { ProfileErrors } from './errors';
 

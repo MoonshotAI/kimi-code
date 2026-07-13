@@ -281,7 +281,9 @@ describe('Session lifecycle hooks', () => {
       homedir: sessionDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
-      background: { keepAliveOnExit: true, printWaitCeilingS: 1 },
+      // Sub-second ceiling: the deadline path is identical, but the test no
+      // longer waits a real second for the drain loop to time out.
+      background: { keepAliveOnExit: true, printWaitCeilingS: 0.05 },
     });
     const agent = await session.createMain();
     const { proc } = pendingProcess();

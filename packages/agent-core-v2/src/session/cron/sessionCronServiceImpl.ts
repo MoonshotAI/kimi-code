@@ -6,8 +6,8 @@
  * (tick / coalesce / jitter / cursor), persists mutations through the
  * App-scoped `ICronTaskPersistence`, mirrors mutations as `cron.add` /
  * `cron.delete` / `cron.cursor` Ops on the main agent's `wire` (cross-scope
- * borrow) so `wire.replay` can rebuild the `CronModel`, fires `cron.fired`
- * through the main agent's `wire` signal channel, steers the main agent
+ * borrow) so `wire.replay` can rebuild the `CronModel`, publishes `cron.fired`
+ * to the main agent's `IEventBus`, steers the main agent
  * through `IAgentPromptService` when a task fires, and registers the cron
  * tools (`CronCreate` / `CronList` / `CronDelete`) into the main agent's
  * `IAgentToolRegistryService` once `IAgentLifecycleService` signals
@@ -55,21 +55,6 @@ export const CRON_SCHEDULED = 'cron_scheduled' as const;
 export const CRON_FIRED = 'cron_fired' as const;
 export const CRON_MISSED = 'cron_missed' as const;
 export const CRON_DELETED = 'cron_deleted' as const;
-
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'cron.add': {
-      task: CronTask;
-    };
-    'cron.delete': {
-      ids: readonly string[];
-    };
-    'cron.cursor': {
-      id: string;
-      lastFiredAt: number;
-    };
-  }
-}
 
 const STALE_THRESHOLD_MS = 7 * 24 * 60 * 60 * 1000;
 const DEFAULT_POLL_INTERVAL_MS = 1_000;

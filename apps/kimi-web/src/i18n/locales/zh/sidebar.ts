@@ -29,6 +29,7 @@ export default {
   signIn: '登录',
   language: '语言',
   daemon: '后台',
+  backendTitle: '后端 {backend} · {endpoint} — 点击切换',
   noSessions: '暂无对话',
   showMore: '加载更多 {count} 个对话',
   showLess: '收起',

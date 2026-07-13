@@ -13,7 +13,7 @@ import type {
 import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PlanData } from '#/agent/plan/plan';
 import type { SwarmModeTrigger } from '#/agent/swarm/swarm';
-import type { ToolInfo } from '#/agent/tool/toolContract';
+import type { ToolInfo } from '#/tool/toolContract';
 import type { ResolvedConfig } from '#/app/config/config';
 import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import type { ExperimentalFeatureState } from '#/app/flag/flag';

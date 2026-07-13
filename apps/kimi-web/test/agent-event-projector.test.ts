@@ -1,3 +1,8 @@
+/**
+ * Web daemon projector contract for transcript isolation, task progress, and
+ * client-visible error projection.
+ */
+
 import { describe, expect, it } from 'vitest';
 import { classifyFrame, createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
 
@@ -58,6 +63,41 @@ describe('subagent streaming text', () => {
     const projector = createAgentProjector();
     const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: '' }, 's1');
     expect(events).toEqual([]);
+  });
+});
+
+describe('agent error projection', () => {
+  it('drops a subagent error instead of surfacing it as a session warning', () => {
+    const projector = createAgentProjector();
+
+    expect(
+      projector.project(
+        'error',
+        { agentId: 'sub-1', code: 'provider.rate_limit', message: 'Rate limited' },
+        's1',
+      ),
+    ).toEqual([]);
+  });
+
+  it('keeps a main-agent error visible to the session', () => {
+    const projector = createAgentProjector();
+
+    expect(
+      projector.project(
+        'error',
+        { agentId: 'main', code: 'provider.rate_limit', message: 'Rate limited' },
+        's1',
+      ),
+    ).toEqual([
+      {
+        type: 'unknown',
+        raw: {
+          _agentError: true,
+          code: 'provider.rate_limit',
+          message: 'Rate limited',
+        },
+      },
+    ]);
   });
 });
 
@@ -175,6 +215,83 @@ describe('session status single-sourcing', () => {
       expect.objectContaining({
         type: 'messageCreated',
         message: expect.objectContaining({ role: 'assistant' }),
+      }),
+    );
+  });
+});
+
+describe('step-boundary delta alignment', () => {
+  it('resets stream offsets at step boundaries — a post-step delta ahead of local state signals a gap', () => {
+    const projector = createAgentProjector();
+    projector.project('turn.started', { turnId: 1 }, 's1');
+    projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
+    projector.project('assistant.delta', { turnId: 1, delta: 'step-one text' }, 's1', { offset: 0 });
+    projector.project('turn.step.completed', { turnId: 1, step: 1 }, 's1');
+    projector.project('turn.step.started', { turnId: 1, step: 2 }, 's1');
+
+    const events = projector.project('assistant.delta', { turnId: 1, delta: 'tail' }, 's1', { offset: 12 });
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'historyCompacted', reason: 'delta_gap' }),
+    );
+  });
+
+  it('appends step-2 deltas to the fresh step message at step-relative offsets', () => {
+    const projector = createAgentProjector();
+    projector.project('turn.started', { turnId: 1 }, 's1');
+    projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
+    projector.project('assistant.delta', { turnId: 1, delta: 'step one' }, 's1', { offset: 0 });
+    projector.project('turn.step.completed', { turnId: 1, step: 1 }, 's1');
+
+    const step2 = projector.project('turn.step.started', { turnId: 1, step: 2 }, 's1');
+    const created = step2.find((e) => e.type === 'messageCreated');
+    const msgId = (created as { message: { id: string } } | undefined)?.message.id;
+    expect(msgId).toBeDefined();
+
+    // Offset restarts at 0 for the new step and appends to ITS message.
+    const events = projector.project('assistant.delta', { turnId: 1, delta: 'step two' }, 's1', { offset: 0 });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'assistantDelta',
+        messageId: msgId,
+        delta: { text: 'step two' },
+      }),
+    );
+  });
+
+  it('seeds only the current step and aligns live deltas against the seeded length', () => {
+    const projector = createAgentProjector();
+    const seeded = projector.seedInFlight('s1', {
+      turnId: 7,
+      promptId: 'pr_1',
+      thinkingText: 'step two thinking',
+      assistantText: 'step two partial',
+      runningTools: [{ toolCallId: 'tc_1', name: 'bash', args: { command: 'ls' } }],
+    });
+    const created = seeded.find((e) => e.type === 'messageCreated');
+    const message = (created as { message: { id: string; content: unknown[] } } | undefined)?.message;
+    expect(message).toBeDefined();
+
+    expect(message!.content).toEqual([
+      { type: 'thinking', thinking: 'step two thinking' },
+      { type: 'text', text: 'step two partial' },
+      { type: 'toolUse', toolCallId: 'tc_1', toolName: 'bash', input: { command: 'ls' } },
+    ]);
+
+    const dup = projector.project('assistant.delta', { turnId: 7, delta: 'two part' }, 's1', { offset: 5 });
+    expect(dup).toEqual([]);
+
+    const cont = projector.project(
+      'assistant.delta',
+      { turnId: 7, delta: ' continues' },
+      's1',
+      { offset: 'step two partial'.length },
+    );
+    expect(cont).toContainEqual(
+      expect.objectContaining({
+        type: 'assistantDelta',
+        messageId: message!.id,
+        contentIndex: 3,
+        delta: { text: ' continues' },
       }),
     );
   });

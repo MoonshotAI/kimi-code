@@ -3,7 +3,7 @@
  *
  * AC coverage (ROADMAP §Chain 14):
  *   1. subscribe `/src` → create file → receive `event.fs.changed`
- *   2. burst > 500 changes / 200ms → truncated event
+ *   2. burst beyond the per-window change cap → truncated event
  *   3. two clients, two paths → no cross-delivery
  *   4. > 100 paths per connection → `42902 fs.watch_limit_exceeded`
  *
@@ -42,6 +42,7 @@ import {
   IRestGateway,
   startServer,
   type RunningServer,
+  type ServerStartOptions,
 } from '../src';
 import { fixedTokenAuth } from './helpers/serverHarness';
 import { rawDataToString } from '../src/ws/rawData';
@@ -73,7 +74,9 @@ afterEach(async () => {
   rmSync(bridgeHome, { recursive: true, force: true });
 });
 
-async function bootDaemon(): Promise<RunningServer> {
+async function bootDaemon(
+  fsWatcherOptions?: ServerStartOptions['fsWatcherOptions'],
+): Promise<RunningServer> {
   server = await startServer({
     serviceOverrides: [fixedTokenAuth()],
     host: '127.0.0.1',
@@ -82,6 +85,7 @@ async function bootDaemon(): Promise<RunningServer> {
     logger: pino({ level: 'silent' }),
     coreProcessOptions: { homeDir: bridgeHome },
     wsGatewayOptions: { pingIntervalMs: 5_000, pongTimeoutMs: 5_000 },
+    fsWatcherOptions,
   });
   return server;
 }
@@ -229,6 +233,17 @@ const sleep = (ms: number): Promise<void> =>
 /** Time we give chokidar to register newly-watched paths before we mutate. */
 const WATCH_SETTLE_MS = 150;
 
+/**
+ * AC #2 aggregation settings: a lower per-window cap makes overflow
+ * deterministic even when full-suite CPU load spreads chokidar delivery
+ * across windows. With 600 burst events and a 500ms window, some window
+ * exceeds 100 events as long as delivery completes within ~2.5s of the first
+ * event (pigeonhole); on a normal machine the burst still lands in a single
+ * window that flushes ~500ms after the first event, so the test stays fast.
+ */
+const BURST_WINDOW_MS = 500;
+const BURST_MAX_CHANGES_PER_WINDOW = 100;
+
 describe('WS fs watch (W12 / Chain 14)', () => {
   it('AC #1: subscribe /src → create file → receive event.fs.changed', async () => {
     const r = await bootDaemon();
@@ -270,10 +285,13 @@ describe('WS fs watch (W12 / Chain 14)', () => {
   });
 
   // Windows ReadDirectoryChangesW coalesces/spreads the burst, so no single
-  // 200ms window reliably crosses the 500-event overflow threshold. The
-  // truncation logic itself is covered by this same test on POSIX.
-  it.skipIf(process.platform === 'win32')('AC #2: burst > 500 changes inside 200ms window → truncated:true', { timeout: 5000 }, async () => {
-    const r = await bootDaemon();
+  // aggregation window reliably crosses the per-window overflow threshold.
+  // The truncation logic itself is covered by this same test on POSIX.
+  it.skipIf(process.platform === 'win32')('AC #2: burst beyond per-window capacity → truncated:true', { timeout: 15000 }, async () => {
+    const r = await bootDaemon({
+      debounceMs: BURST_WINDOW_MS,
+      maxChangesPerWindow: BURST_MAX_CHANGES_PER_WINDOW,
+    });
     const sid = await createSession(r);
     const conn = await openConn(wsUrl(r.address));
     await helloAndSubscribe(conn, 'A', sid);
@@ -290,8 +308,8 @@ describe('WS fs watch (W12 / Chain 14)', () => {
 
     await sleep(WATCH_SETTLE_MS);
 
-    // Slam 600 files into a fresh dir; chokidar emits >500 add events well
-    // inside one 200ms window.
+    // Slam 600 files into a fresh dir; the burst far exceeds the injected
+    // per-window capacity.
     const burstDir = join(workspace, 'burst');
     mkdirSync(burstDir, { recursive: true });
     for (let i = 0; i < 600; i++) {
@@ -299,7 +317,7 @@ describe('WS fs watch (W12 / Chain 14)', () => {
     }
 
     // Drain frames until we see truncated:true OR run out of time.
-    const deadline = Date.now() + (process.platform === 'win32' ? 8000 : 4000);
+    const deadline = Date.now() + 4000;
     let sawTruncated = false;
     while (Date.now() < deadline) {
       const remaining = deadline - Date.now();
@@ -312,7 +330,7 @@ describe('WS fs watch (W12 / Chain 14)', () => {
       if (frame.type !== 'event.fs.changed') continue;
       const payload = frame.payload as { truncated?: boolean; count?: number };
       if (payload.truncated === true) {
-        expect(payload.count).toBeGreaterThan(500);
+        expect(payload.count).toBeGreaterThan(BURST_MAX_CHANGES_PER_WINDOW);
         sawTruncated = true;
         break;
       }

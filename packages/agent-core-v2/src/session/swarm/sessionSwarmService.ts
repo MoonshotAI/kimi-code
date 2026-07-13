@@ -189,14 +189,16 @@ export class SessionSwarmService implements ISessionSwarmService {
     this.realignChildModel(caller, child);
     const profileName =
       child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
-    emitAgentRunSpawned(caller, agentId, {
-      profileName,
-      parentToolCallId: options.parentToolCallId,
-      parentToolCallUuid: options.parentToolCallUuid,
-      description: options.description,
-      swarmIndex: options.swarmIndex,
-      runInBackground: options.runInBackground,
-    });
+    if (!retryTurn) {
+      emitAgentRunSpawned(caller, agentId, {
+        profileName,
+        parentToolCallId: options.parentToolCallId,
+        parentToolCallUuid: options.parentToolCallUuid,
+        description: options.description,
+        swarmIndex: options.swarmIndex,
+        runInBackground: options.runInBackground,
+      });
+    }
     const request = retryTurn
       ? ({ kind: 'retry' } as const)
       : ({ kind: 'prompt', prompt: options.prompt } as const);

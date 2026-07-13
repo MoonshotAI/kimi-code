@@ -42,7 +42,7 @@ import type { LoopControl } from '#/agent/loop/configSection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { isMcpToolName } from '#/agent/tool/toolName';
+import { isMcpToolName, type ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
@@ -50,8 +50,8 @@ import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/
 import type { WarningEvent } from '@moonshot-ai/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import type { ToolSource } from '#/agent/tool/toolContract';
 import { IAgentWireService } from '#/wire/tokens';
+import type { PayloadOf } from '#/wire/types';
 import type { IWireService } from '#/wire/wireService';
 import { IEventBus } from '#/app/event/eventBus';
 import { prepareSystemPromptContext } from './context';
@@ -75,17 +75,8 @@ import {
   ProfileModel,
   setActiveTools,
   type ActiveToolsState,
-  type ConfigUpdatePayload,
   type ProfileModelState,
 } from './profileOps';
-
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'tools.set_active_tools': {
-      names: readonly string[];
-    };
-  }
-}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -396,8 +387,10 @@ export class AgentProfileService implements IAgentProfileService {
 
   private resolveConfigPayload(
     changed: Omit<ProfileUpdateData, 'activeToolNames'>,
-  ): ConfigUpdatePayload {
-    const payload: { -readonly [K in keyof ConfigUpdatePayload]: ConfigUpdatePayload[K] } = {};
+  ): PayloadOf<typeof configUpdate> {
+    const payload: {
+      -readonly [K in keyof PayloadOf<typeof configUpdate>]: PayloadOf<typeof configUpdate>[K];
+    } = {};
     if (changed.cwd !== undefined) payload.cwd = changed.cwd;
     if (changed.modelAlias !== undefined) payload.modelAlias = changed.modelAlias;
     if (changed.profileName !== undefined) payload.profileName = changed.profileName;

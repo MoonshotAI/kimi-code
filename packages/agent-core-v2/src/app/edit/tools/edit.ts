@@ -20,15 +20,18 @@
 
 import { z } from 'zod';
 
-import { resolvePathAccessPath } from '#/_base/tools/policies/path-access';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { literalRulePattern, matchesPathRuleSubject } from '#/_base/tools/support/rule-match';
-import type { WorkspaceConfig } from '#/_base/tools/support/workspace';
+import { resolvePathAccessPath, type WorkspaceConfig } from '#/tool/path-access';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { IFileEditService } from '../fileEdit';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/agent/tool/toolContract';
+import {
+  ToolAccesses,
+  type BuiltinTool,
+  type ExecutableToolResult,
+  type ToolExecution,
+} from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import editDescriptionTemplate from './edit.md?raw';

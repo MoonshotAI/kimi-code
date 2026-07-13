@@ -5,8 +5,9 @@
  * keyed by `${serverName}\n${hash}` entries already present in this log.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 import type { MCPToolDefinition } from './types';
 
 export interface McpToolCollision {
@@ -25,24 +26,32 @@ export const McpDiscoveryModel = defineModel<McpDiscoveryState>('mcp.discovery',
   seen: [],
 }));
 
-export interface McpToolsDiscoveredPayload {
-  readonly serverName: string;
-  readonly hash: string;
-  readonly tools: readonly MCPToolDefinition[];
-  readonly enabledNames: readonly string[];
-  readonly collisions?: readonly McpToolCollision[];
+const mcpToolCollisionSchema = z.object({
+  qualified: z.string(),
+  toolName: z.string(),
+  collidesWith: z.union([
+    z.object({ kind: z.literal('same_server'), toolName: z.string() }),
+    z.object({ kind: z.literal('other_server'), serverName: z.string() }),
+  ]),
+});
+
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'mcp.tools_discovered': typeof mcpToolsDiscovered;
+  }
 }
 
-export const mcpToolsDiscovered = defineOp(McpDiscoveryModel, 'mcp.tools_discovered', {
-  apply: (s, p: McpToolsDiscoveredPayload): McpDiscoveryState => {
+export const mcpToolsDiscovered = McpDiscoveryModel.defineOp('mcp.tools_discovered', {
+  schema: z.object({
+    serverName: z.string(),
+    hash: z.string(),
+    tools: z.custom<readonly MCPToolDefinition[]>(),
+    enabledNames: z.array(z.string()).readonly(),
+    collisions: z.array(mcpToolCollisionSchema).readonly().optional(),
+  }),
+  apply: (s, p) => {
     const key = `${p.serverName}\n${p.hash}`;
     if (s.seen.includes(key)) return s;
     return { seen: [...s.seen, key] };
   },
 });
-
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'mcp.tools_discovered': McpToolsDiscoveredPayload;
-  }
-}

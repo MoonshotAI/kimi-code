@@ -426,6 +426,33 @@ describe('SessionLifecycleService', () => {
     expect(h.kind).toBe(LifecycleScope.Session);
   });
 
+  it('create appends the session to the shared session_index.jsonl', async () => {
+    const appended: unknown[] = [];
+    const svc = build([
+      stubPair(IAppendLogStore, {
+        ...appendLogStoreStub(),
+        append: (scope: string, key: string, record: unknown) => {
+          appended.push({ scope, key, record });
+        },
+      }),
+    ]);
+
+    await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
+
+    const workspaceId = encodeWorkDirKey('/tmp/proj');
+    expect(appended).toEqual([
+      {
+        scope: '',
+        key: 'session_index.jsonl',
+        record: {
+          sessionId: 's1',
+          sessionDir: `/tmp/sessions/${workspaceId}/s1`,
+          workDir: '/tmp/proj',
+        },
+      },
+    ]);
+  });
+
   it('registers the workspace during create so a cold resume can resolve the workdir', async () => {
     const workDir = '/tmp/proj';
     const workspaceRegistry = persistentWorkspaceRegistryStub();

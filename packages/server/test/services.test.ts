@@ -16,6 +16,7 @@ import {
   ISessionClientsService,
   type ISessionClientsService as ISessionClientsServiceT,
 } from '#/services/gateway';
+import { SubagentRosterTracker } from '#/services/gateway/subagentRosterTracker';
 import { WSBroadcastService } from '#/services/gateway/wsBroadcastService';
 import type { WsConnection } from '../src/ws/connection';
 
@@ -453,6 +454,161 @@ describe('WSBroadcastService (WS transport pump)', () => {
     expect(snap.seq).toBe(2);
     broadcast.dispose();
     bus.dispose();
+  });
+
+  it('getSnapshotState exposes the live subagent roster until turn.ended', async () => {
+    const bus = new EventService();
+    const broadcast = new WSBroadcastService(bus, testLogger, new FakeSessionClients(), new FakeConnectionRegistry(), makeEnv());
+    bus.publish({
+      type: 'subagent.spawned',
+      sessionId: 'sid_r',
+      agentId: 'main',
+      subagentId: 'agent_1',
+      subagentName: 'explore',
+      parentToolCallId: 'call_1',
+      description: 'explore the auth flow',
+      swarmIndex: 0,
+      runInBackground: false,
+    } as unknown as Event);
+    bus.publish({
+      type: 'subagent.started',
+      sessionId: 'sid_r',
+      agentId: 'agent_1',
+      subagentId: 'agent_1',
+    } as unknown as Event);
+
+    const mid = await broadcast.getSnapshotState('sid_r');
+    expect(mid.subagents).toHaveLength(1);
+    expect(mid.subagents[0]).toMatchObject({
+      id: 'agent_1',
+      session_id: 'sid_r',
+      kind: 'subagent',
+      description: 'explore the auth flow',
+      status: 'running',
+      subagent_phase: 'working',
+      subagent_type: 'explore',
+      parent_tool_call_id: 'call_1',
+      swarm_index: 0,
+      run_in_background: false,
+    });
+    expect(mid.subagents[0]?.started_at).toBeDefined();
+
+    bus.publish({
+      type: 'subagent.completed',
+      sessionId: 'sid_r',
+      agentId: 'agent_1',
+      subagentId: 'agent_1',
+      resultSummary: 'done',
+    } as unknown as Event);
+    const done = await broadcast.getSnapshotState('sid_r');
+    expect(done.subagents[0]).toMatchObject({
+      subagent_phase: 'completed',
+      status: 'completed',
+      output_preview: 'done',
+    });
+    expect(done.subagents[0]?.completed_at).toBeDefined();
+
+    // turn.ended drops the roster: the swarm result tool output in the wire
+    // transcript becomes the restore source from then on.
+    bus.publish({
+      type: 'turn.ended',
+      sessionId: 'sid_r',
+      agentId: 'main',
+      turnId: 1,
+      reason: 'completed',
+    } as unknown as Event);
+    const after = await broadcast.getSnapshotState('sid_r');
+    expect(after.subagents).toEqual([]);
+    broadcast.dispose();
+    bus.dispose();
+  });
+});
+
+describe('SubagentRosterTracker', () => {
+  const spawned = (overrides: Record<string, unknown> = {}): Event =>
+    ({
+      type: 'subagent.spawned',
+      sessionId: 'sid',
+      agentId: 'main',
+      subagentId: 'agent_1',
+      subagentName: 'explore',
+      parentToolCallId: 'call_1',
+      runInBackground: false,
+      ...overrides,
+    }) as unknown as Event;
+
+  it('ignores lifecycle events for unknown subagent ids', () => {
+    const tracker = new SubagentRosterTracker();
+    tracker.apply('sid', {
+      type: 'subagent.completed',
+      subagentId: 'ghost',
+      resultSummary: 'x',
+    } as unknown as Event);
+    tracker.apply('sid', { type: 'subagent.started', subagentId: 'ghost' } as unknown as Event);
+    tracker.apply('sid', {
+      type: 'subagent.suspended',
+      subagentId: 'ghost',
+      reason: 'approval',
+    } as unknown as Event);
+    expect(tracker.get('sid')).toEqual([]);
+  });
+
+  it('returns fresh copies that do not alias the tracked entries', () => {
+    const tracker = new SubagentRosterTracker();
+    tracker.apply('sid', spawned());
+    const first = tracker.get('sid');
+    first[0]!.status = 'failed';
+    first.push({} as never);
+    const second = tracker.get('sid');
+    expect(second).toHaveLength(1);
+    expect(second[0]?.status).toBe('running');
+  });
+
+  it('tracks suspend and resume, keeping the original started_at', () => {
+    const tracker = new SubagentRosterTracker();
+    tracker.apply('sid', spawned());
+    tracker.apply('sid', { type: 'subagent.started', subagentId: 'agent_1' } as unknown as Event);
+    const startedAt = tracker.get('sid')[0]?.started_at;
+    expect(startedAt).toBeDefined();
+
+    tracker.apply('sid', {
+      type: 'subagent.suspended',
+      subagentId: 'agent_1',
+      reason: 'awaiting approval',
+    } as unknown as Event);
+    expect(tracker.get('sid')[0]).toMatchObject({
+      subagent_phase: 'suspended',
+      suspended_reason: 'awaiting approval',
+    });
+
+    tracker.apply('sid', { type: 'subagent.started', subagentId: 'agent_1' } as unknown as Event);
+    const resumed = tracker.get('sid')[0]!;
+    expect(resumed.subagent_phase).toBe('working');
+    expect(resumed.started_at).toBe(startedAt);
+    expect(resumed.suspended_reason).toBeUndefined();
+  });
+
+  it('records failure with the error as output preview', () => {
+    const tracker = new SubagentRosterTracker();
+    tracker.apply('sid', spawned());
+    tracker.apply('sid', {
+      type: 'subagent.failed',
+      subagentId: 'agent_1',
+      error: 'boom',
+    } as unknown as Event);
+    expect(tracker.get('sid')[0]).toMatchObject({
+      subagent_phase: 'failed',
+      status: 'failed',
+      output_preview: 'boom',
+    });
+  });
+
+  it('clear drops the roster', () => {
+    const tracker = new SubagentRosterTracker();
+    tracker.apply('sid', spawned());
+    expect(tracker.get('sid')).toHaveLength(1);
+    tracker.clear('sid');
+    expect(tracker.get('sid')).toEqual([]);
   });
 });
 

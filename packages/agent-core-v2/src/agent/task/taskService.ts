@@ -45,7 +45,10 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentWireRecordService, type WireRecord } from '#/agent/wireRecord/wireRecord';
+import {
+  IAgentWireRecordService,
+  type PersistedWireRecord,
+} from '#/agent/wireRecord/wireRecord';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
 import {
@@ -159,8 +162,8 @@ const USER_INTERRUPT_REASON = 'Interrupted by user';
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
 const ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT = 'background_task_status';
 const ACTIVE_BACKGROUND_TASK_GUIDANCE = [
-  'The conversation was compacted, so the earlier messages that started these background tasks are gone - but the tasks are still running from before.',
-  'Do not start duplicates. Use TaskOutput to fetch a task result, TaskList to list them, and TaskStop to cancel one.',
+  'The conversation was compacted, so the earlier messages that started these background tasks are gone — but the tasks are still running from before.',
+  'Do not start duplicates. Use TaskOutput to fetch a task’s result, TaskList to list them, and TaskStop to cancel one.',
 ].join(' ');
 
 export function isAgentTaskTerminal(status: AgentTaskStatus): boolean {
@@ -233,7 +236,14 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       atomicDocs,
       byteStore,
     );
-    this._register(this.wire.onRestored(() => this.restoreAfterReplay()));
+    this._register(
+      this.wire.onRestored(async () => {
+        for (const record of wireRecord.getRecords()) {
+          this.markDeliveredNotificationsFromRecord(record);
+        }
+        await this.restoreAfterReplay();
+      }),
+    );
     this._register(
       this.eventBus.subscribe('context.spliced', (e) => {
         if (isCompactionSplice(e)) {
@@ -249,15 +259,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     this._register(
       injector.register(ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT, () =>
         this.activeBackgroundTaskReminder(),
-      ),
-    );
-    this._register(
-      wireRecord.hooks.onDidRestoreRecord.register(
-        'task-delivered-notifications',
-        async (ctx, next) => {
-          this.markDeliveredNotificationsFromRecord(ctx.record);
-          await next();
-        },
       ),
     );
   }
@@ -290,7 +291,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     }
   }
 
-  private markDeliveredNotificationsFromRecord(record: WireRecord): void {
+  private markDeliveredNotificationsFromRecord(record: PersistedWireRecord): void {
     for (const origin of taskOriginsFromRecord(record)) {
       this.markDeliveredNotification(origin);
     }
@@ -1227,7 +1228,7 @@ function notificationKey(origin: TaskNotificationOrigin): string {
   return `${origin.taskId}\0${origin.status}\0${origin.notificationId}`;
 }
 
-function taskOriginsFromRecord(record: WireRecord): readonly TaskNotificationOrigin[] {
+function taskOriginsFromRecord(record: PersistedWireRecord): readonly TaskNotificationOrigin[] {
   const raw = record as {
     readonly type: string;
     readonly message?: unknown;

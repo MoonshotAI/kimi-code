@@ -313,11 +313,11 @@ export {
   resolveMaxImageEdgePx,
   resolveReadImageByteBudget,
   type ImageCompressionTelemetry,
-} from '#/_base/tools/support/image-compress';
+} from '#/agent/media/image-compress';
 export {
   persistOriginalImage,
   sessionMediaOriginalsDir,
-} from '#/_base/tools/support/image-originals';
+} from '#/agent/media/image-originals';
 export * from '#/app/edit/fileEdit';
 export * from '#/app/edit/fileEditService';
 export * from '#/app/edit/editService';
@@ -422,10 +422,8 @@ export * from '#/session/todo/todoListReminder';
 export * from '#/session/todo/sessionTodo';
 export * from '#/session/todo/sessionTodoService';
 export * from '#/session/todo/tools/todo-list';
-export * from '#/agent/tool/toolContract';
-export * from '#/agent/tool/tool-access';
-export * from '#/agent/tool/toolHooks';
-export * from '#/agent/tool/toolName';
+export * from '#/tool/toolContract';
+export * from '#/agent/toolExecutor/toolHooks';
 export * from '#/agent/toolExecutor/toolExecutor';
 export * from '#/agent/toolExecutor/toolExecutorService';
 export * from '#/agent/toolResultTruncation/toolResultTruncation';

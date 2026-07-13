@@ -17,8 +17,9 @@
  * replays.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 import { readTodoItems, type TodoItem } from './todoItem';
 
@@ -26,12 +27,13 @@ export type TodoModelState = readonly TodoItem[];
 
 export const TodoModel = defineModel<TodoModelState>('todo', () => []);
 
-export interface ToolStoreUpdatePayload {
-  readonly key: string;
-  readonly value: unknown;
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'tools.update_store': typeof todoSet;
+  }
 }
 
-export const todoSet = defineOp(TodoModel, 'tools.update_store', {
-  apply: (s, p: ToolStoreUpdatePayload): TodoModelState =>
-    p.key === 'todo' ? readTodoItems(p.value) : s,
+export const todoSet = TodoModel.defineOp('tools.update_store', {
+  schema: z.object({ key: z.string(), value: z.unknown() }),
+  apply: (s, p) => (p.key === 'todo' ? readTodoItems(p.value) : s),
 });
