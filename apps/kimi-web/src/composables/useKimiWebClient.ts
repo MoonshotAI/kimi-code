@@ -657,12 +657,17 @@ async function refreshSessionStatus(sessionId: string): Promise<void> {
  * endpoint keeps any live-event state.
  */
 async function refreshSessionGoal(sessionId: string): Promise<void> {
+  // A live `goal.updated` arriving during the request is newer than whatever
+  // the server read when handling it — never let this recovery write override
+  // such an event (it would resurrect a finished goal until the next reload).
+  const before = rawState.goalBySession[sessionId];
   let goal: AppGoal | null;
   try {
     goal = await getKimiWebApi().getSessionGoal(sessionId);
   } catch {
     return; // goal endpoint missing/unreachable — keep what we have.
   }
+  if (rawState.goalBySession[sessionId] !== before) return; // a live goal event won the race
   // Mirror the reducer's goalUpdated branch: null (or a completed goal) clears
   // the card, anything else replaces it.
   const nextGoals = { ...rawState.goalBySession };
