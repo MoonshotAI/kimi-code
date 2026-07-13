@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
+import { type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
 import { type McpServerConfig } from '#/agent/mcp/config-schema';
@@ -19,6 +20,7 @@ import { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
+import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { SessionMcpService } from '#/session/mcp/sessionMcpService';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
@@ -131,7 +133,7 @@ function stubBlobPassThrough(ix: TestInstantiationService): void {
 describe('AgentLifecycleService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
-  let registerAgent: ReturnType<typeof vi.fn>;
+  let registerAgent: ReturnType<typeof vi.fn<ISessionMetadata['registerAgent']>>;
   let atomicDocs: Map<string, unknown>;
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
 
@@ -145,7 +147,7 @@ describe('AgentLifecycleService', () => {
     ix.stub(IAppendLogStore, recordingAppendLog().store);
     ix.stub(ISessionActivityKernel, stubSessionActivityKernel());
     stubBlobPassThrough(ix);
-    registerAgent = vi.fn(() => Promise.resolve());
+    registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
     atomicDocs = new Map();
     ix.stub(ISessionContext, {
       _serviceBrand: undefined,
@@ -162,7 +164,7 @@ describe('AgentLifecycleService', () => {
       update: () => Promise.resolve(),
       setTitle: () => Promise.resolve(),
       setArchived: () => Promise.resolve(),
-      registerAgent: registerAgent as ISessionMetadata['registerAgent'],
+      registerAgent,
     });
     ix.stub(IBootstrapService, {
       _serviceBrand: undefined,
@@ -415,6 +417,35 @@ describe('AgentLifecycleService', () => {
     resolveConnect?.();
     await create;
     expect(settled).toBe(true);
+  });
+
+  it('ensureMainAgent returns one handle when calls start concurrently', async () => {
+    const session: ISessionScopeHandle = {
+      id: 'sess_test',
+      kind: LifecycleScope.Session,
+      accessor: ix,
+      dispose: () => {},
+    };
+
+    const [first, second] = await Promise.all([
+      ensureMainAgent(session),
+      ensureMainAgent(session),
+    ]);
+
+    expect(first).toBe(second);
+    expect(registerAgent).toHaveBeenCalledTimes(1);
+    expect(ix.get(IAgentLifecycleService).list()).toEqual([first]);
+  });
+
+  it('drops the handle when creation bootstrap fails so the next create starts clean', async () => {
+    registerAgent.mockRejectedValueOnce(new Error('bootstrap boom'));
+    const svc = ix.get(IAgentLifecycleService);
+
+    await expect(svc.create({ agentId: 'main' })).rejects.toThrow('bootstrap boom');
+    expect(svc.get('main')).toBeUndefined();
+
+    const main = await svc.create({ agentId: 'main' });
+    expect(main.id).toBe('main');
   });
 
   it('fork throws when the source agent does not exist', async () => {

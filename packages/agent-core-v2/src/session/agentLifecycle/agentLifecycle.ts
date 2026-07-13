@@ -15,6 +15,9 @@
  * - No agent id is special: the main agent is an ordinary agent whose only
  *   distinction is the conventional `MAIN_AGENT_ID`, and nothing in this
  *   domain branches on it.
+ * - Creation is single-flight per explicit agent id (concurrent creations
+ *   join), an already-created agent is returned as-is, and a failed bootstrap
+ *   drops the incomplete handle.
  * - `forkedFrom` is provenance only (a recorded value); business logic must
  *   not branch on it.
  */

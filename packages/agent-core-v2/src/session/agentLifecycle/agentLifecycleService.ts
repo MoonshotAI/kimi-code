@@ -1,10 +1,11 @@
 /**
  * `agentLifecycle` domain (L6) — `IAgentLifecycleService` implementation.
  *
- * Creates and tracks the session's agents as child scopes in a flat registry.
- * Seeds each agent's identity through `agent` scopeContext, wires per-agent
- * wire records and the wire state machine, the blob store, and MCP, and
- * registers the agent in the session registry. Bound at Session scope.
+ * Creates and tracks the session's agents as child scopes in a flat registry,
+ * serializing same-id bootstrap and dropping incomplete handles after startup
+ * failure. Seeds each agent's identity through `agent` scopeContext, wires
+ * per-agent wire records and the wire state machine, the blob store, and MCP,
+ * and registers the agent in the session registry. Bound at Session scope.
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
@@ -177,26 +178,37 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       { extra: [[IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })]] },
     ) as IAgentScopeHandle;
     this.handles.set(agentId, handle);
-    // Record the agent in the session registry so a closed-session fork can
-    // enumerate every agent and relocate its wire log.
-    await this.sessionMetadata.registerAgent(agentId, {
-      homedir: agentHomedir,
-      type: agentId === 'main' ? 'main' : 'sub',
-      parentAgentId: agentId === 'main' ? undefined : 'main',
-      forkedFrom: opts.forkedFrom,
-      labels: opts.labels,
-    });
-    this.onDidCreateEmitter.fire(handle);
-    this.igniteEagerServices(handle);
-    await mcpReady;
-    await this.ensureWireMetadata(handle, agentScope);
-    await this.bindBootstrap(handle, opts);
-    // Bootstrap (wire metadata, profile binding, and the force-instantiated
-    // observer services) is complete: drive the activity kernel
-    // `initializing → idle` so the agent can admit turns. Until this point
-    // `begin` rejects with `activity.initializing`.
-    handle.accessor.get(IAgentActivityService).markReady();
-    return handle;
+    try {
+      // Record the agent in the session registry so a closed-session fork can
+      // enumerate every agent and relocate its wire log.
+      await this.sessionMetadata.registerAgent(agentId, {
+        homedir: agentHomedir,
+        type: agentId === 'main' ? 'main' : 'sub',
+        parentAgentId: agentId === 'main' ? undefined : 'main',
+        forkedFrom: opts.forkedFrom,
+        labels: opts.labels,
+      });
+      this.onDidCreateEmitter.fire(handle);
+      this.igniteEagerServices(handle);
+      await mcpReady;
+      await this.ensureWireMetadata(handle, agentScope);
+      await this.bindBootstrap(handle, opts);
+      // Bootstrap (wire metadata, profile binding, and the force-instantiated
+      // observer services) is complete: drive the activity kernel
+      // `initializing → idle` so the agent can admit turns. Until this point
+      // `begin` rejects with `activity.initializing`.
+      handle.accessor.get(IAgentActivityService).markReady();
+      return handle;
+    } catch (error) {
+      // Startup failed: drop the half-built agent so the next `create` starts
+      // fresh instead of returning a handle that can never admit turns.
+      if (this.handles.get(agentId) === handle) this.handles.delete(agentId);
+      try {
+        handle.dispose();
+      } catch {}
+      this.onDidDisposeEmitter.fire(agentId);
+      throw error;
+    }
   }
 
   private assertCanCreate(): void {

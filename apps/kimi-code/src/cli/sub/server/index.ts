@@ -6,7 +6,7 @@
  * The OS service-manager subcommands (`install/uninstall/start/stop/restart/
  * status`) are temporarily NOT registered — see the commented
  * `addLifecycleCommands(server)` below. Their implementation is preserved in
- * `./lifecycle.ts` + `packages/server/src/svc/*` for later re-exposure.
+ * `./lifecycle.ts` + `packages/kap-server/src/svc/*` for later re-exposure.
  *
  * The top-level `kimi web` alias is registered separately via
  * `registerWebAliasCommand` so it stays at the program root.
@@ -39,7 +39,7 @@ export function registerServerCommand(program: Command): void {
   // OS service-manager commands (`install/uninstall/start/stop/restart/status`)
   // are temporarily hidden — the product now favors the on-demand background
   // daemon (`kimi web`) over service-ization. The implementation still lives in
-  // `./lifecycle.ts` + `packages/server/src/svc/*`; re-import
+  // `./lifecycle.ts` + `packages/kap-server/src/svc/*`; re-import
   // `addLifecycleCommands` and call it here to re-expose.
   // addLifecycleCommands(server);
 

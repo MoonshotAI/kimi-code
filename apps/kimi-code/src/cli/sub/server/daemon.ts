@@ -22,7 +22,7 @@ import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
-import { DEFAULT_LOCK_DIR, getLiveLock, type LockContents } from '@moonshot-ai/server';
+import { DEFAULT_LOCK_DIR, getLiveLock, type LockContents } from '@moonshot-ai/kap-server';
 
 import {
   DEFAULT_SERVER_HOST,
@@ -179,7 +179,7 @@ function detectSea(): boolean {
 
 /**
  * Absolute path to the CLI entry that should be re-execed to run the daemon.
- * Mirrors `resolveSupervisorProgram` in `packages/server/src/svc/program.ts`:
+ * Mirrors `resolveSupervisorProgram` in `packages/kap-server/src/svc/program.ts`:
  * when the CLI is a compiled single binary, `argv[1]` is the invoked command
  * name (e.g. `kimi`) or the first user argument — never a script path — so we
  * must re-exec `process.execPath` itself.

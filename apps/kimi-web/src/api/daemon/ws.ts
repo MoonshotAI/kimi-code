@@ -8,7 +8,7 @@ import { classifyFrame } from './agentEventProjector';
 import { getCredential } from './serverAuth';
 import type { WireEvent, WireServerFrame } from './wire';
 
-// Mirrors packages/server WS_BEARER_PROTOCOL_PREFIX. The browser WebSocket API
+// Mirrors kap-server's WS_BEARER_PROTOCOL_PREFIX. The browser WebSocket API
 // cannot set arbitrary headers, so the bearer credential rides in the
 // Sec-WebSocket-Protocol subprotocol instead.
 const WS_BEARER_PROTOCOL_PREFIX = 'kimi-code.bearer.';

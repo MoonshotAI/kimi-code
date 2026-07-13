@@ -187,6 +187,11 @@ export class AgentPromptService implements IAgentPromptService {
       if (turn === undefined) { this.pending.unshift(item); return; }
       item.state = 'running'; item.launchedDeferred.resolve(turn); this.active = Object.assign(item, { turn });
       void turn.result.then((result) => this.settle(item, result));
+    } catch {
+      item.state = 'failed';
+      item.launchedDeferred.resolve(undefined);
+      item.completionDeferred.resolve({ promptId: item.id, result: undefined, state: 'failed' });
+      this.publishCompleted(item.id, 'failed');
     } finally {
       this.launching = false;
       if (this.active === undefined) void this.startNext();
