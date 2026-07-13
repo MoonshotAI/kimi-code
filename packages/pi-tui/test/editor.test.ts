@@ -3099,6 +3099,152 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "/help ");
 			assert.strictEqual(editor.isShowingAutocomplete(), false);
 		});
+
+		it("triggers autocomplete for `/` after whitespace mid-input", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let suggestionCalls = 0;
+
+			const mockProvider: AutocompleteProvider = {
+				getSuggestions: async (lines, _cursorLine, cursorCol) => {
+					suggestionCalls += 1;
+					const text = (lines[0] || "").slice(0, cursorCol);
+					if (text === "hello /") {
+						return {
+							items: [{ value: "skill:review", label: "skill:review" }],
+							prefix: text,
+						};
+					}
+					return null;
+				},
+				applyCompletion,
+			};
+			editor.setAutocompleteProvider(mockProvider);
+
+			editor.handleInput("h");
+			editor.handleInput("e");
+			editor.handleInput("l");
+			editor.handleInput("l");
+			editor.handleInput("o");
+			editor.handleInput(" ");
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(suggestionCalls >= 1, true);
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("triggers autocomplete for `/` at the start of a non-first line", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let suggestionCalls = 0;
+
+			const mockProvider: AutocompleteProvider = {
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					suggestionCalls += 1;
+					const text = (lines[cursorLine] || "").slice(0, cursorCol);
+					if (cursorLine === 1 && text === "/") {
+						return {
+							items: [{ value: "skill:review", label: "skill:review" }],
+							prefix: text,
+						};
+					}
+					return null;
+				},
+				applyCompletion,
+			};
+			editor.setAutocompleteProvider(mockProvider);
+
+			editor.setText("hello");
+			editor.handleInput("\n");
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(suggestionCalls >= 1, true);
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("triggers autocomplete for `/` after whitespace on a non-first line", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme, { inlineSlashTrigger: true });
+			let suggestionCalls = 0;
+
+			const mockProvider: AutocompleteProvider = {
+				getSuggestions: async (lines, cursorLine, cursorCol) => {
+					suggestionCalls += 1;
+					const text = (lines[cursorLine] || "").slice(0, cursorCol);
+					if (cursorLine === 1 && text === "world /") {
+						return {
+							items: [{ value: "skill:review", label: "skill:review" }],
+							prefix: text,
+						};
+					}
+					return null;
+				},
+				applyCompletion,
+			};
+			editor.setAutocompleteProvider(mockProvider);
+
+			editor.setText("hello");
+			editor.handleInput("\n");
+			editor.handleInput("w");
+			editor.handleInput("o");
+			editor.handleInput("r");
+			editor.handleInput("l");
+			editor.handleInput("d");
+			editor.handleInput(" ");
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(suggestionCalls >= 1, true);
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+		});
+
+		it("does not trigger autocomplete for `/` after whitespace mid-input by default", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let suggestionCalls = 0;
+
+			const mockProvider: AutocompleteProvider = {
+				getSuggestions: async () => {
+					suggestionCalls += 1;
+					return null;
+				},
+				applyCompletion,
+			};
+			editor.setAutocompleteProvider(mockProvider);
+
+			editor.handleInput("h");
+			editor.handleInput("e");
+			editor.handleInput("l");
+			editor.handleInput("l");
+			editor.handleInput("o");
+			editor.handleInput(" ");
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
+		});
+
+		it("does not trigger autocomplete for `/` after non-whitespace mid-input", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let suggestionCalls = 0;
+
+			const mockProvider: AutocompleteProvider = {
+				getSuggestions: async () => {
+					suggestionCalls += 1;
+					return null;
+				},
+				applyCompletion,
+			};
+			editor.setAutocompleteProvider(mockProvider);
+
+			editor.handleInput("h");
+			editor.handleInput("e");
+			editor.handleInput("l");
+			editor.handleInput("l");
+			editor.handleInput("o");
+			editor.handleInput("/");
+			await flushAutocomplete();
+
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
+		});
 	});
 
 	describe("Character jump (Ctrl+])", () => {
