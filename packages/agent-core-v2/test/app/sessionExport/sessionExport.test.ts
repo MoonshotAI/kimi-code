@@ -428,6 +428,7 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
       throw new Error('run should not be called by session export');
     },
     getHandle: (agentId) => agents.find((agent) => agent.id === agentId),
+    whenReady: (agentId) => Promise.resolve(agents.find((agent) => agent.id === agentId)),
     list: () => agents,
     remove: async () => {},
   };

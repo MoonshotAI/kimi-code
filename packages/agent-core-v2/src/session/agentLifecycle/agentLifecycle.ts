@@ -149,16 +149,26 @@ export interface IAgentLifecycleService {
   /** Create an agent from zero (empty context). */
   create(opts?: CreateAgentOptions): Promise<IAgentScopeHandle>;
   /**
+   * Await any in-flight `create(agentId)` bootstrap and return the settled
+   * handle (`undefined` when the agent does not exist, or its creation
+   * failed). `create` registers the handle before its async bootstrap
+   * finishes, so a concurrent `getHandle` can observe a half-initialized
+   * agent whose activity lane is still `initializing`; callers that
+   * auto-materialize an agent (e.g. `ensureMainAgent`) must resolve through
+   * here instead.
+   */
+  whenReady(agentId: string): Promise<IAgentScopeHandle | undefined>;
+  /**
    * Resolve the session/plugin MCP config and wait for the initial connection
    * attempt to finish. Per-server failures are reflected in MCP status entries
    * rather than rejecting this promise.
    */
   ensureMcpReady(): Promise<void>;
   /**
-   * Fire {@link onDidCreateMain} for the given handle. Called exactly once by
-   * the main-agent bootstrapper (`ensureMainAgent`) after main-only wirings
-   * are attached, so main-only capabilities can subscribe without filtering
-   * every {@link onDidCreate}. No other caller should invoke it.
+   * Idempotently fire {@link onDidCreateMain} for the given handle after
+   * main-only wirings are attached, so main-only capabilities can subscribe
+   * without filtering every {@link onDidCreate}. No caller other than the
+   * main-agent bootstrapper (`ensureMainAgent`) should invoke it.
    */
   notifyMainCreated(handle: IAgentScopeHandle): void;
   /**

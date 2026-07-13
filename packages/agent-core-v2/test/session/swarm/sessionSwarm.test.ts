@@ -1253,6 +1253,7 @@ function lifecycleStub(
       completion: Promise.resolve({ summary: 'child summary' }),
     })),
     getHandle: (agentId: string) => handles.get(agentId),
+    whenReady: (agentId: string) => Promise.resolve(handles.get(agentId)),
     list: () => [...handles.values()],
     remove: async (agentId: string) => {
       handles.delete(agentId);
