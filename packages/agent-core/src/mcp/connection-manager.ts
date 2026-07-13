@@ -396,25 +396,17 @@ export class McpConnectionManager {
   ): Promise<{ tools: Tool[]; rawTools: MCPToolDefinition[] }> {
     await client.connect();
     const mcpTools = await client.listTools();
-<<<<<<< HEAD
-    return mcpTools.map((mcpTool) => {
-      const validated = assertMcpInputSchema(mcpTool.name, mcpTool.inputSchema);
-      return {
-        name: mcpTool.name,
-        description: mcpTool.description,
-        parameters: sanitizeMcpSchema(validated),
-      };
-    });
-=======
     return {
       rawTools: mcpTools,
-      tools: mcpTools.map((mcpTool) => ({
-        name: mcpTool.name,
-        description: mcpTool.description,
-        parameters: assertMcpInputSchema(mcpTool.name, mcpTool.inputSchema),
-      })),
+      tools: mcpTools.map((mcpTool) => {
+        const validated = assertMcpInputSchema(mcpTool.name, mcpTool.inputSchema);
+        return {
+          name: mcpTool.name,
+          description: mcpTool.description,
+          parameters: sanitizeMcpSchema(validated),
+        };
+      }),
     };
->>>>>>> origin/main
   }
 
   private async closeClient(entry: InternalEntry): Promise<void> {

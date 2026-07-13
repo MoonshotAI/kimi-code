@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 import {
   openFileCommandFor,
   openInAppCommandFor,
@@ -38,6 +38,23 @@ describe('file launch commands', () => {
 });
 
 describe('open-in-app launch commands', () => {
+  let origEnv: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    origEnv = {
+      KIMI_CODE_EDITOR: process.env.KIMI_CODE_EDITOR,
+      VISUAL: process.env.VISUAL,
+      EDITOR: process.env.EDITOR,
+    };
+    delete process.env.KIMI_CODE_EDITOR;
+    delete process.env.VISUAL;
+    delete process.env.EDITOR;
+  });
+
+  afterEach(() => {
+    Object.assign(process.env, origEnv);
+  });
+
   it('opens vscode with line targets', () => {
     expect(openInAppCommandFor('vscode', '/repo/src/App.vue', { line: 12 }, 'darwin')).toEqual({
       command: "code -g '/repo/src/App.vue:12'",

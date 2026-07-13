@@ -178,6 +178,7 @@ function recurseSchema(node: Json): void {
   if (typeof items === 'object' && items !== null) {
     if (Array.isArray(items)) {
       for (const value of items) normalizeProperty(value);
+      record['items'] = { anyOf: items };
     } else {
       normalizeProperty(items);
     }

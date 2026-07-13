@@ -39,6 +39,7 @@
     "@changesets/changelog-github": "0.7.0",
     "@changesets/cli": "2.30.0",
     "@microsoft/api-extractor": "7.58.7",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@types/node": "^22.15.3",
     "@vitest/coverage-v8": "4.1.4",
     "lint-staged": "16.4.0",
@@ -51,7 +52,8 @@
     "tsdown": "0.22.0",
     "tsx": "^4.21.0",
     "typescript": "6.0.2",
-    "vitest": "4.1.4"
+    "vitest": "4.1.4",
+    "zod": "catalog:"
   },
   "simple-git-hooks": {
   },

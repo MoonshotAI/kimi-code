@@ -30,6 +30,9 @@ importers:
       '@microsoft/api-extractor':
         specifier: 7.58.7
         version: 7.58.7(@types/node@22.19.17)
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
       '@types/node':
         specifier: ^22.15.3
         version: 22.19.17
@@ -69,6 +72,9 @@ importers:
       vitest:
         specifier: 4.1.4
         version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@25.0.1)(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
 
   apps/kimi-code:
     devDependencies:
