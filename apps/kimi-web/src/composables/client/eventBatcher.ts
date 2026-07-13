@@ -72,6 +72,8 @@ export interface EventBatcher<T> {
   (item: T): void;
   /** Synchronously drain every pending item. Reserved for authoritative state replacement. */
   flush(): void;
+  /** Drop queued items that no longer have a valid owner. */
+  discard(predicate: (item: T) => boolean): void;
   /** Cancel scheduled work and permanently discard this batcher's queue. */
   dispose(): void;
 }
@@ -177,6 +179,18 @@ export function createEventBatcher<T>(
     cancelScheduled();
     while (!disposed && head < pending.length) process(pending[head++]!);
     compactQueue();
+  };
+  enqueue.discard = (predicate): void => {
+    if (disposed || countPending() === 0) return;
+    let write = head;
+    for (let read = head; read < pending.length; read += 1) {
+      const item = pending[read]!;
+      if (!predicate(item)) pending[write++] = item;
+    }
+    pending.length = write;
+    compactQueue();
+    if (countPending() === 0) cancelScheduled();
+    else scheduleDrain();
   };
   enqueue.dispose = (): void => {
     if (disposed) return;

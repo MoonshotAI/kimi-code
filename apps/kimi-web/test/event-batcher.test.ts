@@ -43,6 +43,12 @@ interface ManualScheduler extends EventBatcherScheduler {
   pendingTasks(): number;
 }
 
+interface OwnedQueueItem {
+  owner: string;
+  kind: 'render' | 'control';
+  id: string;
+}
+
 function manualScheduler(): ManualScheduler {
   let nextHandle = 1;
   const frames = new Map<number, () => void>();
@@ -263,6 +269,66 @@ describe('createEventBatcher (ordered bounded scheduling)', () => {
     enqueue.flush();
 
     expect(processed).toEqual(['d1', 'd2']);
+    expect(scheduler.pendingFrames()).toBe(0);
+    expect(scheduler.pendingTasks()).toBe(0);
+  });
+
+  it('discards a removed owner control item that remains beyond the slice budget', () => {
+    const processed: string[] = [];
+    const scheduler = manualScheduler();
+    const enqueue = createEventBatcher<OwnedQueueItem>(
+      (item) => processed.push(item.id),
+      (item) => item.kind === 'render',
+      { scheduler, maxItemsPerSlice: 2 },
+    );
+
+    enqueue({ owner: 'session-2', kind: 'render', id: 'session-2:d1' });
+    enqueue({ owner: 'session-2', kind: 'render', id: 'session-2:d2' });
+    enqueue({ owner: 'session-1', kind: 'render', id: 'session-1:d1' });
+    enqueue({ owner: 'session-1', kind: 'control', id: 'session-1:idle' });
+    expect(processed).toEqual(['session-2:d1', 'session-2:d2']);
+
+    enqueue.discard((item) => item.owner === 'session-1');
+    scheduler.flushFrame();
+    scheduler.flushTask();
+
+    expect(processed).toEqual(['session-2:d1', 'session-2:d2']);
+  });
+
+  it('preserves the order of items not discarded', () => {
+    const processed: string[] = [];
+    const scheduler = manualScheduler();
+    const enqueue = createEventBatcher<string>(
+      (item) => processed.push(item),
+      () => true,
+      { scheduler },
+    );
+
+    enqueue('session-1:d1');
+    enqueue('session-2:d1');
+    enqueue('session-1:d2');
+    enqueue('session-2:d2');
+    enqueue.discard((item) => item.startsWith('session-1:'));
+    scheduler.flushFrame();
+
+    expect(processed).toEqual(['session-2:d1', 'session-2:d2']);
+  });
+
+  it('cancels scheduled callbacks when discard empties the queue', () => {
+    const scheduler = manualScheduler();
+    const enqueue = createEventBatcher<string>(
+      () => {},
+      () => true,
+      { scheduler },
+    );
+
+    enqueue('session-1:d1');
+    enqueue('session-1:d2');
+    expect(scheduler.pendingFrames()).toBe(1);
+    expect(scheduler.pendingTasks()).toBe(1);
+
+    enqueue.discard((item) => item.startsWith('session-1:'));
+
     expect(scheduler.pendingFrames()).toBe(0);
     expect(scheduler.pendingTasks()).toBe(0);
   });

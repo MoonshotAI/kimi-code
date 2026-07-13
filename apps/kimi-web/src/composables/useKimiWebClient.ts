@@ -580,13 +580,11 @@ function forgetSession(sessionId: string): void {
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
   dropWsSubscription(sessionId);
-  // Drain the streaming-event batcher too. unsubscribe() stops future server
-  // frames, but events already queued for the next animation frame would
-  // otherwise survive and be reduced AFTER the maps below are cleared —
-  // recreating entries like messagesBySession[id] and lastSeqBySession[id].
-  // That would make hasLoadedMessages() treat the stale empty cache as
-  // authoritative and skip the next snapshot fetch for this id.
-  enqueueEvent.flush();
+  // Drop this session's queued render AND control events. Flushing them here is
+  // unsafe: a delayed idle event can drain a queued prompt into the session
+  // after the archive request succeeded. Other sessions keep their own ordered
+  // backlog and scheduled continuation.
+  enqueueEvent.discard(({ meta }) => meta.sessionId === sessionId);
   removeSession(sessionId);
   removeSessionMessages(sessionId);
   delete rawState.approvalsBySession[sessionId];
