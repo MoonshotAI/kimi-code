@@ -1,9 +1,10 @@
 /**
  * `model` domain (L2) — model-aware thinking effort resolution.
  *
- * Resolves the effective thinking effort from request/config defaults plus the
- * model's declared thinking metadata. Shared by `modelResolver` and the
- * Agent-scope `profile` domain so both paths keep v1-compatible defaults.
+ * Resolves the effective thinking effort from request/config defaults, Kimi's
+ * operational wire override, and the model's declared thinking metadata.
+ * Shared by `modelResolver` and the Agent-scope `profile` domain so both paths
+ * keep v1-compatible defaults.
  */
 
 import type { ModelCapability } from '#/app/llmProtocol/capability';
@@ -25,6 +26,21 @@ export interface ModelThinkingMetadata {
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
+export function normalizeRequestedThinkingEffort(
+  requested: string | undefined,
+): ThinkingEffort | undefined {
+  return nonEmpty(requested)?.toLowerCase() as ThinkingEffort | undefined;
+}
+
+export function resolveKimiThinkingEffortOverride(
+  forced: string | undefined,
+  effective: ThinkingEffort,
+  kimiProvider: boolean,
+): ThinkingEffort | undefined {
+  if (!kimiProvider || effective === 'off') return undefined;
+  return nonEmpty(forced) as ThinkingEffort | undefined;
 }
 
 function hasCapability(
@@ -121,10 +137,10 @@ export function resolveThinkingEffortForModel(
   kimiProvider = false,
 ): ThinkingEffort {
   const configured = nonEmpty(defaults?.effort) as ThinkingEffort | undefined;
-  const normalized = nonEmpty(requested)?.toLowerCase();
+  const normalized = normalizeRequestedThinkingEffort(requested);
   let effort: ThinkingEffort;
   if (normalized !== undefined) {
-    effort = normalized as ThinkingEffort;
+    effort = normalized;
   } else if (defaults?.enabled === false) {
     effort = 'off';
   } else {

@@ -32,6 +32,10 @@ import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/a
 import { type Model } from '#/app/model/modelInstance';
 import { type KimiModelOverrides } from '#/app/model/modelOverrides';
 import { IModelResolver } from '#/app/model/modelResolver';
+import {
+  normalizeRequestedThinkingEffort,
+  resolveKimiThinkingEffortOverride,
+} from '#/app/model/thinking';
 import picomatch from 'picomatch';
 
 import { ErrorCodes, Error2 } from "#/errors";
@@ -199,7 +203,8 @@ export class AgentProfileService implements IAgentProfileService {
   setThinking(level: string): void {
     const previousEffort = this.thinkingLevel;
     const model = this.tryResolveRawModel();
-    if (!supportsThinkingEffort(level as ThinkingEffort, model)) {
+    const normalized = normalizeRequestedThinkingEffort(level);
+    if (normalized !== undefined && !supportsThinkingEffort(normalized, model)) {
       const efforts = model?.supportEfforts ?? [];
       const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
       throw new ProfileError(
@@ -207,7 +212,7 @@ export class AgentProfileService implements IAgentProfileService {
         `Thinking effort "${level}" is not supported by model "${this.modelAlias}". Supported efforts: ${supported}.`,
       );
     }
-    this.update({ thinkingLevel: level });
+    this.update({ thinkingLevel: normalized ?? level });
     const effort = this.thinkingLevel;
     if (effort !== previousEffort) {
       this.telemetry.track2('thinking_toggle', {
@@ -301,10 +306,11 @@ export class AgentProfileService implements IAgentProfileService {
     let model: Model = this.modelFactory.resolve(this.modelAlias);
     const thinkingLevel = this.thinkingLevel;
     const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
-    const forcedKimiThinkingEffort =
-      model.protocol === 'kimi' && thinkingLevel !== 'off'
-        ? normalizeKimiThinkingEffort(thinkingConfig?.forcedEffort)
-        : undefined;
+    const forcedKimiThinkingEffort = resolveKimiThinkingEffortOverride(
+      thinkingConfig?.forcedEffort,
+      thinkingLevel,
+      model.providerType === 'kimi',
+    );
     const kwargs: GenerationKwargs = {};
     if (model.protocol === 'kimi') {
       kwargs.prompt_cache_key = this.sessionContext.sessionId;
@@ -332,7 +338,7 @@ export class AgentProfileService implements IAgentProfileService {
     }
     if (Object.keys(kwargs).length > 0) model = model.withGenerationKwargs(kwargs);
     model = model.withThinking(forcedKimiThinkingEffort ?? thinkingLevel);
-    if (forcedKimiThinkingEffort !== undefined) {
+    if (model.protocol === 'kimi' && forcedKimiThinkingEffort !== undefined) {
       const thinking: { type: 'enabled'; effort: string; keep?: string } = {
         type: 'enabled',
         effort: forcedKimiThinkingEffort,
@@ -572,11 +578,6 @@ export class AgentProfileService implements IAgentProfileService {
     const cwd = this.optionsValue.cwd;
     return typeof cwd === 'function' ? cwd() : cwd;
   }
-}
-
-function normalizeKimiThinkingEffort(raw: string | undefined): ThinkingEffort | undefined {
-  const trimmed = raw?.trim();
-  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 }
 
 registerScopedService(

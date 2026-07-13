@@ -31,6 +31,7 @@ import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/app/prot
 
 let generateImpl: ChatProvider['generate'];
 let uploadVideoImpl: NonNullable<ChatProvider['uploadVideo']> | undefined;
+let appliedThinkingEfforts: string[];
 
 describe('ModelResolverService', () => {
   let disposables: DisposableStore;
@@ -50,6 +51,7 @@ describe('ModelResolverService', () => {
     configValues = {};
     resolveTokenProvider = vi.fn();
     createdProtocolConfigs = [];
+    appliedThinkingEfforts = [];
     generateImpl = async () => ({
       id: null,
       usage: null,
@@ -812,6 +814,69 @@ describe('ModelResolverService', () => {
       expect(resolveEffort(['thinking'], ['low', 'medium', 'high'])).toBe('medium');
     });
 
+    it('derives Kimi effort semantics for a flat kimi-protocol model', () => {
+      configValues['thinking'] = { effort: 'ultra' };
+      models['m'] = {
+        protocol: 'kimi',
+        baseUrl: 'https://example.test/v1',
+        apiKey: 'sk',
+        model: 'wire-name',
+        maxContextSize: 1000,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'medium', 'high'],
+        defaultEffort: 'medium',
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+
+      expect(model.providerType).toBe('kimi');
+      expect(model.thinkingEffort).toBe('medium');
+    });
+
+    it('applies the forced effort to a direct Kimi-over-Anthropic request', async () => {
+      configValues['thinking'] = { effort: 'low', forcedEffort: 'max' };
+      providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
+      models['m'] = {
+        provider: 'p',
+        protocol: 'anthropic',
+        model: 'wire-name',
+        maxContextSize: 1000,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high'],
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+      for await (const _event of model.request({ systemPrompt: '', tools: [], messages: [] })) {
+        void _event;
+      }
+
+      expect(model.thinkingEffort).toBe('max');
+      expect(appliedThinkingEfforts).toEqual(['max']);
+      expect(createdProtocolConfigs[0]).toMatchObject({
+        protocol: 'anthropic',
+        providerOptions: { kimiThinking: true },
+      });
+    });
+
+    it('ignores the forced Kimi effort when thinking is off', async () => {
+      configValues['thinking'] = { enabled: false, forcedEffort: 'max' };
+      providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
+      models['m'] = {
+        provider: 'p',
+        model: 'wire-name',
+        maxContextSize: 1000,
+        capabilities: ['thinking'],
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+      for await (const _event of model.request({ systemPrompt: '', tools: [], messages: [] })) {
+        void _event;
+      }
+
+      expect(model.thinkingEffort).toBeNull();
+      expect(appliedThinkingEfforts).toEqual([]);
+    });
+
     it('clamps an explicit off back to on for always_thinking models', () => {
       configValues['thinking'] = { enabled: false };
       expect(resolveEffort(['always_thinking'])).toBe('on');
@@ -902,7 +967,8 @@ const fakeChatProvider: ChatProvider = {
     if (uploadVideoImpl === undefined) throw new Error('uploadVideo not configured');
     return uploadVideoImpl(input, options);
   },
-  withThinking() {
+  withThinking(effort) {
+    appliedThinkingEfforts.push(effort);
     return this;
   },
 };

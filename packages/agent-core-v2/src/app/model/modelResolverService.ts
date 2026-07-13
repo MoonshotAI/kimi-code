@@ -45,13 +45,17 @@ import {
 import type { AuthProvider, Model } from './modelInstance';
 import { IModelResolver } from './modelResolver';
 import { ModelImpl, StaticAuthProvider } from './modelImpl';
-import { resolveThinkingEffortForModel } from './thinking';
+import {
+  resolveKimiThinkingEffortOverride,
+  resolveThinkingEffortForModel,
+} from './thinking';
 
 /** Shape of the `thinking` config section (owned by `profile`); only the
  *  fields the resolver needs to mirror the production default are read here. */
 interface ThinkingSection {
   readonly enabled?: boolean;
   readonly effort?: string;
+  readonly forcedEffort?: string;
 }
 
 type MutableProtocolProviderOptions = {
@@ -95,6 +99,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     const authProvider = this.buildAuthProvider(providerName, auth);
 
     const protocol = this.resolveProtocol(id, model, providerConfig);
+    const providerType = providerConfig?.type ?? protocol;
     // Match production v1: strip a trailing `/v1` only when the model explicitly
     // overrides into the Anthropic transport. Native Anthropic providers keep
     // their configured `/v1` because the old provider manager did too.
@@ -148,7 +153,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       supportEfforts: model.supportEfforts,
       defaultEffort: model.defaultEffort,
       alwaysThinking,
-      providerType: providerConfig?.type,
+      providerType,
       providerName,
       authProvider,
       protocolRegistry: this.protocolRegistry as ProtocolAdapterRegistry,
@@ -163,7 +168,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     const effort = this.resolveDefaultThinking(
       model,
       alwaysThinking,
-      providerConfig?.type === 'kimi',
+      providerType === 'kimi',
     );
     return effort === 'off' ? impl : impl.withThinking(effort);
   }
@@ -182,7 +187,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     kimiProvider: boolean,
   ): ThinkingEffort {
     const thinking = this.config.get<ThinkingSection | undefined>('thinking');
-    return resolveThinkingEffortForModel(
+    const effort = resolveThinkingEffortForModel(
       undefined,
       {
         enabled: thinking?.enabled,
@@ -190,6 +195,9 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       },
       { ...model, alwaysThinking },
       kimiProvider,
+    );
+    return (
+      resolveKimiThinkingEffortOverride(thinking?.forcedEffort, effort, kimiProvider) ?? effort
     );
   }
 

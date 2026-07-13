@@ -144,6 +144,7 @@ function createRecordingModel(
   providerOptions: unknown[] = [],
   protocol: Model['protocol'] = 'kimi',
   thinkingKeeps: string[] = [],
+  providerType: string | undefined = protocol === 'kimi' ? 'kimi' : undefined,
 ): Model {
   const build = (thinkingEffort: ThinkingEffort | null): Model => ({
     id: 'kimi-code',
@@ -161,8 +162,12 @@ function createRecordingModel(
       max_context_tokens: 1000,
     },
     maxContextSize: 1000,
+    supportEfforts:
+      providerType === 'kimi' ? ['low', 'medium', 'high', 'max'] : undefined,
+    defaultEffort: providerType === 'kimi' ? 'high' : undefined,
     thinkingEffort,
     alwaysThinking: false,
+    providerType,
     providerName: 'kimi',
     authProvider: { getAuth: async () => undefined },
     withThinking: (effort) => {
@@ -401,6 +406,38 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     expect(thinkingKeeps).toEqual(['all']);
     expect(providerOptions).toEqual([{ metadata: { user_id: 'session-test' } }]);
     expect(generationKwargs).toEqual([{ temperature: 0.3 }]);
+  });
+
+  it('forces Kimi effort through Anthropic without Kimi generation kwargs', () => {
+    const generationKwargs: GenerationKwargs[] = [];
+    const thinkingEfforts: ThinkingEffort[] = [];
+    const providerOptions: unknown[] = [];
+    const thinkingKeeps: string[] = [];
+    modelResolver = {
+      _serviceBrand: undefined,
+      resolve: () =>
+        createRecordingModel(
+          generationKwargs,
+          thinkingEfforts,
+          providerOptions,
+          'anthropic',
+          thinkingKeeps,
+          'kimi',
+        ),
+      findByName: () => [],
+    };
+    const host = buildHost('profile-thinking-effort-force-anthropic');
+    host.svc.configure({ emitStatusUpdated: () => undefined });
+    configValues['thinking'] = { forcedEffort: 'max' };
+
+    host.svc.update({ modelAlias: 'kimi-code', thinkingLevel: 'high' });
+    const model = host.svc.resolveModel();
+
+    expect(model?.thinkingEffort).toBe('max');
+    expect(thinkingEfforts).toEqual(['max']);
+    expect(thinkingKeeps).toEqual(['all']);
+    expect(providerOptions).toEqual([{ metadata: { user_id: 'session-test' } }]);
+    expect(generationKwargs).toEqual([]);
   });
 
   it('defaults thinking.keep to "all" when thinking is enabled on Kimi', () => {

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import type { ModelConfig } from '#/app/model/model';
 import {
   configServices,
   createTestAgent,
@@ -14,6 +15,8 @@ import {
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 type TestKimiConfig = ReturnType<Parameters<typeof configServices>[0]>;
+type TestProtocolModelConfig = NonNullable<TestKimiConfig['models']>[string] &
+  Pick<ModelConfig, 'protocol'>;
 type GenerateFn = Parameters<typeof llmGenerateServices>[0];
 
 function defaultGenerate(): ReturnType<GenerateFn> {
@@ -369,6 +372,25 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
       'Thinking effort "ultra" is not supported by model "kimi-code/custom"',
     );
   });
+
+  it.each([
+    [' HIGH ', 'high'],
+    ['OFF', 'off'],
+  ])('normalizes runtime effort %j to %s before validation', (input, expected) => {
+    profile.update({ modelAlias: 'kimi-code/ultra' });
+
+    profile.setThinking(input);
+
+    expect(profile.data().thinkingLevel).toBe(expected);
+  });
+
+  it('uses the model default when the runtime effort is blank', () => {
+    profile.update({ modelAlias: 'kimi-code/custom', thinkingLevel: 'low' });
+
+    profile.setThinking('   ');
+
+    expect(profile.data().thinkingLevel).toBe('max');
+  });
 });
 
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
@@ -388,6 +410,14 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
           maxContextSize: 128_000,
           capabilities: ['thinking'],
         },
+        'kimi-code-anthropic': {
+          provider: 'kimi',
+          protocol: 'anthropic',
+          model: 'kimi-code-anthropic',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high'],
+        } as TestProtocolModelConfig,
       },
     };
     capturedProvider = undefined;
@@ -465,5 +495,18 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       extra_body?: { thinking?: { keep?: unknown } };
     };
     expect(gen.extra_body?.thinking?.keep).toBeUndefined();
+  });
+
+  it('injects forced effort through the Anthropic protocol for a Kimi provider', async () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    createAgentWithEnv();
+
+    profile.update({ modelAlias: 'kimi-code-anthropic', thinkingLevel: 'high' });
+    await requester.request({}, undefined, new AbortController().signal);
+
+    expect(capturedProvider).toMatchObject({
+      name: 'anthropic',
+      thinkingEffort: 'max',
+    });
   });
 });
