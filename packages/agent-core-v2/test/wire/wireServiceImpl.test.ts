@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -9,7 +10,6 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService, PersistedRecord } from '#/wire/wireService';
 import { CycleError, WireService } from '#/wire/wireServiceImpl';
@@ -24,23 +24,27 @@ const trace: string[] = [];
 const CounterModel = defineModel('store.counter', () => ({ value: 0 }));
 const OtherModel = defineModel('store.other', () => ({ value: 0 }));
 
-const counterAdd = defineOp(CounterModel, 'store.counter.add', {
-  apply: (s, p: { by: number }) => {
+const counterAdd = CounterModel.defineOp('store.counter.add', {
+  schema: z.object({ by: z.number() }),
+  apply: (s, p) => {
     trace.push('apply.counter');
     return { value: s.value + p.by };
   },
 });
-const otherSet = defineOp(OtherModel, 'store.other.set', {
-  apply: (_s, p: { value: number }) => {
+const otherSet = OtherModel.defineOp('store.other.set', {
+  schema: z.object({ value: z.number() }),
+  apply: (_s, p) => {
     trace.push('apply.other');
     return { value: p.value };
   },
 });
-const otherInc = defineOp(OtherModel, 'store.other.inc', {
+const otherInc = OtherModel.defineOp('store.other.inc', {
+  schema: z.object({}),
   apply: (s) => ({ value: s.value + 1 }),
 });
 // Test-only op that violates the new-reference convention by mutating its input.
-const mutateCounter = defineOp(CounterModel, 'store.counter.mutate', {
+const mutateCounter = CounterModel.defineOp('store.counter.mutate', {
+  schema: z.object({}),
   apply: (s) => {
     (s as { value: number }).value = 123;
     return s;

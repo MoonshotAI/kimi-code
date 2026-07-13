@@ -18,9 +18,9 @@
  */
 
 import type { CronJobOrigin } from '@moonshot-ai/protocol';
+import { z } from 'zod';
 
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 import type { CronTask } from '#/app/cron/cronTask';
 
@@ -34,28 +34,16 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-export interface CronAddPayload {
-  readonly task: CronTask;
-}
-
-export interface CronDeletePayload {
-  readonly ids: readonly string[];
-}
-
-export interface CronCursorPayload {
-  readonly id: string;
-  readonly lastFiredAt: number;
-}
-
 declare module '#/wire/types' {
   interface TransientOpMap {
-    'cron.add': CronAddPayload;
-    'cron.delete': CronDeletePayload;
-    'cron.cursor': CronCursorPayload;
+    'cron.add': typeof cronAdd;
+    'cron.delete': typeof cronDelete;
+    'cron.cursor': typeof cronCursor;
   }
 }
 
-export const cronAdd = defineOp(CronModel, 'cron.add', {
+export const cronAdd = CronModel.defineOp('cron.add', {
+  schema: z.object({ task: z.custom<CronTask>() }),
   persist: false,
   apply: (s, p) => {
     const next = new Map(s);
@@ -64,7 +52,8 @@ export const cronAdd = defineOp(CronModel, 'cron.add', {
   },
 });
 
-export const cronDelete = defineOp(CronModel, 'cron.delete', {
+export const cronDelete = CronModel.defineOp('cron.delete', {
+  schema: z.object({ ids: z.array(z.string()).readonly() }),
   persist: false,
   apply: (s, p) => {
     let next: Map<string, CronTask> | undefined;
@@ -78,7 +67,8 @@ export const cronDelete = defineOp(CronModel, 'cron.delete', {
   },
 });
 
-export const cronCursor = defineOp(CronModel, 'cron.cursor', {
+export const cronCursor = CronModel.defineOp('cron.cursor', {
+  schema: z.object({ id: z.string(), lastFiredAt: z.number() }),
   persist: false,
   apply: (s, p) => {
     const task = s.get(p.id);

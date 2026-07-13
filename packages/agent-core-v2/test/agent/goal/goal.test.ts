@@ -10,7 +10,7 @@ import { UpdateGoalTool, UpdateGoalToolInputSchema } from '#/agent/goal/tools/up
 import { IAgentLoopService, type AfterStepContext, type Turn } from '#/agent/loop/loop';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentUsageService } from '#/agent/usage/usage';
-import type { PersistedWireRecord, WireRecord } from '#/agent/wireRecord/wireRecord';
+import type { PersistedWireRecord } from '#/agent/wireRecord/wireRecord';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { APIConnectionError, APIStatusError } from '#/app/llmProtocol/errors';
 import type { ToolCall } from '#/app/llmProtocol/message';
@@ -31,7 +31,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 
 type GoalServiceTestManager = IAgentGoalService & AgentGoalService;
-type GoalRecord = Extract<PersistedWireRecord, { type: `goal.${string}` }>;
+type GoalRecord = PersistedWireRecord & { type: `goal.${string}` };
 type AgentEvent = DomainEvent;
 type GoalUpdatedEvent = Extract<AgentEvent, { type: 'goal.updated' }>;
 type TurnEndedInput = {
@@ -53,7 +53,7 @@ function goalRecords(records: readonly PersistedWireRecord[]): readonly GoalReco
 async function restoreGoalRecords(
   ctx: TestAgentContext,
   goals: IAgentGoalService,
-  records: readonly WireRecord[],
+  records: readonly PersistedWireRecord[],
 ): Promise<void> {
   goals.getGoal();
   await ctx.restore(records as readonly PersistedWireRecord[]);

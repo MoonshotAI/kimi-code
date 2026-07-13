@@ -52,6 +52,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type { ToolSource } from '#/agent/tool/toolContract';
 import { IAgentWireService } from '#/wire/tokens';
+import type { PayloadOf } from '#/wire/types';
 import type { IWireService } from '#/wire/wireService';
 import { IEventBus } from '#/app/event/eventBus';
 import { prepareSystemPromptContext } from './context';
@@ -75,7 +76,6 @@ import {
   ProfileModel,
   setActiveTools,
   type ActiveToolsState,
-  type ConfigUpdatePayload,
   type ProfileModelState,
 } from './profileOps';
 
@@ -388,8 +388,10 @@ export class AgentProfileService implements IAgentProfileService {
 
   private resolveConfigPayload(
     changed: Omit<ProfileUpdateData, 'activeToolNames'>,
-  ): ConfigUpdatePayload {
-    const payload: { -readonly [K in keyof ConfigUpdatePayload]: ConfigUpdatePayload[K] } = {};
+  ): PayloadOf<typeof configUpdate> {
+    const payload: {
+      -readonly [K in keyof PayloadOf<typeof configUpdate>]: PayloadOf<typeof configUpdate>[K];
+    } = {};
     if (changed.cwd !== undefined) payload.cwd = changed.cwd;
     if (changed.modelAlias !== undefined) payload.modelAlias = changed.modelAlias;
     if (changed.profileName !== undefined) payload.profileName = changed.profileName;

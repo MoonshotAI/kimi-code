@@ -36,8 +36,9 @@
  * `getRecords()`. Consumed by the Agent-scope `fullCompactionService`.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 import type {
   CompactionBlockedEvent,
   CompactionCancelledEvent,
@@ -66,20 +67,17 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-export type FullCompactionBeginPayload = CompactionBeginData;
-
-export type FullCompactionCompletePayload = Record<string, never>;
-
 declare module '#/wire/types' {
   interface PersistedOpMap {
-    'full_compaction.begin': FullCompactionBeginPayload;
-    'full_compaction.cancel': {};
-    'full_compaction.complete': FullCompactionCompletePayload;
+    'full_compaction.begin': typeof fullCompactionBegin;
+    'full_compaction.cancel': typeof fullCompactionCancel;
+    'full_compaction.complete': typeof fullCompactionComplete;
   }
 }
 
-export const fullCompactionBegin = defineOp(CompactionModel, 'full_compaction.begin', {
-  apply: (s, _p) => (s.phase === 'running' ? s : { phase: 'running' }),
+export const fullCompactionBegin = CompactionModel.defineOp('full_compaction.begin', {
+  schema: z.custom<CompactionBeginData>(),
+  apply: (s) => (s.phase === 'running' ? s : { phase: 'running' }),
   toEvent: (p) => ({
     type: 'compaction.started' as const,
     trigger: p.source,
@@ -87,10 +85,12 @@ export const fullCompactionBegin = defineOp(CompactionModel, 'full_compaction.be
   }),
 });
 
-export const fullCompactionCancel = defineOp(CompactionModel, 'full_compaction.cancel', {
+export const fullCompactionCancel = CompactionModel.defineOp('full_compaction.cancel', {
+  schema: z.object({}),
   apply: (s) => (s.phase === 'idle' ? s : { phase: 'idle' }),
 });
 
-export const fullCompactionComplete = defineOp(CompactionModel, 'full_compaction.complete', {
-  apply: (s, _p) => (s.phase === 'idle' ? s : { phase: 'idle' }),
+export const fullCompactionComplete = CompactionModel.defineOp('full_compaction.complete', {
+  schema: z.object({}),
+  apply: (s) => (s.phase === 'idle' ? s : { phase: 'idle' }),
 });

@@ -9,17 +9,20 @@
  * the same append path as every other Op. Scope-agnostic.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 const MetadataModel = defineModel<null>('wire.metadata', () => null);
 
-export interface WireMetadataPayload {
-  readonly protocol_version: string;
-  readonly created_at: number;
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    metadata: typeof wireMetadata;
+  }
 }
 
-export const wireMetadata = defineOp(MetadataModel, 'metadata', {
+export const wireMetadata = MetadataModel.defineOp('metadata', {
+  schema: z.object({ protocol_version: z.string(), created_at: z.number() }),
   stamp: false,
-  apply: (s, _p: WireMetadataPayload): null => s,
+  apply: (s) => s,
 });

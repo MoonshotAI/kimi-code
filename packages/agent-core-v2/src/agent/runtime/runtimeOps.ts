@@ -14,8 +14,9 @@
  * by the Agent-scope `runtimeService`.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 import type { AgentPhase } from './runtime';
 
@@ -27,10 +28,17 @@ export const RuntimeModel = defineModel<RuntimeModelState>('runtime', () => ({
   phase: { kind: 'idle' },
 }));
 
-export const setRuntimePhase = defineOp(RuntimeModel, 'runtime.set_phase', {
+declare module '#/wire/types' {
+  interface TransientOpMap {
+    'runtime.set_phase': typeof setRuntimePhase;
+    'activity.set_snapshot': typeof setActivitySnapshot;
+  }
+}
+
+export const setRuntimePhase = RuntimeModel.defineOp('runtime.set_phase', {
+  schema: z.object({ phase: z.custom<AgentPhase>() }),
   persist: false,
-  apply: (s, p: { phase: AgentPhase }): RuntimeModelState =>
-    phaseEqual(s.phase, p.phase) ? s : { phase: p.phase },
+  apply: (s, p) => (phaseEqual(s.phase, p.phase) ? s : { phase: p.phase }),
   toEvent: (p) => ({ type: 'agent.status.updated' as const, phase: p.phase }),
 });
 
@@ -105,10 +113,10 @@ export const ActivityModel = defineModel<AgentActivitySnapshot>('activity', () =
   background: [],
 }));
 
-export const setActivitySnapshot = defineOp(ActivityModel, 'activity.set_snapshot', {
+export const setActivitySnapshot = ActivityModel.defineOp('activity.set_snapshot', {
+  schema: z.object({ next: z.custom<AgentActivitySnapshot>() }),
   persist: false,
-  apply: (s, p: { next: AgentActivitySnapshot }): AgentActivitySnapshot =>
-    snapshotEqual(s, p.next) ? s : p.next,
+  apply: (s, p) => (snapshotEqual(s, p.next) ? s : p.next),
   toEvent: (p) => ({ type: 'agent.activity.updated' as const, ...p.next }),
 });
 

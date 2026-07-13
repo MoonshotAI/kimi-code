@@ -19,8 +19,9 @@
  * `goalService`.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 import type {
   GoalActor,
@@ -55,32 +56,21 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-export interface GoalCreatePayload {
-  readonly goalId: string;
-  readonly objective: string;
-  readonly completionCriterion?: string;
-}
-
-export interface GoalUpdatePayload {
-  readonly status?: GoalStatus;
-  readonly reason?: string;
-  readonly turnsUsed?: number;
-  readonly tokensUsed?: number;
-  readonly wallClockMs?: number;
-  readonly budgetLimits?: GoalBudgetLimits;
-  readonly actor?: GoalActor;
-}
-
 declare module '#/wire/types' {
   interface PersistedOpMap {
-    'goal.create': GoalCreatePayload;
-    'goal.update': GoalUpdatePayload;
-    'goal.clear': {};
-    forked: {};
+    'goal.create': typeof createGoal;
+    'goal.update': typeof updateGoal;
+    'goal.clear': typeof clearGoal;
+    forked: typeof forkGoal;
   }
 }
 
-export const createGoal = defineOp(GoalModel, 'goal.create', {
+export const createGoal = GoalModel.defineOp('goal.create', {
+  schema: z.object({
+    goalId: z.string(),
+    objective: z.string(),
+    completionCriterion: z.string().optional(),
+  }),
   apply: (_s, p) => ({
     goalId: p.goalId,
     objective: p.objective,
@@ -93,7 +83,16 @@ export const createGoal = defineOp(GoalModel, 'goal.create', {
   }),
 });
 
-export const updateGoal = defineOp(GoalModel, 'goal.update', {
+export const updateGoal = GoalModel.defineOp('goal.update', {
+  schema: z.object({
+    status: z.custom<GoalStatus>().optional(),
+    reason: z.string().optional(),
+    turnsUsed: z.number().optional(),
+    tokensUsed: z.number().optional(),
+    wallClockMs: z.number().optional(),
+    budgetLimits: z.custom<GoalBudgetLimits>().optional(),
+    actor: z.custom<GoalActor>().optional(),
+  }),
   apply: (s, p) => {
     if (s === null) return null;
     let next: GoalState | undefined;
@@ -120,10 +119,12 @@ export const updateGoal = defineOp(GoalModel, 'goal.update', {
   },
 });
 
-export const clearGoal = defineOp(GoalModel, 'goal.clear', {
+export const clearGoal = GoalModel.defineOp('goal.clear', {
+  schema: z.object({}),
   apply: () => null,
 });
 
-export const forkGoal = defineOp(GoalModel, 'forked', {
+export const forkGoal = GoalModel.defineOp('forked', {
+  schema: z.object({}),
   apply: () => null,
 });

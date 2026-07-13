@@ -9,12 +9,20 @@
  * type). Consumed by the Agent-scope `permissionModeService`.
  */
 
+import { z } from 'zod';
+
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 export const PermissionModeModel = defineModel<PermissionMode>('permissionMode', () => 'manual');
 
-export const setMode = defineOp(PermissionModeModel, 'permission.set_mode', {
-  apply: (_s, p: { mode: PermissionMode }) => p.mode,
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'permission.set_mode': typeof setMode;
+  }
+}
+
+export const setMode = PermissionModeModel.defineOp('permission.set_mode', {
+  schema: z.object({ mode: z.custom<PermissionMode>() }),
+  apply: (_s, p) => p.mode,
 });
