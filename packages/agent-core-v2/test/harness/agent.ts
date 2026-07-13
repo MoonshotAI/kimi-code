@@ -21,7 +21,8 @@ import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CronTaskPersistenceService } from '#/app/cron/cronTaskPersistenceService';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { AgentGoalService } from '#/agent/goal/goalService';
-import type { McpServiceOptions } from '#/agent/mcp/mcp';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import type { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService } from '#/agent/plan/plan';
@@ -78,7 +79,6 @@ import {
   IAgentFullCompactionService,
   IAgentLLMRequesterService,
   ILogService,
-  IAgentMcpService,
   IAgentPermissionGate,
   IAgentPermissionModeService,
   IAgentPermissionRulesService,
@@ -613,8 +613,16 @@ export function cronServices(): TestAgentServiceOverride {
   return sessionService(ISessionCronService, new SyncDescriptor(SessionCronServiceImpl));
 }
 
-export function mcpServices(options: McpServiceOptions): TestAgentServiceOverride {
-  return agentService(IAgentMcpService, new SyncDescriptor(AgentMcpService, [options]));
+export function mcpServices(options: {
+  readonly manager?: McpConnectionManager;
+}): TestAgentServiceOverride {
+  // `AgentMcpService` now resolves the session's shared manager through
+  // `ISessionMcpService`; tests inject a fake manager by stubbing that service.
+  return sessionService(ISessionMcpService, {
+    _serviceBrand: undefined,
+    ensureMcpReady: () => Promise.resolve(),
+    connectionManager: () => options.manager!,
+  } satisfies ISessionMcpService);
 }
 
 export function skillServices(
@@ -1088,7 +1096,6 @@ export class AgentTestContext {
               IAgentTaskService,
               new SyncDescriptor(AgentTaskService),
             );
-            reg.defineDescriptor(IAgentMcpService, new SyncDescriptor(AgentMcpService, [{}]));
             reg.defineDescriptor(IAgentGoalService, new SyncDescriptor(AgentGoalService));
             reg.defineDescriptor(IAgentSkillService, new SyncDescriptor(AgentSkillService));
             reg.defineDescriptor(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));

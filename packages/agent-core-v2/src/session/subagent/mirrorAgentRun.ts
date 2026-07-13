@@ -1,7 +1,7 @@
 /**
- * `agentLifecycle` domain (L6) — caller-side mirroring of an agent run.
+ * `subagent` domain (L6) — caller-side mirroring of an agent run.
  *
- * When one agent drives another through `IAgentLifecycleService.run` (the
+ * When one agent drives another through `ISessionSubagentService.run` (the
  * `Agent` tool, the swarm scheduler), the *requesting* agent surfaces that run
  * on its own record stream so the UI can nest the child transcript under the
  * launching tool call, external hooks fire, and telemetry is tracked. That
@@ -10,10 +10,10 @@
  *
  * External hooks (`SubagentStart` / `SubagentStop`) fire by observation, like
  * every other external hook: this wrapper announces "a run is about to start"
- * / "...has stopped" through the `IAgentLifecycleService` agent-run hook slot
- * and stop event the lifecycle service hosts, and the Session-scope
- * `externalHooks` adapter registers its own listeners there to translate them
- * into the configured external hook commands.
+ * / "...has stopped" through the `ISessionSubagentService` agent-run hook slot
+ * and stop event, and the Session-scope `externalHooks` adapter registers its
+ * own listeners there to translate them into the configured external hook
+ * commands.
  *
  * Wire shape note: the signals are still named `subagent.spawned / started /
  * completed / failed` and telemetry still tracks `subagent_created` so existing
@@ -35,8 +35,9 @@ import type {
 } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { isAbortError } from '#/_base/utils/abort';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 
-import { type AgentRunHandle, IAgentLifecycleService } from './agentLifecycle';
+import { type AgentRunHandle, ISessionSubagentService } from './subagent';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -113,6 +114,7 @@ export async function mirrorAgentRun(
   options: MirrorAgentRunOptions,
 ): Promise<{ summary: string; usage?: TokenUsage }> {
   const eventBus = requester.accessor.get(IEventBus);
+  const subagents = requester.accessor.get(ISessionSubagentService);
   const agentLifecycle = requester.accessor.get(IAgentLifecycleService);
   eventBus?.publish({ type: 'subagent.started', subagentId: run.agentId });
   if (options.prompt !== undefined) {
@@ -122,7 +124,7 @@ export async function mirrorAgentRun(
       throw reason;
     };
     try {
-      await agentLifecycle?.hooks.onWillStartAgentTask.run({
+      await subagents?.hooks.onWillStartAgentTask.run({
         agentName: options.profileName,
         prompt: options.prompt,
         signal: options.signal,
@@ -144,7 +146,7 @@ export async function mirrorAgentRun(
       usage: result.usage,
       contextTokens,
     });
-    agentLifecycle?.notifyAgentTaskStopped({
+    subagents?.notifyAgentTaskStopped({
       agentName: options.profileName,
       response: result.summary,
     });
@@ -175,6 +177,6 @@ function childContextTokens(
   agentLifecycle: IAgentLifecycleService,
   agentId: string,
 ): number | undefined {
-  const child = agentLifecycle.getHandle(agentId);
+  const child = agentLifecycle.get(agentId);
   return child?.accessor.get(IAgentContextSizeService)?.get().size;
 }

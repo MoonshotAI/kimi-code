@@ -540,7 +540,7 @@ function isAccessorReceiver(node: Node): boolean {
 
 /**
  * Per-interface method → declared return-type text. Lets the analyzer resolve
- * what `agents.getHandle(...)` returns once it knows `agents: IAgentLifecycleService`.
+ * what `agents.get(...)` returns once it knows `agents: IAgentLifecycleService`.
  */
 function collectInterfaceMethodReturns(
   interfacesByName: Map<string, InterfaceDeclaration>,

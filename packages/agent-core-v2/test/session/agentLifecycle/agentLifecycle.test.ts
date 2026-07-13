@@ -19,7 +19,13 @@ import { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import { SessionMcpService } from '#/session/mcp/sessionMcpService';
+import { ISessionSubagentService } from '#/session/subagent/subagent';
+import { SessionSubagentService } from '#/session/subagent/subagentService';
 import '#/activity/agentActivityService';
+import '#/agent/mcp/mcpService';
+import '#/agent/wireRecord/agentWireService';
 import { ISessionActivityKernel } from '#/activity/activity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -224,6 +230,7 @@ describe('AgentLifecycleService', () => {
       setMode: permissionModeSetMode,
       onDidChangeMode: Event.None,
     } as unknown as IAgentPermissionModeService);
+    ix.set(ISessionMcpService, new SyncDescriptor(SessionMcpService));
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
   afterEach(() => {
@@ -235,10 +242,10 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
     expect(main.id).toBe('main');
-    expect(svc.getHandle('main')).toBe(main);
+    expect(svc.get('main')).toBe(main);
     expect(svc.list()).toEqual([main]);
     await svc.remove('main');
-    expect(svc.getHandle('main')).toBeUndefined();
+    expect(svc.get('main')).toBeUndefined();
   });
 
   it('seeds metadata into an empty agent wire before the first business op', async () => {
@@ -426,7 +433,8 @@ describe('AgentLifecycleService', () => {
   });
 
   it('run throws when the agent does not exist', () => {
-    const svc = ix.get(IAgentLifecycleService);
+    ix.set(ISessionSubagentService, new SyncDescriptor(SessionSubagentService));
+    const svc = ix.get(ISessionSubagentService);
     expect(() =>
       svc.run('missing', { kind: 'prompt', prompt: 'hi' }, { signal: new AbortController().signal }),
     ).toThrow('Agent "missing" does not exist');
@@ -444,5 +452,32 @@ describe('AgentLifecycleService', () => {
 
     await svc.remove(a.id);
     expect(disposed).toEqual([a.id]);
+  });
+
+  it('de-dupes concurrent create calls for the same agent id', async () => {
+    let resolveRegistration!: () => void;
+    const registration = new Promise<void>((resolve) => {
+      resolveRegistration = resolve;
+    });
+    registerAgent.mockReturnValue(registration);
+    const svc = ix.get(IAgentLifecycleService);
+
+    const first = svc.create({ agentId: 'main' });
+    const second = svc.create({ agentId: 'main' });
+
+    resolveRegistration();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toBe(b);
+    expect(registerAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('create returns the existing agent on a sequential duplicate id', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+
+    const first = await svc.create({ agentId: 'main' });
+    const second = await svc.create({ agentId: 'main' });
+
+    expect(second).toBe(first);
+    expect(registerAgent).toHaveBeenCalledTimes(1);
   });
 });

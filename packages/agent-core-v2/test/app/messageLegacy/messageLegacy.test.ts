@@ -7,7 +7,7 @@ import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 
 import { MessageLegacyService } from '#/app/messageLegacy/messageLegacyService';
@@ -44,7 +44,10 @@ function buildService(opts: {
     accessor: {
       get: (token: unknown): unknown => {
         if (token === IAgentLifecycleService) {
-          return { getHandle: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined) };
+          return {
+            create: async () => mainHandle,
+            get: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
+          };
         }
         if (token === ISessionCronService) return {};
         throw new Error('unexpected session service access');

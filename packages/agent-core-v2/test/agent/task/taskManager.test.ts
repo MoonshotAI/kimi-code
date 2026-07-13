@@ -18,7 +18,7 @@ import {
 import {
   SubagentTask,
   type SubagentHandle,
-} from '#/session/agentLifecycle/tools/subagent-task';
+} from '#/session/subagent/tools/subagent-task';
 import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
 import { isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import {

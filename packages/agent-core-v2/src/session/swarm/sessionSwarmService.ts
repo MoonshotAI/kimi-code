@@ -28,13 +28,14 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/agentLifecycle/mirrorAgentRun';
 import {
   isSubagentMeta,
   subagentLabels,
   subagentParentAgentId,
   subagentSwarmItem,
 } from '#/session/agentLifecycle/subagentMetadata';
+import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
+import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -74,6 +75,7 @@ export class SessionSwarmService implements ISessionSwarmService {
 
   constructor(
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionMetadata private readonly metadata: ISessionMetadata,
@@ -105,7 +107,7 @@ export class SessionSwarmService implements ISessionSwarmService {
       resume: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, false),
       retry: (agentId, options) => this.resumeAttempt(callerAgentId, agentId, options, true),
       suspended: (event) => {
-        const caller = this.lifecycle.getHandle(callerAgentId);
+        const caller = this.lifecycle.get(callerAgentId);
         caller?.accessor.get(IEventBus)?.publish({
           type: 'subagent.suspended',
           subagentId: event.agentId,
@@ -212,7 +214,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     request: { kind: 'prompt'; prompt: string } | { kind: 'retry' },
     options: AgentRunAttemptOptions,
   ): Promise<AgentRunAttemptHandle> {
-    const run = await this.lifecycle.run(agentId, request, {
+    const run = await this.subagents.run(agentId, request, {
       signal: options.signal,
       onReady: options.onReady,
     });
@@ -230,7 +232,7 @@ export class SessionSwarmService implements ISessionSwarmService {
   }
 
   private requireHandle(agentId: string, label: string): IAgentScopeHandle {
-    const handle = this.lifecycle.getHandle(agentId);
+    const handle = this.lifecycle.get(agentId);
     if (handle === undefined) throw new Error(`${label} "${agentId}" does not exist`);
     return handle;
   }

@@ -110,7 +110,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
   ): Promise<void> {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
-    let agent = session.accessor.get(IAgentLifecycleService).getHandle('main');
+    let agent = session.accessor.get(IAgentLifecycleService).get('main');
     if (agent === undefined) {
       agent = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     }

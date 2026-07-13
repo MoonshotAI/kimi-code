@@ -17,11 +17,10 @@ import { IConfigService } from '#/app/config/config';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IEventService } from '#/app/event/event';
 import {
-  type AgentTaskHooks,
-  type AgentTaskStopHookContext,
   IAgentLifecycleService,
+  MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
@@ -29,7 +28,6 @@ import { SessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle
 import { ISessionActivityKernel } from '#/activity/activity';
 import { SessionActivityKernel } from '#/activity/sessionActivityKernel';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
-import { createHooks } from '#/hooks';
 import { ISessionActivity } from '#/session/sessionActivity/sessionActivity';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
@@ -234,22 +232,25 @@ function atomicDocumentStoreStub(): IAtomicDocumentStore {
 function agentLifecycleStub(): IAgentLifecycleService {
   return {
     _serviceBrand: undefined,
-    hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
-    onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
     onDidCreate: () => ({ dispose: () => {} }),
-    onDidCreateMain: () => ({ dispose: () => {} }),
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.reject(new Error('not implemented')),
-    notifyMainCreated: () => {},
-    notifyAgentTaskStopped: () => {},
-    ensureMcpReady: () => Promise.resolve(),
     fork: () => Promise.reject(new Error('not implemented')),
-    run: () => {
-      throw new Error('not implemented');
-    },
-    getHandle: () => undefined,
+    get: () => undefined,
     list: () => [],
     remove: () => Promise.resolve(),
+  };
+}
+
+function sessionMcpServiceStub(
+  ensureMcpReady: () => Promise<void> = () => Promise.resolve(),
+): ISessionMcpService {
+  return {
+    _serviceBrand: undefined,
+    ensureMcpReady,
+    connectionManager: () => {
+      throw new Error('not implemented');
+    },
   };
 }
 
@@ -266,7 +267,7 @@ function agentLifecycleWithMainStub(): IAgentLifecycleService {
   } as IAgentScopeHandle;
   return {
     ...agentLifecycleStub(),
-    getHandle: (id) => (id === MAIN_AGENT_ID ? main : undefined),
+    get: (id) => (id === MAIN_AGENT_ID ? main : undefined),
   };
 }
 
@@ -310,7 +311,7 @@ function agentLifecycleCapturingPlanSpy(opts: { mainPreexists?: boolean } = {}):
   });
   const lifecycle: IAgentLifecycleService = {
     ...agentLifecycleStub(),
-    getHandle: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
+    get: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
     create,
   };
   return { lifecycle, enter, create };
@@ -397,6 +398,7 @@ describe('SessionLifecycleService', () => {
       stubPair(IAtomicDocumentStore, atomicDocumentStoreStub()),
       stubPair(IEventService, eventStub()),
       stubPair(IAgentLifecycleService, agentLifecycleStub()),
+      stubPair(ISessionMcpService, sessionMcpServiceStub()),
       stubPair(IConfigService, configStub()),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
       stubPair(ISessionActivityKernel, stubSessionActivityKernel()),
@@ -662,10 +664,7 @@ describe('SessionLifecycleService', () => {
       resolveMcpReady = resolve;
     });
     const svc = build([
-      stubPair(IAgentLifecycleService, {
-        ...agentLifecycleStub(),
-        ensureMcpReady: () => mcpReady,
-      }),
+      stubPair(ISessionMcpService, sessionMcpServiceStub(() => mcpReady)),
     ]);
 
     let settled = false;
@@ -688,10 +687,8 @@ describe('SessionLifecycleService', () => {
     });
     const svc = build([
       stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj')),
-      stubPair(IAgentLifecycleService, {
-        ...agentLifecycleWithMainStub(),
-        ensureMcpReady: () => mcpReady,
-      }),
+      stubPair(IAgentLifecycleService, agentLifecycleWithMainStub()),
+      stubPair(ISessionMcpService, sessionMcpServiceStub(() => mcpReady)),
     ]);
 
     const resumed = svc.resume('s1');
@@ -823,7 +820,7 @@ describe('SessionLifecycleService', () => {
         }),
         stubPair(IAgentLifecycleService, {
           ...agentLifecycleStub(),
-          getHandle: () => mainHandle,
+          get: () => mainHandle,
         }),
       ]);
 

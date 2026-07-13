@@ -52,11 +52,13 @@ import { createHooks } from '#/hooks';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ensureMainAgent, MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -187,8 +189,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
     void handle.accessor.get(ISessionSkillCatalog).ready;
-    await handle.accessor.get(IAgentLifecycleService).ensureMcpReady();
+    await handle.accessor.get(ISessionMcpService).ensureMcpReady();
+    // Force-instantiate the session-level eager services whose subscriptions
+    // must exist before the first agent / turn (external hooks, cron).
     handle.accessor.get(ISessionExternalHooksService);
+    handle.accessor.get(ISessionCronService);
     return handle;
   }
 
@@ -254,8 +259,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       workspaceId: summary.workspaceId,
     });
     const agents = handle.accessor.get(IAgentLifecycleService);
-    if (agents.getHandle(MAIN_AGENT_ID) === undefined) {
-      const main = await ensureMainAgent(handle);
+    if (agents.get(MAIN_AGENT_ID) === undefined) {
+      const main = await agents.create({ agentId: MAIN_AGENT_ID });
       // Resolve context memory BEFORE restoring so its reducers are registered;
       // otherwise the wire replay applies context records into a void and the
       // restored transcript never lands in context memory.
@@ -481,7 +486,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (args.sourceHandle !== undefined) {
       const agentHandle = args.sourceHandle.accessor
         .get(IAgentLifecycleService)
-        .getHandle(args.agentId);
+        .get(args.agentId);
       if (agentHandle !== undefined) {
         await agentHandle.accessor.get(IAgentWireRecordService).flush();
       }

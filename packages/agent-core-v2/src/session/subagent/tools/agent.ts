@@ -1,10 +1,11 @@
 /**
- * `agentLifecycle` domain (L6) — the `Agent` collaboration tool.
+ * `subagent` domain (L6) — the `Agent` collaboration tool.
  *
- * The LLM-facing wrapper over `IAgentLifecycleService`: translates the tool
- * args into a Profile + Model binding, creates (or resumes) an agent, drives
- * one turn via `run`, and mirrors the run onto the calling agent's record
- * stream (`mirrorAgentRun`). The tool also owns the JSON schema + description,
+ * The LLM-facing wrapper over the `subagent` domain: translates the tool args
+ * into a Profile + Model binding, creates (or resumes) an agent through
+ * `IAgentLifecycleService`, drives one turn via `ISessionSubagentService.run`,
+ * and mirrors the run onto the calling agent's record stream
+ * (`mirrorAgentRun`). The tool also owns the JSON schema + description,
  * approval rule, background-task registration (so the LLM can see the run
  * under TaskList/TaskOutput/TaskStop when `run_in_background=true` or after
  * detach), and terminal text formatting.
@@ -40,13 +41,14 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { IAgentProfileCatalogService, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { ILogService } from '#/_base/log/log';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
-import { IAgentLifecycleService } from '../agentLifecycle';
 import { emitAgentRunSpawned, mirrorAgentRun } from '../mirrorAgentRun';
-import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '../subagentMetadata';
+import { ISessionSubagentService } from '../subagent';
 import { SubagentTask, type SubagentHandle } from './subagent-task';
 
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
@@ -141,6 +143,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
 
   constructor(
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
@@ -202,7 +205,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   }
 
   private resumeProfileName(agentId: string): string | undefined {
-    const target = this.lifecycle.getHandle(agentId);
+    const target = this.lifecycle.get(agentId);
     if (target === undefined) return undefined;
     return target.accessor.get(IAgentProfileService).data().profileName;
   }
@@ -210,7 +213,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   /**
    * Launch (or resume) the target agent and start its turn: create from an
    * explicit Profile + Model binding inherited from this agent's own config,
-   * submit the prompt via `lifecycle.run`, and mirror the run onto this
+   * submit the prompt via `subagents.run`, and mirror the run onto this
    * agent's record stream. Returns a handle whose completion carries the
    * distilled result text.
    */
@@ -219,7 +222,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     toolCallId: string,
     controller: AbortController,
   ): Promise<SubagentHandle> {
-    const requester = this.lifecycle.getHandle(this.callerAgentId);
+    const requester = this.lifecycle.get(this.callerAgentId);
     if (requester === undefined) {
       throw new Error(`Caller agent "${this.callerAgentId}" does not exist`);
     }
@@ -231,7 +234,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     let profileName: string;
     let promptText = args.prompt;
     if (isResume) {
-      const target = this.lifecycle.getHandle(resumeAgentId);
+      const target = this.lifecycle.get(resumeAgentId);
       if (target === undefined) {
         throw new Error(`Agent instance "${resumeAgentId}" does not exist`);
       }
@@ -285,7 +288,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       runInBackground,
     });
 
-    const run = await this.lifecycle.run(
+    const run = await this.subagents.run(
       agentId,
       { kind: 'prompt', prompt: promptText },
       { signal: controller.signal },

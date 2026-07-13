@@ -71,7 +71,7 @@ describe('server-v2 snapshot route enrichment', () => {
             }),
           },
         ],
-        [IAgentLifecycleService, { getHandle: () => main }],
+        [IAgentLifecycleService, { get: () => main }],
         [ISessionInteractionService, { listPending: () => [] }],
         [ISessionActivity, { status: () => 'idle' }],
       ]),
@@ -258,12 +258,12 @@ describe('server-v2 GET /api/v1/sessions/:id/snapshot', () => {
   async function ensureMainAgent(sessionId: string): Promise<void> {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
     const agents = session!.accessor.get(IAgentLifecycleService);
-    if (agents.getHandle('main') === undefined) await agents.create({ agentId: 'main' });
+    if (agents.get('main') === undefined) await agents.create({ agentId: 'main' });
   }
 
   function emit(sessionId: string, event: DomainEvent): void {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
-    const main = session!.accessor.get(IAgentLifecycleService).getHandle('main');
+    const main = session!.accessor.get(IAgentLifecycleService).get('main');
     main!.accessor.get(IEventBus).publish(event);
   }
 

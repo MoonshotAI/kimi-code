@@ -29,16 +29,17 @@ import {
 import {
   AgentToolInputSchema,
   type AgentToolInput,
-} from '#/session/agentLifecycle/tools/agent';
-import { runAgentTurn } from '#/session/agentLifecycle/runAgentTurn';
-import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/agentLifecycle/mirrorAgentRun';
+} from '#/session/subagent/tools/agent';
+import { runAgentTurn } from '#/session/subagent/runAgentTurn';
+import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
-  IAgentLifecycleService,
   type AgentRunHandle,
   type AgentRunRequest,
   type AgentTaskStopHookContext,
+  ISessionSubagentService,
   type RunAgentOptions,
-} from '#/session/agentLifecycle/agentLifecycle';
+} from '#/session/subagent/subagent';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
@@ -150,10 +151,10 @@ interface AgentLifecycleStubOptions {
   readonly handleServices?: ReadonlyMap<string, ReadonlyMap<unknown, unknown>>;
 }
 
-interface AgentLifecycleStub extends IAgentLifecycleService {
+interface AgentLifecycleStub extends IAgentLifecycleService, ISessionSubagentService {
   readonly create: ReturnType<typeof vi.fn<IAgentLifecycleService['create']>>;
-  readonly run: ReturnType<typeof vi.fn<IAgentLifecycleService['run']>>;
-  readonly getHandle: ReturnType<typeof vi.fn<IAgentLifecycleService['getHandle']>>;
+  readonly run: ReturnType<typeof vi.fn<ISessionSubagentService['run']>>;
+  readonly get: ReturnType<typeof vi.fn<IAgentLifecycleService['get']>>;
   addHandle(
     agentId: string,
     profileName: string,
@@ -175,6 +176,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         const service = servicesByAgentId.get(agentId)?.get(serviceId);
         if (service !== undefined) return service as never;
         if (serviceId === IAgentLifecycleService) return lifecycle as never;
+        if (serviceId === ISessionSubagentService) return lifecycle as never;
         if (serviceId === IAgentContextInjectorService) {
           return {
             _serviceBrand: undefined,
@@ -241,7 +243,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
     },
     onDidStopAgentTask: Event.None as KimiEvent<AgentTaskStopHookContext>,
     onDidCreate: Event.None as KimiEvent<IAgentScopeHandle>,
-    onDidCreateMain: Event.None as KimiEvent<IAgentScopeHandle>,
     onDidDispose: Event.None as KimiEvent<string>,
     create: vi.fn(async (input = {}) => {
       if (options.createError !== undefined) throw options.createError;
@@ -256,8 +257,6 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
       handles.set(agentId, createdHandle);
       return createdHandle;
     }),
-    ensureMcpReady: vi.fn(async () => {}),
-    notifyMainCreated: vi.fn(),
     notifyAgentTaskStopped: vi.fn(),
     fork: vi.fn(async () => {
       throw new Error('unexpected fork');
@@ -272,7 +271,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         completion,
       };
     }),
-    getHandle: vi.fn((agentId) => handles.get(agentId)),
+    get: vi.fn((agentId) => handles.get(agentId)),
     list: vi.fn(() => [...handles.values()]),
     remove: vi.fn(async (agentId) => {
       handles.delete(agentId);
@@ -497,6 +496,7 @@ describe('Agent tool execution contract', () => {
   ): TestAgentContext {
     ctx = createTestAgent(
       sessionService(IAgentLifecycleService, lifecycle),
+      sessionService(ISessionSubagentService, lifecycle),
       sessionService(ISessionCronService, cronStub),
       ...extra,
     );
@@ -530,7 +530,7 @@ describe('Agent tool execution contract', () => {
 
     if (execution.isError === true) throw new Error('expected runnable execution');
     expect(execution.description).toBe('Launching explore agent: Continue work');
-    expect(lifecycle.getHandle).toHaveBeenCalledWith('agent-existing');
+    expect(lifecycle.get).toHaveBeenCalledWith('agent-existing');
   });
 
   it('returns an error when resuming with a subagent type', async () => {
@@ -1999,6 +1999,7 @@ describe('Agent tools', () => {
       });
       ctx = createTestAgent(
         sessionService(IAgentLifecycleService, lifecycle),
+        sessionService(ISessionSubagentService, lifecycle),
         sessionService(ISessionCronService, cronStub),
       );
       lifecycle.addHandle('main', 'agent');

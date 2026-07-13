@@ -19,7 +19,7 @@ import { TaskStopTool } from '#/agent/task/tools/task-stop';
 import {
   SubagentTask,
   type SubagentHandle,
-} from '#/session/agentLifecycle/tools/subagent-task';
+} from '#/session/subagent/tools/subagent-task';
 import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IEventBus } from '#/app/event/eventBus';

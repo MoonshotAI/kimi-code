@@ -53,18 +53,19 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   ) {
     super();
 
-    this._register(this.agentLifecycle.onDidCreate((handle) => this.bindAgent(handle)));
-    this._register(this.agentLifecycle.onDidCreateMain((handle) => this.bindMainWire(handle)));
+    this._register(
+      this.agentLifecycle.onDidCreate((handle) => {
+        this.bindAgent(handle);
+        if (handle.id === MAIN_AGENT_ID) this.bindMainWire(handle);
+      }),
+    );
     this._register(
       this.agentLifecycle.onDidDispose((agentId) => this.disposeAgentBindings(agentId)),
     );
 
     for (const handle of this.agentLifecycle.list()) {
       this.bindAgent(handle);
-    }
-    const main = this.agentLifecycle.getHandle(MAIN_AGENT_ID);
-    if (main !== undefined) {
-      this.bindMainWire(main);
+      if (handle.id === MAIN_AGENT_ID) this.bindMainWire(handle);
     }
 
     this._register(
@@ -77,7 +78,7 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   }
 
   getTodos(): readonly TodoItem[] {
-    const main = this.agentLifecycle.getHandle(MAIN_AGENT_ID);
+    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return [];
     return main.accessor.get(IAgentWireService).getModel(TodoModel);
   }
@@ -95,7 +96,7 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   }
 
   private dispatchTodoSet(todos: readonly TodoItem[]): void {
-    const main = this.agentLifecycle.getHandle(MAIN_AGENT_ID);
+    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return;
     const wire = main.accessor.get(IAgentWireService);
     wire.dispatch(todoSet({ key: 'todo', value: todos }));
@@ -103,10 +104,10 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
 
   private bindMainWire(handle: IAgentScopeHandle): void {
     const wire = handle.accessor.get(IAgentWireService);
-    // Registered on the main agent's wire by `onDidCreateMain`, which fires in
-    // `ensureMainAgent` strictly before that wire's `replay`. Bridge model
-    // changes to `onDidChange`: replay applies silently (no notification), so
-    // this fires only for live `tools.update_store` (`key: 'todo'`) writes, carrying the sanitized model.
+    // Registered on the main agent's wire at `onDidCreate` — on resume, agent
+    // creation runs strictly before that wire's `replay`. Bridge model changes
+    // to `onDidChange`: replay applies silently (no notification), so this
+    // fires only for live `tools.update_store` (`key: 'todo'`) writes.
     const disposable = wire.subscribe(TodoModel, (state) => {
       this.onDidChangeEmitter.fire(state);
     });

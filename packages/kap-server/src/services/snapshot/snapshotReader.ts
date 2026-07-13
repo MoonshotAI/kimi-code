@@ -231,7 +231,7 @@ export class SnapshotReader implements ISnapshotReader {
     inFlightTurn: InFlightTurn | null,
   ): InFlightTurn | null {
     if (inFlightTurn === null || live === undefined) return inFlightTurn;
-    const main = live.accessor.get(IAgentLifecycleService).getHandle(MAIN_AGENT_ID);
+    const main = live.accessor.get(IAgentLifecycleService).get(MAIN_AGENT_ID);
     if (main === undefined) return inFlightTurn;
     let currentPromptId: string | undefined;
     try {

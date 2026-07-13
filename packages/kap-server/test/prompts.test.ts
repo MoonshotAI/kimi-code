@@ -414,7 +414,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     // The main agent must NOT have received it — previously the route ignored
     // agent_id and always targeted main, so the reply landed in the main view.
-    const main = lifecycle.getHandle('main');
+    const main = lifecycle.get('main');
     expect(main).toBeDefined();
     expect(contextHasUserText(main!, 'side question')).toBe(false);
   });

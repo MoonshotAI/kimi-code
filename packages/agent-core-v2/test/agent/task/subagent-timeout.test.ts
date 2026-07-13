@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentTaskService } from '#/agent/task/task';
-import { SubagentTask } from '#/session/agentLifecycle/tools/subagent-task';
+import { SubagentTask } from '#/session/subagent/tools/subagent-task';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
 function agentTask(

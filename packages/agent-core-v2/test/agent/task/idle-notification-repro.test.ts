@@ -25,7 +25,7 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentTaskService } from '#/agent/task/task';
-import { SubagentTask } from '#/session/agentLifecycle/tools/subagent-task';
+import { SubagentTask } from '#/session/subagent/tools/subagent-task';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import {

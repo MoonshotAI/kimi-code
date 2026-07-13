@@ -4,7 +4,7 @@
  * Runs `/init` against the session's main agent: resolves `main` through
  * `agentLifecycle`, spawns a `coder` subagent bound to the main agent's own
  * model / thinking level / cwd (inheriting the main agent's permission mode),
- * drives one init-brief turn via `lifecycle.run`, and mirrors the run onto the
+ * drives one init-brief turn via `subagents.run`, and mirrors the run onto the
  * main agent's record stream (`emitAgentRunSpawned` + `mirrorAgentRun`) so the
  * UI shows the nested transcript and the `subagent.*` records fire. Once the
  * subagent finishes, reloads `AGENTS.md` through the `profile` context helper
@@ -29,9 +29,9 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 import { ErrorCodes, Error2 } from '#/errors';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
-import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/agentLifecycle/mirrorAgentRun';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
+import { ISessionSubagentService } from '#/session/subagent/subagent';
 
 import { ISessionInitService } from './sessionInit';
 import { DEFAULT_INIT_PROMPT, initCompletionReminder } from './profile/init';
@@ -45,13 +45,14 @@ export class SessionInitService implements ISessionInitService {
 
   constructor(
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
+    @ISessionSubagentService private readonly subagents: ISessionSubagentService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {}
 
   async generateAgentsMd(): Promise<void> {
-    const main = this.lifecycle.getHandle(MAIN_AGENT_ID);
+    const main = this.lifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
@@ -81,7 +82,7 @@ export class SessionInitService implements ISessionInitService {
         runInBackground: false,
       });
 
-      const run = await this.lifecycle.run(
+      const run = await this.subagents.run(
         child.id,
         { kind: 'prompt', prompt: DEFAULT_INIT_PROMPT },
         { signal: controller.signal },
