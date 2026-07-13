@@ -357,7 +357,16 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         `Cannot resume a goal in status "${state.status}"`,
       );
     }
-    return this.applyLifecycle(state, 'active', input.reason, actor);
+    const snapshot = this.applyLifecycle(state, 'active', input.reason, actor);
+    if (actor === 'user' && this.shouldLaunchContinuationAfterResume()) {
+      try {
+        this.launchContinuationTurn();
+      } catch (error) {
+        await this.settleGoalAfterContinuationFailure(error);
+        throw error;
+      }
+    }
+    return snapshot;
   }
 
   async setBudgetLimits(
@@ -629,6 +638,19 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     void receipt.assigned.then(({ turn }) => turn.result).finally(() => {
       if (this.pendingContinuation === receipt) this.pendingContinuation = undefined;
     });
+  }
+
+  /**
+   * Return whether a user-resumed goal needs a fresh continuation turn.
+   *
+   * A live turn, an already queued continuation, or any other pending loop
+   * request owns the next scheduling decision. Only an idle loop with no
+   * pending work may admit the goal continuation here.
+   */
+  private shouldLaunchContinuationAfterResume(): boolean {
+    if (this.liveTurnId !== undefined || this.pendingContinuation !== undefined) return false;
+    const status = this.loopService.status();
+    return status.state === 'idle' && !status.hasPendingRequests;
   }
 
   private cancelPendingContinuation(): void {

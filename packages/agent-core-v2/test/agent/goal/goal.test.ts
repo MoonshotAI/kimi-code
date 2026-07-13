@@ -226,7 +226,7 @@ describe('AgentGoalService', () => {
       await expect(goals.createGoal({ objective: 'second' })).rejects.toMatchObject({
         code: ErrorCodes.GOAL_ALREADY_EXISTS,
       });
-      await goals.resumeGoal();
+      await goals.resumeGoal({}, 'model');
       await goals.markBlocked({ reason: 'stuck' });
       await expect(goals.createGoal({ objective: 'second' })).rejects.toMatchObject({
         code: ErrorCodes.GOAL_ALREADY_EXISTS,
@@ -263,7 +263,7 @@ describe('AgentGoalService', () => {
       await goals.pauseGoal();
       expect(events.at(-1)?.change).toMatchObject({ kind: 'lifecycle', status: 'paused' });
 
-      await goals.resumeGoal();
+      await goals.resumeGoal({}, 'model');
       expect(events.at(-1)?.change).toMatchObject({ kind: 'lifecycle', status: 'active' });
 
       await goals.markComplete({ reason: 'done' }, 'model');
@@ -279,7 +279,7 @@ describe('AgentGoalService', () => {
       expect(blocked?.status).toBe('blocked');
       expect(blocked?.terminalReason).toBe('need creds');
 
-      const resumed = await goals.resumeGoal();
+      const resumed = await goals.resumeGoal({}, 'model');
       expect(resumed.status).toBe('active');
       expect(resumed.terminalReason).toBeUndefined();
     });
@@ -389,7 +389,7 @@ describe('AgentGoalService', () => {
       await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 100 } }, 'model');
       await goals.incrementTurn();
       await goals.pauseGoal({ reason: 'private pause reason' });
-      await goals.resumeGoal();
+      await goals.resumeGoal({}, 'model');
       await goals.markComplete({ reason: 'private completion reason' }, 'model');
 
       expect(telemetry.map((record) => record.event)).toEqual([
@@ -614,6 +614,33 @@ describe('AgentGoalService core workflow hooks', () => {
 
   afterEach(async () => {
     await ctx?.dispose();
+  });
+
+  it('starts a continuation when a user resumes an idle blocked goal', async () => {
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.markBlocked({ reason: 'need credentials' });
+
+    const resumed = await goals.resumeGoal();
+
+    expect(resumed.status).toBe('active');
+    expect(loopService.launches).toHaveLength(1);
+    expect(loopService.drainNextBatch(context)).toBeDefined();
+    expect(context.get().at(-1)?.origin).toEqual({
+      kind: 'system_trigger',
+      name: 'goal_continuation',
+    });
+  });
+
+  it('does not launch another turn when the model resumes a goal during a turn', async () => {
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.pauseGoal();
+
+    const turn = makeTurn(41);
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    const resumed = await goals.resumeGoal({}, 'model');
+
+    expect(resumed.status).toBe('active');
+    expect(loopService.launches).toEqual([]);
   });
 
   it('counts an active goal turn and launches the next continuation', async () => {
@@ -1121,7 +1148,7 @@ describe('AgentGoalService mid-turn budget stop', () => {
       expect(goals.getGoal().goal?.status).toBe('blocked');
 
       // Resume does not re-check the budget: the goal comes back active.
-      const resumed = await goals.resumeGoal();
+      const resumed = await goals.resumeGoal({}, 'model');
       expect(resumed.status).toBe('active');
       const telemetryAfterResume = telemetry.length;
 
