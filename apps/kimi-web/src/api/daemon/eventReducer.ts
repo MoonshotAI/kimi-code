@@ -124,7 +124,7 @@ function advanceSeq(state: KimiClientState, sessionId: string | undefined, seq: 
   }
 }
 
-function isOptimisticUserMessage(message: AppMessage): boolean {
+export function isOptimisticUserMessage(message: AppMessage): boolean {
   return (
     message.role === 'user' &&
     message.metadata?.[OPTIMISTIC_USER_MESSAGE_METADATA_KEY] === true
@@ -164,7 +164,7 @@ function userMessageShape(m: AppMessage): { text: string; media: number } {
   return { text, media };
 }
 
-function sameUserMessageLoosely(a: AppMessage, b: AppMessage): boolean {
+export function sameUserMessageLoosely(a: AppMessage, b: AppMessage): boolean {
   const sa = userMessageShape(a);
   const sb = userMessageShape(b);
   return sa.text === sb.text && sa.media === sb.media;
