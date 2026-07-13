@@ -1294,7 +1294,15 @@ export class KimiTUI {
     // inline parts. Skill args are XML-escaped on render (renderSkillAttributes
     // + expandSkillParameters), so rewrite placeholders into escape-proof
     // plain-text file references the model can open with ReadMediaFile.
-    const rewrite = rewriteMediaPlaceholders(skillArgs, this.imageStore, 'plain');
+    let rewrite: ReturnType<typeof rewriteMediaPlaceholders>;
+    try {
+      rewrite = rewriteMediaPlaceholders(skillArgs, this.imageStore, 'plain');
+    } catch (error) {
+      // Cache copy failed (unwritable cache dir, vanished video source…);
+      // nothing has been dispatched yet, so just report and keep the input.
+      this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      return;
+    }
     if (!this.validateMediaCapabilities(rewrite)) return;
     this.beginSessionRequest();
     void session.activateSkill(skillName, rewrite.text).catch((error: unknown) => {
@@ -1312,7 +1320,13 @@ export class KimiTUI {
     // Plugin command args are expanded verbatim (no XML escaping), so the
     // standard <image|video path> tag convention works — see
     // sendSkillActivation for the escaped-channel variant.
-    const rewrite = rewriteMediaPlaceholders(args, this.imageStore, 'tag');
+    let rewrite: ReturnType<typeof rewriteMediaPlaceholders>;
+    try {
+      rewrite = rewriteMediaPlaceholders(args, this.imageStore, 'tag');
+    } catch (error) {
+      this.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+      return;
+    }
     if (!this.validateMediaCapabilities(rewrite)) return;
     this.beginSessionRequest();
     void session

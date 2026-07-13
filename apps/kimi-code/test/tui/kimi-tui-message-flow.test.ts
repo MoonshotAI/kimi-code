@@ -1895,6 +1895,59 @@ command = "vim"
     ]);
   });
 
+  it('shows an error instead of throwing when skill media materialization fails', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    // The pasted video's source file vanished before submit — the cache copy
+    // throws, and it must surface as a TUI error, not an unhandled rejection.
+    const missing = imageStore.addVideo('video/quicktime', '/tmp/kimi-missing-source.mov');
+
+    (
+      driver as unknown as {
+        sendSkillActivation(s: unknown, name: string, args: string): void;
+      }
+    ).sendSkillActivation(session, 'test', `look ${missing.placeholder}`);
+
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).toContain('Failed to prepare media attachment');
+  });
+
+  it('shows an error instead of throwing when plugin command media materialization fails', async () => {
+    const activatePluginCommand = vi.fn(async () => {});
+    const session = makeSession({ activatePluginCommand });
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const missing = imageStore.addVideo('video/mp4', '/tmp/kimi-missing-source.mp4');
+
+    (
+      driver as unknown as {
+        activatePluginCommand(s: unknown, pluginId: string, command: string, args: string): void;
+      }
+    ).activatePluginCommand(session, 'plug', 'cmd', missing.placeholder);
+
+    expect(activatePluginCommand).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).toContain('Failed to prepare media attachment');
+  });
+
+  it('keeps the queue and draft intact when steer media extraction fails', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const missing = imageStore.addVideo('video/quicktime', '/tmp/kimi-missing-source.mov');
+    driver.state.queuedMessages = [{ text: 'queued note', agentId: 'main' }];
+    driver.state.editor.setText(`look ${missing.placeholder}`);
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([{ text: 'queued note', agentId: 'main' }]);
+    expect(driver.state.editor.getText()).toBe(`look ${missing.placeholder}`);
+    expect(stripSgr(renderTranscript(driver))).toContain('Failed to prepare media attachment');
+  });
+
   it('recalls a queued bash command back into bash mode on Up', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';

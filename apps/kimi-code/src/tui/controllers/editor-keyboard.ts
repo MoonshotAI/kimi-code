@@ -268,7 +268,14 @@ export class EditorKeyboardController {
       }
       let editorExtraction: ReturnType<typeof extractMediaAttachments> | undefined;
       if (!editorIsBash && text.length > 0) {
-        editorExtraction = extractMediaAttachments(text, this.imageStore);
+        try {
+          editorExtraction = extractMediaAttachments(text, this.imageStore);
+        } catch (error) {
+          // Cache copy failed (e.g. the pasted video's source vanished) —
+          // leave the queue and the editor draft untouched.
+          host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+          return;
+        }
         items.push({
           text,
           parts: editorExtraction.hasMedia ? editorExtraction.parts : undefined,
