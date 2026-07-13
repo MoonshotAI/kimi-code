@@ -244,13 +244,17 @@ interface SendMessageOptions {
  * historical `'\n\n'`-joined string when nothing carries media, or a
  * merged part list when any item has extracted media parts (queued image
  * messages, or the editor draft after placeholder extraction).
+ *
+ * The item separator is only appended onto a trailing text part — never
+ * as a standalone `{type:'text',text:'\n\n'}` between media parts, which
+ * `normalizePromptInput` rejects as an empty text part.
  */
 function combineSteerInput(items: readonly SteerInputItem[]): string | PromptPart[] {
   const hasMedia = items.some((item) => item.parts !== undefined && item.parts.length > 0);
   if (!hasMedia) return items.map((item) => item.text).join('\n\n');
   const parts: PromptPart[] = [];
   for (const item of items) {
-    if (parts.length > 0) appendSteerText(parts, '\n\n');
+    if (parts.at(-1)?.type === 'text') appendSteerText(parts, '\n\n');
     if (item.parts !== undefined && item.parts.length > 0) {
       for (const part of item.parts) {
         if (part.type === 'text') appendSteerText(parts, part.text);

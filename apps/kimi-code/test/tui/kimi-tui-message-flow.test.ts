@@ -1800,6 +1800,42 @@ command = "vim"
     expect(driver.state.queuedMessages).toEqual([]);
   });
 
+  it('steers consecutive image-only messages without a whitespace-only separator part', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const first = imageStore.addImage(new Uint8Array([0xaa]), 'image/png', 1, 1);
+    const second = imageStore.addImage(new Uint8Array([0xbb]), 'image/png', 1, 1);
+    const imagePart = (bytes: Uint8Array) => ({
+      type: 'image_url' as const,
+      imageUrl: { url: `data:image/png;base64,${Buffer.from(bytes).toString('base64')}` },
+    });
+    driver.state.queuedMessages = [
+      {
+        text: first.placeholder,
+        agentId: 'main',
+        parts: [imagePart(first.bytes)],
+        imageAttachmentIds: [first.id],
+      },
+      {
+        text: second.placeholder,
+        agentId: 'main',
+        parts: [imagePart(second.bytes)],
+        imageAttachmentIds: [second.id],
+      },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    // normalizePromptInput rejects whitespace-only text parts, so the
+    // item separator must not become a standalone `{type:'text',text:'\n\n'}`
+    // between two image parts.
+    expect(session.steer).toHaveBeenCalledWith([imagePart(first.bytes), imagePart(second.bytes)]);
+  });
+
   it('recalls a queued bash command back into bash mode on Up', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
