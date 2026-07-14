@@ -4,8 +4,13 @@
  * Persists the session metadata document (`state.json`) through the `storage`
  * access-pattern store (`IAtomicDocumentStore`), rooted at the `metaScope`
  * namespace from `sessionContext`. Loads the existing document on
- * construction (creating it on first run), and logs through `log`. Bound at
- * Session scope.
+ * construction (creating it on first run), and logs through `log`. The
+ * document always carries the `agents` / `custom` maps that v1's
+ * `Session.resume()` reads unconditionally — seeded at creation, backfilled
+ * and persisted on load for documents written before the seeding existed
+ * (without touching `updatedAt`, so a format heal never reorders session
+ * listings) — keeping sessions on a shared `KIMI_CODE_HOME` resumable by
+ * released v1 builds. Bound at Session scope.
  *
  * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
  * update is persisted, the fresh summary is mirrored into the `IQueryStore`
@@ -131,13 +136,7 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
     if (existing !== undefined) {
       this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
-      // Heal pre-fix v2 documents: sessions created before the create-path
-      // seeding never gained the `agents` / `custom` maps, and v1's
-      // Session.resume() indexes `agents` unconditionally — backfill and
-      // persist so opening the session once with this build leaves it
-      // resumable by released v1 builds. `updatedAt` is deliberately
-      // untouched: a format heal must not reorder session listings.
-      if (this.data.agents == null || this.data.custom == null) {
+      if (this.data.agents === undefined || this.data.custom === undefined) {
         this.data = {
           ...this.data,
           agents: this.data.agents ?? {},
@@ -155,9 +154,6 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
       createdAt: now,
       updatedAt: now,
       archived: false,
-      // Seed the maps v1 reads unconditionally on resume (`agents['main']` in
-      // v1's Session.resume()); v1 also defaults both on fresh sessions, so a
-      // v2-created state.json stays openable by released v1 builds.
       agents: {},
       custom: {},
     };

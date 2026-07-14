@@ -169,10 +169,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     ) as IAgentScopeHandle;
     this.handles.set(agentId, handle);
     try {
-      // Seal the wire log with the metadata envelope before any op can be
-      // dispatched: v1's replay hard-rejects envelope-less logs, and sessions
-      // on a shared KIMI_CODE_HOME must stay readable by released v1 builds.
-      // No-op when the log already has records (resume / forked copies).
       await handle.accessor.get(IAgentWireRecordService).seal();
       await this.sessionMetadata.registerAgent(agentId, {
         homedir: agentHomedir,
@@ -188,9 +184,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       // Bootstrap (profile binding and the force-instantiated observer
       // services) is complete: drive the activity kernel `initializing → idle`
       // so the agent can admit turns. Until this point `begin` rejects with
-      // `activity.initializing`. The wire log was already sealed with its
-      // metadata envelope above; `wireRecord.restore()` heals any legacy
-      // envelope-less log on resume (prepend + rewrite).
+      // `activity.initializing`.
       handle.accessor.get(IAgentActivityService).markReady();
       return handle;
     } catch (error) {
