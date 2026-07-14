@@ -131,6 +131,20 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
     if (existing !== undefined) {
       this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
+      // Heal pre-fix v2 documents: sessions created before the create-path
+      // seeding never gained the `agents` / `custom` maps, and v1's
+      // Session.resume() indexes `agents` unconditionally — backfill and
+      // persist so opening the session once with this build leaves it
+      // resumable by released v1 builds. `updatedAt` is deliberately
+      // untouched: a format heal must not reorder session listings.
+      if (this.data.agents == null || this.data.custom == null) {
+        this.data = {
+          ...this.data,
+          agents: this.data.agents ?? {},
+          custom: this.data.custom ?? {},
+        };
+        await this.store.set(this.scope, META_KEY, this.data);
+      }
       return;
     }
     const now = Date.now();
