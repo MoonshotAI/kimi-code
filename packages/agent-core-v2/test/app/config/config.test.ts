@@ -40,8 +40,15 @@ import {
 import {
   KEEP_ALIVE_ON_EXIT_ENV,
   resolveAgentTaskConfig,
+  resolvePrintBackgroundMode,
   type AgentTaskConfig,
 } from '#/agent/task/configSection';
+import '#/session/subagent/configSection';
+import {
+  DEFAULT_SUBAGENT_TIMEOUT_MS,
+  resolveSubagentTimeoutMs,
+  SUBAGENT_TIMEOUT_ENV,
+} from '#/session/subagent/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -529,6 +536,121 @@ describe('task config section', () => {
       killGracePeriodMs: 25,
       keepAliveOnExit: true,
     });
+
+    disposables.dispose();
+  });
+
+  async function createTaskConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('parses print policy fields and merges legacy background with task overrides', async () => {
+    const { config, disposables } = await createTaskConfig(
+      {},
+      '[background]\nprint_background_mode = "steer"\nprint_wait_ceiling_s = 60\n\n' +
+        '[task]\nprint_max_turns = 5\n',
+    );
+
+    expect(resolveAgentTaskConfig(config)).toEqual({
+      printBackgroundMode: 'steer',
+      printWaitCeilingS: 60,
+      printMaxTurns: 5,
+    });
+
+    disposables.dispose();
+  });
+
+  it('drops the task section with a warning when a print policy value is invalid', async () => {
+    const { config, disposables } = await createTaskConfig(
+      {},
+      '[task]\nprint_background_mode = "wait"\n',
+    );
+    expect(config.get<AgentTaskConfig>('task')?.printBackgroundMode).toBeUndefined();
+    expect(
+      config
+        .diagnostics()
+        .some((d) => d.message.includes("Ignored invalid config section 'task'")),
+    ).toBe(true);
+    disposables.dispose();
+  });
+
+  it('resolvePrintBackgroundMode prefers the explicit mode over keepAliveOnExit', async () => {
+    const { config, disposables } = await createTaskConfig(
+      {},
+      '[task]\nprint_background_mode = "exit"\nkeep_alive_on_exit = true\n',
+    );
+    expect(resolvePrintBackgroundMode(config)).toBe('exit');
+    disposables.dispose();
+  });
+
+  it('resolvePrintBackgroundMode falls back to keepAliveOnExit then exit', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createTaskConfig(env);
+
+    expect(resolvePrintBackgroundMode(config)).toBe('exit');
+
+    env[KEEP_ALIVE_ON_EXIT_ENV] = 'true';
+    expect(resolvePrintBackgroundMode(config)).toBe('drain');
+
+    disposables.dispose();
+  });
+});
+
+describe('subagent config section', () => {
+  async function createConfig(env: Record<string, string>, toml?: string) {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    if (toml !== undefined) {
+      await storage.write('', 'config.toml', new TextEncoder().encode(toml));
+    }
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    return { config, disposables };
+  }
+
+  it('defaults to two hours and honours the env override', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env);
+
+    expect(resolveSubagentTimeoutMs(config)).toBe(DEFAULT_SUBAGENT_TIMEOUT_MS);
+
+    env[SUBAGENT_TIMEOUT_ENV] = 'abc';
+    expect(resolveSubagentTimeoutMs(config)).toBe(DEFAULT_SUBAGENT_TIMEOUT_MS);
+
+    env[SUBAGENT_TIMEOUT_ENV] = '3000';
+    expect(resolveSubagentTimeoutMs(config)).toBe(3000);
+
+    disposables.dispose();
+  });
+
+  it('reads timeout_ms from config.toml and lets the env var win', async () => {
+    const env: Record<string, string> = {};
+    const { config, disposables } = await createConfig(env, '[subagent]\ntimeout_ms = 5000\n');
+    expect(resolveSubagentTimeoutMs(config)).toBe(5000);
+
+    env[SUBAGENT_TIMEOUT_ENV] = '7000';
+    expect(resolveSubagentTimeoutMs(config)).toBe(7000);
 
     disposables.dispose();
   });

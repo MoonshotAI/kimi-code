@@ -10,7 +10,8 @@
  *     native `DomainEvent` stream (payloads are already v1-protocol-shaped),
  *   - drives a turn through `IAgentPromptService.enqueue()` and awaits
  *     `Turn.result` for authoritative completion,
- *   - drains background tasks (config-driven) before exiting.
+ *   - applies the print-mode background policy (config-driven, v1-aligned:
+ *     `exit` / `drain` / `steer`) before exiting.
  *
  * Selected by `runPrompt` when `KIMI_CODE_EXPERIMENTAL_FLAG` is set.
  */
@@ -34,13 +35,16 @@ import {
   ensureMainAgent,
   hostRequestHeadersSeed,
   logSeed,
+  resolveAgentTaskConfig,
   resolveKimiHome,
   resolveLoggingConfig,
+  resolvePrintBackgroundMode,
   skillCatalogRuntimeOptionsSeed,
   type DomainEvent,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
   type LoopRunResult,
+  type PrintBackgroundMode,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import { createKimiDefaultHeaders, createKimiDeviceId } from '@moonshot-ai/kimi-code-oauth';
@@ -81,12 +85,7 @@ import {
 
 const PROMPT_UI_MODE = 'print';
 const DEFAULT_PRINT_WAIT_CEILING_S = 3600;
-const TASK_CONFIG_SECTION = 'task';
-const LEGACY_BACKGROUND_CONFIG_SECTION = 'background';
-
-interface TaskPrintWaitConfig {
-  readonly printWaitCeilingS?: number;
-}
+const DEFAULT_PRINT_MAX_TURNS = 50;
 
 export async function runV2Print(
   opts: CLIOptions,
@@ -336,8 +335,13 @@ async function runNativeTurn(
 
   await agent.accessor.get(IAuthSummaryService).ensureReady();
 
+  const turnEndings = createPrintTurnEndings();
   const subscription = agent.accessor.get(IEventBus).subscribe((event: DomainEvent) => {
     dispatchNativeEvent(writer, event, stderr);
+    // Arm the turn-endings collector before `turn.result` settles so a
+    // background-task completion that steers a new turn right after the main
+    // turn ends cannot have its `turn.ended` slip past the policy loop.
+    if (event.type === 'turn.ended') turnEndings.push(event);
   });
   try {
     const handle = await agent.accessor.get(IAgentPromptService).enqueue({
@@ -361,16 +365,39 @@ async function runNativeTurn(
     }
     const result = await turn.result;
 
-    // Turn settled, but `-p` is not done until any background work the turn
-    // spawned has drained (config-bounded). Flush the buffered assistant
-    // message first so a long drain does not withhold the final message.
+    // Turn settled, but `-p` is not done until the print-mode background
+    // policy says so (config-driven: exit / drain / steer). Flush the buffered
+    // assistant message first so a long drain/steer wait does not withhold the
+    // final message.
     writer.flushAssistant();
     if (result.type === 'completed') {
+      const configService = app.accessor.get(IConfigService);
+      const taskConfig = resolveAgentTaskConfig(configService);
       try {
-        await drainBackgroundTasks(app, session);
-      } catch {
-        // Draining is best-effort; a wedged background task must not fail the
-        // (already completed) turn. Swallow and proceed to finish.
+        await applyPrintBackgroundPolicy({
+          mode: resolvePrintBackgroundMode(configService),
+          ceilingS: taskConfig?.printWaitCeilingS ?? DEFAULT_PRINT_WAIT_CEILING_S,
+          maxTurns: taskConfig?.printMaxTurns ?? DEFAULT_PRINT_MAX_TURNS,
+          countPending: () => countPendingBackgroundTasks(session),
+          drain: () => drainBackgroundTasks(session, taskConfig?.printWaitCeilingS),
+          turnEndings,
+          skipTurnId: turn.id,
+          warn: (message) => stderr.write(`Warning: ${message}\n`),
+          now: () => Date.now(),
+        });
+      } catch (error) {
+        // A steered turn that fails fails the run (v1 parity). Anything else
+        // is best-effort: a wedged background task must not fail the (already
+        // completed) main turn.
+        if (error instanceof PrintSteeredTurnFailedError) {
+          writer.finish();
+          throw error;
+        }
+        stderr.write(
+          `Warning: print background policy failed: ${
+            error instanceof Error ? error.message : String(error)
+          }\n`,
+        );
       }
       writer.finish();
       return;
@@ -466,12 +493,151 @@ function dispatchNativeEvent(
   }
 }
 
-async function drainBackgroundTasks(app: Scope, session: ISessionScopeHandle): Promise<void> {
-  const config = app.accessor.get(IConfigService);
-  const section =
-    config.get<TaskPrintWaitConfig>(TASK_CONFIG_SECTION) ??
-    config.get<TaskPrintWaitConfig>(LEGACY_BACKGROUND_CONFIG_SECTION);
-  const ceilingS = section?.printWaitCeilingS;
+export type PrintTurnEnding = Extract<DomainEvent, { type: 'turn.ended' }>;
+
+/**
+ * Source of `turn.ended` events for the print steer loop. `next` resolves with
+ * the next ending (skipping `skipTurnId`, the main turn's own buffered
+ * ending), or `null` when `remainingMs` elapses first.
+ */
+export interface PrintTurnEndings {
+  next(remainingMs: number, skipTurnId: number): Promise<PrintTurnEnding | null>;
+}
+
+/**
+ * Buffered `turn.ended` collector fed from the agent event bus. Events that
+ * arrive while no one is waiting are queued, so endings that fire between the
+ * main turn settling and the policy loop starting are not missed.
+ */
+export function createPrintTurnEndings(): PrintTurnEndings & {
+  push: (event: PrintTurnEnding) => void;
+} {
+  const buffer: PrintTurnEnding[] = [];
+  let waiter: ((ending: PrintTurnEnding | null) => void) | undefined;
+  return {
+    push: (event) => {
+      const resolve = waiter;
+      if (resolve !== undefined) {
+        waiter = undefined;
+        resolve(event);
+        return;
+      }
+      buffer.push(event);
+    },
+    next: async (remainingMs, skipTurnId) => {
+      const deadlineAt = Date.now() + remainingMs;
+      const waitOnce = (ms: number): Promise<PrintTurnEnding | null> =>
+        new Promise((resolve) => {
+          let settled = false;
+          const settle = (value: PrintTurnEnding | null): void => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            waiter = undefined;
+            // oxlint-disable-next-line promise/no-multiple-resolved -- `settled` guards the single resolve; the rule cannot see it
+            resolve(value);
+          };
+          const timer = setTimeout(() => {
+            settle(null);
+          }, ms);
+          waiter = settle;
+        });
+      for (;;) {
+        while (buffer.length > 0) {
+          const ending = buffer.shift()!;
+          if (ending.turnId !== skipTurnId) return ending;
+        }
+        const ms = deadlineAt - Date.now();
+        if (ms <= 0) return null;
+        const ending = await waitOnce(ms);
+        if (ending === null) return null;
+        if (ending.turnId !== skipTurnId) return ending;
+        // The skipped turn's own ending: keep waiting within the same budget.
+      }
+    },
+  };
+}
+
+/** A background-task completion steered a new main turn that did not complete. */
+export class PrintSteeredTurnFailedError extends Error {}
+
+export interface PrintBackgroundPolicyInput {
+  readonly mode: PrintBackgroundMode;
+  readonly ceilingS: number;
+  readonly maxTurns: number;
+  readonly countPending: () => number;
+  readonly drain: () => Promise<void>;
+  readonly turnEndings: PrintTurnEndings;
+  readonly skipTurnId: number;
+  readonly warn: (message: string) => void;
+  readonly now: () => number;
+}
+
+/**
+ * Apply the print-mode (`kimi -p`) background-task policy after the main turn
+ * completes. Mirrors v1's `Session.handlePrintMainTurnCompleted`:
+ *  - 'exit'  : return immediately (default).
+ *  - 'drain' : suppress + drain background tasks, then return.
+ *  - 'steer' : while background tasks are still pending, stay alive so task
+ *              completions steer new main turns; return once quiescent, or
+ *              when the wall-clock ceiling (`ceilingS`) or the turn cap
+ *              (`maxTurns`) is reached. A steered turn that does not complete
+ *              fails the run.
+ */
+export async function applyPrintBackgroundPolicy(
+  input: PrintBackgroundPolicyInput,
+): Promise<void> {
+  if (input.mode === 'exit') return;
+  if (input.mode === 'drain') {
+    await input.drain();
+    return;
+  }
+
+  // 'steer'
+  const deadline = input.now() + input.ceilingS * 1000;
+  let turns = 0;
+  for (;;) {
+    turns += 1;
+    if (input.now() >= deadline) {
+      input.warn(`print steer ceiling reached (${input.ceilingS}s), finishing`);
+      return;
+    }
+    if (turns > input.maxTurns) {
+      input.warn(`print steer max turns reached (${input.maxTurns}), finishing`);
+      return;
+    }
+    if (input.countPending() === 0) return;
+    const ended = await input.turnEndings.next(deadline - input.now(), input.skipTurnId);
+    if (ended === null) return;
+    if (ended.reason !== 'completed') {
+      throw new PrintSteeredTurnFailedError(formatTurnEndingFailure(ended));
+    }
+  }
+}
+
+function formatTurnEndingFailure(ending: PrintTurnEnding): string {
+  if (ending.error?.code === 'provider.filtered') {
+    return 'Provider safety policy blocked the response.';
+  }
+  if (ending.error !== undefined) return `${ending.error.code}: ${ending.error.message}`;
+  if (ending.reason === 'blocked') {
+    return 'Prompt hook blocked the request.';
+  }
+  return `Prompt turn ended with reason: ${ending.reason}`;
+}
+
+function countPendingBackgroundTasks(session: ISessionScopeHandle): number {
+  let count = 0;
+  for (const handle of session.accessor.get(IAgentLifecycleService).list()) {
+    count += handle.accessor.get(IAgentTaskService).list(true).length;
+  }
+  return count;
+}
+
+async function drainBackgroundTasks(
+  session: ISessionScopeHandle,
+  ceilingS: number | undefined,
+): Promise<void> {
   const ceilingMs =
     typeof ceilingS === 'number' && Number.isFinite(ceilingS) && ceilingS > 0
       ? ceilingS * 1000

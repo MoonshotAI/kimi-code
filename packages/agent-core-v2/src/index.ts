@@ -204,6 +204,12 @@ export * from '#/agent/toolSelect/toolSelectAnnouncements';
 export * from '#/agent/toolSelect/toolSelectAnnouncementsService';
 
 import '#/agent/task/configSection';
+export {
+  resolveAgentTaskConfig,
+  resolvePrintBackgroundMode,
+  type AgentTaskConfig,
+  type PrintBackgroundMode,
+} from '#/agent/task/configSection';
 import '#/agent/task/tools/task-list';
 import '#/agent/task/tools/task-output';
 import '#/agent/task/tools/task-stop';
@@ -233,6 +239,7 @@ export * from '#/session/subagent/subagentService';
 export * from '#/session/subagent/tools/subagent-task';
 export { AGENT_RUN_PROMPT_ORIGIN } from '#/session/subagent/runAgentTurn';
 export * from '#/session/subagent/mirrorAgentRun';
+import '#/session/subagent/configSection';
 import '#/session/subagent/tools/agent';
 export * from '#/app/sessionLifecycle/sessionLifecycle';
 export * from '#/app/sessionLifecycle/sessionLifecycleService';
