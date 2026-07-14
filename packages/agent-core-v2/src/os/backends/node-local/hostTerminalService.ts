@@ -5,7 +5,8 @@
  * tracks live `TerminalProcess` handles so the process-wide PTY layer can be
  * torn down on disposal, releasing App ownership after each PTY exits. It has
  * no session, workspace, or buffering concerns; those live in the
- * Session-scoped `ISessionTerminalService`.
+ * Session-scoped `ISessionTerminalService`. PTYs that arrive after App
+ * teardown are terminated instead of being published.
  *
  * `node-pty` is loaded lazily so merely importing this module (for example in
  * tests that override the service with a fake) does not require the native
@@ -24,9 +25,12 @@ export class HostTerminalService extends Disposable implements IHostTerminalServ
   declare readonly _serviceBrand: undefined;
 
   private readonly processes = new Map<TerminalProcess, IDisposable>();
+  private _disposed = false;
 
   async spawn(options: TerminalSpawnOptions): Promise<TerminalProcess> {
+    this.assertActive();
     const pty = await import('node-pty');
+    this.assertActive();
     const proc: IPty = pty.spawn(options.shell, [], {
       name: 'xterm-256color',
       cwd: options.cwd,
@@ -34,6 +38,10 @@ export class HostTerminalService extends Disposable implements IHostTerminalServ
       rows: options.rows,
       env: globalThis.process.env,
     });
+    if (this._disposed) {
+      killQuietly(proc);
+      throw disposedError();
+    }
     const terminalProcess: TerminalProcess = {
       onProcessData: (listener) => proc.onData(listener),
       onProcessExit: (listener) => proc.onExit((event) => listener({ exitCode: event.exitCode })),
@@ -50,17 +58,25 @@ export class HostTerminalService extends Disposable implements IHostTerminalServ
     } else {
       exitSubscription.dispose();
     }
+    if (this._disposed) {
+      const ownedSubscription = this.processes.get(terminalProcess);
+      if (ownedSubscription !== undefined) {
+        this.processes.delete(terminalProcess);
+        ownedSubscription.dispose();
+        killQuietly(terminalProcess);
+      }
+      throw disposedError();
+    }
     return terminalProcess;
   }
 
   override dispose(): void {
+    this._disposed = true;
     const processes = [...this.processes.entries()];
     this.processes.clear();
     for (const [process, exitSubscription] of processes) {
       exitSubscription.dispose();
-      try {
-        process.kill();
-      } catch {}
+      killQuietly(process);
     }
     super.dispose();
   }
@@ -71,6 +87,20 @@ export class HostTerminalService extends Disposable implements IHostTerminalServ
     this.processes.delete(process);
     exitSubscription.dispose();
   }
+
+  private assertActive(): void {
+    if (this._disposed) throw disposedError();
+  }
+}
+
+function killQuietly(process: Pick<IPty, 'kill'>): void {
+  try {
+    process.kill();
+  } catch {}
+}
+
+function disposedError(): Error {
+  return new Error('Host terminal service is disposed');
 }
 
 registerScopedService(

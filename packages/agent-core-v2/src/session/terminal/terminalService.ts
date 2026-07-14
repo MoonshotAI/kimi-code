@@ -6,7 +6,8 @@
  * resolves the working directory through `workspaceContext`, and reads the
  * session id through `sessionContext` to tag frames. Keeps replay output and
  * exited terminal history bounded while live terminals remain owned until
- * exit or Session disposal. Bound at Session scope.
+ * exit or Session disposal, and rejects PTYs that arrive after Session
+ * teardown. Bound at Session scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -73,6 +74,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
 
   private readonly records = new Map<string, TerminalRecord>();
   private readonly exitedRecords: TerminalRecord[] = [];
+  private _disposed = false;
 
   constructor(
     @IHostTerminalService private readonly terminalService: IHostTerminalService,
@@ -83,6 +85,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   }
 
   async create(input: CreateTerminalRequest): Promise<Terminal> {
+    this.assertActive();
     const cwd =
       input.cwd === undefined
         ? this.workspace.workDir
@@ -91,6 +94,10 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
     const cols = input.cols ?? DEFAULT_COLS;
     const rows = input.rows ?? DEFAULT_ROWS;
     const process = await this.terminalService.spawn({ cwd, shell, cols, rows });
+    if (this._disposed) {
+      killQuietly(process);
+      throw this.closedError();
+    }
     const terminal: Terminal = {
       id: `term_${randomUUID()}`,
       session_id: this.sessionContext.sessionId,
@@ -115,6 +122,11 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       process.onProcessData((data) => this.onData(record, data)),
       process.onProcessExit((event) => this.onExit(record, event.exitCode)),
     );
+    if (this._disposed) {
+      disposeAll(record.disposables);
+      killQuietly(process);
+      throw this.closedError();
+    }
     this.records.set(terminal.id, record);
     return { ...terminal };
   }
@@ -178,12 +190,11 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   }
 
   override dispose(): void {
+    this._disposed = true;
     for (const record of this.records.values()) {
       disposeAll(record.disposables);
       if (record.terminal.status === 'running') {
-        try {
-          record.process.kill();
-        } catch {}
+        killQuietly(record.process);
       }
     }
     this.records.clear();
@@ -200,6 +211,17 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       );
     }
     return record;
+  }
+
+  private assertActive(): void {
+    if (this._disposed) throw this.closedError();
+  }
+
+  private closedError(): Error2 {
+    return new Error2(
+      ErrorCodes.SESSION_CLOSED,
+      `session ${this.sessionContext.sessionId} is closed`,
+    );
   }
 
   private onData(record: TerminalRecord, data: string): void {
@@ -280,6 +302,12 @@ function disposeAll(items: Iterable<IDisposable>): void {
   for (const item of items) {
     item.dispose();
   }
+}
+
+function killQuietly(process: TerminalProcess): void {
+  try {
+    process.kill();
+  } catch {}
 }
 
 function frameSeq(frame: TerminalFrame): number {

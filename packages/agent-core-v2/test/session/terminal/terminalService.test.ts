@@ -10,7 +10,6 @@
 
 import { resolve } from 'node:path';
 
-import { spawn } from 'node-pty';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
@@ -70,12 +69,14 @@ class FakeHostTerminalService implements IHostTerminalService {
   declare readonly _serviceBrand: undefined;
   readonly processes: FakeTerminalProcess[] = [];
   readonly lastOptions: TerminalSpawnOptions[] = [];
+  spawnGate: Promise<void> | undefined;
 
-  spawn(options: TerminalSpawnOptions): Promise<TerminalProcess> {
+  async spawn(options: TerminalSpawnOptions): Promise<TerminalProcess> {
     this.lastOptions.push(options);
     const proc = new FakeTerminalProcess();
     this.processes.push(proc);
-    return Promise.resolve(proc);
+    await this.spawnGate;
+    return proc;
   }
 }
 
@@ -110,7 +111,15 @@ function collectSink(id = 'sink-1'): { sink: TerminalAttachSink; frames: Termina
   return { sink: { id, send: (frame) => frames.push(frame) }, frames };
 }
 
-function createMockPty(): {
+function deferred<T>(): { readonly promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function createMockPty(onExitRegistered?: () => void): {
   readonly pty: import('node-pty').IPty;
   readonly dataListeners: Set<(data: string) => void>;
   readonly exitListeners: Set<(event: { exitCode: number }) => void>;
@@ -130,6 +139,7 @@ function createMockPty(): {
     },
     onExit: (listener: (event: { exitCode: number }) => void) => {
       exitListeners.add(listener);
+      onExitRegistered?.();
       return toDisposable(() => exitListeners.delete(listener));
     },
     write,
@@ -177,6 +187,23 @@ describe('session terminal lifecycle (live I/O, replay, and retention)', () => {
     expect(terminal.cwd).toBe('/ws');
     expect(terminal.cols).toBe(80);
     expect(terminal.rows).toBe(24);
+  });
+
+  it('kills a deferred spawn when it resolves after Session disposal', async () => {
+    const gate = deferred<void>();
+    host.spawnGate = gate.promise;
+    const svc = ix.get(ISessionTerminalService);
+    const pendingCreate = svc.create({});
+    const rejected = expect(pendingCreate).rejects.toMatchObject({
+      code: ErrorCodes.SESSION_CLOSED,
+    });
+
+    disposables.dispose();
+    gate.resolve();
+
+    await rejected;
+    expect(host.processes).toHaveLength(1);
+    expect(host.processes[0]!.killed).toBe(true);
   });
 
   it('lists and gets terminals', async () => {
@@ -433,10 +460,12 @@ describe('session terminal lifecycle (live I/O, replay, and retention)', () => {
 describe('host terminal lifecycle (PTY forwarding and App ownership)', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
+  let spawnPty: typeof import('node-pty').spawn;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     disposables = new DisposableStore();
-    vi.mocked(spawn).mockReset();
+    ({ spawn: spawnPty } = await import('node-pty'));
+    vi.mocked(spawnPty).mockReset();
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.define(IHostTerminalService, HostTerminalService);
@@ -447,12 +476,12 @@ describe('host terminal lifecycle (PTY forwarding and App ownership)', () => {
 
   it('spawns a PTY through node-pty and forwards events', async () => {
     const mockPty = createMockPty();
-    vi.mocked(spawn).mockReturnValue(mockPty.pty);
+    vi.mocked(spawnPty).mockReturnValue(mockPty.pty);
 
     const svc = ix.get(IHostTerminalService);
     const proc = await svc.spawn({ cwd: '/ws', shell: '/bin/sh', cols: 80, rows: 24 });
 
-    expect(spawn).toHaveBeenCalledWith('/bin/sh', [], {
+    expect(spawnPty).toHaveBeenCalledWith('/bin/sh', [], {
       name: 'xterm-256color',
       cwd: '/ws',
       cols: 80,
@@ -486,7 +515,7 @@ describe('host terminal lifecycle (PTY forwarding and App ownership)', () => {
 
   it('releases an exited PTY before App disposal without breaking its listeners', async () => {
     const mockPty = createMockPty();
-    vi.mocked(spawn).mockReturnValue(mockPty.pty);
+    vi.mocked(spawnPty).mockReturnValue(mockPty.pty);
     const svc = ix.get(IHostTerminalService);
     const proc = await svc.spawn({ cwd: '/ws', shell: '/bin/sh', cols: 80, rows: 24 });
     const output: string[] = [];
@@ -503,5 +532,44 @@ describe('host terminal lifecycle (PTY forwarding and App ownership)', () => {
     expect(output).toEqual(['complete output']);
     expect(exitCode).toBe(0);
     expect(mockPty.kill).not.toHaveBeenCalled();
+  });
+
+  it('rejects a spawn that resumes from import after App disposal', async () => {
+    const svc = ix.get(IHostTerminalService);
+    const pendingSpawn = svc.spawn({ cwd: '/ws', shell: '/bin/sh', cols: 80, rows: 24 });
+    const rejected = expect(pendingSpawn).rejects.toThrow('Host terminal service is disposed');
+
+    disposables.dispose();
+
+    await rejected;
+    expect(spawnPty).not.toHaveBeenCalled();
+  });
+
+  it('kills a PTY created while App disposal interrupts spawn', async () => {
+    const mockPty = createMockPty();
+    vi.mocked(spawnPty).mockImplementation(() => {
+      disposables.dispose();
+      return mockPty.pty;
+    });
+    const svc = ix.get(IHostTerminalService);
+
+    await expect(
+      svc.spawn({ cwd: '/ws', shell: '/bin/sh', cols: 80, rows: 24 }),
+    ).rejects.toThrow('Host terminal service is disposed');
+
+    expect(mockPty.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a PTY when App disposal interrupts exit-listener registration', async () => {
+    const mockPty = createMockPty(() => disposables.dispose());
+    vi.mocked(spawnPty).mockReturnValue(mockPty.pty);
+    const svc = ix.get(IHostTerminalService);
+
+    await expect(
+      svc.spawn({ cwd: '/ws', shell: '/bin/sh', cols: 80, rows: 24 }),
+    ).rejects.toThrow('Host terminal service is disposed');
+
+    expect(mockPty.kill).toHaveBeenCalledTimes(1);
+    expect(mockPty.exitListeners.size).toBe(0);
   });
 });
