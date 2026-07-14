@@ -19,7 +19,12 @@
  * (original-image pixel coordinates) out of the file so fine detail survives
  * at full fidelity, and `full_resolution` skips the default downscale when
  * the payload fits the per-image byte budget (refusing explicitly when it
- * does not, instead of silently degrading).
+ * does not, instead of silently degrading). Explicit region/native reads
+ * refuse before loading a source that exceeds the safe decode allocation.
+ * Default image reads also fail closed when compression cannot meet the
+ * configured byte and longest-edge delivery budgets: the original bytes are
+ * not emitted, and the tool result tells the model to create and re-read a
+ * smaller copy.
  *
  * Path safety: goes through the shared path access resolver used by
  * Read/Write/Edit.
@@ -50,10 +55,12 @@ import {
 } from '#/agent/media/file-type';
 import {
   IMAGE_BYTE_BUDGET,
-  resolveReadImageByteBudget,
+  MAX_IMAGE_DECODE_BYTES,
   compressImageForModel,
   cropImageForModel,
   formatByteSize,
+  resolveMaxImageEdgePx,
+  resolveReadImageByteBudget,
   type ImageCompressionTelemetry,
   type ImageCropRegion,
 } from '#/agent/media/image-compress';
@@ -224,6 +231,39 @@ function buildMediaNote(input: {
   return `<system>${parts.join(' ')}</system>`;
 }
 
+function buildImageDeliveryLimitError(input: {
+  readonly finalBytes: number;
+  readonly readByteBudget: number;
+  readonly maxEdge: number;
+}): string {
+  return (
+    `Image is too large to send safely after compression (${String(input.finalBytes)} bytes; ` +
+    `limit ${String(input.readByteBudget)} bytes and ${String(input.maxEdge)}px on the longest edge). ` +
+    'The original image was not sent to the model. Do not retry the same file unchanged. ' +
+    'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
+    'then call ReadMediaFile on the smaller copy.'
+  );
+}
+
+function buildImageDecodeLimitError(finalBytes: number): string {
+  return (
+    `Image is too large to process safely for region or full_resolution (${String(finalBytes)} bytes; ` +
+    `safe decode limit ${String(MAX_IMAGE_DECODE_BYTES)} bytes). ` +
+    'The original image was not sent to the model. Do not retry the same file unchanged. ' +
+    'Use Bash or an available image-processing tool to create a smaller copy or crop the needed ' +
+    'region into a separate image, then call ReadMediaFile on the resulting file.'
+  );
+}
+
+function buildFullResolutionLimitError(path: string, finalBytes: number): string {
+  return (
+    `"${path}" is ${String(finalBytes)} bytes (${formatByteSize(finalBytes)}), ` +
+    `over the ${String(IMAGE_BYTE_BUDGET)}-byte (${formatByteSize(IMAGE_BYTE_BUDGET)}) ` +
+    'per-image limit, so full_resolution cannot be honored. ' +
+    'Use region to view a crop at full fidelity instead.'
+  );
+}
+
 // ── Implementation ───────────────────────────────────────────────────
 
 export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
@@ -351,6 +391,49 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
         };
       }
 
+      if (
+        fileType.kind === 'image' &&
+        stat.size > MAX_IMAGE_DECODE_BYTES &&
+        (args.region !== undefined || args.full_resolution === true)
+      ) {
+        return {
+          isError: true,
+          output: buildImageDecodeLimitError(stat.size),
+        };
+      }
+
+      if (
+        fileType.kind === 'image' &&
+        args.region === undefined &&
+        args.full_resolution === true &&
+        stat.size > IMAGE_BYTE_BUDGET
+      ) {
+        return {
+          isError: true,
+          output: buildFullResolutionLimitError(args.path, stat.size),
+        };
+      }
+
+      const imageDeliveryLimits = {
+        readByteBudget: resolveReadImageByteBudget(),
+        maxEdge: resolveMaxImageEdgePx(),
+      };
+      if (
+        fileType.kind === 'image' &&
+        args.region === undefined &&
+        args.full_resolution !== true &&
+        stat.size > MAX_IMAGE_DECODE_BYTES &&
+        stat.size > imageDeliveryLimits.readByteBudget
+      ) {
+        return {
+          isError: true,
+          output: buildImageDeliveryLimitError({
+            finalBytes: stat.size,
+            ...imageDeliveryLimits,
+          }),
+        };
+      }
+
       const data = Buffer.from(await this.fs.readBytes(safePath));
       // The summary always reports the ORIGINAL pixel size and byte size: the
       // model derives relative coordinates and scales them by the original
@@ -396,11 +479,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
           if (data.length > IMAGE_BYTE_BUDGET) {
             return {
               isError: true,
-              output:
-                `"${args.path}" is ${String(data.length)} bytes (${formatByteSize(data.length)}), ` +
-                `over the ${String(IMAGE_BYTE_BUDGET)}-byte (${formatByteSize(IMAGE_BYTE_BUDGET)}) ` +
-                'per-image limit, so full_resolution cannot be honored. ' +
-                'Use region to view a crop at full fidelity instead.',
+              output: buildFullResolutionLimitError(args.path, data.length),
             };
           }
           const base64 = data.toString('base64');
@@ -416,17 +495,25 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
             mimeType: fileType.mimeType,
           };
         } else {
-          // Shrink oversized images so a large screenshot neither wastes context
-          // tokens nor trips the provider's per-image byte ceiling. Model-read
-          // images get the much tighter read budget: they accumulate in the
-          // request body on every turn, and detail stays reachable through the
-          // region readback (which ignores the budget). Best effort: on any
-          // failure compressImageForModel returns the original bytes, so the
-          // read still succeeds with the uncompressed image.
+          const { readByteBudget, maxEdge } = imageDeliveryLimits;
           const compressed = await compressImageForModel(data, fileType.mimeType, {
-            byteBudget: resolveReadImageByteBudget(),
+            byteBudget: readByteBudget,
+            maxEdge,
             telemetry: this.compressTelemetry,
           });
+          if (
+            compressed.finalByteLength > readByteBudget ||
+            Math.max(compressed.width, compressed.height) > maxEdge
+          ) {
+            return {
+              isError: true,
+              output: buildImageDeliveryLimitError({
+                finalBytes: compressed.finalByteLength,
+                readByteBudget,
+                maxEdge,
+              }),
+            };
+          }
           const base64 = Buffer.from(compressed.data).toString('base64');
           mediaPart = {
             type: 'image_url',

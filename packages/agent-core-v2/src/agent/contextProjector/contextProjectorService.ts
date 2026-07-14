@@ -14,12 +14,14 @@
  * `projectMediaDegraded` / `projectMediaStripped` are the fallback
  * projections for the two deterministic provider rejections: media-degraded
  * (all but the most recent media replaced by text markers) resends after an
- * HTTP 413 body-size rejection; media-stripped (every media part replaced)
- * resends after an image-format rejection, since that error never says WHICH
- * image is poison and only a full strip guarantees a clean request. Both are
- * read-side only — the history keeps its media.
+ * HTTP 413 body-size rejection; media-stripped captures every media identity
+ * present when degraded media is still too large or an image format is
+ * rejected, then replaces only that snapshot on later steps so a newly
+ * generated recovery image remains visible. Both are read-side only — the
+ * history keeps its media.
  */
 
+import { createHash } from 'node:crypto';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
@@ -28,7 +30,10 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart, Message } from '#/app/llmProtocol/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentContextProjectorService } from './contextProjector';
+import {
+  IAgentContextProjectorService,
+  type MediaStripSnapshot,
+} from './contextProjector';
 
 export class AgentContextProjectorService implements IAgentContextProjectorService {
   declare readonly _serviceBrand: undefined;
@@ -59,8 +64,23 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
     );
   }
 
-  projectMediaStripped(messages: readonly ContextMessage[]): readonly Message[] {
-    return degradeOlderMediaParts(this.projectWithTrace(messages, project), 0, MEDIA_STRIPPED_PLACEHOLDERS);
+  captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot {
+    // Snapshot the normal provider-visible projection, not raw ContextMessage
+    // state: tool-exchange repair can drop or rewrite history before send.
+    // projectWithTrace already de-duplicates identical repair reports, so the
+    // transition-time rebuild does not duplicate anomaly telemetry.
+    return captureMediaStripSnapshot(this.projectWithTrace(messages, project));
+  }
+
+  projectMediaStripped(
+    messages: readonly ContextMessage[],
+    snapshot?: MediaStripSnapshot,
+  ): readonly Message[] {
+    const projected = this.projectWithTrace(messages, project);
+    return stripMediaPartsBySnapshot(
+      projected,
+      snapshot ?? captureMediaStripSnapshot(projected),
+    );
   }
 
   private projectWithTrace(
@@ -185,35 +205,116 @@ const MEDIA_DEGRADED_PLACEHOLDERS = {
 } as const;
 
 /**
- * Markers for the media-stripped resend after the provider rejected an
- * image's FORMAT (not its size): the image marker points the model at
- * re-reading the file, whose refusal carries per-OS conversion instructions;
- * audio/video are collateral of the full strip and say so.
+ * Provider-compatible markers for the media-stripped projection. The image
+ * marker points the model at re-reading the file, which either restores the
+ * view or returns conversion guidance without assuming which rejection caused
+ * the full strip.
  */
 export const MEDIA_STRIPPED_PLACEHOLDERS = {
   image_url:
-    '[image omitted: the provider rejected this image; re-read the file for conversion instructions]',
+    '[image omitted for provider compatibility; re-read the file to view it or get conversion guidance]',
   audio_url:
-    '[audio omitted: dropped along with a rejected image; re-read the file to hear it]',
+    '[audio omitted for provider compatibility; re-read the file to hear it]',
   video_url:
-    '[video omitted: dropped along with a rejected image; re-read the file to view it]',
+    '[video omitted for provider compatibility; re-read the file to view it]',
 } as const;
 
 type MediaPlaceholderSet = typeof MEDIA_DEGRADED_PLACEHOLDERS | typeof MEDIA_STRIPPED_PLACEHOLDERS;
 
+type DegradableMediaPart = Extract<
+  ContentPart,
+  { readonly type: keyof MediaPlaceholderSet }
+>;
+
+interface MediaContainer {
+  readonly url: string;
+  readonly id?: string;
+}
+
+interface MediaStripSnapshotData {
+  readonly keys: ReadonlySet<string>;
+}
+
+type MediaContainerKeyCache = Partial<Record<DegradableMediaPart['type'], string>>;
+
+const MEDIA_CONTAINER_KEY_CACHE = new WeakMap<MediaContainer, MediaContainerKeyCache>();
+
 function isDegradableMediaPart(
   part: ContentPart,
-): part is ContentPart & { type: keyof MediaPlaceholderSet } {
+): part is DegradableMediaPart {
   return part.type in MEDIA_DEGRADED_PLACEHOLDERS;
+}
+
+function mediaContainer(part: DegradableMediaPart): MediaContainer {
+  if (part.type === 'image_url') return part.imageUrl;
+  if (part.type === 'audio_url') return part.audioUrl;
+  return part.videoUrl;
+}
+
+function mediaStripKey(part: DegradableMediaPart): string {
+  const container = mediaContainer(part);
+  let cache = MEDIA_CONTAINER_KEY_CACHE.get(container);
+  const cached = cache?.[part.type];
+  if (cached !== undefined) return cached;
+
+  const key = createHash('sha256')
+    .update(part.type)
+    .update('\0')
+    .update(container.id ?? '')
+    .update('\0')
+    .update(container.url)
+    .digest('hex');
+  if (cache === undefined) {
+    cache = {};
+    MEDIA_CONTAINER_KEY_CACHE.set(container, cache);
+  }
+  cache[part.type] = key;
+  return key;
+}
+
+function mediaStripSnapshotKeys(snapshot: MediaStripSnapshot): ReadonlySet<string> {
+  return (snapshot as unknown as MediaStripSnapshotData).keys;
+}
+
+/** Capture canonical content identities for all media in projected messages. */
+export function captureMediaStripSnapshot(
+  messages: readonly Message[],
+): MediaStripSnapshot {
+  const keys = new Set<string>();
+  for (const message of messages) {
+    for (const part of message.content) {
+      if (isDegradableMediaPart(part)) keys.add(mediaStripKey(part));
+    }
+  }
+  return Object.freeze({ keys }) as unknown as MediaStripSnapshot;
+}
+
+/** Replace only media whose canonical content identity is in `snapshot`. */
+export function stripMediaPartsBySnapshot(
+  messages: readonly Message[],
+  snapshot: MediaStripSnapshot,
+): readonly Message[] {
+  const keys = mediaStripSnapshotKeys(snapshot);
+  let changed = false;
+  const result = messages.map((message) => {
+    let messageChanged = false;
+    const content = message.content.map((part): ContentPart => {
+      if (!isDegradableMediaPart(part) || !keys.has(mediaStripKey(part))) return part;
+      changed = true;
+      messageChanged = true;
+      return { type: 'text', text: MEDIA_STRIPPED_PLACEHOLDERS[part.type] };
+    });
+    return messageChanged ? { ...message, content } : message;
+  });
+  return changed ? result : messages;
 }
 
 /**
  * Replace all but the `keepRecent` most recent media parts with deterministic
  * text markers. This is the media-degraded projection used to resend a request
  * the provider rejected as too large (HTTP 413 on accumulated base64 media)
- * and — with `keepRecent = 0` and `MEDIA_STRIPPED_PLACEHOLDERS` — the resend
- * after an image-format rejection, where the poisoned image could be anywhere
- * and only a full strip guarantees a clean request. A purely read-side
+ * and — with `keepRecent = 0` and `MEDIA_STRIPPED_PLACEHOLDERS` — the
+ * provider-compatible full-strip fallback. A purely read-side
  * transform — the underlying history is left untouched — that trades pixels
  * for deliverability while the surrounding text (including ReadMediaFile's
  * `<image path="...">` wrapper) survives, so the model can re-read any file

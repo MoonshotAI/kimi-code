@@ -14,8 +14,8 @@
  *    only paid for when an image actually needs work; startup and the fast
  *    path stay cheap.
  *  - Best effort: any decode/encode failure returns the original bytes
- *    unchanged (`changed: false`), so a compression problem never blocks a
- *    prompt. Callers simply send the original instead.
+ *    unchanged (`changed: false`). Callers must verify that this unchanged
+ *    result satisfies their delivery limits before forwarding it.
  *  - Format gate first: content-part lists pass through
  *    {@link gateImageFormatParts} before any compression, so images outside
  *    the provider-accepted set (see ./image-format-policy) are never decoded
@@ -173,7 +173,7 @@ const MAX_DECODE_PIXELS = 100_000_000;
  * This bounds that input allocation. Set well above legitimate
  * screenshots/photos; larger images pass through uncompressed.
  */
-const MAX_DECODE_BYTES = 64 * 1024 * 1024;
+export const MAX_IMAGE_DECODE_BYTES = 64 * 1024 * 1024;
 
 /** Formats we can decode and re-encode. WebP decodes via the bundled wasm
  * codec and re-encodes through the PNG/JPEG ladder (animated WebP is gated
@@ -269,7 +269,7 @@ export async function compressImageForModel(
   const startedAt = Date.now();
   const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
-  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
+  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_IMAGE_DECODE_BYTES;
   const normalizedMime = normalizeImageMime(mimeType);
   const dims = sniffImageDimensions(bytes);
 
@@ -405,7 +405,7 @@ export async function compressBase64ForModel(
   // length, so a payload whose decoded size would exceed the cap is passed
   // through without the Buffer.from allocation (and without touching Jimp).
   const startedAt = Date.now();
-  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
+  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_IMAGE_DECODE_BYTES;
   const approxBytes = Math.floor((base64.length * 3) / 4);
   if (approxBytes > maxDecodeBytes) {
     const result: CompressBase64Result = {
@@ -718,7 +718,7 @@ export async function cropImageForModel(
   const startedAt = Date.now();
   const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
-  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
+  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_IMAGE_DECODE_BYTES;
   const normalizedMime = normalizeImageMime(mimeType);
 
   const fail = (errorKind: CropErrorKind, error: string): CropImageFailure => {
