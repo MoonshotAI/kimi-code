@@ -391,7 +391,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A turn starts running.',
     properties: {
-      turn_id: 'Turn index within the session',
+      turn_id: 'Per-agent turn index (main or subagent); not unique across agents in the same session',
       mode: 'Agent mode the turn runs in',
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
@@ -401,7 +401,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A running turn is interrupted.',
     properties: {
-      turn_id: 'Turn index within the session',
+      turn_id: 'Per-agent turn index (main or subagent); not unique across agents in the same session',
       at_step: 'Step index the turn reached before interruption',
       mode: 'Agent mode the turn ran in',
       interrupt_reason: 'Why the turn was interrupted',
@@ -413,7 +413,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A turn ends, unconditionally.',
     properties: {
-      turn_id: 'Turn index within the session',
+      turn_id: 'Per-agent turn index (main or subagent); not unique across agents in the same session',
       reason: 'How the turn ended',
       duration_ms: 'Turn wall-clock time in milliseconds',
       mode: 'Agent mode the turn ran in',
@@ -425,7 +425,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A tool call finishes execution.',
     properties: {
-      turn_id: 'Turn index within the session',
+      turn_id: 'Per-agent turn index (main or subagent); not unique across agents in the same session',
       tool_call_id: 'Provider-assigned tool call id',
       tool_name: 'Registered tool name',
       outcome: 'Execution outcome',
@@ -663,7 +663,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A duplicate tool call is detected.',
     properties: {
-      turn_id: 'Turn index within the session',
+      turn_id: 'Per-agent turn index (main or subagent); not unique across agents in the same session',
       step_no: 'Step index within the turn',
       tool_call_id: 'Provider-assigned tool call id',
       tool_name: 'Registered tool name',
