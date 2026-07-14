@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppGoal } from '../../api/types';
+import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import Card from '../ui/Card.vue';
 import Badge from '../ui/Badge.vue';
 import Button from '../ui/Button.vue';
@@ -11,11 +12,9 @@ const props = defineProps<{ goal: AppGoal; forceExpanded?: number }>();
 const emit = defineEmits<{ controlGoal: [action: 'pause' | 'resume' | 'cancel'] }>();
 
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 const expanded = ref(false);
-const cancelConfirmOpen = ref(false);
-const cancelActionRef = ref<HTMLElement | null>(null);
-const cancelPopoverStyle = ref<Record<string, string>>({});
 
 watch(
   () => props.forceExpanded,
@@ -49,53 +48,16 @@ function formatMs(ms: number): string {
   return `${hour}h ${min % 60}m`;
 }
 
-function updateCancelPopoverPosition(): void {
-  const anchor = cancelActionRef.value;
-  if (!anchor || typeof window === 'undefined') return;
-  const rect = anchor.getBoundingClientRect();
-  const width = 240;
-  const left = Math.min(
-    window.innerWidth - width - 8,
-    Math.max(8, rect.right - width),
-  );
-  const arrowRight = Math.min(
-    width - 12,
-    Math.max(12, width - (rect.left + rect.width / 2 - left)),
-  );
-  cancelPopoverStyle.value = {
-    left: `${left}px`,
-    top: `${Math.max(8, rect.top - 8)}px`,
-    '--goal-cancel-arrow-right': `${arrowRight}px`,
-  };
+async function onCancel(): Promise<void> {
+  const confirmed = await confirm({
+    title: t('status.goalCancel'),
+    message: t('status.goalCancelConfirm'),
+    confirmLabel: t('status.goalCancelConfirmYes'),
+    cancelLabel: t('status.goalCancelConfirmNo'),
+    variant: 'danger',
+  });
+  if (confirmed) emit('controlGoal', 'cancel');
 }
-
-function onCancelPopoverDocumentMouseDown(event: MouseEvent): void {
-  const target = event.target as Node | null;
-  if (target && cancelActionRef.value?.contains(target)) return;
-  cancelConfirmOpen.value = false;
-}
-
-function setCancelConfirmOpen(open: boolean): void {
-  cancelConfirmOpen.value = open;
-  if (typeof window === 'undefined') return;
-  if (open) {
-    updateCancelPopoverPosition();
-    document.addEventListener('mousedown', onCancelPopoverDocumentMouseDown);
-    window.addEventListener('resize', updateCancelPopoverPosition);
-    window.addEventListener('scroll', updateCancelPopoverPosition, true);
-  } else {
-    document.removeEventListener('mousedown', onCancelPopoverDocumentMouseDown);
-    window.removeEventListener('resize', updateCancelPopoverPosition);
-    window.removeEventListener('scroll', updateCancelPopoverPosition, true);
-  }
-}
-
-function confirmCancel(): void {
-  setCancelConfirmOpen(false);
-  emit('controlGoal', 'cancel');
-}
-
-onBeforeUnmount(() => setCancelConfirmOpen(false));
 </script>
 
 <template>
@@ -154,45 +116,19 @@ onBeforeUnmount(() => setCancelConfirmOpen(false));
             <Icon name="play" size="md" />
             <span>{{ t('status.goalResume') }}</span>
           </Button>
-          <div ref="cancelActionRef" class="goal-cancel-action">
-            <Button
-              size="sm"
-              variant="danger-soft"
-              class="goal-action"
-              :aria-expanded="cancelConfirmOpen"
-              aria-haspopup="dialog"
-              @click.stop="setCancelConfirmOpen(!cancelConfirmOpen)"
-            >
-              <Icon name="close" size="md" />
-              <span>{{ t('status.goalCancel') }}</span>
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            variant="danger-soft"
+            class="goal-action"
+            @click.stop="onCancel"
+          >
+            <Icon name="close" size="md" />
+            <span>{{ t('status.goalCancel') }}</span>
+          </Button>
         </div>
       </div>
     </template>
   </Card>
-
-  <Teleport to="body">
-    <div
-      v-if="cancelConfirmOpen"
-      id="goal-cancel-confirm"
-      class="goal-cancel-popover"
-      role="dialog"
-      :aria-label="t('status.goalCancelConfirm')"
-      :style="cancelPopoverStyle"
-      @mousedown.stop
-    >
-      <p>{{ t('status.goalCancelConfirm') }}</p>
-      <div class="goal-cancel-popover__actions">
-        <Button size="sm" variant="secondary" @click="setCancelConfirmOpen(false)">
-          {{ t('status.goalCancelConfirmNo') }}
-        </Button>
-        <Button size="sm" variant="danger" @click="confirmCancel">
-          {{ t('status.goalCancelConfirmYes') }}
-        </Button>
-      </div>
-    </div>
-  </Teleport>
 </template>
 
 <style scoped>
@@ -379,44 +315,6 @@ onBeforeUnmount(() => setCancelConfirmOpen(false));
 }
 .goal-action :deep(.ui-button__content) {
   gap: var(--space-1);
-}
-.goal-cancel-action {
-  position: relative;
-}
-.goal-cancel-popover {
-  position: fixed;
-  z-index: var(--z-dropdown);
-  width: 240px;
-  padding: var(--space-3);
-  transform: translateY(-100%);
-  background: var(--color-surface-raised);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-2xl);
-  box-shadow: var(--shadow-lg);
-  color: var(--color-text);
-}
-.goal-cancel-popover::after {
-  content: '';
-  position: absolute;
-  right: var(--goal-cancel-arrow-right, 32px);
-  bottom: -9px;
-  width: 16px;
-  height: 16px;
-  background: var(--color-surface-raised);
-  border-right: 1px solid var(--color-line);
-  border-bottom: 1px solid var(--color-line);
-  transform: rotate(45deg);
-}
-.goal-cancel-popover p {
-  margin: 0;
-  font-size: var(--text-sm);
-  line-height: var(--leading-normal);
-}
-.goal-cancel-popover__actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-2);
-  margin-top: var(--space-3);
 }
 @media (max-width: 640px) {
   .goal-strip {
