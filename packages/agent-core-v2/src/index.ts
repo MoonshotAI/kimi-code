@@ -266,6 +266,7 @@ export * from '#/app/workspaceRegistry/workspaceRegistry';
 export * from '#/app/workspaceRegistry/workspaceRegistryService';
 export * from '#/app/workspaceRegistry/workspacePersistence';
 export * from '#/app/workspaceRegistry/fileWorkspacePersistence';
+export * from '#/app/workspaceRegistry/workspaceQuery';
 import '#/app/workspaceRegistry/workspaceQueryService';
 import '#/app/git/gitService';
 export * from '#/session/process/processRunner';

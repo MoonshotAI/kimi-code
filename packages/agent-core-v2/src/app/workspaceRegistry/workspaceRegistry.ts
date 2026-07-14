@@ -21,14 +21,21 @@ export interface WorkspaceUpdate {
   readonly name?: string;
 }
 
+export interface WorkspaceRegistrySnapshot {
+  readonly workspaces: readonly Workspace[];
+  readonly deletedWorkspaceIds: ReadonlySet<string>;
+  readonly deletedWorkspaceRoots: ReadonlyMap<string, string>;
+}
+
 export interface IWorkspaceRegistry {
   readonly _serviceBrand: undefined;
 
   list(): Promise<readonly Workspace[]>;
+  snapshot(): Promise<WorkspaceRegistrySnapshot>;
   get(id: string): Promise<Workspace | undefined>;
   createOrTouch(root: string, name?: string): Promise<Workspace>;
   update(id: string, patch: WorkspaceUpdate): Promise<Workspace | undefined>;
-  delete(id: string): Promise<void>;
+  delete(id: string, root?: string): Promise<void>;
 }
 
 export const IWorkspaceRegistry: ServiceIdentifier<IWorkspaceRegistry> =

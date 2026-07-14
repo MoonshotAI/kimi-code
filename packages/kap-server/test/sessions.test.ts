@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
@@ -765,6 +765,23 @@ describe('server-v2 /api/v1/sessions', () => {
     const profile = await getJson<SessionWire>(`/api/v1/sessions/${id}/profile`);
     expect(profile.body.code).toBe(0);
     expect(profile.body.data.metadata.cwd).toBe(cwd);
+  });
+
+  it('falls back to the workspace root when a legacy session has no cwd', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd },
+    });
+    const id = created.body.data.id;
+    const workspaceId = created.body.data.workspace_id;
+    const statePath = join(home as string, 'sessions', workspaceId, id, 'state.json');
+    const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;
+    delete state['cwd'];
+    await writeFile(statePath, `${JSON.stringify(state)}\n`, 'utf8');
+
+    const listed = await getJson<PageWire>('/api/v1/sessions');
+    expect(listed.body.code).toBe(0);
+    expect(listed.body.data.items.find((session) => session.id === id)?.metadata.cwd).toBe(cwd);
   });
 
   it('merges metadata via profile and keeps cwd authoritative', async () => {

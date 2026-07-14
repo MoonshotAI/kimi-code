@@ -46,7 +46,10 @@ import {
   ISessionLifecycleService,
   type SessionLifecycleHooks,
 } from '#/app/sessionLifecycle/sessionLifecycle';
-import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
+import {
+  IWorkspaceRegistry,
+  type WorkspaceRegistrySnapshot,
+} from '#/app/workspaceRegistry/workspaceRegistry';
 import { Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
 import {
@@ -828,6 +831,11 @@ function registerSessionExportServices(
   reg.defineInstance(IWorkspaceRegistry, {
     _serviceBrand: undefined,
     list: async () => [],
+    snapshot: async (): Promise<WorkspaceRegistrySnapshot> => ({
+      workspaces: [],
+      deletedWorkspaceIds: new Set(),
+      deletedWorkspaceRoots: new Map(),
+    }),
     get: async (id) => ({
       id,
       root: `/workspaces/${id}`,

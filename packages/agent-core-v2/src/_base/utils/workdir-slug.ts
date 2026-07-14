@@ -10,6 +10,8 @@
 
 import { createHash } from 'node:crypto';
 
+import { resolve } from 'pathe';
+
 const MAX_WORKDIR_SLUG_LENGTH = 40;
 const WORKDIR_KEY_PREFIX = 'wd_';
 const HASH_LENGTH = 12;
@@ -24,8 +26,12 @@ export function slugifyWorkDirName(name: string): string {
   return slug === '' || slug === '.' || slug === '..' ? 'workspace' : slug;
 }
 
+export function normalizeWorkDir(workDir: string): string {
+  return resolve(workDir);
+}
+
 export function encodeWorkDirKey(workDir: string): string {
-  const normalized = workDir.replace(/\\/g, '/').replace(/\/+$/, '');
+  const normalized = normalizeWorkDir(workDir);
   const base = normalized.split('/').pop() ?? normalized;
   const slug = slugifyWorkDirName(base);
   const hash = createHash('sha256').update(normalized).digest('hex').slice(0, HASH_LENGTH);

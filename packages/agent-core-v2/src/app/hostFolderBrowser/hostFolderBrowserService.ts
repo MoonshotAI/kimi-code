@@ -2,8 +2,8 @@
  * `hostFolderBrowser` domain (L2) — `IHostFolderBrowser` implementation.
  *
  * Browses the real local filesystem through `node:fs/promises` and derives
- * `recent_roots` from the process-wide `IWorkspaceRegistry`. Bound at App
- * scope. Mirrors the v1 `WorkspaceFsService` behaviour so the `/api/v1`
+ * `recent_roots` from the workspace query read model. Bound at App scope.
+ * Mirrors the v1 `WorkspaceFsService` behaviour so the `/api/v1`
  * transport stays wire-compatible: realpath resolution, directory-only
  * entries, git metadata, dot-last sorting, and `parent` resolution.
  */
@@ -16,7 +16,7 @@ import type { FsBrowseEntry, FsBrowseResponse, FsHomeResponse } from '@moonshot-
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
+import { IWorkspaceQueryService } from '#/app/workspaceRegistry/workspaceQuery';
 
 import {
   HostFolderNotAbsoluteError,
@@ -29,7 +29,7 @@ import {
 export class HostFolderBrowser implements IHostFolderBrowser {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IWorkspaceRegistry private readonly registry: IWorkspaceRegistry) {}
+  constructor(@IWorkspaceQueryService private readonly query: IWorkspaceQueryService) {}
 
   async browse(absPath?: string): Promise<FsBrowseResponse> {
     const target = absPath ?? homedir();
@@ -78,7 +78,7 @@ export class HostFolderBrowser implements IHostFolderBrowser {
 
   async home(): Promise<FsHomeResponse> {
     const home = homedir();
-    const workspaces = await this.registry.list();
+    const workspaces = await this.query.list();
     const recent_roots = workspaces.slice(0, RECENT_ROOTS_LIMIT).map((w) => w.root);
     return { home, recent_roots };
   }

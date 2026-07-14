@@ -234,4 +234,22 @@ describe('server-v2 /api/v1/workspaces', () => {
     const ws = body.data.items.find((w) => w.id === created.body.data.id);
     expect(ws?.session_count).toBe(1);
   });
+
+  it('excludes archived sessions from session_count', async () => {
+    const root = home as string;
+    const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
+    const session = await postJson<{ id: string }>('/api/v1/sessions', {
+      metadata: { cwd: root },
+    });
+    expect(session.body.code).toBe(0);
+
+    const archive = await postJson<{ archived: boolean }>(
+      `/api/v1/sessions/${session.body.data.id}:archive`,
+    );
+    expect(archive.body.code).toBe(0);
+
+    const { body } = await getJson<ListWire>('/api/v1/workspaces');
+    const workspace = body.data.items.find((item) => item.id === created.body.data.id);
+    expect(workspace?.session_count).toBe(0);
+  });
 });

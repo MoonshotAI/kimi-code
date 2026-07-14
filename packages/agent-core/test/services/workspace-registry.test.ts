@@ -1,6 +1,8 @@
 import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import lockfile from 'proper-lockfile';
+import { basename as posixBasename } from 'pathe';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -129,6 +131,51 @@ describe('WorkspaceRegistryService', () => {
     expect(matches).toHaveLength(1);
   });
 
+  it('normalizes lexical root aliases to one canonical workspace', async () => {
+    const root = await makeProjectRoot('normalized');
+    const alias = join(root, '..', posixBasename(root));
+
+    const created = await ctx.registry.createOrTouch(alias);
+
+    expect(created.root).toBe(root);
+    expect((await ctx.registry.list()).filter((workspace) => workspace.root === root)).toHaveLength(1);
+  });
+
+  it('serializes concurrent registry mutations across instances', async () => {
+    const rootA = await makeProjectRoot('lock-a');
+    const rootB = await makeProjectRoot('lock-b');
+    const second = new WorkspaceRegistryService(
+      {
+        _serviceBrand: undefined,
+        homeDir: ctx.homeDir,
+        configPath: join(ctx.homeDir, 'config.toml'),
+      },
+      makeLogger(),
+      makeEventService(),
+    );
+    const releaseExternal = await lockfile.lock(join(ctx.homeDir, 'workspaces.json'), {
+      realpath: false,
+    });
+    let settled = false;
+    const pending = Promise.all([
+      ctx.registry.createOrTouch(rootA),
+      second.createOrTouch(rootB),
+    ]).then(() => {
+      settled = true;
+    });
+
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await releaseExternal();
+    await pending;
+
+    expect((await ctx.registry.list()).map((workspace) => workspace.root).toSorted()).toEqual(
+      [rootA, rootB].toSorted(),
+    );
+    second.dispose();
+  });
+
   it('keeps a derived bucket visible even when its root no longer exists on disk', async () => {
     const registeredRoot = await makeProjectRoot('live');
     await ctx.registry.createOrTouch(registeredRoot);
@@ -199,6 +246,89 @@ describe('WorkspaceRegistryService', () => {
     expect(list.map((w) => w.root)).not.toContain(root);
   });
 
+  it('does not count an indexed session whose state document is missing', async () => {
+    const root = await makeProjectRoot('missing-state');
+    const workspace = await ctx.registry.createOrTouch(root);
+    const sessionDir = join(ctx.homeDir, 'sessions', workspace.id, 'missing-state-session');
+    await mkdir(sessionDir, { recursive: true });
+    await appendSessionIndexEntry(ctx.homeDir, {
+      sessionId: 'missing-state-session',
+      sessionDir,
+      workDir: root,
+    });
+
+    const listed = await ctx.registry.list();
+    expect(listed.find((entry) => entry.id === workspace.id)?.session_count).toBe(0);
+  });
+
+  it('ignores indexed sessions without an absolute workDir', async () => {
+    const sessionDir = join(ctx.homeDir, 'sessions', 'wd_invalid_000000000000', 'invalid-cwd');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), JSON.stringify({ archived: false }), 'utf8');
+    await appendSessionIndexEntry(ctx.homeDir, {
+      sessionId: 'invalid-cwd',
+      sessionDir,
+      workDir: '',
+    });
+
+    expect(await ctx.registry.list()).toEqual([]);
+  });
+
+  it('preserves an alias-only workspace id and its session bucket', async () => {
+    const root = await makeProjectRoot('alias-only');
+    const canonicalId = encodeWorkDirKey(root);
+    const legacyId = 'wd_aliaslegacy_deadbeef0000';
+    const registryPath = join(ctx.homeDir, 'workspaces.json');
+    const entry = {
+      root,
+      name: 'alias-only',
+      created_at: '2026-01-01T00:00:00.000Z',
+      last_opened_at: '2026-01-01T00:00:00.000Z',
+    };
+    await writeFile(
+      registryPath,
+      JSON.stringify(
+        {
+          version: 1,
+          workspaces: { [legacyId]: entry },
+          deleted_workspace_ids: [],
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+
+    const sessionDir = join(ctx.homeDir, 'sessions', legacyId, 'sess-alias-only');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), JSON.stringify({ archived: false }), 'utf-8');
+    await appendSessionIndexEntry(ctx.homeDir, {
+      sessionId: 'sess-alias-only',
+      sessionDir,
+      workDir: root,
+    });
+
+    const listed = await ctx.registry.list();
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatchObject({ id: legacyId, session_count: 1 });
+
+    // A canonical lookup may fall back to the root, but must return the real
+    // representative id so subsequent session queries use the populated alias
+    // bucket rather than an empty canonical bucket.
+    await expect(ctx.registry.get(canonicalId)).resolves.toMatchObject({
+      id: legacyId,
+      session_count: 1,
+    });
+    await expect(ctx.registry.createOrTouch(root)).resolves.toMatchObject({
+      id: legacyId,
+      session_count: 1,
+    });
+    await expect(ctx.registry.update(legacyId, { name: 'renamed' })).resolves.toMatchObject({
+      id: legacyId,
+      session_count: 1,
+    });
+  });
+
   it('tombstones a derived workspace on delete so it stays removed', async () => {
     const root = await makeProjectRoot('derived-del');
     // Derived (cwd-only, never registered) workspace with an active session.
@@ -212,7 +342,7 @@ describe('WorkspaceRegistryService', () => {
     expect((await ctx.registry.list()).map((w) => w.id)).not.toContain(derivedId);
   });
 
-  it('collapses duplicate registered entries for the same root, preferring the canonical id', async () => {
+  it('uses the canonical bucket count across duplicate-root registry responses', async () => {
     const root = await makeProjectRoot('dup');
     const canonicalId = encodeWorkDirKey(root);
     // Simulate a registry that also holds a legacy id for the same folder (e.g.
@@ -236,9 +366,8 @@ describe('WorkspaceRegistryService', () => {
     );
     // One active session in the canonical bucket (via the index)...
     await seedSessionBucket(root, 'sess-canonical-1');
-    // ...and one stranded in the legacy bucket. It is NOT counted: the returned
-    // workspace can only page the canonical bucket via GET /sessions, so the
-    // count stays consistent with what the list can retrieve.
+    // ...and one stranded in the legacy bucket. Root-based session queries
+    // include both buckets, so the workspace count does too.
     const legacySessionDir = join(ctx.homeDir, 'sessions', legacyId, 'sess-legacy-1');
     await mkdir(legacySessionDir, { recursive: true });
     await writeFile(
@@ -246,12 +375,140 @@ describe('WorkspaceRegistryService', () => {
       JSON.stringify({ archived: false }),
       'utf-8',
     );
+    await appendSessionIndexEntry(ctx.homeDir, {
+      sessionId: 'sess-legacy-1',
+      sessionDir: legacySessionDir,
+      workDir: root,
+    });
 
     const list = await ctx.registry.list();
     const matches = list.filter((w) => w.root === root);
     expect(matches).toHaveLength(1);
     expect(matches[0]?.id).toBe(canonicalId);
-    // Count is scoped to the representative's (canonical) bucket only.
-    expect(matches[0]?.session_count).toBe(1);
+    expect(matches[0]?.session_count).toBe(2);
+
+    expect((await ctx.registry.get(canonicalId)).session_count).toBe(2);
+    expect((await ctx.registry.get(legacyId)).id).toBe(legacyId);
+    expect((await ctx.registry.createOrTouch(root)).session_count).toBe(2);
+    expect((await ctx.registry.update(canonicalId, { name: 'renamed' })).session_count).toBe(2);
+  });
+
+  it('does not recover a derived workspace with an id tombstone during update', async () => {
+    const root = await makeProjectRoot('update-id-tombstone');
+    await seedSessionBucket(root, 'sess-update-id-tombstone');
+    const id = encodeWorkDirKey(root);
+    await writeFile(
+      join(ctx.homeDir, 'workspaces.json'),
+      JSON.stringify({ version: 1, workspaces: {}, deleted_workspace_ids: [id] }),
+      'utf8',
+    );
+
+    await expect(ctx.registry.update(id, { name: 'should-not-recover' })).rejects.toThrow(
+      'workspace not found',
+    );
+  });
+
+  it('does not recover a legacy alias when its canonical id is tombstoned', async () => {
+    const root = await makeProjectRoot('update-canonical-tombstone');
+    const alias = 'wd_update_alias_deadbeef0000';
+    const sessionDir = join(ctx.homeDir, 'sessions', alias, 'sess-update-canonical-tombstone');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), JSON.stringify({ archived: false }), 'utf8');
+    await appendSessionIndexEntry(ctx.homeDir, {
+      sessionId: 'sess-update-canonical-tombstone',
+      sessionDir,
+      workDir: root,
+    });
+    await writeFile(
+      join(ctx.homeDir, 'workspaces.json'),
+      JSON.stringify({
+        version: 1,
+        workspaces: {},
+        deleted_workspace_ids: [encodeWorkDirKey(root)],
+      }),
+      'utf8',
+    );
+
+    await expect(ctx.registry.update(alias, { name: 'should-not-recover' })).rejects.toThrow(
+      'workspace not found',
+    );
+  });
+
+  it('hides a legacy alias when its canonical id is tombstoned', async () => {
+    const root = await makeProjectRoot('list-canonical-tombstone');
+    const alias = 'wd_list_alias_canonical_tombstone_deadbeef0000';
+    const sessionDir = join(ctx.homeDir, 'sessions', alias, 'sess-list-canonical-tombstone');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), JSON.stringify({ archived: false }), 'utf8');
+    await appendSessionIndexEntry(ctx.homeDir, {
+      sessionId: 'sess-list-canonical-tombstone',
+      sessionDir,
+      workDir: root,
+    });
+    await writeFile(
+      join(ctx.homeDir, 'workspaces.json'),
+      JSON.stringify({
+        version: 1,
+        workspaces: {},
+        deleted_workspace_ids: [encodeWorkDirKey(root)],
+      }),
+      'utf8',
+    );
+
+    await expect(ctx.registry.list()).resolves.toEqual([]);
+    await expect(ctx.registry.get(alias)).rejects.toThrow('workspace not found');
+  });
+
+  it('clears a canonical tombstone when re-adding a legacy alias root', async () => {
+    const root = await makeProjectRoot('readd-canonical-tombstone');
+    const canonicalId = encodeWorkDirKey(root);
+    const alias = 'wd_readd_alias_canonical_tombstone_deadbeef0000';
+    const sessionDir = join(ctx.homeDir, 'sessions', alias, 'sess-readd-canonical-tombstone');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), JSON.stringify({ archived: false }), 'utf8');
+    await appendSessionIndexEntry(ctx.homeDir, {
+      sessionId: 'sess-readd-canonical-tombstone',
+      sessionDir,
+      workDir: root,
+    });
+    await writeFile(
+      join(ctx.homeDir, 'workspaces.json'),
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          [alias]: {
+            root,
+            name: 'legacy alias',
+            created_at: '2026-01-01T00:00:00.000Z',
+            last_opened_at: '2026-01-01T00:00:00.000Z',
+          },
+        },
+        deleted_workspace_ids: [canonicalId],
+      }),
+      'utf8',
+    );
+
+    await expect(ctx.registry.createOrTouch(root)).resolves.toMatchObject({ id: alias, root });
+    await expect(ctx.registry.get(canonicalId)).resolves.toMatchObject({ id: alias, root });
+  });
+
+  it('does not recover a derived workspace with a root tombstone during update', async () => {
+    const root = await makeProjectRoot('update-root-tombstone');
+    await seedSessionBucket(root, 'sess-update-root-tombstone');
+    const id = encodeWorkDirKey(root);
+    await writeFile(
+      join(ctx.homeDir, 'workspaces.json'),
+      JSON.stringify({
+        version: 1,
+        workspaces: {},
+        deleted_workspace_ids: ['old-workspace-id'],
+        deleted_workspace_roots: { 'old-workspace-id': root },
+      }),
+      'utf8',
+    );
+
+    await expect(ctx.registry.update(id, { name: 'should-not-recover' })).rejects.toThrow(
+      'workspace not found',
+    );
   });
 });

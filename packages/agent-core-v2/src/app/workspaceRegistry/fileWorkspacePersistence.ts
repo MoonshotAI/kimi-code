@@ -3,35 +3,60 @@
  *
  * File backend of `IWorkspacePersistence`. Persists the catalog as a single
  * v1-compatible `workspaces.json` document at the storage root
- * (`<homeDir>/workspaces.json`, via `scope = ''`) through the
- * `IAtomicDocumentStore` access-pattern Store. Bound at App scope.
+ * (`<homeDir>/workspaces.json`, via `scope = ''`) through the atomic-document
+ * Store, and coordinates writers through one shared file lock. Bound at App
+ * scope.
  */
+
+import { mkdir } from 'node:fs/promises';
+
+import { join } from 'pathe';
+import lockfile from 'proper-lockfile';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { isStorageError, StorageErrors } from '#/persistence/interface/storage';
 
 import type { Workspace } from './workspaceRegistry';
 import {
   IWorkspacePersistence,
   type PersistedWorkspaceEntry,
   type PersistedWorkspaceFile,
+  type WorkspaceCatalog,
 } from './workspacePersistence';
 
 const WORKSPACE_REGISTRY_VERSION = 1;
 const WORKSPACE_REGISTRY_SCOPE = '';
 const WORKSPACE_REGISTRY_KEY = 'workspaces.json';
+const WORKSPACE_REGISTRY_LOCK_RETRIES = {
+  retries: 100,
+  factor: 1,
+  minTimeout: 10,
+  maxTimeout: 50,
+  randomize: true,
+} as const;
 
 export class FileWorkspacePersistence implements IWorkspacePersistence {
   declare readonly _serviceBrand: undefined;
 
-  constructor(@IAtomicDocumentStore private readonly docs: IAtomicDocumentStore) {}
+  constructor(
+    @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IBootstrapService private readonly bootstrap: IBootstrapService,
+  ) {}
 
-  async load(): Promise<Workspace[] | undefined> {
-    const file = await this.docs.get<PersistedWorkspaceFile>(
-      WORKSPACE_REGISTRY_SCOPE,
-      WORKSPACE_REGISTRY_KEY,
-    );
+  async load(): Promise<WorkspaceCatalog | undefined> {
+    let file: PersistedWorkspaceFile | undefined;
+    try {
+      file = await this.docs.get<PersistedWorkspaceFile>(
+        WORKSPACE_REGISTRY_SCOPE,
+        WORKSPACE_REGISTRY_KEY,
+      );
+    } catch (error) {
+      if (isStorageError(error, StorageErrors.codes.STORAGE_DECODE_FAILED)) return undefined;
+      throw error;
+    }
     if (file === undefined) return undefined;
     if (
       typeof file !== 'object' ||
@@ -54,12 +79,23 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
         lastOpenedAt: parseTime(entry.last_opened_at, now),
       });
     }
-    return result;
+    const rawDeletedIds = file.deleted_workspace_ids;
+    const deletedWorkspaceIds = Array.isArray(rawDeletedIds)
+      ? rawDeletedIds.filter((id): id is string => typeof id === 'string')
+      : [];
+    const rawDeletedRoots = file.deleted_workspace_roots;
+    const deletedWorkspaceRoots: Record<string, string> = {};
+    if (typeof rawDeletedRoots === 'object' && rawDeletedRoots !== null) {
+      for (const [id, root] of Object.entries(rawDeletedRoots)) {
+        if (typeof root === 'string') deletedWorkspaceRoots[id] = root;
+      }
+    }
+    return { workspaces: result, deletedWorkspaceIds, deletedWorkspaceRoots };
   }
 
-  async save(workspaces: readonly Workspace[]): Promise<void> {
+  async save(catalog: WorkspaceCatalog): Promise<void> {
     const record: Record<string, PersistedWorkspaceEntry> = {};
-    for (const ws of workspaces) {
+    for (const ws of catalog.workspaces) {
       record[ws.id] = {
         root: ws.root,
         name: ws.name,
@@ -70,8 +106,26 @@ export class FileWorkspacePersistence implements IWorkspacePersistence {
     const file: PersistedWorkspaceFile = {
       version: WORKSPACE_REGISTRY_VERSION,
       workspaces: record,
+      deleted_workspace_ids: catalog.deletedWorkspaceIds,
+      deleted_workspace_roots: catalog.deletedWorkspaceRoots,
     };
     await this.docs.set(WORKSPACE_REGISTRY_SCOPE, WORKSPACE_REGISTRY_KEY, file);
+  }
+
+  async withWriteLock<T>(operation: () => Promise<T>): Promise<T> {
+    await mkdir(this.bootstrap.homeDir, { recursive: true, mode: 0o700 });
+    const release = await lockfile.lock(
+      join(this.bootstrap.homeDir, WORKSPACE_REGISTRY_KEY),
+      {
+        realpath: false,
+        retries: WORKSPACE_REGISTRY_LOCK_RETRIES,
+      },
+    );
+    try {
+      return await operation();
+    } finally {
+      await release();
+    }
   }
 }
 

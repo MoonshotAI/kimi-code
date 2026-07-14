@@ -33,7 +33,6 @@ import {
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Emitter, type Event } from '#/_base/event';
-import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionActivityKernel } from '#/activity/activity';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/agent/plan/configSection';
@@ -136,7 +135,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
     const handle = await this.materializeSession({ ...opts, sessionId });
-    await this.appendSessionIndexEntry(sessionId, opts.workDir);
+    const sessionContext = handle.accessor.get(ISessionContext);
+    await this.appendSessionIndexEntry(sessionId, sessionContext.sessionDir, opts.workDir);
     if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
       const main = await ensureMainAgent(handle);
       await main.accessor.get(IAgentPlanService).enter();
@@ -188,9 +188,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private async appendSessionIndexEntry(sessionId: string, workDir: string): Promise<void> {
-    const workspaceId = encodeWorkDirKey(workDir);
-    const sessionDir = this.bootstrap.sessionDir(workspaceId, sessionId);
+  private async appendSessionIndexEntry(
+    sessionId: string,
+    sessionDir: string,
+    workDir: string,
+  ): Promise<void> {
     this.appendLogStore.append('', 'session_index.jsonl', {
       sessionId,
       sessionDir,
@@ -401,7 +403,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         await agentHandle.accessor.get(IAgentWireService).replay(...forkRecords);
       }
 
-      await this.appendSessionIndexEntry(targetId, workspace.root);
+      await this.appendSessionIndexEntry(targetId, targetCtx.sessionDir, workspace.root);
       this._onDidForkSession.fire({
         sourceSessionId: sourceId,
         sessionId: targetId,

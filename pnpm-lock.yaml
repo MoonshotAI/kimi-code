@@ -550,6 +550,9 @@ importers:
       picomatch:
         specifier: ^4.0.4
         version: 4.0.4
+      proper-lockfile:
+        specifier: ^4.1.2
+        version: 4.1.2
       retry:
         specifier: 0.13.1
         version: 0.13.1
@@ -590,6 +593,9 @@ importers:
       '@types/picomatch':
         specifier: ^4.0.3
         version: 4.0.3
+      '@types/proper-lockfile':
+        specifier: ^4.1.4
+        version: 4.1.4
       '@types/react':
         specifier: ^19.1.2
         version: 19.2.14

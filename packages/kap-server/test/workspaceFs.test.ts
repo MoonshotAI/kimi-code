@@ -200,4 +200,20 @@ describe('server-v2 /api/v1 fs folder picker', () => {
     expect(body.code).toBe(0);
     expect(body.data.recent_roots).toContain(root);
   });
+
+  it('derives recent roots from sessions when the workspace catalog is empty', async () => {
+    const root = home as string;
+    const created = await postJson<unknown>('/api/v1/sessions', { metadata: { cwd: root } });
+    expect(created.body.code).toBe(0);
+
+    await writeFile(
+      join(root, 'workspaces.json'),
+      JSON.stringify({ version: 1, workspaces: {} }),
+      'utf8',
+    );
+
+    const { body } = await getJson<HomeWire>('/api/v1/fs:home');
+    expect(body.code).toBe(0);
+    expect(body.data.recent_roots).toContain(root);
+  });
 });

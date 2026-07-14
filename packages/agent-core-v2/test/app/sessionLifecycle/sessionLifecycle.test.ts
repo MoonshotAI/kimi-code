@@ -45,7 +45,11 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { SessionWorkspaceContextService } from '#/session/workspaceContext/workspaceContextService';
-import { IWorkspaceRegistry, type Workspace } from '#/app/workspaceRegistry/workspaceRegistry';
+import {
+  IWorkspaceRegistry,
+  type Workspace,
+  type WorkspaceRegistrySnapshot,
+} from '#/app/workspaceRegistry/workspaceRegistry';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -157,6 +161,12 @@ function workspaceRegistryStub(): IWorkspaceRegistry {
   return {
     _serviceBrand: undefined,
     list: () => Promise.resolve([]),
+    snapshot: (): Promise<WorkspaceRegistrySnapshot> =>
+      Promise.resolve({
+        workspaces: [],
+        deletedWorkspaceIds: new Set(),
+        deletedWorkspaceRoots: new Map(),
+      }),
     get: () => Promise.resolve(undefined),
     createOrTouch: (root, name) =>
       Promise.resolve<Workspace>({
@@ -193,6 +203,12 @@ function persistentWorkspaceRegistryStub(): IWorkspaceRegistry {
   return {
     _serviceBrand: undefined,
     list: () => Promise.resolve([...workspaces.values()]),
+    snapshot: (): Promise<WorkspaceRegistrySnapshot> =>
+      Promise.resolve({
+        workspaces: [...workspaces.values()],
+        deletedWorkspaceIds: new Set(),
+        deletedWorkspaceRoots: new Map(),
+      }),
     get: (id) => Promise.resolve(workspaces.get(id)),
     createOrTouch: (root, name) => {
       const id = encodeWorkDirKey(root);
@@ -506,14 +522,13 @@ describe('SessionLifecycleService', () => {
 
     await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
 
-    const workspaceId = encodeWorkDirKey('/tmp/proj');
     expect(appended).toEqual([
       {
         scope: '',
         key: 'session_index.jsonl',
         record: {
           sessionId: 's1',
-          sessionDir: `/tmp/sessions/${workspaceId}/s1`,
+          sessionDir: '/tmp/sessions/wd_stub/s1',
           workDir: '/tmp/proj',
         },
       },
@@ -568,6 +583,12 @@ describe('SessionLifecycleService', () => {
     const workspaceRegistry: IWorkspaceRegistry = {
       _serviceBrand: undefined,
       list: () => Promise.resolve([]),
+      snapshot: (): Promise<WorkspaceRegistrySnapshot> =>
+        Promise.resolve({
+          workspaces: [],
+          deletedWorkspaceIds: new Set(),
+          deletedWorkspaceRoots: new Map(),
+        }),
       get: (id) =>
         Promise.resolve(
           id === indexedWorkspaceId

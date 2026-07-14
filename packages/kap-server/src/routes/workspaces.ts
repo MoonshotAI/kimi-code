@@ -2,9 +2,9 @@
  * `/workspaces` route handlers — server-v2 port.
  *
  * Implements the v1 `/api/v1/workspaces` wire contract on top of
- * `agent-core-v2` services. Backed by `IWorkspaceRegistry` (Core scope) for the
- * catalog, `IHostFileSystem` to validate roots and detect git, and
- * `ISessionIndex` to derive `session_count`.
+ * `agent-core-v2` services. `IWorkspaceRegistry` owns catalog writes,
+ * `IWorkspaceQueryService` resolves canonical roots and session counts, and
+ * `IHostFileSystem` validates roots and detects git.
  *
  *   GET    /workspaces                    list
  *   POST   /workspaces                    register (idempotent on root)
@@ -25,10 +25,11 @@
 
 import {
   IHostFileSystem,
-  ISessionIndex,
+  IWorkspaceQueryService,
   IWorkspaceRegistry,
   type Scope,
   type Workspace,
+  type WorkspaceListItem,
 } from '@moonshot-ai/agent-core-v2';
 import {
   ErrorCode,
@@ -95,7 +96,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
       tags: ['workspaces'],
     },
     async (req, reply) => {
-      const items = await core.accessor.get(IWorkspaceRegistry).list();
+      const items = await core.accessor.get(IWorkspaceQueryService).list();
       const projected = await Promise.all(items.map((ws) => toWireWorkspace(core, ws)));
       reply.send(okEnvelope({ items: projected }, req.id));
     },
@@ -199,14 +200,14 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
     async (req, reply) => {
       const { workspace_id } = req.params;
       const registry = core.accessor.get(IWorkspaceRegistry);
-      const existing = await registry.get(workspace_id);
+      const existing = await core.accessor.get(IWorkspaceQueryService).get(workspace_id);
       if (existing === undefined) {
         reply.send(
           errEnvelope(ErrorCode.WORKSPACE_NOT_FOUND, `workspace ${workspace_id} does not exist`, req.id),
         );
         return;
       }
-      await registry.delete(workspace_id);
+      await registry.delete(workspace_id, existing.root);
       reply.send(okEnvelope({ deleted: true as const }, req.id));
     },
   );
@@ -221,10 +222,15 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
 // Projection — v2 `Workspace` onto the v1 wire `workspaceSchema`.
 // ---------------------------------------------------------------------------
 
-async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWire> {
+async function toWireWorkspace(
+  core: Scope,
+  ws: Workspace | WorkspaceListItem,
+): Promise<WorkspaceWire> {
   const [git, sessionCount] = await Promise.all([
     detectGit(core, ws.root),
-    countSessions(core, ws.id),
+    'sessionCount' in ws
+      ? Promise.resolve(ws.sessionCount)
+      : core.accessor.get(IWorkspaceQueryService).countActiveSessions(ws.id),
   ]);
   return {
     id: ws.id,
@@ -274,13 +280,6 @@ async function detectGit(
   }
   const branch = /^ref:\s*refs\/heads\/(.+)$/.exec(head.trim())?.[1] ?? null;
   return { isGitRepo: true, branch };
-}
-
-async function countSessions(core: Scope, workspaceId: string): Promise<number> {
-  const page = await core.accessor
-    .get(ISessionIndex)
-    .list({ workspaceId, includeArchived: true });
-  return page.items.length;
 }
 
 function buildValidationEnvelope(
