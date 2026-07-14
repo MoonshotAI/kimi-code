@@ -1,3 +1,12 @@
+/**
+ * Scenario: agent-facing config projection, owner-registered sections, and env overlays.
+ *
+ * Exercises the public profile/config surfaces and resolves the real
+ * `ConfigService` with TOML document storage while stubbing host and model
+ * boundaries. Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/app/config/config.test.ts`.
+ */
+
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -30,6 +39,11 @@ import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSe
 // tests below can assert its schema and live env overlay.
 import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
+import {
+  KEEP_ALIVE_ON_EXIT_ENV,
+  resolveAgentTaskConfig,
+  type AgentTaskConfig,
+} from '#/agent/task/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -429,6 +443,64 @@ describe('image config section', () => {
     // Live re-apply on the next get().
     env['KIMI_IMAGE_MAX_EDGE_PX'] = '2500';
     expect(config.get<ImageConfig>(IMAGE_SECTION).maxEdgePx).toBe(2500);
+
+    disposables.dispose();
+  });
+});
+
+describe('task config section', () => {
+  it('re-applies the keepAliveOnExit env binding on every get()', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(config.get<AgentTaskConfig>('task')?.keepAliveOnExit).toBeUndefined();
+
+    env[KEEP_ALIVE_ON_EXIT_ENV] = '1';
+    expect(config.get<AgentTaskConfig>('task')?.keepAliveOnExit).toBe(true);
+    env[KEEP_ALIVE_ON_EXIT_ENV] = '0';
+    expect(config.get<AgentTaskConfig>('task')?.keepAliveOnExit).toBe(false);
+
+    env[KEEP_ALIVE_ON_EXIT_ENV] = 'true';
+    expect(config.get<AgentTaskConfig>('background')?.keepAliveOnExit).toBe(true);
+
+    disposables.dispose();
+  });
+
+  it('preserves legacy task limits when the env binding creates a task overlay', async () => {
+    const env: Record<string, string> = { [KEEP_ALIVE_ON_EXIT_ENV]: 'true' };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode(
+        '[background]\nmax_running_tasks = 3\nkill_grace_period_ms = 25\n',
+      ),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(resolveAgentTaskConfig(config)).toEqual({
+      maxRunningTasks: 3,
+      killGracePeriodMs: 25,
+      keepAliveOnExit: true,
+    });
 
     disposables.dispose();
   });

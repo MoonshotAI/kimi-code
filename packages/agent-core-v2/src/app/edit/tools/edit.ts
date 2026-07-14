@@ -20,11 +20,16 @@
 
 import { z } from 'zod';
 
-import { resolvePathAccessPath, type WorkspaceConfig } from '#/tool/path-access';
+import {
+  extendWorkspaceWithSkillRoots,
+  resolvePathAccessPath,
+  type WorkspaceConfig,
+} from '#/tool/path-access';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
 import { IFileEditService } from '../fileEdit';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   ToolAccesses,
@@ -73,13 +78,22 @@ export class EditTool implements BuiltinTool<EditInput> {
     @IFileEditService private readonly editor: IFileEditService,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    // Optional so unit tests that construct the tool directly (bypassing DI)
+    // keep working; always registered in production scopes.
+    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   private get workspaceConfig(): WorkspaceConfig {
-    return {
-      workspaceDir: this.workspaceCtx.workDir,
-      additionalDirs: this.workspaceCtx.additionalDirs,
-    };
+    // Skill roots are merged per call (v1 merged once at tool construction):
+    // the catalog loads asynchronously and gains roots on plugin reloads.
+    return extendWorkspaceWithSkillRoots(
+      {
+        workspaceDir: this.workspaceCtx.workDir,
+        additionalDirs: this.workspaceCtx.additionalDirs,
+      },
+      this.skillCatalog?.catalog.getSkillRoots() ?? [],
+      this.env.pathClass,
+    );
   }
 
   resolveExecution(args: EditInput): ToolExecution {

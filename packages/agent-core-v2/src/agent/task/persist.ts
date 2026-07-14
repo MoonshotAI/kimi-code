@@ -1,16 +1,21 @@
 /**
- * `task` domain (L5) — `AgentTaskPersistence`, the per-session
+ * `task` domain (L5) — `AgentTaskPersistence`, the per-agent
  * persistence helper behind `AgentTaskService`.
  *
  * Persists task state (`<taskId>.json`) and raw task output (`output.log`)
  * through the `storage` access-pattern stores (`IAtomicDocumentStore` for
  * atomic whole-document state, `IFileSystemStorageService` byte primitives for ordered
- * output append), addressed under the session's storage scope so the domain
- * never touches the filesystem. Task ids are validated against the
- * `{prefix}-{8 hex}` shape before use as path segments (path-traversal and
- * legacy `bg_<hex>` guard), and legacy snake_case records are normalized to
- * the current shape on read. Not scope-bound; constructed by
- * `AgentTaskService`.
+ * output append), addressed under the owning agent's storage scope
+ * (`<sessionScope>/agents/<agentId>/tasks/…`) so the domain never touches the
+ * filesystem and each agent reads back exactly its own records — v1's
+ * per-agent `<sessionDir>/agents/<id>/tasks/` layout. An optional read-only
+ * fallback keeps the previous v2 session-level task root readable during the
+ * layout transition; primary agent keys and output files always win, while
+ * every write remains rooted at the owning agent. Task ids are validated
+ * against the `{prefix}-{8 hex}` shape before use as path segments
+ * (path-traversal and legacy `bg_<hex>` guard), and legacy snake_case records
+ * are normalized to the current shape on read. Not scope-bound; constructed
+ * by `AgentTaskService`.
  */
 
 import { join } from 'pathe';
@@ -33,6 +38,29 @@ type PersistedTask = AgentTaskInfo;
 
 type DiskPersistedTask = PersistedTask | LegacyPersistedTask;
 
+export interface AgentTaskPersistenceRoot {
+  readonly dir: string;
+  readonly scope: string;
+}
+
+export interface AgentTaskStoredOutputSnapshot {
+  readonly outputPath: string;
+  readonly outputSizeBytes: number;
+  readonly previewBytes: number;
+  readonly truncated: boolean;
+  readonly preview: string;
+}
+
+interface ListedTask {
+  readonly keyId: string;
+  readonly task: PersistedTask;
+}
+
+interface TaskOutputData {
+  readonly root: AgentTaskPersistenceRoot;
+  readonly data: Uint8Array;
+}
+
 function validateTaskId(taskId: string): void {
   if (!VALID_TASK_ID.test(taskId)) {
     throw new Error(`Invalid task id: "${taskId}"`);
@@ -41,24 +69,36 @@ function validateTaskId(taskId: string): void {
 
 export class AgentTaskPersistence {
   constructor(
-    private readonly sessionDir: string,
-    private readonly sessionScope: string,
+    private readonly agentDir: string,
+    private readonly agentScope: string,
     private readonly docs: IAtomicDocumentStore,
     private readonly bytes: IFileSystemStorageService,
+    private readonly fallbackRoot?: AgentTaskPersistenceRoot,
   ) {}
 
-  private tasksScope(): string {
-    return `${this.sessionScope}/${TASKS_SCOPE}`;
+  private primaryRoot(): AgentTaskPersistenceRoot {
+    return { dir: this.agentDir, scope: this.agentScope };
   }
 
-  private taskOutputScope(taskId: string): string {
+  private tasksScope(root: AgentTaskPersistenceRoot = this.primaryRoot()): string {
+    return `${root.scope}/${TASKS_SCOPE}`;
+  }
+
+  private taskOutputScope(
+    taskId: string,
+    root: AgentTaskPersistenceRoot = this.primaryRoot(),
+  ): string {
     validateTaskId(taskId);
-    return `${this.sessionScope}/${TASKS_SCOPE}/${taskId}`;
+    return `${root.scope}/${TASKS_SCOPE}/${taskId}`;
+  }
+
+  private taskOutputFileAt(taskId: string, root: AgentTaskPersistenceRoot): string {
+    validateTaskId(taskId);
+    return join(root.dir, TASKS_SCOPE, taskId, OUTPUT_LOG_KEY);
   }
 
   taskOutputFile(taskId: string): string {
-    validateTaskId(taskId);
-    return join(this.sessionDir, TASKS_SCOPE, taskId, OUTPUT_LOG_KEY);
+    return this.taskOutputFileAt(taskId, this.primaryRoot());
   }
 
   async writeTask(task: PersistedTask): Promise<void> {
@@ -68,12 +108,16 @@ export class AgentTaskPersistence {
 
   async readTask(taskId: string): Promise<PersistedTask | undefined> {
     validateTaskId(taskId);
-    const task = await this.docs.get<DiskPersistedTask>(
-      this.tasksScope(),
-      `${taskId}${JSON_SUFFIX}`,
-    );
-    if (task === undefined || !isReadablePersistedTask(task)) return undefined;
-    return normalizePersistedTask(task);
+    const key = `${taskId}${JSON_SUFFIX}`;
+    const task = await this.docs.get<DiskPersistedTask>(this.tasksScope(), key);
+    if (task !== undefined) {
+      return isReadablePersistedTask(task) ? normalizePersistedTask(task) : undefined;
+    }
+    const fallbackRoot = this.fallbackRoot;
+    if (fallbackRoot === undefined) return undefined;
+    const fallback = await this.docs.get<DiskPersistedTask>(this.tasksScope(fallbackRoot), key);
+    if (fallback === undefined || !isReadablePersistedTask(fallback)) return undefined;
+    return normalizePersistedTask(fallback);
   }
 
   async appendTaskOutput(taskId: string, chunk: string): Promise<void> {
@@ -82,43 +126,91 @@ export class AgentTaskPersistence {
   }
 
   async taskOutputSizeBytes(taskId: string): Promise<number> {
-    const data = await this.bytes.read(this.taskOutputScope(taskId), OUTPUT_LOG_KEY);
-    return data === undefined ? 0 : data.byteLength;
+    const output = await this.readTaskOutputData(taskId);
+    return output?.data.byteLength ?? 0;
   }
 
   async taskOutputExists(taskId: string): Promise<boolean> {
-    const entries = await this.bytes.list(this.taskOutputScope(taskId));
-    return entries.includes(OUTPUT_LOG_KEY);
+    return (await this.readTaskOutputData(taskId)) !== undefined;
   }
 
   async readTaskOutputBytes(taskId: string, offset: number, maxBytes: number): Promise<string> {
     const start = Math.max(0, Math.trunc(offset));
     const limit = Math.max(0, Math.trunc(maxBytes));
     if (limit === 0) return '';
-    const data = await this.bytes.read(this.taskOutputScope(taskId), OUTPUT_LOG_KEY);
-    if (data === undefined || start >= data.byteLength) return '';
-    const end = Math.min(data.byteLength, start + limit);
-    return textDecoder.decode(data.subarray(start, end));
+    const output = await this.readTaskOutputData(taskId);
+    if (output === undefined || start >= output.data.byteLength) return '';
+    const end = Math.min(output.data.byteLength, start + limit);
+    return textDecoder.decode(output.data.subarray(start, end));
+  }
+
+  async readTaskOutputSnapshot(
+    taskId: string,
+    maxPreviewBytes: number,
+  ): Promise<AgentTaskStoredOutputSnapshot | undefined> {
+    const output = await this.readTaskOutputData(taskId);
+    if (output === undefined) return undefined;
+    const previewLimit = Math.max(0, Math.trunc(maxPreviewBytes));
+    const previewBytes = Math.min(previewLimit, output.data.byteLength);
+    const previewOffset = output.data.byteLength - previewBytes;
+    return {
+      outputPath: this.taskOutputFileAt(taskId, output.root),
+      outputSizeBytes: output.data.byteLength,
+      previewBytes,
+      truncated: previewOffset > 0,
+      preview: textDecoder.decode(output.data.subarray(previewOffset)),
+    };
   }
 
   async listTasks(): Promise<readonly PersistedTask[]> {
-    const keys = (await this.docs.list(this.tasksScope())).toSorted();
-    const tasks: PersistedTask[] = [];
+    const primary = await this.listTasksAt(this.primaryRoot());
+    const tasks = [...primary.tasks];
+    const fallbackRoot = this.fallbackRoot;
+    if (fallbackRoot !== undefined) {
+      const fallback = await this.listTasksAt(fallbackRoot);
+      for (const entry of fallback.tasks) {
+        if (!primary.reservedIds.has(entry.keyId)) tasks.push(entry);
+      }
+    }
+    return tasks.map((entry) => entry.task).toSorted((a, b) => a.taskId.localeCompare(b.taskId));
+  }
+
+  private async listTasksAt(root: AgentTaskPersistenceRoot): Promise<{
+    readonly reservedIds: ReadonlySet<string>;
+    readonly tasks: readonly ListedTask[];
+  }> {
+    const keys = (await this.docs.list(this.tasksScope(root))).toSorted();
+    const reservedIds = new Set<string>();
+    const tasks: ListedTask[] = [];
     for (const key of keys) {
       if (!key.endsWith(JSON_SUFFIX)) continue;
       const id = key.slice(0, -JSON_SUFFIX.length);
       if (!VALID_TASK_ID.test(id)) continue;
+      reservedIds.add(id);
       let task: DiskPersistedTask | undefined;
       try {
-        task = await this.docs.get<DiskPersistedTask>(this.tasksScope(), key);
+        task = await this.docs.get<DiskPersistedTask>(this.tasksScope(root), key);
       } catch {
         // Skip files that fail to read / parse (corrupt or partially written).
         continue;
       }
       if (task === undefined || !isReadablePersistedTask(task)) continue;
-      tasks.push(normalizePersistedTask(task));
+      tasks.push({ keyId: id, task: normalizePersistedTask(task) });
     }
-    return tasks;
+    return { reservedIds, tasks };
+  }
+
+  private async readTaskOutputData(taskId: string): Promise<TaskOutputData | undefined> {
+    const primaryRoot = this.primaryRoot();
+    const primary = await this.bytes.read(this.taskOutputScope(taskId, primaryRoot), OUTPUT_LOG_KEY);
+    if (primary !== undefined) return { root: primaryRoot, data: primary };
+    const fallbackRoot = this.fallbackRoot;
+    if (fallbackRoot === undefined) return undefined;
+    const fallback = await this.bytes.read(
+      this.taskOutputScope(taskId, fallbackRoot),
+      OUTPUT_LOG_KEY,
+    );
+    return fallback === undefined ? undefined : { root: fallbackRoot, data: fallback };
   }
 }
 

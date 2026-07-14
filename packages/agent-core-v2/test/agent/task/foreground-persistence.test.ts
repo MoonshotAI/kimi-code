@@ -25,7 +25,7 @@ import {
   type TestAgentContext,
 } from '../../harness';
 import {
-  TASK_TEST_SESSION_SCOPE,
+  TASK_TEST_AGENT_SCOPE,
   createAgentTaskPersistence,
 } from './stubs';
 
@@ -147,7 +147,7 @@ describe('AgentTaskService — foreground persistence', () => {
   });
 
   const taskJsonPath = (taskId: string): string =>
-    join(sessionDir, TASK_TEST_SESSION_SCOPE, 'tasks', `${taskId}.json`);
+    join(sessionDir, TASK_TEST_AGENT_SCOPE, 'tasks', `${taskId}.json`);
 
   it('writes nothing to disk for a foreground task that does not spill or detach', async () => {
     const taskId = registerForeground(background, immediateProcess(0, 'hello\n'), 'echo', 'demo');

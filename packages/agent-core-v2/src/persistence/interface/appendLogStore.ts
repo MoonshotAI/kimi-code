@@ -4,7 +4,19 @@
  * The append-log access-pattern store: turns a byte stream into an ordered
  * sequence of typed JSON records on top of `IFileSystemStorageService`. Owns the
  * concerns the storage service deliberately ignores: line framing, batching,
- * and crash-tolerant decoding.
+ * and crash-tolerant decoding. Acquired handles share a keyed buffer; its final
+ * owner release starts a flush and retires that buffer once the flush settles,
+ * before a replacement buffer starts storage I/O for the same key. `rewrite`
+ * takes ownership at its call boundary: `records` replaces the history already
+ * durable before that cutover, while appends still queued or in flight remain
+ * a live tail that is drained after the atomic replacement. Callers must not
+ * also include those outstanding appends in `records`. An ambiguous append or
+ * rewrite failure remains sticky for that acquired buffer generation so a
+ * later flush cannot duplicate data by guessing whether storage committed it.
+ * A valid explicit `rewrite` is the recovery boundary: a successful atomic
+ * replacement clears that failure before the preserved live tail drains.
+ * `flush` and `close` wait for every keyed buffer to settle before reporting
+ * the first failure in stable key insertion order.
  *
  * This file ships the interface, error class, and DI token only.
  * The concrete `AppendLogStore` implementation lives in

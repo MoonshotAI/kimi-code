@@ -4,7 +4,8 @@
  * Defines the Agent-scoped task manager surface used for both foreground and
  * detached work. Task execution adapters implement the generic `AgentTask`
  * contract from this domain's type module; this service owns registration,
- * output retention, persistence, detach/stop/wait, and terminal notifications.
+ * output retention, persistence, detach/stop/wait, terminal notifications,
+ * and session-close task teardown with a `keepAliveOnExit` opt-out.
  * Bound at Agent scope.
  */
 
@@ -119,6 +120,7 @@ export interface IAgentTaskService {
   detach(taskId: string): AgentTaskInfo | undefined;
   stop(taskId: string, reason?: string): Promise<AgentTaskInfo | undefined>;
   stopAll(reason?: string): Promise<readonly AgentTaskInfo[]>;
+  stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]>;
   wait(
     taskId: string,
     timeoutMs?: number,

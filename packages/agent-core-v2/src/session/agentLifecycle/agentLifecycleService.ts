@@ -5,7 +5,10 @@
  * serializing same-id bootstrap and dropping incomplete handles after startup
  * failure. Seeds each agent's identity through `agent` scopeContext, wires
  * per-agent wire records and the wire state machine, the blob store, and MCP,
- * and registers the agent in the session registry. Bound at Session scope.
+ * and registers the agent in the session registry. New logs receive a metadata
+ * envelope while non-empty unversioned logs are rejected. Removal awaits the
+ * agent task manager's graceful exit policy before draining activity and
+ * disposing the child scope. Bound at Session scope.
  *
  * No agent id is special here: the main agent is created by its bootstrappers
  * as `create({ agentId: 'main' })` (see `mainAgent.ts`), and `fork` requires
@@ -37,9 +40,10 @@ import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentP
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { AgentMcpService } from '#/agent/mcp/mcpService';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
+import type { McpServerConfig } from '#/agent/mcp/config-schema';
 import { McpOAuthService } from '#/agent/mcp/oauth/service';
 import { createMcpOAuthStore } from '#/agent/mcp/oauth/store';
-import { resolveSessionMcpConfig } from '#/agent/mcp/session-config';
+import { mergeCallerMcpServers, resolveSessionMcpConfig } from '#/agent/mcp/session-config';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -65,6 +69,7 @@ import {
 } from '#/agent/wireRecord/wireRecord';
 import {
   AgentWireRecordService,
+  missingWireMetadataError,
   WIRE_RECORD_FILENAME,
 } from '#/agent/wireRecord/wireRecordService';
 import { wireMetadata } from '#/agent/wireRecord/metadataOps';
@@ -75,6 +80,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
 import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
+import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 
 import { createHooks } from '#/hooks';
@@ -375,30 +381,25 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const appendLog = this.appendLog;
     if (appendLog === undefined) return;
     let firstRecord: PersistedWireRecord | undefined;
-    const remainingRecords: PersistedWireRecord[] = [];
-    for await (const record of appendLog.read<PersistedWireRecord>(agentScope, WIRE_RECORD_FILENAME)) {
-      if (firstRecord === undefined) {
-        firstRecord = record;
-        if (firstRecord.type === 'metadata') return;
-        continue;
-      }
-      remainingRecords.push(record);
+    for await (const record of appendLog.read<PersistedWireRecord>(
+      agentScope,
+      WIRE_RECORD_FILENAME,
+    )) {
+      firstRecord = record;
+      break;
     }
     if (firstRecord === undefined) {
       handle.accessor.get(IAgentWireService).dispatch(wireMetadata(freshMetadataPayload()));
       return;
     }
-    await appendLog.rewrite(agentScope, WIRE_RECORD_FILENAME, [
-      freshMetadataRecord(),
-      firstRecord,
-      ...remainingRecords,
-    ]);
+    if (firstRecord.type === 'metadata') return;
+    throw missingWireMetadataError();
   }
 
-  ensureMcpReady(): Promise<void> {
+  ensureMcpReady(callerServers?: Readonly<Record<string, McpServerConfig>>): Promise<void> {
     if (this.mcpInitialLoad !== undefined) return this.mcpInitialLoad;
     const manager = this.getMcpManager();
-    const initialLoad = this.connectMcpServers(manager).catch((error: unknown) => {
+    const initialLoad = this.connectMcpServers(manager, callerServers).catch((error: unknown) => {
       this.log.error('mcp initial load failed', { error });
       const message = error instanceof Error ? error.message : String(error);
       this.handles.get('main')?.accessor.get(IEventBus)?.publish({
@@ -486,12 +487,18 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     return manager;
   }
 
-  private async connectMcpServers(manager: McpConnectionManager): Promise<void> {
+  private async connectMcpServers(
+    manager: McpConnectionManager,
+    callerServers?: Readonly<Record<string, McpServerConfig>>,
+  ): Promise<void> {
     const [base, pluginServers] = await Promise.all([
       resolveSessionMcpConfig({ cwd: this.workspace.workDir, homeDir: this.bootstrap.homeDir }),
       this.plugins.enabledMcpServers(),
     ]);
-    const servers = { ...base?.servers, ...pluginServers };
+    // Precedence mirrors v1's `mergeCallerMcpServers` + `mergePluginMcpConfig`
+    // (`rpc/core-impl.ts`): file config < caller-supplied < plugin.
+    const withCaller = mergeCallerMcpServers(base, callerServers);
+    const servers = { ...withCaller?.servers, ...pluginServers };
     if (Object.keys(servers).length === 0) return;
     await manager.connectAll(servers);
     this.trackMcpInitialLoad(manager);
@@ -534,6 +541,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const handle = this.handles.get(agentId);
     if (handle === undefined) return;
     this.handles.delete(agentId);
+    await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
     // Drive the agent activity kernel through disposal: reject new begins and
     // abort any in-flight turn / background activity, then wait for it to drain
     // (including the tool-execution grace window) before releasing the scope.
@@ -550,13 +558,6 @@ function freshMetadataPayload(): PayloadOf<typeof wireMetadata> {
   return {
     protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
     created_at: Date.now(),
-  };
-}
-
-function freshMetadataRecord(): PersistedWireRecord {
-  return {
-    type: 'metadata',
-    ...freshMetadataPayload(),
   };
 }
 

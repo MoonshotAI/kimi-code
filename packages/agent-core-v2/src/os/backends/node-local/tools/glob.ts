@@ -58,6 +58,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { unwrapErrorCause } from '#/_base/errors/errors';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
@@ -68,6 +69,7 @@ import {
 } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import {
+  extendWorkspaceWithSkillRoots,
   isWithinDirectory,
   resolvePathAccessPath,
   type PathClass,
@@ -154,16 +156,25 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     @IHostProcessService private readonly processService: IHostProcessService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    // Optional so unit tests that construct the tool directly (bypassing DI)
+    // keep working; always registered in production scopes.
+    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {
     this.description =
       this.env.pathClass === 'win32' ? globDescription + WINDOWS_PATH_HINT : globDescription;
   }
 
   private get workspaceConfig(): WorkspaceConfig {
-    return {
-      workspaceDir: this.workspaceCtx.workDir,
-      additionalDirs: this.workspaceCtx.additionalDirs,
-    };
+    // Skill roots are merged per call (v1 merged once at tool construction):
+    // the catalog loads asynchronously and gains roots on plugin reloads.
+    return extendWorkspaceWithSkillRoots(
+      {
+        workspaceDir: this.workspaceCtx.workDir,
+        additionalDirs: this.workspaceCtx.additionalDirs,
+      },
+      this.skillCatalog?.catalog.getSkillRoots() ?? [],
+      this.env.pathClass,
+    );
   }
 
   resolveExecution(args: GlobInput): ToolExecution {

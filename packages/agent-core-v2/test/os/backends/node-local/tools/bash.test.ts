@@ -629,6 +629,10 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
       return results.filter((info): info is AgentTaskInfo => info !== undefined);
     },
 
+    async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
+      return service.stopAll(reason);
+    },
+
     async wait(taskId: string, timeoutMs = 30_000): Promise<AgentTaskInfo | undefined> {
       const entry = tasks.get(taskId);
       if (entry === undefined) return undefined;

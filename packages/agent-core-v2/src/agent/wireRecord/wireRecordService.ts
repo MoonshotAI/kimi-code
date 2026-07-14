@@ -1,3 +1,13 @@
+/**
+ * `wireRecord` domain (L2) — `IAgentWireRecordService` implementation.
+ *
+ * Restores and retains the owning agent's wire journal, applies protocol
+ * migrations, rejects non-empty unversioned logs, and awaits durable atomic
+ * rewrites before restore completes. Tracks live records through `wire`, uses
+ * `agent/scopeContext` for storage addressing, and persists through the
+ * `appendLog` access-pattern store. Bound at Agent scope.
+ */
+
 import { relative } from 'pathe';
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -108,7 +118,7 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
           shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
         }
       } else if (requireMetadata) {
-        throw new Error('WireRecord restore expected metadata as the first record');
+        throw missingWireMetadataError();
       }
     }
 
@@ -129,8 +139,7 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
     }
 
     if (shouldRewrite && restoredRecords !== undefined && this.log !== undefined) {
-      void this.log.rewrite(this.wireScope, WIRE_RECORD_FILENAME, restoredRecords);
-      await this.log.flush();
+      await this.log.rewrite(this.wireScope, WIRE_RECORD_FILENAME, restoredRecords);
     }
     return warning === undefined ? {} : { warning };
   }
@@ -166,6 +175,10 @@ function isWireRecordMetadata(record: PersistedWireRecord): record is WireRecord
  * (`<homeDir>/sessions/<ws>/<sid>/agents/<aid>/wire.jsonl`).
  */
 export const WIRE_RECORD_FILENAME = 'wire.jsonl';
+
+export function missingWireMetadataError(): Error {
+  return new Error('WireRecord restore expected metadata as the first record');
+}
 
 /**
  * Store `scope` of an agent's wire log: its homedir made relative to the app

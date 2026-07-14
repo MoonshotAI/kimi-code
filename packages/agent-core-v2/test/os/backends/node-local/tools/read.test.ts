@@ -21,6 +21,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES } from '#/agent/media/file-type';
+import type { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
@@ -310,6 +311,27 @@ describe('ReadTool', () => {
     expect(result).toMatchObject({ isError: true });
     expect(result.output).toContain('absolute path');
     expect(readText).not.toHaveBeenCalled();
+  });
+
+  it('allows relative traversal into a skill root the session catalog provides', async () => {
+    const { fs } = createSpiedFs('skill body');
+    const skillCatalog = {
+      _serviceBrand: undefined,
+      catalog: { getSkillRoots: () => ['/skills'] },
+    } as unknown as ISessionSkillCatalog;
+    const tool = new ReadTool(
+      fs,
+      createTestEnv(),
+      stubWorkspaceContext('/workspace/project'),
+      skillCatalog,
+    );
+
+    // Same shape as the rejection above (`../../` escapes the workspace), but
+    // the canonical path lands inside a catalog skill root.
+    const result = await execute(tool, { path: '../../skills/SKILL.md' });
+
+    expect(result.isError ?? false).toBe(false);
+    expect(result.output).toBe('1\tskill body');
   });
 
   it('allows explicit absolute paths outside the workspace', async () => {

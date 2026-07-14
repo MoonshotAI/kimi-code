@@ -21,6 +21,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
+import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import '#/activity/agentActivityService';
 import '#/agent/toolDedupe/toolDedupeService';
@@ -134,6 +135,7 @@ describe('AgentLifecycleService', () => {
   let registerAgent: ReturnType<typeof vi.fn<ISessionMetadata['registerAgent']>>;
   let atomicDocs: Map<string, unknown>;
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
+  let stopAllOnExit: ReturnType<typeof vi.fn>;
   let beforeExecuteHookIds: string[];
   let didExecuteHookIds: string[];
 
@@ -256,6 +258,11 @@ describe('AgentLifecycleService', () => {
       setMode: permissionModeSetMode,
       onDidChangeMode: Event.None,
     } as unknown as IAgentPermissionModeService);
+    stopAllOnExit = vi.fn(async () => []);
+    ix.stub(IAgentTaskService, {
+      _serviceBrand: undefined,
+      stopAllOnExit,
+    } as unknown as IAgentTaskService);
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
   afterEach(() => {
@@ -271,6 +278,15 @@ describe('AgentLifecycleService', () => {
     expect(svc.list()).toEqual([main]);
     await svc.remove('main');
     expect(svc.getHandle('main')).toBeUndefined();
+  });
+
+  it('remove stops the agent background tasks before disposal', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    await svc.remove('main');
+
+    expect(stopAllOnExit).toHaveBeenCalledWith('Session closed');
   });
 
   it('ignites the self-wiring toolDedupe plugin so its hooks exist before the first turn', async () => {
@@ -301,7 +317,7 @@ describe('AgentLifecycleService', () => {
     );
   });
 
-  it('prepends metadata to an existing agent wire that is missing the envelope', async () => {
+  it('rejects an existing agent wire that is missing the metadata envelope', async () => {
     const log = recordingAppendLog([
       { type: 'turn.prompt', turnId: 0 } as PersistedWireRecord,
     ]);
@@ -309,14 +325,12 @@ describe('AgentLifecycleService', () => {
     stubBlobPassThrough(ix);
     const svc = ix.get(IAgentLifecycleService);
 
-    await svc.create({ agentId: 'main' });
+    await expect(svc.create({ agentId: 'main' })).rejects.toThrow(
+      'WireRecord restore expected metadata as the first record',
+    );
 
     expect(log.appended).toEqual([]);
-    expect(log.rewritten?.map((record) => record.type)).toEqual(['metadata', 'turn.prompt']);
-    expect(log.rewritten?.[0]).toMatchObject({
-      type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    });
+    expect(log.rewritten).toBeUndefined();
   });
 
   it('leaves an existing metadata envelope in place', async () => {
@@ -461,6 +475,35 @@ describe('AgentLifecycleService', () => {
     resolveConnect?.();
     await create;
     expect(settled).toBe(true);
+  });
+
+  it('merges caller-supplied MCP servers into the initial connect (file < caller < plugin)', async () => {
+    ix.stub(IPluginService, {
+      ...pluginServiceStub,
+      enabledMcpServers: async () => ({
+        shared: { transport: 'stdio', command: 'plugin-version' },
+      }),
+    } as unknown as IPluginService);
+    const connectAll = vi
+      .spyOn(McpConnectionManager.prototype, 'connectAll')
+      .mockResolvedValue(undefined);
+
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.ensureMcpReady({
+      shared: { transport: 'stdio', command: 'caller-version' },
+      callerOnly: { transport: 'http', url: 'https://caller.example.com' },
+    });
+
+    expect(connectAll).toHaveBeenCalledTimes(1);
+    expect(connectAll).toHaveBeenCalledWith({
+      shared: { transport: 'stdio', command: 'plugin-version' },
+      callerOnly: { transport: 'http', url: 'https://caller.example.com' },
+    });
+
+    // The initial load is single-flight: later calls only await it and never
+    // re-merge a different caller payload.
+    await svc.ensureMcpReady({ ignored: { transport: 'stdio', command: 'ignored' } });
+    expect(connectAll).toHaveBeenCalledTimes(1);
   });
 
   it('whenReady waits for an in-flight creation to finish bootstrap', async () => {

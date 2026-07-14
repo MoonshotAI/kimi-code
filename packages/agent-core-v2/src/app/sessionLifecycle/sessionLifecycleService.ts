@@ -12,7 +12,9 @@
  * sessions are discovered through the `sessionIndex` read model, and workspace
  * roots are remembered through `workspaceRegistry`. On create / fork the
  * session is also appended to the shared `session_index.jsonl` so v1 clients
- * (TUI, export) can discover sessions created by the v2 engine.
+ * (TUI, export) can discover sessions created by the v2 engine. Fork flushes
+ * live agent logs and rejects non-empty logs without a protocol metadata
+ * envelope instead of stamping legacy data as current.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -41,7 +43,11 @@ import {
   IAgentWireRecordService,
   type PersistedWireRecord,
 } from '#/agent/wireRecord/wireRecord';
-import { WIRE_RECORD_FILENAME, wireRecordScope } from '#/agent/wireRecord/wireRecordService';
+import {
+  missingWireMetadataError,
+  WIRE_RECORD_FILENAME,
+  wireRecordScope,
+} from '#/agent/wireRecord/wireRecordService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -200,7 +206,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
     void handle.accessor.get(ISessionSkillCatalog).ready;
-    await handle.accessor.get(IAgentLifecycleService).ensureMcpReady();
+    // First `ensureMcpReady` call for the session — it starts the initial MCP
+    // load, so the caller-supplied servers must ride on it (later calls, e.g.
+    // from agent creation, only await the in-flight load).
+    await handle.accessor.get(IAgentLifecycleService).ensureMcpReady(opts.mcpServers);
     handle.accessor.get(ISessionExternalHooksService);
     return handle;
   }
@@ -560,7 +569,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (records.length === 0) {
       records.push(freshMetadataRecord());
     } else if (records[0]?.type !== 'metadata') {
-      records.unshift(freshMetadataRecord());
+      throw missingWireMetadataError();
     }
     records.push(forkedRecord());
 

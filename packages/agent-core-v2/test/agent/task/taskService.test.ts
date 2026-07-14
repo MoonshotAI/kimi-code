@@ -1,3 +1,12 @@
+/**
+ * Scenario: Agent task lifecycle, persistence, output retention, and teardown.
+ *
+ * Resolves the real `AgentTaskService` by interface, uses real `ProcessTask`
+ * adapters where process signals are observable, and stubs only persistence,
+ * wire, loop, and telemetry boundaries. Run with
+ * `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/task/taskService.test.ts`.
+ */
+
 import { Readable, type Writable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,7 +32,8 @@ import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -34,9 +44,11 @@ import type { IWireService } from '#/wire/wireService';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ITaskService } from '#/app/task/task';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
 import { stubContextMemory, stubWireRecord } from '../contextMemory/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
+import type { TaskServiceTestManager } from './stubs';
 
 function fakeProcessTask(): AgentTask {
   return {
@@ -48,7 +60,9 @@ function fakeProcessTask(): AgentTask {
   };
 }
 
-function stubWireService(): IWireService {
+type RestoreHandler = Parameters<IWireService['onRestored']>[0];
+
+function stubWireService(captureRestored?: (handler: RestoreHandler) => void): IWireService {
   return {
     _serviceBrand: undefined,
     dispatch: () => {},
@@ -56,10 +70,13 @@ function stubWireService(): IWireService {
     signal: () => {},
     flush: async () => {},
     attach: () => toDisposable(() => {}),
-    getModel: () => ({}),
+    getModel: () => new Map(),
     subscribe: () => toDisposable(() => {}),
     onEmission: () => toDisposable(() => {}),
-    onRestored: () => toDisposable(() => {}),
+    onRestored: (handler: RestoreHandler) => {
+      captureRestored?.(handler);
+      return toDisposable(() => {});
+    },
   } as unknown as IWireService;
 }
 
@@ -103,12 +120,23 @@ describe('AgentTaskService', () => {
     ix.stub(IConfigService, {
       get: (() => undefined) as IConfigService['get'],
     });
-    ix.stub(ISessionContext, {
-      sessionId: 'test-session',
-      workspaceId: 'test-ws',
-      sessionDir: '/tmp/test-session',
-      metaScope: 'sessions/test-ws/test-session/session-meta',
-    });
+    ix.stub(
+      ISessionContext,
+      makeSessionContext({
+        sessionId: 'test-session',
+        workspaceId: 'test-ws',
+        sessionDir: '/tmp/test-session',
+        sessionScope: 'sessions/test-ws/test-session',
+        cwd: '/tmp/test-session',
+      }),
+    );
+    ix.stub(
+      IAgentScopeContext,
+      makeAgentScopeContext({
+        agentId: 'main',
+        agentScope: 'sessions/test-ws/test-session/agents/main',
+      }),
+    );
     ix.stub(IAtomicDocumentStore, {
       get: async () => undefined,
       set: async () => {},
@@ -138,6 +166,388 @@ describe('AgentTaskService', () => {
     expect(listed[0]?.kind).toBe('process');
     expect(await svc.readOutput(id)).toBe('');
     await svc.stop(id);
+  });
+
+  function stubTaskConfig(value: unknown): void {
+    ix.stub(IConfigService, {
+      get: ((domain: string) => (domain === 'task' ? value : undefined)) as IConfigService['get'],
+    });
+  }
+
+  function stubTaskWrites(): AgentTaskInfo[] {
+    const writes: AgentTaskInfo[] = [];
+    ix.stub(IAtomicDocumentStore, {
+      get: async () => undefined,
+      set: async <T,>(_scope: string, _key: string, value: T) => {
+        writes.push(value as AgentTaskInfo);
+      },
+      delete: async () => {},
+      list: async () => [],
+    });
+    return writes;
+  }
+
+  function abortObservingTask(onAbort: (reason: unknown) => void): AgentTask {
+    return {
+      ...fakeProcessTask(),
+      start: ({ signal }) => {
+        if (signal.aborted) {
+          onAbort(signal.reason);
+          return;
+        }
+        signal.addEventListener('abort', () => onAbort(signal.reason));
+      },
+    };
+  }
+
+  it('stopAllOnExit suppresses and persists terminal state for detached tasks', async () => {
+    const writes = stubTaskWrites();
+    const svc = ix.get(IAgentTaskService);
+    const first = svc.registerTask(fakeProcessTask());
+    const second = svc.registerTask(fakeProcessTask());
+
+    const stopped = await svc.stopAllOnExit('Session closed');
+
+    expect(stopped.map((info) => info.taskId).toSorted()).toEqual([first, second].toSorted());
+    for (const taskId of [first, second]) {
+      const info = svc.getTask(taskId);
+      expect(info?.status).toBe('killed');
+      expect(info?.stopReason).toBe('Session closed');
+      expect(info?.terminalNotificationSuppressed).toBe(true);
+      const persisted = writes.filter((write) => write.taskId === taskId);
+      expect(
+        persisted.some(
+          (write) =>
+            write.status === 'running' && write.terminalNotificationSuppressed === true,
+        ),
+      ).toBe(true);
+      expect(persisted.at(-1)).toMatchObject({
+        status: 'killed',
+        terminalNotificationSuppressed: true,
+      });
+    }
+  });
+
+  it('stopAllOnExit does not persist a foreground-only task', async () => {
+    const writes = stubTaskWrites();
+    const svc = ix.get(IAgentTaskService);
+    const taskId = svc.registerTask(fakeProcessTask(), { detached: false });
+
+    await svc.stopAllOnExit('Session closed');
+
+    expect(writes).toEqual([]);
+    expect(svc.getTask(taskId)).toMatchObject({
+      status: 'killed',
+      detached: false,
+      terminalNotificationSuppressed: undefined,
+    });
+  });
+
+  it('stopAllOnExit leaves tasks running when keepAliveOnExit is set', async () => {
+    stubTaskConfig({ keepAliveOnExit: true });
+    const svc = ix.get(IAgentTaskService);
+    const taskId = svc.registerTask(fakeProcessTask());
+
+    const stopped = await svc.stopAllOnExit('Session closed');
+
+    expect(stopped).toEqual([]);
+    expect(svc.getTask(taskId)?.status).toBe('running');
+
+    await svc.stop(taskId);
+  });
+
+  it('dispose aborts live tasks as a last resort', async () => {
+    const svc = ix.get(IAgentTaskService);
+    let abortReason: unknown;
+    svc.registerTask(abortObservingTask((reason) => (abortReason = reason)), {
+      timeoutMs: 60_000,
+    });
+
+    disposables.dispose();
+    await Promise.resolve();
+
+    expect(abortReason).toBe('Session closed');
+  });
+
+  it('scope disposal requests SIGKILL when a process ignores SIGTERM', async () => {
+    const stdout = new Readable({ read() {} });
+    const stderr = new Readable({ read() {} });
+    let resolveWait!: (code: number) => void;
+    const wait = new Promise<number>((resolve) => {
+      resolveWait = resolve;
+    });
+    const kill = vi.fn(async (signal: NodeJS.Signals) => {
+      if (signal !== 'SIGKILL') return;
+      stdout.push(null);
+      stderr.push(null);
+      resolveWait(137);
+    });
+    const proc = {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr,
+      pid: 4244,
+      exitCode: null,
+      wait: () => wait,
+      kill,
+      dispose: vi.fn().mockResolvedValue(undefined),
+    } as unknown as IProcess;
+    const svc = ix.get(IAgentTaskService);
+    svc.registerTask(new ProcessTask(proc, 'ignore-term', 'long-running process'));
+    await Promise.resolve();
+
+    disposables.dispose();
+    await Promise.resolve();
+
+    expect(kill).toHaveBeenNthCalledWith(1, 'SIGTERM');
+    expect(kill).toHaveBeenNthCalledWith(2, 'SIGKILL');
+  });
+
+  it('dispose leaves tasks running when keepAliveOnExit is set', async () => {
+    stubTaskConfig({ keepAliveOnExit: true });
+    const svc = ix.get(IAgentTaskService);
+    let aborted = false;
+    const forceStop = vi.fn(async () => {});
+    svc.registerTask({
+      ...abortObservingTask(() => (aborted = true)),
+      forceStop,
+    });
+    await Promise.resolve();
+
+    disposables.dispose();
+
+    expect(aborted).toBe(false);
+    expect(forceStop).not.toHaveBeenCalled();
+  });
+
+  it('scope disposal leaves a process running when keepAliveOnExit is set', async () => {
+    stubTaskConfig({ keepAliveOnExit: true });
+    const stdout = new Readable({ read() {} });
+    const stderr = new Readable({ read() {} });
+    let resolveWait!: (code: number) => void;
+    const wait = new Promise<number>((resolve) => {
+      resolveWait = resolve;
+    });
+    const proc = {
+      stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
+      stdout,
+      stderr,
+      pid: 4245,
+      exitCode: null,
+      wait: () => wait,
+      kill: vi.fn().mockResolvedValue(undefined),
+      dispose: vi.fn().mockResolvedValue(undefined),
+    } as unknown as IProcess;
+    const svc = ix.get(IAgentTaskService);
+    svc.registerTask(new ProcessTask(proc, 'keep-running', 'long-running process'));
+    await Promise.resolve();
+
+    disposables.dispose();
+    await Promise.resolve();
+
+    expect(proc.kill).not.toHaveBeenCalled();
+    expect(proc.dispose).not.toHaveBeenCalled();
+
+    stdout.push(null);
+    stderr.push(null);
+    resolveWait(0);
+    await Promise.resolve();
+  });
+
+  it('stop requests force-stop when killGracePeriodMs is zero', async () => {
+    stubTaskConfig({ killGracePeriodMs: 0 });
+    const svc = ix.get(IAgentTaskService);
+    let forceStopped = false;
+    const taskId = svc.registerTask({
+      ...fakeProcessTask(),
+      start: () => new Promise<void>(() => {}),
+      forceStop: async () => {
+        forceStopped = true;
+      },
+    });
+
+    const info = await svc.stop(taskId);
+
+    expect(forceStopped).toBe(true);
+    expect(info?.status).toBe('killed');
+  });
+
+  function mapBackedDocs(): IAtomicDocumentStore {
+    const map = new Map<string, unknown>();
+    return {
+      _serviceBrand: undefined,
+      get: async <T,>(scope: string, key: string): Promise<T | undefined> =>
+        map.get(`${scope}/${key}`) as T | undefined,
+      set: async <T,>(scope: string, key: string, value: T): Promise<void> => {
+        map.set(`${scope}/${key}`, value);
+      },
+      delete: async (scope: string, key: string): Promise<void> => {
+        map.delete(`${scope}/${key}`);
+      },
+      list: async (scope: string, prefix = ''): Promise<readonly string[]> =>
+        [...map.keys()]
+          .filter((key) => key.startsWith(`${scope}/${prefix}`))
+          .map((key) => key.slice(scope.length + 1)),
+    } as unknown as IAtomicDocumentStore;
+  }
+
+  function buildAgentIx(
+    agentId: string,
+    docs: IAtomicDocumentStore,
+    bytes: IFileSystemStorageService,
+    captureRestored?: (handler: RestoreHandler) => void,
+  ): TestInstantiationService {
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(IAgentWireRecordService, stubWireRecord());
+    ix.stub(IAgentWireService, stubWireService(captureRestored));
+    ix.stub(IEventBus, disposables.add(new EventBusService()));
+    ix.stub(IAgentContextInjectorService, {
+      register: () => toDisposable(() => {}),
+    });
+    ix.stub(ITaskService, {
+      run: () => {
+        throw new Error('ITaskService.run is not used by this test');
+      },
+      defer: () => {
+        throw new Error('ITaskService.defer is not used by this test');
+      },
+    });
+    ix.stub(IAgentContextMemoryService, stubContextMemory());
+    ix.stub(ITelemetryService, { track: () => {}, track2: () => {} });
+    ix.stub(IAgentLoopService, stubLoopWithHooks());
+    ix.stub(IConfigService, {
+      get: (() => undefined) as IConfigService['get'],
+    });
+    ix.stub(
+      ISessionContext,
+      makeSessionContext({
+        sessionId: 'test-session',
+        workspaceId: 'test-ws',
+        sessionDir: '/tmp/test-session',
+        sessionScope: 'sessions/test-ws/test-session',
+        cwd: '/tmp/test-session',
+      }),
+    );
+    ix.stub(
+      IAgentScopeContext,
+      makeAgentScopeContext({
+        agentId,
+        agentScope: `sessions/test-ws/test-session/agents/${agentId}`,
+      }),
+    );
+    ix.stub(IAtomicDocumentStore, docs);
+    ix.stub(IFileSystemStorageService, bytes);
+    ix.set(IAgentTaskService, new SyncDescriptor(AgentTaskService));
+    return ix;
+  }
+
+  it('restore touches only the agent own task records', async () => {
+    const docs = mapBackedDocs();
+    const bytes = new InMemoryStorageService();
+    const subScope = 'sessions/test-ws/test-session/agents/agent-1';
+    await docs.set(`${subScope}/tasks`, 'bash-abcdef01.json', {
+      taskId: 'bash-abcdef01',
+      kind: 'process',
+      command: 'sleep 60',
+      description: 'sub task',
+      pid: 4242,
+      startedAt: 1,
+      endedAt: null,
+      exitCode: null,
+      status: 'running',
+      detached: true,
+    });
+
+    const main = buildAgentIx('main', docs, bytes).get(
+      IAgentTaskService,
+    ) as TaskServiceTestManager;
+    await main.loadFromDisk();
+    const lost = await main.reconcile();
+
+    expect(lost).toEqual([]);
+    expect(main.list(false)).toEqual([]);
+    const untouched = await docs.get<{ status: string }>(
+      `${subScope}/tasks`,
+      'bash-abcdef01.json',
+    );
+    expect(untouched?.status).toBe('running');
+
+    const sub = buildAgentIx('agent-1', docs, bytes).get(
+      IAgentTaskService,
+    ) as TaskServiceTestManager;
+    await sub.loadFromDisk();
+    const subLost = await sub.reconcile();
+    expect(subLost.map((info) => info.taskId)).toEqual(['bash-abcdef01']);
+    expect(subLost[0]?.status).toBe('lost');
+  });
+
+  it('main restore claims a previous v2 session task with its legacy output path', async () => {
+    const docs = mapBackedDocs();
+    const bytes = new InMemoryStorageService();
+    const sessionScope = 'sessions/test-ws/test-session';
+    const taskId = 'bash-legacy01';
+    await docs.set(`${sessionScope}/tasks`, `${taskId}.json`, {
+      taskId,
+      kind: 'process',
+      command: 'echo legacy',
+      description: 'legacy task',
+      pid: 4242,
+      startedAt: 1,
+      endedAt: 2,
+      exitCode: 0,
+      status: 'completed',
+      detached: true,
+    });
+    await bytes.write(
+      `${sessionScope}/tasks/${taskId}`,
+      'output.log',
+      new TextEncoder().encode('legacy output'),
+    );
+    let restore!: RestoreHandler;
+    const main = buildAgentIx('main', docs, bytes, (handler) => {
+      restore = handler;
+    }).get(IAgentTaskService);
+
+    await restore();
+
+    expect(main.list(false)).toEqual([
+      expect.objectContaining({ taskId, description: 'legacy task', status: 'completed' }),
+    ]);
+    expect(await main.getOutputSnapshot(taskId, 100)).toEqual({
+      outputPath: `/tmp/test-session/tasks/${taskId}/output.log`,
+      outputSizeBytes: 13,
+      previewBytes: 13,
+      truncated: false,
+      fullOutputAvailable: true,
+      preview: 'legacy output',
+    });
+  });
+
+  it('subagent restore does not claim previous v2 session tasks', async () => {
+    const docs = mapBackedDocs();
+    const bytes = new InMemoryStorageService();
+    const sessionScope = 'sessions/test-ws/test-session';
+    const taskId = 'bash-legacy02';
+    await docs.set(`${sessionScope}/tasks`, `${taskId}.json`, {
+      taskId,
+      kind: 'process',
+      command: 'echo legacy',
+      description: 'legacy task',
+      pid: 4242,
+      startedAt: 1,
+      endedAt: 2,
+      exitCode: 0,
+      status: 'completed',
+      detached: true,
+    });
+    let restore!: RestoreHandler;
+    const subagent = buildAgentIx('agent-1', docs, bytes, (handler) => {
+      restore = handler;
+    }).get(IAgentTaskService);
+
+    await restore();
+
+    expect(subagent.list(false)).toEqual([]);
   });
 
   function compactionSummary(text: string): ContextMessage {
