@@ -6,6 +6,20 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.24.1 (2026-07-14)
+
+### Bug Fixes
+
+- Fix Kimi sessions getting stuck when preserved-thinking history contains an empty reasoning step.
+- Fix built-in tools being unavailable when the model provider becomes ready after the session starts.
+- Fix Thinking effort routing: non-Kimi providers now preserve configured values, while Kimi models validate runtime selections and fall back safely during model resolution.
+- web: Align thinking-level handling with the CLI: submit the selected level verbatim instead of silently downgrading it, fall back to the model's own default when nothing was chosen or the model switches, and persist explicit picks as the default for new sessions.
+- Preserve goal completion summaries and show untyped LLM errors without an internal error-code prefix in step interruption events.
+
+### Polish
+
+- web: Show just the level name (e.g. Max) in the model pill instead of "thinking: max".
+
 ## 0.24.0 (2026-07-14)
 
 ### Features
