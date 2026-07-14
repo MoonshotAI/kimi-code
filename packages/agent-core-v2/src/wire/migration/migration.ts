@@ -4,15 +4,17 @@ import { migrateV1_0ToV1_1 } from './v1.1';
 import { migrateV1_1ToV1_2 } from './v1.2';
 import { migrateV1_2ToV1_3 } from './v1.3';
 import { migrateV1_3ToV1_4 } from './v1.4';
+import { migrateV1_4ToV1_5 } from './v1.5';
 
 export {
   migrateV1_0ToV1_1,
   migrateV1_1ToV1_2,
   migrateV1_2ToV1_3,
   migrateV1_3ToV1_4,
+  migrateV1_4ToV1_5,
 };
 
-export const WIRE_PROTOCOL_VERSION = '1.4';
+export const WIRE_PROTOCOL_VERSION = '1.5';
 
 export type WireMigrationRecord = WireRecord;
 
@@ -27,6 +29,7 @@ const MIGRATIONS: readonly WireMigration[] = [
   migrateV1_1ToV1_2,
   migrateV1_2ToV1_3,
   migrateV1_3ToV1_4,
+  migrateV1_4ToV1_5,
 ];
 
 export function isNewerWireVersion(readVersion: string): boolean {

@@ -570,22 +570,29 @@ describe('Agent resume', () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(6_000);
     const persistence = new RecordingAgentPersistence([
       {
+        type: 'metadata',
+        protocol_version: '1.4',
+        created_at: 1,
+      },
+      {
         type: 'goal.create',
         goalId: 'goal-1',
         objective: 'ship work',
+        time: 100,
       },
       {
         type: 'goal.update',
         status: 'paused',
         wallClockMs: 2_000,
         actor: 'user',
+        time: 500,
       },
       {
         type: 'goal.update',
         status: 'active',
-        wallClockResumedAt: 1_000,
         budgetLimits: { wallClockBudgetMs: 6_000 },
         actor: 'user',
+        time: 1_000,
       },
     ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
@@ -611,6 +618,13 @@ describe('Agent resume', () => {
           wallClockMs: 7_000,
         }),
       ]);
+      expect(persistence.rewritten).toContainEqual(
+        expect.objectContaining({
+          type: 'goal.update',
+          status: 'active',
+          wallClockResumedAt: 1_000,
+        }),
+      );
     } finally {
       now.mockRestore();
       await ctx.dispose();
