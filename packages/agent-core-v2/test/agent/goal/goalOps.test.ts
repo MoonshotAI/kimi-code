@@ -21,9 +21,10 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService, PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'goal-test';
@@ -102,7 +103,6 @@ function buildHost(key: string): {
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: key }]));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.stub(IAgentLoopService, createLoopStub());
   ix.stub(IAgentUsageService, {
@@ -114,9 +114,13 @@ function buildHost(key: string): {
   ix.stub(ITelemetryService, createTelemetryStub());
   ix.stub(IAgentToolExecutorService, createToolExecutorStub());
   ix.stub(IConfigService, createConfigStub());
-  ix.set(IAgentGoalService, new SyncDescriptor(AgentGoalService, [{}]));
+  ix.set(IAgentGoalService, new SyncDescriptor(AgentGoalService));
+  const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
+    log: ix.get(IAppendLogStore),
+    eventBus: ix.get(IEventBus),
+  });
   return {
-    wire: ix.get(IAgentWireService),
+    wire,
     svc: ix.get(IAgentGoalService),
     log: ix.get(IAppendLogStore),
     eventBus: ix.get(IEventBus),
@@ -134,9 +138,10 @@ beforeEach(() => {
 
 afterEach(() => disposables.dispose());
 
-async function readRecords(key = KEY): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of log.read<PersistedRecord>(SCOPE, key)) {
+async function readRecords(key = KEY): Promise<WireRecord[]> {
+  await wire.flush();
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -211,7 +216,12 @@ describe('AgentGoalService (wire-backed)', () => {
       replayModelChanges += 1;
     });
 
-    await host.wire.replay(...records);
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'goal-replay'),
+      records,
+    );
     expect(modelOf(host.wire)?.status).toBe('paused');
     expect(replaySignals).toEqual([]);
     expect(replayModelChanges).toBe(0);
@@ -224,19 +234,27 @@ describe('AgentGoalService (wire-backed)', () => {
     const host = buildHost('goal-restore');
     void host.svc;
 
-    await host.wire.replay(...records);
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'goal-restore'),
+      records,
+    );
     expect(modelOf(host.wire)?.status).toBe('paused');
     expect(modelOf(host.wire)?.terminalReason).toBe('Paused after agent resume');
     expect(modelOf(host.wire)?.goalId).toBe(created.goalId);
 
     const written = await (async () => {
-      const out: PersistedRecord[] = [];
-      for await (const record of host.log.read<PersistedRecord>(SCOPE, 'goal-restore')) {
+      const out: WireRecord[] = [];
+      for await (const record of host.log.read<WireRecord>(
+        testWireScope(SCOPE, 'goal-restore'),
+        AGENT_WIRE_RECORD_KEY,
+      )) {
         out.push(record);
       }
       return out;
     })();
-    expect(written).toEqual([
+    expect(written.filter((record) => record.type === 'goal.update')).toEqual([
       expect.objectContaining({
         type: 'goal.update',
         status: 'paused',

@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import {
   IAgentContextMemoryService,
   IAgentLifecycleService,
-  IAgentWireRecordService,
+  IWireService,
   ISessionLifecycleService,
   IModelResolver,
   type ContextMessage,
@@ -118,7 +118,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       agent.accessor.get(IAgentContextMemoryService).append(...messages);
       // Flush the wire log so the temp home is quiescent before afterEach rm's
       // it (macOS can ENOTEMPTY an rmdir while an append is still in flight).
-      await agent.accessor.get(IAgentWireRecordService).flush();
+      await agent.accessor.get(IWireService).flush();
     }
   }
 
@@ -299,7 +299,7 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
       compactedCount: 3,
       tokensBefore: 100,
     });
-    await agent.accessor.get(IAgentWireRecordService).flush();
+    await agent.accessor.get(IWireService).flush();
 
     // The live read already serves the full transcript (pre-compaction prefix
     // + summary), matching v1's `/messages`. Capture the summary id so we can

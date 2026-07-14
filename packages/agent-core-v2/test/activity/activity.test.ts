@@ -20,11 +20,9 @@ import { AgentActivityService } from '#/activity/agentActivityService';
 import { SessionActivityKernel } from '#/activity/sessionActivityKernel';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ErrorCodes } from '#/errors';
-import { IAgentWireService, ISessionWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
 
 import { stubSessionActivityKernel } from './stubs';
+import { registerTestAgentWireServices } from '../wire/stubs';
 
 describe('AgentActivityService (turn lane)', () => {
   let disposables: DisposableStore;
@@ -35,10 +33,7 @@ describe('AgentActivityService (turn lane)', () => {
     disposables = new DisposableStore();
     ix = createServices(disposables, {
       additionalServices: (reg) => {
-        reg.defineInstance(
-          IAgentWireService,
-          disposables.add(new WireService({ logScope: 'wire', logKey: 'activity' })),
-        );
+        registerTestAgentWireServices(reg, 'wire/activity');
         reg.defineInstance(ISessionActivityKernel, stubSessionActivityKernel());
         reg.defineInstance(
           IAgentScopeContext,
@@ -126,25 +121,9 @@ describe('SessionActivityKernel (session lane)', () => {
   let host: ReturnType<typeof createScopedTestHost>;
   let kernel: ISessionActivityKernel;
 
-  function stubWire(): IWireService {
-    return {
-      _serviceBrand: undefined,
-      dispatch: () => undefined,
-      replay: () => Promise.resolve(),
-      flush: () => Promise.resolve(),
-      attach: () => ({ dispose: () => undefined }),
-      getModel: (model: { initial: () => unknown }) => model.initial(),
-      subscribe: () => ({ dispose: () => undefined }),
-      onEmission: () => ({ dispose: () => undefined }),
-      onRestored: () => ({ dispose: () => undefined }),
-    } as unknown as IWireService;
-  }
-
   beforeEach(() => {
     host = createScopedTestHost();
-    const session = host.child(LifecycleScope.Session, 'session', [
-      [ISessionWireService, stubWire()],
-    ]);
+    const session = host.child(LifecycleScope.Session, 'session');
     kernel = session.accessor.get(ISessionActivityKernel);
   });
 

@@ -10,7 +10,7 @@ import type { ContentPart } from '#/app/llmProtocol/message';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { createHooks } from '#/hooks';
 import type { Op } from '#/wire/op';
-import type { IWireService } from '#/wire/wireService';
+import type { IWireService } from '#/wire/wire';
 
 export interface StubLoopOptions { readonly hasActiveTurn?: boolean; readonly currentId?: string | number; readonly pendingTurnResult?: boolean }
 export type StubLoop = IAgentLoopService & {

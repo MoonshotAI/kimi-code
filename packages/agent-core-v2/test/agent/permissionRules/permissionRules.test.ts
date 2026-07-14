@@ -10,9 +10,10 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentWireService } from '#/wire/tokens';
-import type { PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'permission-rules-test';
@@ -41,17 +42,18 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: KEY }]));
   ix.set(IAgentPermissionRulesService, new SyncDescriptor(AgentPermissionRulesService));
   log = ix.get(IAppendLogStore);
+  registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
   svc = ix.get(IAgentPermissionRulesService);
 });
 
 afterEach(() => disposables.dispose());
 
-async function readRecords(): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of log.read<PersistedRecord>(SCOPE, KEY)) {
+async function readRecords(): Promise<WireRecord[]> {
+  await ix.get(IWireService).flush();
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -120,27 +122,31 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix2.set(
-      IAgentWireService,
-      new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: 'permission-rules-replay' }]),
-    );
     const log2 = ix2.get(IAppendLogStore);
-    const fresh = ix2.get(IAgentWireService);
+    const fresh = registerTestAgentWire(ix2, testWireScope(SCOPE, 'permission-rules-replay'), {
+      log: log2,
+    });
 
     let changes = 0;
     disposables.add(fresh.subscribe(PermissionRulesModel, () => (changes += 1)));
 
-    void fresh.replay(...records);
+    await restoreTestAgentWire(
+      fresh,
+      log2,
+      testWireScope(SCOPE, 'permission-rules-replay'),
+      records,
+    );
 
     expect(fresh.getModel(PermissionRulesModel)).toEqual({
       rules: [],
       sessionApprovalRulePatterns: ['Bash(rm *)'],
     });
     expect(changes).toBe(0);
-    const written: PersistedRecord[] = [];
-    for await (const record of log2.read<PersistedRecord>(SCOPE, 'permission-rules-replay')) {
+    const written: WireRecord[] = [];
+    for await (const record of log2.read<WireRecord>(testWireScope(SCOPE, 'permission-rules-replay'), AGENT_WIRE_RECORD_KEY)) {
       written.push(record);
     }
-    expect(written).toEqual([]);
+    expect(written[0]).toMatchObject({ type: 'metadata' });
+    expect(written.slice(1)).toEqual(records);
   });
 });

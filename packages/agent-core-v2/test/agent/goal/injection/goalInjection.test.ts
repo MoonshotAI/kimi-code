@@ -246,7 +246,7 @@ async function flushedGoalReminderRecords(
   ctx: TestAgentContext,
   persistence: InMemoryWireRecordPersistence,
 ) {
-  await ctx.wireRecord.flush();
+  await ctx.wire.flush();
   return goalReminderRecords(persistence);
 }
 

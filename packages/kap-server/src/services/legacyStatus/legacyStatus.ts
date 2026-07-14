@@ -20,7 +20,7 @@ import {
   IAgentContextSizeService,
   IAgentProfileService,
   IAgentUsageService,
-  IAgentWireService,
+  IWireService,
   defineDerivedModel,
   type IAgentScopeHandle,
   type UsageStatus,
@@ -79,7 +79,7 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
   // is the better reading there. Every REAL shrink (undo / clear / compaction)
   // rebases the measured model first, so the max only wins in that window.
   const contextSize = agent.accessor.get(IAgentContextSizeService);
-  const measured = agent.accessor.get(IAgentWireService).getModel(ContextSizeModel);
+  const measured = agent.accessor.get(IWireService).getModel(ContextSizeModel);
   const contextTokens = Math.max(contextSize.get().size, measured.tokens);
   const maxContextTokens = profile.getModelCapabilities().max_context_tokens;
   const model = profile.getModel();

@@ -12,7 +12,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { resolveGlobalLogPath } from '#/_base/log/logConfig';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
+import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
@@ -126,7 +126,7 @@ export class SessionExportService implements ISessionExportService {
     const agents = handle.accessor.get(IAgentLifecycleService);
     for (const agent of agents.list()) {
       await this.warnIfFails('export agent wire flush failed', () =>
-        agent.accessor.get(IAgentWireRecordService).flush(),
+        agent.accessor.get(IWireService).flush(),
       );
     }
 

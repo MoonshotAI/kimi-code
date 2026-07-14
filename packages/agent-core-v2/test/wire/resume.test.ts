@@ -5,27 +5,27 @@ import { join } from 'pathe';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  AGENT_WIRE_PROTOCOL_VERSION,
-  type PersistedWireRecord,
+  WIRE_PROTOCOL_VERSION,
+  type WireRecord,
   type PromptOrigin,
 } from '#/index';
 import { IAgentTaskService } from '#/agent/task/task';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { TurnModel } from '#/agent/loop/turnOps';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 import {
   createAgentTaskPersistence,
   type TaskServiceTestManager,
-} from '../task/stubs';
-import { createFakeHostFs, createFakeProcessRunner } from '../../tools/fixtures/fake-exec';
+} from '../agent/task/stubs';
+import { createFakeHostFs, createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import {
   DEFAULT_TEST_SYSTEM_PROMPT,
   InMemoryWireRecordPersistence,
   execEnvServices,
   homeDirServices,
   testAgent,
-} from '../../harness';
+} from '../harness';
 
 const MOCK_PROVIDER = {
   type: 'kimi',
@@ -34,7 +34,7 @@ const MOCK_PROVIDER = {
 } as const;
 
 function turnCurrentId(ctx: ReturnType<typeof testAgent>): number {
-  return ctx.get(IAgentWireService).getModel(TurnModel).nextTurnId - 1;
+  return ctx.get(IWireService).getModel(TurnModel).nextTurnId - 1;
 }
 
 describe('Agent resume', () => {
@@ -42,15 +42,15 @@ describe('Agent resume', () => {
     const persistence = new RecordingAgentPersistence([
       {
         type: 'metadata',
-        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        protocol_version: WIRE_PROTOCOL_VERSION,
         created_at: 1,
         app_version: '0.0.1-old',
-      } as unknown as PersistedWireRecord,
+      } as unknown as WireRecord,
       {
         type: 'turn.prompt',
         input: [{ type: 'text', text: 'old prompt' }],
         origin: { kind: 'user' },
-      } as unknown as PersistedWireRecord,
+      } as unknown as WireRecord,
     ]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
@@ -61,7 +61,7 @@ describe('Agent resume', () => {
   });
 
   it('replays persisted records without restarting turns, compactions, plan turns, or tools', async () => {
-    const persistence = new RecordingAgentPersistence(resumeHistory() as unknown as PersistedWireRecord[]);
+    const persistence = new RecordingAgentPersistence(resumeHistory() as unknown as WireRecord[]);
     const execWithEnv = vi.fn().mockRejectedValue(new Error('Bash should not execute on resume'));
     const ctx = testAgent(
       execEnvServices({
@@ -105,7 +105,7 @@ describe('Agent resume', () => {
   });
 
   it('allocates monotonically increasing turnIds across multiple historical turns on resume', async () => {
-    const persistence = new RecordingAgentPersistence(multiTurnResumeHistory() as unknown as PersistedWireRecord[]);
+    const persistence = new RecordingAgentPersistence(multiTurnResumeHistory() as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
@@ -124,7 +124,7 @@ describe('Agent resume', () => {
   });
 
   it('restores the turn counter past goal-continuation turns that have no turn.prompt record', async () => {
-    const persistence = new RecordingAgentPersistence(goalContinuationResumeHistory() as unknown as PersistedWireRecord[]);
+    const persistence = new RecordingAgentPersistence(goalContinuationResumeHistory() as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
@@ -143,7 +143,7 @@ describe('Agent resume', () => {
   });
 
   it('keeps turnIds monotonic across repeated resume cycles', async () => {
-    const persistence = new RecordingAgentPersistence(multiTurnResumeHistory() as unknown as PersistedWireRecord[]);
+    const persistence = new RecordingAgentPersistence(multiTurnResumeHistory() as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
@@ -152,7 +152,7 @@ describe('Agent resume', () => {
     await ctx.untilTurnEnd();
     expect(turnCurrentId(ctx)).toBe(2);
 
-    const persistence2 = new RecordingAgentPersistence(persistence.records as unknown as PersistedWireRecord[]);
+    const persistence2 = new RecordingAgentPersistence(persistence.records as unknown as WireRecord[]);
     const ctx2 = testAgent({ persistence: persistence2, autoConfigure: false });
 
     await ctx2.restorePersisted();
@@ -219,7 +219,7 @@ describe('Agent resume', () => {
           toolCallId: 'call_lookup',
         },
       },
-    ] as unknown as PersistedWireRecord[]);
+    ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
@@ -243,7 +243,7 @@ describe('Agent resume', () => {
   });
 
   it('replays inline skill reminders after pending tool results before the next prompt', async () => {
-    const persistence = new RecordingAgentPersistence(resumeDeferredSystemReminderHistory() as unknown as PersistedWireRecord[]);
+    const persistence = new RecordingAgentPersistence(resumeDeferredSystemReminderHistory() as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
@@ -307,7 +307,7 @@ describe('Agent resume', () => {
           ],
         },
       },
-    ] as unknown as PersistedWireRecord[]);
+    ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
@@ -351,7 +351,7 @@ describe('Agent resume', () => {
         tokensBefore: 10,
         tokensAfter: 3,
       },
-    ] as unknown as PersistedWireRecord[]);
+    ] as unknown as WireRecord[]);
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-delivered-'));
     try {
       const backgroundPersistence = createAgentTaskPersistence(homeDir);
@@ -416,7 +416,7 @@ describe('Agent resume', () => {
         tokensBefore: 120,
         tokensAfter: 24,
       },
-    ] as unknown as PersistedWireRecord[]);
+    ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
@@ -443,7 +443,7 @@ describe('Agent resume', () => {
         input: [{ type: 'text', text: 'Historical prompt' }],
         origin: { kind: 'user' },
       },
-    ] as unknown as PersistedWireRecord[]);
+    ] as unknown as WireRecord[]);
     const homeDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-undelivered-'));
     try {
       const backgroundPersistence = createAgentTaskPersistence(homeDir);
@@ -521,7 +521,7 @@ describe('Agent resume', () => {
           toolCallId: 'call_ghost',
         },
       },
-    ] as unknown as PersistedWireRecord[]);
+    ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
@@ -540,7 +540,7 @@ describe('Agent resume', () => {
     const persistence = new RecordingAgentPersistence([
       {
         type: 'metadata',
-        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        protocol_version: WIRE_PROTOCOL_VERSION,
         created_at: 1,
       },
       {
@@ -557,7 +557,7 @@ describe('Agent resume', () => {
         wallClockMs: 65_000,
         actor: 'model',
       },
-    ] as unknown as PersistedWireRecord[]);
+    ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
@@ -649,7 +649,7 @@ describe('Agent resume', () => {
         },
       },
       { type: 'context.undo', count: 1 },
-    ] as unknown as PersistedWireRecord[]);
+    ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
@@ -661,30 +661,30 @@ describe('Agent resume', () => {
 });
 
 class RecordingAgentPersistence extends InMemoryWireRecordPersistence {
-  readonly appended: PersistedWireRecord[] = [];
-  rewritten: readonly PersistedWireRecord[] | undefined;
+  readonly appended: WireRecord[] = [];
+  rewritten: readonly WireRecord[] | undefined;
 
-  constructor(events: readonly PersistedWireRecord[]) {
+  constructor(events: readonly WireRecord[]) {
     super(withMetadata(events));
   }
 
-  override append(input: PersistedWireRecord): void {
+  override append(input: WireRecord): void {
     this.appended.push(input);
     super.append(input);
   }
 
-  override rewrite(records: readonly PersistedWireRecord[]): void {
+  override rewrite(records: readonly WireRecord[]): void {
     this.rewritten = records;
     super.rewrite(records);
   }
 }
 
-function withMetadata(events: readonly PersistedWireRecord[]): readonly PersistedWireRecord[] {
+function withMetadata(events: readonly WireRecord[]): readonly WireRecord[] {
   if (events.length === 0 || events[0]?.type === 'metadata') return events;
   return [
     {
       type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+      protocol_version: WIRE_PROTOCOL_VERSION,
       created_at: 1,
     },
     ...events,
@@ -703,7 +703,7 @@ function textContent(
   );
 }
 
-function resumeHistory(): PersistedWireRecord[] {
+function resumeHistory(): WireRecord[] {
   return [
     {
       type: 'metadata',
@@ -825,10 +825,10 @@ function resumeHistory(): PersistedWireRecord[] {
       type: 'plan_mode.enter',
       id: 'resume-plan',
     },
-  ] as unknown as PersistedWireRecord[];
+  ] as unknown as WireRecord[];
 }
 
-function resumeDeferredSystemReminderHistory(): PersistedWireRecord[] {
+function resumeDeferredSystemReminderHistory(): WireRecord[] {
   return [
     resumeConfigRecord(),
     {
@@ -903,17 +903,17 @@ function resumeDeferredSystemReminderHistory(): PersistedWireRecord[] {
         },
       },
     },
-  ] as unknown as PersistedWireRecord[];
+  ] as unknown as WireRecord[];
 }
 
-function resumeConfigRecord(): PersistedWireRecord {
+function resumeConfigRecord(): WireRecord {
   return {
     type: 'config.update',
     cwd: process.cwd(),
     modelAlias: MOCK_PROVIDER.model,
     systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
     thinkingLevel: 'off',
-  } as unknown as PersistedWireRecord;
+  } as unknown as WireRecord;
 }
 
 function contextAppendRecord(
@@ -923,7 +923,7 @@ function contextAppendRecord(
     readonly text: string;
     readonly origin?: PromptOrigin;
   }[],
-): PersistedWireRecord {
+): WireRecord {
   const message = messages[0]!;
   return {
     type: 'context.append_message',
@@ -933,15 +933,15 @@ function contextAppendRecord(
       toolCalls: [],
       origin: message.origin,
     },
-  } as unknown as PersistedWireRecord;
+  } as unknown as WireRecord;
 }
 
-function turnPromptRecord(_turnId: number, origin: PromptOrigin): PersistedWireRecord {
+function turnPromptRecord(_turnId: number, origin: PromptOrigin): WireRecord {
   return {
     type: 'turn.prompt',
     input: [],
     origin,
-  } as unknown as PersistedWireRecord;
+  } as unknown as WireRecord;
 }
 
 function canonicalPromptedTurn(
@@ -949,7 +949,7 @@ function canonicalPromptedTurn(
   promptText: string,
   responseText: string,
   start: number,
-): PersistedWireRecord[] {
+): WireRecord[] {
   const origin: PromptOrigin = { kind: 'user' };
   return [
     contextAppendRecord(start, [{ role: 'user', text: promptText, origin }]),
@@ -962,14 +962,14 @@ function canonicalContinuationTurn(
   turnId: number,
   responseText: string,
   start: number,
-): PersistedWireRecord[] {
+): WireRecord[] {
   return [
     turnPromptRecord(turnId, { kind: 'system_trigger', name: 'goal_continuation' }),
     contextAppendRecord(start, [{ role: 'assistant', text: responseText }]),
   ];
 }
 
-function loopEventsForTurn(turnId: string, responseText: string): PersistedWireRecord[] {
+function loopEventsForTurn(turnId: string, responseText: string): WireRecord[] {
   return [
     {
       type: 'context.append_loop_event',
@@ -1002,10 +1002,10 @@ function loopEventsForTurn(turnId: string, responseText: string): PersistedWireR
       model: MOCK_PROVIDER.model,
       usage: { inputOther: 5, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
     },
-  ] as unknown as PersistedWireRecord[];
+  ] as unknown as WireRecord[];
 }
 
-function multiTurnResumeHistory(): PersistedWireRecord[] {
+function multiTurnResumeHistory(): WireRecord[] {
   return [
     resumeConfigRecord(),
     ...canonicalPromptedTurn(0, 'First historical prompt', 'First historical response.', 0),
@@ -1013,7 +1013,7 @@ function multiTurnResumeHistory(): PersistedWireRecord[] {
   ];
 }
 
-function goalContinuationResumeHistory(): PersistedWireRecord[] {
+function goalContinuationResumeHistory(): WireRecord[] {
   return [
     resumeConfigRecord(),
     ...canonicalPromptedTurn(0, 'Goal prompt', 'Starting the goal.', 0),

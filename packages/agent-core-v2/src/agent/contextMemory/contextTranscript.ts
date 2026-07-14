@@ -29,7 +29,7 @@
  */
 
 import { type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
-import type { PersistedRecord } from '#/wire/wireService';
+import type { WireRecord } from '#/wire/record';
 
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
@@ -64,7 +64,7 @@ interface MutableEntry {
   time?: number;
 }
 
-export function reduceContextTranscript(records: Iterable<PersistedRecord>): ContextTranscript {
+export function reduceContextTranscript(records: Iterable<WireRecord>): ContextTranscript {
   const transcript: MutableEntry[] = [];
   let foldedLength = 0;
   let clearFloor = 0;
@@ -237,7 +237,7 @@ function toMutableEntry(message: ContextMessage, time: number | undefined): Muta
 }
 
 function recoverFoldedLength(
-  record: PersistedRecord,
+  record: WireRecord,
   transcript: readonly MutableEntry[],
   clearFloor: number,
   foldedLength: number,
@@ -258,7 +258,7 @@ function recoverFoldedLength(
   return keptUserMessages.length + 1;
 }
 
-function readCompactionSummaryText(record: PersistedRecord): string {
+function readCompactionSummaryText(record: WireRecord): string {
   const summary = record['summary'];
   if (typeof summary === 'string') return summary;
   const contextSummary = record['contextSummary'];
@@ -281,7 +281,7 @@ function textOfParts(content: readonly ContentPart[]): string {
   return text;
 }
 
-function readNumber(record: PersistedRecord, key: string): number | undefined {
+function readNumber(record: WireRecord, key: string): number | undefined {
   const value = record[key];
   return typeof value === 'number' ? value : undefined;
 }

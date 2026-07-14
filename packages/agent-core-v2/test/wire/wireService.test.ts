@@ -10,9 +10,11 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { defineModel } from '#/wire/model';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService, PersistedRecord } from '#/wire/wireService';
-import { CycleError, WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+import { CycleError } from '#/wire/wireService';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from './stubs';
 
 const SCOPE = 'wire';
 const KEY = 'store-test';
@@ -59,9 +61,8 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: KEY }]));
   log = ix.get(IAppendLogStore);
-  wire = ix.get(IAgentWireService);
+  wire = registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
 });
 
 afterEach(() => disposables.dispose());
@@ -70,9 +71,9 @@ async function readRecords(
   target: IAppendLogStore = log,
   scope = SCOPE,
   key = KEY,
-): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of target.read<PersistedRecord>(scope, key)) {
+): Promise<WireRecord[]> {
+  const out: WireRecord[] = [];
+  for await (const record of target.read<WireRecord>(testWireScope(scope, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -126,12 +127,10 @@ describe('WireService', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix2.set(
-      IAgentWireService,
-      new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: 'replay' }]),
-    );
     const log2 = ix2.get(IAppendLogStore);
-    const replayed = ix2.get(IAgentWireService);
+    const replayed = registerTestAgentWire(ix2, testWireScope(SCOPE, 'replay'), {
+      log: log2,
+    });
 
     let changes = 0;
     let restored = 0;
@@ -142,12 +141,17 @@ describe('WireService', () => {
       }),
     );
 
-    await replayed.replay(...records);
+    await restoreTestAgentWire(
+      replayed,
+      log2,
+      testWireScope(SCOPE, 'replay'),
+      records,
+    );
 
     expect(replayed.getModel(CounterModel)).toEqual({ value: 5 });
     expect(changes).toBe(0);
     expect(restored).toBe(1);
-    expect(await readRecords(log2, SCOPE, 'replay')).toEqual([]);
+    expect((await readRecords(log2, SCOPE, 'replay')).slice(1)).toEqual(records);
   });
 
   it('queues reentrant dispatch and drains it after the current group', () => {
@@ -185,10 +189,15 @@ describe('WireService', () => {
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((error) => unexpected.push(error));
     try {
-      const result = await wire.replay(
-        { type: 'store.counter.add', by: 2 },
-        { type: 'no.such.op', foo: 1 },
-        { type: 'store.counter.add', by: 3 },
+      const result = await restoreTestAgentWire(
+        wire,
+        log,
+        testWireScope(SCOPE, KEY),
+        [
+          { type: 'store.counter.add', by: 2 },
+          { type: 'no.such.op', foo: 1 },
+          { type: 'store.counter.add', by: 3 },
+        ],
       );
 
       expect(wire.getModel(CounterModel)).toEqual({ value: 5 });

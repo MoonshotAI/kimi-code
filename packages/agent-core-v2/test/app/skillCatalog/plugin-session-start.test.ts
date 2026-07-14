@@ -11,7 +11,6 @@ import { describe, expect, it } from 'vitest';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentWireService } from '#/wire/tokens';
 import type { LogContext, LogPayload } from '#/_base/log/log';
 import type { EnabledPluginSessionStart } from '#/app/plugin/types';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
@@ -184,7 +183,7 @@ describe('plugin session-start dynamic injection', () => {
       skills: [skill('using-superpowers', 'body', { id: 'superpowers' })],
     });
 
-    await ctx.get(IAgentWireService).replay({
+    await ctx.restore([{
       type: 'context.append_message',
       time: 1,
       message: {
@@ -193,7 +192,7 @@ describe('plugin session-start dynamic injection', () => {
         toolCalls: [],
         origin: { kind: 'injection', variant: 'plugin_session_start' },
       },
-    });
+    }]);
 
     await injectDynamic(ctx);
 

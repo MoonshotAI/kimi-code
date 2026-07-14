@@ -1,10 +1,10 @@
 /**
  * Scenario: append-log file persistence and agent wire migration rewrites.
  *
- * Resolves real append-log and wire-record services by interface over file or
+ * Resolves real append-log and Agent wire services by interface over file or
  * in-memory storage. Controlled storage promises expose rewrite durability
  * without wall-clock waits. Run with `pnpm --filter @moonshot-ai/agent-core-v2
- * exec vitest run test/agent/wireRecord/persistence.test.ts`.
+ * exec vitest run test/wire/persistence.test.ts`.
  */
 
 import { randomBytes } from 'node:crypto';
@@ -19,19 +19,16 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import {
   AppendLogStore,
-  AGENT_WIRE_PROTOCOL_VERSION,
+  WIRE_PROTOCOL_VERSION,
   IFileSystemStorageService,
   IAppendLogStore,
-  type PersistedWireRecord,
+  type WireRecord,
 } from '#/index';
-import {
-  IAgentScopeContext,
-  makeAgentScopeContext,
-} from '#/agent/scopeContext/scopeContext';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
-import { AgentWireRecordService } from '#/agent/wireRecord/wireRecordService';
+import { IWireService } from '#/wire/wire';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+
+import { registerTestAgentWire } from './stubs';
 
 const cleanups: string[] = [];
 const disposables: DisposableStore[] = [];
@@ -69,18 +66,12 @@ function createAppendLogHarness(storage: IFileSystemStorageService): IAppendLogS
   return ix.get(IAppendLogStore);
 }
 
-function createWireRecordHarness(log: IAppendLogStore): IAgentWireRecordService {
+function createAgentWireHarness(log: IAppendLogStore): IWireService {
   const disposable = new DisposableStore();
   disposables.push(disposable);
 
   const ix = disposable.add(new TestInstantiationService());
-  ix.stub(
-    IAgentScopeContext,
-    makeAgentScopeContext({ agentId: 'main', agentScope: SCOPE }),
-  );
-  ix.stub(IAppendLogStore, log);
-  ix.set(IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService));
-  return ix.get(IAgentWireRecordService);
+  return registerTestAgentWire(ix, SCOPE, { log });
 }
 
 async function createFileAppendLogHarness(): Promise<{
@@ -148,7 +139,7 @@ describe('AppendLogStore file persistence', () => {
     const { log } = await createFileAppendLogHarness();
     log.append(SCOPE, KEY, {
       type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+      protocol_version: WIRE_PROTOCOL_VERSION,
       created_at: 1,
     });
     log.append(SCOPE, KEY, {
@@ -158,11 +149,11 @@ describe('AppendLogStore file persistence', () => {
     });
     await log.close();
 
-    const records = await collect<PersistedWireRecord>(log);
+    const records = await collect<WireRecord>(log);
     expect(records).toHaveLength(2);
     expect(records[0]).toMatchObject({
       type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+      protocol_version: WIRE_PROTOCOL_VERSION,
     });
     expect(records[1]!.type).toBe('turn.prompt');
   });
@@ -178,7 +169,7 @@ describe('AppendLogStore file persistence', () => {
     await log.rewrite(SCOPE, KEY, [
       {
         type: 'metadata',
-        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        protocol_version: WIRE_PROTOCOL_VERSION,
         created_at: 1,
       },
       {
@@ -216,7 +207,7 @@ describe('AppendLogStore file persistence', () => {
     await log.rewrite(SCOPE, KEY, [
       {
         type: 'metadata',
-        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        protocol_version: WIRE_PROTOCOL_VERSION,
         created_at: 1,
       },
       {
@@ -270,39 +261,39 @@ describe('wire record append-log persistence', () => {
     const storage = new InMemoryStorageService();
     const log = createAppendLogHarness(storage);
 
-    log.append<PersistedWireRecord>(SCOPE, KEY, {
+    log.append<WireRecord>(SCOPE, KEY, {
       type: 'turn.prompt',
       input: [{ type: 'text', text: 'one' }],
       origin: { kind: 'user' },
     });
     await log.flush();
-    await log.rewrite<PersistedWireRecord>(SCOPE, KEY, [
+    await log.rewrite<WireRecord>(SCOPE, KEY, [
       {
         type: 'metadata',
-        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        protocol_version: WIRE_PROTOCOL_VERSION,
         created_at: 1,
       },
     ]);
 
-    expect(await collect<PersistedWireRecord>(log)).toEqual([
+    expect(await collect<WireRecord>(log)).toEqual([
       {
         type: 'metadata',
-        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        protocol_version: WIRE_PROTOCOL_VERSION,
         created_at: 1,
       },
     ]);
   });
 });
 
-describe('AgentWireRecordService migration rewrite', () => {
+describe('WireService migration rewrite', () => {
   async function seedLegacyLog(storage: InMemoryStorageService): Promise<IAppendLogStore> {
     const log = createAppendLogHarness(storage);
-    log.append<PersistedWireRecord>(SCOPE, KEY, {
+    log.append<WireRecord>(SCOPE, KEY, {
       type: 'metadata',
       protocol_version: '1.0',
       created_at: 1,
     });
-    log.append<PersistedWireRecord>(SCOPE, KEY, {
+    log.append<WireRecord>(SCOPE, KEY, {
       type: 'turn.prompt',
       input: [{ type: 'text', text: 'hi' }],
       origin: { kind: 'user' },
@@ -329,7 +320,7 @@ describe('AgentWireRecordService migration rewrite', () => {
       return originalWrite(...args);
     };
 
-    const svc = createWireRecordHarness(log);
+    const svc = createAgentWireHarness(log);
     let restored = false;
     const restorePromise = svc.restore().then(() => {
       restored = true;
@@ -340,10 +331,10 @@ describe('AgentWireRecordService migration rewrite', () => {
     releaseWrite();
     await restorePromise;
 
-    const records = await collect<PersistedWireRecord>(log);
+    const records = await collect<WireRecord>(log);
     expect(records[0]).toMatchObject({
       type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+      protocol_version: WIRE_PROTOCOL_VERSION,
     });
   });
 
@@ -354,7 +345,7 @@ describe('AgentWireRecordService migration rewrite', () => {
       throw new Error('disk full');
     };
 
-    const svc = createWireRecordHarness(log);
+    const svc = createAgentWireHarness(log);
 
     await expect(svc.restore()).rejects.toThrow('disk full');
   });

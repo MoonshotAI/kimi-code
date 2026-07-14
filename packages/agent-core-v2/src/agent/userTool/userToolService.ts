@@ -28,8 +28,7 @@ import type {
 } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 
 import { IAgentUserToolService, type UserToolRegistration } from './userTool';
 import { registerUserTool, unregisterUserTool, UserToolModel } from './userToolOps';
@@ -50,7 +49,7 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
   ) {
     super();
     this._register(this.wire.onRestored(() => this.restoreRegisteredTools()));

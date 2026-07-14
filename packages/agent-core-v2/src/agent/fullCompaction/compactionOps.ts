@@ -31,8 +31,8 @@
  * declared here via interface-merge (`error` is already declared by `mcp`, so
  * it is not re-declared). The `full_compaction.*` record shapes are registered in
  * `PersistedOpMap` (`#/wire/types`, below) because the records still
- * ride the per-agent `wire.jsonl` log read by `wireRecord.restore()` /
- * `getRecords()`. Consumed by the Agent-scope `fullCompactionService`.
+ * ride the per-agent `wire.jsonl` journal restored by `IWireService`.
+ * Consumed by the Agent-scope `fullCompactionService`.
  */
 
 import { z } from 'zod';

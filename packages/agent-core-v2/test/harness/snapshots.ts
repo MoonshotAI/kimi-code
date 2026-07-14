@@ -2,7 +2,7 @@ import type { Message } from '#/app/llmProtocol/message';
 import type { Tool as LLMTool } from '#/app/llmProtocol/tool';
 import { expect } from 'vitest';
 
-import { AGENT_WIRE_PROTOCOL_VERSION } from '#/agent/wireRecord/migration/migration';
+import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 
 const IS_EVENT_ARRAY = Symbol('isEventArray');
 const IS_GENERATE_INPUT_SNAPSHOT = Symbol('isGenerateInputSnapshot');
@@ -284,7 +284,7 @@ function normalizeValue(value: unknown, labels: SnapshotLabels): unknown {
 function normalizeObjectField(key: string, value: unknown, labels: SnapshotLabels): unknown {
   if ((key === 'time' || key === 'created_at') && typeof value === 'number') return '<time>';
   if ((key === 'finishedAt' || key === 'abortedAt' || key === 'steeredAt') && typeof value === 'string') return '<time>';
-  if (key === 'protocol_version' && value === AGENT_WIRE_PROTOCOL_VERSION) {
+  if (key === 'protocol_version' && value === WIRE_PROTOCOL_VERSION) {
     return '<protocol-version>';
   }
   if (key === 'cwd' && typeof value === 'string') return '<cwd>';

@@ -17,7 +17,7 @@ import { IAgentLoopService, type AfterStepContext, type Turn } from '#/agent/loo
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentUsageService } from '#/agent/usage/usage';
-import type { PersistedWireRecord } from '#/agent/wireRecord/wireRecord';
+import type { WireRecord } from '#/wire/record';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { APIConnectionError, APIStatusError } from '#/app/llmProtocol/errors';
 import type { ToolCall } from '#/app/llmProtocol/message';
@@ -38,7 +38,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 
 type GoalServiceTestManager = IAgentGoalService & AgentGoalService;
-type GoalRecord = PersistedWireRecord & { type: `goal.${string}` };
+type GoalRecord = WireRecord & { type: `goal.${string}` };
 type AgentEvent = DomainEvent;
 type GoalUpdatedEvent = Extract<AgentEvent, { type: 'goal.updated' }>;
 type TurnEndedInput = {
@@ -53,17 +53,17 @@ const zeroUsage: TokenUsage = {
   output: 0,
 };
 
-function goalRecords(records: readonly PersistedWireRecord[]): readonly GoalRecord[] {
+function goalRecords(records: readonly WireRecord[]): readonly GoalRecord[] {
   return records.filter((record): record is GoalRecord => record.type.startsWith('goal.'));
 }
 
 async function restoreGoalRecords(
   ctx: TestAgentContext,
   goals: IAgentGoalService,
-  records: readonly PersistedWireRecord[],
+  records: readonly WireRecord[],
 ): Promise<void> {
   goals.getGoal();
-  await ctx.restore(records as readonly PersistedWireRecord[]);
+  await ctx.restore(records as readonly WireRecord[]);
 }
 
 function makeTurn(id: number): Turn {
@@ -146,7 +146,7 @@ describe('AgentGoalService', () => {
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
   let goals: GoalServiceTestManager;
-  let records: PersistedWireRecord[];
+  let records: WireRecord[];
   let events: GoalUpdatedEvent[];
   let telemetry: TelemetryRecord[];
 
@@ -241,7 +241,7 @@ describe('AgentGoalService', () => {
     it('replaces an existing goal when replace is set', async () => {
       const first = await goals.createGoal({ objective: 'first' });
       const second = await goals.createGoal({ objective: 'second', replace: true });
-      await ctx.wireRecord.flush();
+      await ctx.wire.flush();
 
       expect(second.goalId).not.toBe(first.goalId);
       expect(goals.getGoal().goal?.objective).toBe('second');
@@ -468,7 +468,7 @@ describe('AgentGoalService', () => {
       await goals.markBlocked({ reason: 'stuck' });
       await goals.resumeGoal();
       await goals.cancelGoal();
-      await ctx.wireRecord.flush();
+      await ctx.wire.flush();
 
       const recordsWithoutMetadata = goalRecords(records);
       expect(recordsWithoutMetadata).toEqual([
@@ -547,7 +547,7 @@ describe('AgentGoalService', () => {
         status: 'paused',
         terminalReason: 'Paused after agent resume',
       });
-      expect(goalRecords(records)).toEqual([
+      expect(goalRecords(records).filter((record) => record.type === 'goal.update')).toEqual([
         expect.objectContaining({
           type: 'goal.update',
           status: 'paused',

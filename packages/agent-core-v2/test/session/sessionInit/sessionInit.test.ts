@@ -13,7 +13,7 @@ import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
+import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionInitService } from '#/session/sessionInit/sessionInit';
@@ -77,7 +77,7 @@ describe('SessionInitService', () => {
           if (id === IAgentProfileService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentSystemReminderService) return { appendSystemReminder };
-          if (id === IAgentWireRecordService) return { flush };
+          if (id === IWireService) return { flush };
           if (id === IEventBus) return eventBus;
           if (id === ITelemetryService) return telemetry;
           return undefined;

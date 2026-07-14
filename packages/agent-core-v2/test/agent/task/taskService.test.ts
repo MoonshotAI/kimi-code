@@ -38,15 +38,13 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ITaskService } from '#/app/task/task';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
-import { stubContextMemory, stubWireRecord } from '../contextMemory/stubs';
+import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import type { TaskServiceTestManager } from './stubs';
 
@@ -66,18 +64,18 @@ function stubWireService(captureRestored?: (handler: RestoreHandler) => void): I
   return {
     _serviceBrand: undefined,
     dispatch: () => {},
-    replay: async () => {},
-    signal: () => {},
+    restore: async () => ({ unknownRecords: 0 }),
     flush: async () => {},
     attach: () => toDisposable(() => {}),
     getModel: () => new Map(),
     subscribe: () => toDisposable(() => {}),
-    onEmission: () => toDisposable(() => {}),
+    getRecordHistory: () => [],
+    onDidDispatch: () => toDisposable(() => {}),
     onRestored: (handler: RestoreHandler) => {
       captureRestored?.(handler);
       return toDisposable(() => {});
     },
-  } as unknown as IWireService;
+  } as IWireService;
 }
 
 describe('AgentTaskService', () => {
@@ -91,8 +89,7 @@ describe('AgentTaskService', () => {
     ix = disposables.add(new TestInstantiationService());
     eventBus = disposables.add(new EventBusService());
     injectionProviders = new Map();
-    ix.stub(IAgentWireRecordService, stubWireRecord());
-    ix.stub(IAgentWireService, stubWireService());
+    ix.stub(IWireService, stubWireService());
     ix.stub(IEventBus, eventBus);
     ix.stub(IAgentContextInjectorService, {
       register: (name, provider) => {
@@ -398,8 +395,7 @@ describe('AgentTaskService', () => {
     captureRestored?: (handler: RestoreHandler) => void,
   ): TestInstantiationService {
     const ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentWireRecordService, stubWireRecord());
-    ix.stub(IAgentWireService, stubWireService(captureRestored));
+    ix.stub(IWireService, stubWireService(captureRestored));
     ix.stub(IEventBus, disposables.add(new EventBusService()));
     ix.stub(IAgentContextInjectorService, {
       register: () => toDisposable(() => {}),

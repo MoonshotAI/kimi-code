@@ -61,9 +61,8 @@ import { applyCompletionBudget, resolveCompletionBudget } from '#/app/model/comp
 import type { Protocol } from '#/app/protocol/protocol';
 import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 import type { PayloadOf } from '#/wire/types';
-import type { IWireService } from '#/wire/wireService';
 import { THINKING_SECTION, type ThinkingConfig } from '#/agent/profile/configSection';
 import { resolveThinkingKeep } from '#/agent/profile/thinking';
 
@@ -143,7 +142,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IConfigService private readonly config: IConfigService,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IFaultInjectionService private readonly faultInjection: IFaultInjectionService,
   ) {}
 

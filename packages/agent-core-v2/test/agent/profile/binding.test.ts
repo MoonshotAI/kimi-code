@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 
 import {
   InMemoryWireRecordPersistence,
@@ -64,7 +64,7 @@ describe('AgentProfileService.bind', () => {
       hostEnvironmentServices(homeDir),
     );
     const svc = ctx.get(IAgentProfileService);
-    await ctx.get(IAgentWireService).flush();
+    await ctx.get(IWireService).flush();
     const start = persistence.records.length;
 
     await svc.bind({
@@ -73,7 +73,7 @@ describe('AgentProfileService.bind', () => {
       thinking: 'low',
       cwd: homeDir,
     });
-    await ctx.get(IAgentWireService).flush();
+    await ctx.get(IWireService).flush();
 
     const records = persistence.records
       .slice(start)

@@ -18,14 +18,11 @@ import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/too
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
-import { IAgentWireService } from '#/wire/tokens';
-import { WireService } from '#/wire/wireServiceImpl';
-import { stubWireRecord } from '../contextMemory/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { registerToolResultTruncationServices } from '../toolResultTruncation/stubs';
+import { registerTestAgentWireServices } from '../../wire/stubs';
 
 const { REMINDER_TEXT_1, REMINDER_TEXT_3, makeReminderText2 } = toolDedupeTesting;
 const ZERO_USAGE = emptyUsage();
@@ -57,6 +54,7 @@ function createHarness(telemetry: ITelemetryService = recordingTelemetry(telemet
   const loop = stubLoopWithHooks();
   const ix = createServices(disposables, {
     additionalServices: (reg) => {
+      registerTestAgentWireServices(reg, 'wire/tool-dedupe');
       reg.defineInstance(ITelemetryService, telemetry);
       reg.defineInstance(IEventBus, noopEventBus);
       const homedir = '/tmp/tool-dedupe-homedir';
@@ -83,11 +81,6 @@ function createHarness(telemetry: ITelemetryService = recordingTelemetry(telemet
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
       registerToolResultTruncationServices(reg);
-      reg.defineInstance(IAgentWireRecordService, stubWireRecord());
-      reg.defineInstance(
-        IAgentWireService,
-        disposables.add(new WireService({ logScope: 'wire', logKey: 'tool-dedupe' })),
-      );
       reg.define(IAgentToolDedupeService, AgentToolDedupeService);
       registerLogServices(reg);
     },

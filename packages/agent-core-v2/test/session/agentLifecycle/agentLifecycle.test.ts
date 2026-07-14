@@ -18,6 +18,7 @@ import { type McpServerConfig } from '#/agent/mcp/config-schema';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { McpConnectionManager } from '#/agent/mcp/connection-manager';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import '#/agent/permissionMode/permissionModeOps';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
@@ -27,7 +28,7 @@ import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
 import '#/activity/agentActivityService';
 import '#/agent/mcp/mcpService';
-import '#/agent/wireRecord/agentWireService';
+import '#/wire/wireService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import '#/agent/toolDedupe/toolDedupeService';
@@ -42,7 +43,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { type PersistedWireRecord } from '#/agent/wireRecord/wireRecord';
+import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -86,18 +87,18 @@ const pluginServiceStub = {
   enabledHooks: async () => [],
 } as unknown as IPluginService;
 
-function recordingAppendLog(initial: readonly PersistedWireRecord[] = []): {
-  readonly appended: PersistedWireRecord[];
+function recordingAppendLog(initial: readonly WireRecord[] = []): {
+  readonly appended: WireRecord[];
   readonly store: IAppendLogStore;
-  rewritten?: readonly PersistedWireRecord[];
+  rewritten?: readonly WireRecord[];
 } {
   const records = [...initial];
-  const appended: PersistedWireRecord[] = [];
-  const state: { rewritten?: readonly PersistedWireRecord[] } = {};
+  const appended: WireRecord[] = [];
+  const state: { rewritten?: readonly WireRecord[] } = {};
   const store: IAppendLogStore = {
     _serviceBrand: undefined,
     append: <R>(_scope: string, _key: string, record: R) => {
-      const persisted = record as unknown as PersistedWireRecord;
+      const persisted = record as unknown as WireRecord;
       records.push(persisted);
       appended.push(persisted);
     },
@@ -107,7 +108,7 @@ function recordingAppendLog(initial: readonly PersistedWireRecord[] = []): {
       }
     },
     rewrite: <R>(_scope: string, _key: string, next: readonly R[]) => {
-      const persisted = next as readonly PersistedWireRecord[];
+      const persisted = next as readonly WireRecord[];
       state.rewritten = persisted;
       records.splice(0, records.length, ...persisted);
       return Promise.resolve();
@@ -328,6 +329,35 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
 
     await svc.create({ agentId: 'child' });
+    expect(permissionModeSetMode).not.toHaveBeenCalled();
+  });
+
+  it('applies the configured permission mode when the Agent has no persisted mode', async () => {
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: (() => 'auto') as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
+    expect(permissionModeSetMode).toHaveBeenCalledOnce();
+    expect(permissionModeSetMode).toHaveBeenCalledWith('auto');
+  });
+
+  it('keeps the restored permission mode instead of overwriting it with the default', async () => {
+    ix.stub(IAppendLogStore, recordingAppendLog([
+      createWireMetadataRecord(1),
+      { type: 'permission.set_mode', mode: 'manual', time: 2 },
+    ]).store);
+    ix.stub(IConfigService, {
+      ready: Promise.resolve(),
+      get: (() => 'auto') as IConfigService['get'],
+      onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
+    } as unknown as IConfigService);
+
+    await ix.get(IAgentLifecycleService).create({ agentId: 'main' });
+
     expect(permissionModeSetMode).not.toHaveBeenCalled();
   });
 

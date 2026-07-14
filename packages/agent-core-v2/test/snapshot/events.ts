@@ -4,7 +4,7 @@ import {
   type EventSnapshotEntry,
   type WireSnapshotEntry,
 } from '../harness/snapshots';
-import type { PersistedWireRecord } from '#/agent/wireRecord/wireRecord';
+import type { WireRecord } from '#/wire/record';
 
 export interface RpcPromiseLike {
   resolve(value: unknown): void;
@@ -137,7 +137,7 @@ export function recordAgentEvents() {
       });
     },
 
-    recordWire(record: PersistedWireRecord): WireSnapshotEntry {
+    recordWire(record: WireRecord): WireSnapshotEntry {
       const { type, ...args } = record;
       return emit({ type: '[wire]', event: type, args }) as WireSnapshotEntry;
     },

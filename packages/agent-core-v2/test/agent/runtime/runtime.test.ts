@@ -14,9 +14,10 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentWireService } from '#/wire/tokens';
-import type { PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'runtime-test';
@@ -32,11 +33,11 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: KEY }]));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.set(IAgentRuntimeService, new SyncDescriptor(AgentRuntimeService));
   log = ix.get(IAppendLogStore);
   eventBus = ix.get(IEventBus);
+  registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log, eventBus });
   svc = ix.get(IAgentRuntimeService);
 });
 
@@ -52,9 +53,10 @@ function collect(): AgentPhase[] {
   return phases;
 }
 
-async function readRecords(): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of log.read<PersistedRecord>(SCOPE, KEY)) {
+async function readRecords(): Promise<WireRecord[]> {
+  await ix.get(IWireService).flush();
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -212,15 +214,22 @@ describe('AgentRuntimeService', () => {
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix2.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: 'runtime-replay' }]));
     ix2.set(IEventBus, new SyncDescriptor(EventBusService));
-    const fresh = ix2.get(IAgentWireService);
     const bus2 = ix2.get(IEventBus);
+    const fresh = registerTestAgentWire(ix2, testWireScope(SCOPE, 'runtime-replay'), {
+      log: ix2.get(IAppendLogStore),
+      eventBus: bus2,
+    });
 
     const emitted: DomainEvent[] = [];
     disposables.add(bus2.subscribe((e) => emitted.push(e)));
 
-    await fresh.replay(...records);
+    await restoreTestAgentWire(
+      fresh,
+      ix2.get(IAppendLogStore),
+      testWireScope(SCOPE, 'runtime-replay'),
+      records,
+    );
 
     expect(fresh.getModel(RuntimeModel).phase).toEqual({ kind: 'idle' });
     expect(emitted.filter((e) => e.type === 'agent.status.updated')).toHaveLength(0);

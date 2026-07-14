@@ -21,8 +21,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
 import type { PermissionApprovalRequestContext } from '#/agent/permissionGate/permissionGateService';
 import type { TurnEndedEvent } from '@moonshot-ai/protocol';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import type {
   ActivityRetryState,
   AgentActivitySnapshot,
@@ -59,7 +58,7 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
   private readonly activeToolCalls = new Map<string, ToolCallRef>();
 
   constructor(
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
   ) {
     super();

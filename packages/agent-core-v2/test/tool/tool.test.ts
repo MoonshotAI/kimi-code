@@ -51,7 +51,7 @@ import type {
   SessionSwarmRunResult,
 } from '#/session/swarm/sessionSwarm';
 import type { IProcess, ISessionProcessRunner } from '#/session/process/processRunner';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 import { createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import {
   configServices,
@@ -227,7 +227,7 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
             unregister: () => {},
           } as never;
         }
-        if (serviceId === IAgentWireService) {
+        if (serviceId === IWireService) {
           return {
             _serviceBrand: undefined,
             dispatch: () => {},

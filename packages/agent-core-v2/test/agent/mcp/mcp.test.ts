@@ -2,6 +2,7 @@ import type { ContentPart } from '#/app/llmProtocol/message';
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
 import { Jimp } from 'jimp';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
@@ -16,11 +17,9 @@ import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { McpOAuthService } from '#/agent/mcp/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/agent/mcp/types';
-import { IAgentWireService } from '#/wire/tokens';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
 import { McpDiscoveryModel } from '#/agent/mcp/mcpDiscoveryOps';
-import { AGENT_WIRE_PROTOCOL_VERSION } from '#/agent/wireRecord/wireRecord';
-import { wireMetadata } from '#/agent/wireRecord/metadataOps';
+import { defineModel } from '#/wire/model';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -33,6 +32,13 @@ import { createTestAgent, mcpServices, type TestAgentContext } from '../../harne
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { stubToolResultTruncationService } from '../toolResultTruncation/stubs';
+import { registerTestAgentWire } from '../../wire/stubs';
+
+const McpTestModel = defineModel('mcp.test', () => 0);
+const mcpTestTick = McpTestModel.defineOp('mcp.test.tick', {
+  schema: z.object({}),
+  apply: (state) => state + 1,
+});
 import { discoverTools, executeTool, fakeMcpClient } from './stubs';
 
 const MCP_OUTPUT_TRUNCATED_TEXT =
@@ -156,7 +162,7 @@ describe('AgentMcpService', () => {
   let ix: TestInstantiationService;
   let events: DomainEvent[];
   let telemetryEvents: TelemetryRecord[];
-  let wire: WireService;
+  let wire: IWireService;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -174,8 +180,7 @@ describe('AgentMcpService', () => {
     ix.set(IAgentToolExecutorService, new SyncDescriptor(AgentToolExecutorService));
     ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
     ix.stub(IAgentLoopService, stubLoopWithHooks());
-    wire = disposables.add(new WireService({ logScope: 'mcp-test', logKey: 'wire.jsonl' }));
-    ix.stub(IAgentWireService, wire);
+    wire = registerTestAgentWire(ix, 'mcp-test', { eventBus: ix.get(IEventBus) });
   });
   afterEach(() => {
     disposables.dispose();
@@ -573,9 +578,9 @@ describe('AgentMcpService', () => {
     off: { dispose(): void };
   } {
     const records: { type: string; [key: string]: unknown }[] = [];
-    const off = wire.onEmission((e) => {
-      if (e.record.type === 'mcp.tools_discovered') {
-        records.push(e.record as { type: string; [key: string]: unknown });
+    const off = wire.onDidDispatch((record) => {
+      if (record.type === 'mcp.tools_discovered') {
+        records.push(record as { type: string; [key: string]: unknown });
       }
     });
     return { records, off };
@@ -598,7 +603,7 @@ describe('AgentMcpService', () => {
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
-      await wire.replay();
+      await wire.restore();
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         type: 'mcp.tools_discovered',
@@ -636,7 +641,7 @@ describe('AgentMcpService', () => {
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
-      await wire.replay();
+      await wire.restore();
       expect(records).toHaveLength(1);
     } finally {
       off.dispose();
@@ -662,7 +667,7 @@ describe('AgentMcpService', () => {
       manager.connect('grafana');
       enabledNames.clear();
       enabledNames.add('mutated_after_observation');
-      await wire.replay();
+      await wire.restore();
 
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
@@ -693,12 +698,7 @@ describe('AgentMcpService', () => {
     try {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
-      wire.dispatch(
-        wireMetadata({
-          protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-          created_at: 1,
-        }),
-      );
+      wire.dispatch(mcpTestTick({}));
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         type: 'mcp.tools_discovered',
@@ -724,7 +724,7 @@ describe('AgentMcpService', () => {
     );
     createService(manager);
     manager.connect('graf.ana');
-    await wire.replay();
+    await wire.restore();
 
     const { records, off } = collectDiscoveries();
     try {

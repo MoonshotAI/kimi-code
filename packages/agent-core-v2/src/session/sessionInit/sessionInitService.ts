@@ -10,7 +10,7 @@
  * subagent finishes, reloads `AGENTS.md` through the `profile` context helper
  * (over the os `hostFs` + host home dir, with the `bootstrap` brand dir) and
  * appends an `init`-variant system reminder to the main agent via
- * `systemReminder`, then flushes the main agent's `wireRecord` log. Bound at
+ * `systemReminder`, then flushes the main agent's wire journal. Bound at
  * Session scope.
  *
  * Port of v1 `Session.generateAgentsMd()`. The main-agent lookup is a hard
@@ -31,7 +31,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { loadAgentsMd } from '#/agent/profile/context';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
+import { IWireService } from '#/wire/wire';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
@@ -117,7 +117,7 @@ export class SessionInitService implements ISessionInitService {
           kind: 'injection',
           variant: 'init',
         });
-      await main.accessor.get(IAgentWireRecordService).flush();
+      await main.accessor.get(IWireService).flush();
     } catch (error) {
       // User cancellations (Ctrl+C → cancelInit) must surface as aborts, not
       // as init failures — the TUI resets quietly on `isAbortError`.

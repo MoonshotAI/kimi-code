@@ -58,11 +58,10 @@ import {
 } from '#/session/subagent/subagent';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { SessionExternalHooksService } from '#/session/externalHooks/externalHooksService';
-import { IAgentWireService } from '#/wire/tokens';
-import { WireService } from '#/wire/wireServiceImpl';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
+import { registerTestAgentWireServices } from '../../wire/stubs';
 
 function nodeCommand(source: string): string {
   return `node -e ${JSON.stringify(source.replaceAll(/\s*\n\s*/g, ' '))}`;
@@ -279,6 +278,7 @@ describe('IExternalHooksRunnerService integration', () => {
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
+          registerTestAgentWireServices(reg, 'wire/external-hooks');
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.definePartialInstance(IConfigService, {});
@@ -295,10 +295,6 @@ describe('IExternalHooksRunnerService integration', () => {
             hooks: createHooks(['onWillCompact']),
           });
           reg.definePartialInstance(IAgentTaskService, {});
-          reg.defineInstance(
-            IAgentWireService,
-            disposables.add(new WireService({ logScope: 'wire', logKey: 'external-hooks' })),
-          );
         },
       });
       ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
@@ -385,6 +381,7 @@ describe('IExternalHooksRunnerService integration', () => {
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
+          registerTestAgentWireServices(reg, 'wire/external-hooks');
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.definePartialInstance(IConfigService, {});
@@ -603,10 +600,6 @@ describe('IExternalHooksRunnerService integration', () => {
             hooks: createHooks(['onWillCompact']),
           });
           reg.definePartialInstance(IAgentTaskService, {});
-          reg.defineInstance(
-            IAgentWireService,
-            disposables.add(new WireService({ logScope: 'wire', logKey: 'external-hooks' })),
-          );
           reg.define(IHostProcessService, HostProcessService);
         },
       });

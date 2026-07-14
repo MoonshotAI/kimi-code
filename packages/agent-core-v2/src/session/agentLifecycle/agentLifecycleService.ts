@@ -49,6 +49,11 @@ import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
+import { IAgentGoalService } from '#/agent/goal/goal';
+import { IAgentPlanService } from '#/agent/plan/plan';
+import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IAgentBuiltinToolsRegistrar } from '#/agent/toolRegistry/builtinToolsRegistrar';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { IImageConfigBridge } from '#/agent/media/imageConfigBridge';
@@ -56,6 +61,7 @@ import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
+import { IWireService } from '#/wire/wire';
 import {
   type AgentListFilter,
   type CreateAgentOptions,
@@ -143,9 +149,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   private async doCreate(agentId: string, opts: CreateAgentOptions): Promise<IAgentScopeHandle> {
     const mcpReady = this.sessionMcp.ensureMcpReady();
-    // Per-agent homedir → the wire-record persistence key (`hashKey(homedir)`).
-    // Bootstrap computes it under the session dir, mirroring v1's
-    // `<sessionDir>/agents/<id>`; business code never assembles the path itself.
+    // Bootstrap computes the per-agent storage directory and persistence scope
+    // under the session, mirroring v1's `<sessionDir>/agents/<id>` layout.
     const agentHomedir = this.bootstrap.agentHomedir(
       this.ctx.workspaceId,
       this.ctx.sessionId,
@@ -162,7 +167,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       agentId,
       // The only per-agent seed: identity facts. Every other agent-scope
       // service either derives its configuration from `IAgentScopeContext`
-      // (wire, wireRecord, blob) or resolves it through the scope tree (the
+      // (wire, blob) or resolves it through the scope tree (the
       // session's shared MCP manager via `ISessionMcpService`).
       { extra: [[IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })]] },
     ) as IAgentScopeHandle;
@@ -178,14 +183,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidCreateEmitter.fire(handle);
       this.igniteEagerServices(handle);
       await mcpReady;
+      await handle.accessor.get(IWireService).restore();
       await this.bindBootstrap(handle, opts);
-      // Bootstrap (profile binding and the force-instantiated observer
-      // services) is complete: drive the activity kernel `initializing → idle`
-      // so the agent can admit turns. Until this point `begin` rejects with
-      // `activity.initializing`. The wire log's metadata envelope is NOT
-      // seeded here — `wireRecord.restore()` heals envelope-less logs on
-      // resume (prepend + rewrite), so creation stays free of log-format
-      // concerns.
       handle.accessor.get(IAgentActivityService).markReady();
       return handle;
     } catch (error) {
@@ -233,6 +232,13 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     handle.accessor.get(IAgentToolSelectAnnouncementsService);
     handle.accessor.get(IAgentStepRetryService);
     handle.accessor.get(IAgentLoopContinuationService);
+    handle.accessor.get(IAgentContextMemoryService);
+    handle.accessor.get(IAgentContextInjectorService);
+    handle.accessor.get(IAgentGoalService);
+    handle.accessor.get(IAgentPlanService);
+    handle.accessor.get(IAgentTaskService);
+    handle.accessor.get(IAgentUserToolService);
+    handle.accessor.get(IAgentFullCompactionService);
   }
 
   private async bindBootstrap(
@@ -242,12 +248,16 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (opts.binding !== undefined) {
       await handle.accessor.get(IAgentProfileService).bind(opts.binding);
     }
-    // Every fresh agent starts from the configured default permission posture;
-    // dispatchers that want a specific mode (subagent inheritance) set it on
-    // the child themselves after creation. On resume the wire replay
-    // overwrites this with the persisted mode.
+    // Apply the configured default only when restore found no persisted mode.
+    // A resumed Agent's journal owns its permission posture; callers that need
+    // an explicit override (for example subagent inheritance) do so after
+    // creation through the permission service.
+    const wire = handle.accessor.get(IWireService);
     const permissionMode = this.config.get<PermissionMode>(DEFAULT_PERMISSION_MODE_SECTION);
-    if (permissionMode !== undefined) {
+    const hasRestoredPermissionMode = wire
+      .getRecordHistory()
+      .some((record) => record.type === 'permission.set_mode');
+    if (permissionMode !== undefined && !hasRestoredPermissionMode) {
       handle.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
     }
   }

@@ -58,12 +58,8 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import {
-  IAgentWireRecordService,
-  type PersistedWireRecord,
-} from '#/agent/wireRecord/wireRecord';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
+import type { WireRecord } from '#/wire/record';
 import {
   IAgentTaskService,
   type AgentTaskNotificationContext,
@@ -215,8 +211,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @ISessionContext session: ISessionContext,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @ITaskService private readonly taskService: ITaskService,
-    @IAgentWireRecordService wireRecord: IAgentWireRecordService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
@@ -235,7 +230,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     );
     this._register(
       this.wire.onRestored(async () => {
-        for (const record of wireRecord.getRecords()) {
+        for (const record of this.wire.getRecordHistory()) {
           this.markDeliveredNotificationsFromRecord(record);
         }
         await this.restoreAfterReplay();
@@ -281,7 +276,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     }
   }
 
-  private markDeliveredNotificationsFromRecord(record: PersistedWireRecord): void {
+  private markDeliveredNotificationsFromRecord(record: WireRecord): void {
     for (const origin of taskOriginsFromRecord(record)) {
       this.markDeliveredNotification(origin);
     }
@@ -1214,7 +1209,7 @@ function notificationKey(origin: TaskNotificationOrigin): string {
   return `${origin.taskId}\0${origin.status}\0${origin.notificationId}`;
 }
 
-function taskOriginsFromRecord(record: PersistedWireRecord): readonly TaskNotificationOrigin[] {
+function taskOriginsFromRecord(record: WireRecord): readonly TaskNotificationOrigin[] {
   const raw = record as {
     readonly type: string;
     readonly message?: unknown;

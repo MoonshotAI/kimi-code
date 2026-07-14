@@ -24,8 +24,7 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { TurnModel } from '#/agent/loop/turnOps';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 
 import type {
   ActivityLease,
@@ -103,7 +102,7 @@ export class AgentActivityService extends Disposable implements IAgentActivitySe
   private readonly settleWaiters: Array<() => void> = [];
 
   constructor(
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @ISessionActivityKernel private readonly sessionKernel: ISessionActivityKernel,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {

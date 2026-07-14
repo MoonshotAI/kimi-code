@@ -11,7 +11,7 @@
  * replay and (re)started on the live path. A `forked` wire Op clears the Model
  * at a fork boundary; the `goal.*` payload shapes are registered in
  * `PersistedOpMap` (`#/wire/types`) inside `goalOps` because they still ride
- * the shared wire log read by `getRecords()` and replayed into the Model.
+ * the Agent wire journal restored into the Model.
  * Injects reminders through
  * `contextInjector`, drives continuation turns by enqueueing `newTurn`
  * `StepRequest`s onto `loop` (the continuation message materializes when the
@@ -52,9 +52,8 @@ import {
   toKimiErrorPayload,
   type KimiErrorPayload,
 } from '#/errors';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 import { defineDerivedModel } from '#/wire/model';
-import type { IWireService } from '#/wire/wireService';
 import { IEventBus } from '#/app/event/eventBus';
 
 import { IAgentGoalService, type GoalReasonInput, type ResumeGoalInput } from './goal';
@@ -195,7 +194,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private pendingContinuation?: PendingContinuation;
 
   constructor(
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @ITelemetryService private readonly telemetry: ITelemetryService,

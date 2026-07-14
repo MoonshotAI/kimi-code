@@ -1,8 +1,8 @@
 import {
   type WireMigration,
   type WireMigrationRecord,
-} from '#/agent/wireRecord/migration/migration';
-import { eventSnapshot } from '../../../harness/snapshots';
+} from '#/wire/migration/migration';
+import { eventSnapshot } from '../../harness/snapshots';
 
 export function runMigration(
   migration: WireMigration,

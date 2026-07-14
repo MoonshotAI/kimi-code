@@ -14,11 +14,9 @@
  * Per-agent bindings are disposed when the agent is disposed. Bound at Session
  * scope.
  *
- * Debt: the session's todo list is still persisted on the MAIN agent's wire (a
- * Session → Agent edge), so it follows the main agent's lifetime. Once
- * `ISessionWireService` is wired up with its own log + replay, move `TodoModel`
- * there — swap `@IAgentWireService` for `@ISessionWireService` and drop the
- * main-agent subscription. The stateless facade makes that a one-line change.
+ * The session owns the todo facade and tool bindings, while the main Agent wire
+ * owns the replayable state. This is an explicit cross-scope orchestration
+ * boundary: there is no second session-level wire aggregate or journal.
  */
 
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
@@ -30,7 +28,7 @@ import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInj
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 
 import { ISessionTodoService } from './sessionTodo';
 import { TodoModel, todoSet } from './todoOps';
@@ -79,7 +77,7 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   getTodos(): readonly TodoItem[] {
     const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return [];
-    return main.accessor.get(IAgentWireService).getModel(TodoModel);
+    return main.accessor.get(IWireService).getModel(TodoModel);
   }
 
   setTodos(todos: readonly TodoItem[]): void {
@@ -97,12 +95,12 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   private dispatchTodoSet(todos: readonly TodoItem[]): void {
     const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return;
-    const wire = main.accessor.get(IAgentWireService);
+    const wire = main.accessor.get(IWireService);
     wire.dispatch(todoSet({ key: 'todo', value: todos }));
   }
 
   private bindMainWire(handle: IAgentScopeHandle): void {
-    const wire = handle.accessor.get(IAgentWireService);
+    const wire = handle.accessor.get(IWireService);
     const disposable = wire.subscribe(TodoModel, (state) => {
       this.onDidChangeEmitter.fire(state);
     });

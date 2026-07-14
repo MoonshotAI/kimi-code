@@ -44,7 +44,7 @@ import type {
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
-  IAgentWireService,
+  IWireService,
   IEventBus,
   IEventService,
   ISessionActivity as ISessionActivityService,
@@ -475,7 +475,7 @@ export class SessionEventBroadcaster {
    * context window consistent on the wire.
    */
   private attachLegacyStatus(sessionId: string, handle: IAgentScopeHandle): IDisposable {
-    const wire = handle.accessor.get(IAgentWireService);
+    const wire = handle.accessor.get(IWireService);
     // The wire service is only present on a fully-materialized agent; stub /
     // test agents and not-yet-restored agents may not expose it, in which case
     // the native partial events are simply forwarded unchanged.

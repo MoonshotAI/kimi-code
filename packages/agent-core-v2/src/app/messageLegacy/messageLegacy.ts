@@ -8,7 +8,7 @@
  * `messages:*`) holds the model's CURRENT, folded context and is NOT the full
  * transcript: after a compaction it collapses into `[...keptUserMessages,
  * compaction_summary]`. The full transcript is reduced from the main agent's
- * in-memory record journal (`IAgentWireRecordService.getRecords()`), which
+ * in-memory record journal (`IWireService.getRecordHistory()`), which
  * `ISessionLifecycleService.resume` seeds from `wire.jsonl` and live dispatch
  * then keeps current — so neither a live nor a cold session is read back from
  * disk here. The `ContextMessage → Message` projection is shared with the

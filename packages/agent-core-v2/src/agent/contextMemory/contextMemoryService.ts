@@ -27,9 +27,8 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { estimateTokensForMessages } from '#/_base/utils/tokens';
 import { IEventBus } from '#/app/event/eventBus';
 import { ContextSizeModel, contextSizeMeasured } from '#/agent/contextSize/contextSizeOps';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 import type { Op } from '#/wire/op';
-import type { IWireService } from '#/wire/wireService';
 
 import {
   IAgentContextMemoryService,
@@ -66,7 +65,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
   ) {
     super();

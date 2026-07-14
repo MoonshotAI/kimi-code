@@ -16,8 +16,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import { IAgentPermissionModeService, type PermissionModeChangedContext } from './permissionMode';
 import { PermissionModeModel, setMode } from './permissionModeOps';
 
@@ -28,7 +27,7 @@ export class AgentPermissionModeService extends Disposable implements IAgentPerm
   readonly onDidChangeMode: Event<PermissionModeChangedContext> = this._onDidChangeMode.event;
 
   constructor(
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IInstantiationService instantiation: IInstantiationService,
   ) {
     super();

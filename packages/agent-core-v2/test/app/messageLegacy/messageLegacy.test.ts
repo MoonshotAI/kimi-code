@@ -5,7 +5,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { ContentPart } from '#/app/llmProtocol/message';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
+import { IWireService } from '#/wire/wire';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
@@ -29,8 +29,8 @@ function buildService(opts: {
     kind: LifecycleScope.Agent,
     accessor: {
       get: (token: unknown): unknown => {
-        if (token === IAgentWireRecordService) {
-          return { getRecords: () => opts.records };
+        if (token === IWireService) {
+          return { getRecordHistory: () => opts.records };
         }
         if (token === IAgentContextMemoryService) {
           return { get: () => opts.contextMessages };

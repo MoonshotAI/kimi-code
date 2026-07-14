@@ -6,12 +6,10 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { AgentContextMemoryService } from '#/agent/contextMemory/contextMemoryService';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import { IAgentWireService } from '#/wire/tokens';
-import { WireService } from '#/wire/wireServiceImpl';
-import { stubWireRecord } from './stubs';
+
+import { registerTestAgentWire } from '../../wire/stubs';
 
 function textMessage(role: ContextMessage['role'], text: string): ContextMessage {
   return {
@@ -35,9 +33,8 @@ describe('message history (IAgentContextMemoryService)', () => {
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentWireRecordService, stubWireRecord());
-    ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: 'message' }]));
     ix.set(IEventBus, new SyncDescriptor(EventBusService));
+    registerTestAgentWire(ix, 'wire/message-history', { eventBus: ix.get(IEventBus) });
     ix.set(IAgentContextMemoryService, new SyncDescriptor(AgentContextMemoryService));
   });
   afterEach(() => disposables.dispose());

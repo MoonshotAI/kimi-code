@@ -40,10 +40,11 @@ import type { LLMEvent, LLMRequestInput, Model } from '#/app/model/modelInstance
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
-import { IAgentWireService } from '#/wire/tokens';
-import type { PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import type { WireRecord } from '#/wire/record';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { registerTestAgentWire } from '../../wire/stubs';
 
 const capabilities: ModelCapability = {
   image_in: false,
@@ -193,16 +194,13 @@ function createService(
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
-  ix.set(
-    IAgentWireService,
-    new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: 'strict-resend' }]),
-  );
+  registerTestAgentWire(ix, 'wire/llm-requester');
   ix.set(IFaultInjectionService, new SyncDescriptor(FaultInjectionService));
   ix.set(IAgentLLMRequesterService, new SyncDescriptor(AgentLLMRequesterService));
 
-  const records: PersistedRecord[] = [];
+  const records: WireRecord[] = [];
   disposables.add(
-    ix.get(IAgentWireService).onEmission((emission) => records.push(emission.record)),
+    ix.get(IWireService).onDidDispatch((record) => records.push(record)),
   );
 
   return {

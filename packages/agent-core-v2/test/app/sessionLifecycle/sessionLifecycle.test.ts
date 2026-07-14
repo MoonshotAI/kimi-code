@@ -57,6 +57,8 @@ function bootstrapStub(): IBootstrapService {
     homeDir: '/tmp',
     sessionScope: (workspaceId: string, sessionId: string) =>
       `sessions/${workspaceId}/${sessionId}`,
+    agentScope: (workspaceId: string, sessionId: string, agentId: string) =>
+      `sessions/${workspaceId}/${sessionId}/agents/${agentId}`,
     sessionDir: (workspaceId: string, sessionId: string) =>
       `/tmp/sessions/${workspaceId}/${sessionId}`,
   } as IBootstrapService;
@@ -68,6 +70,8 @@ function tmpBootstrapStub(root: string): IBootstrapService {
     homeDir: root,
     sessionScope: (workspaceId: string, sessionId: string) =>
       `sessions/${workspaceId}/${sessionId}`,
+    agentScope: (workspaceId: string, sessionId: string, agentId: string) =>
+      `sessions/${workspaceId}/${sessionId}/agents/${agentId}`,
     sessionDir: (workspaceId: string, sessionId: string) =>
       join(root, 'sessions', workspaceId, sessionId),
     agentHomedir: (workspaceId: string, sessionId: string, agentId: string) =>

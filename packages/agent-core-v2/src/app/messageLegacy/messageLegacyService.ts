@@ -6,8 +6,8 @@
  * shape.
  *
  * History source is the main agent's in-memory record journal
- * (`IAgentWireRecordService.getRecords()`), seeded from `wire.jsonl` by
- * `ISessionLifecycleService.resume` and then kept current as live dispatch
+ * (`IWireService.getRecordHistory()`), seeded from `wire.jsonl` during
+ * Agent creation and then kept current as live dispatch
  * appends each record — so a transcript read never re-reads the file. The
  * journal is reduced by `reduceContextTranscript` (the same reducer v1's
  * `MessageService` uses), which keeps the full history across compactions
@@ -33,12 +33,12 @@ import {
 } from '#/agent/contextMemory/contextTranscript';
 import { toProtocolMessage } from '#/agent/contextMemory/messageProjection';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
+import { IWireService } from '#/wire/wire';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import type { PersistedRecord } from '#/wire/wireService';
+import type { WireRecord } from '#/wire/record';
 
 import { IMessageLegacyService, type MessageListQuery } from './messageLegacy';
 
@@ -144,9 +144,7 @@ export class MessageLegacyService implements IMessageLegacyService {
   }
 
   private readTranscript(agent: IAgentScopeHandle): ContextTranscript {
-    const records = agent
-      .accessor.get(IAgentWireRecordService)
-      .getRecords() as readonly PersistedRecord[];
+    const records = agent.accessor.get(IWireService).getRecordHistory();
     return reduceContextTranscript(records);
   }
 }

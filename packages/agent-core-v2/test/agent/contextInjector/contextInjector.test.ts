@@ -23,7 +23,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 import { registerContextMemoryServices, type StubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubWire } from '../loop/stubs';
 
@@ -71,7 +71,7 @@ describe('AgentContextInjectorService', () => {
       strict: true,
       additionalServices: (reg) => {
         reg.defineInstance(IAgentLoopService, stubLoopWithHooks());
-        reg.defineInstance(IAgentWireService, stubWire());
+        reg.defineInstance(IWireService, stubWire());
         reg.define(IAgentSystemReminderService, AgentSystemReminderService);
         reg.define(IAgentContextInjectorService, AgentContextInjectorService);
       },

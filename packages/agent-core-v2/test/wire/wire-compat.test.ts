@@ -15,9 +15,10 @@ import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageSe
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { defineModel } from '#/wire/model';
-import { IAgentWireService } from '#/wire/tokens';
-import type { PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from './stubs';
 
 const SCOPE = 'wire';
 const KEY = 'round-trip';
@@ -57,8 +58,9 @@ function makeContainer(storage: IFileSystemStorageService, logKey: string) {
   const ix = store.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, storage);
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey }]));
-  return { ix, wire: ix.get(IAgentWireService), log: ix.get(IAppendLogStore) };
+  const log = ix.get(IAppendLogStore);
+  const wire = registerTestAgentWire(ix, testWireScope(SCOPE, logKey), { log });
+  return { ix, wire, log };
 }
 
 function makeReader(storage: IFileSystemStorageService): IAppendLogStore {
@@ -70,9 +72,9 @@ function makeReader(storage: IFileSystemStorageService): IAppendLogStore {
   return ix.get(IAppendLogStore);
 }
 
-async function collect(log: IAppendLogStore): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of log.read<PersistedRecord>(SCOPE, KEY)) {
+async function collect(log: IAppendLogStore): Promise<WireRecord[]> {
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -100,14 +102,19 @@ describe('wire.jsonl round-trip', () => {
     }
 
     const replayTarget = makeContainer(storage, 'replay-target');
-    const withUnknown: PersistedRecord[] = [
+    const withUnknown: WireRecord[] = [
       ...records,
       { type: 'compat.unknown.nope', foo: 1 },
     ];
     setUnexpectedErrorHandler(() => {});
     let replayResult;
     try {
-      replayResult = await replayTarget.wire.replay(...withUnknown);
+      replayResult = await restoreTestAgentWire(
+        replayTarget.wire,
+        replayTarget.log,
+        testWireScope(SCOPE, 'replay-target'),
+        withUnknown,
+      );
     } finally {
       resetUnexpectedErrorHandler();
     }

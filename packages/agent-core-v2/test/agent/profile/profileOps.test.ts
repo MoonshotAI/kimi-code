@@ -25,9 +25,10 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService, PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'profile-test';
@@ -92,7 +93,6 @@ function buildHost(key: string): {
   const host = disposables.add(new TestInstantiationService());
   host.stub(IFileSystemStorageService, new InMemoryStorageService());
   host.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  host.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: key }]));
   host.stub(ITelemetryService, createTelemetryStub());
   host.stub(IAgentTelemetryContextService, new AgentTelemetryContextService());
   host.stub(IConfigService, createConfigStub());
@@ -105,9 +105,12 @@ function buildHost(key: string): {
   host.stub(IAgentProfileCatalogService, stubUnused());
   host.stub(ISessionSkillCatalog, stubUnused());
   host.set(IAgentProfileService, new SyncDescriptor(AgentProfileService));
+  const wire = registerTestAgentWire(host, testWireScope(SCOPE, key), {
+    log: host.get(IAppendLogStore),
+  });
   return {
     ix: host,
-    wire: host.get(IAgentWireService),
+    wire,
     svc: host.get(IAgentProfileService),
     log: host.get(IAppendLogStore),
   };
@@ -126,9 +129,10 @@ beforeEach(() => {
 
 afterEach(() => disposables.dispose());
 
-async function readRecords(key = KEY): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of log.read<PersistedRecord>(SCOPE, key)) {
+async function readRecords(key = KEY): Promise<WireRecord[]> {
+  await wire.flush();
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -251,17 +255,26 @@ describe('AgentProfileService (wire-backed config.update)', () => {
       },
     });
 
-    await host.wire.replay(...records);
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'profile-replay'),
+      records,
+    );
     expect(modelOf(host.wire).cwd).toBe('/work');
     expect(modelOf(host.wire).profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
     expect(replayChdir).toBe(0);
     expect(replayEmits).toBe(0);
 
-    const written: PersistedRecord[] = [];
-    for await (const record of host.log.read<PersistedRecord>(SCOPE, 'profile-replay')) {
+    const written: WireRecord[] = [];
+    for await (const record of host.log.read<WireRecord>(
+      testWireScope(SCOPE, 'profile-replay'),
+      AGENT_WIRE_RECORD_KEY,
+    )) {
       written.push(record);
     }
-    expect(written).toEqual([]);
+    expect(written[0]).toMatchObject({ type: 'metadata' });
+    expect(written.slice(1)).toEqual(records);
   });
 
   it('replay rebuilds the resolved thinkingLevel without re-reading config', async () => {
@@ -269,14 +282,24 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     const records = await readRecords();
 
     const host = buildHost('profile-replay-thinking');
-    await host.wire.replay(...records);
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'profile-replay-thinking'),
+      records,
+    );
     expect(modelOf(host.wire).thinkingLevel).toBe('on');
   });
 
   it('replays legacy config.update thinkingLevel records', async () => {
     const host = buildHost('profile-replay-legacy-thinking-level');
 
-    await host.wire.replay({ type: 'config.update', thinkingLevel: 'high' });
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'profile-replay-legacy-thinking-level'),
+      [{ type: 'config.update', thinkingLevel: 'high' }],
+    );
 
     expect(modelOf(host.wire).thinkingLevel).toBe('high');
   });
@@ -285,7 +308,12 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     const host = buildHost('profile-replay-conflicting-thinking-aliases');
 
     await expect(
-      host.wire.replay({ type: 'config.update', thinkingEffort: 'low', thinkingLevel: 'high' }),
+      restoreTestAgentWire(
+        host.wire,
+        host.log,
+        testWireScope(SCOPE, 'profile-replay-conflicting-thinking-aliases'),
+        [{ type: 'config.update', thinkingEffort: 'low', thinkingLevel: 'high' }],
+      ),
     ).rejects.toMatchObject({
       code: 'profile.thinking_alias_conflict',
       name: 'ProfileError',

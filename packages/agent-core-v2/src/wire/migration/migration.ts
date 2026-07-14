@@ -1,3 +1,5 @@
+import type { WireRecord } from '#/wire/record';
+
 import { migrateV1_0ToV1_1 } from './v1.1';
 import { migrateV1_1ToV1_2 } from './v1.2';
 import { migrateV1_2ToV1_3 } from './v1.3';
@@ -10,12 +12,9 @@ export {
   migrateV1_3ToV1_4,
 };
 
-export const AGENT_WIRE_PROTOCOL_VERSION = '1.4';
+export const WIRE_PROTOCOL_VERSION = '1.4';
 
-export interface WireMigrationRecord {
-  readonly type: string;
-  [key: string]: unknown;
-}
+export type WireMigrationRecord = WireRecord;
 
 export interface WireMigration {
   readonly sourceVersion: string;
@@ -31,17 +30,17 @@ const MIGRATIONS: readonly WireMigration[] = [
 ];
 
 export function isNewerWireVersion(readVersion: string): boolean {
-  return compareWireVersions(readVersion, AGENT_WIRE_PROTOCOL_VERSION) > 0;
+  return compareWireVersions(readVersion, WIRE_PROTOCOL_VERSION) > 0;
 }
 
 export function resolveWireMigrations(readVersion: string): readonly WireMigration[] {
-  if (compareWireVersions(readVersion, AGENT_WIRE_PROTOCOL_VERSION) >= 0) {
+  if (compareWireVersions(readVersion, WIRE_PROTOCOL_VERSION) >= 0) {
     return [];
   }
 
   const migrations: WireMigration[] = [];
   let version = readVersion;
-  while (compareWireVersions(version, AGENT_WIRE_PROTOCOL_VERSION) < 0) {
+  while (compareWireVersions(version, WIRE_PROTOCOL_VERSION) < 0) {
     const migration = findMigration(version);
     if (migration === undefined) {
       throw new Error(`Missing wire migration for version ${version}`);

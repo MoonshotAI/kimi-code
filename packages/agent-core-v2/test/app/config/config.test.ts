@@ -12,7 +12,7 @@ import type { ToolCall } from '#/app/llmProtocol/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
-import { AGENT_WIRE_PROTOCOL_VERSION } from '#/agent/wireRecord/wireRecord';
+import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 import { DEFAULT_TEST_SYSTEM_PROMPT } from '../../harness/snapshots';
 
@@ -176,7 +176,7 @@ describe('Agent config', () => {
     await ctx.restore([
       {
         type: 'metadata',
-        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+        protocol_version: WIRE_PROTOCOL_VERSION,
         created_at: 1,
       },
       {
