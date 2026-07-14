@@ -2077,22 +2077,28 @@ function configWithEnvOverrides(config: KimiConfig): KimiConfig {
     parseEnvCompletionTokens(process.env['KIMI_MODEL_MAX_TOKENS']);
   const temperature = parseEnvFloat(process.env['KIMI_MODEL_TEMPERATURE']);
   const topP = parseEnvFloat(process.env['KIMI_MODEL_TOP_P']);
+  const forcedEffort = process.env['KIMI_MODEL_THINKING_EFFORT']?.trim();
   const thinkingKeep = process.env['KIMI_MODEL_THINKING_KEEP']?.trim();
   const cron = cronEnvOverrides(asMutableRecord(config['cron']));
   if (
     maxCompletionTokens === undefined &&
     temperature === undefined &&
     topP === undefined &&
+    (forcedEffort === undefined || forcedEffort.length === 0) &&
     (thinkingKeep === undefined || thinkingKeep.length === 0) &&
     cron === undefined
   ) {
     return config;
   }
   const modelOverrides = asMutableRecord(config['modelOverrides']);
+  const thinking = asMutableRecord(config['thinking']);
   if (temperature !== undefined) modelOverrides['temperature'] = temperature;
   if (topP !== undefined) modelOverrides['topP'] = topP;
   if (thinkingKeep !== undefined && thinkingKeep.length > 0) {
     modelOverrides['thinkingKeep'] = thinkingKeep;
+  }
+  if (forcedEffort !== undefined && forcedEffort.length > 0) {
+    thinking['forcedEffort'] = forcedEffort;
   }
   if (maxCompletionTokens !== undefined) {
     modelOverrides['maxCompletionTokens'] = maxCompletionTokens;
@@ -2101,6 +2107,8 @@ function configWithEnvOverrides(config: KimiConfig): KimiConfig {
     ...config,
     cron: cron ?? config['cron'],
     modelOverrides,
+    thinking:
+      forcedEffort !== undefined && forcedEffort.length > 0 ? thinking : config['thinking'],
   };
 }
 

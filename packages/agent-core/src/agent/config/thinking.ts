@@ -19,6 +19,11 @@ function middleOf(efforts: readonly string[]): string {
   return efforts[Math.floor(efforts.length / 2)]!;
 }
 
+function effortsFor(model: ModelAlias | undefined): readonly string[] {
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  return effective?.supportEfforts?.filter((effort) => effort.length > 0) ?? [];
+}
+
 /**
  * Resolve the default thinking effort for a model from its declared metadata:
  *   - models that do not support thinking (or an unknown model) -> `'off'`
@@ -32,11 +37,50 @@ function middleOf(efforts: readonly string[]): string {
 export function defaultThinkingEffortFor(model: ModelAlias | undefined): ThinkingEffort {
   const effective = model === undefined ? undefined : effectiveModelAlias(model);
   if (!supportsThinking(effective)) return 'off';
-  const efforts = effective?.supportEfforts;
-  if (efforts !== undefined && efforts.length > 0) {
-    return effective?.defaultEffort ?? middleOf(efforts);
+  const efforts = effortsFor(effective);
+  if (efforts.length > 0) {
+    const declaredDefault = effective?.defaultEffort;
+    return declaredDefault !== undefined && efforts.includes(declaredDefault)
+      ? declaredDefault
+      : middleOf(efforts);
   }
   return 'on';
+}
+
+export function supportsThinkingEffort(
+  effort: ThinkingEffort,
+  model: ModelAlias | undefined,
+  kimiProvider: boolean,
+): boolean {
+  if (!kimiProvider || effort === 'off') return true;
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  if (!supportsThinking(effective)) return false;
+  const efforts = effortsFor(effective);
+  return efforts.length === 0 || effort === 'on' || efforts.includes(effort);
+}
+
+function normalizeThinkingEffortForModel(
+  effort: ThinkingEffort,
+  model: ModelAlias | undefined,
+  kimiProvider: boolean,
+): ThinkingEffort {
+  const effective = model === undefined ? undefined : effectiveModelAlias(model);
+  if (effort === 'off' && effective?.capabilities?.includes('always_thinking') !== true) {
+    return 'off';
+  }
+
+  const efforts = effortsFor(effective);
+  if (!kimiProvider) {
+    return effort === 'on' && efforts.length > 0
+      ? defaultThinkingEffortFor(effective)
+      : effort;
+  }
+  if (!supportsThinking(effective)) return 'off';
+  if (efforts.length === 0) return 'on';
+  if (effort === 'on' || !efforts.includes(effort)) {
+    return defaultThinkingEffortFor(effective);
+  }
+  return effort;
 }
 
 /**
@@ -55,6 +99,7 @@ export function resolveThinkingEffort(
   requested: ThinkingEffort | undefined,
   config: ThinkingConfig | undefined,
   model: ModelAlias | undefined,
+  kimiProvider = false,
 ): ThinkingEffort {
   const effectiveModel = model === undefined ? undefined : effectiveModelAlias(model);
   let effort: ThinkingEffort;
@@ -74,5 +119,5 @@ export function resolveThinkingEffort(
     effort = config?.effort ?? defaultThinkingEffortFor(effectiveModel);
   }
 
-  return effort;
+  return normalizeThinkingEffortForModel(effort, effectiveModel, kimiProvider);
 }
