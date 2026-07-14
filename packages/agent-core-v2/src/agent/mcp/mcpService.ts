@@ -33,8 +33,6 @@ declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'mcp.server.status': McpServerStatusEvent;
     'tool.list.updated': ToolListUpdatedEvent;
-    // Canonical home of the shared `error` event (`IEventBus`); other domains
-    // (`turn`, `fullCompaction`) reuse it via interface-merge, not re-declared.
     error: ErrorEvent;
   }
 }

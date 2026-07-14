@@ -17,14 +17,7 @@ import { IAgentPlanService } from '#/agent/plan/plan';
 import type { PlanData } from '#/agent/plan/plan';
 import DESCRIPTION from './exit-plan-mode.md?raw';
 
-// ── Input schema ─────────────────────────────────────────────────────
 
-/**
- * User-selectable option surfaced at plan approval time. The LLM supplies
- * up to 3 of these when the plan contains multiple approaches; the host's
- * ApprovalRuntime presents them to the user and returns the chosen `label`
- * (or `{kind:'revise', feedback}` when the user asks for revisions).
- */
 export interface ExitPlanModeOption {
   label: string;
   description: string;
@@ -78,7 +71,6 @@ type ResolvePlanResult =
   | { readonly ok: true; readonly plan: string; readonly path?: string | undefined }
   | { readonly ok: false; readonly error: ExecutableToolResult };
 
-// ── Implementation ───────────────────────────────────────────────────
 
 export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
   readonly name = 'ExitPlanMode' as const;

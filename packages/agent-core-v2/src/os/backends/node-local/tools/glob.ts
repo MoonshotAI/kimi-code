@@ -109,8 +109,6 @@ export const MAX_MATCHES = 100;
 
 const VCS_DIRECTORIES_TO_EXCLUDE = ['.git', '.svn', '.hg', '.bzr', '.jj', '.sl'] as const;
 
-// Conservative rg-level prefilter. The authoritative sensitive-file check
-// still happens on parsed rg records via `isSensitiveFile` after execution.
 const SENSITIVE_KEY_BASENAMES = ['id_rsa', 'id_ed25519', 'id_ecdsa'] as const;
 const SENSITIVE_GLOBS_TO_EXCLUDE: readonly string[] = [
   '**/.env',
@@ -125,27 +123,12 @@ const SENSITIVE_GLOBS_TO_EXCLUDE: readonly string[] = [
   '**/.gcp/credentials/**',
 ];
 
-/**
- * Path-shape hint appended to the tool description only on a Windows
- * (`win32` path class) backend. The `path` argument accepts both native
- * Windows paths and POSIX-style paths, but matched paths come back in
- * Windows backslash form — a command run through Bash must convert them
- * to forward slashes first. Injected conditionally so non-Windows
- * sessions are not shown a hint that does not apply to them.
- */
 export const WINDOWS_PATH_HINT =
   '\n\nWindows note: the `path` argument accepts both Windows paths ' +
   '(e.g. `C:\\Users\\foo`) and POSIX-style paths (e.g. `/c/Users/foo`). Matched paths are ' +
   'returned in Windows backslash form; convert them to forward slashes before ' +
   'using them in a Bash command.';
 
-/**
- * Tool-level description shown to the LLM at tool declaration time.
- * Tells the model — before any round-trip — which patterns are accepted,
- * how brace expansion is handled, and which directories are too large to
- * recurse into. On a Windows backend the description also carries
- * `WINDOWS_PATH_HINT` (path-shape guidance).
- */
 export class GlobTool implements BuiltinTool<GlobInput> {
   readonly name = 'Glob' as const;
   readonly description: string;
@@ -156,8 +139,6 @@ export class GlobTool implements BuiltinTool<GlobInput> {
     @IHostProcessService private readonly processService: IHostProcessService,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    // Optional so unit tests that construct the tool directly (bypassing DI)
-    // keep working; always registered in production scopes.
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {
     this.description =
@@ -165,8 +146,6 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   }
 
   private get workspaceConfig(): WorkspaceConfig {
-    // Skill roots are merged per call (v1 merged once at tool construction):
-    // the catalog loads asynchronously and gains roots on plugin reloads.
     return extendWorkspaceWithSkillRoots(
       {
         workspaceDir: this.workspaceCtx.workDir,
@@ -219,9 +198,6 @@ export class GlobTool implements BuiltinTool<GlobInput> {
   ): Promise<ExecutableToolResult> {
     const searchRoot = searchRoots[0] ?? this.workspaceConfig.workspaceDir;
 
-    // `rg --files <file>` exits 0 and lists the file itself, so without this
-    // check a file root would be returned as its own match instead of
-    // rejected, and a missing root would surface as "No matches found".
     try {
       const st = await this.fs.stat(searchRoot);
       if (!st.isDirectory) {
@@ -238,10 +214,6 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       return { isError: true, output: 'Glob aborted' };
     }
 
-    // Resolve a working `rg` before running. Probes the execution environment
-    // (system PATH, then the cached bootstrap binary) so a missing `rg` gets a
-    // clear, actionable message — and so a non-PATH fallback is recorded in
-    // telemetry — instead of a confusing `spawn rg ENOENT`.
     let rgPath: string;
     try {
       const resolution = await ensureRgPath(createRgProbe(this.processService), {
@@ -263,11 +235,6 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       return { isError: true, output: rgUnavailableMessage(error) };
     }
 
-    // Run rg with its cwd pinned to the search root and `.` as the search
-    // path. ripgrep matches `--glob` patterns against the path *as passed to
-    // rg*, so with an absolute search path a pattern containing a `/` (e.g.
-    // `src/**/*.ts`) is matched against the absolute path and never matches.
-    // Running from the search root makes glob matching relative to it.
     let run;
     try {
       run = await runRgOnce(this.processService, buildRgArgs(rgPath, args), signal, { cwd: searchRoot });
@@ -278,9 +245,6 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       return { isError: true, output: 'Glob aborted' };
     }
 
-    // ripgrep can fail with EAGAIN ("os error 11") when its thread pool cannot
-    // spawn a worker under load; a single single-threaded retry sidesteps the
-    // pool and usually succeeds.
     if (shouldRetryRipgrepEagain(run)) {
       try {
         run = await runRgOnce(this.processService, buildRgArgs(rgPath, args, true), signal, { cwd: searchRoot });
@@ -294,12 +258,6 @@ export class GlobTool implements BuiltinTool<GlobInput> {
 
     const { exitCode, stdoutText, stderrText, bufferTruncated, timedOut } = run;
 
-    // rg exit codes: 0 = matches, 1 = no matches, 2+ = error. Timeout kills
-    // usually surface as a signal exit code; keep any partial paths. If rg
-    // returned complete paths before failing on a traversal error such as an
-    // unreadable subdirectory, keep those paths and surface a warning instead
-    // of failing the whole search. If no complete path was produced, treat
-    // stderr as authoritative (invalid glob, spawn failure, etc.).
     let traversalWarning: string | undefined;
     if (exitCode !== 0 && exitCode !== 1 && !timedOut) {
       const rawPathsBeforeError = splitCompletePaths(stdoutText, true);
@@ -312,18 +270,10 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       return { isError: true, output: 'Glob aborted' };
     }
 
-    // One path per line from `rg --files`. When stdout is capped or the run
-    // timed out, the final chunk can cut a path in half; drop any trailing
-    // line that lacks its terminating newline so a half-written path is never
-    // surfaced as a match. rg reports paths relative to its cwd (the search
-    // root), e.g. `./src/a.ts`; resolve them back to absolute paths so the
-    // sensitive-file check, workspace relativization, and display all keep
-    // working on absolute paths.
     const rawPaths = splitCompletePaths(stdoutText, bufferTruncated || timedOut).map((p) =>
       resolve(searchRoot, p),
     );
 
-    // Authoritative sensitive-file check (the rg prefilter is conservative).
     const kept: string[] = [];
     let filteredSensitive = 0;
     for (const p of rawPaths) {
@@ -346,10 +296,6 @@ export class GlobTool implements BuiltinTool<GlobInput> {
       return { output: 'No matches found' };
     }
 
-    // Content shown to the LLM uses paths relative to the search base to
-    // save tokens, but only for the primary workspace. Relative paths are
-    // later resolved against workspaceDir, so additionalDir matches stay
-    // absolute to keep follow-up Read/Edit calls on the same file.
     const pathClass = this.env.pathClass;
     const shouldRelativize = isWithinDirectory(searchRoot, this.workspaceConfig.workspaceDir, pathClass);
     const displayLines = limited.map((p) =>
@@ -387,13 +333,6 @@ export class GlobTool implements BuiltinTool<GlobInput> {
 
 registerTool(GlobTool);
 
-/**
- * Adapt an `IHostProcessService` to the locator's {@link RgProbe}. The probe
- * runs `rg --version` (or the cached binary with `--version`) through the host
- * process service and reports the exit code. stdout/stderr are drained
- * (flowing mode) so a chatty probe can never block the pipe; the bytes are
- * discarded.
- */
 function createRgProbe(processService: IHostProcessService): RgProbe {
   return {
     exec: async (args) => {
@@ -403,7 +342,6 @@ function createRgProbe(processService: IHostProcessService): RgProbe {
       try {
         proc.stdin.end();
       } catch {
-        /* already gone */
       }
       proc.stdout.resume();
       proc.stderr.resume();
@@ -411,7 +349,6 @@ function createRgProbe(processService: IHostProcessService): RgProbe {
       try {
         proc.dispose();
       } catch {
-        /* best-effort cleanup */
       }
       return { exitCode };
     },
@@ -425,15 +362,11 @@ function buildRgArgs(rgPath: string, args: GlobInput, singleThreaded = false): s
   for (const dir of VCS_DIRECTORIES_TO_EXCLUDE) {
     cmd.push('--glob', `!${dir}`);
   }
-  // Positive pattern first, then sensitive-file exclusions so a broad pattern
-  // cannot re-include a sensitive path.
   cmd.push('--glob', args.pattern);
   for (const glob of SENSITIVE_GLOBS_TO_EXCLUDE) {
     cmd.push('--glob', `!${glob}`);
   }
   if (args.include_ignored) cmd.push('--no-ignore');
-  // Search path is `.` because the process cwd is pinned to the search root
-  // (see execution()); this keeps `--glob` matching relative to that root.
   cmd.push('.');
   return cmd;
 }
@@ -462,8 +395,6 @@ function formatSpawnError(error: unknown): string {
 }
 
 function errorCode(error: unknown): string | undefined {
-  // hostFs / hostProcess translate raw errnos into coded errors; classify the
-  // unwrapped cause so boundary translation stays invisible here.
   const unwrapped = unwrapErrorCause(error);
   if (unwrapped !== null && typeof unwrapped === 'object' && 'code' in unwrapped) {
     const code = (unwrapped as { code?: unknown }).code;
@@ -472,12 +403,6 @@ function errorCode(error: unknown): string | undefined {
   return undefined;
 }
 
-/**
- * Split `rg --files` stdout into complete paths. When the run was capped or
- * timed out (`truncatedOutput`), a path cut mid-write lacks its terminating
- * newline; drop that trailing fragment so it is never surfaced as a match.
- * Complete output always ends in `\n`, so the split is lossless in that case.
- */
 export function splitCompletePaths(stdoutText: string, truncatedOutput: boolean): string[] {
   let text = stdoutText;
   if (truncatedOutput && !text.endsWith('\n')) {
@@ -487,11 +412,6 @@ export function splitCompletePaths(stdoutText: string, truncatedOutput: boolean)
   return text.split('\n').filter((p) => p.length > 0);
 }
 
-/**
- * If `candidate` is under `base`, return the portion after `base/`.
- * Otherwise return `candidate` unchanged (absolute). Both arguments
- * should be canonical absolute paths.
- */
 function relativizeIfUnder(candidate: string, base: string, pathClass: PathClass): string {
   const normCandidate = normalize(candidate);
   const normBase = normalize(base);

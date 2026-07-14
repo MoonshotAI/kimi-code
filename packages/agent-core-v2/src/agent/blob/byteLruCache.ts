@@ -20,7 +20,6 @@ export class ByteLruCache {
   get(key: string): Buffer | undefined {
     const value = this.map.get(key);
     if (value === undefined) return undefined;
-    // Refresh to most-recently-used.
     this.map.delete(key);
     this.map.set(key, value);
     return value;

@@ -146,7 +146,6 @@ class HostProcess implements IHostProcess {
         try {
           this._child.kill(signal ?? 'SIGTERM');
         } catch {
-          /* best effort */
         }
         return;
       }

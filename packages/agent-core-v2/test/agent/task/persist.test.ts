@@ -57,10 +57,6 @@ beforeEach(async () => {
   );
   await mkdir(sessionDir, { recursive: true });
 
-  // `AgentTaskPersistence` is a plain (non-DI) helper constructed by
-  // `AgentTaskService`, so the test builds it directly. Its `docs`
-  // collaborator (`IAtomicDocumentStore`) carries an `@IService` dependency, so
-  // it is resolved by interface through the container rather than `new`ed.
   disposables = new DisposableStore();
   const ix = disposables.add(new TestInstantiationService());
   const fs = new FileStorageService(sessionDir, 0o700);

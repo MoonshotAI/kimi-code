@@ -23,7 +23,6 @@ export interface TelemetryEventMeta {
 
 export interface TelemetryEventDefinition<P> {
   readonly meta: TelemetryEventMeta;
-  /** Type-only phantom field carrying `P`; never present at runtime. */
   readonly _properties?: P;
 }
 
@@ -45,9 +44,7 @@ export type StrictPropertyCheck<T, E> = string extends keyof T
 
 export interface TurnStartedEvent {
   mode: 'agent' | 'plan';
-  /** Resolved model protocol; v2 has no separate provider type (v1 parity). */
   provider_type?: string;
-  /** Resolved model protocol. */
   protocol?: string;
 }
 
@@ -55,9 +52,7 @@ export interface TurnInterruptedEvent {
   at_step: number;
   mode: 'agent' | 'plan';
   interrupt_reason: 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
-  /** Resolved model protocol; v2 has no separate provider type (v1 parity). */
   provider_type?: string;
-  /** Resolved model protocol. */
   protocol?: string;
 }
 
@@ -65,9 +60,7 @@ export interface TurnEndedEvent {
   reason: 'completed' | 'cancelled' | 'failed';
   duration_ms: number;
   mode: 'agent' | 'plan';
-  /** Resolved model protocol; v2 has no separate provider type (v1 parity). */
   provider_type?: string;
-  /** Resolved model protocol. */
   protocol?: string;
 }
 
@@ -79,11 +72,6 @@ export interface ToolCallEvent {
   tool_name: string;
   outcome: ToolCallOutcome;
   duration_ms: number;
-  /**
-   * Whether the call was a duplicate. v1's union is 'normal' | 'cross_step';
-   * v2 adds 'same_step' because same-step duplicates reach execution telemetry
-   * through the placeholder-result path (v1 swallowed them beforehand).
-   */
   dup_type: 'normal' | 'same_step' | 'cross_step';
   error_type?: 'cancelled' | 'error';
 }
@@ -91,16 +79,12 @@ export interface ToolCallEvent {
 export interface ApiErrorEvent {
   error_type: string;
   model: string;
-  /** Model alias the request targeted, when one is bound. */
   alias?: string;
   retryable: boolean;
   duration_ms: number;
   status_code?: number;
-  /** Resolved model protocol; v2 has no separate provider type (v1 parity). */
   provider_type?: string;
-  /** Resolved model protocol. */
   protocol?: string;
-  /** Current turn's accumulated total input tokens, when usage exists. */
   input_tokens?: number;
 }
 
@@ -140,7 +124,6 @@ export interface PermissionPolicyDecisionEvent {
   tool_name: string;
   permission_mode: TelemetryPermissionMode;
   decision: 'approve' | 'deny' | 'ask';
-  /** Open property bag: policies attach their own reason keys. */
   [key: string]: TelemetryPrimitive;
 }
 
@@ -181,18 +164,13 @@ export interface CompactionFinishedEvent {
   tokens_after: number;
   duration_ms: number;
   compacted_count: number;
-  /** Always sent; undefined when no entries were dropped. */
   dropped_count?: number;
   retry_count: number;
   round: number;
   thinking_effort: string;
-  /** Total input tokens (other + cache read + cache creation). */
   input_tokens?: number;
-  /** Output tokens. */
   output_tokens?: number;
-  /** Cache-read input tokens (v2 extra). */
   input_cache_read?: number;
-  /** Cache-creation input tokens (v2 extra). */
   input_cache_creation?: number;
 }
 
@@ -207,21 +185,13 @@ export interface CompactionFailedEvent {
 }
 
 export interface ContextProjectionRepairedEvent {
-  /** Tool results moved back next to their call. */
   reordered: number;
-  /** Placeholder results invented for lost ones. */
   synthesized: number;
-  /** Results with no matching call dropped. */
   dropped_orphan: number;
-  /** Tool calls with an already-seen id dropped. */
   duplicate_calls_dropped: number;
-  /** Second results for an already-answered id dropped. */
   duplicate_results_dropped: number;
-  /** Leading non-user messages dropped. */
   leading_dropped: number;
-  /** Consecutive assistant messages merged. */
   assistants_merged: number;
-  /** Whitespace-only text blocks dropped. */
   whitespace_dropped: number;
 }
 
@@ -372,7 +342,6 @@ export interface ImageCompressEvent {
 export interface ImageCropEvent {
   source: string;
   ok: boolean;
-  /** Always sent; undefined when the crop succeeded. */
   error_kind?:
     | 'empty'
     | 'unsupported_format'
@@ -381,25 +350,17 @@ export interface ImageCropEvent {
     | 'out_of_bounds'
     | 'budget'
     | 'decode_failed';
-  /** Always sent; undefined when the crop failed before producing a result. */
   resized?: boolean;
-  /** Always sent; undefined when the crop failed before producing a result. */
   original_width?: number;
-  /** Always sent; undefined when the crop failed before producing a result. */
   original_height?: number;
-  /** Always sent; undefined when there is no result or no original pixels. */
   region_area_ratio?: number;
-  /** Always sent; undefined when the crop failed before producing a result. */
   final_bytes?: number;
   duration_ms: number;
 }
 
 export interface VideoUploadEvent {
-  /** Always sent; undefined when no model alias is bound. */
   model?: string;
-  /** Always sent; undefined when the model is unresolved. */
   provider_type?: string;
-  /** Always sent; undefined when the model is unresolved. */
   protocol?: string;
   mime_type: string;
   size_bytes: number;
@@ -409,12 +370,10 @@ export interface VideoUploadEvent {
 }
 
 export interface SessionStartedEvent {
-  /** True when the session was resumed from disk; false for startup/fork. */
   resumed: boolean;
 }
 
 export interface SessionLoadFailedEvent {
-  /** Error code (Error2), error name, or 'unknown'. */
   reason: string;
 }
 

@@ -52,14 +52,6 @@ export interface KimiOptions {
 }
 
 export interface GenerationKwargs {
-  /**
-   * Legacy completion-budget alias. The Moonshot Kimi API still accepts
-   * `max_tokens`, but for reasoning models it shares the budget with
-   * `reasoning_content` and a small value can cause a 200 response with no
-   * `content`. Prefer `max_completion_tokens`. When both are set
-   * `max_completion_tokens` wins; this provider normalizes by sending only
-   * `max_completion_tokens` on the wire.
-   */
   max_tokens?: number | undefined;
   max_completion_tokens?: number | undefined;
   temperature?: number | undefined;
@@ -124,14 +116,12 @@ function convertMessage(message: Message): OpenAIMessage {
     }
   }
 
-  // Build the OpenAI message.
   const result: OpenAIMessage = { role: message.role };
   const hasToolCalls = message.toolCalls.length > 0;
   const shouldOmitContent =
     message.role === 'assistant' && hasToolCalls && isEffectivelyEmptyContent(nonThinkParts);
 
   if (!shouldOmitContent) {
-    // content: serialize to string if single text, array otherwise
     const firstPart = nonThinkParts[0];
     if (nonThinkParts.length === 1 && firstPart?.type === 'text') {
       result.content = firstPart.text;
@@ -176,7 +166,6 @@ function convertMessage(message: Message): OpenAIMessage {
 }
 function convertTool(tool: Tool): OpenAIToolParam {
   if (tool.name.startsWith('$')) {
-    // Kimi builtin functions start with `$`
     return {
       type: 'builtin_function',
       function: { name: tool.name },
@@ -207,14 +196,9 @@ function responseFormatToOpenAI(format: ResponseFormat): Record<string, unknown>
   };
 }
 
-/**
- * Extract usage from a streaming chunk. Moonshot may place usage in
- * `choices[0].usage` in addition to the top-level `usage` field.
- */
 export function extractUsageFromChunk(
   chunk: Record<string, unknown>,
 ): Record<string, unknown> | null {
-  // Top-level usage
   if (
     chunk['usage'] !== null &&
     chunk['usage'] !== undefined &&
@@ -222,7 +206,6 @@ export function extractUsageFromChunk(
   ) {
     return chunk['usage'] as Record<string, unknown>;
   }
-  // choices[0].usage (Moonshot proprietary)
   const choices = chunk['choices'];
   if (!Array.isArray(choices) || choices.length === 0) {
     return null;
@@ -296,7 +279,6 @@ class KimiStreamedMessage implements StreamedMessage {
     const message = response.choices[0]?.message;
     if (!message) return;
 
-    // reasoning_content (Moonshot proprietary)
     const rc = (message as unknown as Record<string, unknown>)['reasoning_content'];
     if (typeof rc === 'string' && rc) {
       yield { type: 'think', think: rc } satisfies StreamedMessagePart;
@@ -330,7 +312,6 @@ class KimiStreamedMessage implements StreamedMessage {
           this._id = chunk.id;
         }
 
-        // Extract usage from chunk (supports top-level and choices[0].usage)
         const rawChunk = chunk as unknown as Record<string, unknown>;
         const rawUsage = extractUsageFromChunk(rawChunk);
         if (rawUsage) {
@@ -344,29 +325,21 @@ class KimiStreamedMessage implements StreamedMessage {
         const choice = chunk.choices[0];
         if (!choice) continue;
 
-        // Capture finish_reason whenever the chunk carries one. The Chat
-        // Completions API only sets it on the final chunk for a given
-        // choice, but defensively re-capturing on every non-null value
-        // keeps the latest signal available even if upstream re-emits.
         if (choice.finish_reason !== null && choice.finish_reason !== undefined) {
           this._captureFinishReason(choice.finish_reason);
         }
 
         const delta = choice.delta;
 
-        // reasoning_content (Moonshot proprietary)
         const rc = (delta as unknown as Record<string, unknown>)['reasoning_content'];
         if (typeof rc === 'string' && rc) {
           yield { type: 'think', think: rc } satisfies StreamedMessagePart;
         }
 
-        // text content
         if (delta.content) {
           yield { type: 'text', text: delta.content } satisfies StreamedMessagePart;
         }
 
-        // tool calls — preserve `index` on every yielded part so the generate
-        // loop can route interleaved argument deltas from parallel tool calls.
         for (const toolCall of delta.tool_calls ?? []) {
           for (const part of convertChatCompletionStreamToolCall(toolCall, bufferedToolCalls)) {
             yield part;
@@ -416,13 +389,6 @@ export class KimiChatProvider implements ChatProvider {
     return this._model;
   }
 
-  /**
-   * File upload client for Kimi/Moonshot.
-   *
-   * Use this to upload videos (and other media in the future) to the file
-   * service and receive a content part that can be embedded in chat
-   * messages.
-   */
   get files(): KimiFiles {
     this._files ??= new KimiFiles({
       apiKey: this._apiKey,
@@ -475,7 +441,6 @@ export class KimiChatProvider implements ChatProvider {
       ...this._generationKwargs,
     };
 
-    // Remove undefined values from kwargs
     for (const key of Object.keys(kwargs)) {
       if (kwargs[key] === undefined) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
@@ -483,11 +448,6 @@ export class KimiChatProvider implements ChatProvider {
       }
     }
 
-    // Normalize the legacy `max_tokens` alias to Kimi's preferred
-    // `max_completion_tokens`. When both are set, `max_completion_tokens`
-    // wins (confirmed against the live Moonshot API). When neither is
-    // set, send no cap — the upstream loop is responsible for clamping
-    // against the current input size and model context window.
     if (
       kwargs['max_completion_tokens'] === undefined &&
       kwargs['max_tokens'] !== undefined
@@ -607,17 +567,7 @@ export class KimiChatProvider implements ChatProvider {
       this,
     );
     clone._generationKwargs = { ...this._generationKwargs };
-    // Do not share the memoized KimiFiles instance with the clone; let it be
-    // lazily re-created on first access.
     clone._files = undefined;
-    // `_client` is intentionally shared with the original instance. Per-step
-    // budget clamping (see KosongLLM.chatOnce) relies on this clone being
-    // cheap. If a future change introduces a retry path that REPLACES
-    // `clone._client` with a freshly built client (and closes the old one),
-    // the original instance's `_client` would become a dangling reference to
-    // a closed socket. Keep `_client` shared and never mutate it after
-    // construction; instead build a new KimiChatProvider when a real new
-    // client is required.
     return clone;
   }
 }

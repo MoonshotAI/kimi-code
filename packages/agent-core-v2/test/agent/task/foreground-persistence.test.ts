@@ -46,7 +46,6 @@ function immediateProcess(exitCode: number, stdoutText = ''): IProcess {
   };
 }
 
-/** A process whose stdout and exit are driven by the test, for timing control. */
 function controllableProcess(): {
   proc: IProcess;
   pushStdout: (text: string) => void;
@@ -89,15 +88,6 @@ function registerForeground(
   });
 }
 
-/**
- * Detached tasks that reached a terminal state enqueue a notification onto
- * the loop, which auto-launches its own turn when idle (`activeOrNewTurn`).
- * Resume-compare requires the notification materialized in the live context
- * (the replayed side re-derives it from the persisted record) and the loop
- * settled, so queue one response in case the turn's LLM request has not
- * fired yet and wait for the notification turn to drain before
- * `expectResumeMatches`.
- */
 async function drainPendingNotifications(
   ctx: TestAgentContext,
   background: IAgentTaskService,
@@ -157,7 +147,6 @@ describe('AgentTaskService — foreground persistence', () => {
     expect(existsSync(taskJsonPath(taskId))).toBe(false);
     expect(existsSync(persistence.taskOutputFile(taskId))).toBe(false);
 
-    // Output is still readable from the in-memory ring buffer.
     const snapshot = await background.getOutputSnapshot(taskId, 1_000);
     expect(snapshot.fullOutputAvailable).toBe(false);
     expect(snapshot.preview).toContain('hello');
@@ -168,7 +157,7 @@ describe('AgentTaskService — foreground persistence', () => {
     const taskId = registerForeground(background, proc, 'stream', 'demo');
 
     pushStdout('before-detach\n');
-    await tick(); // buffered in memory, not yet on disk
+    await tick();
     expect(existsSync(persistence.taskOutputFile(taskId))).toBe(false);
 
     expect(background.detach(taskId)?.detached).toBe(true);
@@ -178,7 +167,6 @@ describe('AgentTaskService — foreground persistence', () => {
     finish(0);
     await background.wait(taskId);
 
-    // output.log is the complete, in-order record across the detach boundary.
     expect(await background.readOutput(taskId)).toBe('before-detach\nafter-detach\n');
     expect(existsSync(taskJsonPath(taskId))).toBe(true);
   });
@@ -189,10 +177,8 @@ describe('AgentTaskService — foreground persistence', () => {
 
     await background.wait(taskId);
 
-    // getOutputSnapshot drains the output write queue before reporting size.
     const snapshot = await background.getOutputSnapshot(taskId, 1_000);
 
-    // Spilled artifacts are persisted complete and NOT deleted on completion.
     expect(existsSync(persistence.taskOutputFile(taskId))).toBe(true);
     expect(existsSync(taskJsonPath(taskId))).toBe(true);
     expect(snapshot.fullOutputAvailable).toBe(true);

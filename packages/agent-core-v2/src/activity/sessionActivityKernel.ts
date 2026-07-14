@@ -48,11 +48,8 @@ export class SessionActivityKernel extends Disposable implements ISessionActivit
       case 'active':
         return true;
       case 'restoring':
-        // The lifecycle materializes the main agent while restoring; every other
-        // command (turns, fork, close) must wait for `markActive`.
         return command === 'agent.create';
       default:
-        // `quiescing` / `closing` / `disposed` reject every new command.
         return false;
     }
   }
@@ -135,10 +132,6 @@ export class SessionActivityKernel extends Disposable implements ISessionActivit
   }
 
   private publishLane(): void {
-    // The Session scope does not yet own a wire service, so the lane is kept as
-    // kernel-local state in PR3. Publishing to `sessionActivityLane` is deferred
-    // until a Session wire service is introduced; the derived `ISessionActivity`
-    // read model keeps its existing polling source meanwhile.
   }
 }
 

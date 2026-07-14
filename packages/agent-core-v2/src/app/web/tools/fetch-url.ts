@@ -26,7 +26,6 @@ import { IWebFetchService } from '../web';
 import { HttpFetchError, type UrlFetcher } from './fetch-url-types';
 import DESCRIPTION from './fetch-url.md?raw';
 
-// ── Input schema ─────────────────────────────────────────────────────
 
 export const FetchURLInputSchema = z.object({
   url: z.string().describe('The URL to fetch content from.'),
@@ -34,7 +33,6 @@ export const FetchURLInputSchema = z.object({
 
 export type FetchURLInput = z.infer<typeof FetchURLInputSchema>;
 
-// ── Implementation ───────────────────────────────────────────────────
 
 export class FetchURLTool implements BuiltinTool<FetchURLInput> {
   readonly name = 'FetchURL' as const;
@@ -70,12 +68,6 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
       }
 
       const builder = new ToolResultBuilder({ maxLineLength: null });
-      // Tell the LLM whether it received the whole body or only the extracted
-      // article text, so it can judge how complete the content is, and remind it
-      // to cite this page when it uses the content. Both notes must ride in
-      // `output`: the result's `message` field is dropped from the transcript, so
-      // `output` is the only place the model can read them. Put them at the front
-      // so they survive any downstream truncation of the body.
       const note =
         kind === 'passthrough'
           ? 'The returned content is the full response body, returned verbatim.'
@@ -85,10 +77,6 @@ export class FetchURLTool implements BuiltinTool<FetchURLInput> {
       builder.write(`${note} ${citeReminder}\n\n${content}`);
       return builder.ok();
     } catch (error) {
-      // An in-flight abort rejects the signal-aware fetch promptly. Re-throw
-      // so the executor can classify it (including user cancellation) and
-      // produce the right message, rather than surfacing it as a generic
-      // network error that the model may retry.
       if (signal.aborted) throw error;
       const msg = error instanceof Error ? error.message : String(error);
       if (error instanceof HttpFetchError) {

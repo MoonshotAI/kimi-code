@@ -94,7 +94,6 @@ describe('Kimi messages[].tools serialization', () => {
     ];
     const body = await captureRequestBody([], history);
     const messages = body['messages'] as Array<Record<string, unknown>>;
-    // [system prompt, user, system+tools]
     expect(messages).toHaveLength(3);
     const toolsMessage = messages[2]!;
     expect(toolsMessage['role']).toBe('system');
@@ -132,7 +131,6 @@ describe('Kimi messages[].tools serialization', () => {
     for (const message of messages) {
       expect('tools' in message).toBe(false);
     }
-    // Top-level tools[] unchanged by the feature.
     expect(body['tools']).toEqual([
       {
         type: 'function',
@@ -222,8 +220,6 @@ describe('providers without message-level tool declarations', () => {
   it('classifies tool-declaration-only messages', () => {
     expect(isToolDeclarationOnlyMessage(TOOLS_ONLY_MESSAGE)).toBe(true);
     expect(isToolDeclarationOnlyMessage(HISTORY[0]!)).toBe(false);
-    // A message that also carries content is NOT skipped wholesale (only the
-    // tools field stays off the wire via explicit field construction).
     expect(
       isToolDeclarationOnlyMessage({
         ...TOOLS_ONLY_MESSAGE,
@@ -278,7 +274,6 @@ describe('providers without message-level tool declarations', () => {
     const stream = await provider.generate('sys', [], HISTORY);
     for await (const part of stream) void part;
     const messages = captured!['messages'] as Array<Record<string, unknown>>;
-    // [system prompt, user] — no content-free leftover entry.
     expect(messages).toHaveLength(2);
     for (const message of messages) {
       expect(message['content']).toBeDefined();
@@ -312,7 +307,6 @@ describe('providers without message-level tool declarations', () => {
       });
     const stream = await provider.generate('sys', [], HISTORY);
     for await (const part of stream) void part;
-    // The tools-only message contributes no input item at all.
     expect(captured!['input'] as unknown[]).toHaveLength(1);
     expect(JSON.stringify(captured!['input'])).not.toContain('"tools"');
   });

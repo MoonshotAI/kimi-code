@@ -616,23 +616,10 @@ describe('AgentTaskService', () => {
     await svc.stop(taskId);
   });
 
-  // ── Output ceiling for shell (process) tasks ─────────────────────────
-  //
-  // A single shell command that streams more output than the per-command
-  // limit must be force-terminated instead of growing the unbounded
-  // live-forward buffer or the on-disk `output.log` write chain until the
-  // process runs out of memory or fills the disk. Foreground and detached
-  // (background) process tasks are both capped; non-process task results
-  // (subagent completions, user-question answers) are not.
 
   const MiB = 1024 * 1024;
   const LIMIT_BYTES = 16 * MiB;
 
-  /**
-   * A process that streams `chunks` of stdout, then exits 0 on its own — unless
-   * it is killed first, in which case `wait()` resolves with the signal's exit
-   * code and the stream is destroyed (simulating the child dying on SIGTERM).
-   */
   function streamingProcess(chunks: string[]): {
     proc: IProcess;
     kill: ReturnType<typeof vi.fn>;
@@ -663,11 +650,6 @@ describe('AgentTaskService', () => {
     return { proc, kill };
   }
 
-  /**
-   * A process that keeps streaming all of `chunks` regardless of SIGTERM (only
-   * SIGKILL stops it) — simulating a producer that ignores the graceful stop
-   * and keeps writing through the SIGTERM grace window.
-   */
   function sigtermIgnoringProcess(chunks: string[]): {
     proc: IProcess;
     kill: ReturnType<typeof vi.fn>;
@@ -686,7 +668,6 @@ describe('AgentTaskService', () => {
         stdout.destroy();
         resolveWait(137);
       }
-      // SIGTERM is intentionally ignored.
     });
     const proc = {
       stdin: { write: vi.fn(), end: vi.fn() } as unknown as Writable,
@@ -701,7 +682,6 @@ describe('AgentTaskService', () => {
     return { proc, kill };
   }
 
-  /** One-shot non-process task appending its full result at once, like a subagent. */
   function agentLikeTask(result: string, description: string): AgentTask {
     return {
       idPrefix: 'agent',
@@ -737,7 +717,6 @@ describe('AgentTaskService', () => {
     return svc.getTask(taskId);
   }
 
-  /** Re-stub the byte store so `output.log` appends are counted, then build the service. */
   function serviceWithAppendCounter(): {
     svc: IAgentTaskService;
     persistedChars: () => number;
@@ -760,7 +739,6 @@ describe('AgentTaskService', () => {
 
   it('terminates a foreground command that exceeds the output limit and stops forwarding', async () => {
     const svc = ix.get(IAgentTaskService);
-    // 20 MiB total, well past the 16 MiB ceiling.
     const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
     const { proc, kill } = streamingProcess(chunks);
 
@@ -779,8 +757,6 @@ describe('AgentTaskService', () => {
     expect(info?.status).toBe('killed');
     expect(info?.stopReason ?? '').toMatch(/output limit/i);
     expect(kill).toHaveBeenCalledWith('SIGTERM');
-    // The live-forward path is capped at the ceiling rather than draining the
-    // full 20 MiB into the (unbounded) transcript/stderr buffer.
     expect(forwardedChars).toBeLessThanOrEqual(LIMIT_BYTES);
   });
 
@@ -804,8 +780,6 @@ describe('AgentTaskService', () => {
   it('stops enqueuing output to disk once the foreground cap trips', async () => {
     const { svc, persistedChars } = serviceWithAppendCounter();
 
-    // 20 MiB, and the producer ignores SIGTERM so it keeps writing through
-    // the whole grace window.
     const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
     const { proc } = sigtermIgnoringProcess(chunks);
 
@@ -818,18 +792,12 @@ describe('AgentTaskService', () => {
     const info = await waitForTerminal(svc, taskId);
 
     expect(info?.status).toBe('killed');
-    // Before the fix every chunk of the 20 MiB is enqueued into the disk
-    // write chain (retaining each string until its write drains); afterwards
-    // enqueuing stops at the ceiling so the chain cannot grow unbounded.
     expect(persistedChars()).toBeLessThanOrEqual(17 * MiB);
   });
 
   it('stops appending persisted output once the output limit trips for a detached process task', async () => {
     const { svc, persistedChars } = serviceWithAppendCounter();
 
-    // 20 MiB, and the producer ignores SIGTERM so it keeps writing through
-    // the whole grace window. The detached task is still capped: once the
-    // ceiling trips the disk write chain stops growing.
     const chunks = Array.from({ length: 20 }, () => 'x'.repeat(MiB));
     const { proc } = sigtermIgnoringProcess(chunks);
 
@@ -848,8 +816,6 @@ describe('AgentTaskService', () => {
   it('does not cap or drop a detached subagent result larger than the limit', async () => {
     const { svc, persistedChars } = serviceWithAppendCounter();
 
-    // 20 MiB result — well past the 16 MiB ceiling — delivered in one shot,
-    // exactly how a subagent appends its completed result.
     const bigResult = 'y'.repeat(20 * MiB);
     const taskId = svc.registerTask(agentLikeTask(bigResult, 'big subagent result'), {
       detached: true,
@@ -858,8 +824,6 @@ describe('AgentTaskService', () => {
 
     const info = await waitForTerminal(svc, taskId);
 
-    // Non-process tasks must complete normally and have their full result
-    // persisted; the shell-output ceiling must not drop it.
     expect(info?.status).toBe('completed');
     expect(persistedChars()).toBeGreaterThanOrEqual(bigResult.length);
   });

@@ -80,7 +80,6 @@ import {
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
-    // `warning` is owned by `profile` (the agents-md-oversized notice).
     warning: WarningEvent;
   }
 }
@@ -89,14 +88,9 @@ export class AgentProfileService implements IAgentProfileService {
   declare readonly _serviceBrand: undefined;
 
   private optionsValue: ProfileServiceOptions = {};
-  // Live overlay of ephemeral per-tool deltas (`addActiveTool` /
-  // `removeActiveTool`) on top of the persisted `ActiveToolsModel`. `undefined`
-  // means "no overlay — read the Model". Reset on every full `setActiveTools`.
   private activeToolNamesOverlay: readonly string[] | undefined;
   private agentsMdWarning: string | undefined;
 
-  // Effective active-tool set: the live overlay when present, else the persisted
-  // base rebuilt by `wire.replay`. `undefined` means every tool is active.
   private get activeToolNames(): ActiveToolsState {
     return (
       this.activeToolNamesOverlay ??
@@ -154,8 +148,6 @@ export class AgentProfileService implements IAgentProfileService {
     if (profile === undefined) {
       throw new Error(`Unknown agent profile: "${input.profile}"`);
     }
-    // Resolve eagerly so an unknown model id fails the bind here rather than on
-    // the first turn.
     const model = this.modelFactory.resolve(input.model);
 
     const context = await this.buildSystemPromptContext(input.cwd);
@@ -374,14 +366,12 @@ export class AgentProfileService implements IAgentProfileService {
   addActiveTool(name: string): void {
     const activeToolNames = this.activeToolNames;
     if (activeToolNames === undefined || activeToolNames.includes(name)) return;
-    // Ephemeral overlay: not persisted; re-derived on resume by `userTool`.
     this.activeToolNamesOverlay = [...activeToolNames, name];
   }
 
   removeActiveTool(name: string): void {
     const activeToolNames = this.activeToolNames;
     if (activeToolNames === undefined || !activeToolNames.includes(name)) return;
-    // Ephemeral overlay: not persisted; re-derived on resume by `userTool`.
     this.activeToolNamesOverlay = activeToolNames.filter((candidate) => candidate !== name);
   }
 
@@ -411,9 +401,6 @@ export class AgentProfileService implements IAgentProfileService {
       void this.optionsValue.chdir?.(changed.cwd);
     }
     if (changed.modelAlias !== undefined) {
-      // Mirror the resolved model protocol into the ambient telemetry context
-      // (v1 parity: both keys carry the protocol — v2 has no separate provider
-      // type). Unresolvable models yield undefined; never throw.
       const protocol = this.tryResolveRawModel()?.protocol;
       this.telemetryContext.set({ provider_type: protocol, protocol });
     }
@@ -421,8 +408,6 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   private setActiveTools(names: readonly string[]): void {
-    // Full replace: drop the ephemeral overlay (subsequent reads fall back to the
-    // Model) and persist the new base set through the wire.
     this.activeToolNamesOverlay = undefined;
     this.wire.dispatch(setActiveTools({ names: [...names] }));
   }
@@ -472,8 +457,6 @@ export class AgentProfileService implements IAgentProfileService {
   private get thinkingLevel(): ThinkingEffort {
     const stored = this.profileState.thinkingLevel;
     if (stored === 'off' && this.alwaysThinkingModel) {
-      // Re-run the resolver so the always_thinking clamp restores the
-      // configured effort (or the model default) instead of a stale 'off'.
       return resolveThinkingEffort(
         stored,
         this.config.get<ThinkingConfig>(THINKING_SECTION),

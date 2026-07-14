@@ -104,8 +104,6 @@ declare module '#/app/event/eventBus' {
     'assistant.delta': AssistantDeltaEvent;
     'thinking.delta': ThinkingDeltaEvent;
     'tool.call.delta': ToolCallDeltaEvent;
-    // `error` is declared by the `mcp` domain (interface-merge); reused here,
-    // not re-declared.
   }
 }
 
@@ -408,8 +406,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
           turnTelemetry.track2('turn_interrupted', interrupted);
         }
       }
-      // v1 parity: `turn_ended` fires unconditionally at every turn end, even
-      // when the turn never produced a result (it died before the first step).
       const ended: TurnEndedTelemetryEvent = {
         reason: result?.type ?? 'failed',
         duration_ms: Date.now() - startedAt,
@@ -482,11 +478,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return true;
   }
 
-  /**
-   * Drain the step queue for one turn: each queued `StepRequest` drives (or
-   * merges into) one step, and the turn completes once the queue empties.
-   * Only `runTurn` calls this — turns start exclusively through `enqueue`.
-   */
   async run(options: LoopRunOptions): Promise<LoopRunResult> {
     const runtime = this.createLoopRuntime(options);
     try {
@@ -659,11 +650,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     return { type: 'return', result: { type: 'failed', error, steps: runtime.steps } };
   }
 
-  /**
-   * Append the batch's context messages (driver first, then merged requests)
-   * before `onWillBeginStep` hooks run, so compaction / injection hooks observe the
-   * full step input. A materialized driver (a retried step) is skipped.
-   */
   private materializeBatch(batch: StepRequestBatch): void {
     this.materializeRequest(batch.driver);
     for (const request of batch.merged) {
@@ -908,14 +894,6 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     turnId: number,
     onResponseEvent: () => void,
   ): (part: StreamedMessagePart) => void {
-    // Maps a tool call's streaming index to its identity so that interleaved
-    // argument deltas from parallel tool calls can be routed to the right call.
-    // Each provider emits a `function` header before any of its `tool_call_part`
-    // deltas, and a delta's `index` always matches a previously-seen header's
-    // `_streamIndex`. The `undefined` key doubles as the single-call fallback
-    // for providers that stream without indices: those streams never mix indexed
-    // and unindexed parts, so the most recent unindexed header is always the
-    // target.
     const callsByIndex = new Map<number | string | undefined, { id: string; name: string }>();
 
     return (part) => {
@@ -1016,9 +994,6 @@ interface StepRuntime {
 
 type BeginStepResult = { readonly step: StepRuntime } | { readonly result: LoopRunResult };
 
-// Map a non-completed turn result to v1's `interrupt_reason` taxonomy.
-// `blocked` exists in the union for parity but is never emitted — the v2 loop
-// has no blocked end.
 function interruptReasonFor(
   result: Extract<TurnResult, { readonly type: 'cancelled' | 'failed' }>,
 ): TurnInterruptedEvent['interrupt_reason'] {

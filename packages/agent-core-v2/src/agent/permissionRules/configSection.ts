@@ -56,7 +56,6 @@ function isValidPermissionPattern(pattern: string): boolean {
   }
 }
 
-/** Read transform: merge `deny`/`allow`/`ask` and `rules` into a single `rules` array. */
 export const permissionFromToml = (rawSnake: unknown): unknown => {
   if (!isPlainObject(rawSnake)) return rawSnake;
   const raw = transformPlainObject(rawSnake);
@@ -100,7 +99,6 @@ function transformPermissionRule(value: unknown, decision?: 'allow' | 'deny' | '
   return out;
 }
 
-/** Write transform: drop the on-disk `deny`/`allow`/`ask` lists and write `rules`. */
 export const permissionToToml = (value: unknown, rawSnake: unknown): unknown => {
   if (!isPlainObject(value)) return value;
   const out = cloneRecord(rawSnake);

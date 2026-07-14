@@ -147,26 +147,12 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
   }
 }
 
-/**
- * Normalize a persisted `state.json` document into the v2 `SessionMeta` shape.
- *
- * Documents tagged `version: 2` are already v2-shaped and returned as-is.
- * Legacy v1 documents (no `version`) store `createdAt`/`updatedAt` as ISO
- * strings and omit the `id` field; we coerce the timestamps to epoch ms and
- * backfill `id` from the session identity so every reader sees a consistent
- * v2-shaped object. Normalization is in-memory only — the on-disk document is
- * left untouched until an explicit write, so a read-only snapshot of a v1
- * session does not migrate it.
- */
 export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): SessionMeta {
   const legacy = raw as unknown as {
     createdAt?: unknown;
     updatedAt?: unknown;
     workDir?: unknown;
   };
-  // Backfill `cwd` for legacy v1 documents, which store the working directory
-  // as `workDir` (older v1 sessions used `custom.cwd`). New v2 documents already
-  // carry `cwd` and pass through unchanged.
   const cwd =
     raw.cwd ?? (typeof legacy.workDir === 'string' && legacy.workDir.length > 0
       ? legacy.workDir
@@ -184,7 +170,6 @@ export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): Sessi
   };
 }
 
-/** Coerce a persisted timestamp (v2 epoch-ms number or v1 ISO string) to epoch ms. */
 export function toEpochMs(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {

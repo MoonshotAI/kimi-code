@@ -85,8 +85,6 @@ async function runGoalStep(loopService: StubLoop, turn: Turn): Promise<boolean> 
   };
   await loopService.hooks.onWillBeginStep.run(step);
   await loopService.hooks.onDidFinishStep.run(afterStep);
-  // Hooks ask for another step by enqueueing a continuation request (the old
-  // `afterStep.continue` flag); the loop pops it as the next step's driver.
   return loopService.queue.takeNextBatch() !== undefined;
 }
 
@@ -476,95 +474,7 @@ describe('AgentGoalService', () => {
       expect(goals.getGoal().goal?.budget.turnBudget).toBe(2);
     });
 
-    // TODO(phase-4.6): rewrite against wire resume — buildReplay() facade deleted
-    // it('projects restored goal status changes into replay records', async () => {
-    //   await restoreGoalRecords(ctx, goals, [
-    //     {
-    //       type: 'goal.create',
-    //       goalId: 'g1',
-    //       objective: 'work',
-    //       completionCriterion: 'tests pass',
-    //       time: Date.parse('2026-01-01T00:00:00.000Z'),
-    //     },
-    //     { type: 'goal.update', tokensUsed: 5 },
-    //     { type: 'goal.update', turnsUsed: 1 },
-    //     {
-    //       type: 'goal.update',
-    //       status: 'paused',
-    //       reason: 'break',
-    //       actor: 'runtime',
-    //     },
-    //     { type: 'goal.update', status: 'active', actor: 'user' },
-    //     {
-    //       type: 'goal.update',
-    //       status: 'complete',
-    //       reason: 'done',
-    //       actor: 'model',
-    //     },
-    //   ]);
-    //
-    //   expect(replayBuilder.buildReplay()).toEqual([
-    //     expect.objectContaining({
-    //       type: 'goal_updated',
-    //       snapshot: expect.objectContaining({ objective: 'work', status: 'active' }),
-    //       change: { kind: 'created' },
-    //     }),
-    //     expect.objectContaining({
-    //       type: 'goal_updated',
-    //       snapshot: expect.objectContaining({ status: 'paused', terminalReason: 'break' }),
-    //       change: { kind: 'lifecycle', status: 'paused', reason: 'break', actor: 'runtime' },
-    //     }),
-    //     expect.objectContaining({
-    //       type: 'goal_updated',
-    //       snapshot: expect.objectContaining({ status: 'active' }),
-    //       change: { kind: 'lifecycle', status: 'active', reason: undefined, actor: 'user' },
-    //     }),
-    //     expect.objectContaining({
-    //       type: 'goal_updated',
-    //       snapshot: expect.objectContaining({
-    //         status: 'complete',
-    //         terminalReason: 'done',
-    //         turnsUsed: 1,
-    //         tokensUsed: 5,
-    //       }),
-    //       change: {
-    //         kind: 'completion',
-    //         status: 'complete',
-    //         reason: 'done',
-    //         stats: { turnsUsed: 1, tokensUsed: 5, wallClockMs: 0 },
-    //         actor: 'model',
-    //       },
-    //     }),
-    //   ]);
-    // });
 
-    // TODO(phase-4.6): rewrite against wire resume — buildReplay() facade deleted
-    // it('keeps resume-normalization pauses in core replay records', async () => {
-    //   await restoreGoalRecords(ctx, goals, [
-    //     {
-    //       type: 'goal.create',
-    //       goalId: 'g1',
-    //       objective: 'work',
-    //       time: Date.parse('2026-01-01T00:00:00.000Z'),
-    //     },
-    //     {
-    //       type: 'goal.update',
-    //       status: 'paused',
-    //       reason: 'Paused after agent resume',
-    //     },
-    //   ]);
-    //
-    //   expect(replayBuilder.buildReplay().at(-1)).toMatchObject({
-    //     type: 'goal_updated',
-    //     snapshot: { status: 'paused', terminalReason: 'Paused after agent resume' },
-    //     change: {
-    //       kind: 'lifecycle',
-    //       status: 'paused',
-    //       reason: 'Paused after agent resume',
-    //       actor: undefined,
-    //     },
-    //   });
-    // });
 
     it('normalizes active replayed goals to paused', async () => {
       records.length = 0;
@@ -629,8 +539,6 @@ describe('AgentGoalService core workflow hooks', () => {
       turnsUsed: 1,
     });
     expect(loopService.launches).toHaveLength(1);
-    // The continuation message is carried by a queued step request and only
-    // lands in context when the loop pops it.
     expect(loopService.drainNextBatch(context)).toBeDefined();
     expect(context.get().at(-1)?.origin).toEqual({
       kind: 'system_trigger',
@@ -783,14 +691,12 @@ describe('AgentGoalService core workflow hooks', () => {
     await runTerminalUpdateGoalResult(toolExecutor, turn, 'complete', 'outcome prompt');
     await loopService.hooks.onDidFinishStep.run(afterStep);
 
-    // The outcome continuation is a queued step request now, not a ctx flag.
     expect(loopService.hasPendingRequests()).toBe(true);
     expect(goals.getGoal().goal).toBeNull();
     expect(loopService.launches).toEqual([]);
     expect(JSON.stringify(context.get())).not.toContain('goal_completion_summary');
     expect(JSON.stringify(context.get())).not.toContain('goal_blocked_reason');
 
-    // The loop pops the continuation to drive step 2.
     expect(loopService.drainNextBatch(context)).toBeDefined();
     const secondAfterStep: AfterStepContext = {
       turnId: turn.id,
@@ -1102,7 +1008,6 @@ describe('AgentGoalService mid-turn budget stop', () => {
 
       const goal = (await ctx.rpc.getGoal({})).goal;
       expect(goal?.status).toBe('blocked');
-      // The rejected SetGoalBudget never executed: the turn budget is unchanged.
       expect(goal?.budget.turnBudget).toBeNull();
     } finally {
       await ctx.dispose();
@@ -1120,7 +1025,6 @@ describe('AgentGoalService mid-turn budget stop', () => {
       await goals.incrementTurn();
       expect(goals.getGoal().goal?.status).toBe('blocked');
 
-      // Resume does not re-check the budget: the goal comes back active.
       const resumed = await goals.resumeGoal();
       expect(resumed.status).toBe('active');
       const telemetryAfterResume = telemetry.length;
@@ -1128,8 +1032,6 @@ describe('AgentGoalService mid-turn budget stop', () => {
       ctx.mockNextResponse({ type: 'text', text: 'Answering the prompt normally.' });
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hello' }] });
       const events = await ctx.untilTurnEnd();
-      // Let the turn.ended subscriber settle so a (wrongly) launched goal
-      // continuation would be observable below.
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(ctx.llmCalls).toHaveLength(1);

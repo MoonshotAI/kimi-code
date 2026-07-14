@@ -34,7 +34,6 @@ import type {
 import DESCRIPTION from './ask-user.md?raw';
 import { QuestionBackgroundTask } from './question-background-task';
 
-// ── Input schema ─────────────────────────────────────────────────────
 
 const QuestionOptionSchema = z.object({
   label: z
@@ -76,13 +75,6 @@ export interface AskUserQuestionInput {
 const QUESTION_UNIQUENESS_MESSAGE =
   'Question texts must be unique across questions, and option labels must be unique within each question.';
 
-/**
- * Answers are keyed by question text with option labels as values, so both
- * must be unambiguous: question texts unique across the call, option labels
- * unique within their question. Runtime tool-arg validation is AJV against
- * the JSON Schema (where zod refinements are unrepresentable), so the
- * execution path re-runs this check itself.
- */
 function questionUniquenessError(
   questions: AskUserQuestionInput['questions'],
 ): string | null {
@@ -133,7 +125,6 @@ const QUESTION_DISMISSED_MESSAGE = 'User dismissed the question without answerin
 const QUESTION_UNSUPPORTED_FAILURE_MESSAGE =
   'The connected client does not support interactive questions. Do NOT call this tool again. Ask the user directly in your text response instead.';
 
-// ── Implementation ───────────────────────────────────────────────────
 
 export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
   readonly name = 'AskUserQuestion' as const;
@@ -164,8 +155,6 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     args: AskUserQuestionInput,
     { toolCallId, signal, turnId }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
-    // AJV (the runtime arg validator) cannot express the uniqueness refine,
-    // so enforce it here before any UI interaction or task registration.
     const uniquenessError = questionUniquenessError(args.questions);
     if (uniquenessError !== null) {
       return { isError: true, output: uniquenessError };

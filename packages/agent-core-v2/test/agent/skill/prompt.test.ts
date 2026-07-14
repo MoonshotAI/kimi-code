@@ -5,12 +5,6 @@ import {
   renderUserSlashSkillPrompt,
 } from '#/agent/skill/prompt';
 
-/**
- * Regression coverage for the skill directory being surfaced on the
- * `<kimi-skill-loaded>` block. Without `dir`, an agent that loads a skill
- * cannot locate the skill's bundled resources (scripts, templates) by
- * relative path — the bug this guards against.
- */
 describe('renderSkillLoadedBlock skill directory', () => {
   const base = {
     skillName: 'review',
@@ -48,7 +42,6 @@ describe('renderSkillLoadedBlock skill directory', () => {
     const { skillDir: _omit, ...withoutDir } = base;
     const text = renderUserSlashSkillPrompt(withoutDir);
     expect(text).not.toContain('dir=');
-    // Other attributes still render so the block is well-formed.
     expect(text).toContain('name="review"');
     expect(text).toContain('source="user"');
   });

@@ -446,7 +446,6 @@ describe('AskUserQuestionTool', () => {
       expect(registerTask).toHaveBeenCalledOnce();
       expect(registerTask.mock.calls[0]![1]).toMatchObject({ detached: true });
       expect(getTask).toHaveBeenCalledWith('q_test_task_id');
-      // Non-blocking: the question service is not awaited inside the tool call.
       expect(request).not.toHaveBeenCalled();
     });
 

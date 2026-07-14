@@ -54,18 +54,12 @@ const deviceAuth = {
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-/**
- * Scoped credential ref derived for the `https://api.example.com` fixture
- * environment (default OAuth host) — what login resolves when the configured
- * ref does not match its (host, baseUrl) environment.
- */
 const EXAMPLE_COM_SCOPED_REF = {
   storage: 'file',
   key: resolveKimiCodeOAuthKey({ baseUrl: 'https://api.example.com' }),
   oauthHost: 'https://auth.kimi.com',
 } as const;
 
-/** Scoped credential ref for the env-override fixture environment. */
 const ENV_SCOPED_REF = {
   storage: 'file',
   key: resolveKimiCodeOAuthKey({
@@ -238,9 +232,6 @@ describe('OAuthService', () => {
     expect(toolkit.login).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
       expect.objectContaining({
-        // The fixture's configured key does not match its (host, baseUrl)
-        // environment, so login re-derives the slot from the environment
-        // (v1 parity) instead of trusting the stale ref.
         oauthRef: EXAMPLE_COM_SCOPED_REF,
         baseUrl: 'https://api.example.com',
         oauthHost: undefined,
@@ -266,8 +257,6 @@ describe('OAuthService', () => {
         type: 'kimi',
         baseUrl: 'https://api.example.com',
         apiKey: '',
-        // The provisioned entry records the env-scoped slot explicitly, so
-        // the runtime reads the same slot login wrote (v1 parity).
         oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
@@ -348,8 +337,6 @@ describe('OAuthService', () => {
       OAUTH_PROVIDER,
       expect.objectContaining({
         type: 'kimi',
-        // The provisioned entry targets the env environment, not the stale
-        // configured one — so runtime reads hit the same credential slot.
         baseUrl: 'https://env-api.example.com/coding/v1',
         oauth: ENV_SCOPED_REF,
       }),
@@ -368,9 +355,6 @@ describe('OAuthService', () => {
     await svc.startLogin(OAUTH_PROVIDER);
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
 
-    // The slot login targeted and the slot the runtime reads must be the
-    // same env-scoped key — the mismatch was "login succeeds but every
-    // call 401s".
     await svc.status(OAUTH_PROVIDER);
     expect(toolkit.getCachedAccessToken).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
@@ -537,9 +521,6 @@ describe('OAuthService', () => {
 
     const result = await svc.logout(OAUTH_PROVIDER);
     expect(result).toEqual({ logged_out: true, provider: OAUTH_PROVIDER });
-    // Logout deletes from the slot the runtime reads: the fixture's configured
-    // key does not match its (host, baseUrl) environment, so the env-derived
-    // scoped slot is the one cleared (v1 parity).
     expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, EXAMPLE_COM_SCOPED_REF);
     expect(configReplace).toHaveBeenCalledWith('providers', {
       [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' },
@@ -702,9 +683,6 @@ describe('OAuthService', () => {
       }),
     );
     expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
-    // Regression: the `[thinking] enabled` value computed by the shared oauth
-    // apply logic must be persisted, not dropped (previously only the legacy
-    // `default_thinking` key was written).
     expect(configSet).toHaveBeenCalledWith('thinking', { enabled: true });
     expect(events).toEqual([
       {
@@ -741,8 +719,6 @@ describe('OAuthService', () => {
 
     await Promise.all([svc.refreshOAuthProviderModels(), svc.refreshOAuthProviderModels()]);
 
-    // Without the refresh chain both remote fetches would overlap (peak 2); the
-    // chain holds the second run until the first finishes, so the peak stays 1.
     expect(maxInFlight).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });

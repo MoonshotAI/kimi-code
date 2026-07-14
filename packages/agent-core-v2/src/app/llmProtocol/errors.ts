@@ -1,8 +1,5 @@
 import type { FinishReason } from './provider';
 
-/**
- * Base error for all chat provider errors.
- */
 export class ChatProviderError extends Error {
   constructor(message: string) {
     super(message);
@@ -10,9 +7,6 @@ export class ChatProviderError extends Error {
   }
 }
 
-/**
- * Network-level connection failure.
- */
 export class APIConnectionError extends ChatProviderError {
   constructor(message: string) {
     super(message);
@@ -20,9 +14,6 @@ export class APIConnectionError extends ChatProviderError {
   }
 }
 
-/**
- * Request timed out.
- */
 export class APITimeoutError extends ChatProviderError {
   constructor(message: string) {
     super(message);
@@ -30,9 +21,6 @@ export class APITimeoutError extends ChatProviderError {
   }
 }
 
-/**
- * HTTP status error from the API.
- */
 export class APIStatusError extends ChatProviderError {
   readonly statusCode: number;
   readonly requestId: string | null;
@@ -52,10 +40,6 @@ export class APIStatusError extends ChatProviderError {
   }
 }
 
-/**
- * HTTP status error that specifically means the request exceeded the model
- * context window.
- */
 export class APIContextOverflowError extends APIStatusError {
   constructor(
     statusCode: number,
@@ -68,12 +52,6 @@ export class APIContextOverflowError extends APIStatusError {
   }
 }
 
-/**
- * HTTP 413 that specifically means the serialized request body exceeded the
- * provider's byte ceiling (e.g. accumulated base64 images), as opposed to a
- * token-count overflow. Token overflow is recoverable by compaction; a body
- * size rejection is not — it needs media to be dropped or shrunk.
- */
 export class APIRequestTooLargeError extends APIStatusError {
   constructor(
     statusCode: number,
@@ -86,10 +64,6 @@ export class APIRequestTooLargeError extends APIStatusError {
   }
 }
 
-/**
- * HTTP status error that specifically means the provider rate-limited the
- * request.
- */
 export class APIProviderRateLimitError extends APIStatusError {
   constructor(message: string, requestId?: string | null, retryAfterMs?: number | null) {
     super(429, message, requestId, retryAfterMs);
@@ -97,12 +71,6 @@ export class APIProviderRateLimitError extends APIStatusError {
   }
 }
 
-/**
- * HTTP status error that specifically means the provider is overloaded / at
- * capacity (Anthropic 529 `overloaded_error`, OpenAI 503 "server is currently
- * overloaded"). Distinct from rate limiting: the caller's quota is not the
- * constraint, the provider is simply saturated — retry with backoff.
- */
 export class APIProviderOverloadedError extends APIStatusError {
   constructor(
     statusCode: number,
@@ -115,9 +83,6 @@ export class APIProviderOverloadedError extends APIStatusError {
   }
 }
 
-/**
- * The API returned an empty response (no content, no tool calls).
- */
 export class APIEmptyResponseError extends ChatProviderError {
   readonly finishReason: FinishReason | null;
   readonly rawFinishReason: string | null;
@@ -136,35 +101,13 @@ export class APIEmptyResponseError extends ChatProviderError {
   }
 }
 
-// Client-side image rejections thrown before the request is sent (the
-// provider adapter's own media whitelist).
 const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
   /unsupported media type for base64 image/,
   /invalid data url for image/,
 ] as const;
 
-// Server-side image rejections that are safe to recover by stripping media:
-// an unsupported/invalid media type or undecodable image data. These are
-// deliberately narrow and grounded in the documented messages of the major
-// providers (Anthropic, OpenAI, Moonshot/Kimi, Gemini) — image COUNT/SIZE
-// limits or image-input-disabled errors also mention "image", but stripping
-// media either over-recovers or hides a real configuration problem the user
-// should see; only format/data rejections are guaranteed to be fixed by
-// removing the offending image.
-//
-// Matching on provider message text is inherently best-effort: these strings
-// are not a stable contract, so a novel phrasing is missed and the error
-// propagates (the pre-recovery behavior). The entry-point format gate is the
-// structural defense; this recovery only backstops the residue.
-// Every pattern mentions "image" literally, and MEDIA_TYPE_FIELD_PATTERN is
-// separately gated on an "image" anchor — so audio/video media rejections
-// ("unsupported media type", "invalid media type") can never be classified
-// as image errors here. All documented provider image rejections mention
-// "image", so the restriction costs no known match.
 const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
-  // Unsupported format — OpenAI / Moonshot "unsupported image …".
   /unsupported image (?:url|format|type)/,
-  // Undecodable / corrupt image data.
   /does not represent a valid image/,
   /could not (?:process|decode) (?:the |input )?image/,
   /unable to process (?:the |input )?image/,
@@ -172,26 +115,8 @@ const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
   /invalid image(?: data| type| format)?/,
 ] as const;
 
-// Anthropic `media_type` & Gemini `mime_type` enum violations name the field
-// — recoverable only when the message is about an IMAGE. A video/audio
-// `media_type` rejection must surface instead of being blindly
-// media-stripped: unlike images there is no conversion-guidance path for
-// video today, so dropping the user's video silently would hide the real
-// error. Every documented image media_type message also mentions "image",
-// so the anchor costs nothing on the known cases.
 const MEDIA_TYPE_FIELD_PATTERN = /(?:media|mime)_?type/;
 
-/**
- * Whether the provider rejected an IMAGE in the request because of its
- * FORMAT or DATA — an unsupported media type or undecodable image bytes.
- * The rejection is deterministic for a given history (the same image is
- * re-sent on every request, so the session would fail every turn), and the
- * only recovery is to resend once with all media stripped (see the
- * media-stripped resend in `llmRequester`). Body-size (413), context
- * overflow, image count/size limits, image-input-disabled rejections, and
- * non-image (audio/video) media rejections are excluded — the first two
- * have their own recoveries, and the rest are not fixed by stripping media.
- */
 export function isImageFormatError(error: unknown): boolean {
   if (error instanceof APIStatusError) {
     if (error instanceof APIContextOverflowError) return false;
@@ -223,13 +148,6 @@ export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIStatusError) {
     return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
   }
-  // Fallback safety net: an unclassified provider failure — typically an
-  // upstream gateway that forwards the original error only as text, with no
-  // usable HTTP status — lands here as a base `ChatProviderError`. Retrying
-  // beats failing the run on the first transient blip. Image-format
-  // rejections are excluded: they are deterministic per history and recovered
-  // by the media-stripped resend (see isImageFormatError), so retrying the
-  // identical request first would only burn the retry budget.
   return error instanceof ChatProviderError && !isImageFormatError(error);
 }
 
@@ -267,32 +185,15 @@ const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
   /rate-limited/,
 ] as const;
 
-// Wordings that mean the provider itself is saturated rather than throttling
-// this caller. Anchored on "overload" (Anthropic's `overloaded_error`, OpenAI's
-// "server is currently overloaded", Gemini's "model is overloaded") so a bare
-// proxy 503 ("Service Unavailable") does not get misclassified as overload.
 const PROVIDER_OVERLOAD_MESSAGE_PATTERNS = [/overload/] as const;
 
-// Wordings that mean the serialized request BODY was too big, matched against
-// the lowercased message of a 413. Kept separate from the context-overflow
-// patterns above: those describe token counts, these describe bytes. A 413
-// whose message matches neither family stays a plain `APIStatusError` —
-// Vertex phrases prompt-too-long as a 413, so the status alone is not proof
-// of a body-size rejection.
 const REQUEST_TOO_LARGE_MESSAGE_PATTERNS = [
-  // Moonshot / Kimi: "Request exceeds the maximum size".
   /request exceeds the maximum size/,
-  // Reverse proxies (nginx-style HTML body): "413 Request Entity Too Large".
   /request entity too large/,
-  // Anthropic: error type `request_too_large`, message "Request exceeds the
-  // maximum allowed number of bytes".
   /request_too_large/,
   /exceeds? the maximum allowed number of bytes/,
-  // RFC 9110 reason phrase (both the pre-2022 and current names).
   /payload too large/,
   /content too large/,
-  // Plain wordings: generic gateways say "request too large"; Go's
-  // http.MaxBytesReader (common in Go proxies) says "request body too large".
   /request (?:body )?too large/,
 ] as const;
 
@@ -309,8 +210,6 @@ export function normalizeAPIStatusError(
   if (statusCode === 429) {
     return new APIProviderRateLimitError(message, requestId, retryAfterMs);
   }
-  // Context overflow first: Vertex returns prompt-too-long as a 413, and a
-  // token overflow must keep routing to compaction even on that status.
   if (isContextOverflowStatusError(statusCode, message)) {
     return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs);
   }
@@ -343,7 +242,6 @@ export function isContextOverflowStatusError(statusCode: number, message: string
 }
 
 export function isProviderOverloadStatusError(statusCode: number, message: string): boolean {
-  // 529 is Anthropic's dedicated overloaded status — always overload.
   if (statusCode === 529) return true;
   if (statusCode !== 500 && statusCode !== 503) return false;
   const lowerMessage = message.toLowerCase();

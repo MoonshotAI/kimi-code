@@ -16,11 +16,6 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 export interface IAuthLegacyService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Compute the v1 readiness snapshot (`GET /api/v1/auth`). Cheap (one provider
-   * list + one config read + one cached-token probe); safe to call on every
-   * request. Never throws on provider state — the probe returns 200 regardless.
-   */
   get(): Promise<AuthSummary>;
 }
 

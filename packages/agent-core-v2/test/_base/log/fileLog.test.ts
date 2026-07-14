@@ -53,12 +53,10 @@ describe('RotatingFileWriter', () => {
       sink.enqueue(`${i.toString().padStart(3, '0')} ${'x'.repeat(30)}\n`);
       await sink.flush();
     }
-    // Final write to ensure active file exists post-rotation
     sink.enqueue('final\n');
     await sink.flush();
     const files = await listLogs(workDir);
     expect(files).toEqual(expect.arrayContaining(['app.log']));
-    // files = 2 → active + at most 1 archive; no app.log.2 or higher
     expect(files.some((f) => /^app\.log\.[2-9]$/.test(f))).toBe(false);
   });
 
@@ -89,15 +87,12 @@ describe('RotatingFileWriter', () => {
     await sink.flush();
     const text = await readFile(path, 'utf-8');
     expect(text).toMatch(/\.\.\. dropped \d+ entries \.\.\./);
-    // First lines (oldest) should be gone
     expect(text).not.toContain('line0\n');
-    // Latest should be present
     expect(text).toContain(`line${over - 1}\n`);
   });
 
   it('does not throw when fs write fails; emits stderr notice', async () => {
     const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
-    // Force failure by passing an invalid path char on POSIX
     const badWriter = new RotatingFileWriter({
       path: '\0/invalid/path',
       maxBytes: 1024,

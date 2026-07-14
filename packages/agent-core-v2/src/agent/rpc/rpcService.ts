@@ -103,9 +103,6 @@ export class AgentRPCService implements IAgentRPCService {
   ) { }
 
   async prompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
-    // Mirror v1: persist `lastPrompt` and derive an easy title from the first
-    // prompt BEFORE launching the turn, so the web session title is populated as
-    // soon as the conversation starts (gap closed — v2 used to leave it empty).
     await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
     const handle = await this.promptService.enqueue({ message: {
       role: 'user',

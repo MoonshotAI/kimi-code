@@ -11,9 +11,6 @@ export function derefJsonSchema(schema: Record<string, unknown>): Record<string,
   const visited = new Set<string>();
   const result = resolveNode(schema, schema, visited) as Record<string, unknown>;
 
-  // Only delete definition buckets if no refs into them remain in the result.
-  // Cyclic refs are intentionally preserved by resolveNode() and still need
-  // their definition buckets; dropping them would leave dangling pointers.
   if (!hasUnresolvedDefinitionRef(result, '$defs')) {
     delete result['$defs'];
   }
@@ -44,9 +41,6 @@ const TYPE_COMPLETION_SKIP_KEYS = new Set([
   'then',
 ]);
 
-// Child-schema positions that this Kimi normalizer knows how to walk. This is
-// also the source of truth for child-schema keywords that imply the parent
-// schema's type. It is not a list of keywords that Moonshot accepts on the wire.
 const CHILD_SCHEMA_SLOTS = [
   { key: '$defs', kind: 'map' },
   { key: 'definitions', kind: 'map' },
@@ -107,18 +101,6 @@ const NUMERIC_STRUCTURE_KEYS = new Set([
   'multipleOf',
 ]);
 
-/**
- * Return a deep-cloned JSON Schema with missing `type` fields filled in for
- * Kimi tool compatibility.
- *
- * Moonshot's tool validator rejects some valid JSON Schema shapes when nested
- * property schemas omit `type` (for example enum-only MCP properties). This is
- * a provider-compatibility normalizer, not a complete JSON Schema compiler:
- * it resolves local refs, preserves combinator nodes, infers obvious
- * scalar/object/array types, and falls back to `string` only for nested
- * typeless property schemas. The root schema object is treated as a container
- * and is not itself normalized.
- */
 export function normalizeKimiToolSchema(schema: Record<string, unknown>): Record<string, unknown> {
   return ensureKimiPropertyTypes(derefJsonSchema(schema));
 }
@@ -143,8 +125,6 @@ function hasUnresolvedDefinitionRef(node: unknown, bucketKey: string): boolean {
       return true;
     }
     for (const [key, value] of Object.entries(obj)) {
-      // Skip the definition bucket itself when walking the result — we only
-      // care about `$ref` pointers living elsewhere in the schema.
       if (key === bucketKey) continue;
       if (hasUnresolvedDefinitionRef(value, bucketKey)) return true;
     }
@@ -161,12 +141,10 @@ function resolveNode(node: unknown, root: Record<string, unknown>, visited: Set<
   if (typeof node === 'object' && node !== null) {
     const obj = node as Record<string, unknown>;
 
-    // Handle $ref
     if (typeof obj['$ref'] === 'string') {
       const ref = obj['$ref'];
       if (isLocalJsonPointerRef(ref)) {
         if (visited.has(ref)) {
-          // Circular reference — return the $ref as-is to avoid infinite recursion
           return obj;
         }
         const resolvedRef = resolveLocalJsonPointer(root, ref);
@@ -174,11 +152,6 @@ function resolveNode(node: unknown, root: Record<string, unknown>, visited: Set<
           visited.add(ref);
           const resolved = resolveNode(resolvedRef.value, root, visited);
           visited.delete(ref);
-          // Preserve sibling keywords (JSON Schema 2020-12 semantics):
-          // a node may contain `$ref` alongside other fields like
-          // `description`, `default`, or local constraints. Python's deref
-          // implementation merges these with the resolved definition;
-          // sibling keys on the local node take precedence.
           if (typeof resolved === 'object' && resolved !== null && !Array.isArray(resolved)) {
             const merged: Record<string, unknown> = { ...(resolved as Record<string, unknown>) };
             for (const [key, value] of Object.entries(obj)) {
@@ -190,7 +163,6 @@ function resolveNode(node: unknown, root: Record<string, unknown>, visited: Set<
           return resolved;
         }
       }
-      // Unknown $ref — return as-is
       return obj;
     }
 
@@ -310,13 +282,6 @@ function normalizeProperty(node: unknown): void {
       node['type'] = inferTypeFromStructure(node);
     }
   } else if (!hasAnyKey(node, TYPE_COMPLETION_SKIP_KEYS) && typeof node['type'] === 'string') {
-    // Some MCP servers emit schemas where a $ref merge or a generator bug
-    // leaves an explicit type that contradicts the enum/const values (e.g.
-    // type: 'object' alongside string enum values). Moonshot rejects these
-    // as invalid, so repair the type when it disagrees with the values.
-    //
-    // Known trigger: Xcode MCP (xcrun mcpbridge) starting with
-    // Version 26.5 (17F42) generates this bug for String-backed Swift enums.
     const enumValues = node['enum'];
     if (Array.isArray(enumValues) && enumValues.length > 0) {
       try {
@@ -326,8 +291,6 @@ function normalizeProperty(node: unknown): void {
           removeIrrelevantStructureKeys(node, inferred);
         }
       } catch {
-        // Mixed or uninferable enum types — leave the explicit type as-is
-        // and let the provider validator surface the error.
       }
     } else if (hasOwn(node, 'const')) {
       try {
@@ -337,7 +300,6 @@ function normalizeProperty(node: unknown): void {
           removeIrrelevantStructureKeys(node, inferred);
         }
       } catch {
-        // Same as above.
       }
     }
   }

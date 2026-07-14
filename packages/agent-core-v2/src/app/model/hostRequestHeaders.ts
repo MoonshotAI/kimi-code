@@ -25,7 +25,6 @@ export class HostRequestHeaders implements IHostRequestHeaders {
   constructor(readonly headers: Readonly<Record<string, string>> = {}) {}
 }
 
-/** Seed the host-provided outbound identity headers into an App scope. */
 export function hostRequestHeadersSeed(headers: Readonly<Record<string, string>>): ScopeSeed {
   return [[IHostRequestHeaders as ServiceIdentifier<unknown>, new HostRequestHeaders(headers)]];
 }

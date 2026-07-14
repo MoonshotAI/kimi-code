@@ -326,7 +326,6 @@ describe('IExternalHooksRunnerService integration', () => {
           origin: { kind: 'system_trigger', name: 'stop_hook' },
         }),
       );
-      // The queued request only drives the next step; pop it to move on.
       expect(loop.drainNextBatch(context)).toBeDefined();
 
       const second = makeAfterStep(signal);
@@ -522,9 +521,6 @@ describe('IExternalHooksRunnerService integration', () => {
       ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
       ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
 
-      // Construct the observer first so it registers its listeners on the
-      // agent-lifecycle run-hook slot / stop event, then drive them the way
-      // `mirrorAgentRun` does.
       ix.get(ISessionExternalHooksService);
       const agentLifecycle = ix.get(IAgentLifecycleService);
 
@@ -547,7 +543,6 @@ describe('IExternalHooksRunnerService integration', () => {
         },
       ]);
 
-      // SubagentStop is fire-and-forget; flush until it lands.
       await flushMicrotasks();
       await flushMicrotasks();
       expect(fired).toEqual([

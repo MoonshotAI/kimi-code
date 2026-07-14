@@ -61,7 +61,6 @@ export const WriteInputSchema = z.object({
 });
 
 export const WriteOutputSchema = z.object({
-  /** Number of UTF-8 bytes written to disk by this call. */
   bytesWritten: z.number().int().nonnegative(),
 });
 
@@ -77,14 +76,10 @@ export class WriteTool implements BuiltinTool<WriteInput> {
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
-    // Optional so unit tests that construct the tool directly (bypassing DI)
-    // keep working; always registered in production scopes.
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   private get workspaceConfig(): WorkspaceConfig {
-    // Skill roots are merged per call (v1 merged once at tool construction):
-    // the catalog loads asynchronously and gains roots on plugin reloads.
     return extendWorkspaceWithSkillRoots(
       {
         workspaceDir: this.workspaceCtx.workDir,
@@ -129,15 +124,11 @@ export class WriteTool implements BuiltinTool<WriteInput> {
       } else {
         await this.fs.writeText(safePath, args.content);
       }
-      // Report the number of UTF-8 bytes this call wrote to disk. The string
-      // length would only equal the byte count for pure ASCII content, so it
-      // is not used here.
       const bytesWritten = Buffer.byteLength(args.content, 'utf8');
       return {
         output: `${mode === 'append' ? 'Appended' : 'Wrote'} ${String(bytesWritten)} bytes to ${args.path}`,
       };
     } catch (error) {
-      // hostFs wraps raw errnos in `HostFsError`; classify the unwrapped cause.
       const code = (unwrapErrorCause(error) as { code?: unknown } | null)?.code;
       if (code === 'ENOENT') {
         return {
@@ -152,22 +143,6 @@ export class WriteTool implements BuiltinTool<WriteInput> {
     }
   }
 
-  /**
-   * Best-effort check that the parent directory is usable, creating it when
-   * it is missing.
-   *
-   * If the parent (or any ancestor) does not exist, it is created
-   * recursively — mirroring Python's `Path.mkdir(parents=True,
-   * exist_ok=True)` — so the agent does not need a separate `mkdir` round
-   * trip before writing into a fresh subfolder. An existing parent that is
-   * not a directory is still a hard error. Any other `stat` failure
-   * (permissions, an environment without `stat`) is treated as
-   * inconclusive: the check is skipped and the write proceeds, surfacing
-   * the real I/O error if any.
-   *
-   * Returns an error string when the precondition is definitively violated,
-   * or `undefined` otherwise.
-   */
   private async ensureParentDirectory(safePath: string): Promise<string | undefined> {
     const parent = dirname(safePath);
     let stat: HostFileStat;

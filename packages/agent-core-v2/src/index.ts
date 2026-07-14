@@ -266,7 +266,6 @@ export * from '#/app/workspaceRegistry/workspaceRegistry';
 export * from '#/app/workspaceRegistry/workspaceRegistryService';
 export * from '#/app/workspaceRegistry/workspacePersistence';
 export * from '#/app/workspaceRegistry/fileWorkspacePersistence';
-// Register-only bindings not re-exported by their domain barrel — loaded for side effects.
 import '#/app/workspaceRegistry/workspaceQueryService';
 import '#/app/git/gitService';
 export * from '#/session/process/processRunner';
@@ -345,7 +344,6 @@ export * from '#/app/web/webService';
 export * from '#/app/web/providers/local-fetch-url';
 export * from '#/app/web/providers/moonshot-fetch-url';
 
-// Ported agent services. These keep the current service boundaries during the migration.
 export * from '#/agent/blob/agentBlobService';
 export * from '#/agent/blob/agentBlobServiceImpl';
 export * from '#/agent/contextMemory/contextMemory';

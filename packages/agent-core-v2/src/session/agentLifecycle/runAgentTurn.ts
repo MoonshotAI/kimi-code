@@ -31,13 +31,6 @@ import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentP
 
 import type { AgentRunHandle, AgentRunRequest } from './agentLifecycle';
 
-/**
- * Legacy `PromptOrigin` tag emitted when one agent submits a prompt to another
- * (the `Agent` tool, swarm scheduler, …). Wire shape kept unchanged
- * (`kind: 'system_trigger', name: 'subagent'`) so existing session recordings
- * replay against v2 without a protocol schema bump. Rename lives on a separate
- * wire-cleanup PR.
- */
 export const AGENT_RUN_PROMPT_ORIGIN: PromptOrigin = {
   kind: 'system_trigger',
   name: 'subagent',
@@ -47,19 +40,11 @@ const SUBAGENT_MAX_TOKENS_ERROR =
   'Subagent turn failed before completing its final summary: reason=max_tokens';
 
 export interface RunAgentTurnOptions {
-  /** When set, drives a continuation-prompt loop when the agent's summary is too short. */
   readonly summaryPolicy?: AgentProfileSummaryPolicy;
-  /** Cancellation signal. Aborting it cancels the agent's turn. */
   readonly signal: AbortSignal;
-  /** Fires once the turn's first request is committed (used by swarm to fan out). */
   readonly onReady?: () => void;
 }
 
-/**
- * Submit a prompt (or a retry) to `target` and resolve to the running `Turn`
- * plus a promise of the distilled summary/usage. Throws when the underlying
- * `IAgentPromptService.prompt/retry` refuses to launch a turn (busy / no head).
- */
 export async function runAgentTurn(
   target: IAgentScopeHandle,
   request: AgentRunRequest,

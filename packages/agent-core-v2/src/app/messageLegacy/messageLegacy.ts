@@ -30,7 +30,6 @@ import type {
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-/** Listing query — v1 `cursorQuery` plus an optional role filter. */
 export interface MessageListQuery extends CursorQuery {
   readonly role?: MessageRole;
 }
@@ -38,16 +37,7 @@ export interface MessageListQuery extends CursorQuery {
 export interface IMessageLegacyService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * `GET /sessions/{sid}/messages` — paginated, newest-first message history.
-   * Throws `session.not_found` when `sid` is unknown.
-   */
   list(sessionId: string, query: MessageListQuery): Promise<PageResponse<Message>>;
-  /**
-   * `GET /sessions/{sid}/messages/{mid}` — single message by id.
-   * Throws `session.not_found` when `sid` is unknown, `message.not_found` when
-   * the session is known but `mid` is missing, mismatched, or out of range.
-   */
   get(sessionId: string, messageId: string): Promise<Message>;
 }
 

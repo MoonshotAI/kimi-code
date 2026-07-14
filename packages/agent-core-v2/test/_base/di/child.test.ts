@@ -293,7 +293,6 @@ describe('InstantiationService.createChild', () => {
     }
     const ISvc = createDecorator<ISvc>('child-ctor-counter-svc');
 
-    // case 1: parent consumes BEFORE the child is created
     let count = 0;
     class CtorCounter1 implements ISvc {
       tag = 'svc';
@@ -310,7 +309,6 @@ describe('InstantiationService.createChild', () => {
     expect(count).toBe(1);
     parent.dispose();
 
-    // case 2: child is created BEFORE the parent consumes
     count = 0;
     class CtorCounter2 implements ISvc {
       tag = 'svc';
@@ -345,7 +343,6 @@ describe('InstantiationService.createChild', () => {
 
     child.dispose();
 
-    // parent still works; child is dead
     expect(parent.invokeFunction((a) => a.get(IB).value)).toBe(1);
     expect(() => child.invokeFunction((a) => a.get(IB))).toThrow(/disposed/);
 

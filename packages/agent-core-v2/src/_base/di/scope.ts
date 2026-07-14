@@ -70,11 +70,8 @@ export interface IScopeHandle<K extends LifecycleScope = LifecycleScope> {
   dispose(): void;
 }
 
-/** Handle to the process-root App scope. */
 export type IAppScopeHandle = IScopeHandle<LifecycleScope.App>;
-/** Handle to a Session scope (child of App). */
 export type ISessionScopeHandle = IScopeHandle<LifecycleScope.Session>;
-/** Handle to an Agent scope (child of Session). */
 export type IAgentScopeHandle = IScopeHandle<LifecycleScope.Agent>;
 
 function buildCollection(kind: LifecycleScope, extra?: ScopeSeed): ServiceCollection {

@@ -70,19 +70,10 @@ export const ProtocolErrors = {
   },
 } as const satisfies ErrorDomain;
 
-/** @deprecated Use `ProtocolErrors` — same codes, renamed with the domain. */
 export const ChatProviderErrors = ProtocolErrors;
 
 registerErrorDomain(ProtocolErrors);
 
-/**
- * Boundary translation from raw `llmProtocol` provider errors into coded
- * `Error2`s. Idempotent: a `Error2` passes through untouched. The raw
- * error is preserved as `cause` and HTTP fields ride in `details`, so
- * up-stack consumers branch on `code` + `details` (or unwrap `cause`)
- * instead of importing provider classes. Abort-shaped errors are control
- * flow, not provider failures — callers must branch on them before calling.
- */
 export function translateProviderError(error: unknown): Error2 {
   if (isError2(error)) {
     return error;

@@ -45,7 +45,6 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   private readonly onDidChangeEmitter = this._register(new Emitter<readonly TodoItem[]>());
   readonly onDidChange = this.onDidChangeEmitter.event;
 
-  /** Per-agent bindings (reminder per agent, plus the model subscription for main). */
   private readonly agentBindings = new Map<string, IDisposable[]>();
 
   constructor(
@@ -103,10 +102,6 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
 
   private bindMainWire(handle: IAgentScopeHandle): void {
     const wire = handle.accessor.get(IAgentWireService);
-    // Registered on the main agent's wire by `onDidCreateMain`, which fires in
-    // `ensureMainAgent` strictly before that wire's `replay`. Bridge model
-    // changes to `onDidChange`: replay applies silently (no notification), so
-    // this fires only for live `tools.update_store` (`key: 'todo'`) writes, carrying the sanitized model.
     const disposable = wire.subscribe(TodoModel, (state) => {
       this.onDidChangeEmitter.fire(state);
     });

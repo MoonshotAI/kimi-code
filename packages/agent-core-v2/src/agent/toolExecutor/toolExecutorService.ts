@@ -108,9 +108,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
   private missingToolDescriber: MissingToolDescriber | undefined;
   private unavailableToolDescriber: UnavailableToolDescriber | undefined;
-  // Duplicate-call tags written by the `toolDedupe` plugin, consumed by
-  // `trackToolCall`. Pruned on turn change so entries from calls that never
-  // reached telemetry (e.g. an aborted batch) cannot leak across turns.
   private readonly toolCallDupTypes = new Map<string, ToolCallDupType>();
   private dupTypeTurnId: number | undefined;
 
@@ -599,9 +596,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         didCtx.stopTurn === true ||
         effectiveResult.stopTurn === true,
       stopBatchAfterThis: result.stopBatchAfterThis,
-      // Thread the declared delivery through to the yielded result. An
-      // `onDidExecuteTool` hook (the agent/L4 layer) may have already consumed
-      // it by stripping it from `didCtx.result`; in that case this is undefined.
       delivery: coercedResult.delivery,
     };
     return this.resultTruncation.truncateForModel({
@@ -897,7 +891,6 @@ async function raceWithAbortGrace<Result>(
       try {
         signal.removeEventListener('abort', onAbort);
       } catch {
-        // Some AbortSignal polyfills do not implement removeEventListener.
       }
     }
   }

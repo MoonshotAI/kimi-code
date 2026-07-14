@@ -174,7 +174,6 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       try {
         record.process.kill();
       } catch {
-        // best-effort cleanup
       }
     }
     this.records.clear();
@@ -251,9 +250,6 @@ function frameSeq(frame: TerminalFrame): number {
 }
 
 function defaultShell(): string {
-  // Use `||` (not `??`): an EMPTY $SHELL (set but blank, as some daemon/launchd
-  // envs leave it) must still fall back, or a PTY spawn fails with
-  // "posix_spawnp failed".
   return process.env['SHELL'] || '/bin/sh';
 }
 
