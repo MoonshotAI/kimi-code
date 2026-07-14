@@ -704,7 +704,14 @@ export class KimiTUI {
     if (this.session !== undefined) {
       this.updateTerminalTitle();
     }
-    void this.refreshSkillCommands(this.session);
+    // Session-less startup still lists skills: the harness composes the
+    // builtin + user + workspace sources at App scope; the full session
+    // catalog (plugin skills, explicit dirs) replaces it on ensureSession.
+    void this.refreshSkillCommands(
+      this.session ?? {
+        listSkills: () => this.harness.listStartupSkills(this.state.appState.workDir),
+      },
+    );
     void this.refreshPluginCommands(this.session);
   }
 

@@ -25,6 +25,7 @@ import {
   IAgentUsageService,
   IAgentWireRecordService,
   IBootstrapService,
+  IBuiltinSkillSource,
   IConfigService,
   IEventBus,
   IEventService,
@@ -44,6 +45,9 @@ import {
   ISessionQuestionService,
   ISessionTodoService,
   ISessionWorkspaceContext,
+  ISkillCatalogRuntimeOptions,
+  ISkillDiscovery,
+  IUserFileSkillSource,
   IWorkspaceRegistry,
 } from '@moonshot-ai/agent-core-v2';
 import { CoreErrorCodes, isCoreError } from '../../src/core/errors';
@@ -93,6 +97,7 @@ function makeFixture(options?: {
   closeSessionError?: Error;
   disposeError?: Error;
   resolverError?: Error;
+  explicitSkillDirs?: readonly string[];
 }) {
   const calls: Record<string, unknown[]> = {};
   const order: string[] = [];
@@ -306,6 +311,19 @@ function makeFixture(options?: {
     },
   ];
 
+  const skillDef = (name: string, source: string, description: string) => ({
+    name,
+    description,
+    path: `/skills/${name}/SKILL.md`,
+    dir: `/skills/${name}`,
+    content: '',
+    metadata: { type: 'general', disableModelInvocation: false, isSubSkill: false },
+    source,
+  });
+  const builtinSkills = [skillDef('dup', 'builtin', 'builtin dup'), skillDef('builtin-only', 'builtin', 'b')];
+  const userSkills = [skillDef('user-only', 'user', 'u')];
+  const workspaceSkills = [skillDef('dup', 'project', 'workspace dup wins')];
+
   let disposeCalls = 0;
   const appEventBus = makeFakeBus();
   const app = {
@@ -343,6 +361,13 @@ function makeFixture(options?: {
       ],
       [IProviderService, { delete: recordReturning('provider.delete', Promise.resolve()) }],
       [IFlagService, { explainAll: () => flags }],
+      [IBuiltinSkillSource, { load: recordReturning('skills.builtin', Promise.resolve({ skills: builtinSkills })) }],
+      [IUserFileSkillSource, { load: recordReturning('skills.user', Promise.resolve({ skills: userSkills })) }],
+      [
+        ISkillDiscovery,
+        { discover: recordReturning('skills.discover', Promise.resolve({ skills: workspaceSkills })) },
+      ],
+      [ISkillCatalogRuntimeOptions, { explicitDirs: options?.explicitSkillDirs }],
       [ISessionExportService, { export: recordReturning('export.export', Promise.resolve(exportResult)) }],
       [
         IPluginService,
@@ -872,5 +897,28 @@ describe('CoreHarness ensureConfigFile', () => {
     await writeFile(configPath, 'user content', 'utf-8');
     await fx.harness.ensureConfigFile();
     expect(await readFile(configPath, 'utf-8')).toBe('user content');
+  });
+
+
+  it('listStartupSkills merges builtin + user + workspace with workspace winning conflicts', async () => {
+    const fx = makeFixture();
+    const skills = await fx.harness.listStartupSkills('/work');
+
+    const names = skills.map((s) => s.name).toSorted();
+    expect(names).toEqual(['builtin-only', 'dup', 'user-only']);
+    // Same name from builtin and workspace: the higher-priority workspace
+    // contribution replaces the builtin one.
+    expect(skills.find((s) => s.name === 'dup')?.description).toBe('workspace dup wins');
+    expect(fx.calls['skills.builtin']).toHaveLength(1);
+    expect(fx.calls['skills.user']).toHaveLength(1);
+    expect(fx.calls['skills.discover']).toHaveLength(1);
+  });
+
+  it('listStartupSkills skips workspace discovery when explicit skill dirs are set', async () => {
+    const fx = makeFixture({ explicitSkillDirs: ['/explicit'] });
+    const skills = await fx.harness.listStartupSkills('/work');
+
+    expect(skills.map((s) => s.name).toSorted()).toEqual(['builtin-only', 'dup', 'user-only']);
+    expect(fx.calls['skills.discover']).toBeUndefined();
   });
 });

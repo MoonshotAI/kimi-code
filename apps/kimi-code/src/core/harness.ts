@@ -21,9 +21,11 @@ import {
   IAgentPermissionModeService,
   IAgentProfileService,
   IBootstrapService,
+  IBuiltinSkillSource,
   IConfigService,
   IFlagService,
   IModelResolver,
+  InMemorySkillCatalog,
   IPluginService,
   IProviderService,
   ISessionActivity,
@@ -33,16 +35,24 @@ import {
   ISessionLifecycleService,
   ISessionMetadata,
   ISessionWorkspaceContext,
+  ISkillCatalogRuntimeOptions,
+  ISkillDiscovery,
+  IUserFileSkillSource,
   IWorkspaceRegistry,
   logSeed,
   MAIN_AGENT_ID,
+  MERGE_ALL_AVAILABLE_SKILLS_SECTION,
+  projectRoots,
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
   resolveThinkingEffortForModel,
+  SKILL_SOURCE_PRIORITY,
+  summarizeSkill,
   type GetPluginInfoInput,
   type InstallPluginInput,
   type ISessionScopeHandle,
+  type MergeAllAvailableSkillsConfig,
   type PluginCommandDef,
   type PluginInfo,
   type PluginSummary,
@@ -51,6 +61,8 @@ import {
   type Scope,
   type SetPluginEnabledInput,
   type SetPluginMcpServerEnabledInput,
+  type SkillContribution,
+  type SkillSummary,
   type Model,
   type ThinkingDefaults,
 } from '@moonshot-ai/agent-core-v2';
@@ -467,6 +479,38 @@ export class CoreHarness {
     const app = this.deps.app.accessor;
     await app.get(IProviderService).delete(providerId);
     return app.get(IConfigService).getAll();
+  }
+
+  /**
+   * Skills listable before any session exists (session-less startup). v2's
+   * skill catalog is Session-scoped, but its pieces are App-level: the
+   * builtin and user sources are App services, and `skillRoots` +
+   * `skillDiscovery` compose a workspace's skills from a bare workDir (this
+   * is the composition `skillRoots` is exported for). Session-only sources
+   * (explicit dirs, extra dirs, plugin skills) join once the lazy session
+   * lands — `refreshSkillCommands(session)` then replaces this list.
+   */
+  async listStartupSkills(workDir: string): Promise<readonly SkillSummary[]> {
+    const app = this.deps.app.accessor;
+    const config = app.get(IConfigService);
+    await config.ready;
+    const contributions: { c: SkillContribution; priority: number }[] = [
+      { c: await app.get(IBuiltinSkillSource).load(), priority: SKILL_SOURCE_PRIORITY.builtin },
+      { c: await app.get(IUserFileSkillSource).load(), priority: SKILL_SOURCE_PRIORITY.user },
+    ];
+    if ((app.get(ISkillCatalogRuntimeOptions).explicitDirs?.length ?? 0) === 0) {
+      const mergeAllAvailableSkills =
+        config.get<MergeAllAvailableSkillsConfig>(MERGE_ALL_AVAILABLE_SKILLS_SECTION) ?? true;
+      contributions.push({
+        c: await app.get(ISkillDiscovery).discover(await projectRoots(workDir, { mergeAllAvailableSkills })),
+        priority: SKILL_SOURCE_PRIORITY.workspace,
+      });
+    }
+    const merged = new InMemorySkillCatalog();
+    for (const { c } of contributions.toSorted((a, b) => a.priority - b.priority)) {
+      for (const skill of c.skills) merged.register(skill, { replace: true });
+    }
+    return merged.listSkills().map((skill) => summarizeSkill(skill));
   }
 
   async getExperimentalFeatures(): Promise<readonly FlagExplanation[]> {
