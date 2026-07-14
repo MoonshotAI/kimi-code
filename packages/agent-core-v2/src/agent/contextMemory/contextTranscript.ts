@@ -57,6 +57,7 @@ interface MutableMessage {
   toolCallId?: string;
   isError?: boolean;
   origin?: ContextMessage['origin'];
+  display?: ContextMessage['display'];
 }
 
 interface MutableEntry {
@@ -149,6 +150,7 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
             toolCalls: [],
             toolCallId: event.toolCallId,
             isError: event.result.isError,
+            display: event.result.display,
           },
           time,
         });

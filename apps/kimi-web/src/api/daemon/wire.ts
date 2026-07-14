@@ -187,11 +187,40 @@ export interface WireFsHomeResult {
 export type WireMessageContent =
   | { type: 'text'; text: string }
   | { type: 'tool_use'; tool_call_id: string; tool_name: string; input: unknown }
-  | { type: 'tool_result'; tool_call_id: string; output: unknown; is_error?: boolean }
+  | {
+      type: 'tool_result';
+      tool_call_id: string;
+      output: unknown;
+      is_error?: boolean;
+      display?: WireToolResultDisplay;
+    }
   | { type: 'image'; source: WireImageSource }
   | { type: 'video'; source: WireImageSource }
   | { type: 'file'; file_id: string; name: string; media_type: string; size: number }
   | { type: 'thinking'; thinking: string; signature?: string };
+
+/**
+ * Structured, client-only rendering payload attached to a `tool_result` part
+ * (re-declared from the daemon's ToolResultDisplaySchema — web does not depend
+ * on the protocol package). Only the kinds the web renders are modelled;
+ * consumers ignore unknown future kinds.
+ */
+export interface WirePlanResolutionDisplay {
+  kind: 'plan_resolution';
+  outcome:
+    | 'approved'
+    | 'auto_approved'
+    | 'rejected'
+    | 'rejected_and_exited'
+    | 'revise'
+    | 'dismissed';
+  plan: string;
+  path?: string;
+  feedback?: string;
+  selected_label?: string;
+}
+
+export type WireToolResultDisplay = WirePlanResolutionDisplay;
 
 export type WireImageSource =
   | { kind: 'url'; url: string }

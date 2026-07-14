@@ -24,10 +24,11 @@ import type {
   AppMessageContent,
   AppSessionUsage,
   AppTask,
+  AppToolResultDisplay,
 } from '../types';
 import { i18n } from '../../i18n';
 import { toolLabel, toolSummary } from '../../lib/toolMeta';
-import { toAppMessageContent } from './mappers';
+import { toAppMessageContent, toAppToolResultDisplay } from './mappers';
 import type { WireMessageContent } from './wire';
 
 // Subagent turns share the parent session id: their turn / step / delta / tool
@@ -442,12 +443,13 @@ function appendToolResultMessage(
   output: unknown,
   isError: boolean,
   promptId: string,
+  display?: AppToolResultDisplay,
 ): AppMessage {
   const msg: AppMessage = {
     id: ulid('msg_'),
     sessionId,
     role: 'tool',
-    content: [{ type: 'toolResult', toolCallId, output, isError }],
+    content: [{ type: 'toolResult', toolCallId, output, isError, display }],
     createdAt: new Date().toISOString(),
     promptId,
   };
@@ -885,12 +887,13 @@ export function createAgentProjector(): AgentProjector {
         const toolCallId: string = p?.toolCallId;
         const output = p?.output;
         const isError: boolean = p?.isError ?? false;
+        const display = toAppToolResultDisplay(p?.display);
 
         const startTime = s.toolStartTimes.get(toolCallId) ?? Date.now();
         s.toolStartTimes.delete(toolCallId);
         void (Date.now() - startTime); // duration — unused at client level
 
-        const resultMsg = appendToolResultMessage(s, sessionId, toolCallId, output, isError, promptId);
+        const resultMsg = appendToolResultMessage(s, sessionId, toolCallId, output, isError, promptId, display);
         out.push({ type: 'messageCreated', message: cloneMessage(resultMsg) });
 
         // Reset assistant message tracking — next step.started will create a fresh one

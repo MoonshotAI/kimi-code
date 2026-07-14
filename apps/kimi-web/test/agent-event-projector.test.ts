@@ -296,3 +296,54 @@ describe('step-boundary delta alignment', () => {
     );
   });
 });
+
+describe('tool.result projection', () => {
+  it('attaches the plan_resolution display to the toolResult message part', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'tool.result',
+      {
+        turnId: 1,
+        toolCallId: 'call_plan',
+        output: 'Plan rejected by user. Plan mode remains active.',
+        isError: true,
+        display: {
+          kind: 'plan_resolution',
+          outcome: 'rejected',
+          plan: '# Draft Plan',
+          path: '/tmp/plan.md',
+        },
+      },
+      's1',
+    );
+
+    const created = events.find((e) => e.type === 'messageCreated');
+    expect(created).toBeDefined();
+    const part = created!.type === 'messageCreated' ? created!.message.content[0] : undefined;
+    expect(part).toMatchObject({
+      type: 'toolResult',
+      toolCallId: 'call_plan',
+      isError: true,
+      display: {
+        kind: 'plan_resolution',
+        outcome: 'rejected',
+        plan: '# Draft Plan',
+        path: '/tmp/plan.md',
+      },
+    });
+  });
+
+  it('leaves the display undefined when the result event carries none', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'tool.result',
+      { turnId: 1, toolCallId: 'call_read', output: 'file text' },
+      's1',
+    );
+
+    const created = events.find((e) => e.type === 'messageCreated');
+    const part = created!.type === 'messageCreated' ? created!.message.content[0] : undefined;
+    expect(part).toMatchObject({ type: 'toolResult', toolCallId: 'call_read' });
+    expect(part!.type === 'toolResult' ? part!.display : 'n/a').toBeUndefined();
+  });
+});

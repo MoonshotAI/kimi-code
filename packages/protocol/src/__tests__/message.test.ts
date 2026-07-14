@@ -49,6 +49,40 @@ describe('messageContentSchema variants', () => {
     expect(parsed.is_error).toBe(true);
   });
 
+  it('parses tool_result content with a plan_resolution display', () => {
+    const parsed = toolResultContentSchema.parse({
+      type: 'tool_result',
+      tool_call_id: 'call_1',
+      output: 'Plan rejected by user. Plan mode remains active.',
+      is_error: true,
+      display: {
+        kind: 'plan_resolution',
+        outcome: 'rejected',
+        plan: '# Draft Plan',
+        path: '/tmp/plan.md',
+        feedback: 'Add verification steps.',
+      },
+    });
+    expect(parsed.display).toMatchObject({
+      kind: 'plan_resolution',
+      outcome: 'rejected',
+      plan: '# Draft Plan',
+      path: '/tmp/plan.md',
+      feedback: 'Add verification steps.',
+    });
+  });
+
+  it('rejects a plan_resolution display with an unknown outcome', () => {
+    expect(() =>
+      toolResultContentSchema.parse({
+        type: 'tool_result',
+        tool_call_id: 'call_1',
+        output: '',
+        display: { kind: 'plan_resolution', outcome: 'maybe', plan: '# Plan' },
+      }),
+    ).toThrow();
+  });
+
   it('parses image url source', () => {
     const parsed = imageContentSchema.parse({
       type: 'image',

@@ -25,4 +25,12 @@ export default {
   approvePlan: 'Approve plan',
   revise: 'Revise',
   rejectAndExit: 'Reject and Exit',
+  planCard: {
+    approved: 'Approved',
+    autoApproved: 'Auto-approved',
+    rejected: 'Rejected',
+    revise: 'Changes requested',
+    pending: 'Awaiting review',
+    feedback: 'Feedback',
+  },
 } as const;

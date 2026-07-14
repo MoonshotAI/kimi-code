@@ -25,4 +25,12 @@ export default {
   approvePlan: '批准 plan',
   revise: '修改',
   rejectAndExit: '拒绝并退出',
+  planCard: {
+    approved: '已批准',
+    autoApproved: '自动批准',
+    rejected: '已拒绝',
+    revise: '已退回修改',
+    pending: '等待审批',
+    feedback: '反馈',
+  },
 } as const;

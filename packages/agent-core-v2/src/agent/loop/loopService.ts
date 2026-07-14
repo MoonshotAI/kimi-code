@@ -777,7 +777,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         type: 'tool.result',
         parentUuid: toolCallUuids.get(toolResult.toolCallId) ?? randomUUID(),
         toolCallId: toolResult.toolCallId,
-        result: { output: result.output, isError: result.isError, note: result.note },
+        result: {
+          output: result.output,
+          isError: result.isError,
+          note: result.note,
+          display: result.resultDisplay,
+        },
       });
       if (result.stopTurn === true) stopTurn = true;
     }

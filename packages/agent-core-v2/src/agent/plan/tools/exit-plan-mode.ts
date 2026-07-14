@@ -148,6 +148,12 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
       return {
         isError: false,
         output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+        resultDisplay: {
+          kind: 'plan_resolution',
+          outcome: 'auto_approved',
+          plan: resolvedPlan.plan,
+          path: resolvedPlan.path,
+        },
       };
     }
 
@@ -155,6 +161,12 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     return {
       isError: false,
       output: `Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+      resultDisplay: {
+        kind: 'plan_resolution',
+        outcome: 'approved',
+        plan: resolvedPlan.plan,
+        path: resolvedPlan.path,
+      },
     };
   }
 

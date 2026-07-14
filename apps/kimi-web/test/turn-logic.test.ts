@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { AppMessage, AppMessageContent } from '../src/api/types';
+import type { AppMessage, AppMessageContent, AppToolResultDisplay } from '../src/api/types';
 import { latestTodos } from '../src/composables/latestTodos';
 import { messagesToTurns } from '../src/composables/messagesToTurns';
 
@@ -333,6 +333,147 @@ describe('messagesToTurns', () => {
     );
 
     expect(turns[0]).toMatchObject({ role: 'user', text: 'a < b and c > d, no system tag here' });
+  });
+});
+
+describe('messagesToTurns ExitPlanMode plan cards', () => {
+  function exitPlanTurn(
+    display: AppToolResultDisplay | undefined,
+    isError = false,
+    planReview?: { plan: string; path?: string },
+  ) {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          { type: 'toolUse', toolCallId: 'tool-p', toolName: 'ExitPlanMode', input: {} },
+        ]),
+        message('t1', 'tool', [
+          {
+            type: 'toolResult',
+            toolCallId: 'tool-p',
+            output: 'Plan rejected by user. Plan mode remains active.',
+            isError,
+            display,
+          },
+        ]),
+      ],
+      [],
+      undefined,
+      false,
+      planReview ? { 'tool-p': planReview } : {},
+    );
+    return turns[0]?.tools?.[0];
+  }
+
+  it('keeps a rejected plan visible with its body and path from the result display', () => {
+    const tool = exitPlanTurn(
+      {
+        kind: 'plan_resolution',
+        outcome: 'rejected',
+        plan: '# Draft Plan\n- step one',
+        path: '/tmp/plan.md',
+      },
+      true,
+    );
+
+    expect(tool).toMatchObject({
+      status: 'error',
+      plan: {
+        status: 'rejected',
+        content: '# Draft Plan\n- step one',
+        path: '/tmp/plan.md',
+      },
+    });
+  });
+
+  it('maps rejected_and_exited to the rejected card and keeps revise distinct', () => {
+    const exited = exitPlanTurn(
+      { kind: 'plan_resolution', outcome: 'rejected_and_exited', plan: '# Draft Plan' },
+      true,
+    );
+    expect(exited?.plan).toMatchObject({ status: 'rejected', content: '# Draft Plan' });
+
+    const revised = exitPlanTurn({
+      kind: 'plan_resolution',
+      outcome: 'revise',
+      plan: '# Draft Plan',
+      feedback: 'Add verification steps.',
+    });
+    expect(revised?.plan).toMatchObject({
+      status: 'revise',
+      content: '# Draft Plan',
+      feedback: 'Add verification steps.',
+    });
+  });
+
+  it('renders an approved plan with the chosen option', () => {
+    const tool = exitPlanTurn({
+      kind: 'plan_resolution',
+      outcome: 'approved',
+      plan: '# Final Plan',
+      path: '/tmp/plan.md',
+      selectedLabel: 'Approach B',
+    });
+
+    expect(tool?.plan).toMatchObject({
+      status: 'approved',
+      content: '# Final Plan',
+      path: '/tmp/plan.md',
+      chosenOption: 'Approach B',
+    });
+  });
+
+  it('renders an auto-approved plan', () => {
+    const tool = exitPlanTurn({
+      kind: 'plan_resolution',
+      outcome: 'auto_approved',
+      plan: '# Auto Plan',
+    });
+
+    expect(tool?.plan).toMatchObject({ status: 'auto_approved', content: '# Auto Plan' });
+  });
+
+  it('keeps a dismissed review pending', () => {
+    const tool = exitPlanTurn(
+      { kind: 'plan_resolution', outcome: 'dismissed', plan: '# Pending Plan' },
+      false,
+      { plan: '# Pending Plan', path: '/tmp/plan.md' },
+    );
+
+    expect(tool?.plan).toMatchObject({ status: 'pending', content: '# Pending Plan' });
+  });
+
+  it('seeds a pending plan card from the preserved plan_review display', () => {
+    const turns = messagesToTurns(
+      [
+        message('a1', 'assistant', [
+          { type: 'toolUse', toolCallId: 'tool-p', toolName: 'ExitPlanMode', input: {} },
+        ]),
+      ],
+      [],
+      undefined,
+      true,
+      { 'tool-p': { plan: '# Pending Plan', path: '/tmp/plan.md' } },
+    );
+
+    expect(turns[0]?.tools?.[0]?.plan).toMatchObject({
+      status: 'pending',
+      content: '# Pending Plan',
+      path: '/tmp/plan.md',
+    });
+  });
+
+  it('keeps the seeded pending plan when the result carries no display', () => {
+    const tool = exitPlanTurn(undefined, true, {
+      plan: '# Preserved Plan',
+      path: '/tmp/plan.md',
+    });
+
+    expect(tool?.plan).toMatchObject({
+      status: 'pending',
+      content: '# Preserved Plan',
+      path: '/tmp/plan.md',
+    });
   });
 });
 

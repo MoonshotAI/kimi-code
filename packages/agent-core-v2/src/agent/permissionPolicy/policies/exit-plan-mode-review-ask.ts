@@ -61,7 +61,7 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
     display: PlanReviewDisplay,
   ): PermissionPolicyResolution | undefined {
     if (result.decision !== 'approved') {
-      return this.rejectedExitPlanModeApprovalResult(result);
+      return this.rejectedExitPlanModeApprovalResult(result, display);
     }
 
     const selected = selectedExitPlanModeOption(display.options, result.selectedLabel);
@@ -87,12 +87,20 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
       syntheticResult: {
         isError: false,
         output: `Exited plan mode. ${optionPrefix}${formattedPlan}`,
+        resultDisplay: {
+          kind: 'plan_resolution',
+          outcome: 'approved',
+          plan: display.plan,
+          path: display.path,
+          selected_label: result.selectedLabel,
+        },
       },
     };
   }
 
   private rejectedExitPlanModeApprovalResult(
     result: ApprovalResponse,
+    display: PlanReviewDisplay,
   ): PermissionPolicyResolution {
     this.trackRejectedPlanResolution(result);
 
@@ -102,9 +110,22 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
         syntheticResult: {
           isError: false,
           output: 'Plan approval dismissed. Plan mode remains active.',
+          resultDisplay: {
+            kind: 'plan_resolution',
+            outcome: 'dismissed',
+            plan: display.plan,
+            path: display.path,
+          },
         },
       };
     }
+
+    // Embed the rejected plan body (mirroring the approved path's
+    // `## Approved Plan:`) so the plan survives in the model-facing
+    // transcript after rejection; `resultDisplay` carries the same data to
+    // clients structurally (the `plan_review` input display is ephemeral).
+    const savedTo = display.path !== undefined ? `Plan saved to: ${display.path}\n\n` : '';
+    const rejectedPlan = `${savedTo}## Rejected Plan:\n${display.plan}`;
 
     if (result.selectedLabel === 'Reject and Exit') {
       this.plan.exit();
@@ -113,7 +134,13 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
         syntheticResult: {
           isError: true,
           stopTurn: true,
-          output: 'Plan rejected by user. Plan mode deactivated.',
+          output: `Plan rejected by user. Plan mode deactivated.\n${rejectedPlan}`,
+          resultDisplay: {
+            kind: 'plan_resolution',
+            outcome: 'rejected_and_exited',
+            plan: display.plan,
+            path: display.path,
+          },
         },
       };
     }
@@ -126,8 +153,15 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
           isError: false,
           output:
             feedback.length > 0
-              ? `User rejected the plan. Feedback:\n\n${feedback}`
-              : 'User requested revisions. Plan mode remains active.',
+              ? `User rejected the plan. Feedback:\n\n${feedback}\n\n${rejectedPlan}`
+              : `User requested revisions. Plan mode remains active.\n${rejectedPlan}`,
+          resultDisplay: {
+            kind: 'plan_resolution',
+            outcome: 'revise',
+            plan: display.plan,
+            path: display.path,
+            feedback: feedback.length > 0 ? feedback : undefined,
+          },
         },
       };
     }
@@ -137,7 +171,13 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
       syntheticResult: {
         isError: true,
         stopTurn: true,
-        output: 'Plan rejected by user. Plan mode remains active.',
+        output: `Plan rejected by user. Plan mode remains active.\n${rejectedPlan}`,
+        resultDisplay: {
+          kind: 'plan_resolution',
+          outcome: 'rejected',
+          plan: display.plan,
+          path: display.path,
+        },
       },
     };
   }

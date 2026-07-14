@@ -6,7 +6,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import type { PermissionMode, PermissionPolicyResolution } from '#/agent/permissionPolicy/types';
 import { ExitPlanModeReviewAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/exit-plan-mode-review-ask';
 import { IAgentPlanService, type IAgentPlanService as AgentPlanService } from '#/agent/plan/plan';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -30,6 +30,10 @@ interface RuntimeApprovalResponse {
 
 function approvalResponse(response: RuntimeApprovalResponse): ApprovalResponse {
   return response as unknown as ApprovalResponse;
+}
+
+function resultDisplayOf(approval: PermissionPolicyResolution | undefined) {
+  return approval?.kind === 'result' ? approval.syntheticResult?.resultDisplay : undefined;
 }
 
 function planReviewDisplay(
@@ -152,6 +156,13 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
         output: expect.stringContaining('Selected approach: Approach B'),
       },
     });
+    expect(resultDisplayOf(approval)).toMatchObject({
+      kind: 'plan_resolution',
+      outcome: 'approved',
+      plan: '# Plan',
+      path: '/tmp/kimi-plan.md',
+      selected_label: 'Approach B',
+    });
     expect(exitPlanMode).toHaveBeenCalledTimes(1);
     expect(records).toContainEqual({
       event: 'plan_submitted',
@@ -184,6 +195,16 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
         output: expect.stringContaining('Add verification.'),
       },
     });
+    expect(approval?.kind === 'result' ? approval.syntheticResult?.output : '').toContain(
+      '## Rejected Plan:\n# Plan',
+    );
+    expect(resultDisplayOf(approval)).toMatchObject({
+      kind: 'plan_resolution',
+      outcome: 'revise',
+      plan: '# Plan',
+      path: '/tmp/kimi-plan.md',
+      feedback: 'Add verification.',
+    });
     expect(exitPlanMode).not.toHaveBeenCalled();
     expect(records).toContainEqual({
       event: 'plan_resolved',
@@ -205,8 +226,17 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
       kind: 'result',
       syntheticResult: {
         isError: true,
-        output: 'Plan rejected by user. Plan mode remains active.',
+        output: expect.stringContaining('Plan rejected by user. Plan mode remains active.'),
       },
+    });
+    expect(approval?.kind === 'result' ? approval.syntheticResult?.output : '').toContain(
+      '## Rejected Plan:\n# Plan',
+    );
+    expect(resultDisplayOf(approval)).toMatchObject({
+      kind: 'plan_resolution',
+      outcome: 'rejected',
+      plan: '# Plan',
+      path: '/tmp/kimi-plan.md',
     });
     expect(exitPlanMode).not.toHaveBeenCalled();
     expect(records).toContainEqual({
@@ -229,6 +259,12 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
         output: 'Plan approval dismissed. Plan mode remains active.',
       },
     });
+    expect(resultDisplayOf(approval)).toMatchObject({
+      kind: 'plan_resolution',
+      outcome: 'dismissed',
+      plan: '# Plan',
+      path: '/tmp/kimi-plan.md',
+    });
     expect(exitPlanMode).not.toHaveBeenCalled();
     expect(records).toContainEqual({
       event: 'plan_resolved',
@@ -250,8 +286,17 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
       kind: 'result',
       syntheticResult: {
         isError: true,
-        output: 'Plan rejected by user. Plan mode deactivated.',
+        output: expect.stringContaining('Plan rejected by user. Plan mode deactivated.'),
       },
+    });
+    expect(approval?.kind === 'result' ? approval.syntheticResult?.output : '').toContain(
+      '## Rejected Plan:\n# Plan',
+    );
+    expect(resultDisplayOf(approval)).toMatchObject({
+      kind: 'plan_resolution',
+      outcome: 'rejected_and_exited',
+      plan: '# Plan',
+      path: '/tmp/kimi-plan.md',
     });
     expect(exitPlanMode).toHaveBeenCalledTimes(1);
     expect(records).toContainEqual({

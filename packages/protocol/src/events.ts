@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
-import { ToolInputDisplaySchema, type ToolInputDisplay } from './display';
+import {
+  ToolInputDisplaySchema,
+  ToolResultDisplaySchema,
+  type ToolInputDisplay,
+  type ToolResultDisplay,
+} from './display';
 import { messageContentSchema, type MessageContent } from './message';
 import { sessionSchema, sessionStatusSchema, type Session, type SessionStatus } from './session';
 import { isoDateTimeSchema } from './time';
@@ -721,6 +726,9 @@ export interface ToolResultEvent {
   readonly output: unknown;
   readonly isError?: boolean;
   readonly synthetic?: boolean;
+  // Structured client-only rendering payload for the result (e.g. a resolved
+  // plan card) — mirrors `ToolCallStartedEvent.display` on the input side.
+  readonly display?: ToolResultDisplay;
 }
 
 export interface SubagentSpawnedEvent {
@@ -1561,6 +1569,7 @@ export const toolResultEventSchema = z.object({
   output: z.unknown(),
   isError: z.boolean().optional(),
   synthetic: z.boolean().optional(),
+  display: ToolResultDisplaySchema.optional(),
 }) satisfies z.ZodType<ToolResultEvent>;
 
 export const subagentSpawnedEventSchema = z.object({

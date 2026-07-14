@@ -45,6 +45,7 @@
 import type { FinishReason } from '#/app/llmProtocol/finishReason';
 import { createToolMessage, type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { ToolResultDisplay } from '@moonshot-ai/protocol';
 
 import type { ContextMessage } from './types';
 
@@ -101,6 +102,7 @@ export type LoopRecordedEvent =
         readonly output: string | readonly ContentPart[];
         readonly isError?: boolean;
         readonly note?: string;
+        readonly display?: ToolResultDisplay;
       };
       readonly parentUuid?: string;
     };
@@ -182,6 +184,7 @@ export function foldLoopEvent(
         ...createToolMessage(event.toolCallId, typeof output === 'string' ? output : [...output]),
         isError: event.result.isError,
         note: event.result.note,
+        display: event.result.display,
       };
       ctx.pending.delete(event.toolCallId);
       return bind(flushDeferred([...state, toolMessage], ctx), ctx);

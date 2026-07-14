@@ -311,6 +311,12 @@ describe('Plan service', () => {
       const llmInput = ctx.llmCalls[1]!;
       expect(toolResultText(llmInput.history)).toContain('Plan mode deactivated');
       expect(toolResultText(llmInput.history)).toContain('# Plan');
+      const toolMessage = context.get().find((m) => m.role === 'tool');
+      expect(toolMessage?.display).toMatchObject({
+        kind: 'plan_resolution',
+        outcome: 'auto_approved',
+        plan: '# Plan\n\n- Inspect\n- Change\n- Verify',
+      });
     });
 
     it('stops the turn and stays in plan mode when the user rejects the plan', async () => {
@@ -342,6 +348,12 @@ describe('Plan service', () => {
       await expectPlanActive(true);
       expect(ctx.llmCalls).toHaveLength(1);
       expect(toolResultText(context.get())).toContain('Plan rejected by user');
+      const toolMessage = context.get().find((m) => m.role === 'tool');
+      expect(toolMessage?.display).toMatchObject({
+        kind: 'plan_resolution',
+        outcome: 'rejected',
+        plan: '# Plan\n\n- Inspect\n- Change\n- Verify',
+      });
     });
 
     it('does not execute later tool calls in the same batch after plan rejection', async () => {

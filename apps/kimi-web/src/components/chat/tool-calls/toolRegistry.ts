@@ -5,6 +5,7 @@ import { normalizeToolName } from '../../../lib/toolMeta';
 import AgentTool from './AgentTool.vue';
 import AskUserTool from './AskUserTool.vue';
 import EditTool from './EditTool.vue';
+import ExitPlanModeTool from './ExitPlanModeTool.vue';
 import GenericTool from './GenericTool.vue';
 import MediaTool from './MediaTool.vue';
 import SwarmTool from './SwarmTool.vue';
@@ -23,5 +24,6 @@ export function resolveToolRenderer(tool: ToolCall): ToolRenderer {
   if (name === 'task') return AgentTool;
   if (name === 'agentswarm') return SwarmTool;
   if (name === 'askuserquestion') return AskUserTool;
+  if (name === 'exitplanmode') return ExitPlanModeTool;
   return GenericTool;
 }
