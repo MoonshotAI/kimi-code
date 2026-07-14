@@ -208,6 +208,7 @@ describe('applyPrintBackgroundPolicy', () => {
   });
 
   it('warns and returns when the goal wait hits the ceiling', async () => {
+    let now = 0;
     const warn = vi.fn();
     await applyPrintBackgroundPolicy({
       mode: 'exit',
@@ -215,15 +216,45 @@ describe('applyPrintBackgroundPolicy', () => {
       maxTurns: 50,
       countPending: () => 0,
       drain: async () => {},
-      // Empty script: no continuation turn ever ends.
-      turnEndings: scriptedTurnEndings([]),
+      // No continuation turn ever ends; the poll interval elapses each time.
+      turnEndings: {
+        next: async () => {
+          now = 10_001;
+          return null;
+        },
+      },
       skipTurnId: 1,
       warn,
-      now: () => Date.now(),
+      now: () => now,
       goalActive: () => true,
     });
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0]?.[0]).toContain('goal wait ceiling');
+  });
+
+  it('exits the goal wait promptly when the goal settles without a turn ending', async () => {
+    let active = true;
+    const warn = vi.fn();
+    await applyPrintBackgroundPolicy({
+      mode: 'exit',
+      ceilingS: 3600,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      // Poll interval elapses; the goal settles (paused/blocked) mid-wait
+      // without producing a turn.ended.
+      turnEndings: {
+        next: async () => {
+          active = false;
+          return null;
+        },
+      },
+      skipTurnId: 1,
+      warn,
+      now: () => Date.now(),
+      goalActive: () => active,
+    });
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

@@ -86,6 +86,8 @@ import {
 const PROMPT_UI_MODE = 'print';
 const DEFAULT_PRINT_WAIT_CEILING_S = 3600;
 const DEFAULT_PRINT_MAX_TURNS = 50;
+/** Re-check `goalActive` at least this often while waiting for goal turns. */
+const GOAL_WAIT_POLL_MS = 250;
 
 export async function runV2Print(
   opts: CLIOptions,
@@ -604,11 +606,15 @@ export async function applyPrintBackgroundPolicy(
   if (input.goalActive !== undefined) {
     const goalDeadline = input.now() + input.ceilingS * 1000;
     while (input.goalActive()) {
+      // Also wake on a short poll: a goal can leave `active` without any
+      // further turn.ended (budget block at a turn boundary, or a pause after
+      // a continuation-launch failure), which would otherwise hang the run
+      // until the ceiling.
       const ended = await input.turnEndings.next(
-        goalDeadline - input.now(),
+        Math.min(goalDeadline - input.now(), GOAL_WAIT_POLL_MS),
         input.skipTurnId,
       );
-      if (ended === null) {
+      if (ended === null && input.now() >= goalDeadline) {
         input.warn(`print goal wait ceiling reached (${input.ceilingS}s), finishing`);
         return;
       }
