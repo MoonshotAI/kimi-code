@@ -43,12 +43,14 @@ export type StrictPropertyCheck<T, E> = string extends keyof T
     : never;
 
 export interface TurnStartedEvent {
+  turn_id: number;
   mode: 'agent' | 'plan';
   provider_type?: string;
   protocol?: string;
 }
 
 export interface TurnInterruptedEvent {
+  turn_id: number;
   at_step: number;
   mode: 'agent' | 'plan';
   interrupt_reason: 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
@@ -57,6 +59,7 @@ export interface TurnInterruptedEvent {
 }
 
 export interface TurnEndedEvent {
+  turn_id: number;
   reason: 'completed' | 'cancelled' | 'failed';
   duration_ms: number;
   mode: 'agent' | 'plan';
@@ -388,6 +391,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A turn starts running.',
     properties: {
+      turn_id: 'Turn index within the session',
       mode: 'Agent mode the turn runs in',
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
@@ -397,6 +401,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A running turn is interrupted.',
     properties: {
+      turn_id: 'Turn index within the session',
       at_step: 'Step index the turn reached before interruption',
       mode: 'Agent mode the turn ran in',
       interrupt_reason: 'Why the turn was interrupted',
@@ -408,6 +413,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A turn ends, unconditionally.',
     properties: {
+      turn_id: 'Turn index within the session',
       reason: 'How the turn ended',
       duration_ms: 'Turn wall-clock time in milliseconds',
       mode: 'Agent mode the turn ran in',
