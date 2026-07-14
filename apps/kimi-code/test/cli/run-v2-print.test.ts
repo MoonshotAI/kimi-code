@@ -176,6 +176,55 @@ describe('applyPrintBackgroundPolicy', () => {
       }),
     ).rejects.toThrow(PrintSteeredTurnFailedError);
   });
+
+  it('waits for goal continuation turns before applying the mode', async () => {
+    let active = true;
+    let consumed = 0;
+    const drain = vi.fn(async () => {});
+    await applyPrintBackgroundPolicy({
+      mode: 'drain',
+      ceilingS: 60,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain,
+      turnEndings: scriptedTurnEndings([
+        { event: ending(2), apply: () => { consumed += 1; } },
+        {
+          event: ending(3),
+          apply: () => {
+            consumed += 1;
+            active = false;
+          },
+        },
+      ]),
+      skipTurnId: 1,
+      warn: () => {},
+      now: () => Date.now(),
+      goalActive: () => active,
+    });
+    // Both continuation turns ended before the mode ('drain') ran.
+    expect(consumed).toBe(2);
+    expect(drain).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns and returns when the goal wait hits the ceiling', async () => {
+    const warn = vi.fn();
+    await applyPrintBackgroundPolicy({
+      mode: 'exit',
+      ceilingS: 10,
+      maxTurns: 50,
+      countPending: () => 0,
+      drain: async () => {},
+      // Empty script: no continuation turn ever ends.
+      turnEndings: scriptedTurnEndings([]),
+      skipTurnId: 1,
+      warn,
+      now: () => Date.now(),
+      goalActive: () => true,
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('goal wait ceiling');
+  });
 });
 
 describe('createPrintTurnEndings', () => {
