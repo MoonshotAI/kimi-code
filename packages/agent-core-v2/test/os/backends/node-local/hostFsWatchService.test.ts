@@ -29,7 +29,6 @@ describe('HostFsWatchService', () => {
     const svc = new HostFsWatchService();
     handle = svc.watch(root, { recursive });
     handle.onDidChange((e) => events.push(e));
-    // Let chokidar arm before the test mutates the tree.
     await wait(200);
     return events;
   }

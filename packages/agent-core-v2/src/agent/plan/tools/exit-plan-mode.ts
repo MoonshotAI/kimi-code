@@ -4,6 +4,15 @@
  * The LLM calls this tool to surface a finalised plan to the user and
  * exit plan mode. The plan must already be written to the current plan
  * file; this tool reads that file and flips plan mode off.
+ *
+ * `execute` runs only when no interactive review ask intercepted the
+ * call. In auto permission mode the auto-mode-approve policy lets every
+ * call through before any ask can fire, so the result is worded as
+ * auto-approved (not user-reviewed), matching the `auto_approved`
+ * telemetry outcome. In manual / yolo modes the review-ask policy owns
+ * the user-facing result; the only way `execute` still runs there is a
+ * configured or session allow/ask rule — an explicit user decision that
+ * keeps the user-approved output and the `approved` outcome.
  */
 
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
@@ -15,16 +24,10 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import type { PlanData } from '#/agent/plan/plan';
+import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import DESCRIPTION from './exit-plan-mode.md?raw';
 
-// ── Input schema ─────────────────────────────────────────────────────
 
-/**
- * User-selectable option surfaced at plan approval time. The LLM supplies
- * up to 3 of these when the plan contains multiple approaches; the host's
- * ApprovalRuntime presents them to the user and returns the chosen `label`
- * (or `{kind:'revise', feedback}` when the user asks for revisions).
- */
 export interface ExitPlanModeOption {
   label: string;
   description: string;
@@ -78,7 +81,6 @@ type ResolvePlanResult =
   | { readonly ok: true; readonly plan: string; readonly path?: string | undefined }
   | { readonly ok: false; readonly error: ExecutableToolResult };
 
-// ── Implementation ───────────────────────────────────────────────────
 
 export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
   readonly name = 'ExitPlanMode' as const;
@@ -87,6 +89,7 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
 
   constructor(
     @IAgentPlanService private readonly planMode: IAgentPlanService,
+    @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
@@ -140,8 +143,15 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     const failed = this.exitPlanMode();
     if (failed !== undefined) return failed;
 
-    this.telemetry.track2('plan_resolved', { outcome: 'auto_approved' });
+    if (this.permissionMode.mode === 'auto') {
+      this.telemetry.track2('plan_resolved', { outcome: 'auto_approved' });
+      return {
+        isError: false,
+        output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
+      };
+    }
 
+    this.telemetry.track2('plan_resolved', { outcome: 'approved' });
     return {
       isError: false,
       output: `Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
@@ -214,6 +224,11 @@ function hasNoReservedOptionLabels(options: readonly ExitPlanModeOption[]): bool
 
 function normalizeOptionLabel(label: string): string {
   return label.trim().toLowerCase();
+}
+
+function formatAutoApprovedPlanForOutput(plan: string, path: string | undefined): string {
+  const savedTo = path !== undefined ? `Plan saved to: ${path}\n\n` : '';
+  return `Plan mode deactivated. All tools are now available.\nNote: this plan was auto-approved without user review — the user has NOT explicitly approved it. Follow the user's original instructions on whether to proceed with execution; if they asked you to stop, wait, or only summarize after planning, do not start executing.\n${savedTo}## Plan (auto-approved, not user-reviewed):\n${plan}`;
 }
 
 function formatPlanForOutput(plan: string, path: string | undefined): string {

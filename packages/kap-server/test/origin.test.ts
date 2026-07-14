@@ -152,4 +152,34 @@ describe('createOriginHook (onRequest hook)', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers['access-control-allow-origin']).toBeUndefined();
   });
+
+  it('reflects Access-Control-Request-Headers in Allow-Headers for an allowed origin', async () => {
+    const res = await app.inject({
+      method: 'OPTIONS',
+      url: '/api/v1/probe',
+      headers: {
+        origin: 'https://foo.com',
+        host: 'localhost:80',
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'x-request-id, x-kimi-client-version, authorization',
+      },
+    });
+    expect(res.statusCode).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe('https://foo.com');
+    expect(res.headers['access-control-allow-headers']).toBe(
+      'x-request-id, x-kimi-client-version, authorization',
+    );
+  });
+
+  it('falls back to CORS_ALLOW_HEADERS for non-preflight responses', async () => {
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/v1/probe',
+      headers: { origin: 'https://foo.com', host: 'localhost:80' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.headers['access-control-allow-headers']).toBe(
+      'Content-Type, Authorization, X-Kimi-Client-Id, X-Kimi-Client-Name, X-Kimi-Client-Version, X-Kimi-Client-Ui-Mode',
+    );
+  });
 });

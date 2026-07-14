@@ -127,7 +127,6 @@ function bind(state: readonly ContextMessage[], ctx: FoldCtx): readonly ContextM
   return state;
 }
 
-/** Defer-aware `context.append_message` (matches v1 `ContextMemory.appendMessage`). */
 export function foldAppendMessage(
   state: readonly ContextMessage[],
   message: ContextMessage,
@@ -140,7 +139,6 @@ export function foldAppendMessage(
   return bind([...state, message], ctx);
 }
 
-/** Reduce one `context.append_loop_event` record into the history. */
 export function foldLoopEvent(
   state: readonly ContextMessage[],
   event: LoopRecordedEvent,
@@ -148,9 +146,6 @@ export function foldLoopEvent(
   const ctx = ctxOf(state);
   switch (event.type) {
     case 'step.begin': {
-      // A step that failed before `step.end` (a retried attempt, an aborted
-      // turn) leaves its partial assistant open; settle it before opening the
-      // next one so an empty attempt does not strand a ghost assistant.
       const settled = settleOpenStep(state, ctx);
       const assistant: ContextMessage = { role: 'assistant', content: [], toolCalls: [], partial: true };
       ctx.openStepUuid = event.uuid;
@@ -196,11 +191,6 @@ export function foldLoopEvent(
   }
 }
 
-/**
- * Clear fold bookkeeping after an op that invalidates any open exchange
- * (`context.undo` / `context.clear` / `context.apply_compaction`). Returns
- * the same state reference with a fresh fold ctx.
- */
 export function resetFold(state: readonly ContextMessage[]): readonly ContextMessage[] {
   foldCtxMap.set(state, { openStepUuid: undefined, pending: new Set(), deferred: [] });
   return state;
@@ -217,12 +207,6 @@ function appendToOpenAssistant(
   return next;
 }
 
-/**
- * Close the step currently left open: pending tool calls get their interrupted
- * result messages, then the partial assistant is dropped when it is empty
- * (nothing to keep — an empty assistant only trips provider message
- * validation) or sealed in place when it carries content or tool calls.
- */
 function settleOpenStep(
   state: readonly ContextMessage[],
   ctx: FoldCtx,

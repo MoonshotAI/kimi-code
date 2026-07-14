@@ -34,8 +34,6 @@ export class AuthLegacyService implements IAuthLegacyService {
   ) {}
 
   async get(): Promise<AuthSummary> {
-    // Config loads asynchronously during bootstrap; mirror the catalog route's
-    // guard so a first-paint probe never observes a not-yet-loaded snapshot.
     await this.config.ready;
 
     const providers = this.providerService.list();
@@ -63,8 +61,6 @@ export class AuthLegacyService implements IAuthLegacyService {
     try {
       return (await this.oauth.status(MANAGED_PROVIDER_NAME)).loggedIn;
     } catch {
-      // Token-storage failures must not block the readiness probe; treat any
-      // error as "no usable token" (matches v1's `_hasCachedToken`).
       return false;
     }
   }

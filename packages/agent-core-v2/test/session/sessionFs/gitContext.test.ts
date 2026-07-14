@@ -28,14 +28,8 @@ function processWith(stdout: string, exitCode: number, stderr = ''): IProcess {
   };
 }
 
-/** Scripted git output keyed by the full git invocation (`args.slice(3)`). */
 type GitScript = Record<string, { stdout?: string; exitCode?: number; stderr?: string }>;
 
-/**
- * Build a runner whose `git` invocations are driven by `script`. Commands
- * not present in the script fail (exit code 1), matching a probe that did
- * not produce useful output.
- */
 function gitRunner(script: GitScript): { runner: ISessionProcessRunner; exec: ReturnType<typeof vi.fn> } {
   const exec = vi.fn(async (args: readonly string[]) => {
     const key = args.slice(3).join(' ');
@@ -99,7 +93,6 @@ describe('collectGitContext', () => {
     await expect(collectGitContext(runner, '/not-a-repo', logger)).resolves.toBe(
       '<git-context status="unavailable" reason="not-a-repo"/>',
     );
-    // A definitive not-a-repo is a user-facing signal, not a failure to log.
     expect(debug).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
   });
@@ -255,7 +248,6 @@ describe('collectGitContext', () => {
             pid: 1,
             exitCode: null,
             wait: vi.fn(() => exited),
-            // A real process exits once it receives SIGKILL.
             kill: vi.fn(async () => {
               release(137);
             }),

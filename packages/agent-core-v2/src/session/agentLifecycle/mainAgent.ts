@@ -28,26 +28,17 @@ import { IAgentLifecycleService } from './agentLifecycle';
 export const MAIN_AGENT_ID = 'main';
 
 export interface EnsureMainAgentOptions {
-  /** Profile + Model to bind at creation. Omit for an edge-bound main agent. */
   readonly binding?: BindAgentInput;
-  /**
-   * Permission posture for the main agent. Falls back to the persisted
-   * `defaultPermissionMode` config section when omitted.
-   */
   readonly permissionMode?: PermissionMode;
 }
 
-/**
- * Return the session's main agent, creating it (with its session-start
- * bootstrap wiring) when it does not exist yet.
- */
 export async function ensureMainAgent(
   session: ISessionScopeHandle,
   opts?: EnsureMainAgentOptions,
 ): Promise<IAgentScopeHandle> {
   const agents = session.accessor.get(IAgentLifecycleService);
   session.accessor.get(ISessionCronService);
-  const existing = agents.getHandle(MAIN_AGENT_ID);
+  const existing = await agents.whenReady(MAIN_AGENT_ID);
   if (existing !== undefined) return existing;
   const permissionMode =
     opts?.permissionMode ??
@@ -57,11 +48,7 @@ export async function ensureMainAgent(
     binding: opts?.binding,
     permissionMode,
   });
-  // Force-instantiate the agent plugin service so main-agent-only plugin
-  // guidance is registered before the first turn.
   main.accessor.get(IAgentPluginService);
-  // Notify main-only capabilities (e.g. the cron tool registrar) that the main
-  // agent is ready, so they bind to it without filtering every `onDidCreate`.
   agents.notifyMainCreated(main);
   return main;
 }

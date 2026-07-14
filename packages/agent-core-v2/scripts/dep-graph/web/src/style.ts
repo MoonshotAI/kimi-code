@@ -22,9 +22,7 @@ export const SCOPE_STYLE: Record<ServiceScope, { color: string; badge: string }>
   Agent: { color: '#2f8a4d', badge: 'Agt' },
 };
 
-/** Border / minimap color for scope-mismatch nodes (token registered elsewhere). */
 export const SCOPE_MISMATCH_COLOR = '#f0883e';
-/** Border / minimap color for unresolved nodes (token registered nowhere). */
 export const UNRESOLVED_COLOR = '#f85149';
 
 export const EDGE_KINDS: EdgeKind[] = ['ctor', 'accessor', 'publish', 'subscribe', 'emit', 'on'];

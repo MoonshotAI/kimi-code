@@ -45,7 +45,6 @@ export interface IAgentUsageService {
   record(model: string, usage: TokenUsage, source?: LLMRequestSource): void;
   status(): UsageStatus;
 
-  /** Fires after each live usage record; replay stays silent. */
   readonly onDidRecord: Event<UsageRecordedContext>;
 }
 

@@ -25,7 +25,6 @@ import {
 interface ContextInjectionEntry {
   readonly provider: ContextInjectionProvider;
   readonly name: string;
-  /** Live positions of this variant's injection messages, ascending. */
   readonly positions: number[];
 }
 
@@ -139,9 +138,6 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
       const adopted = insertedInjections?.get(entry.name) ?? [];
       const positions = entry.positions;
       if (adopted.length === 0 && positions.length === 0) continue;
-      // Mirror the context splice onto the ascending positions array: shift
-      // survivors past the deleted range, then replace the deleted segment
-      // with the adopted insertions (which land in [start, start + inserted)).
       let lo = 0;
       while (lo < positions.length && positions[lo]! < splice.start) lo++;
       let hi = lo;

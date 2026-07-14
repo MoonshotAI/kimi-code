@@ -138,8 +138,6 @@ export class AgentActivityService extends Disposable implements IAgentActivitySe
     const turnId = opts?.turnId ?? this.wire.getModel(TurnModel).nextTurnId;
     const origin = opts?.origin ?? USER_PROMPT_ORIGIN;
     const lease = new LeaseImpl(turnId, origin, this);
-    // Session admission consult + lease registration. Throws `activity.session_rejected`
-    // when the session is restoring / quiescing / closing; no lane state is touched yet.
     lease.registration = this.sessionKernel.admitTurn(this.scopeContext.agentId, lease);
 
     this.activeLease = lease;

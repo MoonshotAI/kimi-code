@@ -6,6 +6,9 @@
  * Read/Write/Edit/Grep/Glob — canonicalization, workspace containment,
  * sensitive-file detection (env / credential / SSH key patterns with
  * explicit exemptions like `.env.example`) — and `PathSecurityError`.
+ * `extendWorkspaceWithSkillRoots` merges skill-catalog roots into a tool
+ * workspace so skill directories outside the cwd (e.g. `~/.kimi-code/skills`)
+ * stay reachable — the v2 port of v1's `skill/scanner.ts` helper.
  * Canonicalization is **lexical** only (no `realpath` / symlink following).
  * The guard stays host-aware: callers pass the active `IHostEnvironment`
  * path class so SSH paths stay POSIX even when the host Node process is
@@ -20,9 +23,7 @@ import * as pathe from 'pathe';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
 
 export interface WorkspaceConfig {
-  /** Primary workspace directory (absolute, canonicalized). */
   readonly workspaceDir: string;
-  /** Extra allowed roots (e.g. `--add-dir` CLI flag). */
   readonly additionalDirs: readonly string[];
 }
 
@@ -74,8 +75,6 @@ export function isSensitiveFile(path: string): boolean {
 
   for (const prefix of SENSITIVE_BASENAME_PREFIXES) {
     if (comparableName === prefix) return true;
-    // Catch rename-shielded variants without flagging unrelated filenames
-    // like `id_rsafoo` or ordinary JSON files like `credentials.json`.
     if (comparableName.length > prefix.length && comparableName.startsWith(prefix)) {
       const suffix = comparableName.slice(prefix.length);
       const next = suffix[0];
@@ -141,8 +140,6 @@ function isWin32DriveRelative(path: string): boolean {
 export function normalizeUserPath(path: string, pathClass: PathClass = DEFAULT_PATH_CLASS): string {
   if (pathClass !== 'win32') return path;
 
-  // A bare root slash stays forward so downstream pathe operations
-  // treat it consistently. Matches the py helper's behavior.
   if (path === '/') return '/';
 
   if (path.startsWith('//')) {
@@ -175,10 +172,6 @@ function expandUserPath(path: string, homeDir: string | undefined, pathClass: Pa
   return path;
 }
 
-/**
- * Lexical canonicalization: resolve relative → absolute against `cwd`,
- * then normalize `..` / `.` segments. No filesystem I/O.
- */
 export function canonicalizePath(
   path: string,
   cwd: string,
@@ -208,10 +201,6 @@ export function canonicalizePath(
   return pathe.normalize(abs);
 }
 
-/**
- * True iff `candidate` is `base` itself or a descendant of it, compared
- * on path-component boundaries. Both arguments must already be canonical.
- */
 export function isWithinDirectory(
   candidate: string,
   base: string,
@@ -226,10 +215,6 @@ export function isWithinDirectory(
   return comparableCandidate.startsWith(prefix);
 }
 
-/**
- * True iff `candidate` (already canonical) sits inside any of the workspace
- * roots listed in `config` (primary `workspaceDir` or any `additionalDirs`).
- */
 export function isWithinWorkspace(
   candidate: string,
   config: WorkspaceConfig,
@@ -242,9 +227,23 @@ export function isWithinWorkspace(
   return false;
 }
 
+export function extendWorkspaceWithSkillRoots<T extends WorkspaceConfig>(
+  workspace: T,
+  skillRoots: readonly string[],
+  pathClass: PathClass = DEFAULT_PATH_CLASS,
+): T {
+  const additionalDirs = [...workspace.additionalDirs];
+  for (const root of skillRoots) {
+    if (isWithinDirectory(root, workspace.workspaceDir, pathClass)) continue;
+    if (additionalDirs.some((dir) => isWithinDirectory(root, dir, pathClass))) continue;
+    additionalDirs.push(root);
+  }
+  if (additionalDirs.length === workspace.additionalDirs.length) return workspace;
+  return { ...workspace, additionalDirs };
+}
+
 export interface AssertPathOptions {
   readonly mode: PathAccessOperation;
-  /** When true (default), also reject paths matching a sensitive-file pattern. */
   readonly checkSensitive?: boolean | undefined;
   readonly pathClass?: PathClass | undefined;
 }
@@ -334,15 +333,6 @@ export function resolvePathAccessPath(
   }).path;
 }
 
-/**
- * Throw `PathSecurityError` if `path` escapes the workspace through a relative
- * path, matches a known sensitive file, or is empty. Returns the canonical
- * absolute path when the check passes.
- *
- * Note: this is purely lexical. It does NOT protect against symlink
- * targets that point outside the workspace — that would require kaos-layer
- * realpath support, which is not currently available.
- */
 export function assertPathAllowed(
   path: string,
   cwd: string,

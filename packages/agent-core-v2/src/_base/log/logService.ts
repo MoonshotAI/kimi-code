@@ -130,11 +130,6 @@ export class BoundLogger extends Disposable implements ILogger {
   }
 }
 
-/**
- * App-scope `ILogService`: writes the global rotating file under
- * `<homeDir>/logs`, with its level seeded from `ILogOptions`. Flushes
- * synchronously when the App scope is disposed (process shutdown).
- */
 export class AppLogService extends BoundLogger implements ILogService {
   declare readonly _serviceBrand: undefined;
   private readonly sink: FileLogWriter;

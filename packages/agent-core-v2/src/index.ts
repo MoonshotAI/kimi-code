@@ -195,6 +195,7 @@ export * from '#/agent/runtime/runtimeService';
 export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
 import '#/agent/toolSelect/flag';
+import '#/agent/faultInjection/flag';
 import '#/agent/toolSelect/tools/select-tools';
 export * from '#/agent/toolSelect/dynamicTools';
 export * from '#/agent/toolSelect/toolSelect';
@@ -265,7 +266,6 @@ export * from '#/app/workspaceRegistry/workspaceRegistry';
 export * from '#/app/workspaceRegistry/workspaceRegistryService';
 export * from '#/app/workspaceRegistry/workspacePersistence';
 export * from '#/app/workspaceRegistry/fileWorkspacePersistence';
-// Register-only bindings not re-exported by their domain barrel — loaded for side effects.
 import '#/app/workspaceRegistry/workspaceQueryService';
 import '#/app/git/gitService';
 export * from '#/session/process/processRunner';
@@ -296,6 +296,7 @@ export * from '#/persistence/backends/memory/inMemoryStorageService';
 import '#/app/auth/webSearch/tools/web-search';
 export * from '#/app/auth/auth';
 export * from '#/app/auth/authService';
+export * from '#/app/auth/configSection';
 export * from '#/app/auth/webSearch/webSearch';
 export * from '#/app/auth/webSearch/webSearchService';
 export * from '#/app/auth/webSearch/providers/moonshot-web-search';
@@ -307,6 +308,7 @@ export {
   buildImageCompressionCaption,
   compressBase64ForModel,
   compressImageForModel,
+  gateImageFormatParts,
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,
   READ_IMAGE_BYTE_BUDGET,
@@ -314,6 +316,17 @@ export {
   resolveReadImageByteBudget,
   type ImageCompressionTelemetry,
 } from '#/agent/media/image-compress';
+export {
+  MODEL_ACCEPTED_IMAGE_MIMES,
+  buildImageConversionGuidance,
+  buildUnsupportedImageNotice,
+  decodeBase64Prefix,
+  isModelAcceptedImageMime,
+  normalizeImageMime,
+  parseImageDataUrl,
+  resolveEffectiveImageMime,
+  unsupportedImageMimeFromUrl,
+} from '#/agent/media/image-format-policy';
 export {
   persistOriginalImage,
   sessionMediaOriginalsDir,
@@ -331,7 +344,6 @@ export * from '#/app/web/webService';
 export * from '#/app/web/providers/local-fetch-url';
 export * from '#/app/web/providers/moonshot-fetch-url';
 
-// Ported agent services. These keep the current service boundaries during the migration.
 export * from '#/agent/blob/agentBlobService';
 export * from '#/agent/blob/agentBlobServiceImpl';
 export * from '#/agent/contextMemory/contextMemory';
@@ -364,6 +376,8 @@ export * from '#/agent/fullCompaction/compactionOps';
 export * from '#/agent/fullCompaction/types';
 export * from '#/agent/llmRequester/llmRequester';
 export * from '#/agent/llmRequester/llmRequesterService';
+export * from '#/agent/faultInjection/faultInjection';
+export * from '#/agent/faultInjection/faultInjectionService';
 export * from '#/agent/llmRequester/llmRequestOps';
 export * from '#/_base/utils/retry';
 import '#/agent/loop/configSection';

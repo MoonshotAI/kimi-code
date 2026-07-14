@@ -101,7 +101,7 @@ describe('`kimi server` lifecycle exits with ESERVICE_UNSUPPORTED on unsupported
     // The remaining platforms fall through to the stub that throws
     // `ServiceUnsupportedError` — pin that contract so a future addition
     // (freebsd, etc.) needs a deliberate decision instead of silently working.
-    const { resolveServiceManager, ServiceUnsupportedError } = await import('@moonshot-ai/server');
+    const { resolveServiceManager, ServiceUnsupportedError } = await import('@moonshot-ai/kap-server');
     const mgr = resolveServiceManager('freebsd');
     await expect(
       mgr.install({ host: '127.0.0.1', port: 58627, logLevel: 'info' }),
@@ -112,7 +112,7 @@ describe('`kimi server` lifecycle exits with ESERVICE_UNSUPPORTED on unsupported
 
 describe('`kimi server` lifecycle handles unavailable service managers', () => {
   it('prints a friendly JSON error and exits 2', async () => {
-    const { ServiceUnavailableError } = await import('@moonshot-ai/server');
+    const { ServiceUnavailableError } = await import('@moonshot-ai/kap-server');
     const program = new Command('kimi').exitOverride();
     const server = program.command('server');
     let stdout = '';
@@ -668,36 +668,6 @@ describe('shared parsers stay strict', () => {
     expect(() => parseLogLevel('shout')).toThrow(/invalid --log-level/);
     expect(parseLogLevel(undefined)).toBe('info');
     expect(parseLogLevel('debug')).toBe('debug');
-  });
-});
-
-describe('server-v2 routing (KIMI_CODE_EXPERIMENTAL_FLAG)', () => {
-  it('is off when the env is unset or blank', async () => {
-    const { isServerV2Enabled } = await import('#/cli/sub/server/run');
-    expect(isServerV2Enabled({})).toBe(false);
-    expect(isServerV2Enabled({ KIMI_CODE_EXPERIMENTAL_FLAG: '' })).toBe(false);
-    expect(isServerV2Enabled({ KIMI_CODE_EXPERIMENTAL_FLAG: '   ' })).toBe(false);
-  });
-
-  it('is on for the documented truthy values (case-insensitive)', async () => {
-    const { isServerV2Enabled } = await import('#/cli/sub/server/run');
-    for (const value of ['1', 'true', 'yes', 'on', 'TRUE', 'Yes', 'ON']) {
-      expect(isServerV2Enabled({ KIMI_CODE_EXPERIMENTAL_FLAG: value })).toBe(true);
-    }
-  });
-
-  it('is off for explicit falsey values and arbitrary strings', async () => {
-    const { isServerV2Enabled } = await import('#/cli/sub/server/run');
-    for (const value of ['0', 'false', 'no', 'off', '2', 'server-v2']) {
-      expect(isServerV2Enabled({ KIMI_CODE_EXPERIMENTAL_FLAG: value })).toBe(false);
-    }
-  });
-
-  it('is the canonical experimental-v2 gate', async () => {
-    const { isServerV2Enabled } = await import('#/cli/sub/server/run');
-    const { isKimiV2Enabled, KIMI_V2_ENV } = await import('#/cli/experimental-v2');
-    expect(KIMI_V2_ENV).toBe('KIMI_CODE_EXPERIMENTAL_FLAG');
-    expect(isServerV2Enabled).toBe(isKimiV2Enabled);
   });
 });
 

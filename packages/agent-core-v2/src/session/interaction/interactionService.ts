@@ -26,16 +26,13 @@ interface Pending {
   readonly resolve: (response: unknown) => void;
 }
 
-/** How long a resolved id is remembered for idempotent-conflict signaling. */
 const RECENTLY_RESOLVED_TTL_MS = 60_000;
-/** Upper bound on the resolved-ledger size; oldest entries are swept first. */
 const RECENTLY_RESOLVED_MAX = 256;
 
 export class SessionInteractionService extends Disposable implements ISessionInteractionService {
   declare readonly _serviceBrand: undefined;
 
   private readonly pending = new Map<string, Pending>();
-  /** id → epoch ms when it was resolved. */
   private readonly recentlyResolved = new Map<string, number>();
   private readonly _onDidChangePending = this._register(new Emitter<InteractionPendingChangedEvent>());
   readonly onDidChangePending: Event<InteractionPendingChangedEvent> = this._onDidChangePending.event;
@@ -47,14 +44,6 @@ export class SessionInteractionService extends Disposable implements ISessionInt
     super();
   }
 
-  // When a turn ends (cancelled or otherwise), any pending interaction that
-  // originated from it must not strand in the pending set — otherwise
-  // `sessionActivity` keeps reporting `awaiting_approval` forever (矛盾 c).
-  // The pending origin carries `{ agentId, turnId }`; match by turnId (the
-  // field carried by `turn.ended`), which is unambiguous in practice because
-  // a parent turn waits for its sub-agents before ending. Wired from the
-  // per-agent `IEventBus` by `AgentLifecycleService` (the bus is Agent-scoped,
-  // so it cannot be injected into this Session-scope service directly).
   cancelPendingForTurn(turnId: number): void {
     let changed = false;
     for (const [id, entry] of this.pending) {
@@ -125,7 +114,6 @@ export class SessionInteractionService extends Disposable implements ISessionInt
   }
 
   private rememberResolved(id: string): void {
-    // Lazy sweep: drop expired entries, then cap by size (oldest first).
     const now = Date.now();
     for (const [key, resolvedAt] of this.recentlyResolved) {
       if (now - resolvedAt > RECENTLY_RESOLVED_TTL_MS) this.recentlyResolved.delete(key);

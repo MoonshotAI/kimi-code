@@ -735,6 +735,64 @@ describe('BackgroundManager', () => {
     }
   });
 
+  it('auto-backgrounds a foreground task instead of killing it when its deadline fires', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { manager } = createBackgroundManager();
+      const { proc, killSpy } = pendingProcess();
+      const taskId = manager.registerTask(
+        new ProcessBackgroundTask(proc, 'sleep 60', 'auto background'),
+        {
+          detached: false,
+          timeoutMs: 1_000,
+          detachTimeoutMs: 5_000,
+          autoBackgroundOnTimeout: true,
+        },
+      );
+      const waiting = manager.waitForForegroundRelease(taskId);
+
+      // The 1s foreground deadline detaches the task instead of killing it.
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(waiting).resolves.toBe('timeout_detached');
+      expect(killSpy).not.toHaveBeenCalled();
+      expect(manager.getTask(taskId)).toMatchObject({ status: 'running', detached: true });
+
+      // The task keeps running past the original deadline; the re-armed 5s
+      // detach deadline still applies (1000 + 5000 = 6000ms).
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(manager.getTask(taskId)?.status).toBe('running');
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(manager.getTask(taskId)?.status).toBe('timed_out');
+      expect(killSpy).toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('kills a foreground task on timeout when auto-background is not enabled', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const { manager } = createBackgroundManager();
+      const { proc, killSpy } = pendingProcess();
+      const taskId = manager.registerTask(
+        new ProcessBackgroundTask(proc, 'sleep 60', 'plain timeout'),
+        {
+          detached: false,
+          timeoutMs: 1_000,
+          detachTimeoutMs: 5_000,
+        },
+      );
+      const waiting = manager.waitForForegroundRelease(taskId);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      await expect(waiting).resolves.toBe('terminal');
+      expect(killSpy).toHaveBeenCalled();
+      expect(manager.getTask(taskId)?.status).toBe('timed_out');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('returns undefined or empty output for unknown task ids', async () => {
     const { manager } = createBackgroundManager();
 

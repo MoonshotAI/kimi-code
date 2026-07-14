@@ -276,11 +276,6 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
     return message;
   }
 
-  /**
-   * Rejection messages for agents driven by another agent (no user in the
-   * loop) carry extra "don't retry / don't bypass" guidance. Heuristic: any
-   * agent other than `main` is treated as worker-driven.
-   */
   private usesWorkerRejectionGuidance(): boolean {
     return this.scopeContext.agentId !== 'main';
   }

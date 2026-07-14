@@ -91,8 +91,6 @@ describe('precheckUndo', () => {
   });
 
   it('reports compaction_boundary over insufficient when the boundary stops the scan', () => {
-    // One real user prompt sits after the summary, but count=2 needs more and the
-    // scan is stopped by the summary before reaching the older prompts.
     const history = [user(USER_ORIGIN), compaction(), user(USER_ORIGIN), assistant()];
     expect(precheckUndo(history, 2)).toEqual({
       ok: false,

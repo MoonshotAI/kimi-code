@@ -19,36 +19,17 @@ export interface SseMcpClientOptions {
   readonly clientName?: string;
   readonly clientVersion?: string;
   readonly toolCallTimeoutMs?: number;
-  /**
-   * Reads `process.env[name]` by default. Tests can inject a deterministic
-   * lookup function so they do not have to mutate global env.
-   */
   readonly envLookup?: (name: string) => string | undefined;
-  /**
-   * Lets tests inject a fake `fetch` for the underlying transport.
-   */
   readonly fetch?: typeof fetch;
-  /**
-   * OAuth client provider attached to the transport. Set only when the server
-   * has no static token configuration; the connection manager wires this in
-   * and surfaces `UnauthorizedError` as a `needs-auth` status.
-   */
   readonly oauthProvider?: OAuthClientProvider;
 }
 
-/**
- * Wraps the SDK's deprecated HTTP+SSE transport as a kosong
- * {@link MCPClient}. This exists for compatibility with older MCP servers;
- * new remote servers should prefer streamable HTTP.
- */
 export class SseMcpClient implements MCPClient {
   private readonly client: Client;
   private readonly transport: SSEClientTransport;
   private readonly toolCallTimeoutMs?: number;
   private started = false;
   private closed = false;
-  // Mirrors HttpMcpClient: handshake failures surface through connect(), while
-  // post-ready terminal transport errors become unexpected closes.
   private ready = false;
   private hooksInstalled = false;
   private unexpectedCloseListener: UnexpectedCloseListener | undefined;
@@ -98,11 +79,6 @@ export class SseMcpClient implements MCPClient {
     await this.closeStartedClient();
   }
 
-  /**
-   * Register a listener for unsolicited terminal transport drops. Brief SSE
-   * stream flaps are left to EventSource's retry loop; terminal HTTP status
-   * errors after startup remove the tools from the agent.
-   */
   onUnexpectedClose(listener: UnexpectedCloseListener): void {
     this.unexpectedCloseListener = listener;
     const pending = this.pendingUnexpectedClose;

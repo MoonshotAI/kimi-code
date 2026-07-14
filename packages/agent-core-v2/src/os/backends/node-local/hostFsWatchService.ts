@@ -22,7 +22,6 @@ import {
   IHostFsWatchService,
 } from '#/os/interface/hostFsWatch';
 
-/** Suppress `.git` directories by default — they are high-volume noise. */
 const DEFAULT_IGNORED = (p: string): boolean => /(?:^|[/\\])\.git(?:$|[/\\])/.test(p);
 
 class HostFsWatchHandle implements IHostFsWatchHandle {
@@ -47,8 +46,6 @@ class HostFsWatchHandle implements IHostFsWatchHandle {
       if (mapped !== undefined) this.emitter.fire(mapped);
     });
     this.watcher.on('error', (error: unknown) => {
-      // Best-effort: a watcher error must not crash the host. Higher layers
-      // can always re-subscribe if events stop arriving.
       onUnexpectedError(error);
     });
     this.watcher.add(path);

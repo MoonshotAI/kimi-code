@@ -7,7 +7,7 @@
 // production same-origin server) — every helper here degrades to a no-op
 // outside that environment so callers can stay unconditional in dev-only UI.
 
-export type BackendName = 'v1' | 'v2';
+export type BackendName = 'default' | 'multi';
 
 export interface DevBackendState {
   /** Current upstream target of the dev proxy, e.g. `http://127.0.0.1:58627`. */
@@ -25,7 +25,7 @@ export function initialDevBackendState(): DevBackendState | null {
   const current =
     typeof __KIMI_DEV_PROXY_TARGET__ !== 'undefined' && __KIMI_DEV_PROXY_TARGET__
       ? __KIMI_DEV_PROXY_TARGET__
-      : presets.v1;
+      : presets.default;
   return { current, presets };
 }
 

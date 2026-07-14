@@ -145,7 +145,6 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
 }
 
 function isMissingFileError(error: unknown): boolean {
-  // hostFs wraps raw errnos in `HostFsError`; classify the unwrapped cause.
   const unwrapped = unwrapErrorCause(error);
   if (unwrapped === null || typeof unwrapped !== 'object') return false;
   const code = (unwrapped as { readonly code?: unknown }).code;
@@ -154,10 +153,13 @@ function isMissingFileError(error: unknown): boolean {
 
 export { AgentPlanService as Plan };
 
+// Stays Delayed (non-default): eager construction registers the plan_mode
+// context-injection provider too early and perturbs per-turn injection timing,
+// which breaks goal-reminder injection (test/agent/goal/injection/goalInjection).
 registerScopedService(
   LifecycleScope.Agent,
   IAgentPlanService,
   AgentPlanService,
-  InstantiationType.Eager,
+  InstantiationType.Delayed,
   'plan',
 );

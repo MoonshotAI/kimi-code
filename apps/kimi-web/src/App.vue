@@ -269,9 +269,6 @@ const conversationPaneRef = ref<InstanceType<typeof ConversationPane> | null>(nu
 const showModelPicker = ref(false);
 const showProviders = ref(false);
 
-// Provider management (add / delete) is not shipped by the daemon yet — hide the
-// manager UI entry points for now. Re-enable once POST/DELETE /providers land.
-const PROVIDER_MANAGER_ENABLED = false;
 const showLogin = ref(false);
 const showAddWorkspace = ref(false);
 const showStatusPanel = ref(false);
@@ -476,13 +473,6 @@ function handleCommand(cmd: string): void {
     case '/undo':
       void client.undo();
       break;
-    case '/permission': {
-      // Cycle manual → auto → yolo → manual
-      const current = client.permission.value;
-      const next = current === 'manual' ? 'auto' : current === 'auto' ? 'yolo' : 'manual';
-      client.setPermission(next);
-      break;
-    }
     case '/plan':
       client.togglePlanMode();
       break;
@@ -496,17 +486,8 @@ function handleCommand(cmd: string): void {
       // No popover anchor from a slash command — step to the next level.
       client.setThinking(nextThinkingLevel(client.thinking.value));
       break;
-    case '/help':
-      client.dismissWarning(-1);
-      break;
     case '/status':
       showStatusPanel.value = true;
-      break;
-    case '/model':
-      void openModelPicker();
-      break;
-    case '/provider':
-      if (PROVIDER_MANAGER_ENABLED) void openProviders();
       break;
     case '/login':
       openLogin();

@@ -39,8 +39,6 @@ import type {
 } from '#/persistence/interface/storage';
 import { toStorageIoError } from '#/persistence/interface/storage';
 
-// `fs.watch` often emits a burst per save (plus the temp file of an atomic
-// replace); collapse it into one reload signal.
 const WATCH_DEBOUNCE_MS = 150;
 
 function isEnoent(error: unknown): boolean {
@@ -168,11 +166,6 @@ export class FileStorageService implements IFileSystemStorageService {
       timer = setTimeout(() => emitter.fire(), WATCH_DEBOUNCE_MS);
     };
 
-    // Watch the parent directory and filter by exact path: the directory survives
-    // atomic-replace renames (which would detach a single-file watcher) and it
-    // lets us observe a file that does not exist yet at subscription time. Events
-    // are debounced to collapse the burst a single save (plus its atomic-replace
-    // temp file) emits.
     const arm = (): void => {
       try {
         mkdirSync(dir, { recursive: true, mode: this.dirMode });
@@ -187,7 +180,6 @@ export class FileStorageService implements IFileSystemStorageService {
         watcher.on('error', (error: unknown) => onUnexpectedError(error));
         watcher.add(dir);
       } catch (error) {
-        // Best effort: callers can still reload explicitly when watching fails.
         onUnexpectedError(error);
       }
     };
@@ -224,7 +216,6 @@ export class FileStorageService implements IFileSystemStorageService {
   }
 
   async flush(): Promise<void> {
-    // Writes resolve only after the bytes are durable; nothing is buffered.
   }
 
   async close(): Promise<void> {}

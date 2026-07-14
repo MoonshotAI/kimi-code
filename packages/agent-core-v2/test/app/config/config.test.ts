@@ -1,3 +1,12 @@
+/**
+ * Scenario: agent-facing config projection, owner-registered sections, and env overlays.
+ *
+ * Exercises the public profile/config surfaces and resolves the real
+ * `ConfigService` with TOML document storage while stubbing host and model
+ * boundaries. Run with `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/app/config/config.test.ts`.
+ */
+
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -13,8 +22,6 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
-// Side-effect: registers the `cron` section (with its env bindings) so the
-// live-overlay test below can read `config.get('cron')`.
 import '#/app/cron/configSection';
 import type { CronConfig } from '#/app/cron/configSection';
 import '#/app/skillCatalog/configSection';
@@ -22,14 +29,15 @@ import {
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
 } from '#/app/skillCatalog/configSection';
-// Side-effect: registers the `defaultPermissionMode` section so the test below
-// can assert its schema (and that `yolo` is not a registered domain).
 import '#/agent/permissionMode/configSection';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
-// Side-effect: registers the `image` section (with its env bindings) so the
-// tests below can assert its schema and live env overlay.
 import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
+import {
+  KEEP_ALIVE_ON_EXIT_ENV,
+  resolveAgentTaskConfig,
+  type AgentTaskConfig,
+} from '#/agent/task/configSection';
 import { ILogService } from '#/_base/log/log';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
@@ -38,10 +46,6 @@ import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDo
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
 
-// Historical `osEnv` shape carried by `useProfile` context — the test only
-// exercises the profile-service pass-through; the exact fields don't matter to
-// the assertions, so we keep a minimal literal instead of importing an
-// external type.
 const TEST_OS_ENV = {
   osKind: 'Linux',
   osArch: 'x86_64',
@@ -86,8 +90,6 @@ describe('Agent config', () => {
       initialCapability,
     );
 
-    // `getConfig` returns the profile DTO; the raw provider config is not part
-    // of the v2 wire contract (providers are served by the provider service).
     await expect(ctx.rpc.getConfig({})).resolves.toMatchObject({
       systemPrompt: DEFAULT_TEST_SYSTEM_PROMPT,
       thinkingLevel: 'off',
@@ -373,7 +375,6 @@ describe('defaultPermissionMode config section', () => {
     expect(registry.validate(DEFAULT_PERMISSION_MODE_SECTION, 'yolo')).toBe('yolo');
     expect(() => registry.validate(DEFAULT_PERMISSION_MODE_SECTION, 'bogus')).toThrow();
 
-    // `yolo` is wire sugar, not a config domain — it must never be registered.
     expect(registry.getSection('yolo')).toBeUndefined();
   });
 });
@@ -390,7 +391,6 @@ describe('image config section', () => {
     expect(
       registry.validate(IMAGE_SECTION, { maxEdgePx: 1500, readByteBudget: 131072 }),
     ).toEqual({ maxEdgePx: 1500, readByteBudget: 131072 });
-    // Partial is fine; non-positive / non-integer values are rejected.
     expect(registry.validate(IMAGE_SECTION, { maxEdgePx: 1500 })).toEqual({ maxEdgePx: 1500 });
     expect(() => registry.validate(IMAGE_SECTION, { maxEdgePx: 0 })).toThrow();
     expect(() => registry.validate(IMAGE_SECTION, { readByteBudget: 1.5 })).toThrow();
@@ -409,16 +409,12 @@ describe('image config section', () => {
     const config = ix.get(IConfigService);
     await config.ready;
 
-    // No env, no file → empty default.
     expect(config.get<ImageConfig>(IMAGE_SECTION)).toEqual({});
 
-    // Malformed env (non-numeric / non-positive) parses to undefined and is
-    // ignored rather than thrown or persisted as garbage.
     env['KIMI_IMAGE_MAX_EDGE_PX'] = 'abc';
     env['KIMI_IMAGE_READ_BYTE_BUDGET'] = '-1';
     expect(config.get<ImageConfig>(IMAGE_SECTION)).toEqual({});
 
-    // Valid env resolves into the effective value.
     env['KIMI_IMAGE_MAX_EDGE_PX'] = '1500';
     env['KIMI_IMAGE_READ_BYTE_BUDGET'] = '131072';
     expect(config.get<ImageConfig>(IMAGE_SECTION)).toEqual({
@@ -426,9 +422,66 @@ describe('image config section', () => {
       readByteBudget: 131072,
     });
 
-    // Live re-apply on the next get().
     env['KIMI_IMAGE_MAX_EDGE_PX'] = '2500';
     expect(config.get<ImageConfig>(IMAGE_SECTION).maxEdgePx).toBe(2500);
+
+    disposables.dispose();
+  });
+});
+
+describe('task config section', () => {
+  it('re-applies the keepAliveOnExit env binding on every get()', async () => {
+    const env: Record<string, string> = {};
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(config.get<AgentTaskConfig>('task')?.keepAliveOnExit).toBeUndefined();
+
+    env[KEEP_ALIVE_ON_EXIT_ENV] = '1';
+    expect(config.get<AgentTaskConfig>('task')?.keepAliveOnExit).toBe(true);
+    env[KEEP_ALIVE_ON_EXIT_ENV] = '0';
+    expect(config.get<AgentTaskConfig>('task')?.keepAliveOnExit).toBe(false);
+
+    env[KEEP_ALIVE_ON_EXIT_ENV] = 'true';
+    expect(config.get<AgentTaskConfig>('background')?.keepAliveOnExit).toBe(true);
+
+    disposables.dispose();
+  });
+
+  it('preserves legacy task limits when the env binding creates a task overlay', async () => {
+    const env: Record<string, string> = { [KEEP_ALIVE_ON_EXIT_ENV]: 'true' };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    const storage = new InMemoryStorageService();
+    await storage.write(
+      '',
+      'config.toml',
+      new TextEncoder().encode(
+        '[background]\nmax_running_tasks = 3\nkill_grace_period_ms = 25\n',
+      ),
+    );
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    expect(resolveAgentTaskConfig(config)).toEqual({
+      maxRunningTasks: 3,
+      killGracePeriodMs: 25,
+      keepAliveOnExit: true,
+    });
 
     disposables.dispose();
   });

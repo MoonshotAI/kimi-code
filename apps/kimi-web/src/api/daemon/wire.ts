@@ -110,6 +110,31 @@ export interface WireSessionRuntimeStatus {
   context_usage: number;
 }
 
+// GET /sessions/{id}/goal — camelCase, same shape as the `goal.updated` event
+// payload. The endpoint returns null when no goal is active.
+export interface WireGoalSnapshot {
+  goalId: string;
+  objective: string;
+  completionCriterion?: string;
+  status: 'active' | 'paused' | 'blocked' | 'complete';
+  turnsUsed: number;
+  tokensUsed: number;
+  wallClockMs: number;
+  terminalReason?: string;
+  budget: {
+    tokenBudget: number | null;
+    turnBudget: number | null;
+    wallClockBudgetMs: number | null;
+    remainingTokens: number | null;
+    remainingTurns: number | null;
+    remainingWallClockMs: number | null;
+    tokenBudgetReached: boolean;
+    turnBudgetReached: boolean;
+    wallClockBudgetReached: boolean;
+    overBudget: boolean;
+  };
+}
+
 // GET /sessions/{id}/warnings — session-level warnings (e.g. oversized AGENTS.md).
 export interface WireSessionWarning {
   code: string;
@@ -309,6 +334,7 @@ export interface WireTask {
   parent_tool_call_id?: string;
   suspended_reason?: string;
   swarm_index?: number;
+  run_in_background?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -488,7 +514,8 @@ export interface WireServerHello {
   timestamp: string;
   payload: {
     server_id: string;
-    heartbeat_ms: number;
+    /** Advisory only — kap-server omits this since it sends no heartbeat. */
+    heartbeat_ms?: number;
     max_event_buffer_size: number;
     capabilities: {
       event_batching: boolean;
@@ -561,6 +588,8 @@ export interface WireSessionSnapshot {
   session: WireSession;
   messages: { items: WireMessage[]; has_more: boolean };
   in_flight_turn: WireInFlightTurn | null;
+  /** Live subagent roster at the watermark (absent on older servers). */
+  subagents?: WireTask[];
   pending_approvals: WireApprovalRequest[];
   pending_questions: WireQuestionRequest[];
 }

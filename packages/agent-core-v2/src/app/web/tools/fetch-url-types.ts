@@ -13,9 +13,7 @@
 export type UrlFetchKind = 'passthrough' | 'extracted';
 
 export interface UrlFetchResult {
-  /** The text handed to the LLM. */
   readonly content: string;
-  /** Whether `content` is a verbatim passthrough or extracted main text. */
   readonly kind: UrlFetchKind;
 }
 
@@ -26,12 +24,6 @@ export interface UrlFetcher {
   ): Promise<UrlFetchResult>;
 }
 
-/**
- * Thrown by a `UrlFetcher` when the upstream HTTP request completed but
- * returned a non-success status. The tool branches on this to surface
- * `Status: N` in the error message; non-HTTP failures (DNS, timeout,
- * connection reset, …) keep flowing through as plain `Error`.
- */
 export class HttpFetchError extends Error {
   override readonly name = 'HttpFetchError';
   readonly status: number;

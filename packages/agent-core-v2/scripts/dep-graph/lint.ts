@@ -43,9 +43,6 @@ interface Violation {
 
 function loadGraph(): Graph {
   if (existsSync(SNAPSHOT_PATH)) {
-    // Only trust the snapshot if it's newer than the most recently touched
-    // source file — otherwise a stale JSON would silently mask violations
-    // introduced since the last analyze.
     const snapMtime = statSync(SNAPSHOT_PATH).mtimeMs;
     const srcMtime = latestMtime(SRC_ROOT);
     if (snapMtime >= srcMtime) {
@@ -79,7 +76,7 @@ function lint(graph: Graph): Violation[] {
   for (const edge of graph.edges) {
     if (!edge.unresolved) continue;
     const from = byId.get(edge.from);
-    if (!from) continue; // shouldn't happen — edge from unregistered source
+    if (!from) continue;
     if (edge.kind === 'ctor') {
       violations.push({ severity: 'error', edge, from });
     } else if (edge.kind === 'accessor') {
@@ -101,7 +98,6 @@ function main(): number {
     console.log(
       `  [${v.severity.toUpperCase()} ${v.from.scope}→?] ${v.from.impl} (${v.from.token}) --${v.edge.kind}--> ${v.edge.token}  (no binding visible from ${v.from.scope})`,
     );
-    // Refs are stored repo-relative in the graph, so print verbatim.
     for (const ref of v.edge.refs) {
       console.log(`      ${ref.file}:${ref.line}`);
     }

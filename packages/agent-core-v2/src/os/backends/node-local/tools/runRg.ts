@@ -36,18 +36,9 @@ function disposeProcess(proc: IHostProcess): void {
   try {
     proc.dispose();
   } catch {
-    /* best-effort cleanup */
   }
 }
 
-/**
- * Spawn `rgArgs` (`[rgPath, ...args]`) through the host `IHostProcessService`
- * and drain its stdout/stderr with a byte cap. Handles abort (via `signal`)
- * and a hard timeout with a two-phase kill (SIGTERM, then SIGKILL after a
- * grace period) and process disposal. Returns `{ kind: 'aborted' }` when the
- * run is cancelled so the caller can surface a stable "aborted" message. Spawn
- * failures (e.g. ENOENT) are thrown to the caller.
- */
 export async function runRgOnce(
   processService: IHostProcessService,
   rgArgs: readonly string[],
@@ -67,7 +58,6 @@ export async function runRgOnce(
   try {
     proc.stdin.end();
   } catch {
-    /* already gone */
   }
 
   let timedOut = false;
@@ -80,7 +70,6 @@ export async function runRgOnce(
     try {
       await proc.kill('SIGTERM');
     } catch {
-      /* process already gone */
     }
     const exited = proc
       .wait()
@@ -98,7 +87,6 @@ export async function runRgOnce(
       try {
         await proc.kill('SIGKILL');
       } catch {
-        /* ignore */
       }
     }
     disposeProcess(proc);
@@ -109,8 +97,6 @@ export async function runRgOnce(
     void killProc();
   };
   signal.addEventListener('abort', onAbort);
-  // AbortSignal does not replay past abort events; check once after registering
-  // the listener so already-aborted calls still run the cleanup path.
   if (signal.aborted) onAbort();
 
   const timeoutHandle = setTimeout(() => {
@@ -140,7 +126,6 @@ export async function runRgOnce(
     if (!(isPrematureCloseError(error) && (timedOut || aborted || killed))) {
       throw error;
     }
-    // The disposer intentionally closes streams after a terminating signal.
   } finally {
     clearTimeout(timeoutHandle);
     signal.removeEventListener('abort', onAbort);
@@ -162,11 +147,6 @@ export async function runRgOnce(
   };
 }
 
-/**
- * ripgrep can fail with `os error 11` (EAGAIN, "Resource temporarily
- * unavailable") when its thread pool can't spawn a worker under load. A single
- * single-threaded retry (`-j 1`) sidesteps the pool and usually succeeds.
- */
 export function shouldRetryRipgrepEagain(result: RunRgResult): boolean {
   return (
     result.exitCode !== 0 &&

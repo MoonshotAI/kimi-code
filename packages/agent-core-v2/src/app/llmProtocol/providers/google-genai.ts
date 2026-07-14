@@ -22,16 +22,6 @@ import { mergeConsecutiveUserMessages } from './merge-user-messages';
 
 import { requireProviderApiKey, resolveAuthBackedClient } from './request-auth';
 
-/**
- * Normalize a Google GenAI (Gemini) `finishReason` value to the unified
- * {@link FinishReason} enum.
- *
- * Source: `candidates[0].finishReason` (works for both stream and
- * non-stream — the SDK normalizes them). Gemini does not emit a
- * `tool_calls`-style reason; tool calls come via `parts[].functionCall`
- * and `finishReason` stays `'completed'` even when the model produces
- * function calls.
- */
 function normalizeGoogleGenAIFinishReason(raw: unknown): {
   finishReason: FinishReason | null;
   rawFinishReason: string | null;
@@ -39,10 +29,6 @@ function normalizeGoogleGenAIFinishReason(raw: unknown): {
   if (raw === null || raw === undefined) {
     return { finishReason: null, rawFinishReason: null };
   }
-  // The SDK normally hands us a plain string but older builds wrap it in
-  // an enum-like object. Accept both shapes and uppercase to match the
-  // documented constants. Anything else collapses to "no signal" so we
-  // never emit a junk `[object Object]` raw value.
   let rawString: string;
   if (typeof raw === 'string') {
     rawString = raw.toUpperCase();
@@ -154,22 +140,10 @@ interface GooglePart {
 function toolCallIdToName(toolCallId: string, toolNameById: Map<string, string>): string {
   const name = toolNameById.get(toolCallId);
   if (name !== undefined) return name;
-  // Fallback: ids produced by this provider follow the format
-  // "{tool_name}_{id_suffix}" where `tool_name` may itself contain
-  // underscores (e.g. `fetch_image`) and `id_suffix` is a single trailing
-  // token without underscores (e.g. a random hex / UUID fragment). We strip
-  // the last "_<suffix>" segment by matching it explicitly — splitting on
-  // the first underscore would truncate multi-word tool names like
-  // `fetch_image_<id>` to just `fetch`.
   const match = /^(.+)_[^_]+$/.exec(toolCallId);
   return match?.[1] ?? toolCallId;
 }
 
-/**
- * Convert a data URL or HTTP URL to a Google GenAI inline/file data part.
- * - data: URLs are parsed into { inlineData: { mimeType, data } }
- * - http(s): URLs use { fileData: { fileUri, mimeType } }
- */
 function convertMediaUrl(
   url: string,
   fallbackMimeType: string,
@@ -191,7 +165,6 @@ function convertMediaUrl(
         : fallbackMimeType;
     return { inlineData: { mimeType, data } };
   }
-  // For HTTP(S) URLs, try to guess mime type from extension
   let mimeType = fallbackMimeType;
   try {
     const pathname = new URL(url).pathname.toLowerCase();
@@ -203,7 +176,6 @@ function convertMediaUrl(
     else if (pathname.endsWith('.wav')) mimeType = 'audio/wav';
     else if (pathname.endsWith('.ogg')) mimeType = 'audio/ogg';
   } catch {
-    // URL parsing failed, use fallback
   }
   return { fileData: { fileUri: url, mimeType } };
 }
@@ -215,7 +187,6 @@ function createAbortError(): DOMException {
 async function abortPromise(signal: AbortSignal | undefined): Promise<never> {
   if (signal === undefined) {
     return new Promise(() => {
-      // Intentionally never settles when no signal is provided.
     });
   }
   if (signal.aborted) {
@@ -239,18 +210,15 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
     );
   }
 
-  // GoogleGenAI uses "model" instead of "assistant"
   const role = message.role === 'assistant' ? 'model' : message.role;
   const parts: GooglePart[] = [];
 
-  // Handle content parts
   for (const part of message.content) {
     switch (part.type) {
       case 'text':
         parts.push({ text: part.text });
         break;
       case 'think':
-        // Skip think parts (synthetic)
         break;
       case 'image_url':
         parts.push(convertMediaUrl(part.imageUrl.url, 'image/jpeg'));
@@ -264,7 +232,6 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
     }
   }
 
-  // Handle tool calls
   for (const toolCall of message.toolCalls) {
     let args: Record<string, unknown> = {};
     if (toolCall.arguments) {
@@ -298,15 +265,6 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
   return { role, parts };
 }
 
-/**
- * Convert a tool message into a list of Google GenAI parts.
- *
- * Returns a `functionResponse` part carrying the text output, followed by
- * independent media parts (`inlineData` / `fileData`) for any image/audio/video
- * content in the tool result. This preserves multimodal tool outputs so the
- * next Gemini/Vertex turn can see them — returning only the text would silently
- * drop media and break tool chains that rely on images or audio.
- */
 function toolMessageToFunctionResponseParts(
   message: Message,
   toolNameById: Map<string, string>,
@@ -318,7 +276,6 @@ function toolMessageToFunctionResponseParts(
     throw new ChatProviderError('Tool response is missing `toolCallId`.');
   }
 
-  // Separate text output from media parts
   let textOutput = '';
   const mediaParts: GooglePart[] = [];
   for (const part of message.content) {
@@ -336,7 +293,6 @@ function toolMessageToFunctionResponseParts(
         mediaParts.push(convertMediaUrl(part.videoUrl.url, 'video/mp4'));
         break;
       case 'think':
-        // Skip — handled separately via reasoning channel.
         break;
     }
   }
@@ -389,7 +345,6 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
         expectedToolCallIds.push(toolCall.id);
       }
 
-      // Collect consecutive tool messages
       let j = i + 1;
       const toolMessages: Message[] = [];
       while (j < messages.length) {
@@ -400,10 +355,6 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
       }
 
       if (toolMessages.length > 0) {
-        // Sort tool results to match the order of tool calls in the assistant
-        // message, and reject incomplete / duplicated / unexpected results.
-        // Gemini/Vertex expects the next user turn to contain a matching set of
-        // function responses for the preceding function calls.
         const toolMsgById = new Map<string, Message>();
         const seenToolCallIds = new Set<string>();
         for (const toolMsg of toolMessages) {
@@ -432,9 +383,6 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
           );
         }
 
-        // Pack all tool results into a single user Content.
-        // Each tool result may expand to multiple parts (functionResponse +
-        // media parts for image/audio/video outputs).
         const parts: GooglePart[] = [];
         for (const toolMsg of sortedToolMessages) {
           parts.push(...toolMessageToFunctionResponseParts(toolMsg, toolNameById));
@@ -449,7 +397,6 @@ export function messagesToGoogleGenAIContents(messages: Message[]): GoogleConten
     }
 
     if (message.role === 'tool') {
-      // Tool message without preceding assistant message
       const parts: GooglePart[] = toolMessageToFunctionResponseParts(message, toolNameById);
       contents.push({ role: 'user', parts });
       i += 1;
@@ -524,16 +471,12 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
       return;
     }
     const normalized = normalizeGoogleGenAIFinishReason(raw);
-    // Only overwrite when we got a definitive signal — early stream
-    // chunks may contain `FINISH_REASON_UNSPECIFIED` while the model is
-    // still generating, and we treat those as "not yet known".
     if (normalized.finishReason !== null || normalized.rawFinishReason !== null) {
       this._finishReason = normalized.finishReason;
       this._rawFinishReason = normalized.rawFinishReason;
     }
   }
 
-  /** Yield parts from a single (non-streamed) GenerateContentResponse. */
   private _extractChunkParts(response: Record<string, unknown>): StreamedMessagePart[] {
     const parts: StreamedMessagePart[] = [];
 
@@ -573,7 +516,6 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
     return parts;
   }
 
-  /** Extract usage metadata from a response chunk. */
   private _extractUsage(response: Record<string, unknown>): void {
     const usageMetadata = response['usageMetadata'] as Record<string, unknown> | undefined;
     if (usageMetadata) {
@@ -594,7 +536,6 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
     }
   }
 
-  /** Extract response ID from a response chunk. */
   private _extractId(response: Record<string, unknown>): void {
     if (response['responseId'] !== undefined) {
       this._id = response['responseId'] as string;
@@ -602,9 +543,6 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
   }
 
   private _throwIfAborted(signal: AbortSignal | undefined): void {
-    // Helper kept small so TypeScript's control-flow narrowing does not
-    // collapse `signal.aborted` to `false | undefined` at call sites that
-    // check the signal repeatedly between async steps.
     if (signal !== undefined && signal.aborted) {
       throw createAbortError();
     }
@@ -630,9 +568,6 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
   ): AsyncGenerator<StreamedMessagePart> {
     try {
       for await (const chunk of response) {
-        // Check abort at each chunk boundary so users who pass an
-        // AbortSignal see cancellation honored promptly even though the
-        // Google GenAI SDK does not forward it to the underlying fetch.
         this._throwIfAborted(signal);
         this._extractUsage(chunk);
         this._extractId(chunk);
@@ -643,8 +578,6 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
         }
       }
     } catch (error: unknown) {
-      // Preserve AbortError identity so the retry/generate loop can
-      // distinguish it from transient provider errors.
       if (error instanceof DOMException && error.name === 'AbortError') {
         throw error;
       }
@@ -655,25 +588,18 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
 const NETWORK_RE = /network|connection|connect|disconnect|fetch failed/i;
 const TIMEOUT_RE = /timed?\s*out|timeout|deadline/i;
 
-/**
- * Convert a Google GenAI SDK error (or raw Error) to a kosong `ChatProviderError`.
- */
 export function convertGoogleGenAIError(error: unknown): ChatProviderError {
-  // Google SDK's exported ApiError carries an HTTP status code
   if (error instanceof GoogleApiError) {
     return normalizeAPIStatusError(error.status, error.message);
   }
   if (error instanceof Error) {
     const msg = error.message;
-    // Timeout takes priority over network (a timeout is also a connection issue)
     if (TIMEOUT_RE.test(msg)) {
       return new APITimeoutError(msg);
     }
-    // Network / fetch errors (e.g. TypeError: fetch failed)
     if (NETWORK_RE.test(msg) || (error instanceof TypeError && msg.includes('fetch'))) {
       return new APIConnectionError(msg);
     }
-    // Try to extract status code from unknown error shapes
     const statusCode = (error as { code?: number }).code;
     if (typeof statusCode === 'number') {
       return normalizeAPIStatusError(statusCode, msg);
@@ -786,8 +712,6 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     history: Message[],
     options?: GenerateOptions,
   ): Promise<StreamedMessage> {
-    // Short-circuit if the caller has already aborted — the Google GenAI
-    // SDK will not honor the signal natively, so we must check manually.
     if (options?.signal?.aborted === true) {
       throw createAbortError();
     }
@@ -810,10 +734,6 @@ export class GoogleGenAIChatProvider implements ChatProvider {
 
       const params = { model: this._model, contents, config };
 
-      // The Google GenAI SDK does not accept an AbortSignal, so we must race
-      // the initial SDK request against the caller's abort signal ourselves.
-      // Once we have a response/stream object, the wrapper below continues to
-      // check the signal at each chunk boundary.
       options?.onRequestSent?.();
       if (this._stream) {
         const stream = await Promise.race([
@@ -849,12 +769,6 @@ export class GoogleGenAIChatProvider implements ChatProvider {
       { cachedClient: this._client, clientFactory: this._clientFactory },
       auth,
       (a) => {
-        // Vertex AI auth flows through google-auth-library service credentials,
-        // not a request-scoped apiKey, and the @google/genai SDK has no
-        // perRequest header channel — so neither `auth.apiKey` nor
-        // `auth.headers` is propagated in vertexai mode. Callers that need
-        // request-scoped credentials should instead point their service
-        // account at the right principal.
         if (this._vertexai) return this._buildClient(this._apiKey);
         return this._buildClient(requireProviderApiKey('GoogleGenAIChatProvider', a, this._apiKey));
       },

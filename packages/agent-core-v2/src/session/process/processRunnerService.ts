@@ -43,14 +43,9 @@ export class SessionProcessRunner implements ISessionProcessRunner {
   private _buildExecEnv(
     invocationEnv: Record<string, string> | undefined,
   ): Record<string, string> | undefined {
-    // No per-call override — inherit process.env verbatim by passing
-    // `undefined` to the host process service.
     if (invocationEnv === undefined) {
       return undefined;
     }
-    // The host replaces the child's env with what we pass, so layer the
-    // per-call override on top of the current process env to form a complete
-    // bag.
     return {
       ...(process.env as Record<string, string>),
       ...invocationEnv,

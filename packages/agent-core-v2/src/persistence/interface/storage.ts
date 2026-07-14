@@ -93,11 +93,6 @@ function readErrno(error: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined;
 }
 
-/**
- * Translate a raw backend I/O failure into `StorageError(storage.io_failed)`.
- * Idempotent: an existing `StorageError` passes through unchanged. The original
- * error is preserved as `cause`; path/op/errno live in `details`.
- */
 export function toStorageIoError(error: unknown, ctx: { path: string; op: string }): StorageError {
   if (error instanceof StorageError) return error;
   return new StorageError(

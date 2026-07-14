@@ -62,6 +62,7 @@ function lifecycle(handles: readonly IAgentScopeHandle[]): IAgentLifecycleServic
       throw new Error('not implemented in test');
     },
     getHandle: () => undefined,
+    whenReady: () => Promise.resolve(undefined),
     list: () => handles,
     remove: () => Promise.resolve(),
   };

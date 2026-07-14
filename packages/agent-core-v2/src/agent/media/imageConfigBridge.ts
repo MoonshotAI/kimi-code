@@ -42,10 +42,6 @@ export class ImageConfigBridge extends Disposable implements IImageConfigBridge 
 
   constructor(@IConfigService private readonly config: IConfigService) {
     super();
-    // Push the current effective value immediately (covers the already-loaded
-    // case), then re-push whenever the `image` section changes (load / reload /
-    // set). The event carries the env-resolved effective value, so env overrides
-    // are reflected without this bridge reading env.
     this.push(this.config.get<ImageConfig>(IMAGE_SECTION));
     this._register(
       this.config.onDidSectionChange((e) => {

@@ -255,8 +255,6 @@ describe('kimiModelEnvOverlay', () => {
   });
 
   it('honors an explicit baseUrl over the type default', () => {
-    // The KIMI_MODEL_BASE_URL binding is applied by the provider config section;
-    // emulate its effect by seeding the resolved provider with the bound baseUrl.
     const { effective } = applyKimiModelEnvOverlay(
       { KIMI_MODEL_NAME: 'env-model' },
       {
@@ -383,12 +381,6 @@ describe('kimiModelEnvOverlay', () => {
   });
 
   it('self-registers into ConfigRegistry without ModelService instantiation', () => {
-    // envOverlay.ts calls registerConfigOverlay(kimiModelEnvOverlay) at module
-    // load, so a freshly constructed ConfigRegistry drains it even though no
-    // Service (notably ModelService) has been instantiated. This guards the
-    // release-e2e wire-llm-request-trace scenario, where KIMI_MODEL_NAME must
-    // synthesize the env model (and its thinking capability) even when nothing
-    // resolves IModelService.
     const freshRegistry = new ConfigRegistry();
     expect(freshRegistry.listEffectiveOverlays()).toContain(kimiModelEnvOverlay);
   });

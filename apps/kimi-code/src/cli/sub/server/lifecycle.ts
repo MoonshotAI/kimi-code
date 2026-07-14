@@ -1,8 +1,8 @@
 /**
  * `kimi server install/uninstall/start/stop/restart/status`.
  *
- * Phase 2 lands the CLI shape; the lifecycle calls into the platform service
- * manager from `@moonshot-ai/server`, which is filled in by Phase 3+.
+ * The lifecycle calls into the platform service manager from
+ * `@moonshot-ai/kap-server` (`src/svc/*`).
  *
  * The Commander wiring here mirrors `addGatewayServiceCommands` from
  * `../openclaw/src/cli/daemon-cli/register-service-commands.ts:58`.
@@ -17,7 +17,7 @@ import {
   type InstallArgs,
   type ServiceManager,
   type ServiceStatus,
-} from '@moonshot-ai/server';
+} from '@moonshot-ai/kap-server';
 
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
 

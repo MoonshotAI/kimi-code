@@ -55,10 +55,6 @@ export function recordingTelemetry(
   return service;
 }
 
-/**
- * Register an empty `ITelemetryService` placeholder. Tests that assert on
- * telemetry should register a spy via `additionalServices` instead.
- */
 export function registerTelemetryServices(reg: ServiceRegistration): void {
   reg.definePartialInstance(ITelemetryService, {});
 }

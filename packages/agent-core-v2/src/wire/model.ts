@@ -55,10 +55,6 @@ export interface ModelDef<S> {
   readonly name: string;
   readonly initial: () => S;
   readonly blobs?: ModelBlobCodec<S>;
-  /**
-   * Declare an Op on this model — `defineOp(model, ...)` with the model
-   * bound. Preferred call style: `MyModel.defineOp('my.op', { apply })`.
-   */
   readonly defineOp: DefineOpFn<S>;
 }
 

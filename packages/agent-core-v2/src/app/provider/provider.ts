@@ -51,18 +51,13 @@ export const ModelSourceSchema = z.enum(['static', 'discover', 'oauth-catalog'])
 export type ModelSource = z.infer<typeof ModelSourceSchema>;
 
 export const ProviderConfigSchema = z.object({
-  // New (Phase 2) — reference to an entry in [platforms.*] for shared auth.
   platformId: z.string().optional(),
-  // New (Phase 2) — how to enumerate the models this Provider serves.
   modelSource: ModelSourceSchema.optional(),
 
-  // Endpoint and per-endpoint knobs.
   baseUrl: z.string().optional(),
   customHeaders: StringRecordSchema.optional(),
   defaultModel: z.string().optional(),
 
-  // Legacy fields — retained so pre-migration configs continue to load.
-  // Phase 4 migration lifts these into a synthesized Platform entry.
   type: ProviderTypeSchema.optional(),
   apiKey: z.string().optional(),
   oauth: OAuthRefSchema.optional(),
@@ -74,7 +69,6 @@ export type ProviderConfig = z.infer<typeof ProviderConfigSchema>;
 
 export const PROVIDERS_SECTION = 'providers';
 
-/** Reserved key for the env-driven synthetic provider (`KIMI_MODEL_API_KEY` …). */
 export const ENV_MODEL_PROVIDER_KEY = '__kimi_env__';
 
 export const ProvidersSectionSchema = z.record(z.string(), ProviderConfigSchema);

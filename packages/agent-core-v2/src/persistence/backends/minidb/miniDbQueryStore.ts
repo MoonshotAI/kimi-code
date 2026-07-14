@@ -101,13 +101,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
         },
       },
     ).catch((error) => {
-      // The query store is a rebuildable derived read model; authoritative data
-      // lives in the append-log / atomic-document stores. `openOrRebuild`
-      // already turns on-disk corruption into a clean rebuild, so an open
-      // failure here is almost always another kimi process holding the
-      // single-writer lock on `<cacheDir>/query-store`. Surface it as
-      // `storage.locked` (memoized via the cached rejected promise) and let
-      // each consumer decide how to fall back — no silent no-op degradation.
       throw new StorageError(
         StorageErrors.codes.STORAGE_LOCKED,
         'minidb query-store is locked by another process',
@@ -162,10 +155,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
         await db.createCompoundIndex(name, { groupBy: def.groupBy, orderBy: def.orderBy });
       }
     } else {
-      // A text index that already exists (rebuilt from persisted definitions on
-      // reopen) makes `createTextIndex` throw; treat that as already-ensured.
-      // TODO: minidb throws a bare `Error` here — switch to a structured error
-      // type if minidb ever exports one (do not parse messages long-term).
       try {
         await db.createTextIndex(name, { fields: def.fields });
       } catch (error) {
@@ -185,7 +174,6 @@ export class MiniDbQueryStore extends Disposable implements IQueryStore {
 
   async close(): Promise<void> {
     if (this.dbPromise === undefined) return;
-    // A failed (locked) open must not make disposal throw.
     const db = await this.dbPromise.catch(() => undefined);
     await db?.close();
   }
@@ -233,7 +221,6 @@ class MiniDbQuery<T> implements IQuery<T> {
       q.sort = { [this.sortField]: this.sortDir === 'desc' ? -1 : 1 };
     }
     q.skip = this.skip;
-    // Fetch one extra row to know whether a next page exists.
     if (this.lim !== undefined) q.limit = this.lim + 1;
     const rows = db.query(q) as ReadonlyArray<{ key: string; value: T }>;
     let items = rows.map((r) => r.value);

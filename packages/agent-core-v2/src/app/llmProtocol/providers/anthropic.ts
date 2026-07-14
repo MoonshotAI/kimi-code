@@ -49,13 +49,6 @@ import {
   type ToolCallIdPolicy,
 } from './tool-call-id';
 
-/**
- * Normalize an Anthropic `stop_reason` string to the unified
- * {@link FinishReason} enum.
- *
- * Source: `message.stop_reason` (non-stream) or the last `message_delta`
- * event's `delta.stop_reason` (stream).
- */
 function normalizeAnthropicStopReason(raw: string | null | undefined): {
   finishReason: FinishReason | null;
   rawFinishReason: string | null;
@@ -87,23 +80,8 @@ export interface AnthropicOptions {
   betaFeatures?: string[] | undefined;
   defaultHeaders?: Record<string, string>;
   metadata?: Record<string, string> | undefined;
-  /** Use streaming API. Defaults to true. Set to false for non-streaming (test/fallback). */
   stream?: boolean | undefined;
-  /**
-   * Explicitly declare whether the model supports adaptive thinking
-   * (`thinking: { type: 'adaptive' }`), overriding the model-name version
-   * inference. Useful for custom-named endpoints whose model name does not
-   * encode a parseable Claude version. Leave undefined to infer from the name.
-   */
   adaptiveThinking?: boolean | undefined;
-  /**
-   * Use the Anthropic **beta** Messages API (`client.beta.messages.create`,
-   * `POST /v1/messages?beta=true`) instead of the standard Messages API.
-   *
-   * Beta features (`betaFeatures`) are then sent via the request `betas`
-   * field rather than the `anthropic-beta` header. Defaults to false, which
-   * keeps the standard endpoint + header behavior.
-   */
   betaApi?: boolean | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => Anthropic;
 }
@@ -156,24 +134,8 @@ function applyResponseFormat(
   kwargs['output_config'] = outputConfig;
 }
 
-/**
- * Per-version default output ceilings sourced from Anthropic's Messages
- * API model cards (platform.claude.com/docs/en/about-claude/models/overview).
- * Values are the documented synchronous Messages-API maximum — we send
- * the full ceiling because Claude 4 + interleaved-thinking shares this
- * budget with encrypted reasoning, so anything below the documented cap
- * can silently truncate mid-`tool_use`.
- *
- * Keys are `<family>-<major>[-<minor>]`. Lookups try the most specific
- * key first, then the nearest lower catalogued minor of the same
- * family/major (a not-yet-catalogued `opus-4-8` reuses `opus-4-7`'s
- * ceiling), and finally the family/major-only baseline entry.
- */
 const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
-  // Claude Fable 5 documents a 128k output ceiling.
   'fable-5': 128000,
-  // Claude Opus per minor version. 4.6 through 4.8 document a 128k cap;
-  // 4.5 ships at 64k; 4.1 and the dated 4.0 release stay at 32k.
   'opus-4-8': 128000,
   'opus-4-7': 128000,
   'opus-4-6': 128000,
@@ -181,21 +143,16 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   'opus-4-1': 32000,
   'opus-4-0': 32000,
   'opus-4': 32000,
-  // Claude Sonnet 4.x: 4.0 / 4.5 / 4.6 all document a 64k ceiling.
   'sonnet-4-6': 64000,
   'sonnet-4-5': 64000,
   'sonnet-4-0': 64000,
   'sonnet-4': 64000,
-  // Claude Haiku 4.5 is 64k; the family-only entry keeps future dated
-  // 4.x Haiku releases on the same ceiling.
   'haiku-4-5': 64000,
   'haiku-4': 64000,
-  // Claude 3.5 / 3.7 documented at 8192 (standard endpoint).
   'opus-3-5': 8192,
   'sonnet-3-5': 8192,
   'sonnet-3-7': 8192,
   'haiku-3-5': 8192,
-  // Original Claude 3 generation.
   'opus-3': 4096,
   'sonnet-3': 4096,
   'haiku-3': 4096,
@@ -211,32 +168,11 @@ interface ClaudeVersion {
   minor: number | null;
 }
 
-// Family-first form: "opus-4-7", "sonnet-4.6", "haiku-4-5-20251001",
-// "fable-5" (single version component — Fable ids carry no minor).
-// Version numbers are capped at 1–2 digits with a non-digit lookahead so
-// 8-digit date suffixes (e.g. `-20251001`) don't get consumed as version
-// components.
 const FAMILY_FIRST_RE =
   /(opus|sonnet|haiku|fable)[-._](\d{1,2})(?!\d)(?:[-._](\d{1,2})(?!\d))?/;
-// Legacy version-first form: "3-5-sonnet", "3.7.opus" — used by older
-// Anthropic model ids and Bedrock variants of Claude 3.x.
 const VERSION_FIRST_RE = /(\d{1,2})[-._](\d{1,2})[-._](opus|sonnet|haiku)/;
-// Bare family form for base Claude 3 (no minor): "3-opus", "3.haiku".
 const BARE_FAMILY_RE = /(\d{1,2})[-._](opus|sonnet|haiku)/;
 
-/**
- * Extract Claude family + version from a model id.
- *
- * Designed to survive the naming variants we see across vendors:
- * vendor prefixes (`anthropic.`, `aws/`, `openrouter/`,
- * `online-`), suffixes (date stamps like `-20251001`, build tags
- * like `-construct`, `-v1:0`), and `.` vs `-` separators between
- * the family and version components.
- *
- * Returns `null` when the id contains no Claude marker or no
- * recognizable family/version, in which case the resolver should fall
- * back to the override or {@link FALLBACK_MAX_TOKENS}.
- */
 function parseClaudeVersion(model: string): ClaudeVersion | null {
   return parseClaudeFamilyVersion(model, true);
 }
@@ -247,11 +183,6 @@ function parseClaudeAliasVersion(model: string): ClaudeVersion | null {
 
 function parseClaudeFamilyVersion(model: string, requireClaudeMarker: boolean): ClaudeVersion | null {
   const normalized = model.toLowerCase();
-  // Guard against false positives on non-Claude models that happen to
-  // contain an `opus-4-7`-like substring (e.g. fine-tunes named after a
-  // checkpoint). The Anthropic provider might still be configured for
-  // non-Claude endpoints, so without this guard we'd quietly apply
-  // Claude ceilings to unrelated models.
   if (requireClaudeMarker && !normalized.includes('claude')) return null;
 
   const familyFirst = FAMILY_FIRST_RE.exec(normalized);
@@ -284,12 +215,6 @@ function parseClaudeFamilyVersion(model: string, requireClaudeMarker: boolean): 
 function lookupClaudeCeiling(version: ClaudeVersion): number | undefined {
   const { family, major, minor } = version;
   if (minor !== null) {
-    // Exact minor first, then walk down to the nearest catalogued minor:
-    // a newer minor release inherits at least its predecessor's ceiling
-    // (Anthropic has never lowered the cap within a major), so a
-    // not-yet-catalogued 4.8 reuses 4.7's value instead of dropping to
-    // the family baseline. The regex caps minors at two digits, so this
-    // walk is bounded.
     for (let candidate = minor; candidate >= 0; candidate--) {
       const ceiling = CEILING_BY_FAMILY_VERSION[`${family}-${major}-${candidate}`];
       if (ceiling !== undefined) return ceiling;
@@ -298,20 +223,6 @@ function lookupClaudeCeiling(version: ClaudeVersion): number | undefined {
   return CEILING_BY_FAMILY_VERSION[`${family}-${major}`];
 }
 
-/**
- * Resolve the default `max_tokens` for an Anthropic request.
- *
- * Precedence:
- *   1. Caller-provided `override` (e.g. `models.<alias>.maxOutputSize`
- *      from the harness config) — honored when present so users can
- *      intentionally lower the budget (handy for forcing truncation
- *      in tests) or raise it on a model we don't yet know about.
- *   2. When the model id parses to a known Claude family + version,
- *      the override is clamped to the documented Messages-API ceiling
- *      so we never send a value the server would reject.
- *   3. With no override and no recognized version, fall back to
- *      {@link FALLBACK_MAX_TOKENS}.
- */
 export function resolveDefaultMaxTokens(model: string, override?: number): number {
   const parsed = parseClaudeVersion(model);
   const ceiling = parsed === null ? undefined : lookupClaudeCeiling(parsed);
@@ -345,8 +256,6 @@ function supportsAdaptiveThinking(model: string): boolean {
   if (version === null) {
     return false;
   }
-  // A missing minor is a bare family-major id: "claude-fable-5" (5.0 ≥ 4.6,
-  // adaptive-only) or "claude-opus-4" (4.0 < 4.6, budget-based).
   return versionAtLeast(
     { major: version.major, minor: version.minor ?? 0 },
     ADAPTIVE_MIN_VERSION,
@@ -419,9 +328,6 @@ function shouldPreserveUnsignedThinking(model: string): boolean {
   return parseClaudeAliasVersion(model) === null;
 }
 
-/**
- * Content block types that support cache_control injection.
- */
 const CACHEABLE_TYPES = new Set([
   'text',
   'image',
@@ -464,10 +370,6 @@ interface AnthropicVideoBlock {
     | { type: 'url'; url: string };
 }
 
-// The Messages API has no representation for audio input. Instead of
-// silently dropping such parts (the model would not even know an attachment
-// existed), emit a placeholder text block so it can acknowledge the gap.
-// Consecutive parts of the same kind collapse into a single placeholder.
 const OMITTED_MEDIA_PLACEHOLDER = {
   audio_url: '(audio omitted: not supported by this provider)',
 } as const;
@@ -574,7 +476,6 @@ function toolResultToBlock(toolCallId: string, content: ContentPart[]): ToolResu
 function convertMessage(message: Message, model: string): MessageParam {
   const role = message.role;
 
-  // system role -> <system>...</system> wrapped user message
   if (role === 'system') {
     const text = message.content
       .filter((p) => p.type === 'text')
@@ -586,7 +487,6 @@ function convertMessage(message: Message, model: string): MessageParam {
     };
   }
 
-  // tool role -> ToolResultBlockParam in user message
   if (role === 'tool') {
     if (message.toolCallId === undefined) {
       throw new ChatProviderError('Tool message missing `toolCallId`.');
@@ -595,7 +495,6 @@ function convertMessage(message: Message, model: string): MessageParam {
     return { role: 'user', content: [block as ContentBlockParam] };
   }
 
-  // user or assistant
   const blocks: ContentBlockParam[] = [];
   for (const part of message.content) {
     if (part.type === 'text') {
@@ -603,20 +502,6 @@ function convertMessage(message: Message, model: string): MessageParam {
     } else if (part.type === 'image_url') {
       blocks.push(imageUrlPartToAnthropic(part.imageUrl.url) as unknown as ContentBlockParam);
     } else if (part.type === 'think') {
-      // ThinkPart -> ThinkingBlockParam.
-      //
-      // Signed: emit the block with its signature. api.anthropic.com requires a
-      // valid signature and always supplies one, so Anthropic-sourced history
-      // always takes this branch.
-      //
-      // Unsigned: still PRESERVE the thinking, emitted *without* a `signature`
-      // field. Anthropic-compatible backends (e.g. Kimi) stream thinking with
-      // no signature_delta, yet reject a tool-call turn whose thinking is gone
-      // ("thinking is enabled but reasoning_content is missing"). Dropping it
-      // here is what broke multi-step tool use on those backends. Claude
-      // models reject unsigned thinking blocks, so those are only preserved
-      // for non-Claude Anthropic-compatible models. An unsigned part with no
-      // text carries nothing, so it is skipped.
       if (part.encrypted !== undefined) {
         blocks.push({
           type: 'thinking',
@@ -637,7 +522,6 @@ function convertMessage(message: Message, model: string): MessageParam {
     }
   }
 
-  // Tool calls -> ToolUseBlockParam
   if (message.toolCalls.length > 0) {
     for (const tc of message.toolCalls) {
       let toolInput: Record<string, unknown> = {};
@@ -666,14 +550,12 @@ function convertMessage(message: Message, model: string): MessageParam {
   return { role: role, content: blocks };
 }
 export function convertAnthropicError(error: unknown): ChatProviderError {
-  // Check timeout before connection (APIConnectionTimeoutError extends APIConnectionError)
   if (error instanceof AnthropicTimeoutError) {
     return new APITimeoutError(error.message);
   }
   if (error instanceof AnthropicConnectionError) {
     return new APIConnectionError(error.message);
   }
-  // APIError with a status code => status error
   if (error instanceof AnthropicAPIError && typeof error.status === 'number') {
     const reqId = error.requestID ?? null;
     return normalizeAPIStatusError(
@@ -872,9 +754,6 @@ class AnthropicStreamedMessage implements StreamedMessage {
                 id: block.id,
                 name: block.name,
                 arguments: '',
-                // Carry the Anthropic block index so parallel tool_use
-                // blocks' interleaved input_json_delta chunks can be routed
-                // to the correct ToolCall by the generate loop.
                 _streamIndex: blockIndex,
               } satisfies ToolCall;
               break;
@@ -895,8 +774,6 @@ class AnthropicStreamedMessage implements StreamedMessage {
               yield {
                 type: 'tool_call_part',
                 argumentsPart: delta.partial_json,
-                // Carry the Anthropic block index so this delta is routed
-                // to the matching ToolCall (parallel tool_use support).
                 index: blockIndex,
               };
               break;
@@ -909,12 +786,7 @@ class AnthropicStreamedMessage implements StreamedMessage {
               break;
           }
         } else if (eventType === 'content_block_stop') {
-          // No-op: the generate loop infers tool-call completion from the
-          // next non-merging part (typically the next content_block_start)
-          // or from stream end. Anthropic's block boundary is therefore
-          // absorbed inside the adapter rather than surfaced upstream.
         } else if (eventType === 'message_delta') {
-          // Update usage from delta
           const deltaUsage = (evt as { usage?: Record<string, unknown> }).usage;
           if (deltaUsage !== undefined) {
             if (typeof deltaUsage['output_tokens'] === 'number') {
@@ -930,13 +802,6 @@ class AnthropicStreamedMessage implements StreamedMessage {
               this._usage.inputOther = deltaUsage['input_tokens'];
             }
           }
-          // The terminal `stop_reason` lives on `delta.stop_reason` of the
-          // last `message_delta` event for this response. Capture it here.
-          //
-          // Accept `null` explicitly: if the key is present we forward the
-          // value (including null) to `_captureStopReason`, which maps it to
-          // `{null, null}`. Only a missing key skips the capture. This avoids
-          // a stale prior capture persisting after an explicit null reset.
           const messageDeltaPayload = (evt as { delta?: Record<string, unknown> }).delta;
           if (messageDeltaPayload !== undefined && 'stop_reason' in messageDeltaPayload) {
             this._captureStopReason(
@@ -944,7 +809,6 @@ class AnthropicStreamedMessage implements StreamedMessage {
             );
           }
         }
-        // message_stop: nothing to do
       }
     } catch (error: unknown) {
       throw convertAnthropicError(error);
@@ -1012,7 +876,6 @@ export class AnthropicChatProvider implements ChatProvider {
           return effort;
       }
     }
-    // budget-based
     const budget = (thinkingConfig as { budget_tokens?: number }).budget_tokens ?? 0;
     if (budget <= 1024) {
       return 'low';
@@ -1040,7 +903,6 @@ export class AnthropicChatProvider implements ChatProvider {
     history: Message[],
     options?: GenerateOptions,
   ): Promise<StreamedMessage> {
-    // Build system param
     const system: TextBlockParam[] | undefined = systemPrompt
       ? [
           {
@@ -1071,11 +933,8 @@ export class AnthropicChatProvider implements ChatProvider {
       },
     );
 
-    // Inject cache_control on last content block of last message (after merge,
-    // so it lands on the final tool_result block in the merged user message).
     injectCacheControlOnLastBlock(messages);
 
-    // Build generation kwargs (excluding betaFeatures)
     const kwargs: Record<string, unknown> = {};
     if (this._generationKwargs.max_tokens !== undefined) {
       kwargs['max_tokens'] = this._generationKwargs.max_tokens;
@@ -1089,10 +948,6 @@ export class AnthropicChatProvider implements ChatProvider {
     if (this._generationKwargs.top_p !== undefined) {
       kwargs['top_p'] = this._generationKwargs.top_p;
     }
-    // Fable rejects an explicit `disabled` thinking config (HTTP 400, unlike
-    // Opus 4.7/4.8 which accept it), so omit the field instead. Note thinking
-    // cannot actually be turned off on Fable: adaptive thinking is always on,
-    // and an omitted `thinking` field still runs with it.
     const thinking = this._generationKwargs.thinking;
     if (thinking !== undefined && !(thinking.type === 'disabled' && isFableModel(this._model))) {
       kwargs['thinking'] = thinking;
@@ -1105,17 +960,12 @@ export class AnthropicChatProvider implements ChatProvider {
     }
     applyResponseFormat(kwargs, options?.responseFormat);
 
-    // Build the beta feature list. On the standard Messages API these travel
-    // via the `anthropic-beta` header; on the beta Messages API (`betaApi`) the
-    // SDK reads them from the request `betas` field and sets the header itself,
-    // so we must not also set the header (that would duplicate it).
     const betas = this._generationKwargs.betaFeatures ?? [];
     const extraHeaders: Record<string, string> = {};
     if (!this._betaApi && betas.length > 0) {
       extraHeaders['anthropic-beta'] = betas.join(',');
     }
 
-    // Convert tools
     const anthropicTools: AnthropicToolParam[] = tools.map((t) => convertTool(t));
     if (anthropicTools.length > 0) {
       const lastTool = anthropicTools.at(-1);
@@ -1124,7 +974,6 @@ export class AnthropicChatProvider implements ChatProvider {
       }
     }
 
-    // Build the create params
     const createParams: Record<string, unknown> = {
       model: this._model,
       messages,
@@ -1160,9 +1009,6 @@ export class AnthropicChatProvider implements ChatProvider {
     options?.onRequestSent?.();
 
     if (this._stream) {
-      // Use the raw Messages stream instead of the SDK MessageStream helper.
-      // The helper reparses accumulated input_json_delta buffers on every chunk,
-      // which becomes synchronous O(n^2) work for large streamed tool arguments.
       try {
         const stream = this._betaApi
           ? await client.beta.messages.create(
@@ -1179,7 +1025,6 @@ export class AnthropicChatProvider implements ChatProvider {
       }
     }
 
-    // Non-streaming fallback
     try {
       const response = this._betaApi
         ? await client.beta.messages.create(
@@ -1241,15 +1086,6 @@ export class AnthropicChatProvider implements ChatProvider {
     return defaultHeaders;
   }
 
-  // We use the Anthropic SDK purely as a transport to arbitrary
-  // anthropic-compatible endpoints (`baseUrl` may point anywhere). Left to its
-  // defaults the SDK auto-discovers credentials from the shell environment
-  // (ANTHROPIC_AUTH_TOKEN, ANTHROPIC_BASE_URL, ANTHROPIC_CUSTOM_HEADERS), which
-  // would leak an out-of-band bearer/headers to a third-party endpoint even when
-  // an explicit apiKey is set. So we hard-disable every auto-discovery channel.
-  // These `null`s — and the nulled headers in _buildDefaultHeaders — are NOT
-  // redundant: removing them reintroduces credential leakage. Regression cover:
-  // test/e2e/anthropic-adapter.test.ts.
   private _buildClient(apiKey: string): Anthropic {
     return new Anthropic({
       apiKey,
@@ -1260,8 +1096,6 @@ export class AnthropicChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): AnthropicChatProvider {
-    // Resolve once: an explicit `adaptiveThinking` option overrides the
-    // model-name version inference, so custom-named endpoints can opt in/out.
     const adaptive = this._adaptiveThinking ?? supportsAdaptiveThinking(this._model);
 
     if (effort === 'off') {

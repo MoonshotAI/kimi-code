@@ -24,6 +24,7 @@ import {
   applyManagedKimiCodeConfig,
   clearManagedKimiCodeConfig,
   fetchManagedKimiCodeModels,
+  resolveKimiCodeLoginAuth,
   resolveKimiCodeOAuthRef,
   resolveKimiCodeRuntimeAuth,
   type BearerTokenProvider,
@@ -85,6 +86,7 @@ interface FlowState {
   readonly provider: string;
   readonly controller: AbortController;
   readonly oauthRef: OAuthRef | undefined;
+  readonly loginBaseUrl: string | undefined;
   device: DeviceAuthorization | undefined;
   status: OAuthFlowStatus;
   expiresAt: number;
@@ -97,12 +99,6 @@ export class OAuthService extends Disposable implements IOAuthService {
   declare readonly _serviceBrand: undefined;
   private readonly flows = new Map<string, FlowState>();
 
-  /**
-   * Serializes managed-provider model refreshes so a refresh triggered by
-   * login completion and a manual `:refresh_oauth` (or two overlapping manual
-   * ones) never race on reading/patching the persisted config. Mirrors v1's
-   * `_refreshChain`.
-   */
   private refreshChain: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -121,10 +117,12 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   async startLogin(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthFlowStart> {
     this.log.info('oauth startLogin: enter', { provider });
-    const oauthRef = this.resolveOAuthRef(provider);
-    this.log.info('oauth startLogin: resolved oauthRef', {
+    const loginAuth = this.resolveLoginAuth(provider);
+    this.log.info('oauth startLogin: resolved login auth', {
       provider,
-      hasOAuthRef: oauthRef !== undefined,
+      hasOAuthRef: loginAuth.oauthRef !== undefined,
+      hasBaseUrl: loginAuth.baseUrl !== undefined,
+      hasOAuthHost: loginAuth.oauthHost !== undefined,
     });
     this.abortExisting(provider);
 
@@ -132,7 +130,8 @@ export class OAuthService extends Disposable implements IOAuthService {
       flowId: `oauth_${randomUUID()}`,
       provider,
       controller: new AbortController(),
-      oauthRef,
+      oauthRef: loginAuth.oauthRef,
+      loginBaseUrl: loginAuth.baseUrl,
       device: undefined,
       status: 'pending',
       expiresAt: Date.now() + DEFAULT_DEVICE_EXPIRES_IN_SEC * 1000,
@@ -152,7 +151,9 @@ export class OAuthService extends Disposable implements IOAuthService {
     this.log.info('oauth startLogin: calling toolkit.login', { provider });
     const loginPromise = this.toolkit.login(provider, {
       signal: state.controller.signal,
-      oauthRef,
+      oauthRef: loginAuth.oauthRef,
+      baseUrl: loginAuth.baseUrl,
+      oauthHost: loginAuth.oauthHost,
       onDeviceCode: (auth) => {
         this.log.info('oauth startLogin: onDeviceCode fired', { provider });
         state.device = auth;
@@ -226,7 +227,10 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   async logout(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthLogoutResponse> {
-    const oauthRef = this.readOAuthRefOptional(provider);
+    const oauthRef =
+      provider === KIMI_CODE_PROVIDER_NAME
+        ? this.resolveRuntimeOAuthRef(provider)
+        : this.readOAuthRefOptional(provider);
     const result = await this.toolkit.logout(provider, oauthRef);
     this.abortExisting(provider);
     await this.deprovisionProvider(provider);
@@ -367,11 +371,30 @@ export class OAuthService extends Disposable implements IOAuthService {
     };
   }
 
-  private resolveOAuthRef(provider: string): OAuthRef | undefined {
+  private resolveLoginAuth(provider: string): {
+    readonly oauthRef: OAuthRef | undefined;
+    readonly baseUrl: string | undefined;
+    readonly oauthHost: string | undefined;
+  } {
     const config = this.providerService.get(provider);
-    if (config?.oauth !== undefined) return config.oauth;
-    if (provider !== KIMI_CODE_PROVIDER_NAME) return undefined;
-    return resolveKimiCodeOAuthRef({ baseUrl: config?.baseUrl });
+    if (provider !== KIMI_CODE_PROVIDER_NAME) {
+      return { oauthRef: config?.oauth, baseUrl: undefined, oauthHost: undefined };
+    }
+    const loginAuth = resolveKimiCodeLoginAuth({
+      configuredBaseUrl: config?.baseUrl,
+      configuredOAuthRef: config?.oauth,
+    });
+    const oauthRef =
+      loginAuth.oauthRef ??
+      resolveKimiCodeOAuthRef({
+        oauthHost: loginAuth.oauthHost,
+        baseUrl: loginAuth.baseUrl,
+      });
+    return {
+      oauthRef,
+      baseUrl: loginAuth.baseUrl,
+      oauthHost: loginAuth.oauthHost,
+    };
   }
 
   private readOAuthRefOptional(provider: string): OAuthRef | undefined {
@@ -396,10 +419,6 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   private invalidateFlows(event: ProvidersChangedEvent): void {
-    // Only abort flows whose OAuth provider was actually removed or whose
-    // config changed. Refreshes that merely rewrite the `providers` section
-    // (e.g. model catalog refreshes on startup) must not trip in-flight logins
-    // for unaffected providers.
     const affected = new Set([...event.removed, ...event.changed]);
     if (affected.size === 0) return;
     for (const state of this.flows.values()) {
@@ -425,7 +444,7 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   private async finalizeAuthentication(state: FlowState): Promise<void> {
     try {
-      await this.provisionProvider(state.provider, state.oauthRef);
+      await this.provisionProvider(state.provider, state.oauthRef, state.loginBaseUrl);
       if (state.status !== 'pending') return;
       if (state.provider === KIMI_CODE_PROVIDER_NAME) {
         await this.refreshOAuthProviderModelsBestEffort(state.provider);
@@ -443,9 +462,14 @@ export class OAuthService extends Disposable implements IOAuthService {
     }
   }
 
-  private async provisionProvider(provider: string, oauthRef: OAuthRef | undefined): Promise<void> {
-    if (oauthRef === undefined) return;
-    const baseUrl = this.providerService.get(provider)?.baseUrl ?? kimiCodeBaseUrl();
+  private async provisionProvider(
+    provider: string,
+    oauthRef: OAuthRef | undefined,
+    loginBaseUrl: string | undefined,
+  ): Promise<void> {
+    if (oauthRef === undefined && provider !== KIMI_CODE_PROVIDER_NAME) return;
+    const baseUrl =
+      loginBaseUrl ?? this.providerService.get(provider)?.baseUrl ?? kimiCodeBaseUrl();
     await this.providerService.set(provider, {
       type: 'kimi',
       baseUrl,
@@ -640,7 +664,6 @@ function providerNameFromFlatModel(model: ModelAlias): string | undefined {
   return baseUrl === undefined ? undefined : deriveProviderId(baseUrl);
 }
 
-/** Structural view of a managed-config model alias (the fields the refresh reads/writes). */
 interface ManagedModel {
   readonly provider: string;
   readonly model: string;
@@ -785,8 +808,6 @@ function restoreDefaultSelection(
 ): void {
   if (defaultModel === undefined || config.models?.[defaultModel] === undefined) return;
   config.defaultModel = defaultModel;
-  // A refresh may have just learned that the default model cannot disable
-  // thinking — never restore a stale thinking-off selection onto it.
   const capabilities = managedModel(config, defaultModel)?.capabilities ?? [];
   const enabled = capabilities.includes('always_thinking') ? true : defaultEnabled;
   if (enabled !== undefined) {

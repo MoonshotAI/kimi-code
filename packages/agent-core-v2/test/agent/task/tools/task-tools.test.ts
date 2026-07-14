@@ -227,6 +227,10 @@ class FakeTaskService implements IAgentTaskService {
     return stopped.filter((info): info is AgentTaskInfo => info !== undefined);
   }
 
+  async stopAllOnExit(reason: string): Promise<readonly AgentTaskInfo[]> {
+    return this.stopAll(reason);
+  }
+
   async wait(
     taskId: string,
     timeoutMs?: number,
@@ -505,6 +509,7 @@ describe('TaskOutputTool', () => {
 
     expect(output).toContain('retrieval_status: not_ready');
     expect(output).toContain('status: running');
+    expect(output).not.toContain('next_step');
     expect(tasks.waitCalls).toEqual([]);
   });
 
@@ -521,6 +526,8 @@ describe('TaskOutputTool', () => {
     expect(result.isError ?? false).toBe(false);
     expect(output).toContain('retrieval_status: timeout');
     expect(output).toContain('status: running');
+    expect(output).toContain('next_step:');
+    expect(output).toContain('Do not block on it again');
     expect(tasks.waitCalls).toEqual([{ taskId, timeoutMs: 1_000 }]);
   });
 

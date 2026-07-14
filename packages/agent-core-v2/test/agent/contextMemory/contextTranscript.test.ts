@@ -96,7 +96,6 @@ describe('reduceContextTranscript', () => {
     expect(texts(result)).toEqual(['u1', 'a1', 'u2', 'a2', 'SUM', 'u3']);
     expect(result.entries[4]!.origin).toEqual({ kind: 'compaction_summary' });
     expect(result.entries[4]!.role).toBe('user');
-    // live folded view would be [u1, u2, SUM, u3]
     expect(result.foldedLength).toBe(4);
   });
 
@@ -108,7 +107,6 @@ describe('reduceContextTranscript', () => {
       compaction('SUM', 3, 1),
       appendMessage(userMessage('u4')),
     ]);
-    // 1 kept user message + summary + u4 appended after compaction.
     expect(result.foldedLength).toBe(3);
   });
 
@@ -119,14 +117,37 @@ describe('reduceContextTranscript', () => {
       ...assistantStep('s1', 'a1'),
       compaction('SUM', 3, 2, 1),
     ]);
-    // Live context: head user + elision marker + tail user + summary.
     expect(result.foldedLength).toBe(4);
   });
 
+  it('carries the originating wire record time per entry', () => {
+    const result = reduceContextTranscript([
+      { type: 'context.append_message', message: userMessage('u1'), time: 100 },
+      { type: 'context.append_loop_event', event: { type: 'step.begin', uuid: 'st1' }, time: 200 },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'tool.call', stepUuid: 'st1', toolCallId: 'c1', name: 'Bash' },
+        time: 210,
+      },
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          toolCallId: 'c1',
+          result: { output: 'ok', isError: false },
+        },
+        time: 220,
+      },
+      { type: 'context.append_loop_event', event: { type: 'step.end', uuid: 'st1' }, time: 230 },
+      // No record time → undefined (falls back to session createdAt + index).
+      { type: 'context.append_message', message: userMessage('u2') },
+    ]);
+
+    expect(result.entries.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+    expect(result.times).toEqual([100, 200, 220, undefined]);
+  });
+
   it('preserves the pre-compaction assistant reply after a later undo', () => {
-    // The reported regression: send A, /compact, send B, undo. The snapshot
-    // must still show A's assistant reply (compaction only folds the live
-    // context; the transcript keeps the full history).
     const result = reduceContextTranscript([
       appendMessage(userMessage('message A')),
       appendMessage(assistantMessage('reply A')),
@@ -159,7 +180,6 @@ describe('reduceContextTranscript', () => {
       appendMessage(assistantMessage('answer')),
       undo(2),
     ]);
-    // Only the post-compaction exchange is removed; the summary blocks further undo.
     expect(texts(result)).toEqual(['old', 'SUM']);
   });
 
@@ -182,8 +202,6 @@ describe('reduceContextTranscript', () => {
       appendMessage(assistantMessage('a2')),
       undo(1),
     ]);
-    // The post-clear exchange (u2 + a2) is removed; pre-clear u1 stays in the
-    // transcript and the clear floor blocks undo from reaching it.
     expect(texts(result)).toEqual(['u1']);
     expect(result.foldedLength).toBe(0);
   });

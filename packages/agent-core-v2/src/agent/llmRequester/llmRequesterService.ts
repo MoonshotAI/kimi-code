@@ -22,6 +22,10 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
+import {
+  IFaultInjectionService,
+  type FaultKind,
+} from '#/agent/faultInjection/faultInjection';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -32,9 +36,11 @@ import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIProviderOverloadedError,
+  APIRequestTooLargeError,
   APIStatusError,
   APITimeoutError,
   isContextOverflowStatusError,
+  isImageFormatError,
   isRecoverableRequestStructureError,
   isRetryableGenerateError,
 } from '#/app/llmProtocol/errors';
@@ -93,6 +99,8 @@ interface ResolvedLLMRequest {
   readonly logFields: LLMRequestLogFields;
 }
 
+type RequestProjection = 'normal' | 'strict' | 'media-degraded' | 'media-stripped';
+
 interface LLMRequestLogInput {
   readonly protocol: Protocol;
   readonly modelName: string;
@@ -105,11 +113,6 @@ interface LLMRequestLogInput {
   readonly fields?: LLMRequestLogFields;
 }
 
-/**
- * The profile-derived request config one turn runs on: the resolved Model,
- * its model context, and the system prompt, captured once on the turn's
- * first step request and reused by every later step of the same turn.
- */
 interface TurnRequestConfig {
   readonly resolved: ProfileModelContext;
   readonly model: Model;
@@ -121,6 +124,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
   private lastConfigLogSignature: string | undefined;
   private readonly turnConfigs = new Map<number, TurnRequestConfig>();
+  private readonly mediaDegradedTurns = new Set<number>();
+  private readonly mediaStrippedTurns = new Set<number>();
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -134,6 +139,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentWireService private readonly wire: IWireService,
+    @IFaultInjectionService private readonly faultInjection: IFaultInjectionService,
   ) {}
 
   async request(
@@ -173,9 +179,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   ): void {
     if (isAbortError(error) || signal?.aborted === true) return;
     const modelAlias = this.profile.data().modelAlias;
-    // v1 parity: `model` carries the resolved model id with `alias` alongside,
-    // and both protocol keys carry the resolved model's protocol (v2 has no
-    // separate provider type). Resolution must never throw.
     const model = this.tryGetProvider();
     const properties: ApiErrorEvent = {
       error_type: apiErrorType(error),
@@ -188,7 +191,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     };
     const statusCode = apiStatusCode(error);
     if (statusCode !== undefined) properties['status_code'] = statusCode;
-    // v1 parity: the current turn's accumulated total input tokens.
     const currentTurn = this.usage.status().currentTurn;
     if (currentTurn !== undefined) properties['input_tokens'] = inputTotal(currentTurn);
     this.telemetry.track2('api_error', properties);
@@ -207,19 +209,28 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     onPart: LLMRequestPartHandler,
     signal: AbortSignal | undefined,
   ): Promise<LLMRequestFinish> {
-    const requestInput = (strict: boolean) => ({
-      systemPrompt: request.systemPrompt,
-      tools: request.tools,
-      messages: strict
-        ? this.projector.projectStrict(this.toolSelect.shapeHistory(request.messages))
-        : this.projector.project(this.toolSelect.shapeHistory(request.messages)),
-    });
+    const requestInput = (projection: RequestProjection) => {
+      const shaped = this.toolSelect.shapeHistory(request.messages);
+      return {
+        systemPrompt: request.systemPrompt,
+        tools: request.tools,
+        messages:
+          projection === 'strict'
+            ? this.projector.projectStrict(shaped)
+            : projection === 'media-degraded'
+              ? this.projector.projectMediaDegraded(shaped)
+              : projection === 'media-stripped'
+                ? this.projector.projectMediaStripped(shaped)
+                : this.projector.project(shaped),
+      };
+    };
 
-    const run = async (strict: boolean): Promise<LLMRequestFinish> => {
-      const input = requestInput(strict);
-      const fields = strict
-        ? { ...request.logFields, projection: 'strict' }
-        : request.logFields;
+    const run = async (projection: RequestProjection): Promise<LLMRequestFinish> => {
+      const input = requestInput(projection);
+      const fields =
+        projection === 'normal'
+          ? request.logFields
+          : { ...request.logFields, projection };
       const logInput: LLMRequestLogInput = {
         protocol: request.model.protocol,
         modelName: request.model.name,
@@ -233,6 +244,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
       this.logRequest(logInput);
       this.recordRequest(logInput);
+
+      const fault = this.faultInjection.take();
+      if (fault !== undefined) {
+        throw faultToError(fault);
+      }
 
       let message: Message | undefined;
       let usage = emptyUsage();
@@ -278,17 +294,63 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
     };
 
+    const initialProjection: RequestProjection = this.isRecoveryTurn(
+      this.mediaStrippedTurns,
+      request.source,
+    )
+      ? 'media-stripped'
+      : this.isRecoveryTurn(this.mediaDegradedTurns, request.source)
+        ? 'media-degraded'
+        : 'normal';
     try {
-      return await run(false);
+      return await run(initialProjection);
     } catch (error) {
-      if (signal?.aborted === true || !isRecoverableRequestStructureError(unwrapErrorCause(error))) throw error;
-      signal?.throwIfAborted();
-      this.log.warn('provider rejected request structure; resending with strict projection', {
-        model: request.model.name,
-        ...request.logFields,
-      });
-      return run(true);
+      if (signal?.aborted === true) throw error;
+      const raw = unwrapErrorCause(error);
+      if (initialProjection === 'normal' && raw instanceof APIRequestTooLargeError) {
+        signal?.throwIfAborted();
+        this.log.warn('provider rejected request as too large; resending with degraded media', {
+          model: request.model.name,
+          ...request.logFields,
+        });
+        this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
+        return run('media-degraded');
+      }
+      if (initialProjection !== 'media-stripped' && isImageFormatError(raw)) {
+        signal?.throwIfAborted();
+        this.log.warn(
+          'provider rejected an image in the request; resending with all media stripped',
+          {
+            model: request.model.name,
+            ...request.logFields,
+          },
+        );
+        this.markRecoveryTurn(this.mediaStrippedTurns, request.source);
+        return run('media-stripped');
+      }
+      if (initialProjection === 'normal' && isRecoverableRequestStructureError(raw)) {
+        signal?.throwIfAborted();
+        this.log.warn('provider rejected request structure; resending with strict projection', {
+          model: request.model.name,
+          ...request.logFields,
+        });
+        return run('strict');
+      }
+      throw error;
     }
+  }
+
+  private isRecoveryTurn(set: ReadonlySet<number>, source: LLMRequestSource | undefined): boolean {
+    if (source?.type !== 'turn') return false;
+    return set.has(source.turnId);
+  }
+
+  private markRecoveryTurn(set: Set<number>, source: LLMRequestSource | undefined): void {
+    if (source?.type !== 'turn') return;
+    for (const id of set) {
+      if (id < source.turnId) set.delete(id);
+    }
+    set.add(source.turnId);
   }
 
   private resolveRequest(overrides: LLMRequestOverrides): ResolvedLLMRequest {
@@ -303,9 +365,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           this.config.get<KimiModelOverrides>('modelOverrides')?.maxCompletionTokens,
       }),
       capability: resolved.modelCapabilities,
-      // The remaining-window clamp only applies to requests built from the
-      // live context; overridden messages (e.g. compaction) are sized
-      // independently and would be squeezed to nothing at high water marks.
       usedContextTokens:
         overrides.messages === undefined
           ? this.contextSize.get().measured
@@ -325,15 +384,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     };
   }
 
-  /**
-   * Per-turn request-config snapshot (v1 parity): model + system prompt
-   * captured on the turn's first step request and reused by every later step
-   * of that turn, so a mid-turn `config.update` only takes effect on the NEXT
-   * turn. Tools are deliberately NOT snapshotted — they are re-read per step
-   * so a `select_tools` load or `setActiveTools` lands on the very next step
-   * of the same turn. Turn ids are monotonic per agent, so a newer turn
-   * evicts every older entry; no `turn.ended` subscription is needed.
-   */
   private resolveTurnConfig(source: LLMRequestSource | undefined): TurnRequestConfig | undefined {
     if (source?.type !== 'turn') return undefined;
     const turnId = source.turnId;
@@ -504,8 +554,19 @@ function numberField(fields: LLMRequestLogFields, key: string): number | undefin
   return typeof value === 'number' ? value : undefined;
 }
 
-function projectionField(fields: LLMRequestLogFields): 'strict' | undefined {
-  return fields['projection'] === 'strict' ? 'strict' : undefined;
+function projectionField(
+  fields: LLMRequestLogFields,
+): 'strict' | 'media-degraded' | 'media-stripped' | undefined {
+  const value = fields['projection'];
+  return value === 'strict' || value === 'media-degraded' || value === 'media-stripped'
+    ? value
+    : undefined;
+}
+
+function faultToError(kind: FaultKind): Error {
+  return kind === 'request-too-large'
+    ? new APIRequestTooLargeError(413, 'Request Entity Too Large (fault injection)')
+    : new APIStatusError(400, 'unsupported image format: image/avif (fault injection)');
 }
 
 function fingerprint(content: string): string {
@@ -513,8 +574,6 @@ function fingerprint(content: string): string {
 }
 
 function apiErrorType(error: unknown): string {
-  // Errors crossing the model boundary are coded `Error2`s with the raw
-  // provider error as `cause`; classify on the raw shape when available.
   const raw = unwrapErrorCause(error);
   if (raw instanceof APIContextOverflowError) return 'context_overflow';
   if (raw instanceof APIProviderOverloadedError) return 'overloaded';
@@ -541,7 +600,6 @@ function apiStatusCode(error: unknown): number | undefined {
     const status = (raw as Record<string, unknown>)['status'];
     if (typeof status === 'number') return status;
   }
-  // Boundary-translated errors carry the HTTP status in `details`.
   if (typeof error === 'object' && error !== null) {
     const details = (error as Record<string, unknown>)['details'];
     if (typeof details === 'object' && details !== null) {

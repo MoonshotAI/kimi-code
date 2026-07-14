@@ -212,7 +212,6 @@ describe('AgentGoalService (wire-backed)', () => {
     });
 
     await host.wire.replay(...records);
-    // Model rebuilt, but no live signal and no subscriber notification (silent).
     expect(modelOf(host.wire)?.status).toBe('paused');
     expect(replaySignals).toEqual([]);
     expect(replayModelChanges).toBe(0);
@@ -223,7 +222,6 @@ describe('AgentGoalService (wire-backed)', () => {
     const records = await readRecords();
 
     const host = buildHost('goal-restore');
-    // Realize the service so its ctor registers wire.onRestored BEFORE replay.
     void host.svc;
 
     await host.wire.replay(...records);

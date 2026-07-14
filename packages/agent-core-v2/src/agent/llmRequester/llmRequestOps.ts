@@ -62,7 +62,6 @@ export const llmRequest = LlmRequestTraceModel.defineOp('llm.request', {
     topP: z.number().optional(),
     maxTokens: z.number().optional(),
     betaApi: z.boolean().optional(),
-    /** Progressive tool disclosure in effect (env flag × model capability). */
     toolSelect: z.boolean(),
     systemPromptHash: z.string(),
     systemPrompt: z.string().optional(),
@@ -70,7 +69,7 @@ export const llmRequest = LlmRequestTraceModel.defineOp('llm.request', {
     messageCount: z.number(),
     turnStep: z.string().optional(),
     attempt: z.string().optional(),
-    projection: z.literal('strict').optional(),
+    projection: z.enum(['strict', 'media-degraded', 'media-stripped']).optional(),
     droppedCount: z.number().optional(),
   }),
   apply: (s) => s,
