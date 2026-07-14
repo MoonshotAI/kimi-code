@@ -56,4 +56,18 @@ describe('1.4 to 1.5 active wall-clock anchor migration', () => {
       ]),
     ).toMatchInlineSnapshot(`[wire] goal.update   { "status": "active", "wallClockResumedAt": 35, "time": "<time>" }`);
   });
+
+  it('advances a missing anchor from a wall-clock checkpoint timestamp', () => {
+    expect(
+      runMigration(migrateV1_4ToV1_5, [
+        {
+          type: 'goal.update',
+          wallClockMs: 3_000,
+          time: 4_000,
+        },
+      ]),
+    ).toMatchInlineSnapshot(
+      `[wire] goal.update   { "wallClockMs": 3000, "time": "<time>", "wallClockResumedAt": 4000 }`,
+    );
+  });
 });

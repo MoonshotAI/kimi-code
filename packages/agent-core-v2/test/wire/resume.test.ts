@@ -629,6 +629,56 @@ describe('Agent resume', () => {
     }
   });
 
+  it('restores only post-checkpoint active time from a 1.3 wall-clock checkpoint', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(6_000);
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'metadata',
+        protocol_version: '1.3',
+        created_at: 1,
+      },
+      {
+        type: 'goal.create',
+        goalId: 'goal-1',
+        objective: 'ship work',
+        time: 1_000,
+      },
+      {
+        type: 'goal.account_usage',
+        goalId: 'goal-1',
+        wallClockMs: 3_000,
+        time: 4_000,
+      },
+    ] as unknown as PersistedWireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+
+      expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
+        status: 'paused',
+        wallClockMs: 5_000,
+      });
+      expect(persistence.appended).toEqual([
+        expect.objectContaining({
+          type: 'goal.update',
+          status: 'paused',
+          wallClockMs: 5_000,
+        }),
+      ]);
+      expect(persistence.rewritten).toContainEqual(
+        expect.objectContaining({
+          type: 'goal.update',
+          wallClockMs: 3_000,
+          wallClockResumedAt: 4_000,
+        }),
+      );
+    } finally {
+      now.mockRestore();
+      await ctx.dispose();
+    }
+  });
+
   it('restores context after undo and removes undone messages from replay', async () => {
     const persistence = new RecordingAgentPersistence([
       {

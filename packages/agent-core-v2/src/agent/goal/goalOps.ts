@@ -14,8 +14,8 @@
  * cannot span processes, while learning the crash instant would require
  * periodic durable writes. System-clock rollback is clamped to zero. The
  * 1.4 -> 1.5 compatibility transform (also applied before sealing
- * envelope-less logs) derives missing create/resume anchors from those
- * lifecycle records' existing epoch-ms `time` stamps. The
+ * envelope-less logs) derives missing create/resume/checkpoint anchors from
+ * those records' existing epoch-ms `time` stamps. The
  * non-deterministic values stay OUT of `apply`: `goalId` and the wall-clock
  * anchor/totals are computed by the live service and carried in Op payloads.
  * Each `apply` returns the same reference when nothing changes so the wire's
