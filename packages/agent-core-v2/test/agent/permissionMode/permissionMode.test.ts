@@ -105,6 +105,9 @@ describe('AgentPermissionModeService (wire-backed)', () => {
 
     expect(svc.mode).toBe('manual');
 
+    svc.setMode('manual');
+    expect(changes).toEqual([]);
+
     svc.setMode('auto');
     expect(svc.mode).toBe('auto');
     expect(changes).toEqual([{ mode: 'auto', previousMode: 'manual' }]);
@@ -121,6 +124,14 @@ describe('AgentPermissionModeService (wire-backed)', () => {
       { type: 'permission.set_mode', mode: 'auto', time: expect.any(Number) },
     ]);
     expect('payload' in records[0]!).toBe(false);
+  });
+
+  it('persists an explicitly configured manual mode when it matches the initial value', async () => {
+    svc.setMode('manual');
+
+    expect(await readRecords()).toEqual([
+      { type: 'permission.set_mode', mode: 'manual', time: expect.any(Number) },
+    ]);
   });
 
   it('registers auto-mode reminder injection through the injection service', async () => {

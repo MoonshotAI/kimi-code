@@ -18,7 +18,11 @@ import { Emitter, type Event } from '#/_base/event';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
 import { IWireService } from '#/wire/wire';
 import { IAgentPermissionModeService, type PermissionModeChangedContext } from './permissionMode';
-import { PermissionModeModel, setMode } from './permissionModeOps';
+import {
+  PermissionModeConfiguredModel,
+  PermissionModeModel,
+  setMode,
+} from './permissionModeOps';
 
 export class AgentPermissionModeService extends Disposable implements IAgentPermissionModeService {
   declare readonly _serviceBrand: undefined;
@@ -40,9 +44,10 @@ export class AgentPermissionModeService extends Disposable implements IAgentPerm
 
   setMode(mode: PermissionMode): void {
     const previousMode = this.mode;
-    if (mode === previousMode) return;
+    const changed = mode !== previousMode;
+    if (!changed && this.wire.getModel(PermissionModeConfiguredModel)) return;
     this.wire.dispatch(setMode({ mode }));
-    this._onDidChangeMode.fire({ mode, previousMode });
+    if (changed) this._onDidChangeMode.fire({ mode, previousMode });
   }
 }
 
