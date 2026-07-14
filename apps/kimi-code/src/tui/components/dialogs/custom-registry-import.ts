@@ -20,6 +20,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
+import { t } from '#/i18n';
 
 export interface CustomRegistryImportValue {
   readonly url: string;
@@ -30,12 +31,12 @@ export type CustomRegistryImportResult =
   | { readonly kind: 'ok'; readonly value: CustomRegistryImportValue }
   | { readonly kind: 'cancel' };
 
-const TITLE = 'Import custom provider registry';
-const SUBTITLE_DEFAULT = 'Paste an api.json URL and its Bearer token.';
-const SUBTITLE_URL_EMPTY = 'Registry URL cannot be empty.';
-const SUBTITLE_TOKEN_EMPTY = 'Bearer token cannot be empty.';
-const FOOTER_NOT_LAST = 'Tab / ↑↓ to switch  ·  Enter for next field  ·  Esc to cancel';
-const FOOTER_LAST = 'Tab / ↑↓ to switch  ·  Enter to submit  ·  Esc to cancel';
+const TITLE = t('tui.dialogs.customRegistryImport.title');
+const SUBTITLE_DEFAULT = t('tui.dialogs.customRegistryImport.subtitleDefault');
+const SUBTITLE_URL_EMPTY = t('tui.dialogs.customRegistryImport.subtitleUrlEmpty');
+const SUBTITLE_TOKEN_EMPTY = t('tui.dialogs.customRegistryImport.subtitleTokenEmpty');
+const FOOTER_NOT_LAST = t('tui.dialogs.customRegistryImport.footerNotLast');
+const FOOTER_LAST = t('tui.dialogs.customRegistryImport.footerLast');
 
 type FieldId = 'url' | 'token';
 
@@ -156,8 +157,8 @@ export class CustomRegistryImportDialogComponent extends Container implements Fo
       this.activeField === 'url' ? FOOTER_NOT_LAST : FOOTER_LAST,
     );
 
-    const urlLabelText = 'Registry URL';
-    const tokenLabelText = 'Bearer token';
+    const urlLabelText = t('tui.dialogs.customRegistryImport.urlLabel');
+    const tokenLabelText = t('tui.dialogs.customRegistryImport.tokenLabel');
     const urlLabelStyled =
       this.activeField === 'url'
         ? currentTheme.boldFg('accent', urlLabelText)

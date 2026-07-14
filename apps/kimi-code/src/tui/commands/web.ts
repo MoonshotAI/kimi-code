@@ -2,9 +2,10 @@ import { ensureDaemon } from '#/cli/sub/server/daemon';
 import { tryResolveServerToken } from '#/cli/sub/server/shared';
 import { openUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
+import { t } from '#/i18n';
 
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { getNoActiveSessionMessage } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
@@ -22,26 +23,26 @@ const WEB_CANCEL = 'cancel';
 export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
   const sessionId = session.id;
 
   const confirmed = await new Promise<boolean>((resolve) => {
     const picker = new ChoicePickerComponent({
-      title: 'Open current session in the Web UI?',
-      hint: '↑↓ navigate · Enter select · Esc cancel',
+      title: t('tui.statusMessages.openInWebUi'),
+      hint: t('tui.statusMessages.openInWebUiHint'),
       options: [
         {
           value: WEB_CONFIRM,
-          label: 'Continue',
+          label: t('tui.statusMessages.continueLabel'),
           description:
-            'Start the Kimi server (background daemon if needed), open this session in your default browser, and exit the terminal UI.',
+            t('tui.statusMessages.continueDescription'),
         },
         {
           value: WEB_CANCEL,
-          label: 'Cancel',
-          description: 'Stay in the terminal UI.',
+          label: t('tui.statusMessages.cancelLabel'),
+          description: t('tui.statusMessages.stayInTui'),
         },
       ],
       onSelect: (value) => {
@@ -56,12 +57,12 @@ export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
   host.restoreEditor();
   if (!confirmed) return;
 
-  host.showStatus('Starting Kimi server and opening web UI…');
+  host.showStatus(t('tui.statusMessages.startingServerAndWebUi'));
   let origin: string;
   try {
     ({ origin } = await ensureDaemon({}));
   } catch (error) {
-    host.showError(`Failed to start server: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.statusMessages.failedToStartServer', { error: formatErrorMessage(error) }));
     return;
   }
 
@@ -72,9 +73,9 @@ export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
   // file, so we fall back to the plain URL and skip the token line.
   const token = tryResolveServerToken(getDataDir());
   const url = webSessionUrl(origin, sessionId, token);
-  host.showStatus(`open ${url}`, 'success');
+  host.showStatus(t('tui.statusMessages.webOpenUrl', { url }), 'success');
   if (token !== undefined) {
-    host.showStatus(`Token:    ${token}`, 'success');
+    host.showStatus(t('tui.statusMessages.webToken', { token }), 'success');
   }
   openUrl(url);
   host.setExitOpenUrl(url);

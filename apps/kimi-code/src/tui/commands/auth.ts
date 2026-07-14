@@ -12,6 +12,7 @@ import { log } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ChoiceOption } from '../components/dialogs/choice-picker';
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '../constant/kimi-tui';
+import { t } from '#/i18n';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { LoginProgressSpinnerHandle } from '../types';
 import {
@@ -59,13 +60,13 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
         spinner = host.showLoginAuthorizationPrompt(data);
       },
     });
-    spinner?.stop({ ok: true, label: 'Logged in.' });
+    spinner?.stop({ ok: true, label: t('tui.statusMessages.loggedIn') });
     spinner = undefined;
     try {
       await host.authFlow.refreshConfigAfterLogin();
     } catch (refreshError) {
       const message = formatErrorMessage(refreshError);
-      host.showError(`Authentication successful, but failed to refresh config: ${message}`);
+      host.showError(t('tui.statusMessages.authSuccessButConfigFailed', { error: message }));
       return;
     }
     host.track('login', {
@@ -74,13 +75,13 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
       already_logged_in: alreadyLoggedIn,
     });
     if (alreadyLoggedIn) {
-      host.showStatus('Already logged in. Model configuration refreshed.');
+      host.showStatus(t('tui.statusMessages.alreadyLoggedInRefreshed'));
     }
   } catch (error) {
     const cancelled = controller.signal.aborted;
     spinner?.stop({
       ok: false,
-      label: cancelled ? 'Login cancelled.' : 'Login failed.',
+      label: cancelled ? t('tui.statusMessages.loginCancelled') : t('tui.statusMessages.loginFailed'),
     });
     spinner = undefined;
     if (cancelled) return;
@@ -91,7 +92,7 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
       error,
     });
     const message = formatErrorMessage(error);
-    host.showError(`Login failed: ${message}`);
+    host.showError(t('tui.statusMessages.loginFailedWithError', { error: message }));
   } finally {
     if (host.cancelInFlight === cancelLogin) {
       host.cancelInFlight = undefined;
@@ -104,10 +105,12 @@ async function handleOpenPlatformLogin(
   platform: OpenPlatformDefinition,
 ): Promise<void> {
   const consoleHost = platform.consoleUrl?.replace(/^https?:\/\//, '') ?? '';
-  const platformName = consoleHost.length > 0 ? `Kimi Platform (${consoleHost})` : 'Kimi Platform';
+  const platformName = consoleHost.length > 0
+        ? t('tui.statusMessages.kimiPlatformDisplayWithHost', { host: consoleHost })
+        : t('tui.statusMessages.kimiPlatformDisplay');
   const subtitleLines = [
     `${'base_url'.padEnd(12)}${platform.baseUrl}`,
-    `${'saved to'.padEnd(12)}~/.kimi-code/config.toml`,
+    `${t('tui.statusMessages.savedToLabel').padEnd(12)}~/.kimi-code/config.toml`,
   ];
   const apiKey = await promptApiKey(host, platformName, subtitleLines);
   if (apiKey === undefined) return;
@@ -125,14 +128,12 @@ async function handleOpenPlatformLogin(
   } catch (error) {
     if (controller.signal.aborted) return;
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to verify API key: ${msg}`);
+    host.showError(t('tui.statusMessages.failedToVerifyApiKey', { error: msg }));
     if (
       error instanceof OpenPlatformApiError &&
       error.status === 401
     ) {
-      host.showStatus(
-        'Hint: If your API key was obtained from Kimi Code, please select "Kimi Code" instead.',
-      );
+      host.showStatus(t('tui.statusMessages.hintUseKimiCodeInstead'));
     }
     return;
   } finally {
@@ -142,7 +143,7 @@ async function handleOpenPlatformLogin(
   }
 
   if (models.length === 0) {
-    host.showError('No models available for this platform.');
+    host.showError(t('tui.statusMessages.noModelsForPlatform'));
     return;
   }
 
@@ -176,7 +177,7 @@ async function handleOpenPlatformLogin(
 
   await host.authFlow.refreshConfigAfterLogin();
   host.track('login', { provider: platform.id, method: 'api_key' });
-  host.showStatus(`Setup complete: ${platform.name} · ${selection.model.id}`);
+  host.showStatus(t('tui.statusMessages.setupComplete', { platformName: platform.name, modelId: selection.model.id }));
 }
 
 export async function handleLogoutCommand(host: SlashCommandHost): Promise<void> {
@@ -196,7 +197,7 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
     options.push({
       value: DEFAULT_OAUTH_PROVIDER_NAME,
       label: PRODUCT_NAME,
-      description: 'OAuth login',
+      description: t('tui.statusMessages.oauthLoginDescription'),
     });
   }
   for (const id of apiKeyProviderIds) {
@@ -209,7 +210,7 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
   }
 
   if (options.length === 0) {
-    host.showStatus('Nothing to logout.');
+    host.showStatus(t('tui.statusMessages.nothingToLogout'));
     return;
   }
 
@@ -238,5 +239,5 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
 
   host.track('logout', { provider: target });
   const label = target === DEFAULT_OAUTH_PROVIDER_NAME ? PRODUCT_NAME : target;
-  host.showStatus(`Logged out from ${label}.`);
+  host.showStatus(t('tui.statusMessages.loggedOutFrom', { label }));
 }

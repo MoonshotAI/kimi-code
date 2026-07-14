@@ -18,6 +18,7 @@ import type { Command } from 'commander';
 
 import { getLiveLock, type LockContents } from '@moonshot-ai/kap-server';
 
+import { t } from '#/i18n';
 import { getDataDir } from '#/utils/paths';
 
 import { lockConnectHost } from './daemon';
@@ -47,7 +48,7 @@ export interface KillCommandDeps {
 export function registerKillCommand(server: Command): void {
   server
     .command('kill')
-    .description('Stop the running Kimi server (graceful API + forced PID kill).')
+    .description(t('cli.commandDescriptions.serverKill'))
     .action(async () => {
       try {
         await handleKillCommand(DEFAULT_KILL_DEPS);
@@ -61,7 +62,7 @@ export function registerKillCommand(server: Command): void {
 export async function handleKillCommand(deps: KillCommandDeps): Promise<void> {
   const lock = deps.getLiveLock();
   if (!lock) {
-    deps.stdout.write('No running Kimi server.\n');
+    deps.stdout.write(t('tui.statusMessages.serverKillNoRunning') + '\n');
     return;
   }
 
@@ -80,19 +81,19 @@ export async function handleKillCommand(deps: KillCommandDeps): Promise<void> {
   deps.signalPid(pid, 'SIGTERM');
 
   if (await waitForExit(pid, TERM_GRACE_MS, deps)) {
-    deps.stdout.write(`Kimi server (pid ${String(pid)}) stopped.\n`);
+    deps.stdout.write(t('tui.statusMessages.serverKillStopped', { pid: String(pid) }) + '\n');
     return;
   }
 
   deps.signalPid(pid, 'SIGKILL');
 
   if (await waitForExit(pid, KILL_GRACE_MS, deps)) {
-    deps.stdout.write(`Kimi server (pid ${String(pid)}) killed.\n`);
+    deps.stdout.write(t('tui.statusMessages.serverKillKilled', { pid: String(pid) }) + '\n');
     return;
   }
 
   throw new Error(
-    `Failed to stop Kimi server (pid ${String(pid)}); insufficient permissions?`,
+    t('tui.statusMessages.serverKillFailedPermissions', { pid: String(pid) }),
   );
 }
 

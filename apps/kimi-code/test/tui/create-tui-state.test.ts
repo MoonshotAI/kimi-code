@@ -24,6 +24,7 @@ function fakeInitialAppState(): AppState {
     streamingStartTime: 0,
     theme: 'dark',
     version: '0.0.0-test',
+    locale: 'en',
     editorCommand: null,
     notifications: { enabled: true, condition: 'unfocused' },
     upgrade: { autoInstall: true },

@@ -7,6 +7,7 @@ import {
   NATIVE_INSTALL_COMMAND_UNIX,
   NATIVE_INSTALL_COMMAND_WIN,
 } from '#/constant/app';
+import { t } from '#/i18n';
 import { loadTuiConfig } from '#/tui/config';
 
 import { readUpdateCache } from './cache';
@@ -159,27 +160,26 @@ export function renderManualUpdateMessage(
       sourceDesc = 'homebrew';
       break;
     case 'native':
-      sourceDesc = 'native (windows). Auto-update is not supported on this platform.';
+      sourceDesc = t('tui.statusMessages.updateUnsupportedPlatform', { platform: 'windows' });
       break;
     case 'unsupported':
-      sourceDesc = 'unsupported package manager or layout.';
+      sourceDesc = t('tui.statusMessages.updateUnsupportedManager');
       break;
   }
   return (
-    `A newer version of ${NPM_PACKAGE_NAME} is available ` +
-    `(${currentVersion} -> ${target.version}).\n` +
-    `Detected install source: ${sourceDesc}\n` +
-    `To update manually, run: ${installCommand}\n`
+    t('tui.statusMessages.updateNewerAvailable', { name: NPM_PACKAGE_NAME, version: target.version }) + '\n' +
+    t('tui.statusMessages.updateDetectedSource', { source: sourceDesc }) + '\n' +
+    t('tui.statusMessages.updateManualCommand', { command: installCommand }) + '\n'
   );
 }
 
 export function renderInstallSuccessMessage(target: UpdateTarget): string {
-  return `Updated ${NPM_PACKAGE_NAME} to ${target.version}. Restart the CLI to use the new version.\n`;
+  return t('tui.statusMessages.updateUpdated', { name: NPM_PACKAGE_NAME, version: target.version }) + '\n';
 }
 
 function renderBackgroundInstallSuccessNotice(version: string): string {
   const displayVersion = version.startsWith('v') ? version : `v${version}`;
-  return `Kimi Code updated to ${displayVersion}\nChangelog: ${CHANGELOG_URL}\n`;
+  return t('tui.statusMessages.updateUpdatedWithChangelog', { version: displayVersion, url: CHANGELOG_URL }) + '\n';
 }
 
 function refreshInBackground(): void {

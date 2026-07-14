@@ -1,10 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import {
   ErrorCodes,
   KimiError,
 } from '@moonshot-ai/kimi-code-sdk';
+
+import { t } from '#/i18n';
 
 const GOAL_QUEUE_FILE = 'upcoming-goals.json';
 const GOAL_QUEUE_VERSION = 1;
@@ -170,7 +172,12 @@ async function readQueueFile(session: GoalQueueSession): Promise<GoalQueueFile> 
 async function writeQueueFile(session: GoalQueueSession, file: GoalQueueFile): Promise<void> {
   const filePath = goalQueuePath(session);
   await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(filePath, `${JSON.stringify(file, null, 2)}\n`, 'utf-8');
+  // Atomic write: write to a temp file in the same directory, then rename.
+  // This prevents partial-write corruption if the process crashes mid-write
+  // or if another process reads the file concurrently.
+  const tmpPath = `${filePath}.${process.pid}.tmp`;
+  await writeFile(tmpPath, `${JSON.stringify(file, null, 2)}\n`, 'utf-8');
+  await rename(tmpPath, filePath);
 }
 
 async function withQueueMutationLock<T>(
@@ -205,12 +212,12 @@ function toSnapshot(file: GoalQueueFile): GoalQueueSnapshot {
 function normalizeObjective(value: string): string {
   const objective = value.trim();
   if (objective.length === 0) {
-    throw new KimiError(ErrorCodes.GOAL_OBJECTIVE_EMPTY, 'Goal objective cannot be empty');
+    throw new KimiError(ErrorCodes.GOAL_OBJECTIVE_EMPTY, t('tui.messages.goalQueueObjectiveEmpty'));
   }
   if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
     throw new KimiError(
       ErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
-      `Goal objective cannot exceed ${MAX_GOAL_OBJECTIVE_LENGTH} characters`,
+      t('tui.messages.goalQueueObjectiveTooLong', { max: MAX_GOAL_OBJECTIVE_LENGTH }),
     );
   }
   return objective;
@@ -219,7 +226,7 @@ function normalizeObjective(value: string): string {
 function findGoalIndex(file: GoalQueueFile, goalId: string): number {
   const index = file.goals.findIndex((goal) => goal.id === goalId);
   if (index === -1) {
-    throw new KimiError(ErrorCodes.GOAL_NOT_FOUND, 'No queued goal found');
+    throw new KimiError(ErrorCodes.GOAL_NOT_FOUND, t('tui.messages.goalQueueNotFound'));
   }
   return index;
 }

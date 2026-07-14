@@ -12,6 +12,7 @@ import type {
   OpenPlatformDefinition,
 } from '@moonshot-ai/kimi-code-oauth';
 
+import { t } from '#/i18n';
 import { ApiKeyInputDialogComponent, type ApiKeyInputResult } from '../components/dialogs/api-key-input-dialog';
 import { ChoicePickerComponent, type ChoiceOption } from '../components/dialogs/choice-picker';
 import { FeedbackInputDialogComponent, type FeedbackInputDialogResult } from '../components/dialogs/feedback-input-dialog';
@@ -42,7 +43,7 @@ export function promptLogoutProviderSelection(
 ): Promise<string | undefined> {
   return new Promise((resolve) => {
     const picker = new ChoicePickerComponent({
-      title: 'Select a provider to log out',
+      title: t('tui.statusMessages.selectProviderToLogout'),
       options,
       currentValue,
       onSelect: (value) => {
@@ -75,17 +76,17 @@ export function promptFeedbackInput(host: SlashCommandHost): Promise<FeedbackPro
 export type FeedbackAttachmentLevel = 'none' | 'logs' | 'logs+codebase';
 
 const FEEDBACK_ATTACHMENT_OPTIONS: readonly ChoiceOption[] = [
-  { value: 'none', label: 'No attachment', description: 'Text feedback only' },
+  { value: 'none', label: t('tui.statusMessages.feedbackNoAttachment'), description: t('tui.statusMessages.feedbackNoAttachmentDesc') },
   {
     value: 'logs',
-    label: 'Logs only',
-    description: 'Upload wire events and diagnostic logs from this session',
+    label: t('tui.statusMessages.feedbackLogsOnly'),
+    description: t('tui.statusMessages.feedbackLogsOnlyDesc'),
   },
   {
     value: 'logs+codebase',
-    label: 'Logs + codebase',
+    label: t('tui.statusMessages.feedbackLogsAndCodebase'),
     description:
-      'Include your codebase for deeper diagnosis. Sensitive files are automatically excluded — e.g. .env, config files, secret keys. We use attachments only for diagnosis and never share them.',
+      t('tui.statusMessages.feedbackLogsAndCodebaseDesc'),
     descriptionTone: 'warning',
   },
 ];
@@ -95,7 +96,7 @@ export function promptFeedbackAttachment(
 ): Promise<FeedbackAttachmentLevel | undefined> {
   return new Promise((resolve) => {
     const picker = new ChoicePickerComponent({
-      title: 'Share diagnostic info to help us investigate?',
+      title: t('tui.statusMessages.shareDiagnosticInfo'),
       options: FEEDBACK_ATTACHMENT_OPTIONS,
       onSelect: (value) => {
         host.restoreEditor();
@@ -113,7 +114,7 @@ export function promptFeedbackAttachment(
 export function promptApiKey(
   host: SlashCommandHost,
   platformName: string,
-  subtitleLines: readonly string[] = ['Your key will be saved to ~/.kimi-code/config.toml'],
+  subtitleLines: readonly string[] = [t('tui.statusMessages.apiKeySavedTo')],
 ): Promise<string | undefined> {
   return new Promise((resolve) => {
     const dialog = new ApiKeyInputDialogComponent(
@@ -141,13 +142,13 @@ export function promptCatalogProviderSelection(host: SlashCommandHost, catalog: 
       .toSorted((a, b) => a.label.localeCompare(b.label));
 
     if (options.length === 0) {
-      host.showError('Catalog has no providers with supported wire types.');
+      host.showError(t('tui.statusMessages.catalogNoSupportedProviders'));
       resolve(undefined);
       return;
     }
 
     const picker = new ChoicePickerComponent({
-      title: 'Select a provider',
+      title: t('tui.statusMessages.selectProviderTitle'),
       options,
       searchable: true,
       onSelect: (value) => {

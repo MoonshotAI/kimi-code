@@ -53,6 +53,7 @@ function makeStartupInput(): KimiTUIStartupInput {
     tuiConfig: {
       theme: 'dark',
       disablePasteBurst: false,
+      locale: 'en',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },

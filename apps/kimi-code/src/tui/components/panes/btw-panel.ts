@@ -1,3 +1,4 @@
+import { t } from '#/i18n';
 import type { Component, MarkdownTheme } from '@moonshot-ai/pi-tui';
 import {
   Markdown,
@@ -120,10 +121,10 @@ export class BtwPanelComponent implements Component {
   private renderTopBorder(width: number, truncated: boolean): string {
     const paint = (s: string): string => chalk.hex(currentTheme.palette.border)(s);
     const hint = truncated && this.options.canUseScrollKeys()
-      ? 'Esc close · ↑↓ scroll '
-      : 'Esc close ';
+      ? t('tui.dialogs.btwPanel.scrollHint')
+      : t('tui.dialogs.btwPanel.closeHint');
     const title =
-      chalk.hex(currentTheme.palette.accent).bold(' BTW ') +
+      chalk.hex(currentTheme.palette.accent).bold(t('tui.dialogs.btwPanel.title')) +
       paint('─ ') +
       chalk.hex(currentTheme.palette.textMuted)(hint);
     const innerWidth = Math.max(1, width - 2);
@@ -140,7 +141,7 @@ export class BtwPanelComponent implements Component {
       lines.push(...this.renderTurn(turn, width));
     }
     if (this.turns.length === 0) {
-      lines.push(chalk.hex(currentTheme.palette.textDim)('Ready for a side question...'));
+      lines.push(chalk.hex(currentTheme.palette.textDim)(t('tui.dialogs.btwPanel.readyForSideQuestion')));
     }
     lines.push(...this.renderTransientNotices(width));
     return this.fitBodyLines(lines);
@@ -190,7 +191,9 @@ export class BtwPanelComponent implements Component {
   }
 
   private renderTurn(turn: BtwTurn, width: number): string[] {
-    const prompt = chalk.hex(currentTheme.palette.accent)(`Q: ${turn.prompt}`);
+    const prompt = chalk.hex(currentTheme.palette.accent)(
+      `${t('tui.dialogs.btwPanel.questionPrefix')}${turn.prompt}`,
+    );
     const lines = [...new Text(prompt, 0, 0).render(width)];
     const answer = turn.answer.trim();
     const thinking = turn.thinking.trim();
@@ -206,7 +209,7 @@ export class BtwPanelComponent implements Component {
           : thinkingLines;
       lines.push(...visibleThinking);
     } else if (turn.error === undefined) {
-      lines.push(chalk.hex(currentTheme.palette.textDim)('Waiting for answer...'));
+      lines.push(chalk.hex(currentTheme.palette.textDim)(t('tui.dialogs.btwPanel.waitingForAnswer')));
     }
     if (turn.error !== undefined) {
       const error = chalk.hex(currentTheme.palette.error)(turn.error);

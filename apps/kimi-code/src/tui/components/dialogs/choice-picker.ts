@@ -20,6 +20,7 @@ import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme, type ColorToken } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 import { SearchableList } from '#/tui/utils/searchable-list';
+import { t } from '#/i18n';
 
 export interface ChoiceOption {
   /** Value passed to onSelect (e.g. the actual editor command string). */
@@ -135,13 +136,10 @@ export class ChoicePickerComponent extends Container implements Focusable {
     // Header mirrors the model dialog (see model-selector.ts): border, title
     // with a "(type to search)" suffix until you type, the hint, a blank, then
     // the search line. Key vocabulary is lowercase to match every list dialog.
-    const navParts = ['↑↓ navigate'];
-    if (view.page.pageCount > 1) navParts.push('←→ page');
-    navParts.push('Enter select', 'Esc cancel');
-    const hint = this.opts.hint ?? navParts.join(' · ');
+    const hint = this.opts.hint ?? t('tui.dialogs.choicePicker.navHint');
 
     const titleSuffix =
-      searchable && view.query.length === 0 ? currentTheme.fg('textMuted', '  (type to search)') : '';
+      searchable && view.query.length === 0 ? currentTheme.fg('textMuted', `  (${t('tui.dialogs.choicePicker.searchHint')})`) : '';
     const hintLines = hint.split(/\r?\n/);
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
@@ -169,7 +167,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
     }
 
     if (options.length === 0) {
-      lines.push(currentTheme.fg('textMuted', '   No matches'));
+      lines.push(currentTheme.fg('textMuted', `   ${t('tui.dialogs.choicePicker.noMatches')}`));
     }
     for (let i = view.page.start; i < view.page.end; i++) {
       const opt = options[i]!;
@@ -197,7 +195,7 @@ export class ChoicePickerComponent extends Container implements Focusable {
     if (view.page.pageCount > 1) {
       lines.push(
         currentTheme.fg('textMuted',
-          ` Page ${String(view.page.page + 1)}/${String(view.page.pageCount)}`,
+          ` ${t('tui.dialogs.choicePicker.page', { page: view.page.page + 1, pageCount: view.page.pageCount })}`,
         ),
       );
     }

@@ -1,9 +1,10 @@
 import { OPEN_PLATFORMS } from '@moonshot-ai/kimi-code-oauth';
 
+import { t } from '#/i18n';
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
 const PLATFORM_OPTIONS: readonly ChoiceOption[] = [
-  { value: 'kimi-code', label: 'Kimi Code (OAuth)' },
+  { value: 'kimi-code', label: t('tui.dialogs.platformSelector.kimiCode') },
   ...OPEN_PLATFORMS.map((platform) => ({ value: platform.id, label: platform.name })),
 ];
 
@@ -15,7 +16,7 @@ export interface PlatformSelectorOptions {
 export class PlatformSelectorComponent extends ChoicePickerComponent {
   constructor(opts: PlatformSelectorOptions) {
     super({
-      title: 'Select a platform',
+      title: t('tui.dialogs.platformSelector.title'),
       options: [...PLATFORM_OPTIONS],
       onSelect: opts.onSelect,
       onCancel: opts.onCancel,

@@ -13,6 +13,7 @@
 
 import { Container, Text, Spacer } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { currentTheme } from '#/tui/theme';
 
 const ARGS_PREVIEW_MAX = 200;
@@ -29,7 +30,7 @@ export class PluginCommandComponent extends Container {
     this.args = args;
     this.addChild(new Spacer(1));
     const head =
-      currentTheme.boldFg('primary', '▶ Invoked command: ') +
+      currentTheme.boldFg('primary', t('tui.messages.pluginCommand.invoked')) +
       currentTheme.boldFg('roleUser', this.label);
     this.headText = new Text(head, 0, 0);
     this.addChild(this.headText);
@@ -44,7 +45,7 @@ export class PluginCommandComponent extends Container {
 
   override invalidate(): void {
     const head =
-      currentTheme.boldFg('primary', '▶ Invoked command: ') +
+      currentTheme.boldFg('primary', t('tui.messages.pluginCommand.invoked')) +
       currentTheme.boldFg('roleUser', this.label);
     this.headText.setText(head);
     if (this.previewText !== undefined && this.args !== undefined) {

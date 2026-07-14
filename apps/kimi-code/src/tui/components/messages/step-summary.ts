@@ -1,5 +1,6 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { currentTheme } from '#/tui/theme';
 
 /**
@@ -24,8 +25,26 @@ export class StepSummaryComponent implements Component {
 
   render(_width: number): string[] {
     const parts: string[] = [];
-    if (this.thinking > 0) parts.push(`thinking ${this.thinking} times`);
-    if (this.tool > 0) parts.push(`call ${this.tool} tools`);
+    if (this.thinking > 0) {
+      parts.push(
+        t(
+          this.thinking === 1
+            ? 'tui.messages.stepSummary.thinking_one'
+            : 'tui.messages.stepSummary.thinking_other',
+          { count: this.thinking },
+        ),
+      );
+    }
+    if (this.tool > 0) {
+      parts.push(
+        t(
+          this.tool === 1
+            ? 'tui.messages.stepSummary.tool_one'
+            : 'tui.messages.stepSummary.tool_other',
+          { count: this.tool },
+        ),
+      );
+    }
     if (parts.length === 0) return [];
     return [currentTheme.dim(`\u2026 ${parts.join(', ')}`)];
   }

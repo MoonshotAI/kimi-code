@@ -21,6 +21,7 @@ import {
 import { UsagePanelComponent } from '../components/messages/usage-panel';
 import { formatErrorMessage } from '../utils/event-payload';
 import { formatPluginSourceLabel, isOfficialPluginSource } from '../utils/plugin-source-label';
+import { t } from '#/i18n';
 import { loadPluginMarketplace } from '#/utils/plugin-marketplace';
 import { openUrl } from '#/utils/open-url';
 import type { SlashCommandHost } from './dispatch';
@@ -63,19 +64,19 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
     if (sub === 'install') {
       const source = rest.join(' ').trim();
       if (source.length === 0) {
-        host.showError('Usage: /plugins install <local-path-or-zip-url>');
+        host.showError(t('tui.statusMessages.pluginsUsageInstall'));
         return;
       }
       if (!(await confirmInstallTrust(host, source, isOfficialPluginSource(source)))) {
-        host.showStatus('Install cancelled.');
+        host.showStatus(t('tui.statusMessages.pluginsInstallCancelled'));
         return;
       }
-      const spinner = host.showProgressSpinner(`Installing plugin from ${truncateForStatus(source)}…`);
+      const spinner = host.showProgressSpinner(t('tui.statusMessages.pluginsInstallingFrom', { source: truncateForStatus(source) }));
       try {
         await installPluginFromSource(host, source);
-        spinner.stop({ ok: true, label: `Install finished — see details below.` });
+        spinner.stop({ ok: true, label: t('tui.statusMessages.pluginsInstallFinished') });
       } catch (error) {
-        spinner.stop({ ok: false, label: `Install failed: ${formatErrorMessage(error)}` });
+        spinner.stop({ ok: false, label: t('tui.statusMessages.pluginsInstallFailed', { error: formatErrorMessage(error) }) });
         throw error;
       }
       return;
@@ -106,13 +107,12 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       const id = rest[1];
       const server = rest[2];
       if ((action !== 'enable' && action !== 'disable') || id === undefined || server === undefined) {
-        host.showError('Usage: /plugins mcp enable|disable <id> <server>');
+        host.showError(t('tui.statusMessages.pluginsUsageMcp'));
         return;
       }
       await session.setPluginMcpServerEnabled(id, server, action === 'enable');
-      host.showStatus(
-        `${action === 'enable' ? 'Enabled' : 'Disabled'} MCP server ${server} for ${id}. Run /reload or /new to apply.`,
-      );
+      const mcpKey = action === 'enable' ? 'pluginsMcpEnabled' : 'pluginsMcpDisabled';
+      host.showStatus(t(`tui.statusMessages.${mcpKey}`, { server, id }));
       return;
     }
     if (sub === 'enable' || sub === 'disable') {
@@ -127,11 +127,11 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
     if (sub === 'remove') {
       const id = rest[0];
       if (id === undefined) {
-        host.showError('Usage: /plugins remove <id>');
+        host.showError(t('tui.statusMessages.pluginsUsageRemove'));
         return;
       }
       if (!(await confirmRemovePlugin(host, id))) {
-        host.showStatus(`Remove cancelled: ${id}.`);
+        host.showStatus(t('tui.statusMessages.pluginsRemoveCancelled', { id }));
         return;
       }
       await removePlugin(host, id);
@@ -146,9 +146,9 @@ export async function handlePluginsCommand(host: SlashCommandHost, rawArgs: stri
       await renderPluginInfo(host, sub);
       return;
     }
-    host.showError(`Unknown /plugins action: ${sub}. Run /plugins to choose interactively.`);
+    host.showError(t('tui.statusMessages.pluginsUnknownAction', { action: sub }));
   } catch (error) {
-    host.showError(`/plugins ${sub ?? ''} failed: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.statusMessages.pluginsCommandFailed', { action: sub ?? '', error: formatErrorMessage(error) }));
   }
 }
 
@@ -160,7 +160,7 @@ async function showPluginsPicker(
   try {
     plugins = await host.requireSession().listPlugins();
   } catch (error) {
-    host.showError(`Failed to load plugins: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.statusMessages.pluginsFailedToLoad', { error: formatErrorMessage(error) }));
     return;
   }
 
@@ -175,7 +175,7 @@ async function showPluginsPicker(
       // editor itself, so do not pre-restore here — that would flash the editor
       // for in-place actions like toggling a plugin.
       void handlePluginsPanelSelection(host, panel, selection).catch((error: unknown) => {
-        host.showError(`/plugins failed: ${formatErrorMessage(error)}`);
+        host.showError(t('tui.statusMessages.pluginsFailed', { error: formatErrorMessage(error) }));
       });
     },
     onCancel: () => {
@@ -227,7 +227,7 @@ async function showPluginMcpPicker(
   try {
     info = await host.requireSession().getPluginInfo(id);
   } catch (error) {
-    host.showError(`Failed to load plugin MCP servers: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.statusMessages.pluginsFailedToLoadMcp', { error: formatErrorMessage(error) }));
     return;
   }
 
@@ -240,7 +240,7 @@ async function showPluginMcpPicker(
         // Every MCP action re-mounts a picker, so let the handler do the
         // mounting — pre-restoring the editor here would flash on toggle.
         void handlePluginMcpSelection(host, selection).catch((error: unknown) => {
-          host.showError(`/plugins mcp failed: ${formatErrorMessage(error)}`);
+          host.showError(t('tui.statusMessages.pluginsMcpFailed', { error: formatErrorMessage(error) }));
         });
       },
       onCancel: () => {
@@ -302,7 +302,7 @@ async function installFromPanel(
   official: boolean,
 ): Promise<void> {
   if (!(await confirmInstallTrust(host, label, official))) {
-    host.showStatus(`Install cancelled: ${label}.`);
+    host.showStatus(t('tui.statusMessages.pluginsInstallCancelledLabel', { label }));
     host.restoreEditor();
     return;
   }
@@ -312,7 +312,7 @@ async function installFromPanel(
   if (official) {
     panel.setInstalling(truncateForStatus(label));
   } else {
-    host.showStatus(`Installing or updating ${label} from marketplace...`);
+    host.showStatus(t('tui.statusMessages.pluginsInstallingOrUpdating', { label }));
   }
   host.state.ui.requestRender();
   try {
@@ -326,7 +326,7 @@ async function installFromPanel(
       // instead of being dropped back at the editor.
       host.mountEditorReplacement(panel);
     }
-    host.showError(`Failed to install ${label}: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.statusMessages.pluginsFailedToInstall', { label, error: formatErrorMessage(error) }));
     return;
   }
   // Close the panel after installing so the result status and the
@@ -350,12 +350,13 @@ async function applyPluginEnabled(
   }
   const mcpHint =
     enabled && info !== undefined && info.mcpServerCount > info.enabledMcpServerCount
-      ? ` Some MCP servers are disabled; re-enable with /plugins mcp enable ${id} <server>.`
+      ? t('tui.statusMessages.pluginsMcpDisabledHint', { id })
       : '';
   if (showStatus) {
-    host.showStatus(`${enabled ? 'Enabled' : 'Disabled'} ${id}. Run /reload or /new to apply.${mcpHint}`);
+    const enabledKey = enabled ? 'pluginsEnabled' : 'pluginsDisabled';
+    host.showStatus(t(`tui.statusMessages.${enabledKey}`, { id }) + mcpHint);
   }
-  const inlineMcpHint = mcpHint.length > 0 ? ' · MCP servers disabled' : '';
+  const inlineMcpHint = mcpHint.length > 0 ? t('tui.statusMessages.pluginsInlineMcpDisabled') : '';
   return `${pluginInlineChangeHint()}${inlineMcpHint}`;
 }
 
@@ -376,7 +377,7 @@ async function handlePluginsPanelSelection(
     }
     case 'remove':
       if (!(await confirmRemovePlugin(host, selection.id))) {
-        host.showStatus(`Remove cancelled: ${selection.id}.`);
+        host.showStatus(t('tui.statusMessages.pluginsRemoveCancelled', { id: selection.id }));
         await showPluginsPicker(host, { initialTab: 'installed', selectedId: selection.id });
         return;
       }
@@ -415,8 +416,8 @@ async function handlePluginsPanelSelection(
     case 'open-url':
       host.restoreEditor();
       openUrl(selection.url);
-      host.showStatus(`Opening the ${selection.label} page in your browser…`, 'success');
-      host.showStatus(`If it did not open, visit ${selection.url}`);
+      host.showStatus(t('tui.statusMessages.pluginsOpeningPage', { label: selection.label }), 'success');
+      host.showStatus(t('tui.statusMessages.pluginsIfNotOpened', { url: selection.url }));
       return;
   }
 }
@@ -448,8 +449,8 @@ async function handlePluginMcpSelection(
 
 async function removePlugin(host: SlashCommandHost, id: string): Promise<void> {
   await host.requireSession().removePlugin(id);
-  host.showStatus(`Removed ${id}.`);
-  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+  host.showStatus(t('tui.statusMessages.pluginsRemoved', { id }));
+  host.showStatus(t('tui.statusMessages.pluginsReloadHint'), 'warning');
 }
 
 async function renderPluginsList(
@@ -490,7 +491,9 @@ async function installPluginFromSource(
   showPluginInstallResult(host, beforeList, summary);
 }
 
-const PLUGIN_RELOAD_HINT = 'Run /new or /reload to apply plugin changes.';
+function pluginReloadHint(): string {
+  return t('tui.statusMessages.pluginsReloadHint');
+}
 
 function showPluginInstallResult(
   host: SlashCommandHost,
@@ -498,14 +501,14 @@ function showPluginInstallResult(
   summary: PluginSummary,
 ): void {
   const previous = beforeList.find((entry) => entry.id === summary.id);
-  const serverWord = summary.mcpServerCount === 1 ? 'server' : 'servers';
+  const mcpCount = summary.mcpServerCount;
   const mcpHint =
-    summary.mcpServerCount > 0
-      ? ` Declares ${summary.mcpServerCount} MCP ${serverWord}; enabled by default and configurable from /plugins.`
+    mcpCount > 0
+      ? t(mcpCount === 1 ? 'tui.statusMessages.pluginsDeclaresMcp_one' : 'tui.statusMessages.pluginsDeclaresMcp_other', { count: mcpCount })
       : '';
   const action = describeInstallAction(previous, summary);
   host.showStatus(`${action} (${summary.id}).${mcpHint}`);
-  host.showStatus(PLUGIN_RELOAD_HINT, 'warning');
+  host.showStatus(pluginReloadHint(), 'warning');
 }
 
 function describeInstallAction(
@@ -518,19 +521,35 @@ function describeInstallAction(
     return ` ${prev} → ${cur ?? '-'}`;
   };
   if (previous === undefined) {
-    return `Installed ${next.displayName}${versionFromTo(undefined, next.version)} ${sourcePhrase(sourceLabel)}`;
+    return t('tui.statusMessages.pluginsInstalledDesc', {
+      displayName: next.displayName,
+      version: versionFromTo(undefined, next.version),
+      sourcePhrase: sourcePhrase(sourceLabel),
+    });
   }
   if (sourceIdentity(previous) !== sourceIdentity(next)) {
     const prevSourceLabel = formatPluginSourceLabel(previous);
-    return `Migrated ${next.displayName}: ${prevSourceLabel} → ${sourceLabel}${versionFromTo(previous.version, next.version)}`;
+    return t('tui.statusMessages.pluginsMigratedDesc', {
+      displayName: next.displayName,
+      prevSource: prevSourceLabel,
+      source: sourceLabel,
+      version: versionFromTo(previous.version, next.version),
+    });
   }
-  return `Updated ${next.displayName}${versionFromTo(previous.version, next.version)} ${sourcePhrase(sourceLabel)}`;
+  return t('tui.statusMessages.pluginsUpdatedDesc', {
+    displayName: next.displayName,
+    version: versionFromTo(previous.version, next.version),
+    sourcePhrase: sourcePhrase(sourceLabel),
+  });
 }
 
 // formatPluginSourceLabel already prefixes zip-url hosts with "via", so adding
 // "from" would read as "from via <host>". Only prepend "from" otherwise.
 function sourcePhrase(sourceLabel: string): string {
-  return sourceLabel.startsWith('via ') ? sourceLabel : `from ${sourceLabel}`;
+  if (sourceLabel.startsWith('via ')) {
+    return t('tui.statusMessages.pluginsViaSource', { source: sourceLabel.slice(4) });
+  }
+  return t('tui.statusMessages.pluginsFromSource', { source: sourceLabel });
 }
 
 function sourceIdentity(plugin: PluginSummary): string {
@@ -547,8 +566,8 @@ function truncateForStatus(input: string): string {
 
 async function reloadPlugins(host: SlashCommandHost): Promise<void> {
   const summary = await host.requireSession().reloadPlugins();
-  const line = `Reload: +${summary.added.length} -${summary.removed.length}` +
-    (summary.errors.length > 0 ? ` (${summary.errors.length} errors)` : '');
+  const line = t('tui.statusMessages.pluginsReloadResult', { added: summary.added.length, removed: summary.removed.length }) +
+    (summary.errors.length > 0 ? t('tui.statusMessages.pluginsReloadResultErrors', { count: summary.errors.length }) : '');
   host.showStatus(line);
 }
 
@@ -561,5 +580,5 @@ function resolvePluginInstallSource(source: string, workDir: string): string {
 }
 
 function pluginInlineChangeHint(): string {
-  return 'run /reload or /new to apply';
+  return t('tui.statusMessages.pluginsInlineChangeHint');
 }

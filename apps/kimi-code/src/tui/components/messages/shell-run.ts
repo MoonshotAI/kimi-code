@@ -1,5 +1,6 @@
 import { Container, Text } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { currentTheme } from '#/tui/theme';
 
 import { formatBashOutputForDisplay, sanitizeShellOutput } from '#/tui/utils/shell-output';
@@ -103,7 +104,7 @@ export class ShellRunComponent extends Container {
   private renderText(): string {
     try {
       if (this.backgrounded) {
-        return `  ${currentTheme.fg('textDim', 'Moved to background.')}`;
+        return `  ${currentTheme.fg('textDim', t('tui.messages.shellRun.backgrounded'))}`;
       }
       if (!this.running) {
         return formatBashOutputForDisplay(this.finalStdout, this.finalStderr, this.finalIsError)
@@ -117,18 +118,21 @@ export class ShellRunComponent extends Container {
       let body: string;
       let extra = 0;
       if (trimmed.length === 0) {
-        body = `  ${dim('Running…')}`;
+        body = `  ${dim(t('tui.messages.shellRun.running'))}`;
       } else {
         const lines = trimmed.split('\n');
         const tail = lines.slice(-RUNNING_TAIL_LINES);
         extra = Math.max(0, lines.length - RUNNING_TAIL_LINES);
         body = tail.map((line) => `  ${dim(line)}`).join('\n');
       }
-      const timing = `  ${dim(`${extra > 0 ? `+${extra} lines ` : ''}(${elapsed}s)`)}`;
-      const hint = `  ${dim('(ctrl+b to run in background)')}`;
+      const timing =
+        extra > 0
+          ? `  ${dim(t('tui.messages.shellRun.timing', { extra, elapsed }))}`
+          : `  ${dim(t('tui.messages.shellRun.timingNoExtra', { elapsed }))}`;
+      const hint = `  ${dim(t('tui.messages.shellRun.hint'))}`;
       return `${body}\n${timing}\n${hint}`;
     } catch {
-      return '  (output unavailable)';
+      return `  ${t('tui.messages.shellRun.outputUnavailable')}`;
     }
   }
 }

@@ -9,6 +9,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
+import { t } from '#/i18n';
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import type {
   GoalQueueMoveDirection,
@@ -115,17 +116,17 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
   override render(width: number): string[] {
     const view = this.list.view();
     const hint = this.movingGoalId === undefined
-      ? '↑↓ navigate · Space select · E edit · D delete · Esc cancel'
-      : '↑↓ reorder · Space done · E edit · D delete · Esc cancel';
+      ? t('tui.dialogs.goalQueueManager.navHint')
+      : t('tui.dialogs.goalQueueManager.reorderHint');
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', ' Upcoming goals'),
+      currentTheme.boldFg('primary', ` ${t('tui.dialogs.goalQueueManager.title')}`),
       currentTheme.fg('textMuted', ` ${hint}`),
       '',
     ];
 
     if (this.goals.length === 0) {
-      lines.push(currentTheme.fg('textMuted', '  No upcoming goals.'));
+      lines.push(currentTheme.fg('textMuted', `  ${t('tui.dialogs.goalQueueManager.empty')}`));
     } else {
       for (let i = view.page.start; i < view.page.end; i++) {
         const goal = view.items[i];
@@ -136,7 +137,7 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
       const below = view.items.length - view.page.end;
       if (below > 0) {
         lines.push('');
-        lines.push(currentTheme.fg('textMuted', ` ▼ ${String(below)} more`));
+        lines.push(currentTheme.fg('textMuted', ` ${t('tui.dialogs.goalQueueManager.more', { count: below })}`));
       }
     }
 
@@ -150,7 +151,7 @@ export class GoalQueueManagerComponent extends Container implements Focusable {
     const pointer = selected ? SELECT_POINTER : ' ';
     const prefix = currentTheme.fg(selected ? 'primary' : 'textDim', `  ${pointer} `);
     const labelPrefix = `${String(index + 1)}. `;
-    const stateLabel = moving ? '  selected' : '';
+    const stateLabel = moving ? `  ${t('tui.dialogs.goalQueueManager.selected')}` : '';
     const labelWidth = visibleWidth(labelPrefix);
     const stateWidth = visibleWidth(stateLabel);
     const objectiveWidth = Math.max(1, width - 5 - labelWidth - stateWidth);
@@ -247,21 +248,21 @@ export class GoalQueueEditDialogComponent extends Container implements Focusable
     const pad = '  ';
     const border = (s: string): string => currentTheme.fg('primary', s);
     const title = truncateToWidth(
-      currentTheme.boldFg('textStrong', 'Edit upcoming goal'),
+      currentTheme.boldFg('textStrong', t('tui.dialogs.goalQueueEdit.title')),
       innerWidth,
       ELLIPSIS,
     );
     const subtitle = truncateToWidth(
       currentTheme.fg(
         this.error === undefined ? 'textDim' : 'warning',
-        this.error ?? 'Update the queued objective.',
+        this.error ?? t('tui.dialogs.goalQueueEdit.subtitle'),
       ),
       innerWidth,
       ELLIPSIS,
     );
     const inputLines = this.input.render(innerWidth);
     const footer = truncateToWidth(
-      currentTheme.fg('textDim', 'Enter submit · Shift-Enter/Ctrl-J newline · Esc cancel'),
+      currentTheme.fg('textDim', t('tui.dialogs.goalQueueEdit.footer')),
       innerWidth,
       ELLIPSIS,
     );
@@ -291,11 +292,11 @@ export class GoalQueueEditDialogComponent extends Container implements Focusable
   private submit(value: string): void {
     const objective = value.trim();
     if (objective.length === 0) {
-      this.error = 'Goal objective cannot be empty.';
+      this.error = t('tui.dialogs.goalQueueEdit.errorEmpty');
       return;
     }
     if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
-      this.error = `Goal objective cannot exceed ${MAX_GOAL_OBJECTIVE_LENGTH} characters.`;
+      this.error = t('tui.dialogs.goalQueueEdit.errorTooLong', { max: MAX_GOAL_OBJECTIVE_LENGTH });
       return;
     }
     this.opts.onDone({ kind: 'save', goalId: this.opts.goal.id, objective });
@@ -390,7 +391,7 @@ class MultilineGoalInput {
     const rendered: string[] = [];
 
     if (range.start > 0) {
-      rendered.push(padInputLine(`  ${ELLIPSIS} ${String(range.start)} previous`, safeWidth));
+      rendered.push(padInputLine(`  ${t('tui.dialogs.goalQueueEdit.previous', { count: range.start })}`, safeWidth));
     }
 
     for (let lineIndex = range.start; lineIndex < range.end; lineIndex++) {
@@ -405,7 +406,7 @@ class MultilineGoalInput {
 
     const remaining = logicalLines.length - range.end;
     if (remaining > 0) {
-      rendered.push(padInputLine(`  ${ELLIPSIS} ${String(remaining)} more`, safeWidth));
+      rendered.push(padInputLine(`  ${t('tui.dialogs.goalQueueEdit.more', { count: remaining })}`, safeWidth));
     }
 
     return rendered;

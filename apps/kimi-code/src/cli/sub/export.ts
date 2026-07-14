@@ -25,6 +25,7 @@ import {
 import type { Command } from 'commander';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
+import { t } from '#/i18n';
 import { createCliTelemetryBootstrap, initializeCliTelemetry } from '#/cli/telemetry';
 import { detectInstallSource } from '#/cli/update/source';
 import { createKimiCodeHostIdentity } from '#/cli/version';
@@ -73,14 +74,14 @@ export async function handleExport(
     resolvedId = requestedId;
   } else {
     if (previousSummary === undefined) {
-      deps.stderr.write('No previous session found to export.\n');
+      deps.stderr.write(t('tui.statusMessages.exportNoSession') + '\n');
       deps.exit(1);
     }
     resolvedId = previousSummary.id;
     if (!opts.yes) {
       const confirmed = await deps.confirmPreviousSession(toPreviousSessionSummary(previousSummary));
       if (!confirmed) {
-        deps.stdout.write('Export cancelled.\n');
+        deps.stdout.write(t('tui.statusMessages.exportCancelled') + '\n');
         return;
       }
     }
@@ -107,14 +108,14 @@ export async function handleExport(
 export function registerExportCommand(parent: Command, deps?: Partial<ExportDeps>): void {
   parent
     .command('export')
-    .description('Export a session as a ZIP archive.')
-    .option('-o, --output <path>', 'Output ZIP path.')
-    .option('-y, --yes', 'Skip previous-session confirmation.')
+    .description(t('cli.commandDescriptions.exportCmd'))
+    .option('-o, --output <path>', t('cli.optionDescriptions.exportOutput'))
+    .option('-y, --yes', t('cli.optionDescriptions.exportYes'))
     .option(
       '--no-include-global-log',
-      'Skip bundling the active global diagnostic log (~/.kimi-code/logs/kimi-code.log, not rotated .1 files). By default the global log is included.',
+      t('cli.optionDescriptions.exportNoIncludeGlobalLog'),
     )
-    .argument('[sessionId]', 'Session id to export. Defaults to the most recent session.')
+    .argument('[sessionId]', t('cli.optionDescriptions.exportSessionId'))
     .action(
       async (
         sessionId: string | undefined,
@@ -225,7 +226,7 @@ async function confirmPreviousSession(summary: PreviousSessionSummary): Promise<
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
     const title = summary.title === undefined ? summary.sessionId : `${summary.title} (${summary.sessionId})`;
-    const answer = await rl.question(`Export previous session "${title}"? [Y/n] `);
+    const answer = await rl.question(t('tui.statusMessages.exportConfirmPrompt', { title }));
     const trimmed = answer.trim().toLowerCase();
     return trimmed === '' || trimmed === 'y' || trimmed === 'yes';
   } finally {

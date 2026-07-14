@@ -16,6 +16,7 @@ import {
   wrapTextWithAnsi,
 } from '@moonshot-ai/pi-tui';
 import { currentTheme } from '#/tui/theme';
+import { t } from '#/i18n';
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
 import type {
@@ -109,7 +110,7 @@ function renderDisplayBlock(
     case 'diff':
       return renderDiffLinesClustered(block.old_text, block.new_text, block.path, {
         contextLines: 3,
-        expandKeyHint: 'ctrl+e to preview',
+        expandKeyHint: t('tui.dialogs.approvalPanel.previewHint'),
         maxLines: DIFF_SUMMARY_MAX_LINES,
       });
     case 'file_content': {
@@ -124,7 +125,12 @@ function renderDisplayBlock(
       if (remaining > 0) {
         lines.push(
           s.dim(
-            `     … ${String(remaining)} more line${remaining > 1 ? 's' : ''} hidden (ctrl+e to preview)`,
+            `     ${t(
+              remaining === 1
+                ? 'tui.dialogs.approvalPanel.moreLinesHidden_one'
+                : 'tui.dialogs.approvalPanel.moreLinesHidden_other',
+              { count: remaining, previewHint: t('tui.dialogs.approvalPanel.previewHint') },
+            )}`,
           ),
         );
       }
@@ -191,17 +197,17 @@ function isDuplicateBriefBlock(block: DisplayBlock, description: string): boolea
 function headerFor(toolName: string): string {
   switch (toolName) {
     case 'Bash':
-      return 'Run this command?';
+      return t('tui.dialogs.approvalPanel.headerForBash');
     case 'Write':
-      return 'Write this file?';
+      return t('tui.dialogs.approvalPanel.headerForWrite');
     case 'Edit':
-      return 'Apply these edits?';
+      return t('tui.dialogs.approvalPanel.headerForEdit');
     case 'TaskStop':
-      return 'Stop this task?';
+      return t('tui.dialogs.approvalPanel.headerForTaskStop');
     case 'ExitPlanMode':
-      return 'Ready to build with this plan?';
+      return t('tui.dialogs.approvalPanel.headerForExitPlanMode');
     default:
-      return `Approve ${toolName}?`;
+      return t('tui.dialogs.approvalPanel.headerForDefault', { toolName });
   }
 }
 
@@ -395,13 +401,13 @@ export class ApprovalPanelComponent extends Container implements Focusable {
 
     lines.push('');
     if (this.feedbackMode) {
-      lines.push(indent(dim('Type feedback · ↵ submit.')));
+      lines.push(indent(dim(t('tui.dialogs.approvalPanel.feedbackHint'))));
     } else {
-      const expandHint = hasPreviewable ? ' · ctrl+e preview' : '';
+      const expandHint = hasPreviewable ? t('tui.dialogs.approvalPanel.expandHint') : '';
       lines.push(
         indent(
           dim(
-            `↑/↓ select · ${buildNumericHint(data.choices.length)} choose · ↵ confirm${expandHint}`,
+            t('tui.dialogs.approvalPanel.navHint', { numeric: buildNumericHint(data.choices.length), expand: expandHint }),
           ),
         ),
       );

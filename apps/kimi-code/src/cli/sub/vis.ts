@@ -11,6 +11,7 @@
 import type { Command } from 'commander';
 
 import { createCliTelemetryBootstrap } from '#/cli/telemetry';
+import { t } from '#/i18n';
 import { openUrl } from '#/utils/open-url';
 
 interface WritableLike {
@@ -76,7 +77,7 @@ export async function handleVis(deps: VisDeps, opts: VisOptions): Promise<void> 
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    deps.stderr.write(`Failed to start kimi vis: ${msg}\n`);
+    deps.stderr.write(t('tui.statusMessages.visStartFailed', { message: msg }) + '\n');
     return deps.exit(1);
   }
 
@@ -85,14 +86,14 @@ export async function handleVis(deps: VisDeps, opts: VisOptions): Promise<void> 
       ? server.url
       : `${server.url}sessions/${encodeURIComponent(opts.sessionId)}`;
 
-  deps.stdout.write(`kimi vis is running at ${server.url}\n`);
-  deps.stdout.write('Press Ctrl-C to stop.\n');
+  deps.stdout.write(t('tui.statusMessages.visRunning', { url: server.url }) + '\n');
+  deps.stdout.write(t('tui.statusMessages.visStopHint') + '\n');
 
   if (opts.open) {
     try {
       await deps.openUrl(target);
     } catch {
-      deps.stderr.write(`Could not open a browser; visit ${target} manually.\n`);
+      deps.stderr.write(t('tui.statusMessages.visBrowserFailed', { url: target }) + '\n');
     }
   }
 
@@ -103,11 +104,11 @@ export async function handleVis(deps: VisDeps, opts: VisOptions): Promise<void> 
 export function registerVisCommand(parent: Command, overrides?: Partial<VisDeps>): void {
   parent
     .command('vis')
-    .description('Launch the session visualizer in your browser.')
-    .option('--port <number>', 'Port to bind. Default: auto-pick a free port.')
-    .option('--host <host>', 'Host to bind. Default: 127.0.0.1.')
-    .option('--no-open', 'Do not open the browser automatically.')
-    .argument('[sessionId]', 'Open directly to this session.')
+    .description(t('cli.commandDescriptions.vis'))
+    .option('--port <number>', t('cli.optionDescriptions.visPort'))
+    .option('--host <host>', t('cli.optionDescriptions.visHost'))
+    .option('--no-open', t('cli.optionDescriptions.visNoOpen'))
+    .argument('[sessionId]', t('cli.optionDescriptions.visSessionId'))
     .action(
       async (
         sessionId: string | undefined,

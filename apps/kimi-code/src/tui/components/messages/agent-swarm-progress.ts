@@ -1,5 +1,6 @@
 import { truncateToWidth, visibleWidth, type Component } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
+import { t } from '#/i18n';
 
 import {
   AgentSwarmProgressEstimator,
@@ -33,16 +34,6 @@ const AGENT_SWARM_LEFT_INDENT = ' ';
 const AGENT_SWARM_RIGHT_GAP = 1;
 const AGENT_SWARM_NON_GRID_LINES = 6;
 const COMPACT_TERMINAL_MARK_WIDTH = 1;
-const ORCHESTRATING_LABEL = 'Orchestrating...';
-const PROMPTING_LABEL = 'Prompting...';
-const WORKING_LABEL = 'Working...';
-const COMPLETED_LABEL = 'Completed.';
-const FAILED_LABEL = 'Failed.';
-const ABORTED_LABEL = 'Aborted.';
-const CANCELLED_LABEL = 'Cancelled.';
-const QUEUED_LABEL = 'Queued...';
-const SUSPENDED_LABEL = 'Rate limited...';
-const RESUMED_ITEM_LABEL = '(resumed)';
 const CANCELLED_LABEL_DARKEN_FACTOR = 0.72;
 const AGENT_SWARM_TITLE_ACCENT_BIAS = 1.3;
 
@@ -174,15 +165,24 @@ export interface AgentSwarmProgressOptions {
   readonly availableGridHeight?: () => number | undefined;
 }
 
-const PHASE_LABELS: Record<AgentSwarmPhase, string> = {
-  pending: QUEUED_LABEL,
-  queued: QUEUED_LABEL,
-  suspended: SUSPENDED_LABEL,
-  running: 'Running',
-  completed: 'Completed',
-  failed: 'Failed',
-  cancelled: ABORTED_LABEL,
-};
+function phaseLabel(phase: AgentSwarmPhase): string {
+  switch (phase) {
+    case 'pending':
+      return t('tui.messages.agentSwarmProgress.phase.pending');
+    case 'queued':
+      return t('tui.messages.agentSwarmProgress.phase.queued');
+    case 'suspended':
+      return t('tui.messages.agentSwarmProgress.phase.suspended');
+    case 'running':
+      return t('tui.messages.agentSwarmProgress.phase.running');
+    case 'completed':
+      return t('tui.messages.agentSwarmProgress.phase.completed');
+    case 'failed':
+      return t('tui.messages.agentSwarmProgress.phase.failed');
+    case 'cancelled':
+      return t('tui.messages.agentSwarmProgress.phase.cancelled');
+  }
+}
 
 export class AgentSwarmProgressComponent implements Component {
   private members: AgentSwarmMember[];
@@ -475,8 +475,8 @@ export class AgentSwarmProgressComponent implements Component {
 
   private renderHeader(width: number, _summary: AgentSwarmSummary | undefined): string {
     if (width <= 3) return chalk.hex(this.colors.primary)('─'.repeat(width));
-
-    const title = gradientText('Agent Swarm', this.colors.primary, this.colors.accent, AGENT_SWARM_TITLE_ACCENT_BIAS);
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  
+    const title = gradientText(t('tui.messages.agentSwarmProgress.title'), this.colors.primary, this.colors.accent, AGENT_SWARM_TITLE_ACCENT_BIAS);
     const description =
       this.description.length > 0
         ? chalk.hex(this.colors.primary)(' ─ ') + chalk.hex(this.colors.text)(this.description)
@@ -535,14 +535,14 @@ export class AgentSwarmProgressComponent implements Component {
   private renderOrchestratingStatusLine(width: number): string {
     if (this.itemsStarted) {
       return truncateToWidth(
-        renderStatusLabel(ORCHESTRATING_LABEL, this.colors.primary),
+        renderStatusLabel(t('tui.messages.agentSwarmProgress.orchestrating'), this.colors.primary),
         width,
       );
     }
 
     const promptTemplate = collapseWhitespace(this.promptTemplateText);
     const label = renderStatusLabel(
-      promptTemplate.length > 0 ? PROMPTING_LABEL : ORCHESTRATING_LABEL,
+      promptTemplate.length > 0 ? t('tui.messages.agentSwarmProgress.prompting') : t('tui.messages.agentSwarmProgress.orchestrating'),
       this.colors.primary,
     );
     if (promptTemplate.length === 0) return truncateToWidth(label, width);
@@ -772,7 +772,7 @@ export class AgentSwarmProgressComponent implements Component {
     member.phase = 'cancelled';
     clearMemberState(member, ...CANCELLED_CLEAR_KEYS);
     if (previousPhase === 'pending' || previousPhase === 'queued' || previousPhase === 'suspended') {
-      member.cancelledLabelText = CANCELLED_LABEL;
+      member.cancelledLabelText = t('tui.messages.agentSwarmProgress.cancelled');
       member.cancelledLabelColor = cancelledLabelColor(this.colors);
       member.cancelledMarkColor = this.colors.warning;
       member.cancelledBarColor = this.colors.warning;
@@ -782,7 +782,7 @@ export class AgentSwarmProgressComponent implements Component {
       member.cancelledMarkColor = this.colors.warning;
       member.cancelledBarColor = this.colors.warning;
     } else {
-      member.cancelledLabelText = ABORTED_LABEL;
+      member.cancelledLabelText = t('tui.messages.agentSwarmProgress.aborted');
       member.cancelledLabelColor = this.colors.warning;
       member.cancelledMarkColor = this.colors.warning;
       member.cancelledBarColor = this.colors.warning;
@@ -832,7 +832,7 @@ function agentSwarmResumeItemsFromArgs(args: Record<string, unknown>): string[] 
   ) {
     return [];
   }
-  return Object.keys(resumeAgentIds).map(() => RESUMED_ITEM_LABEL);
+  return Object.keys(resumeAgentIds).map(() => t('tui.messages.agentSwarmProgress.resumed'));
 }
 
 export function agentSwarmPartialItemsCountFromArguments(argumentsText: string): number {
@@ -868,7 +868,7 @@ function agentSwarmPartialResumeItemsFromArguments(argumentsText: string): strin
   if (match === null) return [];
   return Array.from(
     { length: countPartialJsonObjectEntries(argumentsText, match.index + match[0].length) },
-    () => RESUMED_ITEM_LABEL,
+    () => t('tui.messages.agentSwarmProgress.resumed'),
   );
 }
 
@@ -1319,11 +1319,11 @@ function totalStatus(
 
 function totalStatusLabel(status: TotalStatus): string {
   const map: Record<TotalStatus, string> = {
-    working: WORKING_LABEL,
-    completed: COMPLETED_LABEL,
-    suspended: SUSPENDED_LABEL,
-    failed: FAILED_LABEL,
-    aborted: ABORTED_LABEL,
+    working: t('tui.messages.agentSwarmProgress.working'),
+    completed: t('tui.messages.agentSwarmProgress.completed'),
+    suspended: t('tui.messages.agentSwarmProgress.rateLimited'),
+    failed: t('tui.messages.agentSwarmProgress.failed'),
+    aborted: t('tui.messages.agentSwarmProgress.aborted'),
   };
   return map[status];
 }
@@ -1388,14 +1388,14 @@ function renderCellLabel(
   if (snapshot.phase === 'cancelled') {
     return renderCancelledCellLabel(member, width, colors);
   }
-  return truncateWithColor(PHASE_LABELS[snapshot.phase], width, phaseColor(snapshot.phase, colors));
+  return truncateWithColor(phaseLabel(snapshot.phase), width, phaseColor(snapshot.phase, colors));
 }
 
 function runningCellLabelText(member: AgentSwarmMember): string {
   const latestLine = latestNonEmptyLine(member.latestModelText);
   const itemText = collapseWhitespace(member.itemText);
   const text = latestLine.length > 0 ? latestLine : itemText;
-  return text.length > 0 ? text : PHASE_LABELS.running;
+  return text.length > 0 ? text : phaseLabel('running');
 }
 
 function renderCancelledCellLabel(
@@ -1403,7 +1403,7 @@ function renderCancelledCellLabel(
   width: number,
   colors: ColorPalette,
 ): string {
-  const labelText = member.cancelledLabelText ?? ABORTED_LABEL;
+  const labelText = member.cancelledLabelText ?? t('tui.messages.agentSwarmProgress.aborted');
   const labelColor = member.cancelledLabelColor ?? colors.warning;
   const markColor = member.cancelledMarkColor ?? colors.warning;
   const labelStyle = chalk.hex(labelColor);
@@ -1445,7 +1445,7 @@ function renderPendingCell(
   const id = chalk.hex(colors.primary)(member.id);
   const prefix = `${id} `;
   const itemText = collapseWhitespace(member.itemText);
-  const label = itemText.length > 0 ? itemText : QUEUED_LABEL;
+  const label = itemText.length > 0 ? itemText : t('tui.messages.agentSwarmProgress.queued');
   const labelWidth = Math.max(1, width - visibleWidth(prefix));
   return prefix + truncateWithColor(label, labelWidth, colors.textDim);
 }
@@ -1458,7 +1458,7 @@ function renderQueuedCell(
   const id = chalk.hex(colors.primary)(member.id);
   const prefix = `${id} `;
   const labelWidth = Math.max(1, width - visibleWidth(prefix));
-  return prefix + truncateWithColor(QUEUED_LABEL, labelWidth, colors.textDim);
+  return prefix + truncateWithColor(t('tui.messages.agentSwarmProgress.queued'), labelWidth, colors.textDim);
 }
 
 function renderCancelledUnstartedCell(

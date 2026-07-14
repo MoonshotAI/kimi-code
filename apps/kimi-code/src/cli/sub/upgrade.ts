@@ -1,6 +1,7 @@
 import { log, type Logger } from '@moonshot-ai/kimi-code-sdk';
 import { track as trackTelemetry, type TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
 
+import { t } from '#/i18n';
 import { refreshUpdateCache } from '#/cli/update/refresh';
 import { selectUpdateTarget } from '#/cli/update/select';
 import { detectInstallSource } from '#/cli/update/source';
@@ -68,7 +69,7 @@ export async function handleUpgrade(
       currentVersion,
       error,
     });
-    deps.stderr.write(`error: failed to check for updates: ${reason}\n`);
+    deps.stderr.write(t('tui.statusMessages.upgradeCheckFailed', { reason }) + '\n');
     return 1;
   }
 
@@ -80,7 +81,7 @@ export async function handleUpgrade(
     logUpgradeInfo(deps.logger, 'manual upgrade no update', {
       currentVersion,
     });
-    deps.stdout.write(`Kimi Code is already up to date (${formatDisplayVersion(currentVersion)}).\n`);
+    deps.stdout.write(t('tui.statusMessages.upgradeAlreadyUpToDate', { version: formatDisplayVersion(currentVersion) }) + '\n');
     return 0;
   }
 

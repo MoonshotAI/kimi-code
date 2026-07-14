@@ -1,20 +1,25 @@
 import type { ApprovalRequest, ApprovalResponse, ToolInputDisplay } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
 import type { ApprovalPanelResponse } from '#/tui/components/dialogs/approval-panel';
 import { goalStartOptions } from '#/tui/components/dialogs/goal-start-permission-prompt';
 import type { ApprovalPanelChoice, ApprovalPanelData, DisplayBlock } from '#/tui/reverse-rpc/types';
 
-const DEFAULT_APPROVAL_CHOICES: ApprovalPanelChoice[] = [
-  { label: 'Approve once', response: 'approved' },
-  { label: 'Approve for this session', response: 'approved_for_session' },
-  { label: 'Reject', response: 'rejected' },
-  { label: 'Reject with feedback', response: 'rejected', requires_feedback: true },
-];
+function getDefaultApprovalChoices(): ApprovalPanelChoice[] {
+  return [
+    { label: t('tui.approvalLabels.approveOnce'), response: 'approved' },
+    { label: t('tui.approvalLabels.approveForSession'), response: 'approved_for_session' },
+    { label: t('tui.approvalLabels.reject'), response: 'rejected' },
+    { label: t('tui.approvalLabels.rejectWithFeedback'), response: 'rejected', requires_feedback: true },
+  ];
+}
 
-const PLAN_REJECT_CHOICES: ApprovalPanelChoice[] = [
-  { label: 'Reject', response: 'rejected', selected_label: 'Reject' },
-  { label: 'Revise', response: 'rejected', selected_label: 'Revise', requires_feedback: true },
-];
+function getPlanRejectChoices(): ApprovalPanelChoice[] {
+  return [
+    { label: t('tui.approvalLabels.reject'), response: 'rejected', selected_label: t('tui.approvalLabels.reject') },
+    { label: t('tui.approvalLabels.revise'), response: 'rejected', selected_label: t('tui.approvalLabels.revise'), requires_feedback: true },
+  ];
+}
 
 export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData {
   const resolved = resolveDisplay(event.toolName, event.display, event.action);
@@ -178,7 +183,7 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
     case 'plan_review':
       return '';
     case 'goal_start':
-      return 'Start a goal?';
+      return t('tui.approvalDescriptions.startGoal');
     case 'generic':
       if (typeof display.detail === 'string' && display.detail.length > 0) {
         return display.detail;
@@ -187,20 +192,34 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
     case 'command':
       return display.description ?? display.command ?? action;
     case 'diff':
-      return `edit ${display.path ?? ''}`.trim();
+      return t('tui.approvalDescriptions.editFile', { path: display.path ?? '' }).trim();
     case 'file_io':
-      return `${display.operation ?? 'file'} ${display.path ?? ''}`.trim();
+      return t('tui.approvalDescriptions.fileOp', {
+        operation: display.operation ?? 'file',
+        path: display.path ?? '',
+      }).trim();
     case 'task_stop':
-      return `stop task: ${display.task_description ?? display.task_id ?? ''}`.trim();
+      return t('tui.approvalDescriptions.stopTask', {
+        description: display.task_description ?? display.task_id ?? '',
+      }).trim();
     case 'agent_call':
-      return `spawn ${display.agent_name ?? 'agent'}`;
+      return t('tui.approvalDescriptions.spawnAgent', { name: display.agent_name ?? 'agent' });
     case 'skill_call':
-      return `invoke skill ${display.skill_name ?? ''}`.trim();
+      return t('tui.approvalDescriptions.invokeSkill', { name: display.skill_name ?? '' }).trim();
     case 'url_fetch':
-      return `fetch ${display.url ?? ''}`.trim();
+      return t('tui.approvalDescriptions.fetchUrl', { url: display.url ?? '' }).trim();
     case 'search':
-      return `search: ${display.query ?? ''}`.trim();
+      return t('tui.approvalDescriptions.searchQuery', { query: display.query ?? '' }).trim();
     case 'todo_list':
+      return t('tui.approvalDescriptions.updateTodoList', {
+        count: String(display.items?.length ?? 0),
+      });
+    case 'background_task':
+      return t('tui.approvalDescriptions.backgroundTask', {
+        status: display.status ?? 'background',
+        taskId: display.task_id ?? '',
+        description: display.description ?? '',
+      }).trim();
       return `update todo list (${String(display.items?.length ?? 0)} items)`;
     case 'task':
       return `${display.status ?? 'background'} task ${display.task_id ?? ''}: ${
@@ -212,14 +231,14 @@ function describeApproval(display: ToolInputDisplay, action: string): string {
 }
 
 const DANGER_PATTERNS: Array<{ pattern: RegExp; label: string }> = [
-  { pattern: /\brm\s+(-[a-zA-Z]*[rRfF][a-zA-Z]*|--recursive|--force)/i, label: 'recursive delete' },
-  { pattern: /\bsudo\b/i, label: 'sudo' },
-  { pattern: /\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b/i, label: 'pipe to shell' },
-  { pattern: /\bdd\b[^|]*\bof=/i, label: 'dd write' },
-  { pattern: /\bmkfs\b/i, label: 'mkfs' },
-  { pattern: />\s*\/dev\/(sd|nvme|disk|hd)/i, label: 'write to raw device' },
-  { pattern: /\bchmod\s+-R?\s*777\b/i, label: 'chmod 777' },
-  { pattern: /:\(\)\s*\{\s*:\|:&\s*\}/i, label: 'fork bomb' },
+  { pattern: /\brm\s+(-[a-zA-Z]*[rRfF][a-zA-Z]*|--recursive|--force)/i, label: t('tui.dangerPatterns.recursiveDelete') },
+  { pattern: /\bsudo\b/i, label: t('tui.dangerPatterns.sudo') },
+  { pattern: /\b(curl|wget)\b[^|]*\|\s*(sh|bash|zsh)\b/i, label: t('tui.dangerPatterns.pipeToShell') },
+  { pattern: /\bdd\b[^|]*\bof=/i, label: t('tui.dangerPatterns.ddWrite') },
+  { pattern: /\bmkfs\b/i, label: t('tui.dangerPatterns.mkfs') },
+  { pattern: />\s*\/dev\/(sd|nvme|disk|hd)/i, label: t('tui.dangerPatterns.writeToRawDevice') },
+  { pattern: /\bchmod\s+-R?\s*777\b/i, label: t('tui.dangerPatterns.chmod777') },
+  { pattern: /:\(\)\s*\{\s*:\|:&\s*\}/i, label: t('tui.dangerPatterns.forkBomb') },
 ];
 
 function detectDanger(command: string): string | undefined {
@@ -318,15 +337,22 @@ function adaptDisplay(display: ToolInputDisplay): DisplayBlock[] {
       return [
         {
           type: 'brief',
-          text: `Stop task ${display.task_id ?? ''}: ${display.task_description ?? ''}`,
+          text: t('tui.approvalDescriptions.taskStopBrief', {
+            taskId: display.task_id ?? '',
+            description: display.task_description ?? '',
+          }),
         },
       ];
     case 'plan_review':
       return [];
     case 'goal_start': {
-      const lines = [`Start goal: ${display.objective}`];
+      const lines = [t('tui.approvalDescriptions.goalStartBrief', { objective: display.objective })];
       if (typeof display.completionCriterion === 'string' && display.completionCriterion.length > 0) {
-        lines.push(`Done when: ${display.completionCriterion}`);
+        lines.push(
+          t('tui.approvalDescriptions.goalCompletionCriterion', {
+            criterion: display.completionCriterion,
+          }),
+        );
       }
       return [{ type: 'brief', text: lines.join('\n') }];
     }
@@ -349,7 +375,7 @@ function adaptChoices(toolName: string, display: ToolInputDisplay): ApprovalPane
     return adaptGoalStartChoices(display);
   }
 
-  return DEFAULT_APPROVAL_CHOICES.map((choice) => cloneChoice(choice));
+  return getDefaultApprovalChoices().map((choice) => cloneChoice(choice));
 }
 
 function adaptGoalStartChoices(
@@ -383,8 +409,8 @@ function adaptPlanReviewChoices(display: ToolInputDisplay): ApprovalPanelChoice[
           response: 'approved' as const,
           selected_label: option.label,
         }))
-      : [{ label: 'Approve', response: 'approved' as const, selected_label: 'Approve' }];
-  return [...optionChoices, ...PLAN_REJECT_CHOICES].map((choice) => cloneChoice(choice));
+      : [{ label: t('tui.approvalLabels.approve'), response: 'approved' as const, selected_label: t('tui.approvalLabels.approve') }];
+  return [...optionChoices, ...getPlanRejectChoices()].map((choice) => cloneChoice(choice));
 }
 
 function cloneChoice(choice: ApprovalPanelChoice): ApprovalPanelChoice {

@@ -9,12 +9,13 @@ import {
 } from '@moonshot-ai/pi-tui';
 
 import { currentTheme } from '#/tui/theme';
+import { t } from '#/i18n';
 
 export type ApiKeyInputResult =
   | { readonly kind: 'ok'; readonly value: string }
   | { readonly kind: 'cancel' };
 
-const FOOTER = 'Enter to submit  ·  Esc to cancel';
+const FOOTER = t('tui.dialogs.apiKeyInput.footer');
 
 function maskInputLine(raw: string): string {
   const prefix = '> ';
@@ -58,7 +59,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
   ) {
     super();
     this.onDone = onDone;
-    this.title = `Enter API key for ${platformName}`;
+    this.title = t('tui.dialogs.apiKeyInput.title', { platformName });
     this.subtitleLines = subtitleLines;
     this.input.onSubmit = (value) => {
       this.submit(value);
@@ -96,7 +97,7 @@ export class ApiKeyInputDialogComponent extends Container implements Focusable {
 
     const border = (s: string): string => currentTheme.fg('primary', s);
     const titleStyled = currentTheme.boldFg('textStrong', this.title);
-    const subtitleSource = this.emptyHinted ? ['API key cannot be empty.'] : this.subtitleLines;
+    const subtitleSource = this.emptyHinted ? [t('tui.dialogs.apiKeyInput.emptyHint')] : this.subtitleLines;
     const subtitleLines = subtitleSource.map((line) =>
       truncateToWidth(currentTheme.fg('textDim', line), innerWidth, '…'),
     );

@@ -44,6 +44,7 @@ import {
   type Focusable,
 } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '#/constant/app';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
@@ -89,9 +90,7 @@ interface AddRow {
 
 type Row = SourceRow | AddRow;
 
-const ADD_ROW_LABEL = '[ Add New Platform ]';
 const PAGE_SIZE = 8;
-const HEADER_HINT = '↑↓ navigate · D delete · Esc cancel';
 
 // Narrows a `ProviderConfig` blob to a `CustomRegistrySource` payload.
 // Mirrors `readCustomRegistrySource` in `kimi-tui.ts`. We can't import
@@ -205,7 +204,7 @@ function buildRows(opts: ProviderManagerOptions): readonly Row[] {
     });
   }
 
-  return [...sources, { kind: 'add', id: '__add__', label: ADD_ROW_LABEL }];
+  return [...sources, { kind: 'add', id: '__add__', label: t('tui.dialogs.providerManager.addRowLabel') }];
 }
 
 export class ProviderManagerComponent extends Container implements Focusable {
@@ -325,8 +324,11 @@ export class ProviderManagerComponent extends Container implements Focusable {
     const ids = selected.providerIds;
     const prompt =
       ids.length === 1
-        ? `Delete platform "${selected.label}"?`
-        : `Delete platform "${selected.label}" and all ${String(ids.length)} providers?`;
+        ? t('tui.dialogs.providerManager.deleteConfirmSingle', { label: selected.label })
+        : t('tui.dialogs.providerManager.deleteConfirmMultiple', {
+            label: selected.label,
+            count: ids.length,
+          });
     this.confirm = {
       label: prompt,
       providerIds: ids,
@@ -360,13 +362,13 @@ export class ProviderManagerComponent extends Container implements Focusable {
     // border under the title.
     const border = currentTheme.fg('primary', '─'.repeat(width));
     lines.push(border);
-    lines.push(currentTheme.boldFg('primary', ' Providers'));
-    lines.push(currentTheme.fg('textMuted', ' ' + HEADER_HINT));
+    lines.push(currentTheme.boldFg('primary', ` ${t('tui.dialogs.providerManager.title')}`));
+    lines.push(currentTheme.fg('textMuted', ` ${t('tui.dialogs.providerManager.headerHint')}`));
     lines.push('');
 
     const rows = this.rows;
     if (rows.length === 0) {
-      lines.push(currentTheme.fg('textMuted', '  No providers configured.'));
+      lines.push(currentTheme.fg('textMuted', `  ${t('tui.dialogs.providerManager.empty')}`));
     } else {
       const view = this.page();
       for (let i = view.start; i < view.end; i++) {
@@ -388,7 +390,7 @@ export class ProviderManagerComponent extends Container implements Focusable {
         lines.push(
           currentTheme.fg(
             'textMuted',
-            ` Page ${String(view.page + 1)}/${String(view.pageCount)}`,
+            ` ${t('tui.dialogs.providerManager.page', { page: view.page + 1, pageCount: view.pageCount })}`,
           ),
         );
       }

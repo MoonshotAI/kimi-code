@@ -27,15 +27,6 @@ const tokenPct = computed(() => {
   return Math.max(0, Math.min(100, Math.round((props.goal.tokensUsed / budget) * 100)));
 });
 
-function goalStatusLabel(status: AppGoal['status']): string {
-  switch (status) {
-    case 'active': return t('status.goalStatusActive');
-    case 'paused': return t('status.goalStatusPaused');
-    case 'blocked': return t('status.goalStatusBlocked');
-    case 'complete': return t('status.goalStatusComplete');
-  }
-}
-
 function formatMs(ms: number): string {
   const sec = Math.max(0, Math.round(ms / 1000));
   const min = Math.floor(sec / 60);
@@ -51,13 +42,13 @@ function formatMs(ms: number): string {
   <Card class="goal-strip" :class="{ expanded }">
     <template #head>
       <button class="goal-row" type="button" @click="expanded = !expanded">
-        <span class="goal-kicker">{{ t('status.goalLabel') }}</span>
+        <span class="goal-kicker">{{ t('app.goalKicker') }}</span>
         <span class="goal-objective" :class="{ 'expanded-hidden': expanded }">{{ goal.objective }}</span>
         <Badge
           :variant="goal.status === 'active' ? 'success' : goal.status === 'blocked' ? 'danger' : goal.status === 'paused' ? 'warning' : 'neutral'"
           size="sm"
           class="goal-status"
-        >{{ goalStatusLabel(goal.status) }}</Badge>
+        >{{ goal.status }}</Badge>
         <span class="goal-progress" aria-hidden="true">
           <span class="goal-progress-fill" :style="{ width: `${tokenPct}%` }"></span>
         </span>
@@ -68,50 +59,39 @@ function formatMs(ms: number): string {
     <template v-if="expanded" #default>
       <div class="goal-full">{{ goal.objective }}</div>
       <div v-if="goal.completionCriterion" class="goal-criterion">
-        <span>Done when</span>
+        <span>{{ t('app.goalDoneWhen') }}</span>
         <p>{{ goal.completionCriterion }}</p>
+      </div>
+      <div class="goal-stats">
+        <Badge variant="neutral" size="sm">{{ t('app.goalTurns', { count: goal.turnsUsed }) }}</Badge>
+        <Badge variant="neutral" size="sm">{{ t('app.goalTokens', { count: goal.tokensUsed.toLocaleString() }) }}</Badge>
+        <Badge variant="neutral" size="sm">{{ formatMs(goal.wallClockMs) }}</Badge>
+        <Badge v-if="goal.budget.tokenBudget !== null" variant="neutral" size="sm">{{ t('app.goalTokenBudget', { pct: tokenPct }) }}</Badge>
       </div>
     </template>
 
     <template v-if="expanded" #foot>
-      <div class="goal-footer">
-        <div class="goal-meta">
-          <span>{{ goal.turnsUsed }} turns</span>
-          <span>{{ goal.tokensUsed.toLocaleString() }} tokens</span>
-          <span>{{ formatMs(goal.wallClockMs) }}</span>
-          <span v-if="goal.budget.tokenBudget !== null">{{ tokenPct }}% token budget</span>
-        </div>
-        <div class="goal-actions">
-          <Button
-            v-if="goal.status === 'active'"
-            size="sm"
-            variant="secondary"
-            class="goal-action"
-            @click.stop="emit('controlGoal', 'pause')"
-          >
-            <Icon name="pause" size="md" />
-            <span>{{ t('status.goalPause') }}</span>
-          </Button>
-          <Button
-            v-if="goal.status === 'paused' || goal.status === 'blocked'"
-            size="sm"
-            variant="primary"
-            class="goal-action"
-            @click.stop="emit('controlGoal', 'resume')"
-          >
-            <Icon name="play" size="md" />
-            <span>{{ t('status.goalResume') }}</span>
-          </Button>
-          <Button
-            size="sm"
-            variant="danger-soft"
-            class="goal-action"
-            @click.stop="emit('controlGoal', 'cancel')"
-          >
-            <Icon name="close" size="md" />
-            <span>{{ t('status.goalCancel') }}</span>
-          </Button>
-        </div>
+      <div class="goal-actions">
+        <Button
+          v-if="goal.status === 'active'"
+          size="sm"
+          variant="secondary"
+          class="goal-action"
+          @click.stop="emit('controlGoal', 'pause')"
+        >{{ t('status.goalPause') }}</Button>
+        <Button
+          v-if="goal.status === 'paused' || goal.status === 'blocked'"
+          size="sm"
+          variant="primary"
+          class="goal-action"
+          @click.stop="emit('controlGoal', 'resume')"
+        >{{ t('status.goalResume') }}</Button>
+        <Button
+          size="sm"
+          variant="danger-soft"
+          class="goal-action"
+          @click.stop="emit('controlGoal', 'cancel')"
+        >{{ t('status.goalCancel') }}</Button>
       </div>
     </template>
   </Card>
@@ -119,20 +99,7 @@ function formatMs(ms: number): string {
 
 <style scoped>
 .goal-strip {
-  --composer-send-size: 32px;
-  --composer-send-inset: var(--space-2);
   margin: var(--space-2) var(--space-4) 0;
-}
-.goal-strip.ui-card {
-  border-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset));
-}
-.goal-strip :deep(.ui-card__foot) {
-  padding: var(--composer-send-inset);
-}
-.goal-strip :deep(.ui-card__head),
-.goal-strip :deep(.ui-card__body),
-.goal-strip :deep(.ui-card__foot) {
-  padding-left: calc((var(--composer-send-inset) + var(--composer-send-size)) / 2);
 }
 /* When collapsed the body/foot slots are not rendered; collapse the (always-
    rendered) Card body and drop the head border so the strip is a single row. */
@@ -149,14 +116,13 @@ function formatMs(ms: number): string {
   background: transparent;
   color: var(--color-text);
   font: var(--text-base)/var(--leading-normal) var(--font-ui);
-  text-align: left;
   cursor: pointer;
 }
 .goal-kicker {
   flex: none;
   color: var(--color-success);
-  font: var(--text-base)/var(--leading-normal) var(--font-ui);
-  font-weight: var(--weight-semibold);
+  font: var(--weight-bold) var(--text-xs) var(--font-mono);
+  text-transform: uppercase;
 }
 .goal-objective {
   min-width: 0;
@@ -166,7 +132,6 @@ function formatMs(ms: number): string {
   white-space: nowrap;
   color: var(--color-text);
   font-size: var(--text-base);
-  text-align: left;
 }
 .goal-objective.expanded-hidden {
   visibility: hidden;
@@ -218,43 +183,25 @@ function formatMs(ms: number): string {
   font: var(--text-xs)/var(--leading-normal) var(--font-ui);
   text-transform: none;
 }
-.goal-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
-  width: 100%;
-  min-width: 0;
-}
-.goal-meta {
-  min-width: 0;
+.goal-stats {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  margin-top: var(--space-3);
   color: var(--color-text-muted);
-  font: 12px/var(--leading-normal) var(--font-ui);
-  font-weight: 450;
-  font-variant-numeric: tabular-nums;
+  font: var(--text-xs) var(--font-mono);
 }
 .goal-actions {
   display: flex;
   gap: var(--space-2);
-  justify-content: flex-end;
-  flex: none;
+  width: 100%;
 }
 .goal-action {
-  flex: none;
+  flex: 1;
   min-width: 0;
-  height: var(--composer-send-size);
-  border-radius: calc(var(--composer-send-size) / 2);
-  padding-inline: var(--space-4);
-}
-.goal-action :deep(.ui-button__content) {
-  gap: var(--space-1);
 }
 @media (max-width: 640px) {
   .goal-strip {
-    --composer-send-size: 36px;
     margin: var(--space-2) var(--space-3) 0;
   }
   .goal-progress {

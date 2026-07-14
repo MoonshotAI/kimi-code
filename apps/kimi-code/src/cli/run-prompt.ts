@@ -17,6 +17,7 @@ import {
 import { resolve } from 'pathe';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, PROMPT_CLEANUP_TIMEOUT_MS } from '#/constant/app';
+import { t } from '#/i18n';
 
 import { isKimiV2Enabled } from './experimental-v2';
 import { resolveOutputFormat } from './options';
@@ -170,7 +171,7 @@ export async function runPrompt(
     await harness.ensureConfigFile();
     const config = await harness.getConfig();
     for (const warning of (await harness.getConfigDiagnostics()).warnings) {
-      stderr.write(`Warning: ${warning}\n`);
+      stderr.write(`${t('tui.statusMessages.promptWarning', { warning })}\n`);
     }
     const { session, restorePermission, telemetryModel, goalModel } =
       await resolvePromptSession(
@@ -300,7 +301,7 @@ async function resolvePromptSession(
     const sessions = await harness.listSessions({ sessionId: opts.session, workDir });
     const target = sessions[0];
     if (target === undefined) {
-      throw new Error(`Session "${opts.session}" not found.`);
+      throw new Error(t('tui.statusMessages.sessionNotFound', { sessionId: opts.session ?? '' }));
     }
     if (resolve(target.workDir) !== resolve(workDir)) {
       stderr.write(
@@ -362,7 +363,7 @@ async function resolvePromptSession(
         goalModel: configuredModel(opts.model, status.model),
       };
     }
-    stderr.write(`No sessions to continue under "${workDir}"; starting a fresh session.\n`);
+    stderr.write(`${t('tui.statusMessages.noSessionsToContinue', { workDir })}\n`);
   }
 
   const model = requireConfiguredModel(opts.model, defaultModel);
@@ -407,7 +408,7 @@ export function requireConfiguredModel(...models: readonly (string | undefined)[
   const model = configuredModel(...models);
   if (model === undefined) {
     throw new Error(
-      'No model configured. Run `kimi` and use /login to sign in, then retry; or set default_model in config.toml.',
+      t('tui.statusMessages.noModelPrompt'),
     );
   }
   return model;
@@ -664,11 +665,346 @@ function runPromptTurn(
   });
 }
 
+interface PromptTurnWriter {
+  writeAssistantDelta(delta: string): void;
+  writeHookResult(event: HookResultEvent): void;
+  writeThinkingDelta(delta: string): void;
+  writeToolCall(toolCallId: string, name: string, args: unknown): void;
+  writeToolCallDelta(
+    toolCallId: string,
+    name: string | undefined,
+    argumentsPart: string | undefined,
+  ): void;
+  writeToolResult(toolCallId: string, output: unknown): void;
+  writeRetrying(event: Extract<Event, { type: 'turn.step.retrying' }>): void;
+  flushAssistant(): void;
+  discardAssistant(): void;
+  finish(): void;
+}
+
+class PromptTranscriptWriter implements PromptTurnWriter {
+  private readonly assistantWriter: PromptBlockWriter;
+  private readonly thinkingWriter: PromptBlockWriter;
+
+  constructor(stdout: PromptOutput, stderr: PromptOutput) {
+    this.assistantWriter = new PromptBlockWriter(stdout);
+    this.thinkingWriter = new PromptBlockWriter(stderr);
+  }
+
+  writeAssistantDelta(delta: string): void {
+    this.thinkingWriter.finish();
+    this.assistantWriter.write(delta);
+  }
+
+  writeHookResult(event: HookResultEvent): void {
+    this.thinkingWriter.finish();
+    this.assistantWriter.finish();
+    this.assistantWriter.write(formatHookResultPlain(event));
+    this.assistantWriter.finish();
+  }
+
+  writeThinkingDelta(delta: string): void {
+    this.thinkingWriter.write(delta);
+  }
+
+  writeToolCall(): void {}
+
+  writeToolCallDelta(): void {}
+
+  writeToolResult(): void {}
+
+  writeStatus(message: string): void {
+    this.assistantWriter.finish();
+    this.thinkingWriter.finish();
+    this.stderr.write(`${message}\n`);
+  }
+
+  flushAssistant(): void {
+    this.assistantWriter.finish();
+  }
+
+  discardAssistant(): void {}
+
+  finish(): void {
+    this.thinkingWriter.finish();
+    this.assistantWriter.finish();
+  }
+}
+
+interface PromptJsonToolCall {
+  type: 'function';
+  id: string;
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
+interface PromptJsonAssistantMessage {
+  role: 'assistant';
+  content?: string;
+  tool_calls?: PromptJsonToolCall[];
+}
+
+interface PromptJsonToolMessage {
+  role: 'tool';
+  tool_call_id: string;
+  content: string;
+}
+
+interface PromptJsonResumeMetaMessage {
+  role: 'meta';
+  type: 'session.resume_hint';
+  session_id: string;
+  command: string;
+  content: string;
+}
+
+interface PromptJsonMetaMessage {
+  role: 'meta';
+  type: string;
+  content: string;
+}
+
+function writeResumeHint(
+  sessionId: string,
+  outputFormat: PromptOutputFormat,
+  stdout: PromptOutput,
+  stderr: PromptOutput,
+): void {
+  const command = `kimi -r ${sessionId}`;
+  const content = t('tui.statusMessages.shellResumeHint', { sessionId });
+  if (outputFormat === 'stream-json') {
+    const message: PromptJsonResumeMetaMessage = {
+      role: 'meta',
+      type: 'session.resume_hint',
+      session_id: sessionId,
+      command,
+      content,
+    };
+    stdout.write(`${JSON.stringify(message)}\n`);
+    return;
+  }
+  stderr.write(`${content}\n`);
+}
+
+class PromptJsonWriter implements PromptTurnWriter {
+  private assistantText = '';
+  private readonly toolCalls: PromptJsonToolCall[] = [];
+
+  constructor(private readonly stdout: PromptOutput) {}
+
+  writeAssistantDelta(delta: string): void {
+    this.assistantText += delta;
+  }
+
+  writeHookResult(event: HookResultEvent): void {
+    this.flushAssistant();
+    this.writeJsonLine({
+      role: 'assistant',
+      content: formatHookResultPlain(event),
+    });
+  }
+
+  writeThinkingDelta(): void {}
+
+  writeToolCall(toolCallId: string, name: string, args: unknown): void {
+    const existing = this.toolCalls.find((toolCall) => toolCall.id === toolCallId);
+    if (existing !== undefined) {
+      existing.function.name = name;
+      existing.function.arguments = stringifyJsonValue(args);
+      return;
+    }
+    this.toolCalls.push({
+      type: 'function',
+      id: toolCallId,
+      function: {
+        name,
+        arguments: stringifyJsonValue(args),
+      },
+    });
+  }
+
+  writeToolCallDelta(
+    toolCallId: string,
+    name: string | undefined,
+    argumentsPart: string | undefined,
+  ): void {
+    const toolCall = this.findOrCreateToolCall(toolCallId, name ?? '');
+    if (name !== undefined) {
+      toolCall.function.name = name;
+    }
+    if (argumentsPart !== undefined) {
+      toolCall.function.arguments += argumentsPart;
+    }
+  }
+
+  writeToolResult(toolCallId: string, output: unknown): void {
+    this.flushAssistant();
+    this.writeJsonLine({
+      role: 'tool',
+      tool_call_id: toolCallId,
+      content: stringifyToolOutput(output),
+    });
+  }
+
+  writeRetrying(event: Extract<Event, { type: 'turn.step.retrying' }>): void {
+    // Emit a machine-readable meta line so stream-json consumers can observe
+    // provider retries. The failed attempt's partial assistant text was already
+    // discarded by the caller, so no half-formed assistant message leaks.
+    const message: PromptJsonRetryMetaMessage = {
+      role: 'meta',
+      type: 'turn.step.retrying',
+      failed_attempt: event.failedAttempt,
+      next_attempt: event.nextAttempt,
+      max_attempts: event.maxAttempts,
+      delay_ms: event.delayMs,
+      error_name: event.errorName,
+      error_message: event.errorMessage,
+      status_code: event.statusCode,
+    };
+    this.writeJsonLine(message);
+  }
+
+  flushAssistant(): void {
+    if (this.assistantText.length === 0 && this.toolCalls.length === 0) return;
+    const message: PromptJsonAssistantMessage = {
+      role: 'assistant',
+      content: this.assistantText.length > 0 ? this.assistantText : undefined,
+      tool_calls: this.toolCalls.length > 0 ? [...this.toolCalls] : undefined,
+    };
+    this.writeJsonLine(message);
+    this.discardAssistant();
+  }
+
+  discardAssistant(): void {
+    this.assistantText = '';
+    this.toolCalls.length = 0;
+  }
+
+  finish(): void {
+    this.flushAssistant();
+  }
+
+  private findOrCreateToolCall(toolCallId: string, name: string): PromptJsonToolCall {
+    const existing = this.toolCalls.find((toolCall) => toolCall.id === toolCallId);
+    if (existing !== undefined) return existing;
+    const toolCall: PromptJsonToolCall = {
+      type: 'function',
+      id: toolCallId,
+      function: {
+        name,
+        arguments: '',
+      },
+    };
+    this.toolCalls.push(toolCall);
+    return toolCall;
+  }
+
+  private writeJsonLine(message: PromptJsonAssistantMessage | PromptJsonToolMessage | PromptJsonMetaMessage): void {
+    this.stdout.write(`${JSON.stringify(message)}\n`);
+  }
+}
+
+class PromptBlockWriter {
+  private started = false;
+  private atLineStart = false;
+  private lineWidth = 0;
+  private readonly wrapWidth: number | undefined;
+
+  constructor(private readonly output: PromptOutput) {
+    this.wrapWidth =
+      typeof output.columns === 'number' && output.columns > PROMPT_BLOCK_INDENT.length + 1
+        ? output.columns
+        : undefined;
+  }
+
+  write(chunk: string): void {
+    if (chunk.length === 0) return;
+    let rendered = this.start();
+    for (const char of chunk) {
+      if (this.atLineStart && char !== '\n') {
+        rendered += PROMPT_BLOCK_INDENT;
+        this.atLineStart = false;
+        this.lineWidth = PROMPT_BLOCK_INDENT.length;
+      }
+      const charWidth = visibleCharWidth(char);
+      if (
+        this.wrapWidth !== undefined &&
+        !this.atLineStart &&
+        char !== '\n' &&
+        this.lineWidth + charWidth > this.wrapWidth
+      ) {
+        rendered += `\n${PROMPT_BLOCK_INDENT}`;
+        this.lineWidth = PROMPT_BLOCK_INDENT.length;
+      }
+      rendered += char;
+      if (char === '\n') {
+        this.atLineStart = true;
+        this.lineWidth = 0;
+      } else {
+        this.lineWidth += charWidth;
+      }
+    }
+    this.output.write(rendered);
+  }
+
+  finish(): void {
+    if (!this.started) return;
+    this.output.write(this.atLineStart ? '\n' : '\n\n');
+    this.started = false;
+    this.atLineStart = false;
+    this.lineWidth = 0;
+  }
+
+  private start(): string {
+    if (this.started) return '';
+    this.started = true;
+    this.atLineStart = false;
+    this.lineWidth = PROMPT_BLOCK_BULLET.length;
+    return PROMPT_BLOCK_BULLET;
+  }
+}
+
+function visibleCharWidth(char: string): number {
+  return char === '\t' ? 4 : 1;
+}
+
+function formatHookResultPlain(event: HookResultEvent): string {
+  return `${formatHookResultTitle(event)}\n\n${formatHookResultBody(event)}`;
+}
+
+function formatHookResultTitle(event: HookResultEvent): string {
+  return `${event.hookEvent} hook${event.blocked === true ? ' blocked' : ''}`;
+}
+
+function formatHookResultBody(event: HookResultEvent): string {
+  const content = event.content.trim();
+  return content.length === 0 ? '(empty)' : content;
+}
+
+function stringifyJsonValue(value: unknown): string {
+  if (typeof value === 'string') return value;
+  const json = JSON.stringify(value);
+  return json ?? '';
+}
+
+function stringifyToolOutput(output: unknown): string {
+  if (typeof output === 'string') return output;
+  const json = JSON.stringify(output);
+  return json ?? String(output);
+}
+
 function hasTurnId(event: Event): event is Event & { readonly turnId: number } {
   return 'turnId' in event;
 }
 
 function formatTurnEndedFailure(event: Extract<Event, { type: 'turn.ended' }>): string {
+  if (event.error !== undefined) return `${event.error.code}: ${event.error.message}`;
+  if (event.reason === 'filtered') {
+    return t('tui.statusMessages.policyBlocked');
+  }
+  return t('tui.statusMessages.promptTurnEnded', { reason: event.reason });
   if (event.error?.code === 'provider.filtered') {
     return 'Provider safety policy blocked the response.';
   }

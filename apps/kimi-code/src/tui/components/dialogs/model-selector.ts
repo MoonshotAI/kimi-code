@@ -11,11 +11,13 @@ import {
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '#/constant/app';
 import { CURRENT_MARK, SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import { t } from '#/i18n';
 import { SearchableList } from '#/tui/utils/searchable-list';
 
 import type { ChoiceOption } from './choice-picker';
 
-type ThinkingAvailability = 'toggle' | 'always-on' | 'unsupported';
+type ThinkingAvailabilityKind = 'toggle' | 'always-on' | 'unsupported';
+type ThinkingAvailability = string;
 
 interface ModelChoice {
   readonly alias: string;
@@ -89,11 +91,23 @@ function createModelChoices(models: Record<string, ModelAlias>): readonly ModelC
   });
 }
 
-export function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
+export function thinkingAvailabilityKind(model: ModelAlias): ThinkingAvailabilityKind {
   const caps = model.capabilities ?? [];
   if (caps.includes('always_thinking')) return 'always-on';
   if (caps.includes('thinking') || model.adaptiveThinking === true) return 'toggle';
   return 'unsupported';
+}
+
+export function thinkingAvailability(model: ModelAlias): ThinkingAvailability {
+  const kind = thinkingAvailabilityKind(model);
+  switch (kind) {
+    case 'always-on':
+      return t('tui.dialogs.modelSelector.thinkingAlwaysOn');
+    case 'toggle':
+      return t('tui.dialogs.modelSelector.thinkingToggle');
+    case 'unsupported':
+      return t('tui.dialogs.modelSelector.thinkingUnsupported');
+  }
 }
 
 export function effortsOf(model: ModelAlias): readonly string[] {
@@ -108,7 +122,7 @@ export function effortsOf(model: ModelAlias): readonly string[] {
  */
 export function segmentsFor(model: ModelAlias): readonly string[] {
   const efforts = effortsOf(model);
-  const availability = thinkingAvailability(model);
+  const availability = thinkingAvailabilityKind(model);
   if (efforts.length > 0) {
     return availability === 'always-on' ? efforts : ['off', ...efforts];
   }
@@ -128,7 +142,7 @@ export function effortLabel(effort: string): string {
  * thinking is unsupported.
  */
 function defaultThinkingEffortFor(model: ModelAlias): ThinkingEffort {
-  if (thinkingAvailability(model) === 'unsupported') return 'off';
+  if (thinkingAvailabilityKind(model) === 'unsupported') return 'off';
   const efforts = effortsOf(model);
   if (efforts.length > 0) {
     return model.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
@@ -194,7 +208,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
       if (def !== undefined && efforts.includes(def)) return def;
       return efforts[0]!;
     }
-    return thinkingAvailability(choice.model) !== 'unsupported' ? 'on' : 'off';
+    return thinkingAvailabilityKind(choice.model) !== 'unsupported' ? 'on' : 'off';
   }
 
   /** Draft coerced onto the model's segment list so rendering/selection never
@@ -269,32 +283,32 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
     const titleSuffix =
       searchable && view.query.length === 0
-        ? currentTheme.fg('textMuted', '  (type to search)')
+        ? currentTheme.fg('textMuted', `  ${t('tui.dialogs.modelSelector.searchHint')}`)
         : '';
 
     // "type to search" already lives in the title suffix, so the hint only
     // surfaces the backspace shortcut once a query is active.
     const hintParts: string[] = [];
-    if (this.opts.providerSwitchHint) hintParts.push('Tab toggle provider');
-    hintParts.push('↑↓ navigate');
-    if (searchable && view.query.length > 0) hintParts.push('Backspace clear');
-    hintParts.push('Enter select');
-    if (this.opts.onSessionOnlySelect !== undefined) hintParts.push('Alt+S session-only');
-    hintParts.push('Esc cancel');
+    if (this.opts.providerSwitchHint) hintParts.push(t('tui.dialogs.modelSelector.hintTab'));
+    hintParts.push(t('tui.dialogs.modelSelector.hintNavigate'));
+    if (searchable && view.query.length > 0) hintParts.push(t('tui.dialogs.modelSelector.hintBackspace'));
+    hintParts.push(t('tui.dialogs.modelSelector.hintSelect'));
+    if (this.opts.onSessionOnlySelect !== undefined) hintParts.push(t('tui.dialogs.modelSelector.hintSessionOnly'));
+    hintParts.push(t('tui.dialogs.modelSelector.hintCancel'));
 
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', ' Select a model') + titleSuffix,
+      currentTheme.boldFg('primary', ` ${t('tui.dialogs.modelSelector.title')}`) + titleSuffix,
       currentTheme.fg('textMuted', ' ' + hintParts.join(' · ')),
       '',
     ];
 
     if (searchable && view.query.length > 0) {
-      lines.push(currentTheme.fg('primary', ' Search: ') + currentTheme.fg('text', view.query));
+      lines.push(currentTheme.fg('primary', ` ${t('tui.dialogs.modelSelector.searchLabel')}`) + currentTheme.fg('text', view.query));
     }
 
     if (view.items.length === 0) {
-      lines.push(currentTheme.fg('textMuted', '   No matches'));
+      lines.push(currentTheme.fg('textMuted', '   ' + t('tui.dialogs.modelSelector.noMatches')));
     } else {
       // Column width for model names so the provider column lines up. Capped so
       // the provider + "← current" marker still fit on normal terminal widths.
@@ -328,13 +342,16 @@ export class ModelSelectorComponent extends Container implements Focusable {
     if (view.query.length > 0) {
       lines.push('');
       lines.push(
-        currentTheme.fg('textMuted', ` ${String(view.items.length)} / ${String(totalCount)}`),
+        currentTheme.fg(
+          'textMuted',
+          ` ${t('tui.dialogs.modelSelector.count', { matches: view.items.length, total: totalCount })}`,
+        ),
       );
     } else {
       const below = view.items.length - view.page.end;
       if (below > 0) {
         lines.push('');
-        lines.push(currentTheme.fg('textMuted', ` ▼ ${String(below)} more`));
+        lines.push(currentTheme.fg('textMuted', ` ${t('tui.dialogs.modelSelector.more', { count: below })}`));
       }
     }
 
@@ -342,7 +359,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
     const selected = this.selectedChoice();
     if (selected !== undefined) {
       const canSwitch = segmentsFor(selected.model).length > 1;
-      const thinkingHeader = canSwitch ? ' Thinking  (←→ to switch)' : ' Thinking';
+      const thinkingHeader = canSwitch ? t('tui.dialogs.modelSelector.thinkingSwitchable') : t('tui.dialogs.modelSelector.thinking');
       lines.push(currentTheme.fg('textMuted', thinkingHeader));
       lines.push(this.renderThinkingControl(selected));
     }
@@ -363,17 +380,20 @@ export class ModelSelectorComponent extends Container implements Focusable {
     // The whole segment is muted, suffix included, so the disabled side reads
     // as a single greyed-out control rather than a selectable option.
     const unavailable = (label: string): string =>
-      currentTheme.fg('textMuted', `  ${label} (Unsupported)  `);
+      currentTheme.fg(
+        'textMuted',
+        `  ${label} (${t('tui.dialogs.modelSelector.unsupported')})  `,
+      );
 
     // Non-effort always-on / unsupported models keep the original On/Off layout
     // so the control never shifts while moving across legacy models.
     const efforts = effortsOf(choice.model);
-    const availability = thinkingAvailability(choice.model);
+    const availability = thinkingAvailabilityKind(choice.model);
     if (efforts.length === 0 && availability === 'always-on') {
-      return `  ${segment('On', true)} ${unavailable('Off')}`;
+      return `  ${segment(t('tui.dialogs.modelSelector.on'), true)} ${unavailable(t('tui.dialogs.modelSelector.off'))}`;
     }
     if (efforts.length === 0 && availability === 'unsupported') {
-      return `  ${unavailable('On')} ${segment('Off', true)}`;
+      return `  ${unavailable(t('tui.dialogs.modelSelector.on'))} ${segment(t('tui.dialogs.modelSelector.off'), true)}`;
     }
 
     const segments = segmentsFor(choice.model);

@@ -21,15 +21,16 @@ import {
   type Focusable,
 } from '@moonshot-ai/pi-tui';
 import { currentTheme } from '#/tui/theme';
+import { t } from '#/i18n';
 
 export type FeedbackInputDialogResult =
   | { readonly kind: 'ok'; readonly value: string }
   | { readonly kind: 'cancel' };
 
-const TITLE = 'Send feedback to Kimi Code';
-const SUBTITLE_DEFAULT = "Tell us what's working or what's not.";
-const SUBTITLE_EMPTY = 'Feedback cannot be empty.';
-const FOOTER = 'Enter to submit  ·  Esc to cancel';
+const TITLE = t('tui.dialogs.feedbackInput.title');
+const SUBTITLE_DEFAULT = t('tui.dialogs.feedbackInput.subtitleDefault');
+const SUBTITLE_EMPTY = t('tui.dialogs.feedbackInput.subtitleEmpty');
+const FOOTER = t('tui.dialogs.feedbackInput.footer');
 
 export class FeedbackInputDialogComponent extends Container implements Focusable {
   focused = false;

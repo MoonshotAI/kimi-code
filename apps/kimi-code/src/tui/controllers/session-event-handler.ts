@@ -27,6 +27,7 @@ import type {
   TurnStartedEvent,
   TurnStepCompletedEvent,
   TurnStepInterruptedEvent,
+  TurnStepRetryingEvent,
   TurnStepStartedEvent,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -39,8 +40,8 @@ import {
   type SwarmModeMarkerState,
 } from '../components/messages/swarm-markers';
 import {
+  getOauthLoginRequiredStartupNotice,
   OAUTH_LOGIN_REQUIRED_CODE,
-  OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE,
 } from '../constant/kimi-tui';
 import { buildGoalCompletionMessage } from '../utils/goal-completion';
 import {
@@ -71,6 +72,7 @@ import { currentTheme } from '#/tui/theme';
 import type { ColorToken } from '#/tui/theme';
 import { errorReportHintLine } from '../constant/feedback';
 import { formatStepDebugTiming } from '#/utils/usage/debug-timing';
+import { t } from '#/i18n';
 import { nextTranscriptId } from '../utils/transcript-id';
 import type { BtwPanelController } from './btw-panel';
 import type { StreamingUIController } from './streaming-ui';
@@ -205,7 +207,7 @@ export class SessionEventHandler {
     } catch (error) {
       if (host.session !== session || host.aborted) return;
       const message = error instanceof Error ? error.message : String(error);
-      host.showError(`Failed to sync MCP server status: ${message}`);
+      host.showError(t('tui.statusMessages.failedToSyncMcp', { message }));
       return;
     }
     if (host.session !== session || host.state.appState.sessionId !== session.id) return;
@@ -245,7 +247,7 @@ export class SessionEventHandler {
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
       case 'turn.step.completed': this.handleStepCompleted(event); break;
-      case 'turn.step.retrying': break;
+      case 'turn.step.retrying': this.handleStepRetrying(event); break;
       case 'tool.progress': this.handleToolProgress(event); break;
       case 'shell.output': this.host.handleShellOutput(event); break;
       case 'shell.started': this.host.handleShellStarted(event); break;
@@ -333,6 +335,8 @@ export class SessionEventHandler {
     if (event.reason === 'cancelled') {
       this.markActiveAgentSwarmsCancelled();
     }
+    if (event.reason === 'filtered') {
+      this.host.showStatus(t('tui.statusMessages.turnStoppedFiltered'), 'error');
     if (event.reason === 'failed' && event.error?.code === 'provider.filtered') {
       this.host.showStatus('Turn stopped: provider safety policy blocked the response.', 'error');
     }
@@ -349,6 +353,20 @@ export class SessionEventHandler {
     this.currentTurnHasAssistantText = false;
     this.goalCompletionTurnEnded = true;
     this.scheduleQueuedGoalPromotion();
+  }
+
+  private handleStepRetrying(event: TurnStepRetryingEvent): void {
+    this.host.streamingUI.flushNow();
+    this.host.streamingUI.finalizeLiveTextBuffers('waiting');
+    const delayS = Math.ceil(event.delayMs / 1000);
+    this.host.showStatus(
+      t('tui.statusMessages.retryingStep', { attempt: String(event.nextAttempt), maxAttempts: String(event.maxAttempts), delayS: String(delayS), errorName: event.errorName }),
+      'warning',
+    );
+    this.host.setAppState({
+      streamingPhase: 'waiting',
+      streamingStartTime: Date.now(),
+    });
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
@@ -373,8 +391,8 @@ export class SessionEventHandler {
 
     if (event.providerFinishReason === 'filtered') {
       this.host.showNotice(
-        'Provider safety policy blocked the response.',
-        `The model output was filtered (${event.rawFinishReason ?? 'content_filter'}).`,
+        t('tui.statusMessages.policyBlocked'),
+        t('tui.statusMessages.outputFiltered', { reason: event.rawFinishReason ?? 'content_filter' }),
       );
       return;
     }
@@ -388,10 +406,10 @@ export class SessionEventHandler {
 
     const title =
       truncatedCount > 0
-        ? 'Model hit max_tokens — tool call was truncated before it could run.'
-        : 'Model hit max_tokens — no tool call was emitted.';
+        ? t('tui.statusMessages.maxTokensTruncated')
+        : t('tui.statusMessages.maxTokensNoToolCall');
     const detail = this.isAnthropicSessionActive()
-      ? 'If this limit is wrong for your model, set `max_output_size` on the model alias in your kimi-code config.'
+      ? t('tui.statusMessages.maxTokensHint')
       : undefined;
     this.host.showNotice(title, detail);
   }
@@ -429,6 +447,7 @@ export class SessionEventHandler {
     if (reason === 'error') return;
     if (reason === 'aborted' || reason === undefined || reason === '') {
       this.markActiveAgentSwarmsCancelled();
+      this.host.showStatus(t('tui.statusMessages.interruptedByUser'), 'error');
       if (event.message === undefined || event.message === '') {
         this.host.showStatus('Interrupted by user', 'error');
       } else {
@@ -438,8 +457,8 @@ export class SessionEventHandler {
     }
     this.host.showError(
       reason === 'max_steps'
-        ? 'reached per-turn step limit (max_steps)'
-        : `step interrupted (${reason})`,
+        ? t('tui.statusMessages.stepMaxSteps')
+        : t('tui.statusMessages.stepInterrupted', { reason }),
     );
   }
 
@@ -522,7 +541,7 @@ export class SessionEventHandler {
       turnId,
     };
     streamingUI.registerToolCall(toolCall);
-    if (event.name === 'AgentSwarm') {
+    if (event.name === 'AgentSwarm' || event.name === 'SwarmDiscussion') {
       this.subAgentEventHandler.handleAgentSwarmToolCallStarted(event.toolCallId, toolCall.args);
     }
     this.host.patchLivePane({
@@ -539,7 +558,7 @@ export class SessionEventHandler {
     const preview = streamingUI.getStreamingToolCallPreview(event.toolCallId);
     if (
       preview !== undefined &&
-      (preview.name === 'AgentSwarm' || this.subAgentEventHandler.hasAgentSwarmProgress(event.toolCallId))
+      (preview.name === 'AgentSwarm' || preview.name === 'SwarmDiscussion' || this.subAgentEventHandler.hasAgentSwarmProgress(event.toolCallId))
     ) {
       this.subAgentEventHandler.handleAgentSwarmToolCallDelta(event.toolCallId, preview.args, {
         streamingArguments: preview.argumentsText,
@@ -759,7 +778,7 @@ export class SessionEventHandler {
     try {
       queue = await readGoalQueue(session);
     } catch (error) {
-      host.showError(`Failed to read upcoming goals: ${formatErrorMessage(error)}`);
+      host.showError(t('tui.statusMessages.failedToReadUpcomingGoals', { error: formatErrorMessage(error) }));
       return false;
     }
     if (host.session !== session || host.aborted) return true;
@@ -783,7 +802,7 @@ export class SessionEventHandler {
             await removeGoalQueueItem(session, { goalId: next.id });
           } catch (error) {
             host.showError(
-              `Queued goal started, but could not be removed from the queue: ${formatErrorMessage(error)}`,
+              t('tui.statusMessages.queuedGoalRemoveFailed', { error: formatErrorMessage(error) }),
             );
             await this.cancelStartedQueuedGoal(session);
             return false;
@@ -809,7 +828,7 @@ export class SessionEventHandler {
     try {
       await restoreGoalQueueItem(session, goal);
     } catch (error) {
-      this.host.showError(`Queued goal could not be restored: ${formatErrorMessage(error)}`);
+      this.host.showError(t('tui.statusMessages.queuedGoalRestoreFailed', { error: formatErrorMessage(error) }));
     }
     await this.cancelStartedQueuedGoal(session);
   }
@@ -818,7 +837,7 @@ export class SessionEventHandler {
     try {
       await session.cancelGoal();
     } catch (error) {
-      this.host.showError(`Queued goal could not be cancelled: ${formatErrorMessage(error)}`);
+      this.host.showError(t('tui.statusMessages.queuedGoalCancelFailed', { error: formatErrorMessage(error) }));
     }
   }
 
@@ -837,8 +856,8 @@ export class SessionEventHandler {
     if (!hasQueuedGoal || host.session !== session || host.aborted) return;
 
     host.showNotice(
-      'Goal blocked.',
-      'The next queued goal will start only after this goal is complete.',
+      t('tui.statusMessages.goalBlocked'),
+      t('tui.statusMessages.goalBlockedDetail'),
     );
   }
 
@@ -855,7 +874,7 @@ export class SessionEventHandler {
     this.host.streamingUI.resetToolUi();
     this.host.streamingUI.finalizeLiveTextBuffers('idle');
     if (event.code === OAUTH_LOGIN_REQUIRED_CODE) {
-      this.host.showError(OAUTH_LOGIN_REQUIRED_STARTUP_NOTICE);
+      this.host.showError(getOauthLoginRequiredStartupNotice());
       return;
     }
     this.host.showError(formatErrorPayload(event));
@@ -866,7 +885,7 @@ export class SessionEventHandler {
   }
 
   private handleSessionWarning(event: WarningEvent): void {
-    this.host.showStatus(`Warning: ${event.message}`, 'warning');
+    this.host.showStatus(t('tui.statusMessages.warningPrefix', { message: event.message }), 'warning');
   }
 
   private renderMcpServerStatus(server: McpServerStatusSnapshot): void {
@@ -879,25 +898,26 @@ export class SessionEventHandler {
 
     switch (server.status) {
       case 'connected': {
-        const toolStr = `${server.toolCount} tool${server.toolCount === 1 ? '' : 's'}`;
-        const message = `MCP server "${server.name}" connected · ${toolStr} (${server.transport})`;
+        const message = t('tui.statusMessages.mcpServerConnected', { name: server.name, count: server.toolCount, transport: server.transport });
         this.finalizeMcpServerStatusRow(server.name, message, 'success');
         return;
       }
       case 'failed': {
-        const message = `MCP server "${server.name}" failed${server.error !== undefined ? `: ${server.error}` : ''}`;
+        const message = server.error !== undefined
+          ? t('tui.statusMessages.mcpServerFailedWithError', { name: server.name, error: server.error })
+          : t('tui.statusMessages.mcpServerFailed', { name: server.name });
         this.finalizeMcpServerStatusRow(server.name, message, 'error');
         return;
       }
       case 'needs-auth': {
-        const message = `MCP server "${server.name}" needs OAuth — run /mcp-config login ${server.name}`;
+        const message = t('tui.statusMessages.mcpServerNeedsAuth', { name: server.name });
         this.finalizeMcpServerStatusRow(server.name, message, 'warning');
         return;
       }
       case 'disabled':
         this.finalizeMcpServerStatusRow(
           server.name,
-          `MCP server "${server.name}" disabled`,
+          t('tui.statusMessages.mcpServerDisabled', { name: server.name }),
           'textMuted',
         );
         return;
@@ -909,7 +929,7 @@ export class SessionEventHandler {
 
   private showMcpServerStatusSpinner(name: string): void {
     const { state } = this.host;
-    const label = `MCP server "${name}" connecting…`;
+    const label = t('tui.statusMessages.mcpServerConnecting', { name });
     const existing = this.mcpServerStatusSpinners.get(name);
     if (existing !== undefined) {
       existing.setLabel(label);
@@ -951,7 +971,7 @@ export class SessionEventHandler {
       kind: 'skill_activation',
       turnId: undefined,
       renderMode: 'plain',
-      content: `Activated skill: ${event.skillName}`,
+      content: t('tui.statusMessages.activatedSkill', { skillName: event.skillName }),
       skillActivationId: event.activationId,
       skillName: event.skillName,
       skillArgs: event.skillArgs,

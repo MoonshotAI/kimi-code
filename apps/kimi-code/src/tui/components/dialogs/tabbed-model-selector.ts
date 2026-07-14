@@ -24,6 +24,7 @@ import {
 
 import { currentTheme } from '#/tui/theme';
 import { renderTabStrip } from '#/tui/utils/tab-strip';
+import { t } from '#/i18n';
 
 import {
   ModelSelectorComponent,
@@ -33,7 +34,7 @@ import {
 } from './model-selector';
 
 const ALL_TAB_ID = 'all';
-const ALL_TAB_LABEL = 'All';
+const ALL_TAB_LABEL = t('tui.dialogs.tabbedModelSelector.allTab');
 
 export interface TabbedModelSelectorOptions {
   readonly models: Record<string, ModelAlias>;

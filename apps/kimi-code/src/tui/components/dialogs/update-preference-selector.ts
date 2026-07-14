@@ -1,15 +1,16 @@
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
+import { t } from '#/i18n';
 
 const UPDATE_PREFERENCE_OPTIONS: readonly ChoiceOption[] = [
   {
     value: 'on',
-    label: 'On',
-    description: 'Install new versions in the background.',
+    label: t('tui.dialogs.updatePreferenceSelector.on'),
+    description: t('tui.dialogs.updatePreferenceSelector.onDescription'),
   },
   {
     value: 'off',
-    label: 'Off',
-    description: 'Show the install prompt instead.',
+    label: t('tui.dialogs.updatePreferenceSelector.off'),
+    description: t('tui.dialogs.updatePreferenceSelector.offDescription'),
   },
 ];
 
@@ -22,7 +23,7 @@ export interface UpdatePreferenceSelectorOptions {
 export class UpdatePreferenceSelectorComponent extends ChoicePickerComponent {
   constructor(opts: UpdatePreferenceSelectorOptions) {
     super({
-      title: 'Automatic updates',
+      title: t('tui.dialogs.updatePreferenceSelector.title'),
       options: [...UPDATE_PREFERENCE_OPTIONS],
       currentValue: opts.currentValue ? 'on' : 'off',
       onSelect: (value) => {

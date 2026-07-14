@@ -20,8 +20,9 @@ import {
 } from '@moonshot-ai/pi-tui';
 import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
 import { currentTheme } from '#/tui/theme';
-import { printableChar } from '@/tui/utils/printable-key';
+import { printableChar } from '#/tui/utils/printable-key';
 
 const ELLIPSIS = '…';
 
@@ -32,14 +33,22 @@ export interface TaskOutputViewerProps {
   readonly onClose: () => void;
 }
 
-const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
-  running: 'running',
-  completed: 'completed',
-  failed: 'failed',
-  timed_out: 'timed out',
-  killed: 'killed',
-  lost: 'lost',
-};
+function statusLabel(status: BackgroundTaskStatus): string {
+  switch (status) {
+    case 'running':
+      return t('tui.dialogs.taskOutputViewer.status.running');
+    case 'completed':
+      return t('tui.dialogs.taskOutputViewer.status.completed');
+    case 'failed':
+      return t('tui.dialogs.taskOutputViewer.status.failed');
+    case 'timed_out':
+      return t('tui.dialogs.taskOutputViewer.status.timedOut');
+    case 'killed':
+      return t('tui.dialogs.taskOutputViewer.status.killed');
+    case 'lost':
+      return t('tui.dialogs.taskOutputViewer.status.lost');
+  }
+}
 
 function statusColor(status: BackgroundTaskStatus): 'success' | 'textMuted' | 'error' {
   switch (status) {
@@ -104,7 +113,7 @@ export class TaskOutputViewer extends Container implements Focusable {
   }
 
   private splitOutput(output: string): string[] {
-    return (output.length > 0 ? output : '[no output captured]').split('\n');
+    return (output.length > 0 ? output : t('tui.dialogs.taskOutputViewer.noOutput')).split('\n');
   }
 
   // ── input ──────────────────────────────────────────────────────────
@@ -190,14 +199,14 @@ export class TaskOutputViewer extends Container implements Focusable {
   }
 
   private renderHeader(width: number): string {
-    const title = currentTheme.boldFg('primary', ' Task output ');
+    const title = currentTheme.boldFg('primary', t('tui.dialogs.taskOutputViewer.title'));
     const id = currentTheme.boldFg('text', this.props.taskId);
     const info = this.props.info;
     const segments: string[] = [];
     if (info !== undefined) {
-      segments.push(currentTheme.fg(statusColor(info.status), STATUS_LABEL[info.status]));
+      segments.push(currentTheme.fg(statusColor(info.status), statusLabel(info.status)));
       if (info.kind === 'process' && info.exitCode !== null) {
-        segments.push(currentTheme.fg('textMuted', `exit ${String(info.exitCode)}`));
+        segments.push(currentTheme.fg('textMuted', t('tui.dialogs.taskOutputViewer.exitCode', { code: String(info.exitCode) })));
       }
       if (info.description && info.description.length > 0) {
         segments.push(currentTheme.fg('textMuted', info.description));
@@ -248,10 +257,10 @@ export class TaskOutputViewer extends Container implements Focusable {
       ` ${String(lineFrom)}-${String(lineTo)} / ${String(total)} (${String(percent)}%) `,
     );
     const keys =
-      `${key('↑↓')} ${dim('line')}  ` +
-      `${key('PgUp/PgDn/Ctrl+U/D')} ${dim('page')}  ` +
-      `${key('g/G')} ${dim('top/bot')}  ` +
-      `${key('Q/Esc')} ${dim('cancel')}`;
+      `${key('↑↓')} ${dim(t('tui.dialogs.taskOutputViewer.footer.line'))}  ` +
+      `${key('PgUp/PgDn/Ctrl+U/D')} ${dim(t('tui.dialogs.taskOutputViewer.footer.page'))}  ` +
+      `${key('g/G')} ${dim(t('tui.dialogs.taskOutputViewer.footer.topBottom'))}  ` +
+      `${key('Q/Esc')} ${dim(t('tui.dialogs.taskOutputViewer.footer.cancel'))}`;
     const left = ` ${keys}`;
     const leftW = visibleWidth(left);
     const rightW = visibleWidth(position);

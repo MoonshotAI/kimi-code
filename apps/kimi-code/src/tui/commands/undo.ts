@@ -2,6 +2,7 @@ import type { Component } from '@moonshot-ai/pi-tui';
 import type { ContextMessage } from '@moonshot-ai/kimi-code-sdk';
 import { isKimiError } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
 import { WelcomeComponent } from '../components/chrome/welcome';
 import { CompactionComponent } from '../components/dialogs/compaction';
 import {
@@ -19,7 +20,7 @@ import { PluginCommandComponent } from '../components/messages/plugin-command';
 import { ThinkingComponent } from '../components/messages/thinking';
 import { ToolCallComponent } from '../components/messages/tool-call';
 import { UserMessageComponent } from '../components/messages/user-message';
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { getNoActiveSessionMessage } from '../constant/kimi-tui';
 import type { TranscriptEntry } from '../types';
 import { formatErrorMessage } from '../utils/event-payload';
 import { getTranscriptComponentEntry } from '../utils/transcript-component-metadata';
@@ -46,7 +47,7 @@ export async function handleUndoCommand(
   args: string = '',
 ): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
-    host.showError('Cannot undo while streaming — press Esc or Ctrl-C first.');
+    host.showError(t('tui.statusMessages.undoCannotWhileStreaming'));
     return;
   }
 
@@ -58,13 +59,13 @@ export async function handleUndoCommand(
 
   const count = parseUndoCount(trimmed);
   if (count === undefined) {
-    host.showError('Usage: /undo [count], where count is a positive integer.');
+    host.showError(t('tui.statusMessages.undoUsage'));
     return;
   }
 
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
 
@@ -80,14 +81,14 @@ export async function handleUndoCommand(
 async function undoByCount(host: SlashCommandHost, count: number): Promise<boolean> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return false;
   }
 
   const entries = host.state.transcriptEntries;
   const lastUserIndex = findUndoAnchorEntryIndex(entries, count);
   if (lastUserIndex === undefined) {
-    showUndoLimitStatus(host, 'Nothing to undo.');
+    showUndoLimitStatus(host, t('tui.statusMessages.undoNothingToUndo'));
     return false;
   }
 
@@ -100,7 +101,7 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
       return false;
     }
     const message = formatErrorMessage(error);
-    host.showError(`Failed to undo: ${message}`);
+    host.showError(t('tui.statusMessages.undoFailed', { message }));
     return false;
   }
 
@@ -126,7 +127,7 @@ async function undoByCount(host: SlashCommandHost, count: number): Promise<boole
 
 async function showUndoSelector(host: SlashCommandHost): Promise<void> {
   if (host.session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
 
@@ -296,20 +297,20 @@ function formatUndoChoiceLabel(
       entry.skillName ?? entry.content.replace(/^Activated skill:\s*/, ''),
     );
     const args = singleLine(entry.skillArgs ?? '');
-    if (name.length === 0) return 'Skill: unknown';
+    if (name.length === 0) return t('tui.statusMessages.undoSkillUnknown');
     return args.length > 0 ? `/${name} ${args}` : `/${name}`;
   }
   if (entry.kind === 'plugin_command' && entry.pluginCommandData !== undefined) {
-    return formatPluginCommandSlash(entry.pluginCommandData) ?? 'User message';
+    return formatPluginCommandSlash(entry.pluginCommandData) ?? t('tui.statusMessages.undoUserMessage');
   }
 
   const content = singleLine(entry.content);
   const imageCount = entry.imageAttachmentIds?.length ?? 0;
   if (content.length > 0) return content;
   if (imageCount > 0) {
-    return `User message (${String(imageCount)} ${imageCount === 1 ? 'image' : 'images'})`;
+    return t('tui.statusMessages.undoUserMessageWithImage', { count: imageCount });
   }
-  return 'User message';
+  return t('tui.statusMessages.undoUserMessage');
 }
 
 function formatUndoChoiceInput(entry: TranscriptEntry): string {
@@ -342,21 +343,15 @@ function formatUndoLimitMessage(
   requestedCount: number,
   availability: UndoAvailability,
 ): string {
-  const reason = availability.stoppedAtCompaction ? ' after the last compaction' : '';
-  const requested = formatPromptCount(requestedCount);
-  const max = formatPromptCount(availability.maxCount);
-  return `Cannot undo ${requested}; only ${max} can be undone in the active context${reason}.`;
+  const reason = availability.stoppedAtCompaction ? t('tui.statusMessages.undoLimitAfterCompaction') : '';
+  return t('tui.statusMessages.undoLimit', { requested: String(requestedCount), max: String(availability.maxCount), reason });
 }
 
 function formatNothingToUndoMessage(availability: UndoAvailability): string {
   if (availability.stoppedAtCompaction) {
-    return 'Nothing to undo after the last compaction.';
+    return t('tui.statusMessages.undoNothingToUndoAfterCompaction');
   }
-  return 'Nothing to undo.';
-}
-
-function formatPromptCount(count: number): string {
-  return `${String(count)} ${count === 1 ? 'prompt' : 'prompts'}`;
+  return t('tui.statusMessages.undoNothingToUndo');
 }
 
 function showUndoLimitStatus(host: SlashCommandHost, message: string): void {

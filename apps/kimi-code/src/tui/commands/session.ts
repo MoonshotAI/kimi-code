@@ -4,10 +4,11 @@ import { pathToFileURL } from 'node:url';
 
 import type { Session } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
 import { detectInstallSource } from '#/cli/update/source';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
-import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { getLlmNotSetMessage, getNoActiveSessionMessage } from '../constant/kimi-tui';
 import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
 import { buildExportMarkdown } from '../utils/export-markdown';
@@ -23,15 +24,15 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
     const current = host.state.appState.sessionTitle;
     host.showStatus(
       current !== null && current.length > 0
-        ? `Session title: ${current}`
-        : `Session title: (not set) — id: ${host.state.appState.sessionId}`,
+        ? t('tui.statusMessages.sessionTitle', { title: current })
+        : t('tui.statusMessages.sessionTitleNotSet', { sessionId: host.state.appState.sessionId }),
     );
     return;
   }
 
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
 
@@ -40,17 +41,17 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
     await host.harness.renameSession({ id: session.id, title: newTitle });
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to set title: ${msg}`);
+    host.showError(t('tui.statusMessages.sessionFailedToSetTitle', { message: msg }));
     return;
   }
-  host.showStatus(`Session title set to: ${newTitle}`);
+  host.showStatus(t('tui.statusMessages.sessionTitleSetTo', { title: newTitle }));
 }
 
 export async function handleForkCommand(host: SlashCommandHost, args: string): Promise<void> {
   void args;
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
 
@@ -63,18 +64,18 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
     });
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to fork session: ${msg}`);
+    host.showError(t('tui.statusMessages.sessionFailedToFork', { message: msg }));
     return;
   }
 
   try {
     await host.switchToSession(
       forked,
-      `Session forked (${forked.id}). To return to the original session: kimi -r ${session.id}`,
+      t('tui.statusMessages.sessionForked', { forkedId: forked.id, originalId: session.id }),
     );
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to switch to forked session: ${msg}`);
+    host.showError(t('tui.statusMessages.sessionFailedToSwitchToForked', { message: msg }));
   }
 }
 
@@ -90,15 +91,15 @@ function forkSourceTitle(host: SlashCommandHost, session: Session): string {
 export async function handleExportMdCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
 
-  host.showStatus('Exporting session as Markdown…');
+  host.showStatus(t('tui.statusMessages.sessionExportingMarkdown'));
   try {
     const context = await session.getContext();
     if (context.history.length === 0) {
-      host.showError('No messages to export.');
+      host.showError(t('tui.statusMessages.sessionNoMessagesToExport'));
       return;
     }
 
@@ -124,21 +125,21 @@ export async function handleExportMdCommand(host: SlashCommandHost, args: string
     await writeFile(outputPath, md, 'utf-8');
 
     const linked = toTerminalHyperlink(outputPath, pathToFileURL(outputPath).href);
-    host.showNotice(`Exported ${String(context.history.length)} messages`, linked);
+    host.showNotice(t('tui.statusMessages.sessionExportComplete', { count: context.history.length }), linked);
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to export session: ${msg}`);
+    host.showError(t('tui.statusMessages.sessionFailedToExport', { message: msg }));
   }
 }
 
 export async function handleExportDebugZipCommand(host: SlashCommandHost): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
+    host.showError(getNoActiveSessionMessage());
     return;
   }
 
-  host.showStatus('Exporting session…');
+  host.showStatus(t('tui.statusMessages.sessionExportingDebug'));
   try {
     const installSource = await detectInstallSource();
     const shellEnv = detectShellEnvironment();
@@ -150,17 +151,17 @@ export async function handleExportDebugZipCommand(host: SlashCommandHost): Promi
       includeGlobalLog: true,
     });
     const linked = toTerminalHyperlink(result.zipPath, pathToFileURL(result.zipPath).href);
-    host.showNotice('Export complete', linked);
+    host.showNotice(t('tui.statusMessages.sessionExportDebugComplete'), linked);
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to export session: ${msg}`);
+    host.showError(t('tui.statusMessages.sessionFailedToExport', { message: msg }));
   }
 }
 
 export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
   const session = host.session;
   if (host.state.appState.model.trim().length === 0 || session === undefined) {
-    host.showError(LLM_NOT_SET_MESSAGE);
+    host.showError(getLlmNotSetMessage());
     return;
   }
 
@@ -179,7 +180,7 @@ export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
       return;
     }
     const msg = error instanceof Error ? error.message : String(error);
-    host.failSessionRequest(`Init failed: ${msg}`);
+    host.failSessionRequest(t('tui.messages.sessionInitFailed', { msg }));
   } finally {
     host.deferUserMessages = false;
   }

@@ -22,6 +22,7 @@ import {
 } from '@moonshot-ai/pi-tui';
 import type { GoalSnapshot, GoalStatus } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
@@ -58,7 +59,7 @@ export class GoalSetMessageComponent implements Component {
   invalidate(): void {}
 
   render(width: number): string[] {
-    return renderLifecycleLine('Goal set', width);
+    return renderLifecycleLine(t('tui.messages.goalPanel.goalSet'), width);
   }
 }
 
@@ -67,7 +68,7 @@ export class UpcomingGoalAddedMessageComponent implements Component {
 
   render(width: number): string[] {
     return renderLifecycleLine(
-      'Upcoming goal added. It will start after the current goal is complete.',
+      t('tui.messages.goalPanel.upcomingAdded'),
       width,
     );
   }
@@ -125,7 +126,7 @@ export class GoalStatusMessageComponent implements Component {
 
 /** Box title, e.g. ` Goal · active `. */
 export function goalPanelTitle(goal: GoalSnapshot): string {
-  return ` Goal · ${goal.status} `;
+  return t('tui.messages.goalPanel.title', { status: statusLabel(goal.status) });
 }
 
 export function buildGoalReportLines(goal: GoalSnapshot, wrapWidth: number = WRAP_WIDTH): string[] {
@@ -160,21 +161,21 @@ export function buildGoalReportLines(goal: GoalSnapshot, wrapWidth: number = WRA
   if (showReason) {
     lines.push(
       row(
-        'Status',
-        currentTheme.fg(statusColor, goal.status) +
+        t('tui.messages.goalPanel.statusLabel'),
+        currentTheme.fg(statusColor, statusLabel(goal.status)) +
           (reason !== undefined ? muted(` — ${reason}`) : ''),
       ),
     );
   }
-  lines.push(row('Running', value(formatGoalElapsed(goal.wallClockMs))));
-  lines.push(row('Turns', value(`${goal.turnsUsed}`)));
-  lines.push(row('Tokens', value(formatTokenCount(goal.tokensUsed))));
+  lines.push(row(t('tui.messages.goalPanel.runningLabel'), value(formatGoalElapsed(goal.wallClockMs))));
+  lines.push(row(t('tui.messages.goalPanel.turnsLabel'), value(`${goal.turnsUsed}`)));
+  lines.push(row(t('tui.messages.goalPanel.tokensLabel'), value(formatTokenCount(goal.tokensUsed))));
   if (!isComplete) {
     const stop = formatStopRow(goal);
     lines.push(
       stop !== null
-        ? row('Stop', value(stop))
-        : muted('No stop condition — runs until evaluated complete.'),
+        ? row(t('tui.messages.goalPanel.stopLabel'), value(stop))
+        : muted(t('tui.messages.goalPanel.noStopCondition')),
     );
   }
   return lines;
@@ -185,13 +186,26 @@ function formatStopRow(goal: GoalSnapshot): string | null {
   const { budget } = goal;
   const parts: string[] = [];
   if (budget.turnBudget !== null) {
-    parts.push(`after ${budget.turnBudget} turns (${goal.turnsUsed}/${budget.turnBudget})`);
+    parts.push(
+      t('tui.messages.goalPanel.stopTurns', {
+        turnBudget: budget.turnBudget,
+        turnsUsed: goal.turnsUsed,
+      }),
+    );
   }
   if (budget.tokenBudget !== null) {
-    parts.push(`at ${formatTokenCount(budget.tokenBudget)} tokens`);
+    parts.push(
+      t('tui.messages.goalPanel.stopTokens', {
+        tokenBudget: formatTokenCount(budget.tokenBudget),
+      }),
+    );
   }
   if (budget.wallClockBudgetMs !== null) {
-    parts.push(`after ${formatGoalElapsed(budget.wallClockBudgetMs)}`);
+    parts.push(
+      t('tui.messages.goalPanel.stopTime', {
+        duration: formatGoalElapsed(budget.wallClockBudgetMs),
+      }),
+    );
   }
   return parts.length > 0 ? parts.join(', ') : null;
 }
@@ -206,6 +220,19 @@ function statusToken(status: GoalStatus): ColorToken {
       return 'warning';
     case 'paused':
       return 'textDim';
+  }
+}
+
+function statusLabel(status: GoalStatus): string {
+  switch (status) {
+    case 'active':
+      return t('tui.messages.goalPanel.statusActive');
+    case 'complete':
+      return t('tui.messages.goalPanel.statusComplete');
+    case 'blocked':
+      return t('tui.messages.goalPanel.statusBlocked');
+    case 'paused':
+      return t('tui.messages.goalPanel.statusPaused');
   }
 }
 

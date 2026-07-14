@@ -1,3 +1,4 @@
+import { t } from '#/i18n';
 import { Container, truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 
 import { SELECT_POINTER } from '../../constant/symbols';
@@ -28,10 +29,10 @@ export class QueuePaneComponent extends Container {
       const canSteer = options.canSteerImmediately && hasSteerable;
       this.hint =
         options.isCompacting && !options.isStreaming
-          ? '  ↑ to edit · will send after compaction'
+          ? t('tui.dialogs.queuePane.hintCompacting')
           : canSteer
-            ? '  ↑ to edit · ctrl-s to steer immediately'
-            : '  ↑ to edit · will send after current task';
+            ? t('tui.dialogs.queuePane.hintSteer')
+            : t('tui.dialogs.queuePane.hintAfterTask');
     }
   }
 

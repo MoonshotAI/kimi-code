@@ -13,6 +13,7 @@
  * fire the `on*` callbacks back to the controller.
  */
 
+import { t } from '#/i18n';
 import {
   Container,
   Key,
@@ -24,9 +25,9 @@ import {
 } from '@moonshot-ai/pi-tui';
 import type { BackgroundTaskInfo, BackgroundTaskStatus } from '@moonshot-ai/kimi-code-sdk';
 
-import { SELECT_POINTER } from '@/tui/constant/symbols';
+import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
-import { printableChar } from '@/tui/utils/printable-key';
+import { printableChar } from '#/tui/utils/printable-key';
 
 const ELLIPSIS = '…';
 
@@ -52,12 +53,12 @@ export interface TasksBrowserProps {
 }
 
 const STATUS_LABEL: Record<BackgroundTaskStatus, string> = {
-  running: 'running',
-  completed: 'completed',
-  failed: 'failed',
-  timed_out: 'timed out',
-  killed: 'killed',
-  lost: 'lost',
+  running: t('tui.dialogs.tasksBrowser.statusRunning'),
+  completed: t('tui.dialogs.tasksBrowser.statusCompleted'),
+  failed: t('tui.dialogs.tasksBrowser.statusFailed'),
+  timed_out: t('tui.dialogs.tasksBrowser.statusTimedOut'),
+  killed: t('tui.dialogs.tasksBrowser.statusKilled'),
+  lost: t('tui.dialogs.tasksBrowser.statusLost'),
 };
 
 /** Auto-cancel the inline stop confirmation after this many ms. */
@@ -99,13 +100,13 @@ function isTerminal(status: BackgroundTaskStatus): boolean {
 function formatRelativeTime(ts: number | null | undefined): string {
   if (ts === null || ts === undefined || !Number.isFinite(ts) || ts <= 0) return '';
   const diffSec = Math.floor(Math.max(0, Date.now() - ts) / 1000);
-  if (diffSec < 60) return 'just now';
+  if (diffSec < 60) return t('tui.dialogs.tasksBrowser.relativeTimeJustNow');
   const minutes = Math.floor(diffSec / 60);
-  if (minutes < 60) return `${String(minutes)}m ago`;
+  if (minutes < 60) return t('tui.dialogs.tasksBrowser.relativeTimeMins', { minutes });
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${String(hours)}h ago`;
+  if (hours < 24) return t('tui.dialogs.tasksBrowser.relativeTimeHours', { hours });
   const days = Math.floor(hours / 24);
-  return `${String(days)}d ago`;
+  return t('tui.dialogs.tasksBrowser.relativeTimeDays', { days });
 }
 
 function singleLine(text: string): string {
@@ -333,10 +334,10 @@ export class TasksBrowserApp extends Container implements Focusable {
   // ── header / footer ──────────────────────────────────────────────────
 
   private renderHeader(width: number): string {
-    const title = currentTheme.boldFg('primary', ' TASK BROWSER ');
+    const title = currentTheme.boldFg('primary', t('tui.dialogs.tasksBrowser.headerTitle'));
     const filterText = currentTheme.fg(
       'textMuted',
-      ` filter=${this.props.filter === 'all' ? 'ALL' : 'ACTIVE'} `,
+      ` ${this.props.filter === 'all' ? t('tui.dialogs.tasksBrowser.filterAll') : t('tui.dialogs.tasksBrowser.filterActive')} `,
     );
     // Count only the tasks actually listed (background tasks after the
     // foreground-task filter), so a foreground-only session doesn't read
@@ -345,14 +346,14 @@ export class TasksBrowserApp extends Container implements Focusable {
     const counts = countByStatus(visible);
     const countSegments: string[] = [];
     if (counts.running > 0)
-      countSegments.push(currentTheme.fg('success', ` ${String(counts.running)} running `));
+      countSegments.push(currentTheme.fg('success', ` ${String(counts.running)} ${t('tui.dialogs.tasksBrowser.statusRunning')} `));
     if (counts.completed > 0)
-      countSegments.push(currentTheme.fg('textDim', ` ${String(counts.completed)} completed `));
+      countSegments.push(currentTheme.fg('textDim', ` ${String(counts.completed)} ${t('tui.dialogs.tasksBrowser.statusCompleted')} `));
     if (counts.terminalFailed > 0)
       countSegments.push(
-        currentTheme.fg('error', ` ${String(counts.terminalFailed)} interrupted `),
+        currentTheme.fg('error', ` ${String(counts.terminalFailed)} ${t('tui.dialogs.tasksBrowser.statusInterrupted')} `),
       );
-    const totals = currentTheme.fg('textMuted', ` ${String(visible.length)} total `);
+    const totals = currentTheme.fg('textMuted', ` ${String(visible.length)} ${t('tui.dialogs.tasksBrowser.statusTotal')} `);
 
     const composed = title + filterText + countSegments.join('') + totals;
     return fitExactly(composed, width);
@@ -365,18 +366,18 @@ export class TasksBrowserApp extends Container implements Focusable {
     if (this.pendingStopTaskId !== undefined) {
       const warn = (text: string): string => currentTheme.boldFg('warning', text);
       const line =
-        ` ${warn('Stop')} ${currentTheme.fg('text', this.pendingStopTaskId)}? ` +
-        `${key('Y')} ${dim('confirm')}  ${key('N')}${dim('/')}${key('esc')} ${dim('cancel')} `;
+        ` ${warn(t('tui.dialogs.tasksBrowser.stopLabel'))} ${currentTheme.fg('text', this.pendingStopTaskId)}? ` +
+        `${key('Y')} ${dim(t('tui.dialogs.tasksBrowser.footerConfirm'))}  ${key('N')}${dim('/')}${key('esc')} ${dim(t('tui.dialogs.tasksBrowser.footerCancel'))} `;
       return fitExactly(line, width);
     }
 
     const parts = [
-      ` ${key('↑↓')} ${dim('select')}`,
-      `${key('Enter/O')} ${dim('output')}`,
-      `${key('S')} ${dim('stop')}`,
-      `${key('R')} ${dim('refresh')}`,
-      `${key('Tab')} ${dim('filter')}`,
-      `${key('Q/Esc')} ${dim('cancel')} `,
+      ` ${key('↑↓')} ${dim(t('tui.dialogs.tasksBrowser.footerSelect'))}`,
+      `${key('Enter/O')} ${dim(t('tui.dialogs.tasksBrowser.footerOutput'))}`,
+      `${key('S')} ${dim(t('tui.dialogs.tasksBrowser.footerStop'))}`,
+      `${key('R')} ${dim(t('tui.dialogs.tasksBrowser.footerRefresh'))}`,
+      `${key('Tab')} ${dim(t('tui.dialogs.tasksBrowser.footerFilter'))}`,
+      `${key('Q/Esc')} ${dim(t('tui.dialogs.tasksBrowser.footerCancel'))} `,
     ];
     const left = parts.join('  ');
     const flash = this.props.flashMessage;
@@ -438,14 +439,14 @@ export class TasksBrowserApp extends Container implements Focusable {
   // ── left: task list frame ────────────────────────────────────────────
 
   private renderListFrame(width: number, height: number): string[] {
-    const title = `Tasks [${this.props.filter}]`;
+    const title = t('tui.dialogs.tasksBrowser.tasksFrameTitle', { filter: this.props.filter });
     const innerHeight = Math.max(0, height - 2);
 
     if (this.sortedVisible.length === 0) {
       const empty =
         this.props.filter === 'active'
-          ? 'No active tasks. Tab = show all.'
-          : 'No background tasks in this session.';
+          ? t('tui.dialogs.tasksBrowser.noActiveTasks')
+          : t('tui.dialogs.tasksBrowser.noBackgroundTasks');
       const lines: string[] = [currentTheme.fg('textMuted', empty)];
       while (lines.length < innerHeight) lines.push('');
       return this.renderFrame(title, lines, width, height);
@@ -493,7 +494,7 @@ export class TasksBrowserApp extends Container implements Focusable {
     const description =
       singleLine(task.description) ||
       (task.kind === 'process' ? singleLine(task.command) : '') ||
-      '(no description)';
+      t('tui.dialogs.tasksBrowser.noDescription');
     const desc = truncateToWidth(description, descBudget, ELLIPSIS);
     return fitExactly(`${prefix} ${currentTheme.fg('text', desc)}`, innerWidth);
   }
@@ -530,75 +531,75 @@ export class TasksBrowserApp extends Container implements Focusable {
     const innerHeight = Math.max(0, height - 2);
     const task = this.sortedVisible[this.selectedIndex];
     if (task === undefined) {
-      const empty = currentTheme.fg('textMuted', 'Select a task from the list.');
+      const empty = currentTheme.fg('textMuted', t('tui.dialogs.tasksBrowser.noTaskSelected'));
       const lines: string[] = [empty];
       while (lines.length < innerHeight) lines.push('');
-      return this.renderFrame('Detail', lines, width, height);
+      return this.renderFrame(t('tui.dialogs.tasksBrowser.detailFrameTitle'), lines, width, height);
     }
 
     const label = (text: string): string => currentTheme.fg('textMuted', text.padEnd(14));
     const value = (text: string): string => currentTheme.fg('text', text);
 
     const lines: string[] = [
-      `${label('Task ID:')}${value(task.taskId)}`,
-      `${label('Status:')}${currentTheme.fg(statusColor(task.status), STATUS_LABEL[task.status])}`,
-      `${label('Description:')}${value(singleLine(task.description) || '—')}`,
+      `${label(t('tui.dialogs.tasksBrowser.taskIdLabel'))}${value(task.taskId)}`,
+      `${label(t('tui.dialogs.tasksBrowser.statusLabel'))}${currentTheme.fg(statusColor(task.status), STATUS_LABEL[task.status])}`,
+      `${label(t('tui.dialogs.tasksBrowser.descriptionLabel'))}${value(singleLine(task.description) || '—')}`,
     ];
     if (task.kind === 'process' && task.command && task.command !== task.description) {
-      lines.push(`${label('Command:')}${value(singleLine(task.command))}`);
+      lines.push(`${label(t('tui.dialogs.tasksBrowser.commandLabel'))}${value(singleLine(task.command))}`);
     }
     if (task.kind === 'agent' && task.agentId !== undefined) {
-      lines.push(`${label('Agent ID:')}${value(task.agentId)}`);
+      lines.push(`${label(t('tui.dialogs.tasksBrowser.agentIdLabel'))}${value(task.agentId)}`);
     }
     if (task.kind === 'agent' && task.subagentType !== undefined) {
-      lines.push(`${label('Agent type:')}${value(task.subagentType)}`);
+      lines.push(`${label(t('tui.dialogs.tasksBrowser.agentTypeLabel'))}${value(task.subagentType)}`);
     }
     if (task.kind === 'question') {
-      lines.push(`${label('Questions:')}${currentTheme.fg('textMuted', String(task.questionCount))}`);
+      lines.push(`${label(t('tui.dialogs.tasksBrowser.questionsLabel'))}${currentTheme.fg('textMuted', String(task.questionCount))}`);
       if (task.toolCallId !== undefined) {
-        lines.push(`${label('Tool call:')}${currentTheme.fg('textMuted', task.toolCallId)}`);
+        lines.push(`${label(t('tui.dialogs.tasksBrowser.toolCallLabel'))}${currentTheme.fg('textMuted', task.toolCallId)}`);
       }
     }
     const timing =
       task.status === 'running'
-        ? `running ${formatRelativeTime(task.startedAt)}`
+        ? `${t('tui.dialogs.tasksBrowser.timingRunning')}${formatRelativeTime(task.startedAt)}`
         : task.endedAt !== null && task.endedAt !== undefined
-          ? `finished ${formatRelativeTime(task.endedAt)}`
+          ? `${t('tui.dialogs.tasksBrowser.timingFinished')}${formatRelativeTime(task.endedAt)}`
           : '';
-    if (timing.length > 0) lines.push(`${label('Time:')}${currentTheme.fg('textMuted', timing)}`);
+    if (timing.length > 0) lines.push(`${label(t('tui.dialogs.tasksBrowser.timeLabel'))}${currentTheme.fg('textMuted', timing)}`);
     if (task.kind === 'process' && task.pid > 0) {
-      lines.push(`${label('Pid:')}${currentTheme.fg('textMuted', String(task.pid))}`);
+      lines.push(`${label(t('tui.dialogs.tasksBrowser.pidLabel'))}${currentTheme.fg('textMuted', String(task.pid))}`);
     }
     if (task.kind === 'process' && task.exitCode !== null) {
-      lines.push(`${label('Exit code:')}${currentTheme.fg('textMuted', String(task.exitCode))}`);
+      lines.push(`${label(t('tui.dialogs.tasksBrowser.exitCodeLabel'))}${currentTheme.fg('textMuted', String(task.exitCode))}`);
     }
     if (task.stopReason !== undefined && task.stopReason.length > 0) {
-      lines.push(`${label('Reason:')}${currentTheme.fg('textMuted', task.stopReason)}`);
+      lines.push(`${label(t('tui.dialogs.tasksBrowser.reasonLabel'))}${currentTheme.fg('textMuted', task.stopReason)}`);
     }
     while (lines.length < innerHeight) lines.push('');
-    return this.renderFrame('Detail', lines, width, height);
+    return this.renderFrame(t('tui.dialogs.tasksBrowser.detailFrameTitle'), lines, width, height);
   }
 
   private renderPreviewFrame(width: number, height: number): string[] {
     const innerHeight = Math.max(0, height - 2);
     const task = this.sortedVisible[this.selectedIndex];
     if (task === undefined) {
-      const lines: string[] = [currentTheme.fg('textMuted', 'No task selected.')];
+      const lines: string[] = [currentTheme.fg('textMuted', t('tui.dialogs.tasksBrowser.noTaskSelected'))];
       while (lines.length < innerHeight) lines.push('');
-      return this.renderFrame('Preview Output', lines, width, height);
+      return this.renderFrame(t('tui.dialogs.tasksBrowser.previewFrameTitle'), lines, width, height);
     }
 
     let body: string;
-    if (this.props.tailLoading) body = '[loading…]';
+    if (this.props.tailLoading) body = t('tui.dialogs.tasksBrowser.loadingTail');
     else if (this.props.tailOutput === undefined || this.props.tailOutput.length === 0)
-      body = '[no output captured]';
+      body = t('tui.dialogs.tasksBrowser.noOutputTail');
     else body = this.props.tailOutput;
 
     const rawLines = body.split('\n');
     const tailLines = rawLines.slice(-innerHeight);
     const styled = tailLines.map((line) => currentTheme.fg('textDim', line));
     while (styled.length < innerHeight) styled.push('');
-    return this.renderFrame('Preview Output', styled, width, height);
+    return this.renderFrame(t('tui.dialogs.tasksBrowser.previewFrameTitle'), styled, width, height);
   }
 
   // ── too-small fallback ──────────────────────────────────────────────
@@ -607,7 +608,7 @@ export class TasksBrowserApp extends Container implements Focusable {
     const lines: string[] = [];
     const msg = currentTheme.fg(
       'error',
-      `Terminal too small (need ≥ ${String(MIN_WIDTH)} × ${String(MIN_HEIGHT)})`,
+      t('tui.dialogs.tasksBrowser.tooSmall', { minWidth: MIN_WIDTH, minHeight: MIN_HEIGHT }),
     );
     lines.push(fitExactly(msg, width));
     for (let i = 1; i < rows; i++) lines.push(' '.repeat(width));

@@ -129,6 +129,7 @@ function makeStartupInput(): KimiTUIStartupInput {
     tuiConfig: {
       theme: 'dark',
       disablePasteBurst: false,
+      locale: 'en',
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
@@ -1221,7 +1222,7 @@ command = "vim"
     driver.handleUserInput('/undo 10');
     await vi.waitFor(() => {
       expect(stripSgr(renderTranscript(driver))).toContain(
-        'Cannot undo 10 prompts; only 1 prompt can be undone in the active context.',
+        'Cannot undo 10; only 1 can be undone in the active context.',
       );
     });
 

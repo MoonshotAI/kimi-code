@@ -31,6 +31,7 @@ import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
 import type { DiffDisplayBlock, FileContentDisplayBlock } from '#/tui/reverse-rpc/types';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
+import { t } from '#/i18n';
 
 const ELLIPSIS = '…';
 
@@ -150,7 +151,7 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
   }
 
   private renderHeader(width: number): string {
-    const title = currentTheme.boldFg('primary', ' Preview ');
+    const title = currentTheme.boldFg('primary', t('tui.dialogs.approvalPreview.title'));
     return fitExactly(title + this.headerTitle, width);
   }
 
@@ -190,11 +191,7 @@ export class ApprovalPreviewViewer extends Container implements Focusable {
       'textMuted',
       ` ${String(lineFrom)}-${String(lineTo)} / ${String(total)} (${String(percent)}%) `,
     );
-    const keys =
-      `${key('↑↓')} ${dim('line')}  ` +
-      `${key('PgUp/PgDn')} ${dim('page')}  ` +
-      `${key('g/G')} ${dim('top/bot')}  ` +
-      `${key('Q/Esc/Ctrl+E')} ${dim('cancel')}`;
+    const keys = t('tui.dialogs.approvalPreview.footerKeys');
     const left = ` ${keys}`;
     const leftW = visibleWidth(left);
     const rightW = visibleWidth(position);

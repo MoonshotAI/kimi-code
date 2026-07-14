@@ -1,6 +1,7 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 import { Spacer, Text, visibleWidth } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
@@ -20,7 +21,9 @@ export class CronMessageComponent implements Component {
   ) {
     const missed = data.missedCount !== undefined;
     this.data = data;
-    this.title = missed ? 'Missed scheduled reminders' : 'Scheduled reminder fired';
+    this.title = missed
+      ? t('tui.messages.cronMessage.missedTitle')
+      : t('tui.messages.cronMessage.firedTitle');
     this.detail = cronDetail(data);
     this.prompt = prompt;
     this.promptText = new Text(currentTheme.fg('text', prompt), 0, 0);
@@ -71,14 +74,16 @@ export class CronMessageComponent implements Component {
 function cronDetail(data: CronTranscriptData): string | undefined {
   const parts: string[] = [];
   if (data.cron !== undefined && data.cron.length > 0) parts.push(data.cron);
-  if (data.jobId !== undefined && data.jobId.length > 0) parts.push(`job ${data.jobId}`);
-  if (data.recurring === false) parts.push('one-shot');
+  if (data.jobId !== undefined && data.jobId.length > 0) {
+    parts.push(t('tui.messages.cronMessage.job', { jobId: data.jobId }));
+  }
+  if (data.recurring === false) parts.push(t('tui.messages.cronMessage.oneShot'));
   if (data.coalescedCount !== undefined && data.coalescedCount > 1) {
-    parts.push(`${String(data.coalescedCount)} fires coalesced`);
+    parts.push(t('tui.messages.cronMessage.coalesced', { count: data.coalescedCount }));
   }
   if (data.missedCount !== undefined) {
-    parts.push(`${String(data.missedCount)} missed`);
+    parts.push(t('tui.messages.cronMessage.missed', { count: data.missedCount }));
   }
-  if (data.stale === true) parts.push('final delivery');
+  if (data.stale === true) parts.push(t('tui.messages.cronMessage.finalDelivery'));
   return parts.length > 0 ? parts.join(' | ') : undefined;
 }

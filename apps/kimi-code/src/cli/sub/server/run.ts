@@ -20,6 +20,7 @@ import chalk from 'chalk';
 import { Option, type Command } from 'commander';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS } from '#/constant/app';
+import { t } from '#/i18n';
 import { getNativeWebAssetsDir } from '#/native/web-assets';
 import { darkColors } from '#/tui/theme/colors';
 import { openUrl as defaultOpenUrl } from '#/utils/open-url';
@@ -124,61 +125,61 @@ export function buildRunCommand(cmd: Command, options: { defaultOpen: boolean })
   return cmd
     .option(
       '--port <port>',
-      `Bind port (default ${DEFAULT_SERVER_PORT})`,
+      t('cli.optionDescriptions.serverRunOptionPort'),
       String(DEFAULT_SERVER_PORT),
     )
     .option(
       '--host [host]',
-      `Bind host. Omit to bind ${DEFAULT_SERVER_HOST} (this machine only); pass --host to bind ${DEFAULT_LAN_HOST} (all interfaces), or --host <host> for a specific host. The bearer token is printed at startup.`,
+      t('cli.optionDescriptions.serverRunOptionHost'),
     )
     .option(
       '--allowed-host <host...>',
-      'Extra Host header value to allow through the DNS-rebinding check. Repeat or comma-separate; a leading dot matches a domain suffix (e.g. .example.com).',
+      t('cli.optionDescriptions.serverRunOptionAllowedHost'),
     )
     .option(
       '--keep-alive',
-      'Keep the server running instead of exiting after 60s with no connected clients. Implied automatically by --host / --allowed-host, and always on in --foreground mode.',
+      t('cli.optionDescriptions.serverRunOptionKeepAlive'),
       false,
     )
     .option(
       '--insecure-no-tls',
-      'Allow a non-loopback bind without a TLS-terminating reverse proxy. Defaults to true; only relevant for non-loopback binds.',
+      t('cli.optionDescriptions.serverRunOptionInsecureNoTls'),
       true,
     )
     .option(
       '--allow-remote-shutdown',
-      'On a non-loopback bind, keep POST /api/v1/shutdown enabled (default: route is disabled → 404).',
+      t('cli.optionDescriptions.serverRunOptionAllowRemoteShutdown'),
       false,
     )
     .option(
       '--allow-remote-terminals',
-      'On a non-loopback bind, keep the PTY /api/v1/terminals/* routes enabled (default: disabled → 404). Remote shell is high risk.',
+      t('cli.optionDescriptions.serverRunOptionAllowRemoteTerminals'),
       false,
     )
     .option(
       '--dangerous-bypass-auth',
-      'Disable bearer-token auth on every REST and WebSocket route, and advertise it via /api/v1/meta so the web UI connects without a token. Only use on a trusted network or behind your own authenticating proxy.',
+      t('cli.optionDescriptions.serverRunOptionDangerousBypassAuth'),
       false,
     )
     .option(
       '--log-level <level>',
-      `Server log level: ${VALID_LOG_LEVELS.join('|')}. Omit to keep logs off.`,
+      t('cli.optionDescriptions.serverRunOptionLogLevel'),
     )
     .option(
       '--debug-endpoints',
-      'Mount /api/v1/debug/* routes for test introspection. OFF by default; production callers leave this unset.',
+      t('cli.optionDescriptions.serverRunOptionDebugEndpoints'),
       false,
     )
     .option(
       '--foreground',
-      'Run the server in the foreground and keep this terminal attached until SIGINT/SIGTERM (do not daemonize).',
+      t('cli.optionDescriptions.serverRunOptionForeground'),
       false,
     )
     .option(
       options.defaultOpen ? '--no-open' : '--open',
       options.defaultOpen
-        ? 'Do not open the web UI in the default browser.'
-        : 'Open the web UI in the default browser once the server is healthy.',
+        ? t('cli.optionDescriptions.serverRunOptionNoOpen')
+        : t('cli.optionDescriptions.serverRunOptionOpen'),
       options.defaultOpen,
     )
     .addOption(
@@ -279,7 +280,7 @@ function formatReadyLine(
   const notice = dangerousBypassAuth
     ? `${formatDangerNoticeLines().join('\n')}\n`
     : '';
-  return `${notice}Kimi server: ${buildOpenableUrl(origin, token)}\n`;
+  return `${notice}${t('tui.statusMessages.serverUrl', { url: buildOpenableUrl(origin, token) })}\n`;
 }
 
 /**
@@ -291,9 +292,9 @@ function formatDangerNoticeLines(): string[] {
   const danger = (text: string): string => chalk.hex(darkColors.error)(text);
   const dangerBold = (text: string): string => chalk.bold.hex(darkColors.error)(text);
   return [
-    `  ${dangerBold('⚠ DANGER: authentication is DISABLED (--dangerous-bypass-auth).')}`,
-    `  ${danger('Anyone who can reach this port gets full access. Only continue if you understand the risk.')}`,
-    `  ${danger(`If you are unsure, run `)}${dangerBold('kimi server kill')}${danger(' now to stop this process.')}`,
+    `  ${dangerBold(t('tui.statusMessages.serverDangerAuthDisabled'))}`,
+    `  ${danger(t('tui.statusMessages.serverDangerAnyoneAccess'))}`,
+    `  ${danger(t('tui.statusMessages.serverDangerUnsure'))}${dangerBold(t('tui.statusMessages.serverDangerUnsureCmd'))}${danger(t('tui.statusMessages.serverDangerUnsureSuffix'))}`,
   ];
 }
 
@@ -543,8 +544,8 @@ function formatReadyBanner(
   const logo = ['▐█▛█▛█▌', '▐█████▌'] as const;
   const lines: string[] = [
     '',
-    `  ${primary(logo[0])}  ${title('Kimi server ready')}  ${dim(getVersion())}`,
-    `  ${primary(logo[1])}  ${dim('Local web UI is available from this machine.')}`,
+    `  ${primary(logo[0])}  ${title(t('tui.statusMessages.serverReadyBanner'))}  ${dim(getVersion())}`,
+    `  ${primary(logo[1])}  ${dim(t('tui.statusMessages.serverReadyLocalUi'))}`,
     '',
   ];
 
@@ -565,7 +566,7 @@ function formatReadyBanner(
   }
   // On a loopback bind there is no network URL; show how to enable one.
   if (isLoopbackHost(host)) {
-    lines.push(`  ${label('Network:  ')}${muted('off')}${dim('  use --host to enable')}`);
+    lines.push(`  ${label(t('tui.statusMessages.serverAccessNetwork'))}${muted(t('tui.statusMessages.serverNetworkOff'))}${dim('  ' + t('tui.statusMessages.serverNetworkUseHost'))}`);
   }
   if (opts.token !== undefined) {
     // Set the token off with surrounding whitespace rather than color, so it is
@@ -576,8 +577,8 @@ function formatReadyBanner(
   }
 
   // Auxiliary controls last.
-  lines.push(`  ${label('Logs:     ')}${muted('off')}${dim('  use --log-level info to enable')}`);
-  lines.push(`  ${label('Stop:     ')}${muted('kimi server kill')}`);
+  lines.push(`  ${label('Logs:     ')}${muted(t('tui.statusMessages.serverLogsOff'))}${dim('  ' + t('tui.statusMessages.serverLogsUseLevel'))}`);
+  lines.push(`  ${label('Stop:     ')}${muted(t('tui.statusMessages.serverStopCmd'))}`);
   lines.push('');
   return lines.join('\n');
 }

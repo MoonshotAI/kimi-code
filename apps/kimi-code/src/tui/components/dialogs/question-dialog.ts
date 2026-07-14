@@ -5,6 +5,7 @@
  * reviews everything before the answers are emitted upstream.
  */
 
+import { t } from '#/i18n';
 import {
   Container,
   Input,
@@ -26,12 +27,12 @@ import type {
 
 const NUMBER_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const MAX_BODY_LINES = 12;
-const DEFAULT_OTHER_LABEL = 'Other';
-const NOT_ANSWERED_LABEL = 'Not answered';
-const REVIEW_TITLE = 'Review your answer before submit';
-const SUBMIT_PROMPT = 'Ready to submit your answers?';
-const UNANSWERED_WARNING = 'Some questions are still unanswered.';
-const SUBMIT_ACTIONS = ['Submit', 'Cancel'] as const;
+const DEFAULT_OTHER_LABEL = t('tui.dialogs.questionDialog.defaultOtherLabel');
+const NOT_ANSWERED_LABEL = t('tui.dialogs.questionDialog.notAnswered');
+const REVIEW_TITLE = t('tui.dialogs.questionDialog.reviewTitle');
+const SUBMIT_PROMPT = t('tui.dialogs.questionDialog.submitPrompt');
+const UNANSWERED_WARNING = t('tui.dialogs.questionDialog.unansweredWarning');
+const SUBMIT_ACTIONS = [t('common.submit'), t('common.cancel')] as const;
 
 interface DisplayOption {
   readonly label: string;
@@ -446,13 +447,17 @@ export class QuestionDialogComponent extends Container implements Focusable {
     const success = (text: string) => currentTheme.fg('success', text);
 
     const renderWidth = Math.max(1, width);
-    const lines: string[] = [accent('─'.repeat(renderWidth)), currentTheme.boldFg('primary', ' question'), ''];
+    const lines: string[] = [
+      accent('─'.repeat(renderWidth)),
+      currentTheme.boldFg('primary', t('tui.dialogs.questionDialog.title')),
+      '',
+    ];
     this.pushTabs(lines);
     lines.push('');
 
     appendWrapped(lines, ' ? ', '   ', question.question, renderWidth, accent);
     if (this.isEditingOther()) {
-      lines.push(dim('   Type your answer, then press Enter to save.'));
+      lines.push(dim(`   ${t('tui.dialogs.questionDialog.typeAnswerHint')}`));
     }
 
     if (question.body !== undefined && question.body.trim().length > 0) {
@@ -463,7 +468,13 @@ export class QuestionDialogComponent extends Container implements Focusable {
         appendWrapped(lines, '   ', '   ', bodyLine, renderWidth, dim);
       }
       if (bodyLines.length > visibleBodyLines.length) {
-        lines.push(dim(`   ... ${String(bodyLines.length - visibleBodyLines.length)} more lines`));
+        lines.push(
+          dim(
+            `   ${t('tui.dialogs.questionDialog.moreLines', {
+              count: bodyLines.length - visibleBodyLines.length,
+            })}`,
+          ),
+        );
       }
     }
 
@@ -525,7 +536,11 @@ export class QuestionDialogComponent extends Container implements Focusable {
     if (visibleEnd < options.length || visibleStart > 0) {
       lines.push(
         dim(
-          `   showing ${String(visibleStart + 1)}-${String(visibleEnd)} of ${String(options.length)}`,
+          `   ${t('tui.dialogs.questionDialog.showing', {
+            from: visibleStart + 1,
+            to: visibleEnd,
+            total: options.length,
+          })}`,
         ),
       );
     }
@@ -544,7 +559,11 @@ export class QuestionDialogComponent extends Container implements Focusable {
     const warning = (text: string) => currentTheme.fg('warning', text);
 
     const renderWidth = Math.max(1, width);
-    const lines: string[] = [accent('─'.repeat(renderWidth)), currentTheme.boldFg('primary', ' question'), ''];
+    const lines: string[] = [
+      accent('─'.repeat(renderWidth)),
+      currentTheme.boldFg('primary', t('tui.dialogs.questionDialog.title')),
+      '',
+    ];
     this.pushTabs(lines);
     lines.push('');
     lines.push(currentTheme.boldFg('text', ` ${REVIEW_TITLE}`));
@@ -613,13 +632,13 @@ export class QuestionDialogComponent extends Container implements Focusable {
       const label =
         question.header !== undefined && question.header.length > 0
           ? question.header
-          : `Q${String(i + 1)}`;
+          : t('tui.dialogs.questionDialog.questionPrefix', { number: i + 1 });
       if (i === this.currentTab) tabs.push(active(` ${label} `));
       else if (this.isAnswered(i)) tabs.push(currentTheme.fg('success', `(✓) ${label}`));
       else tabs.push(dim(`(○) ${label}`));
     }
 
-    const submitLabel = 'Submit';
+    const submitLabel = t('tui.dialogs.questionDialog.submitTab');
     if (this.isSubmitTab()) tabs.push(active(` ${submitLabel} `));
     else tabs.push(dim(` ${submitLabel} `));
 
@@ -629,10 +648,10 @@ export class QuestionDialogComponent extends Container implements Focusable {
   private buildQuestionHint(dim: (s: string) => string, questionIdx: number): string {
     if (this.isEditingOther()) {
       const parts: string[] = [
-        'type answer',
-        '↵ save',
-        ...(this.totalTabs() > 1 ? ['tab switch'] : []),
-        'esc cancel',
+        t('tui.dialogs.questionDialog.hintEdit.typeAnswer'),
+        t('tui.dialogs.questionDialog.hintEdit.save'),
+        ...(this.totalTabs() > 1 ? [t('tui.dialogs.questionDialog.hintEdit.tabSwitch')] : []),
+        t('tui.dialogs.questionDialog.hintEdit.cancel'),
       ];
       return dim(`  ${parts.join('  ')}`);
     }
@@ -640,21 +659,28 @@ export class QuestionDialogComponent extends Container implements Focusable {
     const optionCount = Math.min(this.displayOptions(questionIdx).length, NUMBER_KEYS.length);
     const numberHint = optionCount <= 1 ? '1' : `1-${String(optionCount)}`;
     const question = this.request.data.questions[questionIdx];
-    if (question === undefined) return dim('  esc cancel');
+    if (question === undefined) return dim(`  ${t('tui.dialogs.questionDialog.hintQuestion.cancel')}`);
 
+    const actionKey = question.multi_select
+      ? 'tui.dialogs.questionDialog.hintQuestion.toggle'
+      : 'tui.dialogs.questionDialog.hintQuestion.choose';
     const parts: string[] = [
-      '↑↓ select',
-      `${numberHint} / ↵ ${question.multi_select ? 'toggle' : 'choose'}`,
+      t('tui.dialogs.questionDialog.hintQuestion.navigate'),
+      t(actionKey, { range: numberHint }),
     ];
-    if (this.totalTabs() > 1) parts.push('←/→/tab switch');
-    parts.push('esc cancel');
+    if (this.totalTabs() > 1) parts.push(t('tui.dialogs.questionDialog.hintQuestion.tabSwitch'));
+    parts.push(t('tui.dialogs.questionDialog.hintQuestion.cancel'));
     return dim(`  ${parts.join('  ')}`);
   }
 
   private buildSubmitHint(dim: (s: string) => string): string {
-    const parts: string[] = ['↑↓ select', '1/2 choose', '↵ confirm'];
-    if (this.totalTabs() > 1) parts.push('←/→/tab switch');
-    parts.push('esc cancel');
+    const parts: string[] = [
+      t('tui.dialogs.questionDialog.hintSubmit.navigate'),
+      t('tui.dialogs.questionDialog.hintSubmit.choose'),
+      t('tui.dialogs.questionDialog.hintSubmit.confirm'),
+    ];
+    if (this.totalTabs() > 1) parts.push(t('tui.dialogs.questionDialog.hintSubmit.tabSwitch'));
+    parts.push(t('tui.dialogs.questionDialog.hintSubmit.cancel'));
     return dim(`  ${parts.join('  ')}`);
   }
 

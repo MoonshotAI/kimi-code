@@ -1,3 +1,4 @@
+import { t } from '#/i18n';
 import {
   Container,
   Key,
@@ -66,17 +67,16 @@ export class UndoSelectorComponent extends Container implements Focusable {
 
   override render(width: number): string[] {
     const view = this.list.view();
-    const hintParts = ['↑↓ navigate', 'Enter select', 'Esc cancel'];
 
     const lines: string[] = [
       currentTheme.fg('primary', '─'.repeat(width)),
-      currentTheme.boldFg('primary', ' Select messages to undo'),
-      currentTheme.fg('textMuted', ' ' + hintParts.join(' · ')),
+      currentTheme.boldFg('primary', t('tui.dialogs.undoSelector.title')),
+      currentTheme.fg('textMuted', ' ' + t('tui.dialogs.undoSelector.navHint')),
       '',
     ];
 
     if (view.items.length === 0) {
-      lines.push(currentTheme.fg('textMuted', '   No messages'));
+      lines.push(currentTheme.fg('textMuted', t('tui.dialogs.undoSelector.noMessages')));
     } else {
       const visibleCount = Math.min(MAX_VISIBLE_CHOICES, view.items.length);
       const maxStart = view.items.length - visibleCount;

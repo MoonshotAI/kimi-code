@@ -10,6 +10,7 @@ import {
 import type { Command } from 'commander';
 import { z } from 'zod';
 
+import { t } from '#/i18n';
 import { getTuiConfigPath, parseTuiConfig } from '#/tui/config';
 
 interface WritableLike {
@@ -81,23 +82,23 @@ export async function handleDoctor(deps: DoctorDeps, options: DoctorOptions): Pr
 export function registerDoctorCommand(parent: Command, deps?: Partial<DoctorDeps>): void {
   const doctor = parent
     .command('doctor')
-    .description('Validate Kimi Code configuration files.')
+    .description(t('cli.commandDescriptions.doctor'))
     .action(async () => {
       await runDoctorCommand(deps, {});
     });
 
   doctor
     .command('config')
-    .description('Validate config.toml.')
-    .argument('[path]', 'Validate this file as config.toml instead of the default path.')
+    .description(t('cli.commandDescriptions.doctorConfig'))
+    .argument('[path]', t('cli.optionDescriptions.doctorConfigPath'))
     .action(async (path: string | undefined) => {
       await runDoctorCommand(deps, { target: 'config', path });
     });
 
   doctor
     .command('tui')
-    .description('Validate tui.toml.')
-    .argument('[path]', 'Validate this file as tui.toml instead of the default path.')
+    .description(t('cli.commandDescriptions.doctorTui'))
+    .argument('[path]', t('cli.optionDescriptions.doctorTuiPath'))
     .action(async (path: string | undefined) => {
       await runDoctorCommand(deps, { target: 'tui', path });
     });
@@ -197,8 +198,8 @@ async function checkTomlFile(deps: ResolvedDoctorDeps, spec: CheckSpec): Promise
       path: spec.path,
       status: spec.explicit ? 'ERROR' : 'SKIP',
       message: spec.explicit
-        ? 'File does not exist.'
-        : 'File does not exist; built-in defaults will apply.',
+        ? t('tui.statusMessages.doctorFileNotExist')
+        : t('tui.statusMessages.doctorFileNotExistDefaults'),
     };
   }
 
@@ -238,18 +239,18 @@ function resolveInputPath(input: string, cwd: string): string {
 
 function formatSuccess(results: readonly CheckResult[]): string {
   return [
-    'Kimi doctor',
+    t('tui.statusMessages.doctorTitle'),
     '',
     ...formatResults(results),
     '',
-    'All checked config files are valid.',
+    t('tui.statusMessages.doctorAllValid'),
     '',
   ].join('\n');
 }
 
 function formatFailure(results: readonly CheckResult[], issueCount: number): string {
   return [
-    `Kimi doctor found ${String(issueCount)} ${issueCount === 1 ? 'issue' : 'issues'}.`,
+    t('tui.statusMessages.doctorFoundIssues', { count: String(issueCount), plural: issueCount === 1 ? '' : 's' }),
     '',
     ...formatResults(results),
     '',
@@ -273,8 +274,8 @@ function formatErrorMessage(error: unknown, filePath: string): string {
   const validationIssues = findValidationIssues(error);
   if (validationIssues !== undefined) {
     return [
-      `Invalid configuration in ${filePath}.`,
-      'Validation issues:',
+      t('tui.statusMessages.doctorInvalidConfig', { path: filePath }),
+      t('tui.statusMessages.doctorValidationIssues'),
       ...validationIssues.map((issue) => `  ${formatIssuePath(issue.path)}: ${issue.message}`),
     ].join('\n');
   }
@@ -282,8 +283,8 @@ function formatErrorMessage(error: unknown, filePath: string): string {
   const zodError = findZodError(error);
   if (zodError !== undefined) {
     return [
-      `Invalid configuration in ${filePath}.`,
-      'Validation issues:',
+      t('tui.statusMessages.doctorInvalidConfig', { path: filePath }),
+      t('tui.statusMessages.doctorValidationIssues'),
       ...zodError.issues.map((issue) => `  ${formatIssuePath(issue.path)}: ${issue.message}`),
     ].join('\n');
   }

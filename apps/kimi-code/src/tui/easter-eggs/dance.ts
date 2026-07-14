@@ -12,6 +12,7 @@
 import chalk from 'chalk';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import type { SlashCommandHost } from '../commands/dispatch';
 import type { ParsedSlashInput } from '../commands/types';
 import { currentTheme } from '../theme';
@@ -239,10 +240,10 @@ export function tryHandleDanceCommand(host: SlashCommandHost, parsed: ParsedSlas
     currentDanceController.stop();
   } else if (sub === 'on') {
     currentDanceController.start({ hold: true });
-    host.showStatus(`Dancing — use ${cmd('/dance off')} to turn it off.`);
+    host.showStatus(t('tui.messages.danceOn', { cmd: cmd('/dance off') }));
   } else {
     currentDanceController.start({ hold: false });
-    host.showStatus(`Use ${cmd('/dance on')} to keep the rainbow on.`);
+    host.showStatus(t('tui.messages.danceOff', { cmd: cmd('/dance on') }));
   }
   return true;
 }

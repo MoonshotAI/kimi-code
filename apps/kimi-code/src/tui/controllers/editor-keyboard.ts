@@ -1,17 +1,18 @@
 import type { KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 import { compressImageForModel, persistOriginalImage, sessionMediaOriginalsDir } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
 import { ClipboardMediaError, readClipboardMedia } from '#/utils/clipboard/clipboard-image';
 import { parseImageMeta } from '#/utils/image/image-mime';
 import { editInExternalEditor, resolveEditorCommand } from '#/utils/process/external-editor';
 
 import {
-  CTRL_C_HINT,
-  CTRL_D_HINT,
   DOUBLE_ESC_WINDOW_MS,
   EXIT_CONFIRM_WINDOW_MS,
-  LLM_NOT_SET_MESSAGE,
-  NO_ACTIVE_SESSION_MESSAGE,
+  getCtrlCHint,
+  getCtrlDHint,
+  getLlmNotSetMessage,
+  getNoActiveSessionMessage,
 } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
@@ -165,7 +166,7 @@ export class EditorKeyboardController {
       if (editor.getText().length > 0) {
         editor.setText('');
       }
-      this.armPendingExit('ctrl-c', CTRL_C_HINT);
+      this.armPendingExit('ctrl-c', getCtrlCHint());
     };
 
     editor.onCtrlD = () => {
@@ -174,7 +175,7 @@ export class EditorKeyboardController {
         void host.stop();
         return;
       }
-      this.armPendingExit('ctrl-d', CTRL_D_HINT);
+      this.armPendingExit('ctrl-d', getCtrlDHint());
     };
 
     editor.onEscape = () => {
@@ -209,7 +210,7 @@ export class EditorKeyboardController {
 
     editor.onShiftTab = () => {
       if (host.session === undefined) {
-        host.showError(NO_ACTIVE_SESSION_MESSAGE);
+        host.showError(getNoActiveSessionMessage());
         return;
       }
       const next = !host.state.appState.planMode;
@@ -300,7 +301,7 @@ export class EditorKeyboardController {
         if (!editorIsBash) editor.setText('');
         const session = host.session;
         if (host.state.appState.model.trim().length === 0 || session === undefined) {
-          host.showError(LLM_NOT_SET_MESSAGE);
+          host.showError(getLlmNotSetMessage());
         } else {
           host.steerMessage(session, items);
         }
@@ -415,7 +416,7 @@ export class EditorKeyboardController {
     if (session === undefined) return;
     void session.cancelCompaction().catch((error: unknown) => {
       const message = formatErrorMessage(error);
-      this.host.showError(`Failed to cancel compaction: ${message}`);
+      this.host.showError(t('tui.statusMessages.compactionCancelFailed', { message }));
     });
   }
 
@@ -503,7 +504,7 @@ export class EditorKeyboardController {
     if (state.externalEditorRunning) return;
     const cmd = resolveEditorCommand(state.appState.editorCommand);
     if (cmd === undefined) {
-      this.host.showError('No editor configured. Set $VISUAL / $EDITOR, or run /editor <command>.');
+      this.host.showError(t('tui.statusMessages.noEditorConfigured'));
       return;
     }
     this.host.setExternalEditorRunning(true);
@@ -519,7 +520,7 @@ export class EditorKeyboardController {
       }
     } catch (error) {
       const msg = formatErrorMessage(error);
-      this.host.showError(`External editor failed: ${msg}`);
+      this.host.showError(t('tui.messages.editorExternalFailed', { msg }));
     } finally {
       if (typeof process.stdin.pause === 'function') {
         process.stdin.pause();

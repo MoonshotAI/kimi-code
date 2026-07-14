@@ -7,6 +7,7 @@
  * user open the link on another device and be authenticated automatically.
  */
 
+import { t } from '#/i18n';
 import { formatHostForUrl, listNetworkAddresses, type NetworkAddress } from './networks';
 
 /**
@@ -67,19 +68,19 @@ export function accessUrlLines(
 ): AccessUrlLine[] {
   if (isWildcard(host)) {
     const lines: AccessUrlLine[] = [
-      { label: 'Local:    ', url: buildOpenableUrl(`http://localhost:${port}`, token) },
+      { label: t('tui.statusMessages.serverAccessLocal'), url: buildOpenableUrl(`http://localhost:${port}`, token) },
     ];
     const addrs = networkAddresses ?? listNetworkAddresses();
     for (const addr of addrs) {
       lines.push({
-        label: 'Network:  ',
+        label: t('tui.statusMessages.serverAccessNetwork'),
         url: buildOpenableUrl(`http://${formatHostForUrl(addr.address, addr.family)}:${port}`, token),
       });
     }
     return lines;
   }
   if (isLoopbackHost(host)) {
-    return [{ label: 'Local:    ', url: buildOpenableUrl(hostOrigin(host, port), token) }];
+    return [{ label: t('tui.statusMessages.serverAccessLocal'), url: buildOpenableUrl(hostOrigin(host, port), token) }];
   }
-  return [{ label: 'URL:      ', url: buildOpenableUrl(hostOrigin(host, port), token) }];
+  return [{ label: t('tui.statusMessages.serverAccessUrl'), url: buildOpenableUrl(hostOrigin(host, port), token) }];
 }

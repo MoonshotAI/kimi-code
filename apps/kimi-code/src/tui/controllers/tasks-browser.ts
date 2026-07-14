@@ -1,6 +1,7 @@
 import type { BackgroundTaskInfo, Session } from '@moonshot-ai/kimi-code-sdk';
 import type { Component, ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { TaskOutputViewer } from '../components/dialogs/task-output-viewer';
 import { TasksBrowserApp, type TasksFilter } from '../components/dialogs/tasks-browser';
 import type { Theme } from '#/tui/theme';
@@ -52,7 +53,7 @@ export class TasksBrowserController {
 
     const session = this.host.session;
     if (session === undefined) {
-      this.host.showError('No active session.');
+      this.host.showError(t('tui.statusMessages.noActiveSession'));
       return;
     }
 
@@ -61,7 +62,9 @@ export class TasksBrowserController {
       tasks = await session.listBackgroundTasks({ activeOnly: false });
     } catch (error) {
       this.host.showError(
-        `Failed to load tasks: ${error instanceof Error ? error.message : String(error)}`,
+        t('tui.messages.tasksLoadFailed', {
+          error: error instanceof Error ? error.message : String(error),
+        }),
       );
       return;
     }
@@ -151,7 +154,7 @@ export class TasksBrowserController {
     } catch (error) {
       if (!opts.silent) {
         const message = error instanceof Error ? error.message : String(error);
-        this.flash(`Output refresh failed: ${message}`);
+        this.flash(t('tui.messages.tasksOutputRefreshFailed', { message }));
       }
       return;
     }
@@ -208,7 +211,9 @@ export class TasksBrowserController {
     } catch (error) {
       if (!opts.silent) {
         this.flash(
-          `Refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+          t('tui.messages.tasksRefreshFailed', {
+            error: error instanceof Error ? error.message : String(error),
+          }),
         );
       }
       return;
@@ -287,7 +292,7 @@ export class TasksBrowserController {
   }
 
   private handleRefresh(): void {
-    this.flash('Refreshing…', 600);
+    this.flash(t('tui.messages.tasksRefreshing'), 600);
     void this.refresh();
   }
 
@@ -297,17 +302,17 @@ export class TasksBrowserController {
 
     const session = this.host.session;
     if (session === undefined) {
-      this.flash('No active session.');
+      this.flash(t('tui.statusMessages.noActiveSession'));
       return;
     }
 
-    this.flash(`Stopping ${taskId}…`, 1500);
+    this.flash(t('tui.messages.tasksStopping', { taskId }), 1500);
     try {
       await session.stopBackgroundTask(taskId, { reason: 'User initiated stop' });
       await this.refresh({ silent: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.flash(`Stop failed: ${message}`);
+      this.flash(t('tui.messages.tasksStopFailed', { message }));
     }
   }
 
@@ -319,7 +324,7 @@ export class TasksBrowserController {
 
     const session = this.host.session;
     if (session === undefined) {
-      this.flash('No active session.');
+      this.flash(t('tui.statusMessages.noActiveSession'));
       return;
     }
 
@@ -328,7 +333,7 @@ export class TasksBrowserController {
       output = await session.getBackgroundTaskOutput(taskId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.flash(`Cannot open output: ${message}`);
+      this.flash(t('tui.messages.tasksCannotOpenOutput', { message }));
       return;
     }
     const current = state.tasksBrowser;

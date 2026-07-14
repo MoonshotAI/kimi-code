@@ -7,6 +7,8 @@
  * visual contract.
  */
 
+import { t } from '#/i18n';
+
 import { FEEDBACK_VERSION_PREFIX } from '#/constant/app';
 
 export {
@@ -15,33 +17,31 @@ export {
   FEEDBACK_VERSION_PREFIX,
 } from '#/constant/app';
 
-export const FEEDBACK_STATUS_SUBMITTING = 'Submitting feedback…';
-export const FEEDBACK_STATUS_UPLOADING = 'Uploading attachments, this could take a few minutes…';
-export const FEEDBACK_STATUS_SUCCESS = 'Feedback submitted, thank you!';
-export const FEEDBACK_STATUS_CANCELLED = 'Feedback cancelled.';
-export const FEEDBACK_STATUS_NETWORK_ERROR = 'Network error, failed to submit feedback.';
-export const FEEDBACK_STATUS_FALLBACK = 'Opening GitHub Issues as fallback…';
-export const FEEDBACK_STATUS_NOT_SIGNED_IN =
-  "You're not signed in. Opening GitHub Issues for feedback…";
-export const FEEDBACK_STATUS_UPLOAD_FAILED =
-  'Feedback sent; attachment upload failed — see feedback-upload.log.';
+export const FEEDBACK_STATUS_SUBMITTING = t('tui.messages.feedbackSubmitting');
+export const FEEDBACK_STATUS_UPLOADING = t('tui.messages.feedbackUploading');
+export const FEEDBACK_STATUS_SUCCESS = t('tui.messages.feedbackSubmitted');
+export const FEEDBACK_STATUS_CANCELLED = t('tui.messages.feedbackCancelled');
+export const FEEDBACK_STATUS_NETWORK_ERROR = t('tui.messages.feedbackNetworkError');
+export const FEEDBACK_STATUS_FALLBACK = t('tui.messages.feedbackOpeningGithub');
+export const FEEDBACK_STATUS_NOT_SIGNED_IN = t('tui.messages.feedbackNotSignedIn');
+export const FEEDBACK_STATUS_UPLOAD_FAILED = t('tui.messages.feedbackSentUploadFailed');
 
 export function feedbackHttpErrorMessage(status: number): string {
-  return `Failed to submit feedback (HTTP ${String(status)}).`;
+  return t('tui.messages.feedbackHttpFailed', { status: String(status) });
 }
 
 export function feedbackSessionLine(sessionId: string): string {
-  return `Session: ${sessionId}`;
+  return t('tui.messages.feedbackSession', { sessionId });
 }
 
 export function feedbackIdLine(feedbackId: number): string {
-  return `Feedback ID: ${String(feedbackId)}`;
+  return t('tui.messages.feedbackId', { id: String(feedbackId) });
 }
 
 // Hint shown beneath session-level error messages in the TUI to point users
 // at the `/export-debug-zip` workflow so they can share diagnostics with us.
 export function errorReportHintLine(): string {
-  return "If this persists, run `/export-debug-zip` and share the file with us for diagnosis. Please don't share it publicly.";
+  return t('tui.messages.feedbackPersistHint');
 }
 
 export function withFeedbackVersionPrefix(version: string): string {

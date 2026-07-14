@@ -1,5 +1,5 @@
 import {
-  BUILTIN_SLASH_COMMANDS,
+  getBuiltinSlashCommands,
   findBuiltInSlashCommand,
   parseSlashInput,
   resolveSlashCommandAvailability,
@@ -143,7 +143,7 @@ describe('built-in slash command registry', () => {
   });
 
   it('contains the expected command names once', () => {
-    const names = BUILTIN_SLASH_COMMANDS.map((command) => command.name);
+    const names = getBuiltinSlashCommands().map((command) => command.name);
 
     expect(new Set(names).size).toBe(names.length);
     expect(names).toEqual(

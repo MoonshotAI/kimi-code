@@ -4,6 +4,8 @@ import type {
   BackgroundAgentStatusPhase,
 } from '#/tui/types';
 
+import { t } from '#/i18n';
+
 const MAX_BACKGROUND_FIELD_LENGTH = 240;
 
 function normalizeBackgroundField(value: string | undefined): string | undefined {
@@ -23,10 +25,10 @@ export function formatBackgroundAgentTranscript(
   const subject = normalizedAgentName !== undefined ? `${normalizedAgentName} agent` : 'agent';
   const headline =
     phase === 'started'
-      ? `${subject} started in background`
+      ? t('tui.messages.bgAgentStarted', { subject })
       : phase === 'completed'
-        ? `${subject} completed in background`
-        : `${subject} failed in background`;
+        ? t('tui.messages.bgAgentCompleted', { subject })
+        : t('tui.messages.bgAgentFailed', { subject });
   const tail = phase === 'failed' ? normalizeBackgroundField(extras?.error) : undefined;
   const detailParts = [normalizeBackgroundField(meta.description), tail].filter(
     (part): part is string => part !== undefined,

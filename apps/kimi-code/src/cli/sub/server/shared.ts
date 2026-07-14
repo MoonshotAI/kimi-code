@@ -10,6 +10,8 @@ import { join } from 'node:path';
 
 import type { ServerLogLevel } from '@moonshot-ai/kap-server';
 
+import { t } from '#/i18n';
+
 export const LOCAL_SERVER_HOST = '127.0.0.1';
 export const DEFAULT_LAN_HOST = '0.0.0.0';
 export const DEFAULT_SERVER_HOST = LOCAL_SERVER_HOST;
@@ -133,7 +135,7 @@ function parseIdleGraceMs(raw: string | undefined): number {
   if (raw === undefined) return DEFAULT_IDLE_GRACE_MS;
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n < 0) {
-    throw new Error(`error: invalid --idle-grace-ms value: ${raw}`);
+    throw new Error(t('tui.statusMessages.serverInvalidIdleGrace', { raw }));
   }
   return n;
 }
@@ -142,7 +144,7 @@ export function parsePort(raw: string | undefined, label: string, fallback: numb
   if (raw === undefined) return fallback;
   const n = Number.parseInt(raw, 10);
   if (!Number.isFinite(n) || n < 0 || n > 65535) {
-    throw new Error(`error: invalid ${label} value: ${raw}`);
+    throw new Error(t('tui.statusMessages.serverInvalidValue', { label, raw }));
   }
   return n;
 }
@@ -232,7 +234,7 @@ export async function ensureServerWebReady(origin: string): Promise<void> {
   } catch (error) {
     const reason = error instanceof Error ? ` (${error.message})` : '';
     throw new Error(
-      `Server at ${origin} does not serve the Kimi web UI${reason}. Stop the existing server and rerun \`kimi server run\`.`,
+      t('tui.statusMessages.serverNotServingWebUi', { origin, reason }),
       { cause: error },
     );
   } finally {

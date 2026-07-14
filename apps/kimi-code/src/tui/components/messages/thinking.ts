@@ -14,6 +14,7 @@ import {
   THINKING_PREVIEW_LINES,
 } from '#/tui/constant/rendering';
 import { STATUS_BULLET } from '#/tui/constant/symbols';
+import { t } from '#/i18n';
 import { currentTheme } from '#/tui/theme';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
 
@@ -111,7 +112,7 @@ export class ThinkingComponent implements Component {
       );
       rendered = [
         '',
-        spinner + currentTheme.fg('textDim', 'thinking...'),
+        spinner + currentTheme.fg('textDim', t('tui.messages.thinking.liveLabel')),
         ...visibleLines.map((line) => MESSAGE_INDENT + line),
       ];
     } else {
@@ -127,7 +128,7 @@ export class ThinkingComponent implements Component {
         // Leading blank + first PREVIEW_LINES content lines + hint line.
         const truncated = lines.slice(0, 1 + THINKING_PREVIEW_LINES);
         const remaining = contentLines.length - THINKING_PREVIEW_LINES;
-        const hint = `... (${String(remaining)} more lines, ctrl+o to expand)`;
+        const hint = t('tui.messages.thinking.expandHint', { count: remaining });
         const indentWidth = Math.min(MESSAGE_INDENT.length, Math.max(0, width));
         const hintWidth = Math.max(0, width - indentWidth);
         truncated.push(

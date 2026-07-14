@@ -27,6 +27,7 @@ import { finalizeHeadlessRun } from './cli/headless-exit';
 import type { CLIOptions } from './cli/options';
 import { OptionConflictError, validateOptions } from './cli/options';
 import { runPrompt } from './cli/run-prompt';
+import { t } from '#/i18n';
 import { runShell } from './cli/run-shell';
 import { formatStartupError } from './cli/startup-error';
 import { runPluginNodeEntry } from './cli/sub/plugin-run-node';
@@ -60,7 +61,7 @@ export async function handleMainCommand(
     validated = validateOptions(opts);
   } catch (error) {
     if (error instanceof OptionConflictError) {
-      process.stderr.write(`error: ${error.message}\n`);
+      process.stderr.write(t('tui.statusMessages.mainError', { message: error.message }) + '\n');
       process.exit(1);
     }
     throw error;
@@ -182,37 +183,48 @@ export function main(): void {
           // would then exit 0 nondeterministically. Setting `process.exitCode`
           // up front makes that drain-exit report failure too.
           process.exitCode = 1;
-          const operation = opts.prompt !== undefined ? 'run prompt' : 'start shell';
+          const operation =
+            opts.prompt !== undefined
+              ? t('startup.operations.runPrompt')
+              : t('startup.operations.startShell');
           await logStartupFailure(operation, error);
           process.stderr.write(
             formatStartupError(error, {
               operation,
             }),
           );
-          process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
+          process.stderr.write(
+            `${t('startup.error.seeLog', { path: resolveGlobalLogPath(resolveKimiHome()) })}\n`,
+          );
           process.exit(1);
         });
     },
     () => {
       void handleMigrateCommand(version).catch(async (error: unknown) => {
-        await logStartupFailure('run migration', error);
-        process.stderr.write(formatStartupError(error, { operation: 'run migration' }));
-        process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
+        const operation = t('startup.operations.runMigration');
+        await logStartupFailure(operation, error);
+        process.stderr.write(formatStartupError(error, { operation }));
+        process.stderr.write(
+          `${t('startup.error.seeLog', { path: resolveGlobalLogPath(resolveKimiHome()) })}\n`,
+        );
         process.exit(1);
       });
     },
     (entry, args) => {
       void runPluginNodeEntry(entry, args).catch(async (error: unknown) => {
-        await logStartupFailure('run plugin node entry', error);
-        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        await logStartupFailure(t('startup.operations.runPluginNodeEntry'), error);
+        process.stderr.write(t('tui.statusMessages.mainError', { message: error instanceof Error ? error.message : String(error) }) + '\n');
         process.exit(1);
       });
     },
     () => {
       void handleUpgradeCommand(version).catch(async (error: unknown) => {
-        await logStartupFailure('upgrade', error);
-        process.stderr.write(formatStartupError(error, { operation: 'upgrade' }));
-        process.stderr.write(`See log: ${resolveGlobalLogPath(resolveKimiHome())}\n`);
+        const operation = t('startup.operations.upgrade');
+        await logStartupFailure(operation, error);
+        process.stderr.write(formatStartupError(error, { operation }));
+        process.stderr.write(
+          `${t('startup.error.seeLog', { path: resolveGlobalLogPath(resolveKimiHome()) })}\n`,
+        );
         process.exit(1);
       });
     },

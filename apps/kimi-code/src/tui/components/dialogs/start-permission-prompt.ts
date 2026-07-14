@@ -7,6 +7,7 @@ import {
   type Focusable,
 } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
 
@@ -61,7 +62,7 @@ export class StartPermissionPromptComponent<TChoice extends StartPermissionChoic
     const lines = [
       rule,
       currentTheme.boldFg('primary', ` ${this.opts.title}`),
-      currentTheme.fg('textMuted', ' ↑↓ navigate · Enter select · Esc cancel'),
+      currentTheme.fg('textMuted', ` ${t('tui.dialogs.startPermissionPrompt.navHint')}`),
       '',
     ];
 

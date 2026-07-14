@@ -2,6 +2,7 @@ import { release as osRelease, type as osType } from 'node:os';
 
 import type { McpServerInfo, SessionStatus, SessionUsage } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
 import { buildMcpStatusReportLines } from '../components/messages/mcp-status-panel';
 import { buildStatusReportLines } from '../components/messages/status-panel';
 import { buildUsageReportLines, UsagePanelComponent, type ManagedUsageReport } from '../components/messages/usage-panel';
@@ -169,7 +170,7 @@ export async function showMcpServers(host: SlashCommandHost): Promise<void> {
   try {
     servers = await host.requireSession().listMcpServers();
   } catch (error) {
-    host.showError(`Failed to load MCP servers: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.messages.infoMcpLoadFailed', { error: formatErrorMessage(error) }));
     return;
   }
 

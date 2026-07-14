@@ -25,6 +25,7 @@ import { Container, Spacer, Text } from '@moonshot-ai/pi-tui';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
+import { t } from '#/i18n';
 
 import type { ToolCallComponent, ToolCallReadSnapshot } from './tool-call';
 
@@ -135,21 +136,30 @@ export class ReadGroupComponent extends Container {
 
     if (pending > 0) {
       const bullet = currentTheme.fg('text', STATUS_BULLET);
-      const label = currentTheme.boldFg('primary', `Reading ${String(total)} files…`);
+      const label = currentTheme.boldFg('primary', t('tui.messages.readGroup.readingFiles', { count: total }));
       return `${bullet}${label}`;
     }
 
     // All reads have finished, either successfully or with failures.
     if (failed === total) {
       const bullet = currentTheme.fg('error', '✗ ');
-      const label = currentTheme.boldFg('error', `Read ${String(total)} files`);
-      return `${bullet}${label}${currentTheme.fg('error', ' · failed')}`;
+      const label = currentTheme.boldFg('error', t('tui.messages.readGroup.readFiles', { count: total }));
+      return `${bullet}${label}${currentTheme.fg('error', ` · ${t('tui.messages.readGroup.failed')}`)}`;
     }
 
     const bullet = currentTheme.fg('success', STATUS_BULLET);
-    const label = currentTheme.boldFg('primary', `Read ${String(total)} files`);
-    const linesPart = dim(` · ${String(totalLines)} ${totalLines === 1 ? 'line' : 'lines'}`);
-    const failPart = failed > 0 ? currentTheme.fg('error', ` · ${String(failed)} failed`) : '';
+    const label = currentTheme.boldFg('primary', t('tui.messages.readGroup.readFiles', { count: total }));
+    const linesPart = dim(
+      ` · ${t(
+        totalLines === 1
+          ? 'tui.messages.readGroup.line_one'
+          : 'tui.messages.readGroup.line_other',
+        { count: totalLines },
+      )}`,
+    );
+    const failPart = failed > 0
+      ? currentTheme.fg('error', ` · ${String(failed)} ${t('tui.messages.readGroup.failed')}`)
+      : '';
     return `${bullet}${label}${linesPart}${failPart}`;
   }
 
@@ -161,11 +171,16 @@ export class ReadGroupComponent extends Container {
 
     let tail: string;
     if (snap.phase === 'pending') {
-      tail = dim(' · reading…');
+      tail = dim(` · ${t('tui.messages.readGroup.reading')}`);
     } else if (snap.phase === 'failed') {
-      tail = currentTheme.fg('error', ' · failed');
+      tail = currentTheme.fg('error', ` · ${t('tui.messages.readGroup.failed')}`);
     } else {
-      tail = dim(` · ${String(snap.lines)} ${snap.lines === 1 ? 'line' : 'lines'}`);
+      tail = dim(
+        ` · ${t(
+          snap.lines === 1 ? 'tui.messages.readGroup.line_one' : 'tui.messages.readGroup.line_other',
+          { count: snap.lines },
+        )}`,
+      );
     }
     return `  ${branch} ${pathPart}${tail}`;
   }

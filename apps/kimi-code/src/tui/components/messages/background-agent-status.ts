@@ -1,5 +1,6 @@
 import { Text, truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { MESSAGE_INDENT } from '#/tui/constant/rendering';
 import { FAILURE_MARK, STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';
@@ -27,7 +28,7 @@ export class BackgroundAgentStatusComponent implements Component {
     const text =
       currentTheme.fg(tone, this.data.headline) +
       (this.data.detail !== undefined && this.data.detail.length > 0
-        ? currentTheme.fg('textDim', ` (${this.data.detail})`)
+        ? currentTheme.fg('textDim', t('tui.messages.backgroundAgentStatus.detail', { detail: this.data.detail }))
         : '');
 
     const textComponent = new Text(text, 0, 0);

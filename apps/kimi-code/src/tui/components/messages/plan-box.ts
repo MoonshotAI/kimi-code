@@ -11,10 +11,11 @@ import { Markdown, truncateToWidth, visibleWidth, type Component, type MarkdownT
 import chalk from 'chalk';
 
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
+import { t } from '#/i18n';
 
 const LEFT_MARGIN = 2; // two-space indent matching other tool call children
 const SIDE_PADDING = 1; // space between the │ and the content on each side
-const TITLE_PREFIX = ' plan: ';
+const TITLE_PREFIX = t('tui.messages.planBox.titlePrefix');
 const TITLE_SUFFIX = ' ';
 
 export interface PlanBoxOptions {
@@ -95,9 +96,9 @@ export class PlanBoxComponent implements Component {
   }
 
   private buildTitle(horzLen: number): string {
-    const fallback = ' plan ';
+    const fallback = t('tui.messages.planBox.fallback');
     const statusSuffix = this.buildStatusSuffix();
-    const fallbackWithStatus = ` plan${statusSuffix} `;
+    const fallbackWithStatus = `${fallback.trimEnd()}${statusSuffix} `;
     const budget = Math.max(0, horzLen - 1);
     const fallbackTitle = truncateToWidth(
       visibleWidth(fallbackWithStatus) <= budget ? fallbackWithStatus : fallback,

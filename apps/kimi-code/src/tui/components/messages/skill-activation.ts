@@ -14,6 +14,7 @@
 
 import { Container, Text, Spacer } from '@moonshot-ai/pi-tui';
 
+import { t } from '#/i18n';
 import { currentTheme } from '#/tui/theme';
 import type { SkillActivationTrigger } from '#/tui/types';
 
@@ -35,7 +36,7 @@ export class SkillActivationComponent extends Container {
     this.args = args;
     this.addChild(new Spacer(1));
     const head =
-      currentTheme.boldFg('primary', '▶ Activated skill: ') +
+      currentTheme.boldFg('primary', t('tui.messages.skillActivation.activated')) +
       currentTheme.boldFg('roleUser', name);
     this.headText = new Text(head, 0, 0);
     this.addChild(this.headText);
@@ -50,7 +51,7 @@ export class SkillActivationComponent extends Container {
 
   override invalidate(): void {
     const head =
-      currentTheme.boldFg('primary', '▶ Activated skill: ') +
+      currentTheme.boldFg('primary', t('tui.messages.skillActivation.activated')) +
       currentTheme.boldFg('roleUser', this.name);
     this.headText.setText(head);
     if (this.previewText !== undefined && this.args !== undefined) {
