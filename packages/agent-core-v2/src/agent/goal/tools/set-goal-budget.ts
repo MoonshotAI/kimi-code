@@ -57,6 +57,9 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
         if (currentGoal === null) {
           return { output: 'Goal budget not set: no current goal.' };
         }
+        if (goalAtResolution !== null && currentGoal.goalId !== goalAtResolution.goalId) {
+          return { output: 'Goal budget not set: the current goal changed.' };
+        }
         if (budget === null) {
           return {
             output:

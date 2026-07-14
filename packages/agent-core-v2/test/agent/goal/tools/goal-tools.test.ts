@@ -113,6 +113,21 @@ describe('goal tools', () => {
     });
   });
 
+  it('SetGoalBudget does not apply a delayed execution to a replacement goal', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const execution = setGoalBudgetTool.resolveExecution({ value: 5, unit: 'turns' });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+
+    const result = await execution.execute({ turnId: 0, toolCallId: 'call_old_budget', signal });
+
+    expect(result.output).toBe('Goal budget not set: the current goal changed.');
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      budget: { turnBudget: null },
+    });
+  });
+
   it('SetGoalBudget ignores a stale call from a replaced goal turn', async () => {
     await goals.createGoal({ objective: 'old task' });
     eventBus.publish({ type: 'turn.started', turnId: 1, origin: USER_PROMPT_ORIGIN });
@@ -133,26 +148,9 @@ describe('goal tools', () => {
   });
 
   it('SetGoalBudget applies a delayed execution to a goal created earlier in the same batch', async () => {
-    const execution = setGoalBudgetTool.resolveExecution({ value: 5, unit: 'turns' });
-    if (execution.isError === true) throw new Error('execution should not be an error');
-    const created = await goals.createGoal({ objective: 'new task' });
-
-    const result = await execution.execute({ turnId: 0, toolCallId: 'call_new_budget', signal });
-
-    expect(result.output).toBe('Goal budget set: 5 turns.');
-    expect(goals.getGoal().goal).toMatchObject({
-      goalId: created.goalId,
-      budget: { turnBudget: 5 },
-    });
-  });
-
-  it('SetGoalBudget applies a limit to a replacement goal created earlier in the same batch', async () => {
-    await goals.createGoal({ objective: 'old task' });
-    eventBus.publish({ type: 'turn.started', turnId: 2, origin: USER_PROMPT_ORIGIN });
-
     const results = await executeGoalCalls(
       [
-        goalToolCall('call_replace', 'CreateGoal', { objective: 'new task', replace: true }),
+        goalToolCall('call_create', 'CreateGoal', { objective: 'new task' }),
         goalToolCall('call_budget', 'SetGoalBudget', { value: 5, unit: 'turns' }),
       ],
       2,
@@ -164,6 +162,27 @@ describe('goal tools', () => {
     expect(goals.getGoal().goal).toMatchObject({
       objective: 'new task',
       budget: { turnBudget: 5 },
+    });
+  });
+
+  it('SetGoalBudget ignores a same-batch call resolved before replacing the current goal', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    eventBus.publish({ type: 'turn.started', turnId: 3, origin: USER_PROMPT_ORIGIN });
+
+    const results = await executeGoalCalls(
+      [
+        goalToolCall('call_replace', 'CreateGoal', { objective: 'new task', replace: true }),
+        goalToolCall('call_budget', 'SetGoalBudget', { value: 5, unit: 'turns' }),
+      ],
+      3,
+    );
+
+    expect(results.find((result) => result.toolName === 'SetGoalBudget')?.result.output).toBe(
+      'Goal budget not set: the current goal changed.',
+    );
+    expect(goals.getGoal().goal).toMatchObject({
+      objective: 'new task',
+      budget: { turnBudget: null },
     });
   });
 
