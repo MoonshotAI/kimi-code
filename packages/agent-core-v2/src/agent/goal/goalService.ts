@@ -788,13 +788,13 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const wallClockMs = this.settleWallClock(state);
     if (status === 'active') {
       this.wallClockResumedAt = Date.now();
-      this.adoptStarterTurn(actor);
     } else if (state.status === 'active') {
       this.cancelPendingContinuation();
       this.wallClockResumedAt = undefined;
     }
     this.wire.dispatch(updateGoal({ status, reason, wallClockMs, actor }));
     const next = this.requireState();
+    if (status === 'active') this.adoptStarterTurn(actor);
     this.emitGoalUpdated(this.toSnapshot(next), { kind: 'lifecycle', status, reason, actor });
     this.trackStatusChanged(next, actor);
     return this.toSnapshot(next);

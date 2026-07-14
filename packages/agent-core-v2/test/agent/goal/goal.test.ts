@@ -642,6 +642,59 @@ describe('AgentGoalService core workflow hooks', () => {
     });
   });
 
+  it.each([{ status: 'paused' as const }, { status: 'blocked' as const }])(
+    'queues a continuation when a live non-goal turn resumes a $status goal',
+    async ({ status }) => {
+      await goals.createGoal({ objective: 'finish the task' });
+      if (status === 'paused') {
+        await goals.pauseGoal();
+      } else {
+        await goals.markBlocked({ reason: 'need credentials' });
+      }
+      const turn = makeTurn(49);
+      eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+      await loopService.hooks.onWillBeginStep.run({
+        turnId: turn.id,
+        step: 1,
+        signal: turn.signal,
+      });
+
+      await goals.resumeGoal();
+      endTurn(eventBus, turn);
+
+      await vi.waitFor(() => {
+        expect(loopService.launches).toHaveLength(1);
+      });
+      expect(loopService.drainNextBatch(context)).toBeDefined();
+      expect(context.get().at(-1)?.origin).toEqual({
+        kind: 'system_trigger',
+        name: 'goal_continuation',
+      });
+    },
+  );
+
+  it('records a live non-goal turn against the paused goal it resumes', async () => {
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.pauseGoal();
+    const turn = makeTurn(50);
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    await loopService.hooks.onWillBeginStep.run({
+      turnId: turn.id,
+      step: 1,
+      signal: turn.signal,
+    });
+
+    await goals.resumeGoal();
+    recordStepUsage(usageService, goals, turn, { ...zeroUsage, output: 5 });
+    endTurn(eventBus, turn);
+
+    expect(goals.getGoal().goal).toMatchObject({
+      status: 'active',
+      turnsUsed: 1,
+      tokensUsed: 5,
+    });
+  });
+
   it('aborts a live continuation when the user pauses the goal', async () => {
     const abort = await startLiveContinuation();
 
