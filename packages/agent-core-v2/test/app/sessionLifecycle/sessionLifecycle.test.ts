@@ -522,14 +522,13 @@ describe('SessionLifecycleService', () => {
 
     await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
 
-    const workspaceId = encodeWorkDirKey('/tmp/proj');
     expect(appended).toEqual([
       {
         scope: '',
         key: 'session_index.jsonl',
         record: {
           sessionId: 's1',
-          sessionDir: `/tmp/sessions/${workspaceId}/s1`,
+          sessionDir: '/tmp/sessions/wd_stub/s1',
           workDir: '/tmp/proj',
         },
       },
