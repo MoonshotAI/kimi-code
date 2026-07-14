@@ -795,6 +795,9 @@ export class AcpSession {
         case 'compact':
           await this.runCompactCommand(args);
           break;
+        case 'undo':
+          await this.runUndoCommand(args);
+          break;
         case 'status':
           await this.emitLocalCommandMessage(formatStatusReport(await this.session.getStatus()));
           break;
@@ -903,6 +906,38 @@ export class AcpSession {
     } finally {
       unsubscribe?.();
     }
+  }
+
+  /**
+   * Built-in `/undo [count]` — drop the last `count` turns from the
+   * conversation context via the SDK's `undoHistory` (the same RPC the
+   * TUI's `/undo` drives). Guarded against running turns: unlike
+   * `/compact` (which has its own blocked/cancelled lifecycle events),
+   * `undoHistory` mutates the context synchronously with no active-turn
+   * check in the kernel, so an undo landing mid-turn would splice the
+   * history the in-flight turn is still reading.
+   */
+  private async runUndoCommand(args: string): Promise<void> {
+    if (this.currentTurnId !== undefined) {
+      await this.emitLocalCommandMessage('Cannot undo while a turn is running.');
+      return;
+    }
+    const trimmed = args.trim();
+    let count = 1;
+    if (trimmed.length > 0) {
+      const parsed = Number(trimmed);
+      if (!Number.isInteger(parsed) || parsed <= 0) {
+        await this.emitLocalCommandMessage(
+          'Usage: /undo [count], where count is a positive integer.',
+        );
+        return;
+      }
+      count = parsed;
+    }
+    await this.session.undoHistory(count);
+    await this.emitLocalCommandMessage(
+      count === 1 ? 'Undid the last turn.' : `Undid the last ${count} turns.`,
+    );
   }
 
   /**

@@ -204,6 +204,11 @@ export abstract class SDKRpcClientBase {
     return rpc.deleteSession({ sessionId: input.sessionId });
   }
 
+  async archiveSession(input: SessionIdRpcInput): Promise<void> {
+    const rpc = await this.getRpc();
+    return rpc.archiveSession({ sessionId: input.sessionId });
+  }
+
   async listSessions(input: ListSessionsOptions = {}): Promise<readonly SessionSummary[]> {
     const rpc = await this.getRpc();
     return rpc.listSessions(input);

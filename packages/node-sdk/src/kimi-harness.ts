@@ -230,6 +230,18 @@ export class KimiHarness {
     await this.rpc.deleteSession({ sessionId });
   }
 
+  /**
+   * Close (if active) and archive the on-disk session directory so it
+   * disappears from the session list. Used by the ACP adapter to clean
+   * up ephemeral fork sessions (btw) — `closeSession` alone would leave
+   * the fork dir on disk forever.
+   */
+  async archiveSession(id: string): Promise<void> {
+    const normalized = normalizeSessionId(id);
+    await this.activeSessions.get(normalized)?.close();
+    await this.rpc.archiveSession({ sessionId: normalized });
+  }
+
   async renameSession(input: RenameSessionInput): Promise<void> {
     await this.rpc.renameSession(input);
     this.activeSessions.get(input.id)?.emitMetaUpdated({ title: input.title });

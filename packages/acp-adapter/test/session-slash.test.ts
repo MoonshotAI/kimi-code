@@ -65,12 +65,14 @@ function makeFakeSession(
   calls: {
     prompt: number;
     activate: Array<{ name: string; args?: string | undefined }>;
+    undoHistory: number[];
   };
 } {
   const listeners = new Set<(event: Event) => void>();
   const calls = {
     prompt: 0,
     activate: [] as Array<{ name: string; args?: string | undefined }>,
+    undoHistory: [] as number[],
   };
   const emit = async (): Promise<void> => {
     await Promise.resolve();
@@ -87,6 +89,9 @@ function makeFakeSession(
     activateSkill: async (name: string, args?: string | undefined) => {
       calls.activate.push({ name, args });
       await emit();
+    },
+    undoHistory: async (count: number) => {
+      calls.undoHistory.push(count);
     },
     cancel: async () => undefined,
     onEvent: (fn: (event: Event) => void) => {
@@ -370,5 +375,104 @@ describe('AcpSession slash routing', () => {
     expect(text).toContain('Session status:');
     expect(text).toContain('Model: mock-model');
     expect(text).toContain('Context: 1,234 / 200,000 (0.6%)');
+  });
+
+  it('routes built-in `/undo [count]` to Session.undoHistory', async () => {
+    const sessionId = 'sess-slash-undo';
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/undo')] });
+    await client.prompt({ sessionId, prompt: [textBlock('/undo 3')] });
+
+    expect(calls.prompt).toBe(0);
+    expect(calls.undoHistory).toEqual([1, 3]);
+    const texts = collecting.updates
+      .filter(
+        (n) =>
+          (n.update as { sessionUpdate?: string }).sessionUpdate === 'agent_message_chunk',
+      )
+      .map((n) => (n.update as { content?: { text?: string } }).content?.text ?? '');
+    expect(texts.some((t) => t.includes('Undid the last turn.'))).toBe(true);
+    expect(texts.some((t) => t.includes('Undid the last 3 turns.'))).toBe(true);
+  });
+
+  it('rejects a malformed `/undo` count with a usage message', async () => {
+    const sessionId = 'sess-slash-undo-usage';
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/undo zero')] });
+
+    expect(calls.undoHistory).toEqual([]);
+    const reply = collecting.updates.find(
+      (n) =>
+        (n.update as { sessionUpdate?: string }).sessionUpdate === 'agent_message_chunk',
+    );
+    const text = (reply!.update as { content?: { text?: string } }).content?.text ?? '';
+    expect(text).toContain('Usage: /undo [count]');
+  });
+
+  it('refuses `/undo` while a turn is running', async () => {
+    const sessionId = 'sess-slash-undo-busy';
+    // Script emits turn.started but never turn.ended — the first prompt
+    // stays in flight and the adapter keeps `currentTurnId` set.
+    const started = {
+      type: 'turn.started',
+      sessionId,
+      agentId: 'main',
+      turnId: 1,
+    } as Event;
+    const { session, calls } = makeFakeSession(sessionId, [started]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    // Fire-and-forget: the turn never ends, so this prompt never resolves.
+    void client.prompt({ sessionId, prompt: [textBlock('run something long')] });
+    // Let the turn.started event reach the adapter before /undo fires.
+    await new Promise((r) => setTimeout(r, 20));
+
+    await client.prompt({ sessionId, prompt: [textBlock('/undo')] });
+
+    expect(calls.undoHistory).toEqual([]);
+    const texts = collecting.updates
+      .filter(
+        (n) =>
+          (n.update as { sessionUpdate?: string }).sessionUpdate === 'agent_message_chunk',
+      )
+      .map((n) => (n.update as { content?: { text?: string } }).content?.text ?? '');
+    expect(texts.some((t) => t.includes('Cannot undo while a turn is running.'))).toBe(true);
   });
 });
