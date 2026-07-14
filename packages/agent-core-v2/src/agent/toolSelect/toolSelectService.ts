@@ -75,7 +75,7 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
   enabled(): boolean {
     const capabilities = this.profile.getModelCapabilities();
     return (
-      capabilities.select_tools === true &&
+      capabilities.dynamically_loaded_tools === true &&
       capabilities.tool_use &&
       this.flags.enabled(TOOL_SELECT_FLAG_ID)
     );

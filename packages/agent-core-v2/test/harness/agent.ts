@@ -2217,7 +2217,7 @@ function capabilityNames(capabilities: ModelCapability | undefined): string[] {
     capabilities.audio_in ? 'audio_in' : undefined,
     capabilities.thinking ? 'thinking' : undefined,
     capabilities.tool_use ? 'tool_use' : undefined,
-    capabilities.select_tools ? 'select_tools' : undefined,
+    capabilities.dynamically_loaded_tools ? 'dynamically_loaded_tools' : undefined,
   ].filter((capability): capability is string => capability !== undefined);
 }
 

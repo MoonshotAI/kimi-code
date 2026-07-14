@@ -148,16 +148,16 @@ describe('ModelResolverService', () => {
     expect(auth).toEqual({ apiKey: 'sk-model' });
   });
 
-  it('forwards declared select_tools capability to the resolved model', () => {
+  it('forwards declared dynamically_loaded_tools capability to the resolved model', () => {
     providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk-test' };
     models['m'] = {
       provider: 'p',
       model: 'wire-name',
       maxContextSize: 1000,
-      capabilities: ['select_tools'],
+      capabilities: ['dynamically_loaded_tools'],
     };
 
-    expect(ix.get(IModelResolver).resolve('m').capabilities.select_tools).toBe(true);
+    expect(ix.get(IModelResolver).resolve('m').capabilities.dynamically_loaded_tools).toBe(true);
   });
 
   it('returns an OAuth access token as ProviderRequestAuth.apiKey', async () => {
@@ -727,7 +727,7 @@ describe('ModelResolverService', () => {
         thinking: true,
         tool_use: false,
         max_context_tokens: 1000,
-        select_tools: false,
+        dynamically_loaded_tools: false,
       });
     });
 
@@ -742,7 +742,7 @@ describe('ModelResolverService', () => {
         thinking: false,
         tool_use: true,
         max_context_tokens: 128000,
-        select_tools: false,
+        dynamically_loaded_tools: false,
       });
     });
   });

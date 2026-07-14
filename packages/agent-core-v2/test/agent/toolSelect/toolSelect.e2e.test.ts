@@ -41,7 +41,7 @@ const DISCLOSURE_CAPABILITIES = {
   thinking: false,
   tool_use: true,
   max_context_tokens: 128_000,
-  select_tools: true,
+  dynamically_loaded_tools: true,
 } as const;
 
 type WireEvent = Extract<
