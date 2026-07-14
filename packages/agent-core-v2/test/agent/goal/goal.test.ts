@@ -13,7 +13,7 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { type AgentGoalService } from '#/agent/goal/goalService';
 import { UpdateGoalTool, UpdateGoalToolInputSchema } from '#/agent/goal/tools/update-goal';
-import { IAgentLoopService, type AfterStepContext, type Turn } from '#/agent/loop/loop';
+import { IAgentLoopService, type AfterStepContext, type EnqueueReceipt, type Step, type Turn } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentUsageService } from '#/agent/usage/usage';
@@ -584,6 +584,28 @@ describe('AgentGoalService core workflow hooks', () => {
     await ctx?.dispose();
   });
 
+  async function startLiveContinuation(): Promise<ReturnType<typeof vi.fn<() => boolean>>> {
+    const abort = vi.fn<() => boolean>(() => true);
+    const turn: Turn = { ...makeTurn(41), result: new Promise<never>(() => {}) };
+    const step: Step = {
+      id: 'goal-continuation',
+      turnId: turn.id,
+      state: 'queued',
+      signal: turn.signal,
+      result: Promise.resolve({ type: 'completed' }),
+      cancel: () => true,
+    };
+    const receipt: EnqueueReceipt = { assigned: Promise.resolve({ turn, step }), abort };
+    vi.spyOn(loopService, 'enqueue').mockReturnValue(receipt);
+
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.markBlocked({ reason: 'need credentials' });
+    await goals.resumeGoal({ continueIfBlocked: true });
+    await Promise.resolve();
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    return abort;
+  }
+
   it('starts a continuation when a user resumes an idle blocked goal', async () => {
     await goals.createGoal({ objective: 'finish the task' });
     await goals.markBlocked({ reason: 'need credentials' });
@@ -597,6 +619,30 @@ describe('AgentGoalService core workflow hooks', () => {
       kind: 'system_trigger',
       name: 'goal_continuation',
     });
+  });
+
+  it('aborts a live continuation when the user pauses the goal', async () => {
+    const abort = await startLiveContinuation();
+
+    await goals.pauseGoal();
+
+    expect(abort).toHaveBeenCalledOnce();
+  });
+
+  it('aborts a live continuation when the user cancels the goal', async () => {
+    const abort = await startLiveContinuation();
+
+    await goals.cancelGoal();
+
+    expect(abort).toHaveBeenCalledOnce();
+  });
+
+  it('aborts a live continuation when the user replaces the goal', async () => {
+    const abort = await startLiveContinuation();
+
+    await goals.createGoal({ objective: 'new task', replace: true });
+
+    expect(abort).toHaveBeenCalledOnce();
   });
 
   it.each(['turn', 'token', 'wall-clock'] as const)(
