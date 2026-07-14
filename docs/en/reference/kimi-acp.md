@@ -12,6 +12,8 @@ Once started, the command prints no banner and immediately waits for the ACP cli
 You typically do not need to run `kimi acp` manually — this command is the subprocess entry point for IDEs. For IDE-side configuration, see [Using in IDEs](../guides/ides.md).
 :::
 
+`kimi acp` makes Kimi Code the ACP agent process that an IDE or ACP client drives. It does not make Kimi Code an ACP client for dispatching prompts to other ACP agents.
+
 ## Capability Matrix
 
 The table below lists the capabilities declared by the current ACP adapter layer. The `agentCapabilities` field is returned in full in the `initialize` response, so the IDE can adjust its UI accordingly.
@@ -76,6 +78,8 @@ When an ACP client provides `mcpServers` in `session/new` or `session/load`, the
 - `stdio` → kimi's `transport: 'stdio'` configuration
 - `sse` → kimi's `transport: 'sse'` configuration
 - `acp` → discarded with a warn log entry
+
+Forwarded MCP servers are exposed to Kimi Code as tools inside the session. They are not promoted into `Agent` / `AgentSwarm` sub-agents, even when an MCP tool wraps another local agent or CLI.
 
 ## Next steps
 

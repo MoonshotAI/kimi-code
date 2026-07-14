@@ -12,6 +12,12 @@ Kimi Code CLI 内置三种子 Agent，开箱即用，分别面向不同任务形
 - **`explore`**：代码库探索专用，只做只读操作，不修改任何文件。适合在不改动文件的前提下快速搜索、阅读和总结仓库。
 - **`plan`**：实现规划与架构设计专用，连 Shell 命令都不提供，专注于"想清楚怎么做"而不是"动手做"。
 
+## 运行时边界
+
+子 Agent 是 Kimi Code 运行时内的 Agent 实例，会使用当前会话配置的模型/供应商和所选 Kimi 子 Agent profile；它们不是单独启动的 Claude Code、Codex 或 IDE Agent 进程。
+
+如果某个子 Agent profile 暴露了 MCP 工具，这些工具仍然是在该子 Agent 内部发起的工具调用。例如，MCP server 可以包装另一个本地 CLI，但这不会让被包装的进程自动获得 `Agent` / `AgentSwarm` 的生命周期、resume ID 或 TUI 进度语义，除非 Kimi Code 显式实现了这类集成。
+
 ## 调用方式
 
 子 Agent 由主 Agent 自动调度——根据任务复杂度、上下文消耗和子任务的独立性，在适当时机派发，无需用户手动指定。
