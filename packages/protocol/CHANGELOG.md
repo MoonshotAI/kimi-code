@@ -1,5 +1,15 @@
 # @moonshot-ai/protocol
 
+## 0.4.0
+
+### Minor Changes
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Track the agent's live phase (idle, running, streaming, tool call, retrying, awaiting approval, interrupted, ended) as a single model field driven by the existing turn events, and carry it on the status update channel for downstream consumers.
+
+### Patch Changes
+
+- [#1630](https://github.com/MoonshotAI/kimi-code/pull/1630) [`0303b82`](https://github.com/MoonshotAI/kimi-code/commit/0303b82c3e691836163ecf906febfb6324c81d74) Thanks [@sailist](https://github.com/sailist)! - Make the server_hello heartbeat_ms field optional so spec-compliant clients no longer reject handshakes from servers that do not advertise a heartbeat interval.
+
 ## 0.3.2
 
 ### Patch Changes
