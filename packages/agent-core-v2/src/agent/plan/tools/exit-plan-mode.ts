@@ -160,7 +160,7 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
 
   private exitPlanMode(): ExecutableToolResult | undefined {
     try {
-      this.planMode.exit();
+      this.planMode.exit('approved');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to exit plan mode.';
       return {

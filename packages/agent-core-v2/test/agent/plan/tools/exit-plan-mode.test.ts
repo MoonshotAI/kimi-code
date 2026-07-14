@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { Event } from '#/_base/event';
 import type { IAgentPlanService, PlanData } from '#/agent/plan/plan';
 import {
   ExitPlanModeInputSchema,
@@ -32,6 +33,9 @@ function planService(): IAgentPlanService {
         content: '# Plan',
         path: '/tmp/kimi-plan.md',
       } satisfies NonNullable<PlanData>),
+    onDidEnter: Event.None as IAgentPlanService['onDidEnter'],
+    onDidExit: Event.None as IAgentPlanService['onDidExit'],
+    onDidCancel: Event.None as IAgentPlanService['onDidCancel'],
   };
 }
 

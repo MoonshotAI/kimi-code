@@ -106,7 +106,7 @@ export class SessionLegacyService implements ISessionLegacyService {
       const active = (await plan.status()) !== null;
       if (active !== agentConfig.plan_mode) {
         if (agentConfig.plan_mode) await plan.enter();
-        else plan.exit();
+        else plan.exit('host');
       }
     }
     if (agentConfig.swarm_mode !== undefined) {

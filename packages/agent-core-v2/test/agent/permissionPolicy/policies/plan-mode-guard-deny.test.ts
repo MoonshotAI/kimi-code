@@ -1,6 +1,7 @@
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { describe, expect, it } from 'vitest';
 
+import { Event } from '#/_base/event';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentPlanService, type PlanData } from '#/agent/plan/plan';
 import { PlanModeGuardDenyPermissionPolicyService } from '#/agent/permissionPolicy/policies/plan-mode-guard-deny';
@@ -24,6 +25,9 @@ function planService(active: boolean, planFilePath: string | null = PLAN_PATH): 
             path: planFilePath ?? PLAN_PATH,
           } satisfies NonNullable<PlanData>)
         : null,
+    onDidEnter: Event.None as IAgentPlanService['onDidEnter'],
+    onDidExit: Event.None as IAgentPlanService['onDidExit'],
+    onDidCancel: Event.None as IAgentPlanService['onDidCancel'],
   };
 }
 

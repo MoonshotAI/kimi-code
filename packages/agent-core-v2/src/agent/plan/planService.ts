@@ -3,7 +3,9 @@
  *
  * Manages plan-mode state through `wire`, injects plan-mode context through
  * `contextInjector`, writes optional plan files through `hostFileSystem`,
- * and tags mode telemetry through `telemetry`. Bound at Agent scope.
+ * tags mode telemetry through `telemetry`, and announces lifecycle
+ * transitions through `onDidEnter` / `onDidExit` / `onDidCancel` (live path
+ * only — replay rebuilds state silently). Bound at Agent scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -12,6 +14,7 @@ import { dirname, join } from 'pathe';
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { Emitter } from '#/_base/event';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -25,7 +28,11 @@ import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService } from '#/wire/wireService';
 import {
   IAgentPlanService,
+  type PlanCancelledContext,
   type PlanData,
+  type PlanEnteredContext,
+  type PlanExitedContext,
+  type PlanExitReason,
   type PlanFilePath,
 } from './plan';
 import {
@@ -37,6 +44,13 @@ import {
 
 export class AgentPlanService extends Disposable implements IAgentPlanService {
   declare readonly _serviceBrand: undefined;
+
+  private readonly _onDidEnter = this._register(new Emitter<PlanEnteredContext>());
+  readonly onDidEnter = this._onDidEnter.event;
+  private readonly _onDidExit = this._register(new Emitter<PlanExitedContext>());
+  readonly onDidExit = this._onDidExit.event;
+  private readonly _onDidCancel = this._register(new Emitter<PlanCancelledContext>());
+  readonly onDidCancel = this._onDidCancel.event;
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -85,6 +99,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
       await this.ensurePlanDirectory(planFilePath);
       this.wire.dispatch(planModeEnter({ id }));
       this.telemetryContext.set({ mode: 'plan' });
+      this._onDidEnter.fire({ id, path: planFilePath });
       enterRecorded = true;
       if (createFile) {
         await this.writeEmptyPlanFile(planFilePath);
@@ -98,8 +113,12 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   }
 
   cancel(id?: string): void {
+    const before = this.wire.getModel(PlanModel);
     this.wire.dispatch(planModeCancel({ id }));
     this.telemetryContext.set({ mode: 'agent' });
+    if (before.active) {
+      this._onDidCancel.fire({ id: before.id });
+    }
   }
 
   async clear(): Promise<void> {
@@ -108,9 +127,17 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     await this.writeEmptyPlanFile(path);
   }
 
-  exit(id?: string): void {
+  exit(reason: PlanExitReason, id?: string): void {
+    const before = this.wire.getModel(PlanModel);
     this.wire.dispatch(planModeExit({ id }));
     this.telemetryContext.set({ mode: 'agent' });
+    if (before.active && before.id !== undefined) {
+      this._onDidExit.fire({
+        id: before.id,
+        path: this.planFilePathFor(before.id),
+        reason,
+      });
+    }
   }
 
   async status(): Promise<PlanData> {

@@ -65,7 +65,7 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
     }
 
     const selected = selectedExitPlanModeOption(display.options, result.selectedLabel);
-    this.plan.exit();
+    this.plan.exit('approved');
 
     if (result.selectedLabel !== undefined && result.selectedLabel.length > 0) {
       this.trackPlanTelemetry('plan_resolved', {
@@ -107,7 +107,7 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
     }
 
     if (result.selectedLabel === 'Reject and Exit') {
-      this.plan.exit();
+      this.plan.exit('rejected');
       return {
         kind: 'result',
         syntheticResult: {
