@@ -98,9 +98,28 @@ export interface ToolCall {
   output?: string[]; // shown line by line when expanded
   media?: ToolMedia;
   defaultExpanded?: boolean;
-  /** Absolute path of the plan file (ExitPlanMode only) — rendered as a
-   *  clickable link that opens the plan in the file preview. */
-  planPath?: string;
+  /** ExitPlanMode only: the plan under review and how it resolved. Sourced
+   *  from the structured `plan_resolution` display on the tool result (which
+   *  the daemon persists, so the card survives a page reload); while the
+   *  review is pending it is seeded from the preserved plan_review approval
+   *  display. */
+  plan?: ToolPlan;
+}
+
+export interface ToolPlan {
+  /** 'pending' = review in flight (or unknown); the others come from the
+   *  plan_resolution outcome (rejected / rejected_and_exited map to
+   *  'rejected'). */
+  status: 'pending' | 'approved' | 'auto_approved' | 'rejected' | 'revise';
+  /** Plan body — from the result display, or the preserved `plan_review`
+   *  approval display while the review is pending. */
+  content?: string;
+  /** Absolute path of the plan file — rendered as a clickable link. */
+  path?: string;
+  /** User feedback attached to a rejection. */
+  feedback?: string;
+  /** The option label the user picked when approving a multi-option plan. */
+  chosenOption?: string;
 }
 
 export interface ToolMedia {

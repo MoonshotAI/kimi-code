@@ -19,6 +19,7 @@ import type {
   AppSessionUsage,
   AppTask,
   AppTaskStatus,
+  AppToolResultDisplay,
   AppWorkspace,
   ApprovalResponse,
   ImageSource,
@@ -39,6 +40,7 @@ import type {
   WireMessageContent,
   WireModel,
   WirePromptSubmission,
+  WireToolResultDisplay,
   WireProvider,
   WireQuestionAnswer,
   WireQuestionItem,
@@ -157,6 +159,26 @@ function toAppImageSource(src: WireImageSource): ImageSource {
   return { kind: 'url', url: src.url };
 }
 
+/** Convert the wire (snake_case) tool-result display to the app shape. The
+ *  daemon only produces `plan_resolution` today; unknown future kinds pass
+ *  through structurally and are ignored by consumers. */
+export function toAppToolResultDisplay(
+  display: WireToolResultDisplay | undefined,
+): AppToolResultDisplay | undefined {
+  if (display === undefined) return undefined;
+  if (display.kind === 'plan_resolution') {
+    return {
+      kind: 'plan_resolution',
+      outcome: display.outcome,
+      plan: display.plan,
+      path: display.path,
+      feedback: display.feedback,
+      selectedLabel: display.selected_label,
+    };
+  }
+  return display;
+}
+
 export function toAppMessageContent(wire: WireMessageContent): AppMessageContent {
   switch (wire.type) {
     case 'text':
@@ -174,6 +196,7 @@ export function toAppMessageContent(wire: WireMessageContent): AppMessageContent
         toolCallId: wire.tool_call_id,
         output: wire.output,
         isError: wire.is_error,
+        display: toAppToolResultDisplay(wire.display),
       };
     case 'image':
       return {

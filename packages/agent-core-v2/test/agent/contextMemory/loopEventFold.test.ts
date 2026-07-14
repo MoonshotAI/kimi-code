@@ -233,4 +233,31 @@ describe('loop-event fold parity', () => {
 
     expect(folded).toEqual(baseline);
   });
+
+  it('folds a tool-result display as client-only structured metadata', () => {
+    const display = {
+      kind: 'plan_resolution',
+      outcome: 'rejected',
+      plan: '# Draft Plan',
+      path: '/tmp/plan.md',
+    } as const;
+
+    context.appendLoopEvent({ type: 'step.begin', uuid: 's4' });
+    context.appendLoopEvent({
+      type: 'tool.call',
+      stepUuid: 's4',
+      toolCallId: 'c4',
+      name: 'ExitPlanMode',
+      args: {},
+    });
+    context.appendLoopEvent({
+      type: 'tool.result',
+      toolCallId: 'c4',
+      result: { output: 'Plan rejected by user. Plan mode remains active.', isError: true, display },
+    });
+    context.appendLoopEvent({ type: 'step.end', uuid: 's4' });
+
+    const toolMessage = context.get().find((m) => m.role === 'tool' && m.toolCallId === 'c4');
+    expect(toolMessage?.display).toEqual(display);
+  });
 });

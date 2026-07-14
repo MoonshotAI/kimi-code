@@ -1,7 +1,12 @@
 import type { ContentPart, Message } from '#/app/llmProtocol/message';
 
 import type { AgentTaskStatus } from '#/agent/task/task';
-import type { CronJobOrigin, CronMissedOrigin, ShellCommandOrigin } from '@moonshot-ai/protocol';
+import type {
+  CronJobOrigin,
+  CronMissedOrigin,
+  ShellCommandOrigin,
+  ToolResultDisplay,
+} from '@moonshot-ai/protocol';
 
 export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
 
@@ -83,6 +88,9 @@ export type ContextMessage = Message & {
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;
   readonly note?: string;
+  /** Structured, client-only rendering payload attached to a tool result
+   *  (e.g. a resolved plan card). Never enters the model-facing context. */
+  readonly display?: ToolResultDisplay;
 };
 
 export interface UserMessageRecord {

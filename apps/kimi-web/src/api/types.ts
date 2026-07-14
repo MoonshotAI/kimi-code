@@ -149,12 +149,40 @@ export type AppMessageRole = 'user' | 'assistant' | 'tool' | 'system';
 export type AppMessageContent =
   | { type: 'text'; text: string }
   | { type: 'toolUse'; toolCallId: string; toolName: string; input: unknown; outputLines?: string[] }
-  | { type: 'toolResult'; toolCallId: string; output: unknown; isError?: boolean }
+  | {
+      type: 'toolResult';
+      toolCallId: string;
+      output: unknown;
+      isError?: boolean;
+      display?: AppToolResultDisplay;
+    }
   | { type: 'image'; source: ImageSource }
   | { type: 'video'; source: ImageSource }
   | { type: 'file'; fileId: string; name: string; mediaType: string; size: number }
   | { type: 'thinking'; thinking: string; signature?: string }
   | { type: 'unknown'; raw: unknown };
+
+/**
+ * Structured, client-only rendering payload attached to a toolResult part —
+ * the daemon's ToolResultDisplay, camelCased on the way in (see mappers).
+ * Only the kinds the web renders are modelled.
+ */
+export interface AppPlanResolutionDisplay {
+  kind: 'plan_resolution';
+  outcome:
+    | 'approved'
+    | 'auto_approved'
+    | 'rejected'
+    | 'rejected_and_exited'
+    | 'revise'
+    | 'dismissed';
+  plan: string;
+  path?: string;
+  feedback?: string;
+  selectedLabel?: string;
+}
+
+export type AppToolResultDisplay = AppPlanResolutionDisplay;
 
 export type ImageSource =
   | { kind: 'url'; url: string }

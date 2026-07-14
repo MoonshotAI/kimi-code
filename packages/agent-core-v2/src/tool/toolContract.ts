@@ -17,7 +17,7 @@
 
 import type { ContentPart, ToolCall } from '#/app/llmProtocol/message';
 import type { Tool } from '#/app/llmProtocol/tool';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay, ToolResultDisplay } from '@moonshot-ai/protocol';
 
 export type ExecutableToolOutput = string | ContentPart[];
 
@@ -43,6 +43,11 @@ export interface ExecutableToolSuccessResult {
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly delivery?: ToolDelivery | undefined;
+  /** Structured, client-only rendering payload for this result (e.g. a
+   *  resolved plan card). Persisted with the tool result and projected to
+   *  clients; never enters the model-facing context. Named `resultDisplay`
+   *  to stay clear of `ToolResult.display` (the input-side echo). */
+  readonly resultDisplay?: ToolResultDisplay;
 }
 
 export interface ExecutableToolErrorResult {
@@ -53,6 +58,7 @@ export interface ExecutableToolErrorResult {
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly delivery?: ToolDelivery | undefined;
+  readonly resultDisplay?: ToolResultDisplay;
 }
 
 export type ExecutableToolResult = ExecutableToolSuccessResult | ExecutableToolErrorResult;

@@ -325,6 +325,37 @@ describe('projector tool-exchange normalization', () => {
     ]);
   });
 
+  it('projects a tool-result display to the wire part but never to the model', () => {
+    const display = {
+      kind: 'plan_resolution',
+      outcome: 'approved',
+      plan: '# Final Plan',
+      path: '/tmp/plan.md',
+    } as const;
+    const result: ContextMessage = {
+      role: 'tool',
+      content: [{ type: 'text', text: 'Exited plan mode.' }],
+      toolCalls: [],
+      toolCallId: 'call_plan',
+      display,
+    };
+    const history = [assistant('', ['call_plan']), result];
+
+    // Model-facing projection: text only, no structured display leak.
+    expect(project(history)[1]?.content).toEqual([{ type: 'text', text: 'Exited plan mode.' }]);
+
+    // Wire projection: the part carries the display for clients.
+    const protocol = toProtocolMessage('session_1', 0, result, 0);
+    expect(protocol.content).toEqual([
+      {
+        type: 'tool_result',
+        tool_call_id: 'call_plan',
+        output: 'Exited plan mode.',
+        display,
+      },
+    ]);
+  });
+
   it('passes raw media parts through as the tool_result output', () => {
     const result: ContextMessage = {
       role: 'tool',

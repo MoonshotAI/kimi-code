@@ -7,7 +7,9 @@ import StatusDot from '../ui/StatusDot.vue';
 
 withDefaults(
   defineProps<{
-    status: 'running' | 'ok' | 'error' | 'suspended';
+    /** Row status icon (✓ / ✗ / spinner). Omit to hide the icon entirely —
+     *  e.g. plan-review cards carry their state as a text badge instead. */
+    status?: 'running' | 'ok' | 'error' | 'suspended';
     /** Inline-SVG glyph string (toolGlyph), or empty for none. */
     icon?: string;
     name: string;
@@ -62,7 +64,7 @@ function onHeadClick(): void {
         </Tooltip>
       </span>
       <span class="rt">
-        <span class="status" :class="status" role="status" :aria-label="status">
+        <span v-if="status" class="status" :class="status" role="status" :aria-label="status">
           <Icon v-if="status === 'ok'" name="check" size="sm" />
           <Icon v-else-if="status === 'error'" name="close" size="sm" />
           <StatusDot v-else-if="status === 'suspended'" status="suspended" />

@@ -532,6 +532,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       toolCallId: call.toolCall.id,
       output: result.output,
       isError: result.isError,
+      display: result.resultDisplay,
     });
   }
 
@@ -812,7 +813,8 @@ function normalizeToolResult(result: ExecutableToolResult): ToolResult {
     stopTurn?: boolean;
     truncated?: true;
     note?: string;
-  } = { output, stopTurn: result.stopTurn };
+    resultDisplay?: ToolResult['resultDisplay'];
+  } = { output, stopTurn: result.stopTurn, resultDisplay: result.resultDisplay };
   if (result.truncated === true) base.truncated = true;
   if (typeof result.note === 'string' && result.note.length > 0) base.note = result.note;
   if (result.isError === true) {

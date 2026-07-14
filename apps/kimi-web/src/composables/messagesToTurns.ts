@@ -9,9 +9,9 @@
 // TOOL-role messages fold their toolResult content into the preceding assistant
 // group rather than becoming separate turns.
 
-import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
+import type { AppMessage, AppApprovalRequest, AppTask, AppToolResultDisplay, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
+import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, ToolPlan, TurnBlock } from '../types';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
@@ -473,17 +473,34 @@ function continuesAssistantGroup(group: Group | null, promptId: string | undefin
 }
 
 
-/** Extract the plan file path from an ExitPlanMode tool result. The approved
- *  output contains `Plan saved to: <path>`; this survives a page reload (unlike
- *  the ephemeral plan_review approval display), so the tool card can still link
- *  to the plan file. */
-function parsePlanSavedPath(output: string[] | undefined): string | undefined {
-  if (!output || output.length === 0) return undefined;
-  const marker = 'Plan saved to: ';
-  for (const line of output) {
-    if (line.startsWith(marker)) return line.slice(marker.length).trim();
-  }
-  return undefined;
+/** Build the ExitPlanMode plan card from the structured `plan_resolution`
+ *  display attached to the tool result (persisted by the daemon, so the card
+ *  survives a page reload — unlike the ephemeral plan_review approval
+ *  display). When the result carries no display (legacy transcripts, or a
+ *  backend that predates the structured channel), the pending plan seeded
+ *  from the preserved plan_review display is kept as-is. */
+function exitPlanModePlanFromDisplay(
+  display: AppToolResultDisplay | undefined,
+  existing: ToolPlan | undefined,
+): ToolPlan | undefined {
+  if (display?.kind !== 'plan_resolution') return existing;
+  const status: ToolPlan['status'] =
+    display.outcome === 'approved'
+      ? 'approved'
+      : display.outcome === 'auto_approved'
+        ? 'auto_approved'
+        : display.outcome === 'dismissed'
+          ? 'pending'
+          : display.outcome === 'revise'
+            ? 'revise'
+            : 'rejected';
+  return {
+    status,
+    content: display.plan,
+    path: display.path,
+    feedback: display.feedback,
+    chosenOption: display.selectedLabel,
+  };
 }
 
 /**
@@ -549,8 +566,9 @@ export function messagesToTurns(
    * spinning forever after the turn already finished.
    */
   sessionActive = true,
-  /** Preserved `plan_review` displays keyed by toolCallId — used to link the
-   *  ExitPlanMode tool card back to the plan file after the approval resolves. */
+  /** Preserved `plan_review` displays keyed by toolCallId — seeds the pending
+   *  ExitPlanMode plan card (body + path) so the plan keeps rendering after
+   *  the approval resolves; the settled result output then takes over. */
   planReviewByToolCallId: Record<string, { plan: string; path?: string }> = {},
 ): ChatTurn[] {
   const turns: ChatTurn[] = [];
@@ -632,7 +650,17 @@ export function messagesToTurns(
           // flushGroup settles dangling tools of finished turns back to 'ok'.
           status: 'running',
           output: c.outputLines,
-          planPath: c.toolName === 'ExitPlanMode' ? planReviewByToolCallId[c.toolCallId]?.path : undefined,
+          // Seed the pending plan card from the preserved `plan_review`
+          // approval display — body and all — so the plan keeps rendering
+          // after the approval resolves (approved / rejected / revised).
+          plan:
+            c.toolName === 'ExitPlanMode' && planReviewByToolCallId[c.toolCallId]
+              ? {
+                  status: 'pending',
+                  content: planReviewByToolCallId[c.toolCallId]!.plan,
+                  path: planReviewByToolCallId[c.toolCallId]!.path,
+                }
+              : undefined,
         };
         g.tools.push(toolCall);
         g.blocks.push({ kind: 'tool', tool: toolCall });
@@ -652,11 +680,12 @@ export function messagesToTurns(
             output: normalizeToolOutput(c.output),
             media: c.isError ? undefined : normalizeToolMedia(tool.name, c.output),
           };
-          // ExitPlanMode: if the plan path wasn't captured from the (ephemeral)
-          // approval display, recover it from the result output so the file link
-          // survives a reload for approved plans.
-          if (updated.name === 'ExitPlanMode' && !updated.planPath) {
-            updated.planPath = parsePlanSavedPath(updated.output);
+          // ExitPlanMode: resolve the plan card from the structured
+          // `plan_resolution` display on the result (persisted by the daemon,
+          // so it survives a reload); a result without a display keeps the
+          // pending plan seeded from the approval display.
+          if (updated.name === 'ExitPlanMode') {
+            updated.plan = exitPlanModePlanFromDisplay(c.display, tool.plan);
           }
           g.tools[idx] = updated;
           const blk = g.blocks.find((b) => b.kind === 'tool' && b.tool.id === c.toolCallId);

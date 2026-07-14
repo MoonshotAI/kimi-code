@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { ToolResultDisplaySchema } from './display';
 import { isoDateTimeSchema } from './time';
 
 export const messageRoleSchema = z.enum(['user', 'assistant', 'tool', 'system']);
@@ -24,6 +25,10 @@ export const toolResultContentSchema = z.object({
   tool_call_id: z.string().min(1),
   output: z.unknown(),
   is_error: z.boolean().optional(),
+  // Structured, client-only rendering payload (e.g. a resolved plan card).
+  // The text `output` remains the model-facing result; `display` mirrors the
+  // `display` on ToolCallStartedEvent / `tool_input_display` on approvals.
+  display: ToolResultDisplaySchema.optional(),
 });
 export type ToolResultContent = z.infer<typeof toolResultContentSchema>;
 

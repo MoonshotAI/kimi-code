@@ -156,6 +156,24 @@ export const ToolResultDisplaySchema = z.discriminatedUnion('kind', [
     summary: z.string(),
     detail: z.unknown().optional(),
   }),
+  z.object({
+    kind: z.literal('plan_resolution'),
+    // Mirrors the `plan_resolved` telemetry outcomes plus the auto path's
+    // auto_approved. Carries the plan body so clients can render the resolved
+    // plan card without parsing the model-facing tool result text.
+    outcome: z.enum([
+      'approved',
+      'auto_approved',
+      'rejected',
+      'rejected_and_exited',
+      'revise',
+      'dismissed',
+    ]),
+    plan: z.string(),
+    path: z.string().optional(),
+    feedback: z.string().optional(),
+    selected_label: z.string().optional(),
+  }),
 ]);
 
 export type ToolInputDisplay = z.infer<typeof ToolInputDisplaySchema>;
