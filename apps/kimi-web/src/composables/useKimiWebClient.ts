@@ -110,9 +110,9 @@ const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 // 'off'/'on', or a model-declared level (e.g. 'low'/'high'/'max'). Since the
 // set of legal levels comes from each model's support_efforts, we can't
 // whitelist values — only guard against corrupted localStorage with a charset
-// + length check. An absent/invalid value means "no explicit preference"
-// (undefined): prompts then carry no thinking override and the daemon resolves
-// the model's own default, same as a fresh TUI config.
+// + length check. An absent/invalid value means the user never picked a level;
+// loadModels() then pins the active model's catalog default as the concrete
+// in-memory value (see useModelProviderState).
 const PERSISTED_THINKING_LEVEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 
 // Appearance types + logic live in ./client/useAppearance; re-exported here so
@@ -304,9 +304,10 @@ export interface ExtendedState extends KimiClientState {
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
-  /** Explicit thinking-level preference. Undefined = no preference: prompts
-   *  omit the override and the daemon resolves the model's default (same as
-   *  the TUI with an unset [thinking] config). */
+  /** The thinking level shown and submitted. Undefined only transiently —
+   *  before the model catalog loads or when the active model is unknown;
+   *  loadModels() pins the active model's catalog default as a concrete
+   *  in-memory value so display and submission always agree. */
   thinking: ThinkingLevel | undefined;
   /** Plan-mode toggle per session. Bound to a session (not global) so toggling
    *  it in one session does not affect another. */

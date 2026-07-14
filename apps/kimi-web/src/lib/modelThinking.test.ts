@@ -15,11 +15,14 @@ import {
   modelThinkingAvailability,
   segmentsFor,
   thinkingLevelForModelSwitch,
+  thinkingLevelToConfig,
 } from './modelThinking';
 import type { ModelThinkingInfo } from './modelThinking';
 
 const apiMock = vi.hoisted(() => ({
   updateSession: vi.fn(),
+  listModels: vi.fn(),
+  setConfig: vi.fn(),
 }));
 
 vi.mock('../api', () => ({
@@ -173,6 +176,20 @@ describe('modelThinking', () => {
       expect(commitLevel(effortModel, 'max')).toBe('max');
     });
   });
+
+  describe('thinkingLevelToConfig', () => {
+    it('disables thinking for off', () => {
+      expect(thinkingLevelToConfig('off')).toEqual({ enabled: false });
+    });
+
+    it('records only enabled for boolean on', () => {
+      expect(thinkingLevelToConfig('on')).toEqual({ enabled: true });
+    });
+
+    it('records concrete efforts as the global default', () => {
+      expect(thinkingLevelToConfig('max')).toEqual({ enabled: true, effort: 'max' });
+    });
+  });
 });
 
 describe('useModelProviderState thinking on model selection', () => {
@@ -196,6 +213,10 @@ describe('useModelProviderState thinking on model selection', () => {
   beforeEach(() => {
     apiMock.updateSession.mockReset();
     apiMock.updateSession.mockResolvedValue({});
+    apiMock.listModels.mockReset();
+    apiMock.listModels.mockResolvedValue([effortAppModel, booleanAppModel]);
+    apiMock.setConfig.mockReset();
+    apiMock.setConfig.mockResolvedValue({});
   });
 
   function createState(options: {
@@ -272,5 +293,76 @@ describe('useModelProviderState thinking on model selection', () => {
     await provider.setModel(effortAppModel.id);
 
     expect(state.thinking).toBe('high');
+  });
+
+  it('pins the catalog default in memory when no thinking preference exists', async () => {
+    const state = createState({ defaultModel: effortAppModel.id });
+    state.thinking = undefined;
+    const provider = createModelProvider(state);
+
+    await provider.loadModels();
+
+    expect(state.thinking).toBe('high');
+  });
+
+  it('keeps a stored preference when loading models', async () => {
+    const state = createState({ defaultModel: effortAppModel.id });
+    state.thinking = 'max';
+    const provider = createModelProvider(state);
+
+    await provider.loadModels();
+
+    expect(state.thinking).toBe('max');
+  });
+
+  it('does not write the global thinking config for the loadModels default pin', async () => {
+    const state = createState({ defaultModel: effortAppModel.id });
+    state.thinking = undefined;
+    const provider = createModelProvider(state);
+
+    await provider.loadModels();
+
+    expect(apiMock.setConfig).not.toHaveBeenCalled();
+  });
+
+  it('persists the thinking pick as the global default on setThinking', async () => {
+    const state = createState({ defaultModel: effortAppModel.id });
+    const provider = createModelProvider(state);
+
+    provider.setThinking('max');
+
+    expect(apiMock.setConfig).toHaveBeenCalledWith({ thinking: { enabled: true, effort: 'max' } });
+  });
+
+  it('persists the thinking pick as the global default on a model switch', async () => {
+    const state = createState({ defaultModel: booleanAppModel.id });
+    const provider = createModelProvider(state);
+
+    await provider.setModel(effortAppModel.id);
+
+    expect(apiMock.setConfig).toHaveBeenCalledWith({ thinking: { enabled: true, effort: 'high' } });
+  });
+
+  it('does not write the global thinking config when re-selecting the current model', async () => {
+    const state = createState({ defaultModel: effortAppModel.id });
+    const provider = createModelProvider(state);
+
+    await provider.setModel(effortAppModel.id);
+
+    expect(apiMock.setConfig).not.toHaveBeenCalled();
+  });
+
+  it('does not write the global thinking config when the session switch fails', async () => {
+    apiMock.updateSession.mockRejectedValue(new Error('daemon unreachable'));
+    const state = createState({
+      activeSession: { id: 'session-1', model: booleanAppModel.id },
+      defaultModel: booleanAppModel.id,
+    });
+    const provider = createModelProvider(state);
+
+    const switched = await provider.setModel(effortAppModel.id);
+
+    expect(switched).toBe(false);
+    expect(apiMock.setConfig).not.toHaveBeenCalled();
   });
 });

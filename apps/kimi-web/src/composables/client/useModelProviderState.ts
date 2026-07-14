@@ -17,7 +17,11 @@ import type {
   ThinkingLevel,
 } from '../../api/types';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
-import { thinkingLevelForModelSwitch } from '../../lib/modelThinking';
+import {
+  defaultThinkingLevelFor,
+  thinkingLevelForModelSwitch,
+  thinkingLevelToConfig,
+} from '../../lib/modelThinking';
 import { beginLocalTurn, settleLocalTurn } from './useWorkspaceState';
 import type { ActivityState } from '../../types';
 import type { ExtendedState } from '../useKimiWebClient';
@@ -138,6 +142,17 @@ export function useModelProviderState(
     return level;
   }
 
+  /** Persist an explicit thinking pick as the daemon-wide default ([thinking]
+   *  in config.toml), mirroring the TUI's persistModelSelection, so sessions
+   *  created by other clients inherit it. Fire-and-forget: the session-level
+   *  and local values have already been applied. Never called for derived
+   *  values (e.g. the loadModels default pin) — only for user actions. */
+  function persistGlobalThinking(level: ThinkingLevel): void {
+    void getKimiWebApi()
+      .setConfig({ thinking: thinkingLevelToConfig(level) })
+      .catch((error: unknown) => pushOperationFailure('setConfig', error));
+  }
+
   async function loadSkillsForSession(sessionId: string): Promise<void> {
     try {
       const api = getKimiWebApi();
@@ -165,6 +180,15 @@ export function useModelProviderState(
     try {
       const api = getKimiWebApi();
       models.value = await api.listModels();
+      // No explicit preference: pin the active model's default level (from the
+      // server catalog) as a concrete value, so what the UI shows, what gets
+      // submitted, and what the session runs are always the same. In-memory
+      // only — localStorage stays reserved for levels the user actually
+      // picked, and a reload re-derives from the then-current model.
+      if (rawState.thinking === undefined) {
+        const active = modelById(currentModelId());
+        if (active !== undefined) rawState.thinking = defaultThinkingLevelFor(active);
+      }
     } catch (err) {
       pushOperationFailure('loadModels', err);
     }
@@ -218,6 +242,9 @@ export function useModelProviderState(
       // Remember the pick — startSessionAndSendPrompt applies it at create time.
       draftModel.value = modelId;
       applyThinkingLevel(nextThinking);
+      if (nextThinking !== prevThinking && nextThinking !== undefined) {
+        persistGlobalThinking(nextThinking);
+      }
       return true;
     }
     // Optimistic: show the chosen model immediately, but remember the previous
@@ -242,6 +269,11 @@ export function useModelProviderState(
       }
       pushOperationFailure('setModel', err, { sessionId: sid });
       return false;
+    }
+    // The switch reached the daemon: also persist the thinking pick as the
+    // daemon-wide default (mirrors the TUI). Skipped on rollback above.
+    if (nextThinking !== prevThinking && nextThinking !== undefined) {
+      persistGlobalThinking(nextThinking);
     }
     // refreshSessionStatus folds the authoritative current model from /status
     // back into the session (the profile echo can return ''). Best-effort: a
@@ -414,6 +446,7 @@ export function useModelProviderState(
   function setThinking(level: ThinkingLevel): void {
     const next = applyThinkingLevel(level);
     void persistSessionProfile({ thinking: next });
+    if (next !== undefined) persistGlobalThinking(next);
   }
 
   return {

@@ -97,6 +97,22 @@ export function effectiveThinkingLevel(
 }
 
 /**
+ * Project a thinking level onto the daemon's `[thinking]` config section —
+ * the same mapping the TUI persists (thinkingEffortToConfig): 'off' disables
+ * thinking, a concrete effort records it as the global default, and boolean
+ * 'on' records only `enabled` (boolean models resolve back to 'on' at
+ * runtime).
+ */
+export function thinkingLevelToConfig(level: ThinkingLevel): {
+  enabled: boolean;
+  effort?: string;
+} {
+  if (level === 'off') return { enabled: false };
+  if (level === 'on') return { enabled: true };
+  return { enabled: true, effort: level };
+}
+
+/**
  * Thinking level to use when the user picks a model in the switcher.
  * Mirrors the TUI model picker: switching onto a different model pre-selects
  * that model's own default level; re-selecting the current model keeps the
