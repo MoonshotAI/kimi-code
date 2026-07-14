@@ -504,7 +504,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const next = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(next));
     this.telemetry.track2('goal_continued', { turns_used: next.turnsUsed });
-    return this.blockIfBudgetReached(next) ?? this.toSnapshot(next);
+    return this.toSnapshot(next);
   }
 
   private handleTurnLaunched(turnId: number, origin: TurnStartedEvent['origin']): void {
@@ -563,11 +563,19 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private stopAfterBudgetReached(ctx: AfterStepContext): boolean {
     const goalId = this.goalTurnTarget(ctx.turnId);
     const state = this.goalState;
+    const budget = state === null ? null : this.toSnapshot(state).budget;
+    const turnBudgetBlocksCurrentTurn =
+      state?.status === 'blocked' &&
+      state.terminalReason?.startsWith(GOAL_BUDGET_BLOCK_PREFIX) === true &&
+      budget?.turnBudgetReached === true;
     if (
       goalId === undefined ||
       state === null ||
       state.goalId !== goalId ||
-      !this.toSnapshot(state).budget.overBudget
+      budget === null ||
+      (!budget.tokenBudgetReached &&
+        !budget.wallClockBudgetReached &&
+        !turnBudgetBlocksCurrentTurn)
     ) {
       return false;
     }
