@@ -1756,7 +1756,7 @@ describe('FullCompaction', () => {
       modelCapabilities: {
         ...CATALOGUED_MODEL_CAPABILITIES,
         max_context_tokens: 2_000,
-        select_tools: true,
+        dynamically_loaded_tools: true,
       },
       tools: [LARGE_MCP_TOOL],
     });

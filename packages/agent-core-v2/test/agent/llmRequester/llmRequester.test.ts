@@ -96,7 +96,7 @@ describe('LLMRequester service migration coverage', () => {
           thinking: false,
           tool_use: true,
           max_context_tokens: 128_000,
-          select_tools: true,
+          dynamically_loaded_tools: true,
         },
       });
       ctx.mockNextResponse({ type: 'text', text: 'first response' });

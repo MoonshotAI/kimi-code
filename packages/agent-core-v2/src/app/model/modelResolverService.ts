@@ -315,7 +315,9 @@ function resolveModelCapabilities(
     thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
     tool_use: declared.has('tool_use') || detected.tool_use,
     max_context_tokens: maxContextSize,
-    select_tools: declared.has('select_tools') || detected.select_tools === true,
+    dynamically_loaded_tools:
+      declared.has('dynamically_loaded_tools') ||
+      detected.dynamically_loaded_tools === true,
   };
 }
 

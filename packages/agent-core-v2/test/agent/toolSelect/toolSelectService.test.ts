@@ -71,7 +71,7 @@ let activeToolNames: ReadonlySet<string> | undefined;
 
 beforeEach(() => {
   disposables = new DisposableStore();
-  capabilities = makeCapabilities({ tool_use: true, select_tools: true });
+  capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: true });
   flagEnabled = false;
   activeToolNames = undefined;
 });
@@ -80,7 +80,7 @@ afterEach(() => disposables.dispose());
 
 function makeCapabilities(overrides: {
   readonly tool_use?: boolean;
-  readonly select_tools?: boolean;
+  readonly dynamically_loaded_tools?: boolean;
 } = {}): ModelCapability {
   return {
     image_in: false,
@@ -89,7 +89,7 @@ function makeCapabilities(overrides: {
     thinking: false,
     tool_use: overrides.tool_use ?? false,
     max_context_tokens: 128_000,
-    select_tools: overrides.select_tools,
+    dynamically_loaded_tools: overrides.dynamically_loaded_tools,
   };
 }
 
@@ -404,22 +404,22 @@ async function execute(
 }
 
 describe('AgentToolSelectService gate', () => {
-  it('opens only when select_tools capability, tool_use capability and flag are all on', () => {
+  it('opens only when dynamically_loaded_tools capability, tool_use capability and flag are all on', () => {
     flagEnabled = true;
     const { sut } = createHarness();
     expect(sut.enabled()).toBe(true);
   });
 
-  it('stays closed without the select_tools capability', () => {
+  it('stays closed without the dynamically_loaded_tools capability', () => {
     flagEnabled = true;
-    capabilities = makeCapabilities({ tool_use: true, select_tools: false });
+    capabilities = makeCapabilities({ tool_use: true, dynamically_loaded_tools: false });
     const { sut } = createHarness();
     expect(sut.enabled()).toBe(false);
   });
 
   it('stays closed without tool_use capability', () => {
     flagEnabled = true;
-    capabilities = makeCapabilities({ tool_use: false, select_tools: true });
+    capabilities = makeCapabilities({ tool_use: false, dynamically_loaded_tools: true });
     const { sut } = createHarness();
     expect(sut.enabled()).toBe(false);
   });
@@ -432,7 +432,7 @@ describe('AgentToolSelectService gate', () => {
 });
 
 describe('AgentToolSelectService S0 baseline (gate closed)', () => {
-  it('shapeTools returns the identical array when select_tools is absent', () => {
+  it('shapeTools returns the identical array when dynamically_loaded_tools is absent', () => {
     const h = createHarness();
     registerBuiltin(h, new EchoTool());
     registerMcp(h, new StubMcpTool(MCP_ALPHA));
