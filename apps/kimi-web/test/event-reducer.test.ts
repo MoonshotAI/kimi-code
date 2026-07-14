@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createInitialState,
   planReviewOverlaysFromSnapshot,
+  reconcilePlanReviewOverlaysFromSnapshot,
   reduceAppEvent,
 } from '../src/api/daemon/eventReducer';
 import type {
@@ -284,6 +285,24 @@ describe('reduceAppEvent plan review overlays (live approval bridge)', () => {
     });
   });
 
+  it('does not add a pending card when the snapshot already has the durable decision', () => {
+    const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
+    const messages = [
+      makeSnapshotPlanMessage(approval, 'assistant-snapshot', {
+        decision: 'approved',
+        selectedLabel: 'Safe rollout',
+      }),
+    ];
+    const overlays = planReviewOverlaysFromSnapshot(messages, [approval]);
+    const plans = messagesToTurns(messages, [], undefined, false, overlays).flatMap((turn) =>
+      (turn.tools ?? []).flatMap((tool) => tool.planReview ?? []),
+    );
+
+    expect(overlays).toEqual({});
+    expect(plans).toHaveLength(1);
+    expect(plans[0]).toMatchObject({ status: 'approved', selectedLabel: 'Safe rollout' });
+  });
+
   it('stores a requested plan overlay only under the approval session', () => {
     const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
 
@@ -333,6 +352,122 @@ describe('reduceAppEvent plan review overlays (live approval bridge)', () => {
       scope: undefined,
       feedback: 'Add rollback checks.',
       selectedLabel: 'Revise',
+    });
+  });
+
+  it('keeps a resolved decision through an empty snapshot and releases it after durable history arrives', () => {
+    const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
+    const pendingMessages = [makeSnapshotPlanMessage(approval)];
+    let state = {
+      ...createInitialState(),
+      messagesBySession: { 'session-a': pendingMessages },
+      approvalsBySession: { 'session-a': [approval] },
+      planReviewOverlayBySession: {
+        'session-a': planReviewOverlaysFromSnapshot(pendingMessages, [approval]),
+      },
+    };
+
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'approvalResolved',
+        sessionId: 'session-a',
+        approvalId: 'approval-a',
+        decision: 'rejected',
+        selectedLabel: 'Revise',
+        feedback: 'Add rollback checks.',
+        resolvedAt: '2026-01-01T00:01:02.000Z',
+      },
+      { sessionId: 'session-a', seq: 2 },
+    );
+
+    const racedSnapshot = [makeSnapshotPlanMessage(approval)];
+    state.messagesBySession['session-a'] = racedSnapshot;
+    reconcilePlanReviewOverlaysFromSnapshot(state, 'session-a', racedSnapshot, []);
+
+    expect(state.messagesBySession['session-a']?.[0]?.content[0]).toMatchObject({
+      type: 'toolUse',
+      approvalResult: {
+        decision: 'rejected',
+        selectedLabel: 'Revise',
+        feedback: 'Add rollback checks.',
+      },
+    });
+    expect(state.planReviewOverlayBySession['session-a']?.['approval-a']).toMatchObject({
+      renderSynthetic: false,
+      snapshotTarget: { messageId: 'assistant-snapshot', contentIndex: 0 },
+    });
+
+    const durableMessage = makeSnapshotPlanMessage(approval, 'assistant-snapshot', {
+      decision: 'rejected',
+      selectedLabel: 'Revise',
+      feedback: 'Add rollback checks.',
+    });
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'messageUpdated',
+        sessionId: 'session-a',
+        messageId: durableMessage.id,
+        content: durableMessage.content,
+        status: 'completed',
+      },
+      { sessionId: 'session-a', seq: 3 },
+    );
+
+    expect(state.planReviewOverlayBySession['session-a']).toEqual({});
+    expect(state.messagesBySession['session-a']?.[0]?.content[0]).toMatchObject({
+      approvalResult: {
+        decision: 'rejected',
+        selectedLabel: 'Revise',
+        feedback: 'Add rollback checks.',
+      },
+    });
+  });
+
+  it('lets a settled overlay replace a stale pending correlation for the same approval', () => {
+    const approval = makePlanApproval('session-a', 'approval-a', 'call-1');
+    const initialMessages = [makeSnapshotPlanMessage(approval)];
+    let state = {
+      ...createInitialState(),
+      messagesBySession: { 'session-a': initialMessages },
+      approvalsBySession: { 'session-a': [approval] },
+      planReviewOverlayBySession: {
+        'session-a': planReviewOverlaysFromSnapshot(initialMessages, [approval]),
+      },
+    };
+    state = reduceAppEvent(
+      state,
+      {
+        type: 'approvalResolved',
+        sessionId: 'session-a',
+        approvalId: 'approval-a',
+        decision: 'rejected',
+        selectedLabel: 'Revise',
+        feedback: 'Use a rollback checkpoint.',
+        resolvedAt: '2026-01-01T00:01:02.000Z',
+      },
+      { sessionId: 'session-a', seq: 2 },
+    );
+
+    const staleSnapshot = [makeSnapshotPlanMessage(approval)];
+    state.messagesBySession['session-a'] = staleSnapshot;
+    reconcilePlanReviewOverlaysFromSnapshot(state, 'session-a', staleSnapshot, [approval]);
+
+    const plans = messagesToTurns(
+      state.messagesBySession['session-a'] ?? [],
+      [],
+      undefined,
+      false,
+      state.planReviewOverlayBySession['session-a'] ?? {},
+    ).flatMap((turn) => (turn.tools ?? []).flatMap((tool) => tool.planReview ?? []));
+    expect(plans).toHaveLength(1);
+    expect(plans[0]).toMatchObject({
+      status: 'revision_requested',
+      feedback: 'Use a rollback checkpoint.',
+    });
+    expect(state.planReviewOverlayBySession['session-a']?.['approval-a']).toMatchObject({
+      renderSynthetic: false,
     });
   });
 

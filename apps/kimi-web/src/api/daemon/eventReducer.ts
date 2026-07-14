@@ -299,13 +299,32 @@ function restoreSettledSnapshotPlanReviews(
   messageId: string,
 ): void {
   const overlays = Object.values(state.planReviewOverlayBySession[sessionId] ?? {});
+  const consumed = new Set<string>();
   for (const overlay of overlays) {
     if (
       overlay.snapshotTarget?.messageId === messageId &&
       (overlay.approvalResult !== undefined || overlay.status === 'interrupted')
     ) {
-      setSettledPlanReviewOverlay(state, sessionId, overlay);
+      const part = matchingPlanReviewPart(
+        state.messagesBySession[sessionId] ?? [],
+        overlay.snapshotTarget,
+        overlay,
+      );
+      if (part?.approvalResult !== undefined) {
+        consumed.add(overlay.approvalId);
+      } else {
+        setSettledPlanReviewOverlay(state, sessionId, overlay);
+      }
     }
+  }
+  if (consumed.size > 0) {
+    const current = state.planReviewOverlayBySession[sessionId] ?? {};
+    state.planReviewOverlayBySession = {
+      ...state.planReviewOverlayBySession,
+      [sessionId]: Object.fromEntries(
+        Object.entries(current).filter(([approvalId]) => !consumed.has(approvalId)),
+      ),
+    };
   }
 }
 
@@ -336,6 +355,7 @@ export function planReviewOverlaysFromSnapshot(
     if (displayIdentity === undefined) continue;
 
     let snapshotTarget: AppPlanReviewOverlay['snapshotTarget'];
+    let durableSnapshotResult = false;
     for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
       const message = messages[messageIndex]!;
       for (let contentIndex = message.content.length - 1; contentIndex >= 0; contentIndex--) {
@@ -344,15 +364,20 @@ export function planReviewOverlaysFromSnapshot(
           part.type === 'toolUse' &&
           part.toolCallId === approval.toolCallId &&
           part.toolName === approval.toolName &&
-          part.approvalResult === undefined &&
           planReviewDisplayIdentity(part.toolInputDisplay) === displayIdentity
         ) {
+          if (part.approvalResult !== undefined) {
+            durableSnapshotResult = true;
+            break;
+          }
           snapshotTarget = { messageId: message.id, contentIndex };
           break;
         }
       }
-      if (snapshotTarget !== undefined) break;
+      if (snapshotTarget !== undefined || durableSnapshotResult) break;
     }
+
+    if (snapshotTarget === undefined && durableSnapshotResult) continue;
 
     overlays[approval.approvalId] = {
       approvalId: approval.approvalId,
@@ -364,6 +389,131 @@ export function planReviewOverlaysFromSnapshot(
     };
   }
   return overlays;
+}
+
+function planReviewTargetKey(target: AppPlanReviewOverlay['snapshotTarget']): string {
+  return target === undefined ? '' : `${target.messageId}:${target.contentIndex}`;
+}
+
+function matchingPlanReviewPart(
+  messages: AppMessage[],
+  target: AppPlanReviewOverlay['snapshotTarget'],
+  overlay: AppPlanReviewOverlay,
+): Extract<AppMessageContent, { type: 'toolUse' }> | undefined {
+  if (target === undefined) return undefined;
+  const part = messages.find((message) => message.id === target.messageId)?.content[target.contentIndex];
+  if (
+    part?.type !== 'toolUse' ||
+    part.toolCallId !== overlay.toolCallId ||
+    planReviewDisplayIdentity(part.toolInputDisplay) !==
+      planReviewDisplayIdentity(overlay.toolInputDisplay)
+  ) {
+    return undefined;
+  }
+  return part;
+}
+
+type PlanReviewSnapshotCandidate = {
+  target: NonNullable<AppPlanReviewOverlay['snapshotTarget']>;
+  part?: Extract<AppMessageContent, { type: 'toolUse' }>;
+};
+
+function findFreshPlanReviewTarget(
+  messages: AppMessage[],
+  overlay: AppPlanReviewOverlay,
+  claimed: Map<string, string>,
+): PlanReviewSnapshotCandidate | undefined {
+  const displayIdentity = planReviewDisplayIdentity(overlay.toolInputDisplay);
+  if (displayIdentity === undefined) return undefined;
+  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex--) {
+    const message = messages[messageIndex]!;
+    for (let contentIndex = message.content.length - 1; contentIndex >= 0; contentIndex--) {
+      const part = message.content[contentIndex]!;
+      if (
+        part.type === 'toolUse' &&
+        part.toolCallId === overlay.toolCallId &&
+        planReviewDisplayIdentity(part.toolInputDisplay) === displayIdentity
+      ) {
+        const target = { messageId: message.id, contentIndex };
+        if (!claimed.has(planReviewTargetKey(target))) return { target, part };
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Rebind settled approval outcomes after a snapshot replaces live messages. */
+export function reconcilePlanReviewOverlaysFromSnapshot(
+  state: KimiClientState,
+  sessionId: string,
+  snapshotMessages: AppMessage[],
+  approvals: AppApprovalRequest[],
+): void {
+  const pending = planReviewOverlaysFromSnapshot(snapshotMessages, approvals);
+  const next = { ...pending };
+  const claimed = new Map<string, string>();
+  for (const overlay of Object.values(pending)) {
+    const key = planReviewTargetKey(overlay.snapshotTarget);
+    if (key.length > 0) claimed.set(key, overlay.approvalId);
+  }
+  const prior = state.planReviewOverlayBySession[sessionId] ?? {};
+  const mergedMessages = state.messagesBySession[sessionId] ?? [];
+
+  for (const overlay of Object.values(prior)) {
+    if (overlay.approvalResult === undefined && overlay.status !== 'interrupted') continue;
+
+    const priorTargetKey = planReviewTargetKey(overlay.snapshotTarget);
+    if (claimed.get(priorTargetKey) === overlay.approvalId) claimed.delete(priorTargetKey);
+    const freshPriorPart =
+      priorTargetKey.length > 0 && !claimed.has(priorTargetKey)
+        ? matchingPlanReviewPart(snapshotMessages, overlay.snapshotTarget, overlay)
+        : undefined;
+    let candidate: PlanReviewSnapshotCandidate | undefined =
+      freshPriorPart === undefined
+        ? undefined
+        : { target: overlay.snapshotTarget!, part: freshPriorPart };
+    if (candidate === undefined && priorTargetKey.length > 0 && !claimed.has(priorTargetKey)) {
+      const mergedPriorPart = matchingPlanReviewPart(mergedMessages, overlay.snapshotTarget, overlay);
+      if (mergedPriorPart !== undefined) {
+        candidate = { target: overlay.snapshotTarget! };
+      }
+    }
+    if (candidate === undefined) {
+      candidate = findFreshPlanReviewTarget(snapshotMessages, overlay, claimed);
+    }
+
+    if (candidate?.part?.approvalResult !== undefined) {
+      delete next[overlay.approvalId];
+      continue;
+    }
+
+    if (candidate !== undefined) {
+      const target = candidate.target;
+      const settled: AppPlanReviewOverlay = {
+        ...overlay,
+        renderSynthetic: false,
+        snapshotTarget: target,
+      };
+      const mergedPart = matchingPlanReviewPart(mergedMessages, target, overlay);
+      if (mergedPart !== undefined) {
+        setSettledPlanReviewOverlay(state, sessionId, settled);
+        claimed.set(planReviewTargetKey(target), overlay.approvalId);
+        next[overlay.approvalId] = settled;
+        continue;
+      }
+    }
+
+    next[overlay.approvalId] = {
+      ...overlay,
+      renderSynthetic: true,
+      snapshotTarget: undefined,
+    };
+  }
+
+  state.planReviewOverlayBySession = {
+    ...state.planReviewOverlayBySession,
+    [sessionId]: next,
+  };
 }
 
 function findPlanReviewOverlay(
@@ -660,6 +810,7 @@ export function reduceAppEvent(
         }
         next.messagesBySession[sid] = [...msgs, incomingMessage];
       }
+      restoreSettledSnapshotPlanReviews(next, sid, event.message.id);
       break;
     }
 

@@ -68,7 +68,7 @@ import type {
 } from '../api/types';
 import {
   createInitialState,
-  planReviewOverlaysFromSnapshot,
+  reconcilePlanReviewOverlaysFromSnapshot,
   reduceAppEvent,
   type CompactionStatus,
   type KimiClientState,
@@ -1341,17 +1341,15 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       ...rawState.approvalsBySession,
       [sessionId]: snap.pendingApprovals,
     };
-    // Hide the synthetic card only after binding this approval to one exact
-    // snapshot message/content slot. The overlay keeps that stable local target
-    // while the live projector catches up (or drops the started event).
-    const planReviewCorrelations = planReviewOverlaysFromSnapshot(
-      rawState.messagesBySession[sessionId] ?? [],
+    // Rebuild pending correlations, but keep a resolved approval visible until
+    // its durable tool_use/result reaches the transcript. The snapshot can race
+    // that write and otherwise erase the only decision the user can see.
+    reconcilePlanReviewOverlaysFromSnapshot(
+      rawState,
+      sessionId,
+      snap.messages,
       snap.pendingApprovals,
     );
-    rawState.planReviewOverlayBySession = {
-      ...rawState.planReviewOverlayBySession,
-      [sessionId]: planReviewCorrelations,
-    };
     rawState.questionsBySession = {
       ...rawState.questionsBySession,
       [sessionId]: snap.pendingQuestions,

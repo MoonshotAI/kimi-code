@@ -12,6 +12,7 @@ import { createI18n } from 'vue-i18n';
 import {
   createInitialState,
   planReviewOverlaysFromSnapshot,
+  reconcilePlanReviewOverlaysFromSnapshot,
   reduceAppEvent,
   type KimiClientState,
 } from '../src/api/daemon/eventReducer';
@@ -24,8 +25,9 @@ import type {
   ApprovalResponse,
 } from '../src/api/types';
 import type { WireApprovalResponse, WireMessage } from '../src/api/daemon/wire';
-import { toAppMessage } from '../src/api/daemon/mappers';
+import { toAppMessage, toWireApprovalResponse } from '../src/api/daemon/mappers';
 import { messagesToTurns } from '../src/composables/messagesToTurns';
+import { mergeSnapshotMessages } from '../src/lib/snapshotMessages';
 import {
   assistantRenderBlocks,
   formatDuration,
@@ -200,7 +202,10 @@ function planToolContent(approval: AppApprovalRequest): AppMessageContent[] {
   ];
 }
 
-function snapshotPlanMessage(approval: AppApprovalRequest): ReturnType<typeof toAppMessage> {
+function snapshotPlanMessage(
+  approval: AppApprovalRequest,
+  approvalResult?: ApprovalResponse,
+): ReturnType<typeof toAppMessage> {
   const wire: WireMessage = {
     id: 'assistant-live',
     session_id: approval.sessionId,
@@ -212,6 +217,8 @@ function snapshotPlanMessage(approval: AppApprovalRequest): ReturnType<typeof to
         tool_name: approval.toolName,
         input: {},
         tool_input_display: approval.display,
+        approval_result:
+          approvalResult === undefined ? undefined : toWireApprovalResponse(approvalResult),
       },
     ],
     created_at: '2026-01-01T00:00:01.000Z',
@@ -219,7 +226,7 @@ function snapshotPlanMessage(approval: AppApprovalRequest): ReturnType<typeof to
   return toAppMessage(wire);
 }
 
-function mountReducerPlan(): {
+function mountReducerPlan(initialApprovalResult?: ApprovalResponse): {
   host: HTMLElement;
   replaceSnapshotContent: (replacement: 'text' | 'toolUse') => void;
   expire: () => void;
@@ -228,6 +235,8 @@ function mountReducerPlan(): {
   projectDroppedToolUse: () => void;
   appendToolResult: (isError: boolean) => void;
   updateCurrentMessage: () => void;
+  resyncSnapshot: (approvalResult?: ApprovalResponse) => void;
+  settleDurableMessage: (approvalResult: ApprovalResponse) => void;
 } {
   const sessionId = 'session-1';
   const messageId = 'assistant-live';
@@ -243,7 +252,7 @@ function mountReducerPlan(): {
     expiresAt: '2026-01-01T00:05:00.000Z',
   };
   const initialState = createInitialState();
-  const snapshotMessages = [snapshotPlanMessage(approval)];
+  const snapshotMessages = [snapshotPlanMessage(approval, initialApprovalResult)];
   const state = shallowRef<KimiClientState>({
     ...initialState,
     messagesBySession: {
@@ -355,6 +364,35 @@ function mountReducerPlan(): {
         content: state.value.messagesBySession[sessionId]?.[0]?.content ?? [],
         status: 'completed',
         durationMs: 100,
+      });
+    },
+    resyncSnapshot(approvalResult) {
+      const snapshotMessages = [snapshotPlanMessage(approval, approvalResult)];
+      const nextState: KimiClientState = {
+        ...state.value,
+        messagesBySession: {
+          ...state.value.messagesBySession,
+          [sessionId]: mergeSnapshotMessages(
+            state.value.messagesBySession[sessionId] ?? [],
+            snapshotMessages,
+          ),
+        },
+      };
+      reconcilePlanReviewOverlaysFromSnapshot(
+        nextState,
+        sessionId,
+        snapshotMessages,
+        [],
+      );
+      state.value = nextState;
+    },
+    settleDurableMessage(approvalResult) {
+      applyEvent({
+        type: 'messageUpdated',
+        sessionId,
+        messageId,
+        content: snapshotPlanMessage(approval, approvalResult).content,
+        status: 'completed',
       });
     },
   };
@@ -750,6 +788,45 @@ describe('ToolCall plan review rendering (real component entry)', () => {
 
     expect(plan.host.textContent).toContain('Revision requested');
     expect(plan.host.textContent).toContain('Add rollback verification.');
+    expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
+  });
+
+  it('keeps the resolved card across an empty snapshot until durable history arrives', async () => {
+    const plan = mountReducerPlan();
+    await settleAsyncComponents();
+
+    plan.resolve({
+      decision: 'rejected',
+      selectedLabel: 'Revise',
+      feedback: 'Add rollback verification.',
+    });
+    await settleAsyncComponents();
+
+    plan.resyncSnapshot();
+    await settleAsyncComponents();
+    expect(plan.host.textContent).toContain('Revision requested');
+    expect(plan.host.textContent).toContain('Add rollback verification.');
+    expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
+
+    plan.settleDurableMessage({
+      decision: 'rejected',
+      selectedLabel: 'Revise',
+      feedback: 'Add rollback verification.',
+    });
+    await settleAsyncComponents();
+    expect(plan.host.textContent).toContain('Revision requested');
+    expect(plan.host.textContent).toContain('Add rollback verification.');
+    expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
+  });
+
+  it('renders one durable card when a stale snapshot still lists the approval', async () => {
+    const plan = mountReducerPlan({
+      decision: 'approved',
+      selectedLabel: 'Safe rollout',
+    });
+    await settleAsyncComponents();
+
+    expect(plan.host.textContent).toContain('Approved');
     expect(plan.host.querySelectorAll('.plan-card')).toHaveLength(1);
   });
 
