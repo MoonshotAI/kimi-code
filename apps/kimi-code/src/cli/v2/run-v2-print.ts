@@ -608,7 +608,11 @@ export async function applyPrintBackgroundPolicy(
     }
     if (input.countPending() === 0) return;
     const ended = await input.turnEndings.next(deadline - input.now(), input.skipTurnId);
-    if (ended === null) return;
+    if (ended === null) {
+      // The wait itself ran out: no further turn ended before the ceiling.
+      input.warn(`print steer ceiling reached (${input.ceilingS}s), finishing`);
+      return;
+    }
     if (ended.reason !== 'completed') {
       throw new PrintSteeredTurnFailedError(formatTurnEndingFailure(ended));
     }

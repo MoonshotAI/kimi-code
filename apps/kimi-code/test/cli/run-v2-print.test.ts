@@ -135,7 +135,7 @@ describe('applyPrintBackgroundPolicy', () => {
     expect(warn.mock.calls[0]?.[0]).toContain('ceiling');
   });
 
-  it('steer returns when the wait times out with tasks still pending', async () => {
+  it('steer warns and returns when the wait times out with tasks still pending', async () => {
     const warn = vi.fn();
     await applyPrintBackgroundPolicy({
       mode: 'steer',
@@ -149,7 +149,8 @@ describe('applyPrintBackgroundPolicy', () => {
       warn,
       now: () => Date.now(),
     });
-    expect(warn).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain('ceiling');
   });
 
   it('steer throws when a steered turn does not complete', async () => {
