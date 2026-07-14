@@ -252,6 +252,28 @@ describe('goal tools', () => {
     });
   });
 
+  it('UpdateGoal lets later calls run when an earlier same-batch call replaces its goal', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    eventBus.publish({ type: 'turn.started', turnId: 4, origin: USER_PROMPT_ORIGIN });
+
+    const results = await executeGoalCalls(
+      [
+        goalToolCall('call_replace', 'CreateGoal', { objective: 'new task', replace: true }),
+        goalToolCall('call_old_outcome', 'UpdateGoal', { status: 'complete' }),
+        goalToolCall('call_get_replacement', 'GetGoal', {}),
+      ],
+      4,
+    );
+
+    expect(results.find((result) => result.toolName === 'UpdateGoal')?.result.output).toBe(
+      'Goal changed since this turn started; ignored stale goal tool call.',
+    );
+    expect(results.find((result) => result.toolName === 'GetGoal')?.result.output).toContain(
+      '"objective": "new task"',
+    );
+    expect(goals.getGoal().goal).toMatchObject({ objective: 'new task', status: 'active' });
+  });
+
   it('UpdateGoal reports no active goal when completing/blocking/resuming without one', async () => {
     const done = updateGoalTool.resolveExecution({ status: 'complete' });
     if (done.isError === true) throw new Error('execution should not be an error');
@@ -292,7 +314,7 @@ describe('goal tools', () => {
 
   function goalToolCall(
     id: string,
-    name: 'CreateGoal' | 'SetGoalBudget',
+    name: 'CreateGoal' | 'GetGoal' | 'SetGoalBudget' | 'UpdateGoal',
     args: Record<string, unknown>,
   ): ToolCall {
     return { type: 'function', id, name, arguments: JSON.stringify(args) };

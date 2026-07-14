@@ -43,6 +43,7 @@ import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRe
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentUsageService, type UsageRecordedContext } from '#/agent/usage/usage';
 import type { GoalBudgetProperties } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -253,7 +254,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     );
     this._register(
       toolExecutor.hooks.onBeforeExecuteTool.register('goal-budget-reject', async (ctx, next) => {
-        if (this.isStaleGoalToolCall(ctx.turnId, ctx.toolCall.name)) {
+        if (this.isStaleGoalToolCall(ctx)) {
           ctx.decision = { syntheticResult: { output: GOAL_STALE_TOOL_RESULT } };
           return;
         }
@@ -718,9 +719,11 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return state?.status === 'active' && state.goalId === goalId;
   }
 
-  private isStaleGoalToolCall(turnId: number, toolName: string): boolean {
+  private isStaleGoalToolCall(ctx: ToolBeforeExecuteContext): boolean {
+    const toolName = ctx.toolCall.name;
     if (!isGoalMutationTool(toolName)) return false;
-    const goalId = this.goalTurnTarget(turnId);
+    if (isTerminalUpdateAfterEarlierReplacement(ctx)) return true;
+    const goalId = this.goalTurnTarget(ctx.turnId);
     if (goalId === undefined) return false;
     return this.goalState?.goalId !== goalId;
   }
@@ -898,6 +901,25 @@ function matchesGoal(state: GoalState, goalId: string | undefined): boolean {
 
 function isGoalMutationTool(toolName: string): boolean {
   return toolName === 'CreateGoal' || toolName === 'UpdateGoal' || toolName === 'SetGoalBudget';
+}
+
+function isTerminalUpdateAfterEarlierReplacement(ctx: ToolBeforeExecuteContext): boolean {
+  if (ctx.toolCall.name !== 'UpdateGoal' || !isPlainRecord(ctx.args)) return false;
+  const status = ctx.args['status'];
+  if (status !== 'complete' && status !== 'blocked') return false;
+  const currentIndex = ctx.toolCalls.findIndex((call) => call.id === ctx.toolCall.id);
+  if (currentIndex <= 0) return false;
+  return ctx.toolCalls.slice(0, currentIndex).some(isGoalReplacementCall);
+}
+
+function isGoalReplacementCall(call: ToolBeforeExecuteContext['toolCall']): boolean {
+  if (call.name !== 'CreateGoal' || call.arguments === null) return false;
+  try {
+    const args = JSON.parse(call.arguments) as unknown;
+    return isPlainRecord(args) && args['replace'] === true;
+  } catch {
+    return false;
+  }
 }
 
 function goalBudgetBlockReason(budget: GoalBudgetReport): string | undefined {
