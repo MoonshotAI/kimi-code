@@ -4,7 +4,10 @@
  * Owns this session's terminal set and its per-terminal output buffers and
  * attached sinks; spawns PTYs through the App-scoped `IHostTerminalService`,
  * resolves the working directory through `workspaceContext`, and reads the
- * session id through `sessionContext` to tag frames. Bound at Session scope.
+ * session id through `sessionContext` to tag frames. Keeps replay output and
+ * exited terminal history bounded while live terminals remain owned until
+ * exit or Session disposal, and rejects PTYs that arrive after Session
+ * teardown. Bound at Session scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -31,12 +34,15 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 const DEFAULT_MAX_BUFFERED_FRAMES = 2000;
+const DEFAULT_MAX_BUFFERED_OUTPUT_BYTES = 1_048_576;
+const DEFAULT_MAX_EXITED_TERMINALS = 16;
 
 interface TerminalRecord {
   terminal: Terminal;
   process: TerminalProcess;
   sinks: Map<string, TerminalAttachSink>;
   buffer: TerminalFrame[];
+  bufferedOutputBytes: number;
   nextSeq: number;
   disposables: IDisposable[];
   closed: boolean;
@@ -67,6 +73,8 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   declare readonly _serviceBrand: undefined;
 
   private readonly records = new Map<string, TerminalRecord>();
+  private readonly exitedRecords: TerminalRecord[] = [];
+  private _disposed = false;
 
   constructor(
     @IHostTerminalService private readonly terminalService: IHostTerminalService,
@@ -77,6 +85,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   }
 
   async create(input: CreateTerminalRequest): Promise<Terminal> {
+    this.assertActive();
     const cwd =
       input.cwd === undefined
         ? this.workspace.workDir
@@ -85,6 +94,10 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
     const cols = input.cols ?? DEFAULT_COLS;
     const rows = input.rows ?? DEFAULT_ROWS;
     const process = await this.terminalService.spawn({ cwd, shell, cols, rows });
+    if (this._disposed) {
+      killQuietly(process);
+      throw this.closedError();
+    }
     const terminal: Terminal = {
       id: `term_${randomUUID()}`,
       session_id: this.sessionContext.sessionId,
@@ -100,6 +113,7 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       process,
       sinks: new Map(),
       buffer: [],
+      bufferedOutputBytes: 0,
       nextSeq: 0,
       disposables: [],
       closed: false,
@@ -108,6 +122,11 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       process.onProcessData((data) => this.onData(record, data)),
       process.onProcessExit((event) => this.onExit(record, event.exitCode)),
     );
+    if (this._disposed) {
+      disposeAll(record.disposables);
+      killQuietly(process);
+      throw this.closedError();
+    }
     this.records.set(terminal.id, record);
     return { ...terminal };
   }
@@ -128,7 +147,9 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
     options: TerminalAttachOptions = {},
   ): Promise<{ replayed: number }> {
     const record = this.requireRecord(terminalId);
-    record.sinks.set(sink.id, sink);
+    if (record.terminal.status === 'running') {
+      record.sinks.set(sink.id, sink);
+    }
     const sinceSeq = options.sinceSeq ?? 0;
     const replay = record.buffer.filter((frame) => frameSeq(frame) > sinceSeq);
     for (const frame of replay) {
@@ -169,15 +190,15 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
   }
 
   override dispose(): void {
+    this._disposed = true;
     for (const record of this.records.values()) {
       disposeAll(record.disposables);
-      try {
-        record.process.kill();
-      } catch {
-        // best-effort cleanup
+      if (record.terminal.status === 'running') {
+        killQuietly(record.process);
       }
     }
     this.records.clear();
+    this.exitedRecords.length = 0;
     super.dispose();
   }
 
@@ -190,6 +211,17 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       );
     }
     return record;
+  }
+
+  private assertActive(): void {
+    if (this._disposed) throw this.closedError();
+  }
+
+  private closedError(): Error2 {
+    return new Error2(
+      ErrorCodes.SESSION_CLOSED,
+      `session ${this.sessionContext.sessionId} is closed`,
+    );
   }
 
   private onData(record: TerminalRecord, data: string): void {
@@ -224,18 +256,44 @@ export class SessionTerminalService extends Disposable implements ISessionTermin
       timestamp: new Date().toISOString(),
       payload: { exit_code: exitCode },
     };
-    this.pushFrame(record, frame);
-    disposeAll(record.disposables);
-    record.disposables = [];
+    try {
+      this.pushFrame(record, frame);
+    } finally {
+      disposeAll(record.disposables);
+      record.disposables = [];
+      record.sinks.clear();
+      this.exitedRecords.push(record);
+      this.pruneExitedRecords();
+    }
   }
 
   private pushFrame(record: TerminalRecord, frame: TerminalFrame): void {
-    record.buffer.push(frame);
-    if (record.buffer.length > DEFAULT_MAX_BUFFERED_FRAMES) {
-      record.buffer.splice(0, record.buffer.length - DEFAULT_MAX_BUFFERED_FRAMES);
+    const buffered = boundedReplayFrame(frame);
+    record.buffer.push(buffered.frame);
+    record.bufferedOutputBytes += buffered.outputBytes;
+    while (
+      record.buffer.length > DEFAULT_MAX_BUFFERED_FRAMES ||
+      record.bufferedOutputBytes > DEFAULT_MAX_BUFFERED_OUTPUT_BYTES
+    ) {
+      const removed = record.buffer.shift();
+      if (removed !== undefined) {
+        record.bufferedOutputBytes -= outputBytes(removed);
+      }
     }
     for (const sink of record.sinks.values()) {
       sink.send(frame);
+    }
+  }
+
+  private pruneExitedRecords(): void {
+    while (this.exitedRecords.length > DEFAULT_MAX_EXITED_TERMINALS) {
+      const record = this.exitedRecords.shift();
+      if (record === undefined) return;
+      if (this.records.get(record.terminal.id) !== record) continue;
+      this.records.delete(record.terminal.id);
+      record.buffer = [];
+      record.bufferedOutputBytes = 0;
+      record.sinks.clear();
     }
   }
 }
@@ -246,14 +304,64 @@ function disposeAll(items: Iterable<IDisposable>): void {
   }
 }
 
+function killQuietly(process: TerminalProcess): void {
+  try {
+    process.kill();
+  } catch {}
+}
+
 function frameSeq(frame: TerminalFrame): number {
   return frame.type === 'terminal_output' ? frame.seq : Number.MAX_SAFE_INTEGER;
 }
 
+function outputBytes(frame: TerminalFrame): number {
+  return frame.type === 'terminal_output' ? Buffer.byteLength(frame.payload.data) : 0;
+}
+
+function boundedReplayFrame(
+  frame: TerminalFrame,
+): { frame: TerminalFrame; outputBytes: number } {
+  if (frame.type !== 'terminal_output') return { frame, outputBytes: 0 };
+  const bytes =
+    frame.payload.data.length > DEFAULT_MAX_BUFFERED_OUTPUT_BYTES
+      ? DEFAULT_MAX_BUFFERED_OUTPUT_BYTES + 1
+      : outputBytes(frame);
+  if (bytes <= DEFAULT_MAX_BUFFERED_OUTPUT_BYTES) {
+    return { frame, outputBytes: bytes };
+  }
+  const suffix = utf8Suffix(frame.payload.data, DEFAULT_MAX_BUFFERED_OUTPUT_BYTES);
+  return {
+    frame: { ...frame, payload: { data: suffix.value } },
+    outputBytes: suffix.bytes,
+  };
+}
+
+function utf8Suffix(value: string, maxBytes: number): { value: string; bytes: number } {
+  let bytes = 0;
+  let start = value.length;
+  while (start > 0) {
+    const next = precedingUtf8CodePoint(value, start);
+    if (bytes + next.bytes > maxBytes) break;
+    bytes += next.bytes;
+    start = next.start;
+  }
+  return { value: Buffer.from(value.slice(start)).toString('utf8'), bytes };
+}
+
+function precedingUtf8CodePoint(value: string, end: number): { start: number; bytes: number } {
+  const last = value.codePointAt(end - 1)!;
+  if (last >= 0xdc00 && last <= 0xdfff && end > 1) {
+    const previous = value.codePointAt(end - 2)!;
+    if (previous > 0xffff) {
+      return { start: end - 2, bytes: 4 };
+    }
+  }
+  if (last <= 0x7f) return { start: end - 1, bytes: 1 };
+  if (last <= 0x7ff) return { start: end - 1, bytes: 2 };
+  return { start: end - 1, bytes: 3 };
+}
+
 function defaultShell(): string {
-  // Use `||` (not `??`): an EMPTY $SHELL (set but blank, as some daemon/launchd
-  // envs leave it) must still fall back, or a PTY spawn fails with
-  // "posix_spawnp failed".
   return process.env['SHELL'] || '/bin/sh';
 }
 
