@@ -373,6 +373,7 @@ async function runNativeTurn(
     if (result.type === 'completed') {
       const configService = app.accessor.get(IConfigService);
       const taskConfig = resolveAgentTaskConfig(configService);
+      const goalService = agent.accessor.get(IAgentGoalService);
       try {
         await applyPrintBackgroundPolicy({
           mode: resolvePrintBackgroundMode(configService),
@@ -384,6 +385,7 @@ async function runNativeTurn(
           skipTurnId: turn.id,
           warn: (message) => stderr.write(`Warning: ${message}\n`),
           now: () => Date.now(),
+          goalActive: () => goalService.getGoal().goal?.status === 'active',
         });
       } catch (error) {
         // A steered turn that fails fails the run (v1 parity). Anything else
@@ -537,9 +539,11 @@ export function createPrintTurnEndings(): PrintTurnEndings & {
             // oxlint-disable-next-line promise/no-multiple-resolved -- `settled` guards the single resolve; the rule cannot see it
             resolve(value);
           };
-          const timer = setTimeout(() => {
-            settle(null);
-          }, ms);
+          const timer = Number.isFinite(ms)
+            ? setTimeout(() => {
+                settle(null);
+              }, ms)
+            : undefined;
           waiter = settle;
         });
       for (;;) {
@@ -571,11 +575,21 @@ export interface PrintBackgroundPolicyInput {
   readonly skipTurnId: number;
   readonly warn: (message: string) => void;
   readonly now: () => number;
+  /**
+   * Reports whether an agent goal is still `active`. v2 drives goal
+   * continuation as new turns (v1 keeps a single turn alive), so a `-p` goal
+   * run must stay alive until the goal leaves `active`, independent of the
+   * background policy.
+   */
+  readonly goalActive?: () => boolean;
 }
 
 /**
  * Apply the print-mode (`kimi -p`) background-task policy after the main turn
  * completes. Mirrors v1's `Session.handlePrintMainTurnCompleted`:
+ *  - goal    : while a goal is `active`, keep waiting for its continuation
+ *              turns (bounded by `ceilingS` as a safety net), regardless of
+ *              the background mode; the goal summary drives the exit code.
  *  - 'exit'  : return immediately (default).
  *  - 'drain' : suppress + drain background tasks, then return.
  *  - 'steer' : while background tasks are still pending, stay alive so task
@@ -587,6 +601,21 @@ export interface PrintBackgroundPolicyInput {
 export async function applyPrintBackgroundPolicy(
   input: PrintBackgroundPolicyInput,
 ): Promise<void> {
+  if (input.goalActive !== undefined) {
+    const goalDeadline = input.now() + input.ceilingS * 1000;
+    while (input.goalActive()) {
+      const ended = await input.turnEndings.next(
+        goalDeadline - input.now(),
+        input.skipTurnId,
+      );
+      if (ended === null) {
+        input.warn(`print goal wait ceiling reached (${input.ceilingS}s), finishing`);
+        return;
+      }
+      // A continuation turn that does not complete pauses/blocks the goal, so
+      // the loop condition exits on the next check.
+    }
+  }
   if (input.mode === 'exit') return;
   if (input.mode === 'drain') {
     await input.drain();
