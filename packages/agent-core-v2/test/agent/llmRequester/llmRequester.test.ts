@@ -161,6 +161,16 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('records the resolved Kimi thinking keep default when thinking is enabled', async () => {
+      ctx.configure({
+        modelCapabilities: {
+          image_in: false,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000_000,
+        },
+      });
       ctx.get(IAgentProfileService).update({ thinkingLevel: 'high' });
       ctx.mockNextResponse({ type: 'text', text: 'thinking response' });
 
@@ -168,8 +178,37 @@ describe('LLMRequester service migration coverage', () => {
 
       expect(wireEvents(ctx, 'llm.request')).toHaveLength(1);
       expect(wireEvents(ctx, 'llm.request')[0]?.args).toMatchObject({
-        thinkingEffort: 'high',
+        thinkingEffort: 'on',
         thinkingKeep: 'all',
+      });
+    });
+
+    it('records the env-forced Kimi effort used by the provider', async () => {
+      await ctx.dispose();
+      vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+      ctx = createTestAgent();
+      llmRequester = ctx.get(IAgentLLMRequesterService);
+      ctx.configure({
+        modelCapabilities: {
+          image_in: false,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000_000,
+        },
+      });
+      const profile = ctx.get(IAgentProfileService);
+      profile.update({ thinkingLevel: 'high' });
+      expect(profile.data().thinkingLevel).toBe('on');
+      expect(profile.resolveModelContext().thinkingLevel).toBe('max');
+      ctx.mockNextResponse({ type: 'text', text: 'forced thinking response' });
+
+      await llmRequester.request();
+
+      expect(wireEvents(ctx, 'llm.request')).toHaveLength(1);
+      expect(wireEvents(ctx, 'llm.request')[0]?.args).toMatchObject({
+        thinkingEffort: 'max',
       });
     });
 

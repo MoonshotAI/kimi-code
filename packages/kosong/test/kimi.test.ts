@@ -23,15 +23,11 @@ function makeChatCompletionResponse(model: string = 'test-model') {
   };
 }
 
-function createProvider(
-  stream: boolean = false,
-  supportEfforts?: readonly string[],
-): KimiChatProvider {
+function createProvider(stream: boolean = false): KimiChatProvider {
   return new KimiChatProvider({
     model: 'kimi-k2-turbo-preview',
     apiKey: 'test-key',
     stream,
-    supportEfforts,
   });
 }
 
@@ -901,7 +897,7 @@ describe('KimiChatProvider', () => {
 
       expect(getGenerationState(provider)).toEqual({
         extra_body: {
-          thinking: { type: 'enabled' },
+          thinking: { type: 'enabled', effort: 'high' },
         },
         max_tokens: 512,
       });
@@ -938,7 +934,7 @@ describe('KimiChatProvider', () => {
   });
 
   describe('with thinking', () => {
-    it('model without support_efforts omits effort', async () => {
+    it('sends concrete effort strings verbatim', async () => {
       const provider = createProvider().withThinking('high');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
@@ -946,12 +942,12 @@ describe('KimiChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], history);
 
       expect(body['reasoning_effort']).toBeUndefined();
-      expect(body['thinking']).toEqual({ type: 'enabled' });
+      expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high' });
       expect(body['extra_body']).toBeUndefined();
     });
 
     it('effort-capable model sends thinking.effort', async () => {
-      const provider = createProvider(false, ['low', 'high', 'max']).withThinking('high');
+      const provider = createProvider().withThinking('high');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
@@ -962,7 +958,7 @@ describe('KimiChatProvider', () => {
     });
 
     it('effort-capable model passes max through to thinking.effort (no clamp)', async () => {
-      const provider = createProvider(false, ['low', 'high', 'max']).withThinking('max');
+      const provider = createProvider().withThinking('max');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
@@ -972,7 +968,7 @@ describe('KimiChatProvider', () => {
     });
 
     it('hoists thinking disabled and clears reasoning_effort for off', async () => {
-      const provider = createProvider(false, ['low', 'high', 'max']).withThinking('off');
+      const provider = createProvider().withThinking('off');
       const history: Message[] = [
         { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
       ];
@@ -983,22 +979,22 @@ describe('KimiChatProvider', () => {
       expect(body['extra_body']).toBeUndefined();
     });
 
-    it('effort-capable model omits effort for efforts not declared in support_efforts', async () => {
-      // 'xhigh' / 'on' / 'foo' are not in ['low', 'high', 'max'], so the
-      // provider normalizes them to "enabled, no effort" instead of rejecting.
+    it('omits the effort only for the boolean on signal', async () => {
       for (const effort of ['xhigh', 'on', 'foo']) {
-        const provider = createProvider(false, ['low', 'high', 'max']).withThinking(effort);
+        const provider = createProvider().withThinking(effort);
         const history: Message[] = [
           { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
         ];
         const body = await captureRequestBody(provider, '', [], history);
         expect(body['reasoning_effort']).toBeUndefined();
-        expect(body['thinking']).toEqual({ type: 'enabled' });
+        expect(body['thinking']).toEqual(
+          effort === 'on' ? { type: 'enabled' } : { type: 'enabled', effort },
+        );
       }
     });
 
     it('thinkingEffort property reflects the configured effort', () => {
-      const provider = createProvider(false, ['low', 'high', 'max']);
+      const provider = createProvider();
       expect(provider.thinkingEffort).toBeNull();
 
       expect(provider.withThinking('high').thinkingEffort).toBe('high');
@@ -1007,17 +1003,15 @@ describe('KimiChatProvider', () => {
       expect(provider.withThinking('off').thinkingEffort).toBe('off');
     });
 
-    it("thinkingEffort falls back to 'on' when support_efforts is absent", () => {
+    it("thinkingEffort reports 'on' only for the boolean on signal", () => {
       const provider = createProvider();
-      // Without declared efforts the wire object carries no `effort`, so the
-      // getter reports boolean-thinking ("on") for any non-off effort.
-      expect(provider.withThinking('high').thinkingEffort).toBe('on');
+      expect(provider.withThinking('high').thinkingEffort).toBe('high');
       expect(provider.withThinking('on').thinkingEffort).toBe('on');
       expect(provider.withThinking('off').thinkingEffort).toBe('off');
     });
 
     it('replaces the previous thinking effort when called again', () => {
-      const provider = createProvider(false, ['low', 'high', 'max'])
+      const provider = createProvider()
         .withThinking('high')
         .withThinking('off');
 
@@ -1572,7 +1566,7 @@ describe('KimiChatProvider', () => {
 
   describe('withThinking medium', () => {
     it('maps medium -> thinking.effort=medium for an effort-capable model', () => {
-      const provider = createProvider(false, ['low', 'medium', 'high']).withThinking('medium');
+      const provider = createProvider().withThinking('medium');
       expect(provider.thinkingEffort).toBe('medium');
     });
   });
@@ -1590,7 +1584,7 @@ describe('KimiChatProvider', () => {
     });
 
     it('field-merges thinking when called after withThinking', async () => {
-      const provider = createProvider(false, ['low', 'high', 'max'])
+      const provider = createProvider()
         .withThinking('high')
         .withExtraBody({ thinking: { keep: 'all' } });
       const history: Message[] = [
@@ -1619,7 +1613,7 @@ describe('KimiChatProvider', () => {
         .withThinking('high');
 
       expect(getGenerationState(provider).extra_body).toEqual({
-        thinking: { type: 'enabled', keep: 'all' },
+        thinking: { type: 'enabled', effort: 'high', keep: 'all' },
       });
     });
 
@@ -1632,7 +1626,7 @@ describe('KimiChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['thinking']).toEqual({ type: 'enabled' });
+      expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high' });
     });
 
     it('treats empty thinking patch as noop, preserving prior withThinking', async () => {
@@ -1642,7 +1636,7 @@ describe('KimiChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect(body['thinking']).toEqual({ type: 'enabled' });
+      expect(body['thinking']).toEqual({ type: 'enabled', effort: 'high' });
     });
   });
 
