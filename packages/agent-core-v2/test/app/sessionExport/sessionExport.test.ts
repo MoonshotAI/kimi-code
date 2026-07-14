@@ -916,6 +916,7 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
 function stubAgentWire(flush: () => Promise<void> = async () => {}): IAgentWireRecordService {
   return {
     _serviceBrand: undefined,
+    seal: async () => {},
     getRecords: () => [],
     restore: async () => ({}),
     flush,

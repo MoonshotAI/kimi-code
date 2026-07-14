@@ -24,6 +24,7 @@ import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 export function stubWireRecord(): IAgentWireRecordService {
   return {
     _serviceBrand: undefined,
+    seal: () => Promise.resolve(),
     restore: () => Promise.resolve({}),
     flush: () => Promise.resolve(),
     close: () => Promise.resolve(),

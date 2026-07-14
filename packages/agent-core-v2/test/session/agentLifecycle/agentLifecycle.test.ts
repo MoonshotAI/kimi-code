@@ -28,6 +28,7 @@ import { SessionSubagentService } from '#/session/subagent/subagentService';
 import '#/activity/agentActivityService';
 import '#/agent/mcp/mcpService';
 import '#/agent/wireRecord/agentWireService';
+import '#/agent/wireRecord/wireRecordService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import '#/agent/toolDedupe/toolDedupeService';
@@ -42,7 +43,10 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { type PersistedWireRecord } from '#/agent/wireRecord/wireRecord';
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+  type PersistedWireRecord,
+} from '#/agent/wireRecord/wireRecord';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -324,6 +328,34 @@ describe('AgentLifecycleService', () => {
     });
   });
 
+  it('seals a fresh wire log with the metadata envelope as the first record', async () => {
+    const log = recordingAppendLog();
+    ix.stub(IAppendLogStore, log.store);
+    const svc = ix.get(IAgentLifecycleService);
+
+    await svc.create({ agentId: 'main' });
+
+    expect(log.appended[0]).toMatchObject({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+    });
+  });
+
+  it('does not re-seal a wire log that already has records', async () => {
+    const existing: PersistedWireRecord = {
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'existing' }],
+      origin: { kind: 'user' },
+    } as unknown as PersistedWireRecord;
+    const log = recordingAppendLog([existing]);
+    ix.stub(IAppendLogStore, log.store);
+    const svc = ix.get(IAgentLifecycleService);
+
+    await svc.create({ agentId: 'main' });
+
+    expect(log.appended.some((record) => record.type === 'metadata')).toBe(false);
+  });
+
   it('leaves permission mode at the default when permissionMode is omitted', async () => {
     const svc = ix.get(IAgentLifecycleService);
 
@@ -442,12 +474,16 @@ describe('AgentLifecycleService', () => {
 
   it('exposes the in-flight handle and yields it idle after bootstrap', async () => {
     let releaseRegister!: () => void;
-    registerAgent.mockImplementationOnce(
-      () =>
-        new Promise<void>((resolve) => {
-          releaseRegister = resolve;
-        }),
-    );
+    let registerStarted!: () => void;
+    const registerCalled = new Promise<void>((resolve) => {
+      registerStarted = resolve;
+    });
+    registerAgent.mockImplementationOnce(() => {
+      registerStarted();
+      return new Promise<void>((resolve) => {
+        releaseRegister = resolve;
+      });
+    });
     const svc = ix.get(IAgentLifecycleService);
     const create = svc.create({ agentId: 'main' });
 
@@ -456,6 +492,9 @@ describe('AgentLifecycleService', () => {
     expect(early!.accessor.get(IAgentActivityService).lane()).toBe('initializing');
 
     const joined = svc.create({ agentId: 'main' });
+    // doCreate awaits the wire-log seal before registerAgent, so the mock is
+    // invoked a few microtasks after create() — wait for the actual call.
+    await registerCalled;
     releaseRegister();
     const handle = await joined;
     await create;

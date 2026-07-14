@@ -3,9 +3,13 @@
  *
  * Restores and retains the owning agent's wire journal, applies protocol
  * migrations, rejects non-empty unversioned logs, and awaits durable atomic
- * rewrites before restore completes. Tracks live records through `wire`, uses
- * `agent/scopeContext` for storage addressing, and persists through the
- * `appendLog` access-pattern store. Bound at Agent scope.
+ * rewrites before restore completes. Seals fresh logs with the `metadata`
+ * envelope at creation (`seal`) so released v1 builds — whose replay
+ * hard-rejects envelope-less logs — can read sessions on a shared
+ * `KIMI_CODE_HOME`; legacy envelope-less logs are healed on `restore`.
+ * Tracks live records through `wire`, uses `agent/scopeContext` for storage
+ * addressing, and persists through the `appendLog` access-pattern store.
+ * Bound at Agent scope.
  */
 
 import { relative } from 'pathe';
@@ -13,6 +17,7 @@ import { relative } from 'pathe';
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { onUnexpectedError } from '#/_base/errors/unexpectedError';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAgentWireService } from '#/wire/tokens';
@@ -62,6 +67,14 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
 
   getRecords(): readonly PersistedWireRecord[] {
     return [...this.records];
+  }
+
+  async seal(): Promise<void> {
+    if (this.log === undefined) return;
+    if (await hasAnyRecord(this.log, this.wireScope, WIRE_RECORD_FILENAME)) return;
+    this.log.append(this.wireScope, WIRE_RECORD_FILENAME, metadataRecord(), {
+      onError: onUnexpectedError,
+    });
   }
 
   async restore(
@@ -159,6 +172,14 @@ registerScopedService(
 
 function isWireRecordMetadata(record: PersistedWireRecord): record is WireRecordMetadata {
   return record.type === 'metadata' && typeof record['protocol_version'] === 'string';
+}
+
+async function hasAnyRecord(log: IAppendLogStore, scope: string, key: string): Promise<boolean> {
+  for await (const record of log.read(scope, key)) {
+    void record;
+    return true;
+  }
+  return false;
 }
 
 export const WIRE_RECORD_FILENAME = 'wire.jsonl';

@@ -141,6 +141,11 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
       createdAt: now,
       updatedAt: now,
       archived: false,
+      // Seed the maps v1 reads unconditionally on resume (`agents['main']` in
+      // v1's Session.resume()); v1 also defaults both on fresh sessions, so a
+      // v2-created state.json stays openable by released v1 builds.
+      agents: {},
+      custom: {},
     };
     await this.store.set(this.scope, META_KEY, this.data);
     this.log.debug('session metadata created', { sessionId: this.ctx.sessionId });

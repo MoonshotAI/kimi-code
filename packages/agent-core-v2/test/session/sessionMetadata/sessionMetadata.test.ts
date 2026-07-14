@@ -51,7 +51,14 @@ describe('SessionMetadata', () => {
 
   it('creates an initial document on first read', async () => {
     const meta = ix.get(ISessionMetadata);
-    expect(await meta.read()).toMatchObject({ id: 's1', archived: false });
+    expect(await meta.read()).toMatchObject({
+      id: 's1',
+      archived: false,
+      // Seeded so released v1 builds can open a v2-created state.json
+      // (v1's Session.resume() indexes `agents` unconditionally).
+      agents: {},
+      custom: {},
+    });
     expect((await meta.read()).createdAt).toBeGreaterThan(0);
   });
 

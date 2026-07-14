@@ -294,6 +294,69 @@ describe('wire record append-log persistence', () => {
   });
 });
 
+describe('AgentWireRecordService seal', () => {
+  it('appends the metadata envelope to an empty log', async () => {
+    const { dir, log } = await createFileAppendLogHarness();
+    const svc = createWireRecordHarness(log);
+
+    await svc.seal();
+    await log.close();
+
+    const lines = await readLines(join(dir, SCOPE, KEY));
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+    });
+  });
+
+  it('is a no-op on a non-empty log', async () => {
+    const { dir, log } = await createFileAppendLogHarness();
+    log.append(SCOPE, KEY, {
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'existing' }],
+      origin: { kind: 'user' },
+    });
+    await log.flush();
+    const svc = createWireRecordHarness(log);
+
+    await svc.seal();
+    await log.close();
+
+    const lines = await readLines(join(dir, SCOPE, KEY));
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)['type']).toBe('turn.prompt');
+  });
+
+  it('seals only once across repeated calls', async () => {
+    const { dir, log } = await createFileAppendLogHarness();
+    const svc = createWireRecordHarness(log);
+
+    await svc.seal();
+    await svc.seal();
+    await log.close();
+
+    const lines = await readLines(join(dir, SCOPE, KEY));
+    expect(lines).toHaveLength(1);
+  });
+
+  it('restore after seal keeps the sealed log untouched', async () => {
+    const { dir, log } = await createFileAppendLogHarness();
+    const svc = createWireRecordHarness(log);
+
+    await svc.seal();
+    await svc.restore();
+    await log.close();
+
+    const lines = await readLines(join(dir, SCOPE, KEY));
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+    });
+  });
+});
+
 describe('AgentWireRecordService migration rewrite', () => {
   async function seedLegacyLog(storage: InMemoryStorageService): Promise<IAppendLogStore> {
     const log = createAppendLogHarness(storage);
