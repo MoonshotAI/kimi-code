@@ -88,7 +88,11 @@ async function onCancel(): Promise<void> {
     </template>
 
     <template #foot>
-      <div class="goal-footer">
+      <div
+        class="goal-footer"
+        :inert="!expanded"
+        :aria-hidden="!expanded"
+      >
         <div class="goal-meta">
           <span>{{ goal.turnsUsed }} turns</span>
           <span>{{ goal.tokensUsed.toLocaleString() }} tokens</span>
