@@ -150,6 +150,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
 
   private async doCreate(agentId: string, opts: CreateAgentOptions): Promise<IAgentScopeHandle> {
     const mcpReady = this.sessionMcp.ensureMcpReady();
+    const agentHomedir = this.bootstrap.agentHomedir(
+      this.ctx.workspaceId,
+      this.ctx.sessionId,
+      agentId,
+    );
     const agentScope = this.bootstrap.agentScope(
       this.ctx.workspaceId,
       this.ctx.sessionId,
@@ -168,6 +173,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     this.handles.set(agentId, handle);
     try {
       await this.sessionMetadata.registerAgent(agentId, {
+        homedir: agentHomedir,
         type: agentId === 'main' ? 'main' : 'sub',
         parentAgentId: agentId === 'main' ? undefined : 'main',
         forkedFrom: opts.forkedFrom,

@@ -179,6 +179,8 @@ describe('AgentLifecycleService', () => {
       cwd: '/tmp/kimi-agentLifecycle-home',
       agentScope: (_ws: string, _session: string, agentId: string) =>
         `test/agents/${agentId}`,
+      agentHomedir: (workspaceId: string, sessionId: string, agentId: string) =>
+        `/tmp/kimi-agentLifecycle-home/sessions/${workspaceId}/${sessionId}/agents/${agentId}`,
     } as unknown as IBootstrapService);
     ix.stub(ISessionWorkspaceContext, {
       _serviceBrand: undefined,
@@ -305,7 +307,7 @@ describe('AgentLifecycleService', () => {
     expect(a.id).not.toBe(b.id);
   });
 
-  it('persists provenance and labels when creating an agent', async () => {
+  it('persists complete agent metadata when creating a child', async () => {
     const svc = ix.get(IAgentLifecycleService);
 
     const child = await svc.create({
@@ -316,6 +318,7 @@ describe('AgentLifecycleService', () => {
 
     expect(child.id).toBe('child');
     expect(registerAgent).toHaveBeenCalledWith('child', {
+      homedir: '/tmp/kimi-agentLifecycle-home/sessions/ws_test/sess_test/agents/child',
       type: 'sub',
       parentAgentId: 'main',
       forkedFrom: 'main',

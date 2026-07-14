@@ -312,11 +312,16 @@ describe('AgentProfileService (wire-backed config.update)', () => {
   it('returns the persisted effort when a replayed model alias no longer resolves', async () => {
     const host = buildHost('profile-replay-removed-model');
 
-    await host.wire.replay({
-      type: 'config.update',
-      modelAlias: 'removed-model',
-      thinkingEffort: 'high',
-    });
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'profile-replay-removed-model'),
+      [{
+        type: 'config.update',
+        modelAlias: 'removed-model',
+        thinkingEffort: 'high',
+      }],
+    );
 
     expect(host.svc.getEffectiveThinkingLevel()).toBe('high');
   });

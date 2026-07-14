@@ -213,6 +213,50 @@ describe('Session.init', () => {
     }
   });
 
+  it('resumes a v2 session from the standard path instead of persisted homedir', async () => {
+    const workDir = await makeTempDir();
+    const sessionDir = await makeTempDir();
+    const options = {
+      id: 'test-resume-without-agent-homedir',
+      kaos: testKaos.withCwd(workDir),
+      persistenceKaos: testKaos.withCwd(workDir),
+      homedir: sessionDir,
+      rpc: createSessionRpc([]),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+      providerManager: testProviderManager(),
+    };
+    const firstSession = new Session(options);
+    try {
+      await firstSession.createMain();
+    } finally {
+      await firstSession.closeForReload();
+    }
+
+    const statePath = join(sessionDir, 'state.json');
+    const now = Date.now();
+    await writeFile(statePath, JSON.stringify({
+      id: options.id,
+      version: 2,
+      createdAt: now,
+      updatedAt: now,
+      archived: false,
+      cwd: workDir,
+      agents: { main: { homedir: '/stale/session/agents/main', type: 'main' } },
+      custom: {},
+    }), 'utf-8');
+
+    const resumedSession = new Session(options);
+    try {
+      await resumedSession.resume();
+      const main = await resumedSession.ensureAgentResumed('main');
+
+      expect(main.homedir).toBe(join(sessionDir, 'agents', 'main'));
+      expect(main.config.systemPrompt).not.toBe('');
+    } finally {
+      await resumedSession.close();
+    }
+  });
+
   it('rebuilds builtin tools when rebinding the session tool kaos', async () => {
     const workDir = await makeTempDir();
     const sessionDir = await makeTempDir();
