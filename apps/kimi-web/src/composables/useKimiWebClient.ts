@@ -569,6 +569,7 @@ function forgetSession(sessionId: string): void {
   // buffered event for this id would otherwise be reduced and recreate the very
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
+  sideChat.clearSideChatForSession(sessionId);
   dropWsSubscription(sessionId);
   // Drain the streaming-event batcher too. unsubscribe() stops future server
   // frames, but events already queued for the next animation frame would
@@ -872,6 +873,10 @@ function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number
   // persistent divider marker in the reducer (TUI parity: the scrollback
   // is kept, only a marker line records the compaction).
   applyEvent(appEvent, meta.sessionId, meta.seq);
+
+  if (appEvent.type === 'sessionDeleted') {
+    sideChat.clearSideChatForSession(appEvent.sessionId);
+  }
 
   const sideTarget = sideChat.sideChatTargetBySession.value[meta.sessionId];
   if (sideTarget) {

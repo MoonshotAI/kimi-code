@@ -581,9 +581,14 @@ export interface KimiEventConnection {
   /**
    * Mark an agent as a side-channel (e.g. BTW side chat). The client-side
    * projector will then emit its text/thinking deltas as agent-scoped events
-   * instead of dropping them like background subagents.
+   * instead of dropping them like background subagents. New callers should
+   * pass the parent session id so routing stays scoped to that session; the
+   * marker is cleared when the side chat is explicitly closed. The optional
+   * form keeps older callers working.
    */
-  markSideChannelAgent(agentId: string): void;
+  markSideChannelAgent(agentId: string, sessionId?: string): void;
+  /** Remove a side-channel marker when the side chat is explicitly closed. */
+  clearSideChannelAgent(agentId: string, sessionId?: string): void;
   /**
    * Report the underlying socket's health. Used to detect a silent-half-open
    * connection after the tab was frozen in the background: the browser still

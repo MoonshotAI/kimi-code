@@ -8,9 +8,15 @@
 import { describe, expect, it } from 'vitest';
 import { classifyFrame, createAgentProjector, subagentProgressText } from '../src/api/daemon/agentEventProjector';
 
+function createActiveProjector(sessionId = 's1') {
+  const projector = createAgentProjector();
+  projector.activate(sessionId);
+  return projector;
+}
+
 describe('main-agent tool display projection (live transcript)', () => {
   it('includes the plan display when tool.call.started updates the assistant message', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector('session-1');
     projector.project('turn.started', { turnId: 1 }, 'session-1');
     projector.project('turn.step.started', { turnId: 1, step: 1 }, 'session-1');
 
@@ -49,7 +55,7 @@ describe('main-agent tool display projection (live transcript)', () => {
   });
 
   it('includes the plan display when a refresh seeds an in-flight tool', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
 
     const events = projector.seedInFlight('session-1', {
       turnId: 1,
@@ -129,7 +135,7 @@ describe('subagentProgressText', () => {
 
 describe('subagent streaming text', () => {
   it('forwards a subagent assistant.delta as a text-kind taskProgress', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
     const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: 'Hello' }, 's1');
     expect(events).toContainEqual({
       type: 'taskProgress',
@@ -142,7 +148,7 @@ describe('subagent streaming text', () => {
   });
 
   it('drops an empty subagent assistant.delta', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
     const events = projector.project('assistant.delta', { agentId: 'sub-1', delta: '' }, 's1');
     expect(events).toEqual([]);
   });
@@ -150,7 +156,7 @@ describe('subagent streaming text', () => {
 
 describe('agent error projection', () => {
   it('drops a subagent error instead of surfacing it as a session warning', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
 
     expect(
       projector.project(
@@ -162,7 +168,7 @@ describe('agent error projection', () => {
   });
 
   it('keeps a main-agent error visible to the session', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
 
     expect(
       projector.project(
@@ -185,7 +191,7 @@ describe('agent error projection', () => {
 
 describe('cron.fired', () => {
   it('synthesizes a user message so the cron notice renders live', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
     const events = projector.project(
       'cron.fired',
       {
@@ -214,7 +220,7 @@ describe('cron.fired', () => {
   });
 
   it('ignores cron.fired events missing a prompt or a cron_job origin', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
     expect(projector.project('cron.fired', { origin: { kind: 'cron_job' } }, 's1')).toEqual([]);
     expect(projector.project('cron.fired', { prompt: 'hi' }, 's1')).toEqual([]);
   });
@@ -222,7 +228,7 @@ describe('cron.fired', () => {
 
 describe('cron.fired prompt id isolation', () => {
   it('omits promptId so the synthesized notice does not clobber the abort cache', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
     projector.project(
       'prompt.submitted',
       { promptId: 'pr_user', userMessageId: 'u1', content: [{ type: 'text', text: 'hi' }] },
@@ -263,13 +269,13 @@ describe('classifyFrame cron.fired', () => {
 // turn-end consumers (completion notification, sound) twice.
 describe('session status single-sourcing', () => {
   it('turn.started projects no sessionStatusChanged', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
     const events = projector.project('turn.started', { turnId: 1 }, 's1');
     expect(events.some((e) => e.type === 'sessionStatusChanged')).toBe(false);
   });
 
   it('turn.ended finalizes the message and usage but projects no sessionStatusChanged', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
     projector.project('turn.started', { turnId: 1 }, 's1');
     projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
     const events = projector.project(
@@ -285,7 +291,7 @@ describe('session status single-sourcing', () => {
   });
 
   it('seedInFlight returns only the seeded message — status comes from the snapshot', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
     const events = projector.seedInFlight('s1', {
       turnId: 1,
       assistantText: 'partial',
@@ -304,7 +310,7 @@ describe('session status single-sourcing', () => {
 
 describe('step-boundary delta alignment', () => {
   it('resets stream offsets at step boundaries — a post-step delta ahead of local state signals a gap', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
     projector.project('turn.started', { turnId: 1 }, 's1');
     projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
     projector.project('assistant.delta', { turnId: 1, delta: 'step-one text' }, 's1', { offset: 0 });
@@ -318,7 +324,7 @@ describe('step-boundary delta alignment', () => {
   });
 
   it('appends step-2 deltas to the fresh step message at step-relative offsets', () => {
-    const projector = createAgentProjector();
+    const projector = createActiveProjector();
     projector.project('turn.started', { turnId: 1 }, 's1');
     projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
     projector.project('assistant.delta', { turnId: 1, delta: 'step one' }, 's1', { offset: 0 });
@@ -384,5 +390,197 @@ describe('step-boundary delta alignment', () => {
         delta: { text: ' continues' },
       }),
     );
+  });
+});
+
+describe('projector session ownership', () => {
+  it('drops queued frames after release until the session is activated again', () => {
+    const projector = createActiveProjector();
+    const submitted = {
+      promptId: 'pr_1',
+      userMessageId: 'msg_1',
+      content: [{ type: 'text', text: 'hello' }],
+    };
+
+    projector.release('s1');
+    expect(projector.project('prompt.submitted', submitted, 's1')).toEqual([]);
+
+    projector.activate('s1');
+    expect(projector.project('prompt.submitted', submitted, 's1')).toContainEqual(
+      expect.objectContaining({ type: 'messageCreated' }),
+    );
+  });
+
+  it('reactivates a released session when a snapshot resets its state', () => {
+    const projector = createActiveProjector();
+    projector.release('s1');
+
+    const events = projector.seedInFlight('s1', {
+      turnId: 1,
+      assistantText: 'partial reply',
+      thinkingText: '',
+      runningTools: [],
+    });
+
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: 'messageCreated' }),
+    );
+    expect(
+      projector.project('assistant.delta', { turnId: 1, delta: ' continued' }, 's1'),
+    ).not.toEqual([]);
+  });
+
+  it('projects released-session metadata without reviving stream state', () => {
+    const projector = createActiveProjector();
+    projector.release('s1');
+
+    expect(
+      projector.project(
+        'session.meta.updated',
+        { patch: { title: 'Updated title', lastPrompt: 'hello' } },
+        's1',
+      ),
+    ).toEqual([
+      {
+        type: 'sessionMetaUpdated',
+        sessionId: 's1',
+        title: 'Updated title',
+        lastPrompt: 'hello',
+      },
+    ]);
+    expect(
+      projector.project('assistant.delta', { turnId: 1, delta: 'late' }, 's1'),
+    ).toEqual([]);
+  });
+
+  it('keeps side-channel routing scoped to its parent session', () => {
+    const projector = createAgentProjector();
+    projector.markSideChannelAgent('agent_btw_1', 's1');
+    projector.activate('s1');
+    projector.activate('s2');
+
+    expect(
+      projector.project(
+        'assistant.delta',
+        { agentId: 'agent_btw_1', delta: 'side chat' },
+        's1',
+      ),
+    ).toContainEqual(expect.objectContaining({ type: 'agentDelta' }));
+    expect(
+      projector.project(
+        'assistant.delta',
+        { agentId: 'agent_btw_1', delta: 'background task' },
+        's2',
+      ),
+    ).not.toContainEqual(expect.objectContaining({ type: 'agentDelta' }));
+  });
+
+  it('keeps inactive side-channel routing until the chat is explicitly closed', () => {
+    const projector = createActiveProjector();
+    projector.markSideChannelAgent('agent_btw_1', 's1');
+    projector.release('s1');
+
+    expect(
+      projector.project(
+        'assistant.delta',
+        { agentId: 'agent_btw_1', delta: 'side chat continues' },
+        's1',
+      ),
+    ).toContainEqual(expect.objectContaining({ type: 'agentDelta' }));
+
+    expect(
+      projector.project(
+        'tool.progress',
+        { agentId: 'agent_btw_1', update: { text: 'tool output' } },
+        's1',
+      ),
+    ).toContainEqual(expect.objectContaining({ type: 'agentDelta', agentId: 'agent_btw_1' }));
+
+    expect(
+      projector.project(
+        'task.terminated',
+        { agentId: 'agent_btw_1', info: { status: 'completed', outputPreview: 'done' } },
+        's1',
+      ),
+    ).toEqual([
+      expect.objectContaining({ type: 'agentDelta', agentId: 'agent_btw_1' }),
+      expect.objectContaining({ type: 'agentTurnEnded', agentId: 'agent_btw_1' }),
+    ]);
+
+    projector.clearSideChannelAgent('agent_btw_1', 's1');
+    expect(
+      projector.project(
+        'assistant.delta',
+        { agentId: 'agent_btw_1', delta: 'closed chat' },
+        's1',
+      ),
+    ).toEqual([]);
+  });
+
+  it('replaces the previous side-channel marker when a session opens a new one', () => {
+    const projector = createActiveProjector();
+    projector.markSideChannelAgent('agent_btw_old', 's1');
+    projector.markSideChannelAgent('agent_btw_new', 's1');
+
+    expect(
+      projector.project(
+        'assistant.delta',
+        { agentId: 'agent_btw_old', delta: 'old agent' },
+        's1',
+      ),
+    ).not.toContainEqual(expect.objectContaining({ type: 'agentDelta' }));
+    expect(
+      projector.project(
+        'assistant.delta',
+        { agentId: 'agent_btw_new', delta: 'new agent' },
+        's1',
+      ),
+    ).toContainEqual(expect.objectContaining({ type: 'agentDelta' }));
+  });
+
+  it('binds a legacy unscoped side-channel marker to the first parent session', () => {
+    const projector = createAgentProjector();
+    projector.activate('s1');
+    projector.activate('s2');
+    projector.markSideChannelAgent('agent_btw_1');
+
+    expect(
+      projector.project(
+        'assistant.delta',
+        { agentId: 'agent_btw_1', delta: 'side chat' },
+        's1',
+      ),
+    ).toContainEqual(expect.objectContaining({ type: 'agentDelta' }));
+    expect(
+      projector.project(
+        'assistant.delta',
+        { agentId: 'agent_btw_1', delta: 'background task' },
+        's2',
+      ),
+    ).not.toContainEqual(expect.objectContaining({ type: 'agentDelta' }));
+  });
+
+  it('keeps released sessions inactive across repeated four-session waves', () => {
+    const projector = createAgentProjector();
+    const oneMiB = 'x'.repeat(1024 * 1024);
+    const sessionIds: string[] = [];
+
+    for (let wave = 0; wave < 24; wave += 1) {
+      for (let slot = 0; slot < 4; slot += 1) {
+        const sessionId = `session-${wave}-${slot}`;
+        sessionIds.push(sessionId);
+        projector.activate(sessionId);
+        projector.project('turn.started', { turnId: 1 }, sessionId);
+        projector.project('turn.step.started', { turnId: 1, step: 1 }, sessionId);
+        projector.project('assistant.delta', { turnId: 1, delta: oneMiB }, sessionId);
+        projector.release(sessionId);
+      }
+    }
+
+    for (const sessionId of sessionIds) {
+      expect(
+        projector.project('assistant.delta', { turnId: 1, delta: 'late' }, sessionId),
+      ).toEqual([]);
+    }
   });
 });

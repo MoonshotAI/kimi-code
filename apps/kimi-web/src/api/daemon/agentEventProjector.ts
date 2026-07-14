@@ -13,8 +13,9 @@
 //
 // Usage:
 //   const projector = createAgentProjector();
+//   projector.activate(sessionId);
 //   const appEvents = projector.project(rawType, payload, sessionId);
-//   // call reset() when re-subscribing / resyncing a session
+//   // call reset() when rebuilding a session from a snapshot / resync
 
 import type {
   AppEvent,
@@ -269,12 +270,12 @@ function projectSubagentProgress(
   subagentId: string,
   rawType: string,
   payload: Record<string, unknown>,
-  sideChannelAgents: ReadonlySet<string>,
+  isSideChannel: boolean,
 ): AppEvent[] {
   // Side-channel agents (e.g. BTW side chat) stream their own transcript via
   // agentDelta events; don't pollute the main task output with generic step
   // placeholders like "Started a step".
-  if (sideChannelAgents.has(subagentId) && rawType === 'turn.step.started') return [];
+  if (isSideChannel && rawType === 'turn.step.started') return [];
 
   // The subagent's own streamed text: forward each delta as a `text`-kind
   // progress chunk so the reducer concatenates it into `AppTask.text`, letting
@@ -319,6 +320,48 @@ function projectSubagentProgress(
   if (task) out.push({ type: 'taskCreated', sessionId, task });
   out.push({ type: 'taskProgress', sessionId, taskId: subagentId, outputChunk: text, stream: 'stdout' });
   return out;
+}
+
+function projectSideChannelFrame(
+  rawType: string,
+  payload: Record<string, unknown>,
+  sessionId: string,
+  agentId: string,
+): AppEvent[] {
+  if (rawType === 'thinking.delta' || rawType === 'assistant.delta') {
+    const deltaText = stringField(payload, 'delta');
+    if (!deltaText) return [];
+    return [
+      {
+        type: 'agentDelta',
+        sessionId,
+        agentId,
+        delta: { [rawType === 'thinking.delta' ? 'thinking' : 'text']: deltaText },
+      },
+    ];
+  }
+  if (rawType === 'turn.ended') {
+    return [{ type: 'agentTurnEnded', sessionId, agentId, reason: stringField(payload, 'reason') }];
+  }
+  if (rawType === 'tool.progress') {
+    const text = subagentProgressText(rawType, payload);
+    return text === null || text.length === 0
+      ? []
+      : [{ type: 'agentDelta', sessionId, agentId, delta: { text } }];
+  }
+  if (rawType === 'task.terminated' || rawType === 'background.task.terminated') {
+    const info = payload['info'];
+    const record = info && typeof info === 'object' ? info as Record<string, unknown> : payload;
+    const preview = stringField(record, 'outputPreview') ?? stringField(record, 'output_preview');
+    const reason = stringField(record, 'status') ?? stringField(payload, 'reason');
+    const events: AppEvent[] = [];
+    if (preview !== undefined && preview.length > 0) {
+      events.push({ type: 'agentDelta', sessionId, agentId, delta: { text: preview } });
+    }
+    events.push({ type: 'agentTurnEnded', sessionId, agentId, reason });
+    return events;
+  }
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -469,6 +512,24 @@ function getMsgById(state: SessionState, messageId: string): AppMessage | undefi
   return state.messages.find((m) => m.id === messageId);
 }
 
+/**
+ * Project title/latest-prompt metadata without touching per-session stream
+ * state. The daemon broadcasts this event to every connection, including
+ * clients that evicted the session from their live subscription.
+ */
+function projectSessionMetaUpdated(payload: unknown, sessionId: string): AppEvent[] {
+  const p = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+  const patchRaw = p['patch'];
+  const patch = patchRaw && typeof patchRaw === 'object' ? patchRaw as Record<string, unknown> : {};
+  const titleValue = patch['title'] ?? p['title'];
+  const lastPromptValue = patch['lastPrompt'];
+  const next: { title?: string; lastPrompt?: string } = {};
+  if (typeof titleValue === 'string' && titleValue.length > 0) next.title = titleValue;
+  if (typeof lastPromptValue === 'string') next.lastPrompt = lastPromptValue;
+  if (next.title === undefined && next.lastPrompt === undefined) return [];
+  return [{ type: 'sessionMetaUpdated', sessionId, ...next }];
+}
+
 // ---------------------------------------------------------------------------
 // Usage snapshot builder
 // ---------------------------------------------------------------------------
@@ -518,19 +579,68 @@ export interface AgentProjector {
    * snapshot's `session.status` is the authoritative value.
    */
   seedInFlight(sessionId: string, turn: AppInFlightTurn): AppEvent[];
-  /** Reset all per-session state (call on re-subscribe / resync). */
+  /** Reset all per-session state (call before a snapshot rebuild / resync). */
   reset(sessionId: string): void;
+  /**
+   * Mark a session as active without replacing its projector state. This is
+   * used before a normal WS subscribe; unlike reset(), it preserves a turn
+   * that is still being streamed.
+   */
+  activate(sessionId: string): void;
+  /**
+   * Release all state owned by a session. Frames already queued by the socket
+   * are ignored until the session is explicitly activated again; a registered
+   * side-channel keeps its lightweight route so its transcript can finish.
+   */
+  release(sessionId: string): void;
+  /** Release every session (used when the event connection is closed). */
+  releaseAll(): void;
+  /** Remove an explicitly closed side-channel marker. */
+  clearSideChannelAgent(agentId: string, sessionId?: string): void;
   /**
    * Mark an agent id as a side-channel (e.g. BTW side chat) rather than a
    * background subagent. Its text/thinking deltas and turn boundary are then
    * emitted as agent-scoped events instead of being dropped.
    */
-  markSideChannelAgent(agentId: string): void;
+  markSideChannelAgent(agentId: string, sessionId?: string): void;
 }
 
 export function createAgentProjector(): AgentProjector {
   const sessions = new Map<string, SessionState>();
-  const sideChannelAgents = new Set<string>();
+  /**
+   * Only subscribed/snapshot-seeded sessions may create projector state. This
+   * active gate avoids an unbounded released-session tombstone while still
+   * dropping frames queued after unsubscribe(). The Web client keeps at most
+   * a small LRU of active WS subscriptions.
+   */
+  const activeSessions = new Set<string>();
+
+  /** Each parent session has at most one current BTW side-channel agent. */
+  const sideChannelAgentBySession = new Map<string, string>();
+  const MAX_SIDE_CHANNEL_SESSIONS = 64;
+  /**
+   * A session switch can re-register its side chat just before the snapshot
+   * activates the WS subscription. Keep that short handoff separate and
+   * bounded; activation promotes the marker into the active-session map.
+   */
+  const pendingSideChannelAgentBySession = new Map<string, string>();
+  const MAX_PENDING_SIDE_CHANNEL_SESSIONS = 4;
+  /**
+   * Keep the old one-argument API working for callers that have not yet been
+   * session-aware. Bind such a marker to the first frame that carries it, and
+   * cap the pending compatibility pool so it cannot grow forever if a caller
+   * marks an agent that never emits a frame.
+   */
+  const unboundSideChannelAgents = new Map<string, true>();
+  const MAX_UNBOUND_SIDE_CHANNEL_AGENTS = 64;
+
+  function trimBoundedMap<T>(map: Map<string, T>, maxSize: number): void {
+    while (map.size > maxSize) {
+      const oldest = map.keys().next().value;
+      if (oldest === undefined) return;
+      map.delete(oldest);
+    }
+  }
 
   function getOrCreate(sessionId: string): SessionState {
     let s = sessions.get(sessionId);
@@ -542,14 +652,84 @@ export function createAgentProjector(): AgentProjector {
   }
 
   function reset(sessionId: string): void {
+    activate(sessionId);
     sessions.set(sessionId, createSessionState());
   }
 
-  function markSideChannelAgent(agentId: string): void {
-    sideChannelAgents.add(agentId);
+  function activate(sessionId: string): void {
+    activeSessions.add(sessionId);
+    const pendingSideChannel = pendingSideChannelAgentBySession.get(sessionId);
+    if (pendingSideChannel !== undefined) {
+      pendingSideChannelAgentBySession.delete(sessionId);
+      sideChannelAgentBySession.set(sessionId, pendingSideChannel);
+      trimBoundedMap(sideChannelAgentBySession, MAX_SIDE_CHANNEL_SESSIONS);
+    }
+  }
+
+  function release(sessionId: string): void {
+    activeSessions.delete(sessionId);
+    sessions.delete(sessionId);
+  }
+
+  function releaseAll(): void {
+    activeSessions.clear();
+    sessions.clear();
+    sideChannelAgentBySession.clear();
+    pendingSideChannelAgentBySession.clear();
+    unboundSideChannelAgents.clear();
+  }
+
+  function clearSideChannelAgent(agentId: string, sessionId?: string): void {
+    if (sessionId !== undefined && sideChannelAgentBySession.get(sessionId) === agentId) {
+      sideChannelAgentBySession.delete(sessionId);
+    }
+    if (sessionId !== undefined && pendingSideChannelAgentBySession.get(sessionId) === agentId) {
+      pendingSideChannelAgentBySession.delete(sessionId);
+    }
+    unboundSideChannelAgents.delete(agentId);
+    for (const [parentId, sideAgentId] of sideChannelAgentBySession) {
+      if (sideAgentId === agentId && (sessionId === undefined || parentId === sessionId)) {
+        sideChannelAgentBySession.delete(parentId);
+      }
+    }
+  }
+
+  function markSideChannelAgent(agentId: string, sessionId?: string): void {
+    if (agentId.length === 0) return;
+    if (sessionId !== undefined && sessionId.length > 0) {
+      if (activeSessions.has(sessionId)) {
+        sideChannelAgentBySession.set(sessionId, agentId);
+        trimBoundedMap(sideChannelAgentBySession, MAX_SIDE_CHANNEL_SESSIONS);
+      } else {
+        pendingSideChannelAgentBySession.delete(sessionId);
+        pendingSideChannelAgentBySession.set(sessionId, agentId);
+        trimBoundedMap(
+          pendingSideChannelAgentBySession,
+          MAX_PENDING_SIDE_CHANNEL_SESSIONS,
+        );
+      }
+      return;
+    }
+    unboundSideChannelAgents.delete(agentId);
+    unboundSideChannelAgents.set(agentId, true);
+    trimBoundedMap(unboundSideChannelAgents, MAX_UNBOUND_SIDE_CHANNEL_AGENTS);
+  }
+
+  function isSideChannelAgent(sessionId: string, agentId: string): boolean {
+    if (sideChannelAgentBySession.get(sessionId) === agentId) return true;
+
+    // Compatibility path for the former one-argument API. Once an unbound
+    // marker is observed, bind it to this session so it is released with the
+    // session instead of living in a connection-global set forever.
+    if (!unboundSideChannelAgents.has(agentId)) return false;
+    unboundSideChannelAgents.delete(agentId);
+    sideChannelAgentBySession.set(sessionId, agentId);
+    trimBoundedMap(sideChannelAgentBySession, MAX_SIDE_CHANNEL_SESSIONS);
+    return true;
   }
 
   function bindNextPromptId(sessionId: string, promptId: string): void {
+    if (!activeSessions.has(sessionId)) return;
     const s = getOrCreate(sessionId);
     s.currentPromptId = promptId;
   }
@@ -600,6 +780,18 @@ export function createAgentProjector(): AgentProjector {
     meta?: ProjectMeta,
   ): AppEvent[] {
     try {
+      // `session.meta.updated` is a daemon-global fan-out event. Project it
+      // without creating a SessionState when this session was evicted or
+      // unsubscribed; every other raw event remains subscription-gated.
+      if (!activeSessions.has(sessionId)) {
+        if (rawType === 'session.meta.updated') return projectSessionMetaUpdated(payload, sessionId);
+        const p = payload && typeof payload === 'object' ? payload as Record<string, unknown> : {};
+        const agentId = typeof p.agentId === 'string' ? p.agentId : undefined;
+        if (agentId !== undefined && isSideChannelAgent(sessionId, agentId)) {
+          return projectSideChannelFrame(rawType, p, sessionId, agentId);
+        }
+        return [];
+      }
       return _project(rawType, payload, sessionId, meta);
     } catch (error) {
       // Defensive: log but never crash the caller
@@ -639,49 +831,36 @@ export function createAgentProjector(): AgentProjector {
     // and must always be projected.
     const frameAgentId: unknown = p?.agentId;
     if (typeof frameAgentId === 'string' && frameAgentId !== MAIN_AGENT_ID) {
-      const isSideChannel = sideChannelAgents.has(frameAgentId);
+      const isSideChannel = isSideChannelAgent(sessionId, frameAgentId);
       // Side-channel agents (e.g. BTW side chat) stream text/thinking deltas and
       // a turn boundary over the parent session channel. Route them to the web
       // layer as agent-scoped events instead of dropping them or folding them
       // into the parent transcript.
       if (isSideChannel && (rawType === 'thinking.delta' || rawType === 'assistant.delta')) {
-        const deltaText: string = p?.delta ?? '';
-        if (!deltaText) return [];
-        return [
-          {
-            type: 'agentDelta' as const,
-            sessionId,
-            agentId: frameAgentId,
-            delta: { [rawType === 'thinking.delta' ? ('thinking' as const) : ('text' as const)]: deltaText },
-          },
-        ];
+        return projectSideChannelFrame(rawType, p ?? {}, sessionId, frameAgentId);
       }
       if (isSideChannel && rawType === 'turn.ended') {
-        return [
-          { type: 'agentTurnEnded' as const, sessionId, agentId: frameAgentId, reason: p?.reason },
-        ];
+        return projectSideChannelFrame(rawType, p ?? {}, sessionId, frameAgentId);
+      }
+      if (isSideChannel && (rawType === 'task.terminated' || rawType === 'background.task.terminated')) {
+        return projectSideChannelFrame(rawType, p ?? {}, sessionId, frameAgentId);
       }
       if (MAIN_AGENT_TRANSCRIPT_FRAMES.has(rawType)) {
-        return projectSubagentProgress(s, sessionId, frameAgentId, rawType, p ?? {}, sideChannelAgents);
+        return projectSubagentProgress(
+          s,
+          sessionId,
+          frameAgentId,
+          rawType,
+          p ?? {},
+          isSideChannel,
+        );
       }
     }
 
     switch (rawType) {
       // -----------------------------------------------------------------------
       case 'session.meta.updated': {
-        // The daemon auto-generates a title from the first prompt (and other
-        // clients can rename a session); it also reports the latest user prompt
-        // via patch.lastPrompt. It announces all of these via this event. We
-        // don't have the full AppSession here, so emit a lightweight
-        // sessionMetaUpdated that patches only the changed meta fields.
-        const title: string | undefined = p?.patch?.title ?? p?.title;
-        const lastPrompt: string | undefined = p?.patch?.lastPrompt;
-        const patch: { title?: string; lastPrompt?: string } = {};
-        if (typeof title === 'string' && title.length > 0) patch.title = title;
-        if (typeof lastPrompt === 'string') patch.lastPrompt = lastPrompt;
-        if (patch.title !== undefined || patch.lastPrompt !== undefined) {
-          out.push({ type: 'sessionMetaUpdated', sessionId, ...patch });
-        }
+        out.push(...projectSessionMetaUpdated(p, sessionId));
         break;
       }
 
@@ -1275,7 +1454,17 @@ export function createAgentProjector(): AgentProjector {
     return out;
   }
 
-  return { project, bindNextPromptId, seedInFlight, reset, markSideChannelAgent };
+  return {
+    project,
+    bindNextPromptId,
+    seedInFlight,
+    reset,
+    activate,
+    release,
+    releaseAll,
+    clearSideChannelAgent,
+    markSideChannelAgent,
+  };
 }
 
 // ---------------------------------------------------------------------------
