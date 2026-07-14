@@ -204,6 +204,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private readonly budgetGraceTurns = new Set<number>();
   private readonly pendingContinuationGoals = new Map<number, string>();
   private readonly goalTurnTargets = new Map<number, string>();
+  private readonly exhaustedTurnBudgetGoals = new Map<number, string>();
   private pendingContinuation?: PendingContinuation;
 
   constructor(
@@ -510,6 +511,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private handleTurnLaunched(turnId: number, origin: TurnStartedEvent['origin']): void {
     this.liveTurnId = turnId;
     this.goalTurnTargets.delete(turnId);
+    this.exhaustedTurnBudgetGoals.delete(turnId);
     if (!this.goalDrivenTurns.has(turnId)) {
       const state = this.goalState;
       const continuationGoalId = isGoalContinuationOrigin(origin)
@@ -533,6 +535,11 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (state === null || state.status !== 'active') return;
     const goalId = this.goalDrivenTurns.get(turnId);
     if (actor === 'model') this.goalTurnTargets.set(turnId, state.goalId);
+    if (this.toSnapshot(state).budget.turnBudgetReached) {
+      this.exhaustedTurnBudgetGoals.set(turnId, state.goalId);
+    } else {
+      this.exhaustedTurnBudgetGoals.delete(turnId);
+    }
     if (goalId !== undefined) return;
     this.goalDrivenTurns.set(turnId, state.goalId);
     this.countedGoalTurns.add(turnId);
@@ -565,9 +572,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const state = this.goalState;
     const budget = state === null ? null : this.toSnapshot(state).budget;
     const turnBudgetBlocksCurrentTurn =
-      state?.status === 'blocked' &&
-      state.terminalReason?.startsWith(GOAL_BUDGET_BLOCK_PREFIX) === true &&
-      budget?.turnBudgetReached === true;
+      budget?.turnBudgetReached === true &&
+      (this.exhaustedTurnBudgetGoals.get(ctx.turnId) === goalId ||
+        (state?.status === 'blocked' &&
+          state.terminalReason?.startsWith(GOAL_BUDGET_BLOCK_PREFIX) === true));
     if (
       goalId === undefined ||
       state === null ||
@@ -651,6 +659,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.budgetGraceTurns.delete(turnId);
     this.pendingContinuationGoals.delete(turnId);
     this.goalTurnTargets.delete(turnId);
+    this.exhaustedTurnBudgetGoals.delete(turnId);
     return { goalId, lifecycleGoalId, starterTurn };
   }
 

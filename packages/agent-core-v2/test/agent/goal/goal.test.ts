@@ -1639,6 +1639,46 @@ describe('AgentGoalService mid-turn budget stop', () => {
     }
   });
 
+  it('rejects goal tool calls when an exhausted turn budget is resumed during a prompt', async () => {
+    const ctx = createTestAgent();
+    try {
+      ctx.configure({ tools: ['UpdateGoal', 'SetGoalBudget'] });
+      const goals = ctx.get(IAgentGoalService) as GoalServiceTestManager;
+      await goals.createGoal({ objective: 'work' });
+      await goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } }, 'model');
+      await goals.incrementTurn();
+      await goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } }, 'model');
+
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'resume',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'active' }),
+      });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'raise-budget',
+        name: 'SetGoalBudget',
+        arguments: JSON.stringify({ value: 5, unit: 'turns' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'This step should never run.' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'resume the goal' }] });
+      await ctx.untilTurnEnd();
+
+      expect(ctx.llmCalls).toHaveLength(2);
+      const history = ctx.get(IAgentContextMemoryService).get();
+      expect(JSON.stringify(history)).toContain(
+        'Goal budget exhausted; tool calls are rejected. Write your final message.',
+      );
+      expect(JSON.stringify(history)).not.toContain('This step should never run.');
+      await vi.waitFor(() => expect(goals.getGoal().goal?.status).toBe('blocked'));
+      expect(goals.getGoal().goal?.budget.turnBudget).toBe(1);
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
   it("runs the prompt as a normal turn when the goal's turn budget was reached at launch", async () => {
     const telemetry: TelemetryRecord[] = [];
     const ctx = createTestAgent(telemetryServices(recordingTelemetry(telemetry)));
