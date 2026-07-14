@@ -229,7 +229,7 @@ describe('server-v2 /api/v1/sessions', () => {
       .get(ISessionLifecycleService)
       .get(id);
     if (session === undefined) throw new Error('expected a live session');
-    const agent = session.accessor.get(IAgentLifecycleService).getHandle('main');
+    const agent = session.accessor.get(IAgentLifecycleService).get('main');
     if (agent === undefined) throw new Error('expected a live main agent');
 
     const eventBus = agent.accessor.get(IEventBus);
