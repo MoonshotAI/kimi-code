@@ -633,15 +633,14 @@ function convertMessage(message: Message, model: string): MessageParam {
       // ("thinking is enabled but reasoning_content is missing"). Dropping it
       // here is what broke multi-step tool use on those backends. Claude
       // models reject unsigned thinking blocks, so those are only preserved
-      // for non-Claude Anthropic-compatible models. An unsigned part with no
-      // text carries nothing, so it is skipped.
+      // for non-Claude Anthropic-compatible models.
       if (part.encrypted !== undefined) {
         blocks.push({
           type: 'thinking',
           thinking: part.think,
           signature: part.encrypted,
         } satisfies ThinkingBlockParam);
-      } else if (part.think !== '' && shouldPreserveUnsignedThinking(model)) {
+      } else if (shouldPreserveUnsignedThinking(model)) {
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
       }
     } else if (part.type === 'video_url') {

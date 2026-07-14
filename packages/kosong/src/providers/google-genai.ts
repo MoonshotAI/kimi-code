@@ -4,7 +4,7 @@ import {
   ChatProviderError,
   normalizeAPIStatusError,
 } from '#/errors';
-import type { Message, StreamedMessagePart, ToolCall } from '#/message';
+import type { Message, StreamedMessagePart, ThinkPart, ToolCall } from '#/message';
 import { isToolDeclarationOnlyMessage } from '#/message';
 import type {
   ChatProvider,
@@ -148,6 +148,7 @@ interface GoogleContent {
 
 interface GooglePart {
   text?: string;
+  thought?: boolean;
   functionCall?: { name: string; args: Record<string, unknown> };
   functionResponse?: {
     name: string;
@@ -256,9 +257,14 @@ function messageToGoogleGenAI(message: Message): GoogleContent {
       case 'text':
         parts.push({ text: part.text });
         break;
-      case 'think':
-        // Skip think parts (synthetic)
+      case 'think': {
+        const thoughtPart: GooglePart = { text: part.think, thought: true };
+        if (part.encrypted !== undefined && part.encrypted.length > 0) {
+          thoughtPart.thoughtSignature = part.encrypted;
+        }
+        parts.push(thoughtPart);
         break;
+      }
       case 'image_url':
         parts.push(convertMediaUrl(part.imageUrl.url, 'image/jpeg'));
         break;
@@ -569,8 +575,13 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
 
       for (const part of contentParts) {
         const p = part as Record<string, unknown>;
-        if (p['thought'] === true && p['text']) {
-          parts.push({ type: 'think', think: p['text'] as string });
+        if (p['thought'] === true && typeof p['text'] === 'string') {
+          const thoughtSignature = p['thoughtSignature'] ?? p['thought_signature'];
+          const thinkPart: ThinkPart = { type: 'think', think: p['text'] };
+          if (typeof thoughtSignature === 'string' && thoughtSignature.length > 0) {
+            thinkPart.encrypted = thoughtSignature;
+          }
+          parts.push(thinkPart);
         } else if (p['text']) {
           parts.push({ type: 'text', text: p['text'] as string });
         } else if (p['functionCall'] || p['function_call']) {
@@ -580,15 +591,16 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
           const id_ = (fc['id'] as string) ?? crypto.randomUUID();
           const toolCallId = `${name}_${id_}`;
           const thoughtSigB64 = p['thoughtSignature'] ?? p['thought_signature'];
-          parts.push({
+          const toolCall: ToolCall = {
             type: 'function',
             id: toolCallId,
             name,
             arguments: fc['args'] ? JSON.stringify(fc['args']) : '{}',
-            ...(thoughtSigB64
-              ? { extras: { thought_signature_b64: thoughtSigB64 as string } }
-              : {}),
-          } satisfies ToolCall);
+          };
+          if (typeof thoughtSigB64 === 'string' && thoughtSigB64.length > 0) {
+            toolCall.extras = { thought_signature_b64: thoughtSigB64 };
+          }
+          parts.push(toolCall);
         }
       }
     }

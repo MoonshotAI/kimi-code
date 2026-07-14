@@ -118,10 +118,12 @@ function isEffectivelyEmptyContent(parts: ContentPart[]): boolean {
 
 function convertMessage(message: Message): OpenAIMessage {
   let reasoningContent = '';
+  let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
 
   for (const part of message.content) {
     if (part.type === 'think') {
+      hasReasoningPart = true;
       reasoningContent += part.think;
     } else {
       nonThinkParts.push(part);
@@ -168,7 +170,7 @@ function convertMessage(message: Message): OpenAIMessage {
     result.tool_call_id = message.toolCallId;
   }
 
-  if (reasoningContent) {
+  if (hasReasoningPart) {
     result.reasoning_content = reasoningContent;
   }
 
@@ -307,7 +309,7 @@ class KimiStreamedMessage implements StreamedMessage {
 
     // reasoning_content (Moonshot proprietary)
     const rc = (message as unknown as Record<string, unknown>)['reasoning_content'];
-    if (typeof rc === 'string' && rc) {
+    if (typeof rc === 'string') {
       yield { type: 'think', think: rc } satisfies StreamedMessagePart;
     }
 
@@ -365,7 +367,7 @@ class KimiStreamedMessage implements StreamedMessage {
 
         // reasoning_content (Moonshot proprietary)
         const rc = (delta as unknown as Record<string, unknown>)['reasoning_content'];
-        if (typeof rc === 'string' && rc) {
+        if (typeof rc === 'string') {
           yield { type: 'think', think: rc } satisfies StreamedMessagePart;
         }
 

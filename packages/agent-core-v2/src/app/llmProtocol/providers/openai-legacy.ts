@@ -62,7 +62,7 @@ function extractReasoningContent(
   const keys: readonly string[] = explicitKey !== undefined ? [explicitKey] : KNOWN_REASONING_KEYS;
   for (const key of keys) {
     const value = record[key];
-    if (typeof value === 'string' && value.length > 0) return value;
+    if (typeof value === 'string') return value;
   }
   return undefined;
 }
@@ -155,10 +155,12 @@ function convertMessage(
   toolMessageConversion: ToolMessageConversion,
 ): OpenAIMessage {
   let reasoningContent = '';
+  let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
 
   for (const part of message.content) {
     if (part.type === 'think') {
+      hasReasoningPart = true;
       reasoningContent += part.think;
     } else {
       nonThinkParts.push(part);
@@ -212,7 +214,7 @@ function convertMessage(
     result.tool_call_id = message.toolCallId;
   }
 
-  if (reasoningContent) {
+  if (hasReasoningPart) {
     result[reasoningKey ?? DEFAULT_OUTBOUND_REASONING_KEY] = reasoningContent;
   }
 
@@ -354,7 +356,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     if (!message) return;
 
     const reasoning = extractReasoningContent(message, reasoningKey);
-    if (reasoning) {
+    if (reasoning !== undefined) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
 
@@ -405,7 +407,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
         const delta = choice.delta;
 
         const reasoning = extractReasoningContent(delta, reasoningKey);
-        if (reasoning) {
+        if (reasoning !== undefined) {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 

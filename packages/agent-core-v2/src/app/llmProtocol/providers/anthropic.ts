@@ -508,7 +508,7 @@ function convertMessage(message: Message, model: string): MessageParam {
           thinking: part.think,
           signature: part.encrypted,
         } satisfies ThinkingBlockParam);
-      } else if (part.think !== '' && shouldPreserveUnsignedThinking(model)) {
+      } else if (shouldPreserveUnsignedThinking(model)) {
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
       }
     } else if (part.type === 'video_url') {

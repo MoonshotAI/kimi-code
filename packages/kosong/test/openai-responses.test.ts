@@ -359,6 +359,25 @@ describe('OpenAIResponsesChatProvider', () => {
       });
     });
 
+    it('serializes an explicitly empty ThinkPart as an empty reasoning summary', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: '' }],
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+      const input = body['input'] as Array<Record<string, unknown>>;
+
+      expect(input.find((item) => item['type'] === 'reasoning')).toMatchObject({
+        type: 'reasoning',
+        summary: [{ type: 'summary_text', text: '' }],
+      });
+    });
+
     it('consecutive ThinkParts with different encrypted values produce separate reasoning items', async () => {
       const provider = createProvider();
       const history: Message[] = [
@@ -1236,6 +1255,30 @@ describe('OpenAIResponsesChatProvider', () => {
         { type: 'think', think: 'Step 2', encrypted: 'enc_token_abc' },
         { type: 'text', text: 'done' },
       ]);
+    });
+
+    it('yields an empty ThinkPart from a non-stream reasoning item with no summaries', async () => {
+      const provider = createProvider();
+      (provider as any)._stream = false;
+      ((provider as any)._client.responses as unknown as Record<string, unknown>)['create'] = vi
+        .fn()
+        .mockResolvedValue({
+          id: 'resp_empty_reasoning',
+          output: [
+            {
+              type: 'reasoning',
+              encrypted_content: 'enc_empty',
+              summary: [],
+            },
+          ],
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        });
+
+      const stream = await provider.generate('', [], []);
+      const parts: StreamedMessagePart[] = [];
+      for await (const part of stream) parts.push(part);
+
+      expect(parts).toEqual([{ type: 'think', think: '', encrypted: 'enc_empty' }]);
     });
 
     it('non-stream reasoning without encrypted_content yields ThinkPart without encrypted field', async () => {
