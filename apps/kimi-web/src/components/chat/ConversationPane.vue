@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { openDialogCount } from '../../composables/dialogStack';
 import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
@@ -1166,7 +1167,11 @@ function handleInterrupt(): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && (props.running || props.sending)) {
+  if (event.key !== 'Escape') return;
+  // When a modal dialog is open (e.g. SearchSessionsDialog), Escape is owned
+  // by the dialog layer. Do NOT interrupt the running prompt behind it.
+  if (openDialogCount.value > 0) return;
+  if (props.running || props.sending) {
     event.preventDefault();
     handleInterrupt();
   }
