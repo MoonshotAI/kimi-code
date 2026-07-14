@@ -145,7 +145,6 @@ v2 一行不改，缺失能力降级 + 标记。完整清单与设计文档 §7 
 | G-3 | bootstrap 无 `skillDirs` 输入 | 参数接受并忽略（`harness.ts:94,160`） |
 | G-4 | 无退出 drain API | close 时 best-effort（`harness.ts:477`） |
 | G-5 | `forcePluginSessionStartReminder` 无 API | reload 接受并忽略（`harness.ts:131,268`） |
-| G-6 | `generateAgentsMd` 无实现 | 未实现，直接抛 `CoreErrorCodes.NOT_IMPLEMENTED`（不在客户端编排） |
 | G-8 | create/resume 无 additionalDirs 输入、注入不持久 | 物化后立即注入，仅存活于 session scope（`harness.ts:223,500`） |
 | G-9/G-12 | 无 warnings 聚合 API；AGENTS.md warning 仅缓存 | 仅回 profile 缓存的 AGENTS.md warning（`session.ts:341`） |
 | G-11 | config 无 raw 文本投影 | `raw` 省略（`harness.ts:384`） |

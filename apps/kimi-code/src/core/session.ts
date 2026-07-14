@@ -31,6 +31,7 @@ import {
   ISessionApprovalService,
   ISessionBtwService,
   ISessionContext,
+  ISessionInitService,
   ISessionInteractionService,
   ISessionMetadata,
   ISessionQuestionService,
@@ -432,13 +433,10 @@ export class CoreSession {
   }
 
   async generateAgentsMd(): Promise<void> {
-    // TODO(v2-gap): G-6 — v2 declares `generateAgentsMd` on its RPC surface but
-    // ships no native implementation. The facade must not orchestrate the v1
-    // swarm flow in the client; surface as not-implemented until v2 lands it.
-    throw new CoreError(
-      CoreErrorCodes.NOT_IMPLEMENTED,
-      '`/init` (AGENTS.md generation) is not implemented on the v2 engine yet.',
-    );
+    // `/init` runs on the session-scoped init service: it spawns a child agent
+    // with the init profile and mirrors its run onto the main agent's event
+    // stream, so the TUI renders it like any other turn.
+    await this.init.handle.accessor.get(ISessionInitService).generateAgentsMd();
   }
 
   // -- Events / interactions / lifecycle ----------------------------------------

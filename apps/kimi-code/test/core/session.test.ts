@@ -29,6 +29,7 @@ import {
   ISessionBtwService,
   ISessionContext,
   ISessionCronService,
+  ISessionInitService,
   ISessionInteractionService,
   ISessionMetadata,
   ISessionQuestionService,
@@ -251,6 +252,7 @@ function makeFixture(options?: {
       [ISessionBtwService, { start: () => Promise.resolve('btw-1') }],
       [ISessionSwarmService, sessionSwarm],
       [ISessionSkillCatalog, { ready: Promise.resolve(), catalog: { listSkills: () => skillDefinitions } }],
+      [ISessionInitService, { generateAgentsMd: record('generateAgentsMd') }],
       [ISessionWorkspaceCommandService, { addAdditionalDir: recordReturning('addAdditionalDir', Promise.resolve(addDirResult)) }],
       [ISessionContext, { cwd: '/work' }],
       [ISessionMetadata, { read: () => Promise.resolve(sessionMeta) }],
@@ -547,14 +549,10 @@ describe('CoreSession orchestration', () => {
     expect(fx.calls['addAdditionalDir']).toEqual([[{ path: '/extra', persist: true }]]);
   });
 
-  it('generateAgentsMd throws NOT_IMPLEMENTED (v2 has no native method)', async () => {
+  it('generateAgentsMd forwards to the session init service', async () => {
     const fx = makeFixture();
-    const error = await fx.core.generateAgentsMd().then(
-      () => undefined,
-      (error: unknown) => error,
-    );
-    expect(isCoreError(error)).toBe(true);
-    expect((error as { code: string }).code).toBe(CoreErrorCodes.NOT_IMPLEMENTED);
+    await fx.core.generateAgentsMd();
+    expect(fx.calls['generateAgentsMd']).toEqual([[]]);
   });
 });
 
