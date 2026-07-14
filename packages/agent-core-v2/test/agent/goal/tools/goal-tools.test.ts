@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
+import type { ToolCall } from '#/app/llmProtocol/message';
 import {
   compileToolArgsValidator,
   validateToolArgs,
@@ -22,10 +23,19 @@ import {
 } from '#/agent/goal/tools/update-goal';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import {
+  IAgentToolExecutorService,
+  type ToolExecutionResult,
+} from '#/agent/toolExecutor/toolExecutor';
 import { getToolContributions } from '#/agent/toolRegistry/toolContribution';
 import { IEventBus } from '#/app/event/eventBus';
 
-import { agentService, createTestAgent, type TestAgentContext } from '../../../harness';
+import {
+  agentService,
+  createTestAgent,
+  permissionModeServices,
+  type TestAgentContext,
+} from '../../../harness';
 import { stubLoopWithHooks } from '../../loop/stubs';
 
 const signal = new AbortController().signal;
@@ -35,14 +45,19 @@ describe('goal tools', () => {
   let goals: IAgentGoalService;
   let loopService: IAgentLoopService;
   let eventBus: IEventBus;
+  let toolExecutor: IAgentToolExecutorService;
   let setGoalBudgetTool: SetGoalBudgetTool;
   let updateGoalTool: UpdateGoalTool;
 
   beforeEach(() => {
     loopService = stubLoopWithHooks({ hasActiveTurn: true });
-    ctx = createTestAgent(agentService(IAgentLoopService, loopService));
+    ctx = createTestAgent(
+      agentService(IAgentLoopService, loopService),
+      permissionModeServices('auto'),
+    );
     goals = ctx.get(IAgentGoalService);
     eventBus = ctx.get(IEventBus);
+    toolExecutor = ctx.get(IAgentToolExecutorService);
     setGoalBudgetTool = new SetGoalBudgetTool(goals);
     updateGoalTool = new UpdateGoalTool(goals);
   });
@@ -98,15 +113,19 @@ describe('goal tools', () => {
     });
   });
 
-  it('SetGoalBudget does not apply a delayed execution to a replacement goal', async () => {
+  it('SetGoalBudget ignores a stale call from a replaced goal turn', async () => {
     await goals.createGoal({ objective: 'old task' });
-    const execution = setGoalBudgetTool.resolveExecution({ value: 5, unit: 'turns' });
-    if (execution.isError === true) throw new Error('execution should not be an error');
+    eventBus.publish({ type: 'turn.started', turnId: 1, origin: USER_PROMPT_ORIGIN });
     const replacement = await goals.createGoal({ objective: 'new task', replace: true });
 
-    const result = await execution.execute({ turnId: 0, toolCallId: 'call_old_budget', signal });
+    const results = await executeGoalCalls(
+      [goalToolCall('call_old_budget', 'SetGoalBudget', { value: 5, unit: 'turns' })],
+      1,
+    );
 
-    expect(result.output).toBe('Goal budget not set: the current goal changed.');
+    expect(results[0]?.result.output).toBe(
+      'Goal changed since this turn started; ignored stale goal tool call.',
+    );
     expect(goals.getGoal().goal).toMatchObject({
       goalId: replacement.goalId,
       budget: { turnBudget: null },
@@ -123,6 +142,27 @@ describe('goal tools', () => {
     expect(result.output).toBe('Goal budget set: 5 turns.');
     expect(goals.getGoal().goal).toMatchObject({
       goalId: created.goalId,
+      budget: { turnBudget: 5 },
+    });
+  });
+
+  it('SetGoalBudget applies a limit to a replacement goal created earlier in the same batch', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    eventBus.publish({ type: 'turn.started', turnId: 2, origin: USER_PROMPT_ORIGIN });
+
+    const results = await executeGoalCalls(
+      [
+        goalToolCall('call_replace', 'CreateGoal', { objective: 'new task', replace: true }),
+        goalToolCall('call_budget', 'SetGoalBudget', { value: 5, unit: 'turns' }),
+      ],
+      2,
+    );
+
+    expect(results.find((result) => result.toolName === 'SetGoalBudget')?.result.output).toBe(
+      'Goal budget set: 5 turns.',
+    );
+    expect(goals.getGoal().goal).toMatchObject({
+      objective: 'new task',
       budget: { turnBudget: 5 },
     });
   });
@@ -218,6 +258,25 @@ describe('goal tools', () => {
       step: 1,
       signal: abortController.signal,
     });
+  }
+
+  async function executeGoalCalls(
+    calls: ToolCall[],
+    turnId: number,
+  ): Promise<ToolExecutionResult[]> {
+    const results: ToolExecutionResult[] = [];
+    for await (const result of toolExecutor.execute(calls, { turnId, signal })) {
+      results.push(result);
+    }
+    return results;
+  }
+
+  function goalToolCall(
+    id: string,
+    name: 'CreateGoal' | 'SetGoalBudget',
+    args: Record<string, unknown>,
+  ): ToolCall {
+    return { type: 'function', id, name, arguments: JSON.stringify(args) };
   }
 });
 
