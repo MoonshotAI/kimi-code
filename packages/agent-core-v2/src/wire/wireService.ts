@@ -31,11 +31,10 @@ import {
 import { WireError, WireErrors } from './errors';
 import {
   WIRE_PROTOCOL_VERSION,
-  applyWireMigrations,
   isNewerWireVersion,
+  migrateWireRecord,
   resolveWireMigrations,
   type WireMigration,
-  type WireMigrationRecord,
 } from './migration/migration';
 import type { DeepReadonly, DerivedModelDef, ModelDef, PartsTransformer } from './model';
 import { MODEL_CROSS_REDUCERS } from './model';
@@ -81,12 +80,6 @@ interface ReducerEntry {
 interface OpGroup {
   readonly ops: readonly Op[];
   readonly silent: boolean;
-}
-
-interface PreparedRestore {
-  readonly records: readonly WireRecord[];
-  readonly shouldRewrite: boolean;
-  readonly warning?: string;
 }
 
 type RestorePhase = 'new' | 'restoring' | 'ready' | 'failed';
@@ -217,21 +210,66 @@ export class WireService extends Disposable implements IWireService {
     this.restorePhase = 'restoring';
     try {
       const source = this.log.read<WireRecord>(this.wireScope, AGENT_WIRE_RECORD_KEY);
-      const prepared = this.prepareRestore(await collectRecords(source), options);
+      const rewriteMigratedRecords = options.rewriteMigratedRecords ?? true;
+      let migrations: readonly WireMigration[] = [];
+      let rewrittenRecords: WireRecord[] | undefined;
+      let warning: string | undefined;
+      let unknownRecords = 0;
+      let recordIndex = 0;
+      let hasRecords = false;
 
-      if (prepared.shouldRewrite) {
-        await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, prepared.records);
+      for await (const sourceRecord of source) {
+        if (!hasRecords) {
+          hasRecords = true;
+          if (sourceRecord.type !== 'metadata') {
+            if (rewriteMigratedRecords) {
+              rewrittenRecords = [createWireMetadataRecord()];
+            }
+          } else if (!isWireMetadataRecord(sourceRecord)) {
+            throw new StorageError(
+              StorageErrors.codes.STORAGE_CORRUPTED,
+              'Agent wire metadata is malformed',
+              { details: { scope: this.wireScope, key: AGENT_WIRE_RECORD_KEY } },
+            );
+          } else if (isNewerWireVersion(sourceRecord.protocol_version)) {
+            warning = `Session wire protocol version ${sourceRecord.protocol_version} is newer than the current version ${WIRE_PROTOCOL_VERSION}. Records will be restored without migration.`;
+          } else {
+            migrations = resolveWireMigrations(sourceRecord.protocol_version);
+            if (
+              rewriteMigratedRecords &&
+              sourceRecord.protocol_version !== WIRE_PROTOCOL_VERSION
+            ) {
+              rewrittenRecords = [];
+            }
+          }
+        }
+
+        const migratedRecord = migrateWireRecord(sourceRecord, migrations);
+        const record =
+          warning === undefined && migratedRecord.type === 'metadata'
+            ? { ...migratedRecord, protocol_version: WIRE_PROTOCOL_VERSION }
+            : migratedRecord;
+        rewrittenRecords?.push(record);
+        if (record.type === 'metadata') continue;
+
+        this.recordHistory.push(record);
+        if (!this.replayRecord(record, recordIndex)) unknownRecords++;
+        recordIndex++;
       }
 
-      const history = prepared.records.filter((record) => record.type !== 'metadata');
-      this.recordHistory.push(...history);
-      const unknownRecords = this.replayRecords(history);
+      if (!hasRecords && rewriteMigratedRecords) {
+        rewrittenRecords = [createWireMetadataRecord()];
+      }
+      if (rewrittenRecords !== undefined) {
+        await this.log.rewrite(this.wireScope, AGENT_WIRE_RECORD_KEY, rewrittenRecords);
+      }
+
       await this.rehydrateModels();
       this.restorePhase = 'ready';
       await this.fireRestored();
-      return prepared.warning === undefined
+      return warning === undefined
         ? { unknownRecords }
-        : { warning: prepared.warning, unknownRecords };
+        : { warning, unknownRecords };
     } catch (error) {
       this.restorePhase = 'failed';
       throw error;
@@ -243,73 +281,23 @@ export class WireService extends Disposable implements IWireService {
     await this.log.flush();
   }
 
-  private prepareRestore(
-    source: readonly WireRecord[],
-    options: WireRestoreOptions,
-  ): PreparedRestore {
-    let records = [...source];
-    let migrations: readonly WireMigration[] = [];
-    let requiresRewrite = false;
-    let warning: string | undefined;
-    const first = records[0];
-
-    if (first === undefined) {
-      records = [createWireMetadataRecord()];
-      requiresRewrite = true;
-    } else if (first.type !== 'metadata') {
-      records = [createWireMetadataRecord(), ...records];
-      requiresRewrite = true;
-    } else if (!isWireMetadataRecord(first)) {
-      throw new StorageError(
-        StorageErrors.codes.STORAGE_CORRUPTED,
-        'Agent wire metadata is malformed',
-        { details: { scope: this.wireScope, key: AGENT_WIRE_RECORD_KEY } },
+  private replayRecord(record: WireRecord, index: number): boolean {
+    const descriptor = OP_REGISTRY.get(record.type);
+    if (descriptor === undefined) {
+      onUnexpectedError(
+        new WireError(
+          WireErrors.codes.WIRE_UNKNOWN_RECORD,
+          `Unknown wire record type '${record.type}' skipped during restore`,
+          { details: { type: record.type, index } },
+        ),
       );
-    } else if (isNewerWireVersion(first.protocol_version)) {
-      warning = `Session wire protocol version ${first.protocol_version} is newer than the current version ${WIRE_PROTOCOL_VERSION}. Records will be restored without migration.`;
-    } else {
-      migrations = resolveWireMigrations(first.protocol_version);
-      requiresRewrite = first.protocol_version !== WIRE_PROTOCOL_VERSION;
+      return false;
     }
-
-    const migrated = applyWireMigrations(
-      records as readonly WireMigrationRecord[],
-      migrations,
-    ) as WireRecord[];
-    const normalized = warning === undefined
-      ? migrated.map((record) =>
-          record.type === 'metadata'
-            ? { ...record, protocol_version: WIRE_PROTOCOL_VERSION }
-            : record,
-        )
-      : migrated;
-    const shouldRewrite =
-      requiresRewrite &&
-      (options.rewriteMigratedRecords ?? true);
-    return { records: normalized, shouldRewrite, warning };
-  }
-
-  private replayRecords(records: readonly WireRecord[]): number {
-    const ops: Op[] = [];
-    let unknownRecords = 0;
-    for (let index = 0; index < records.length; index++) {
-      const record = records[index]!;
-      const descriptor = OP_REGISTRY.get(record.type);
-      if (descriptor === undefined) {
-        unknownRecords++;
-        onUnexpectedError(
-          new WireError(
-            WireErrors.codes.WIRE_UNKNOWN_RECORD,
-            `Unknown wire record type '${record.type}' skipped during restore`,
-            { details: { type: record.type, index } },
-          ),
-        );
-        continue;
-      }
-      ops.push({ type: record.type, payload: wireRecordToPayload(record), descriptor });
-    }
-    this.execute({ ops, silent: true });
-    return unknownRecords;
+    this.execute({
+      ops: [{ type: record.type, payload: wireRecordToPayload(record), descriptor }],
+      silent: true,
+    });
+    return true;
   }
 
   private execute(group: OpGroup): void {
@@ -439,11 +427,3 @@ registerScopedService(
   InstantiationType.Eager,
   'wire',
 );
-
-async function collectRecords(
-  source: Iterable<WireRecord> | AsyncIterable<WireRecord>,
-): Promise<WireRecord[]> {
-  const records: WireRecord[] = [];
-  for await (const record of source) records.push(record);
-  return records;
-}

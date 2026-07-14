@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { resetUnexpectedErrorHandler, setUnexpectedErrorHandler } from '#/_base/errors/unexpectedError';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
@@ -10,6 +10,7 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { defineModel } from '#/wire/model';
+import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { CycleError } from '#/wire/wireService';
@@ -152,6 +153,38 @@ describe('WireService', () => {
     expect(changes).toBe(0);
     expect(restored).toBe(1);
     expect((await readRecords(log2, SCOPE, 'replay')).slice(1)).toEqual(records);
+  });
+
+  it('applies each current-version record before requesting the next record during restore', async () => {
+    let streamed!: IWireService;
+    const streamingLog: IAppendLogStore = {
+      _serviceBrand: undefined,
+      append: () => {},
+      read: async function* <R>() {
+        yield {
+          type: 'metadata',
+          protocol_version: WIRE_PROTOCOL_VERSION,
+          created_at: 1,
+        } as R;
+        yield { type: 'store.counter.add', by: 2 } as R;
+        expect(streamed.getModel(CounterModel)).toEqual({ value: 2 });
+        yield { type: 'store.counter.add', by: 3 } as R;
+      },
+      rewrite: async () => {},
+      flush: async () => {},
+      close: async () => {},
+      acquire: () => toDisposable(() => {}),
+    };
+    const streamingIx = disposables.add(new TestInstantiationService());
+    streamed = registerTestAgentWire(
+      streamingIx,
+      testWireScope(SCOPE, 'streaming'),
+      { log: streamingLog },
+    );
+
+    await streamed.restore();
+
+    expect(streamed.getModel(CounterModel)).toEqual({ value: 5 });
   });
 
   it('queues reentrant dispatch and drains it after the current group', () => {
