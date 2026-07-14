@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -1342,6 +1343,7 @@ export class KimiTUI {
     activations: readonly InlineSkillActivation[],
     extraction: ReturnType<typeof extractMediaAttachments>,
   ): Promise<void> {
+    const submissionId = randomUUID();
     const imageAttachmentIds =
       extraction.imageAttachmentIds.length > 0
         ? extraction.imageAttachmentIds
@@ -1353,11 +1355,13 @@ export class KimiTUI {
       renderMode: 'plain',
       content: text,
       imageAttachmentIds,
+      promptSubmissionId: submissionId,
     });
 
     await session.promptWithSkills(
       extraction.hasMedia ? extraction.parts : text,
       activations.map((activation) => ({ name: activation.skillName })),
+      { submissionId },
     );
   }
 

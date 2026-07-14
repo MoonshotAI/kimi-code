@@ -235,12 +235,14 @@ describe('Session skills', () => {
       await session.promptWithSkills('Review this change.', [
         { name: 'review' },
         { name: 'security' },
-      ]);
+      ], { submissionId: 'submission-sdk' });
       await ended;
       unsubscribe();
 
       expect(events.filter((event) => event.type === 'skill.activated').map((event) => event.skillName))
         .toEqual(['review', 'security']);
+      expect(events.filter((event) => event.type === 'skill.activated').map((event) => event.submissionId))
+        .toEqual(['submission-sdk', 'submission-sdk']);
       expect(events.filter((event) => event.type === 'turn.started')).toHaveLength(1);
       expect(events.some((event) => event.type === 'error' && event.code === 'turn.agent_busy'))
         .toBe(false);

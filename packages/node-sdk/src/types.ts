@@ -105,6 +105,11 @@ export interface PromptSkillActivation {
   readonly args?: string;
 }
 
+export interface PromptWithSkillsOptions {
+  /** Correlates the prompt and its Skill activations as one logical submission. */
+  readonly submissionId?: string;
+}
+
 export interface KimiHarnessOptions {
   readonly identity?: KimiHostIdentity | undefined;
   readonly homeDir?: string | undefined;

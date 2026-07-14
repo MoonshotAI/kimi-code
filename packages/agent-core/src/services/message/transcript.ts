@@ -55,7 +55,8 @@ import type { ExecutableToolResult, LoopRecordedEvent } from '../../loop';
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   collectCompactableUserMessages,
-  isRealUserInput,
+  isUserUndoAnchor,
+  promptSubmissionId,
   selectRecentUserMessages,
 } from '../../agent/compaction';
 
@@ -211,15 +212,23 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
   const applyUndo = (count: number): void => {
     if (count <= 0) return;
     let removedUserCount = 0;
+    let completingSubmissionId: string | undefined;
     for (let i = transcript.length - 1; i >= clearFloor; i--) {
       const message = transcript[i]!.message;
       if (message.origin?.kind === 'injection') continue;
       if (message.origin?.kind === 'compaction_summary') break;
+      const submissionId = promptSubmissionId(message.origin);
+      if (
+        removedUserCount >= count &&
+        (completingSubmissionId === undefined || submissionId !== completingSubmissionId)
+      ) {
+        break;
+      }
       transcript.splice(i, 1);
       foldedLength = Math.max(0, foldedLength - 1);
-      if (isRealUserInput(message)) {
+      if (isUserUndoAnchor(message)) {
         removedUserCount++;
-        if (removedUserCount >= count) break;
+        completingSubmissionId = submissionId;
       }
     }
     resetOpenState();

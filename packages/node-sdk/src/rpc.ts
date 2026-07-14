@@ -80,6 +80,7 @@ export interface SessionPromptRpcInput {
 
 export interface SessionPromptWithSkillsRpcInput extends SessionPromptRpcInput {
   readonly skills: readonly PromptSkillActivation[];
+  readonly submissionId?: string;
 }
 
 export interface SessionIdRpcInput {
@@ -385,6 +386,7 @@ export abstract class SDKRpcClientBase {
       agentId,
       input: input.input,
       skills: input.skills,
+      submissionId: input.submissionId,
     });
   }
 

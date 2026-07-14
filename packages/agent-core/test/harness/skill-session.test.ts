@@ -300,6 +300,30 @@ describe('HarnessAPI session skills', () => {
     expect(JSON.stringify(records)).toContain('Check the requested code for security issues.');
   });
 
+  it('undoes a prompt with multiple user-activated skills as one submission', async () => {
+    await writeSkill('review', [
+      '---', 'name: review', 'description: Review code', '---', '', 'Review the requested code.',
+    ]);
+    await writeSkill('security', [
+      '---', 'name: security', 'description: Check security', '---', '',
+      'Check the requested code for security issues.',
+    ]);
+    const { events, rpc } = await createTestRpc();
+    const created = await rpc.createSession({ id: 'ses_multi_skill_undo', workDir });
+
+    await rpc.promptWithSkills({
+      sessionId: created.id,
+      agentId: 'main',
+      input: [{ type: 'text', text: 'Review this change.' }],
+      skills: [{ name: 'review' }, { name: 'security' }],
+    });
+    await waitForEvent(events, (event) => event.type === 'turn.ended');
+    await rpc.undoHistory({ sessionId: created.id, agentId: 'main', count: 1 });
+
+    const context = await rpc.getContext({ sessionId: created.id, agentId: 'main' });
+    expect(context.history).toEqual([]);
+  });
+
   it('rejects a multi-skill prompt atomically when any skill is invalid', async () => {
     await writeSkill('review', [
       '---', 'name: review', 'description: Review code', '---', '', 'Review the requested code.',

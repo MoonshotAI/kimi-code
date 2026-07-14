@@ -24,15 +24,16 @@ export class SkillManager {
   }
 
   prompt(payload: PromptWithSkillsPayload): void {
-    const prepared = payload.skills.map((skill) => this.prepare(skill));
+    const submissionId = payload.submissionId ?? randomUUID();
+    const prepared = payload.skills.map((skill) => this.prepare(skill, submissionId));
     for (const activation of prepared) {
       this.recordActivation(activation.origin);
       this.agent.context.appendUserMessage(activation.input, activation.origin);
     }
-    this.agent.turn.prompt(payload.input);
+    this.agent.turn.prompt(payload.input, { kind: 'user', submissionId });
   }
 
-  private prepare(input: ActivateSkillPayload): {
+  private prepare(input: ActivateSkillPayload, submissionId?: string): {
     readonly origin: SkillActivationOrigin;
     readonly input: readonly ContentPart[];
   } {
@@ -56,6 +57,7 @@ export class SkillManager {
         skillPath: skill.path,
         skillSource: skill.source,
         skillArgs: input.args,
+        submissionId,
       },
       input: [
         {
@@ -84,6 +86,7 @@ export class SkillManager {
       skillArgs: origin.skillArgs,
       skillPath: origin.skillPath,
       skillSource: origin.skillSource,
+      submissionId: origin.submissionId,
     });
     this.agent.telemetry.track('skill_invoked', {
       skill_name: origin.skillName,

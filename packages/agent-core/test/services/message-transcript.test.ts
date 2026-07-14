@@ -296,6 +296,34 @@ describe('reduceWireRecords', () => {
     expect(foldedLength).toBe(3);
   });
 
+  it('undo removes skill activations grouped with the last user prompt', () => {
+    const { entries, foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('before')),
+      appendMessage(userMessage('review instructions', {
+        kind: 'skill_activation',
+        activationId: 'act-review',
+        skillName: 'review',
+        trigger: 'user-slash',
+        submissionId: 'submission-1',
+      })),
+      appendMessage(userMessage('security instructions', {
+        kind: 'skill_activation',
+        activationId: 'act-security',
+        skillName: 'security',
+        trigger: 'user-slash',
+        submissionId: 'submission-1',
+      })),
+      appendMessage(userMessage('Review this change.', {
+        kind: 'user',
+        submissionId: 'submission-1',
+      })),
+      { type: 'context.undo', count: 1 } as AgentRecord,
+    ]);
+
+    expect(entries.map((entry) => textOf(entry.message))).toEqual(['before']);
+    expect(foldedLength).toBe(1);
+  });
+
   it('undo stops at a compaction summary boundary', () => {
     const { entries } = reduceWireRecords([
       appendMessage(userMessage('u1')),

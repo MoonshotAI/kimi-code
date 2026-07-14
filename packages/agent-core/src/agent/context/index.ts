@@ -11,7 +11,8 @@ import {
   COMPACTION_ELISION_VARIANT,
   buildCompactionElisionText,
   collectCompactableUserMessages,
-  isRealUserInput,
+  isUserUndoAnchor,
+  promptSubmissionId,
   selectCompactionUserMessages,
   selectRecentUserMessages,
   type CompactionInput,
@@ -258,6 +259,7 @@ export class ContextMemory {
     this.agent.records.logRecord({ type: 'context.undo', count });
 
     let removedUserCount = 0;
+    let completingSubmissionId: string | undefined;
     const removedMessages = new Set<ContextMessage>();
     let stoppedAtBoundary = false;
     for (let i = this._history.length - 1; i >= 0; i--) {
@@ -266,6 +268,14 @@ export class ContextMemory {
       if (message.origin?.kind === 'injection') continue;
       if (message.origin?.kind === 'compaction_summary') {
         stoppedAtBoundary = true;
+        break;
+      }
+
+      const submissionId = promptSubmissionId(message.origin);
+      if (
+        removedUserCount >= count &&
+        (completingSubmissionId === undefined || submissionId !== completingSubmissionId)
+      ) {
         break;
       }
 
@@ -278,9 +288,9 @@ export class ContextMemory {
         this._tokenCount -= estimateTokensForMessages([message]);
       }
 
-      if (isRealUserInput(message)) {
+      if (isUserUndoAnchor(message)) {
         removedUserCount++;
-        if (removedUserCount >= count) break;
+        completingSubmissionId = submissionId;
       }
     }
 

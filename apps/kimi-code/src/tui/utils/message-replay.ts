@@ -44,6 +44,7 @@ export interface SkillActivationProjection {
   readonly skillName: string;
   readonly skillArgs?: string;
   readonly trigger: SkillActivationTrigger;
+  readonly submissionId?: string;
 }
 
 export interface PluginCommandProjection {
@@ -252,6 +253,7 @@ export function skillActivationFromOrigin(
     skillName: origin.skillName,
     skillArgs: origin.skillArgs,
     trigger: origin.trigger,
+    submissionId: origin.submissionId,
   };
 }
 

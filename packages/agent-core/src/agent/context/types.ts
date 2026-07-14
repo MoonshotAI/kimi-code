@@ -6,6 +6,7 @@ import type { BackgroundTaskStatus } from '../background';
 
 export interface UserPromptOrigin {
   readonly kind: 'user';
+  readonly submissionId?: string | undefined;
 }
 
 export const USER_PROMPT_ORIGIN: UserPromptOrigin = { kind: 'user' };
@@ -19,6 +20,7 @@ export interface SkillActivationOrigin {
   readonly skillType?: string | undefined;
   readonly skillPath?: string | undefined;
   readonly skillSource?: SkillSource | undefined;
+  readonly submissionId?: string | undefined;
 }
 
 export interface PluginCommandOrigin {

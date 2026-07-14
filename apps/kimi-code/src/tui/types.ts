@@ -214,6 +214,7 @@ export interface TranscriptEntry {
   skillName?: string;
   skillArgs?: string;
   skillTrigger?: SkillActivationTrigger;
+  promptSubmissionId?: string;
   pluginCommandData?: PluginCommandTranscriptData;
 }
 

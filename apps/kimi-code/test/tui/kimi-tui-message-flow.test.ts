@@ -2538,7 +2538,48 @@ command = "vim"
     }
   });
 
+  it('presents one undo choice when one prompt activates multiple inline skills', async () => {
+    const { driver, session } = await makeDriver();
+    const input = 'Review this change with /skill:review and /skill:security';
 
+    driver.sendInlineSkillUserInput(session as never, input, [
+      { skillName: 'review' },
+      { skillName: 'security' },
+    ]);
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        agentId: 'main',
+        activationId: 'act-review',
+        skillName: 'review',
+        trigger: 'user-slash',
+        submissionId: 'submission-1',
+      } as Event,
+      () => {},
+    );
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'skill.activated',
+        agentId: 'main',
+        activationId: 'act-security',
+        skillName: 'security',
+        trigger: 'user-slash',
+        submissionId: 'submission-1',
+      } as Event,
+      () => {},
+    );
+    driver.state.appState.streamingPhase = 'idle';
+
+    driver.handleUserInput('/undo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(UndoSelectorComponent);
+    });
+    const selector = stripSgr(driver.state.editorContainer.render(120).join('\n'));
+    expect(selector).toContain(input);
+    expect(selector).not.toContain('\n     /review');
+    expect(selector).not.toContain('\n     /security');
+  });
   it('sends pasted image placeholders as image content parts', async () => {
     const { driver, session } = await makeDriver();
     const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
@@ -7043,7 +7084,7 @@ describe('KimiTUI inline skill prompt sending', () => {
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith('use /skill:review on this', [
         { name: 'review' },
-      ]);
+      ], { submissionId: expect.any(String) });
     });
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(session.prompt).not.toHaveBeenCalled();
@@ -7064,6 +7105,7 @@ describe('KimiTUI inline skill prompt sending', () => {
       expect(session.promptWithSkills).toHaveBeenCalledWith(
         'use /skill:review and /skill:security',
         [{ name: 'review' }, { name: 'security' }],
+        { submissionId: expect.any(String) },
       );
     });
     expect(session.activateSkill).not.toHaveBeenCalled();
@@ -7087,7 +7129,7 @@ describe('KimiTUI inline skill prompt sending', () => {
     });
     expect(session.promptWithSkills).toHaveBeenCalledWith('use /skill:review on this', [
       { name: 'review' },
-    ]);
+    ], { submissionId: expect.any(String) });
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(session.prompt).not.toHaveBeenCalled();
     expect(driver.state.appState.streamingPhase).toBe('idle');
@@ -7114,7 +7156,7 @@ describe('KimiTUI inline skill prompt sending', () => {
     await vi.waitFor(() => {
       expect(session.promptWithSkills).toHaveBeenCalledWith('use /skill:review on this', [
         { name: 'review' },
-      ]);
+      ], { submissionId: expect.any(String) });
     });
     expect(session.activateSkill).not.toHaveBeenCalled();
     expect(session.prompt).not.toHaveBeenCalled();

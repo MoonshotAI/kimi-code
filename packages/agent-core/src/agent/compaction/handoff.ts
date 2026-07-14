@@ -109,6 +109,19 @@ export function isRealUserInput(message: MessageLike): boolean {
   return message.role === 'user' && compactionUserMessageDisposition(message.origin) === 'keep';
 }
 
+export function promptSubmissionId(origin: PromptOrigin | undefined): string | undefined {
+  if (origin?.kind !== 'user' && origin?.kind !== 'skill_activation') return undefined;
+  return origin.submissionId;
+}
+
+export function isUserUndoAnchor(message: MessageLike): boolean {
+  if (!isRealUserInput(message)) return false;
+  return !(
+    message.origin?.kind === 'skill_activation' &&
+    message.origin.submissionId !== undefined
+  );
+}
+
 export function collectCompactableUserMessages<T extends MessageLike>(messages: readonly T[]): T[] {
   return messages.filter(
     (message) => isRealUserInput(message) && !isCompactionSummaryMessage(message),

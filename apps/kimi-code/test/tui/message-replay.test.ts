@@ -4,6 +4,7 @@ import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
   ContentPart,
+  ContextMessage,
   GoalSnapshot,
   PromptOrigin,
   ResumedAgentState,
@@ -27,6 +28,7 @@ import { ToolCallComponent } from '#/tui/components/messages/tool-call';
 import { ReadGroupComponent } from '#/tui/components/messages/read-group';
 import { replayBackgroundProjection } from '#/tui/utils/message-replay';
 import type { TaskNotificationOrigin } from '#/tui/utils/message-replay';
+import { UndoSelectorComponent } from '#/tui/components/dialogs/undo-selector';
 
 vi.mock('#/utils/open-url', () => ({ openUrl: vi.fn() }));
 
@@ -44,6 +46,7 @@ interface ReplayDriver {
   readonly sessionEventHandler: SessionEventHandler;
   init(): Promise<boolean>;
   switchToSession(session: Session, statusMessage: string): Promise<void>;
+  handleUserInput(text: string): void;
 }
 
 function makeStartupInput(): KimiTUIStartupInput {
@@ -198,6 +201,8 @@ function makeSession(
       contextUsage: 0,
     })),
     getGoal: vi.fn(async () => ({ goal: null })),
+    getContext: vi.fn(async () => agent.context),
+    undoHistory: vi.fn(async () => {}),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
     setModel: vi.fn(async () => {}),
@@ -1073,6 +1078,70 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('src/app.ts');
     expect(transcript).not.toContain('Review the requested file');
     expect(driver.sessionEventHandler.renderedSkillActivationIds.has('act-review')).toBe(true);
+  });
+
+  it('undoes a resumed multi-skill prompt without leaving its activations behind', async () => {
+    const submissionId = 'submission-1';
+    const history: ContextMessage[] = [
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Review instructions' }],
+        toolCalls: [],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-review',
+          skillName: 'review',
+          trigger: 'user-slash',
+          submissionId,
+        },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Security instructions' }],
+        toolCalls: [],
+        origin: {
+          kind: 'skill_activation',
+          activationId: 'act-security',
+          skillName: 'security',
+          trigger: 'user-slash',
+          submissionId,
+        },
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Review this change.' }],
+        toolCalls: [],
+        origin: { kind: 'user', submissionId },
+      },
+    ];
+    const replay = history.map((replayMessage) => ({
+      time: REPLAY_TIME,
+      type: 'message' as const,
+      message: replayMessage,
+    }));
+    const initial = makeSession([]);
+    const resumed = makeSession(replay, { context: { history, tokenCount: 0 } });
+    const driver = await makeDriver(initial);
+    await driver.switchToSession(resumed, 'Resumed session (ses-replay).');
+
+    driver.handleUserInput('/undo');
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(UndoSelectorComponent);
+    });
+    const selector = stripAnsi(driver.state.editorContainer.render(120).join('\n'));
+    expect(selector).toContain('Review this change.');
+    expect(selector).not.toContain('\n     /review');
+    expect(selector).not.toContain('\n     /security');
+    (driver.state.editorContainer.children[0] as UndoSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(resumed.undoHistory).toHaveBeenCalledWith(1);
+    });
+    expect(
+      driver.state.transcriptEntries.filter(
+        (entry) => entry.kind === 'user' || entry.kind === 'skill_activation',
+      ),
+    ).toEqual([]);
   });
 
   it('renders replayed hook results as assistant transcript entries', async () => {
