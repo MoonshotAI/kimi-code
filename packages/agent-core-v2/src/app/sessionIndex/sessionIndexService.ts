@@ -21,8 +21,10 @@
  * summary is resolved through the read model — falling back to a disk read +
  * backfill on a cold miss. Writes (create / archive / metadata update) keep the
  * read model warm via `SessionMetadata`; new sessions that have not been
- * mirrored yet are simply a cold miss and backfilled on first read. The legacy
- * N+1 path remains as the flag-off fallback — and as the runtime fallback when
+ * mirrored yet are simply a cold miss and backfilled on first read. Persisted
+ * metadata remains the membership source, so a cached row is ignored after its
+ * state document disappears. The legacy N+1 path remains as the flag-off
+ * fallback — and as the runtime fallback when
  * the query store reports `storage.locked` (another process holds the writer
  * lock): the first lock warns once and disables the read model for the rest of
  * the process lifetime.
@@ -193,7 +195,14 @@ export class FileSessionIndex implements ISessionIndex {
 
   private async getFromReadModel(id: string): Promise<SessionSummary | undefined> {
     const cached = await this.queryStore.get<SessionSummary>(SESSION_COLLECTION, id);
-    if (cached !== undefined) return cached;
+    if (cached !== undefined && typeof cached.workspaceId === 'string') {
+      const summary = await this.readSummary(cached.workspaceId, id);
+      if (summary !== undefined) {
+        if (cached.id === id && cached.createdAt === summary.createdAt) return cached;
+        await this.queryStore.put(SESSION_COLLECTION, id, summary);
+        return summary;
+      }
+    }
     // Cold miss: locate the session on disk, then read + backfill.
     for (const workspaceId of await this.listWorkspaceIds()) {
       if (!(await this.hasSession(workspaceId, id))) continue;
@@ -240,11 +249,17 @@ export class FileSessionIndex implements ISessionIndex {
     sessionId: string,
   ): Promise<SessionSummary | undefined> {
     const cached = await this.queryStore.get<SessionSummary>(SESSION_COLLECTION, sessionId);
-    if (cached !== undefined) return cached;
     const summary = await this.readSummary(workspaceId, sessionId);
-    if (summary !== undefined) {
-      await this.queryStore.put(SESSION_COLLECTION, sessionId, summary);
+    if (summary === undefined) return undefined;
+    if (
+      cached !== undefined &&
+      cached.id === sessionId &&
+      cached.workspaceId === workspaceId &&
+      cached.createdAt === summary.createdAt
+    ) {
+      return cached;
     }
+    await this.queryStore.put(SESSION_COLLECTION, sessionId, summary);
     return summary;
   }
 

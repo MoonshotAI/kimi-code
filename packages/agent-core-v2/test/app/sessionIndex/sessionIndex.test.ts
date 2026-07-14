@@ -283,11 +283,50 @@ describe('FileSessionIndex (read model)', () => {
   });
 
   it('get prefers the read model over disk', async () => {
+    await seedSession('warm', { title: 'from disk', createdAt: 1, updatedAt: 2 });
     const store = build();
-    // Not seeded on disk — only present in the read model.
     await queryStore.put(SESSION_COLLECTION, 'warm', summary('warm', { title: 'cached' }));
     const got = await store.get('warm');
     expect(got?.title).toBe('cached');
+  });
+
+  it('does not expose a cached session without persisted state', async () => {
+    await fsp.mkdir(join(sessionsDir, workspaceId, 'initializing'), { recursive: true });
+    const store = build();
+    await queryStore.put(
+      SESSION_COLLECTION,
+      'initializing',
+      summary('initializing', { title: 'cached' }),
+    );
+
+    await expect(store.get('initializing')).resolves.toBeUndefined();
+    await expect(
+      store.list({ sessionId: 'initializing', includeArchived: true }),
+    ).resolves.toEqual({ items: [] });
+  });
+
+  it('replaces a cached summary when the same path contains a new session', async () => {
+    await seedSession('recreated', {
+      title: 'current',
+      createdAt: 10,
+      updatedAt: 11,
+    });
+    const store = build();
+    await queryStore.put(
+      SESSION_COLLECTION,
+      'recreated',
+      summary('recreated', { title: 'stale', createdAt: 1, updatedAt: 2 }),
+    );
+
+    await expect(store.get('recreated')).resolves.toMatchObject({
+      id: 'recreated',
+      title: 'current',
+      createdAt: 10,
+    });
+    await expect(queryStore.get(SESSION_COLLECTION, 'recreated')).resolves.toMatchObject({
+      title: 'current',
+      createdAt: 10,
+    });
   });
 
   it('list filters by childOf from the read model', async () => {
@@ -319,8 +358,8 @@ describe('FileSessionIndex (read model)', () => {
   });
 
   it('countActive reflects read-model updates', async () => {
-    await seedSession('a', {});
-    await seedSession('b', { archived: true });
+    await seedSession('a', { createdAt: 1, updatedAt: 2 });
+    await seedSession('b', { archived: true, createdAt: 1, updatedAt: 2 });
 
     const store = build();
     expect(await store.countActive(workspaceId)).toBe(1);

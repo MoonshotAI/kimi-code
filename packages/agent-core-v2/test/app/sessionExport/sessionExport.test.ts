@@ -403,6 +403,7 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     onDidChangeMetadata: noopEvent,
+    whenIdle: async () => {},
     read: async () => meta,
     update: async () => {},
     setTitle: async () => {},

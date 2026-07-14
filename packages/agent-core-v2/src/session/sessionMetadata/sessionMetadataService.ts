@@ -11,9 +11,11 @@
  * update is persisted, the fresh summary is mirrored into the `IQueryStore`
  * derived read model so `FileSessionIndex` can serve listings without
  * re-reading `state.json`. Mirroring is best-effort (a failure is logged, not
- * thrown) and is a no-op when the flag is off. Initial creation in `load()` is
- * intentionally not mirrored — a not-yet-mirrored session is simply a cold
- * read-model miss that `FileSessionIndex` backfills on first read.
+ * thrown) and is a no-op when the flag is off. The metadata owner exposes an
+ * idle barrier covering queued persistence and mirroring before Session-scope
+ * teardown. Initial creation in `load()` is intentionally not mirrored — a
+ * not-yet-mirrored session is simply a cold read-model miss that
+ * `FileSessionIndex` backfills on first read.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -67,6 +69,15 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
   async read(): Promise<SessionMeta> {
     await this.ready;
     return this.data;
+  }
+
+  async whenIdle(): Promise<void> {
+    await this.ready;
+    let queued: Promise<void>;
+    do {
+      queued = this.updateQueue;
+      await queued;
+    } while (this.updateQueue !== queued);
   }
 
   async update(patch: SessionMetaPatch): Promise<void> {

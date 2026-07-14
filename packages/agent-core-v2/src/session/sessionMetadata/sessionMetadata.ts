@@ -5,8 +5,9 @@
  * layers to read and update the session's durable metadata (title, timestamps,
  * archived flag, fork provenance). Owns the in-memory copy, persists it as a
  * single atomic document through `storage`, and notifies changes via
- * `onDidChangeMetadata`. Session-scoped — one instance per session. The initial
- * document is materialized when the session is created.
+ * `onDidChangeMetadata`. Exposes an idle barrier so session teardown can wait
+ * for queued document and read-model writes. Session-scoped — one instance per
+ * session. The initial document is materialized when the session is created.
  */
 
 import type { Event } from '#/_base/event';
@@ -78,6 +79,7 @@ export interface ISessionMetadata {
 
   readonly ready: Promise<void>;
   readonly onDidChangeMetadata: Event<SessionMetadataChangedEvent>;
+  whenIdle(): Promise<void>;
   read(): Promise<SessionMeta>;
   update(patch: SessionMetaPatch): Promise<void>;
   setTitle(title: string): Promise<void>;

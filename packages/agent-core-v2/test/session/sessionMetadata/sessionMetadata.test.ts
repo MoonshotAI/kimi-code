@@ -115,4 +115,74 @@ describe('SessionMetadata', () => {
       'agent-1',
     ]);
   });
+
+  it('whenIdle waits for a queued read-model write', async () => {
+    let startPut!: () => void;
+    const putStarted = new Promise<void>((resolve) => {
+      startPut = resolve;
+    });
+    let releasePut!: () => void;
+    const putReleased = new Promise<void>((resolve) => {
+      releasePut = resolve;
+    });
+    ix.stub(IFlagService, stubFlag(true));
+    ix.stub(IQueryStore, {
+      ...stubQueryStore(),
+      put: async () => {
+        startPut();
+        await putReleased;
+      },
+    });
+    const meta = ix.get(ISessionMetadata);
+
+    const updating = meta.update({ title: 'queued' });
+    await putStarted;
+    let idle = false;
+    const waiting = meta.whenIdle().then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false);
+
+    releasePut();
+    await updating;
+    await waiting;
+    expect(idle).toBe(true);
+  });
+
+  it('whenIdle waits for initial metadata persistence', async () => {
+    let startWrite!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      startWrite = resolve;
+    });
+    let releaseWrite!: () => void;
+    const writeReleased = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    ix.stub(IAtomicDocumentStore, {
+      _serviceBrand: undefined,
+      get: async () => undefined,
+      set: async () => {
+        startWrite();
+        await writeReleased;
+      },
+      delete: async () => {},
+      list: async () => [],
+      watch: () => () => ({ dispose: () => {} }),
+      acquire: () => ({ dispose: () => {} }),
+    });
+    const meta = ix.get(ISessionMetadata);
+
+    let idle = false;
+    const waiting = meta.whenIdle().then(() => {
+      idle = true;
+    });
+    await writeStarted;
+    await Promise.resolve();
+    expect(idle).toBe(false);
+
+    releaseWrite();
+    await waiting;
+    expect(idle).toBe(true);
+  });
 });
