@@ -215,6 +215,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private readonly wallClockDeadline = this._register(new MutableDisposable<IDisposable>());
   private liveWallClockStartedAt?: number;
   private pendingContinuation?: PendingContinuation;
+  private resumeContinuation?: { readonly turnId: number; readonly goalId: string };
 
   constructor(
     @IWireService private readonly wire: IWireService,
@@ -417,10 +418,11 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         `Cannot resume a goal in status "${state.status}"`,
       );
     }
+    const continuePaused =
+      actor === 'user' && state.status === 'paused' && input.continueIfPaused === true;
     const shouldContinue =
-      actor === 'user' &&
-      ((state.status === 'paused' && input.continueIfPaused === true) ||
-        (state.status === 'blocked' && input.continueIfBlocked === true));
+      continuePaused ||
+      (actor === 'user' && state.status === 'blocked' && input.continueIfBlocked === true);
     const snapshot = this.applyLifecycle(state, 'active', input.reason, actor);
     if (!shouldContinue) return snapshot;
     const budgetBlocked = this.blockIfBudgetReached(this.requireState());
@@ -432,6 +434,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         await this.settleGoalAfterContinuationFailure(error, state.goalId);
         throw error;
       }
+    } else if (continuePaused && this.liveTurnId !== undefined) {
+      this.resumeContinuation = { turnId: this.liveTurnId, goalId: state.goalId };
     }
     return snapshot;
   }
@@ -672,6 +676,17 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     result: Pick<TurnEndedEvent, 'reason' | 'error'>,
   ): Promise<void> {
     const { goalId, lifecycleGoalId, starterTurn } = this.clearTurnTracking(turnId);
+    const resumeContinuation = this.resumeContinuation;
+    if (resumeContinuation?.turnId === turnId) this.resumeContinuation = undefined;
+    if (resumeContinuation?.turnId === turnId && result.reason === 'cancelled') {
+      const state = this.goalState;
+      if (state === null || state.status !== 'active' || state.goalId !== resumeContinuation.goalId) {
+        return;
+      }
+      if (this.blockIfBudgetReached(state) !== null) return;
+      this.launchContinuationTurn(resumeContinuation.goalId);
+      return;
+    }
     if (goalId === undefined || lifecycleGoalId === undefined) return;
     if (
       result.reason === 'blocked' ||
@@ -858,6 +873,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     opts: { readonly emit?: boolean; readonly track?: boolean; readonly preserveLiveContinuation?: boolean } = {},
   ): void {
     if (this.goalState === null) return;
+    this.resumeContinuation = undefined;
     this.cancelPendingContinuation(opts.preserveLiveContinuation === true);
     this.wallClockDeadline.clear();
     this.liveWallClockStartedAt = undefined;
@@ -881,6 +897,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (status === 'active') {
       this.liveWallClockStartedAt = this.deadlineScheduler.now();
     } else if (state.status === 'active') {
+      this.resumeContinuation = undefined;
       this.cancelPendingContinuation(
         opts.preserveLiveContinuation === true,
         opts.cancellationReason,

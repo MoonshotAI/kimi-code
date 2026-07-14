@@ -1131,6 +1131,19 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(loopService.launches).toHaveLength(1);
   });
 
+  it('starts a continuation after an opted paused resume waits for a cancelled turn', async () => {
+    await startLiveContinuation();
+    const enqueue = vi.mocked(loopService.enqueue);
+
+    await goals.pauseGoal();
+    const resumed = await goals.resumeGoal({ continueIfPaused: true });
+    endTurn(eventBus, makeTurn(41), { reason: 'cancelled' });
+
+    await vi.waitFor(() => expect(enqueue).toHaveBeenCalledTimes(2));
+    expect(resumed.status).toBe('active');
+    expect(goals.getGoal().goal?.status).toBe('active');
+  });
+
   it('counts an active goal turn and launches the next continuation', async () => {
     await goals.createGoal({ objective: 'finish the task' });
 
