@@ -4,4 +4,4 @@
 "@moonshot-ai/kimi-code": patch
 ---
 
-Add an `agent_id` field to turn and tool telemetry events so activity from the main agent and subagents can be told apart within a session.
+Emit `turn_id` and `agent_id` on turn and tool telemetry events so activity can be attributed to the main agent or a specific subagent within a session.
