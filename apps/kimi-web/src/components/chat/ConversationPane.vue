@@ -15,6 +15,7 @@ import Spinner from '../ui/Spinner.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
+import { openDialogCount } from '../../composables/dialogStack';
 
 const { t } = useI18n();
 
@@ -1166,7 +1167,12 @@ function handleInterrupt(): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && (props.running || props.sending)) {
+  if (event.key !== 'Escape') return;
+  // When a design-system Dialog is open, Escape is owned by the dialog (e.g.
+  // to close AddWorkspace/Settings). Don't let it bubble down and abort the
+  // running session behind the overlay.
+  if (openDialogCount.value > 0) return;
+  if (props.running || props.sending) {
     event.preventDefault();
     handleInterrupt();
   }
