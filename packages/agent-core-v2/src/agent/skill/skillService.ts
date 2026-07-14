@@ -24,6 +24,7 @@ import { Disposable } from '#/_base/di/lifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCatalog/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { Turn } from '#/agent/loop/loop';
 import { IAgentWireService } from '#/wire/tokens';
@@ -41,6 +42,7 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
     @IAgentWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionContext private readonly sessionContext: ISessionContext,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     super();
   }
@@ -124,11 +126,13 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
 
   private publishActivation(origin: SkillActivationOrigin): void {
     this.telemetry.track2('skill_invoked', {
+      agent_id: this.scopeContext.agentId,
       skill_name: origin.skillName,
       trigger: origin.trigger,
     });
     if (origin.skillType === 'flow') {
       this.telemetry.track2('flow_invoked', {
+        agent_id: this.scopeContext.agentId,
         flow_name: origin.skillName,
       });
     }

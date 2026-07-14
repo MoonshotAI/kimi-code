@@ -97,11 +97,13 @@ export interface ApiErrorEvent {
 }
 
 export interface SkillInvokedEvent {
+  agent_id: string;
   skill_name: string;
   trigger: 'user-slash' | 'model-tool' | 'nested-skill';
 }
 
 export interface FlowInvokedEvent {
+  agent_id: string;
   flow_name: string;
 }
 
@@ -118,10 +120,12 @@ export interface ConversationUndoEvent {
 }
 
 export interface YoloToggleEvent {
+  agent_id: string;
   enabled: boolean;
 }
 
 export interface AfkToggleEvent {
+  agent_id: string;
   enabled: boolean;
 }
 
@@ -214,10 +218,12 @@ export interface BackgroundTaskCompletedEvent {
 }
 
 export interface ModelSwitchEvent {
+  agent_id: string;
   model: string;
 }
 
 export interface ThinkingToggleEvent {
+  agent_id: string;
   enabled: boolean;
   effort: string;
   from: string;
@@ -466,6 +472,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A skill is invoked.',
     properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
       skill_name: 'Skill name',
       trigger: 'How the skill was triggered',
     },
@@ -473,7 +480,7 @@ export const telemetryEventDefinitions = {
   flow_invoked: defineTelemetryEvent<FlowInvokedEvent>({
     owner: 'kimi-code',
     comment: 'A flow-type skill is invoked.',
-    properties: { flow_name: 'Flow name' },
+    properties: { agent_id: 'Agent id (main or subagent scope id)', flow_name: 'Flow name' },
   }),
   input_steer: defineTelemetryEvent<InputSteerEvent>({
     owner: 'kimi-code',
@@ -493,12 +500,12 @@ export const telemetryEventDefinitions = {
   yolo_toggle: defineTelemetryEvent<YoloToggleEvent>({
     owner: 'kimi-code',
     comment: 'Yolo permission mode is toggled.',
-    properties: { enabled: 'Whether yolo mode is now enabled' },
+    properties: { agent_id: 'Agent id (main or subagent scope id)', enabled: 'Whether yolo mode is now enabled' },
   }),
   afk_toggle: defineTelemetryEvent<AfkToggleEvent>({
     owner: 'kimi-code',
     comment: 'AFK (auto) permission mode is toggled.',
-    properties: { enabled: 'Whether auto mode is now enabled' },
+    properties: { agent_id: 'Agent id (main or subagent scope id)', enabled: 'Whether auto mode is now enabled' },
   }),
   permission_policy_decision: defineTelemetryEvent<PermissionPolicyDecisionEvent>({
     owner: 'kimi-code',
@@ -606,12 +613,13 @@ export const telemetryEventDefinitions = {
   model_switch: defineTelemetryEvent<ModelSwitchEvent>({
     owner: 'kimi-code',
     comment: 'The active model is bound or switched.',
-    properties: { model: 'Model alias' },
+    properties: { agent_id: 'Agent id (main or subagent scope id)', model: 'Model alias' },
   }),
   thinking_toggle: defineTelemetryEvent<ThinkingToggleEvent>({
     owner: 'kimi-code',
     comment: 'Thinking effort is toggled.',
     properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
       enabled: 'Whether thinking is now enabled',
       effort: 'New thinking effort level',
       from: 'Previous thinking effort level',

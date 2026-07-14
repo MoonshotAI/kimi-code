@@ -6,6 +6,7 @@ import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentSkillService } from '#/agent/skill/skill';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -81,6 +82,7 @@ describe('AgentSkillService', () => {
           register: () => ({ dispose: () => {} }),
         });
         reg.defineInstance(ISessionContext, stubSessionContext());
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
     });
     skills = new InMemorySkillCatalog();
@@ -176,6 +178,7 @@ describe('SkillTool', () => {
           register: () => ({ dispose: () => {} }),
         });
         reg.defineInstance(ISessionContext, stubSessionContext());
+        reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       },
     });
     skills = new InMemorySkillCatalog();
