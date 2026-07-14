@@ -261,6 +261,19 @@ describe('WorkspaceRegistryService', () => {
     expect(listed.find((entry) => entry.id === workspace.id)?.session_count).toBe(0);
   });
 
+  it('ignores indexed sessions without an absolute workDir', async () => {
+    const sessionDir = join(ctx.homeDir, 'sessions', 'wd_invalid_000000000000', 'invalid-cwd');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), JSON.stringify({ archived: false }), 'utf8');
+    await appendSessionIndexEntry(ctx.homeDir, {
+      sessionId: 'invalid-cwd',
+      sessionDir,
+      workDir: '',
+    });
+
+    expect(await ctx.registry.list()).toEqual([]);
+  });
+
   it('preserves an alias-only workspace id and its session bucket', async () => {
     const root = await makeProjectRoot('alias-only');
     const canonicalId = encodeWorkDirKey(root);

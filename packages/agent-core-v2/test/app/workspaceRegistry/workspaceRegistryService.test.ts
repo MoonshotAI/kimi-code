@@ -185,6 +185,24 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     expect(await build().list()).toEqual([]);
   });
 
+  it('derives sessions after an empty catalog has already been materialized', async () => {
+    const root = join(homeDir, 'late-session');
+    const workspaceId = encodeWorkDirKey(root);
+    expect(await build().list()).toEqual([]);
+    await seedSessionIndex([
+      {
+        sessionId: 'late-session',
+        sessionDir: join(homeDir, 'sessions', workspaceId, 'late-session'),
+        workDir: root,
+      },
+    ]);
+
+    await expect(build().get(workspaceId)).resolves.toMatchObject({
+      id: workspaceId,
+      root,
+    });
+  });
+
   it('prefers an existing workspaces.json over the session index', async () => {
     const work = join(homeDir, 'existing');
     await writeWorkspacesJson({

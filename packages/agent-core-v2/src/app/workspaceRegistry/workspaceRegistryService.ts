@@ -68,7 +68,20 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
     return this.runExclusive(() =>
       this.store.withWriteLock(async () => {
         const catalog = await this.store.load();
-        if (catalog !== undefined) return toSnapshot(toCatalogState(catalog));
+        if (catalog !== undefined) {
+          const state = toCatalogState(catalog);
+          if (
+            state.workspaces.size === 0 &&
+            state.deletedWorkspaceIds.size === 0 &&
+            state.deletedWorkspaceRoots.size === 0
+          ) {
+            const derived = await this.rebuildFromSessionIndex();
+            for (const workspace of derived.workspaces.values()) {
+              state.workspaces.set(workspace.id, workspace);
+            }
+          }
+          return toSnapshot(state);
+        }
         const rebuilt = await this.rebuildFromSessionIndex();
         await this.store.save(toPersistedCatalog(rebuilt));
         return toSnapshot(rebuilt);
@@ -79,8 +92,20 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
   async get(id: string): Promise<Workspace | undefined> {
     const snapshot = await this.snapshot();
     if (snapshot.deletedWorkspaceIds.has(id)) return undefined;
-    const workspace = findRepresentativeWorkspace(snapshot.workspaces, id);
-    if (workspace === undefined) return undefined;
+    const workspace =
+      snapshot.workspaces.find((candidate) => candidate.id === id) ??
+      findRepresentativeWorkspace(snapshot.workspaces, id);
+    if (workspace === undefined) {
+      const derived = (await this.rebuildFromSessionIndex()).workspaces.get(id);
+      if (derived === undefined) return undefined;
+      const root = normalizeWorkDir(derived.root);
+      if (normalizedDeletedRoots(snapshot).has(root)) return undefined;
+      const registered = findRepresentativeWorkspace(
+        snapshot.workspaces,
+        encodeWorkDirKey(root),
+      );
+      return { ...(registered ?? derived), id, root };
+    }
     const root = normalizeWorkDir(workspace.root);
     if (normalizedDeletedRoots(snapshot).has(root)) return undefined;
     return { ...workspace, root };
@@ -124,9 +149,6 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
         createdAt: existing?.createdAt ?? now,
         lastOpenedAt: now,
       };
-      for (const alias of aliases) {
-        if (alias.id !== representativeId) next.workspaces.delete(alias.id);
-      }
       next.workspaces.set(representativeId, workspace);
       clearTombstones(next, representativeId, normalizedRoot);
       return { next, value: workspace };
@@ -146,11 +168,6 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
         aliases.find((workspace) => workspace.id === encodeWorkDirKey(root))?.id ??
         aliases[0]?.id ??
         existing.id;
-      for (const [aliasId, workspace] of next.workspaces) {
-        if (normalizeWorkDir(workspace.root) === root && aliasId !== representativeId) {
-          next.workspaces.delete(aliasId);
-        }
-      }
       const updated: Workspace = {
         ...(next.workspaces.get(representativeId) ?? existing),
         id: representativeId,

@@ -1,6 +1,6 @@
 import { promises as fsp } from 'node:fs';
 import os from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { basename as posixBasename } from 'pathe';
 import lockfile from 'proper-lockfile';
 import type { Stats } from 'node:fs';
@@ -156,15 +156,17 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
   }
 
   async get(workspaceId: string): Promise<Workspace> {
-    const { match, deleted } = await this.runExclusive(async () => {
+    const { match, deleted, deletedRoots } = await this.runExclusive(async () => {
       const file = await this.readRegistry();
+      const deletedRoots = normalizedDeletedRoots(file);
       const match = findRepresentativeRegistryEntry(file, workspaceId);
       return {
         match,
+        deletedRoots,
         deleted:
           file.deleted_workspace_ids.includes(workspaceId) ||
           (match !== null &&
-            normalizedDeletedRoots(file).has(normalizeWorkDir(match.entry.root))),
+            deletedRoots.has(normalizeWorkDir(match.entry.root))),
       };
     });
     if (deleted) throw new WorkspaceNotFoundError(workspaceId);
@@ -177,7 +179,9 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       );
     }
     const derived = await this.findDerivedWorkspace(workspaceId);
-    if (derived === undefined) throw new WorkspaceNotFoundError(workspaceId);
+    if (derived === undefined || deletedRoots.has(normalizeWorkDir(derived.root))) {
+      throw new WorkspaceNotFoundError(workspaceId);
+    }
     const representativeId = representativeIndexedWorkspaceId(derived, workspaceId);
     return this.hydrate(
       representativeId,
@@ -232,9 +236,6 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
               created_at: now,
               last_opened_at: now,
             };
-      for (const [aliasId] of aliases) {
-        if (aliasId !== representativeId) delete file.workspaces[aliasId];
-      }
       file.workspaces[representativeId] = next;
       clearWorkspaceTombstones(file, representativeId, normalizedRoot);
       return { id: representativeId, entry: next, created: existingEntry === undefined };
@@ -281,11 +282,6 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         root,
         ...(patch.name !== undefined ? { name: patch.name } : {}),
       };
-      for (const [aliasId, candidate] of Object.entries(file.workspaces)) {
-        if (normalizeWorkDir(candidate.root) === root && aliasId !== representative.id) {
-          delete file.workspaces[aliasId];
-        }
-      }
       file.workspaces[representative.id] = next;
       return { id: representative.id, entry: next };
     });
@@ -310,13 +306,21 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       let root: string;
       if (existing !== undefined) {
         root = normalizeWorkDir(existing.root);
+        if (normalizedDeletedRoots(file).has(root)) {
+          throw new WorkspaceNotFoundError(workspaceId);
+        }
         for (const [aliasId, candidate] of Object.entries(file.workspaces)) {
           if (normalizeWorkDir(candidate.root) !== root) continue;
           delete file.workspaces[aliasId];
           addWorkspaceTombstone(file, aliasId, root);
         }
       } else {
-        if (derived === undefined) throw new WorkspaceNotFoundError(workspaceId);
+        if (
+          derived === undefined ||
+          normalizedDeletedRoots(file).has(normalizeWorkDir(derived.root))
+        ) {
+          throw new WorkspaceNotFoundError(workspaceId);
+        }
         root = derived.root;
       }
       addWorkspaceTombstone(file, workspaceId, root);
@@ -330,8 +334,9 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
   }
 
   async resolveRoot(workspaceId: string): Promise<string> {
-    const { entry, deleted } = await this.runExclusive(async () => {
+    const { entry, deleted, deletedRoots } = await this.runExclusive(async () => {
       const file = await this.readRegistry();
+      const deletedRoots = normalizedDeletedRoots(file);
       const entry =
         file.workspaces[workspaceId] ??
         Object.values(file.workspaces).find(
@@ -340,16 +345,19 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         null;
       return {
         entry,
+        deletedRoots,
         deleted:
           file.deleted_workspace_ids.includes(workspaceId) ||
-          (entry !== null && normalizedDeletedRoots(file).has(normalizeWorkDir(entry.root))),
+          (entry !== null && deletedRoots.has(normalizeWorkDir(entry.root))),
       };
     });
     if (deleted) throw new WorkspaceNotFoundError(workspaceId);
     if (entry !== null) return normalizeWorkDir(entry.root);
 
     const derived = await this.findDerivedWorkspace(workspaceId);
-    if (derived !== undefined) return derived.root;
+    if (derived !== undefined && !deletedRoots.has(normalizeWorkDir(derived.root))) {
+      return derived.root;
+    }
     throw new WorkspaceNotFoundError(workspaceId);
   }
 
@@ -370,6 +378,8 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     const indexed = new Map<string, IndexedWorkspace>();
     for (const summary of summaries) {
       if (!(await hasReadableSessionState(summary.sessionDir))) continue;
+      if (typeof summary.workDir !== 'string' || summary.workDir.trim() === '') continue;
+      if (!isAbsolute(summary.workDir)) continue;
       const root = normalizeWorkDir(summary.workDir);
       const bucketId = posixBasename(dirname(summary.sessionDir));
       const existing = indexed.get(root);
