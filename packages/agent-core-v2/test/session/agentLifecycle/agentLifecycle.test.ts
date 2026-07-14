@@ -176,8 +176,6 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       homeDir: '/tmp/kimi-agentLifecycle-home',
       cwd: '/tmp/kimi-agentLifecycle-home',
-      agentHomedir: (_ws: string, _session: string, agentId: string) =>
-        `/tmp/kimi-agentLifecycle-test/agents/${agentId}`,
       agentScope: (_ws: string, _session: string, agentId: string) =>
         `test/agents/${agentId}`,
     } as unknown as IBootstrapService);
@@ -317,7 +315,6 @@ describe('AgentLifecycleService', () => {
 
     expect(child.id).toBe('child');
     expect(registerAgent).toHaveBeenCalledWith('child', {
-      homedir: '/tmp/kimi-agentLifecycle-test/agents/child',
       type: 'sub',
       parentAgentId: 'main',
       forkedFrom: 'main',

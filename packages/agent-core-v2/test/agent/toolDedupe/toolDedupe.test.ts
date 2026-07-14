@@ -75,7 +75,6 @@ function createHarness(telemetry: ITelemetryService = recordingTelemetry(telemet
       } satisfies IAgentScopeContext);
       reg.defineInstance(IBootstrapService, {
         homeDir: homedir,
-        agentHomedir: () => homedir,
       } as unknown as IBootstrapService);
       reg.defineInstance(IAgentLoopService, loop);
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);

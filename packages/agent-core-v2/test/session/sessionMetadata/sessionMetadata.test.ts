@@ -101,11 +101,9 @@ describe('SessionMetadata', () => {
 
     await Promise.all([
       meta.registerAgent('agent-0', {
-        homedir: '/tmp/sessions/wd_test/s1/agents/agent-0',
         labels: { swarmItem: 'src/a.ts' },
       }),
       meta.registerAgent('agent-1', {
-        homedir: '/tmp/sessions/wd_test/s1/agents/agent-1',
         labels: { swarmItem: 'src/b.ts' },
       }),
     ]);

@@ -13,7 +13,6 @@ import type { Event } from '#/_base/event';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface AgentMeta {
-  readonly homedir: string;
   readonly type?: 'main' | 'sub' | 'independent';
   readonly parentAgentId?: string | null;
   readonly forkedFrom?: string;

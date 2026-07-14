@@ -355,9 +355,8 @@ function sessionMetadataStub(agents: Readonly<Record<string, AgentMeta>>): ISess
   };
 }
 
-function subagentMeta(agentId: string, parentAgentId = 'main'): AgentMeta {
+function subagentMeta(parentAgentId = 'main'): AgentMeta {
   return {
-    homedir: `/tmp/kimi-test/agents/${agentId}`,
     labels: { parentAgentId },
   };
 }
@@ -720,7 +719,7 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       sessionService(
         ISessionMetadata,
-        sessionMetadataStub({ 'agent-existing': subagentMeta('agent-existing') }),
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
       ),
     );
     lifecycle.addHandle('agent-existing', 'explore');
@@ -749,7 +748,7 @@ describe('Agent tool execution contract', () => {
       sessionService(
         ISessionMetadata,
         sessionMetadataStub({
-          main: { homedir: '/tmp/kimi-test/agents/main', type: 'main' },
+          main: { type: 'main' },
         }),
       ),
     );
@@ -774,7 +773,7 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       sessionService(
         ISessionMetadata,
-        sessionMetadataStub({ 'agent-existing': subagentMeta('agent-existing', 'other') }),
+        sessionMetadataStub({ 'agent-existing': subagentMeta('other') }),
       ),
     );
     lifecycle.addHandle('agent-existing', 'explore');
@@ -798,7 +797,7 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       sessionService(
         ISessionMetadata,
-        sessionMetadataStub({ 'agent-existing': subagentMeta('agent-existing') }),
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
       ),
     );
     lifecycle.addHandle(
@@ -843,7 +842,7 @@ describe('Agent tool execution contract', () => {
       lifecycle,
       sessionService(
         ISessionMetadata,
-        sessionMetadataStub({ 'agent-existing': subagentMeta('agent-existing') }),
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
       ),
     );
     lifecycle.addHandle(
