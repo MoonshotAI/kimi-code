@@ -1,11 +1,12 @@
 /**
- * `modelCatalog` domain tests — covers the catalog projection, default-model
- * selection, and coded not-found errors.
+ * `modelCatalog` domain tests — covers catalog projection, default-model
+ * selection, coded not-found errors, and atomic remote-catalog refresh.
  *
  * Uses the flat `TestInstantiationService` harness with real `ModelService` /
  * `ProviderService` collaborators over an in-memory config stub, a stubbed
- * `IOAuthService`, and the SUT registered by interface. The managed-provider
- * refresh is covered in `auth/auth.test.ts`.
+ * `IOAuthService`, and the SUT registered by interface. Managed-provider refresh
+ * is covered in `auth/auth.test.ts`.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/app/modelCatalog/modelCatalog.test.ts
  */
 
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
@@ -13,23 +14,34 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { ILogService } from '#/_base/log/log';
 import { IOAuthService } from '#/app/auth/auth';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigRegistry, IConfigService } from '#/app/config/config';
-import { ConfigRegistry } from '#/app/config/configService';
+import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { isError2 } from '#/errors';
 import { IEventService } from '#/app/event/event';
 import { MODEL_CATALOG_SECTION } from '#/app/modelCatalog/configSection';
 import { IModelCatalogService } from '#/app/modelCatalog/modelCatalog';
 import { ModelCatalogService } from '#/app/modelCatalog/modelCatalogService';
 import { IModelService, type ModelAlias } from '#/app/model/model';
+import '#/app/model/configSection';
 import { HostRequestHeaders, IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
 import { ModelService } from '#/app/model/modelService';
 import { IProviderService, type ProviderConfig } from '#/app/provider/provider';
+import '#/app/provider/configSection';
 import { ProviderService } from '#/app/provider/providerService';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
+import { stubBootstrap } from '../bootstrap/stubs';
+import { stubLog } from '../../_base/log/stubs';
 
 interface Backing {
   providers: Record<string, ProviderConfig>;
   models: Record<string, ModelAlias>;
+  defaultProvider?: string;
   defaultModel?: string;
   thinking?: { enabled?: boolean; effort?: string };
 }
@@ -60,6 +72,7 @@ function seedBacking(): Backing {
       },
       gpt4o: { provider: 'openai', model: 'gpt-4o', maxContextSize: 128000 },
     },
+    defaultProvider: 'kimi',
     defaultModel: 'k2',
   };
 }
@@ -70,6 +83,7 @@ describe('ModelCatalogService', () => {
   let backing: Backing;
   let configSet: ReturnType<typeof vi.fn>;
   let configReplace: ReturnType<typeof vi.fn>;
+  let configReplaceMany: ReturnType<typeof vi.fn>;
   let getCachedAccessToken: ReturnType<typeof vi.fn>;
   let resolveTokenProvider: ReturnType<typeof vi.fn>;
   let publishEvent: ReturnType<typeof vi.fn>;
@@ -89,6 +103,18 @@ describe('ModelCatalogService', () => {
     configReplace = vi.fn().mockImplementation(async (domain: string, value: unknown) => {
       (backing as unknown as Record<string, unknown>)[domain] = value;
     });
+    configReplaceMany = vi.fn().mockImplementation(
+      async (replacements: Readonly<Record<string, unknown>>) => {
+        const values = backing as unknown as Record<string, unknown>;
+        for (const [domain, value] of Object.entries(replacements)) {
+          if (value === undefined) {
+            delete values[domain];
+          } else {
+            values[domain] = value;
+          }
+        }
+      },
+    );
     publishEvent = vi.fn();
 
     ix = createServices(disposables, {
@@ -104,6 +130,7 @@ describe('ModelCatalogService', () => {
           })) as IConfigService['inspect'],
           set: configSet as unknown as IConfigService['set'],
           replace: configReplace as unknown as IConfigService['replace'],
+          replaceMany: configReplaceMany as unknown as IConfigService['replaceMany'],
           reload: vi.fn().mockResolvedValue(undefined) as unknown as IConfigService['reload'],
           onDidChangeConfiguration: (() => ({ dispose: () => {} })) as IConfigService['onDidChangeConfiguration'],
           onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
@@ -357,5 +384,143 @@ describe('ModelCatalogService', () => {
         headers: expect.objectContaining({ 'User-Agent': 'kimi-code-cli/test' }),
       }),
     );
+  });
+
+  it('refreshProviderModels commits a changed catalog through one atomic replacement', async () => {
+    backing.providers = {
+      acme: {
+        type: 'openai',
+        apiKey: 'sk-acme',
+        source: {
+          kind: 'apiJson',
+          url: 'https://registry.example.test/api.json',
+          apiKey: 'sk-registry',
+        },
+      },
+    };
+    backing.models = {
+      'acme/old': {
+        provider: 'acme',
+        model: 'old',
+        maxContextSize: 32000,
+      },
+    };
+    backing.defaultProvider = 'acme';
+    backing.defaultModel = 'acme/old';
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              acme: {
+                id: 'acme',
+                name: 'Acme',
+                api: 'https://acme.example.test/v1',
+                type: 'openai',
+                models: { next: { id: 'next', name: 'Next' } },
+              },
+            }),
+            { headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    );
+
+    await catalog().refreshProviderModels({ scope: 'all' });
+
+    expect(configReplaceMany).toHaveBeenCalledTimes(1);
+    expect(configReplaceMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providers: expect.objectContaining({ acme: expect.any(Object) }),
+        models: expect.objectContaining({ 'acme/next': expect.any(Object) }),
+        defaultProvider: 'acme',
+      }),
+      {
+        expected: expect.objectContaining({
+          providers: expect.objectContaining({ acme: expect.any(Object) }),
+          models: expect.objectContaining({ 'acme/old': expect.any(Object) }),
+          defaultProvider: 'acme',
+          defaultModel: 'acme/old',
+        }),
+      },
+    );
+    expect(configReplace).not.toHaveBeenCalled();
+    expect(configSet).not.toHaveBeenCalled();
+  });
+});
+
+describe('ModelCatalogService persisted config integration', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = createServices(disposables, {
+      additionalServices: (reg) => {
+        reg.defineInstance(IBootstrapService, stubBootstrap('/tmp/kimi-model-catalog-integration'));
+        reg.defineInstance(ILogService, stubLog());
+        reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
+        reg.define(IAtomicTomlDocumentStore, TomlAtomicDocumentStore);
+        reg.defineInstance(IConfigRegistry, new ConfigRegistry());
+        reg.define(IConfigService, ConfigService);
+        reg.definePartialInstance(IOAuthService, {});
+        reg.definePartialInstance(IEventService, { publish: () => {} });
+        reg.define(IModelService, ModelService);
+        reg.define(IProviderService, ProviderService);
+        reg.define(IModelCatalogService, ModelCatalogService);
+        reg.defineInstance(
+          IHostRequestHeaders,
+          new HostRequestHeaders({ 'User-Agent': 'kimi-code-cli/test' }),
+        );
+      },
+    });
+  });
+
+  afterEach(() => {
+    disposables.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it('refreshes a provider catalog when the persisted models section is absent', async () => {
+    const config = ix.get(IConfigService);
+    await config.ready;
+    await config.replace('providers', {
+      acme: {
+        type: 'openai',
+        apiKey: 'sk-acme',
+        source: {
+          kind: 'apiJson',
+          url: 'https://registry.example.test/api.json',
+          apiKey: 'sk-registry',
+        },
+      },
+    });
+    expect(config.inspect('models').userValue).toBeUndefined();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              acme: {
+                id: 'acme',
+                name: 'Acme',
+                api: 'https://acme.example.test/v1',
+                type: 'openai',
+                models: { next: { id: 'next', name: 'Next' } },
+              },
+            }),
+            { headers: { 'Content-Type': 'application/json' } },
+          ),
+      ),
+    );
+
+    await expect(ix.get(IModelCatalogService).refreshProviderModels({ scope: 'all' })).resolves.toMatchObject({
+      changed: [{ provider_id: 'acme', added: 1, removed: 0 }],
+      failed: [],
+    });
+    expect(config.inspect<Record<string, ModelAlias>>('models').userValue).toEqual({
+      'acme/next': expect.objectContaining({ provider: 'acme', model: 'next' }),
+    });
   });
 });

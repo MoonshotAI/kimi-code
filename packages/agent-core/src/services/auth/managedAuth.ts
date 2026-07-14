@@ -45,11 +45,16 @@ export interface ServicesAuthFacade {
   readonly resolveOAuthTokenProvider: OAuthTokenProviderResolver;
 }
 
+export type ServicesConfigAtomicUpdate = <TResult>(
+  update: (config: KimiConfig) => TResult,
+) => Promise<TResult>;
+
 class ServicesManagedAuthFacade implements ServicesAuthFacade {
   private readonly toolkit: KimiOAuthToolkit<ServicesManagedConfig>;
 
   constructor(
     private readonly options: Pick<IEnvironmentService, 'homeDir' | 'configPath'>,
+    atomicUpdate?: ServicesConfigAtomicUpdate,
   ) {
     this.toolkit = new KimiOAuthToolkit<ServicesManagedConfig>({
       homeDir: options.homeDir,
@@ -59,6 +64,7 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
         write: async (config) => {
           await writeConfigFile(options.configPath, config);
         },
+        atomicUpdate,
         apply: applyManagedKimiCodeConfig,
         remove: applyManagedKimiCodeLogoutConfig,
       },
@@ -169,6 +175,7 @@ class ServicesManagedAuthFacade implements ServicesAuthFacade {
 
 export function createManagedAuthFacade(
   env: Pick<IEnvironmentService, 'homeDir' | 'configPath'>,
+  atomicUpdate?: ServicesConfigAtomicUpdate,
 ): ServicesAuthFacade {
-  return new ServicesManagedAuthFacade(env);
+  return new ServicesManagedAuthFacade(env, atomicUpdate);
 }

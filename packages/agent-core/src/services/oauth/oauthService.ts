@@ -20,6 +20,7 @@ import type {
 import { ulid } from 'ulid';
 
 import { createManagedAuthFacade, type ServicesAuthFacade } from '../auth/managedAuth';
+import { ICoreProcessService } from '../coreProcess/coreProcess';
 import { IEnvironmentService } from '../environment/environment';
 import { IOAuthService } from './oauth';
 
@@ -80,15 +81,18 @@ export class OAuthService extends Disposable implements IOAuthService {
   private readonly _authFacade: ServicesAuthFacade;
   private readonly _flows: DisposableMap<string, FlowState>;
 
-  constructor(@IEnvironmentService private readonly env: IEnvironmentService) {
+  constructor(
+    @IEnvironmentService private readonly env: IEnvironmentService,
+    @ICoreProcessService core: ICoreProcessService,
+  ) {
     super();
     this._flows = this._register(new DisposableMap<string, FlowState>());
-    this._authFacade = createManagedAuthFacade(env);
+    this._authFacade = createManagedAuthFacade(env, core.atomicConfigUpdate);
   }
 
   /** @internal Test-only factory that injects a mock facade. */
   static _createForTest(env: IEnvironmentService, facade: ServicesAuthFacade): OAuthService {
-    const svc = new (OAuthService as any)(env) as OAuthService;
+    const svc = new (OAuthService as any)(env, {}) as OAuthService;
     (svc as any)._authFacade = facade;
     return svc;
   }

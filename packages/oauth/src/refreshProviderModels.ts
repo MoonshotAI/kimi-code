@@ -32,6 +32,10 @@ export interface RefreshProviderHost {
   getConfig(): Promise<ManagedKimiConfigShape>;
   removeProvider(providerId: string): Promise<ManagedKimiConfigShape>;
   setConfig(patch: ManagedKimiConfigShape): Promise<ManagedKimiConfigShape>;
+  replaceModelCatalog?(
+    expected: ManagedKimiModelCatalogSnapshot,
+    next: ManagedKimiModelCatalogSnapshot,
+  ): Promise<ManagedKimiConfigShape>;
   resolveOAuthToken(providerName: string, oauthRef?: ManagedKimiOAuthRef): Promise<string>;
   /**
    * Product User-Agent sent on custom-registry (api.json) fetches, e.g.
@@ -39,6 +43,14 @@ export interface RefreshProviderHost {
    * default (`User-Agent: node`).
    */
   readonly userAgent?: string;
+}
+
+export interface ManagedKimiModelCatalogSnapshot {
+  readonly providers: ManagedKimiConfigShape['providers'];
+  readonly models: ManagedKimiConfigShape['models'];
+  readonly defaultProvider: string | undefined;
+  readonly defaultModel: string | undefined;
+  readonly thinking: ManagedKimiConfigShape['thinking'];
 }
 
 export interface ProviderChange {
@@ -295,9 +307,7 @@ function restoreDefaultSelection(
 }
 
 // `apply*` may leave `defaultModel` pointing at an alias that no longer exists
-// (e.g. the previously-selected model was dropped from the registry). The host's
-// `setConfig` deep-merge cannot clear a key, so the matching `removeProvider`
-// call handles disk cleanup while this drops the dangling reference in memory.
+// (e.g. the previously-selected model was dropped from the registry).
 function clampDanglingDefault(config: ManagedKimiConfigShape): void {
   if (config.defaultModel !== undefined && readModel(config, config.defaultModel) === undefined) {
     config.defaultModel = undefined;
@@ -312,6 +322,41 @@ function clearDefaultThinkingWhenDefaultRemoved(
   if (previousDefaultModel !== undefined && config.defaultModel === undefined) {
     config.thinking = undefined;
   }
+}
+
+function modelCatalogSnapshot(
+  config: ManagedKimiConfigShape,
+): ManagedKimiModelCatalogSnapshot {
+  return {
+    providers: config.providers,
+    models: config.models,
+    defaultProvider: config.defaultProvider,
+    defaultModel: config.defaultModel,
+    thinking: config.thinking,
+  };
+}
+
+async function persistModelCatalog(
+  host: RefreshProviderHost,
+  current: ManagedKimiConfigShape,
+  next: ManagedKimiConfigShape,
+  providersToRemove: readonly string[],
+): Promise<ManagedKimiConfigShape> {
+  const expectedCatalog = modelCatalogSnapshot(current);
+  const nextCatalog = modelCatalogSnapshot(next);
+  if (host.replaceModelCatalog !== undefined) {
+    return host.replaceModelCatalog(expectedCatalog, nextCatalog);
+  }
+  for (const providerId of providersToRemove) {
+    await host.removeProvider(providerId);
+  }
+  return host.setConfig({
+    providers: nextCatalog.providers,
+    models: nextCatalog.models,
+    defaultProvider: nextCatalog.defaultProvider,
+    defaultModel: nextCatalog.defaultModel,
+    thinking: nextCatalog.thinking,
+  });
 }
 
 function pickDefaultModel(
@@ -343,8 +388,9 @@ function pickDefaultModel(
  *  2. Open platforms (moonshot-cn, moonshot-ai, …) — platform catalog fetch.
  *  3. Custom registries (models.dev-style, keyed by `provider.source`).
  *
- * Each branch diffs old vs new and only writes when something actually changed
- * (`removeProvider` then `setConfig`). Failures are collected per-provider and
+ * Each branch diffs old vs new and only writes when something actually changed.
+ * Hosts with `replaceModelCatalog` commit the catalog atomically; legacy hosts
+ * retain the remove-then-set fallback. Failures are collected per-provider and
  * never abort the whole refresh. Pass `providerId` to scope the refresh to a
  * single provider; pass `scope: 'oauth'` to refresh only the managed provider.
  */
@@ -411,13 +457,7 @@ export async function refreshProviderModels(
             collectModelIdsForAliases(config, refreshedAliasKeys),
             collectModelIdsForAliases(next, refreshedAliasKeys),
           );
-          await host.removeProvider(KIMI_CODE_PROVIDER_NAME);
-          config = await host.setConfig({
-            providers: next.providers,
-            models: next.models,
-            defaultModel: next.defaultModel,
-            thinking: next.thinking,
-          });
+          config = await persistModelCatalog(host, config, next, [KIMI_CODE_PROVIDER_NAME]);
           changed.push({
             providerId: KIMI_CODE_PROVIDER_NAME,
             providerName: 'Kimi Code',
@@ -486,13 +526,7 @@ export async function refreshProviderModels(
           collectModelIdsForAliases(config, refreshedAliasKeys),
           collectModelIdsForAliases(next, refreshedAliasKeys),
         );
-        await host.removeProvider(providerId);
-        config = await host.setConfig({
-          providers: next.providers,
-          models: next.models,
-          defaultModel: next.defaultModel,
-          thinking: next.thinking,
-        });
+        config = await persistModelCatalog(host, config, next, [providerId]);
         changed.push({
           providerId,
           providerName: platform.name,
@@ -626,15 +660,12 @@ export async function refreshProviderModels(
         restoreDefaultSelection(next, config.defaultModel, config.thinking?.enabled);
         clampDanglingDefault(next);
         clearDefaultThinkingWhenDefaultRemoved(next, config.defaultModel);
-        for (const providerId of providersToRemoveBeforeSet) {
-          await host.removeProvider(providerId);
-        }
-        config = await host.setConfig({
-          providers: next.providers,
-          models: next.models,
-          defaultModel: next.defaultModel,
-          thinking: next.thinking,
-        });
+        config = await persistModelCatalog(
+          host,
+          config,
+          next,
+          [...providersToRemoveBeforeSet],
+        );
         for (const change of changedProviders) {
           changed.push({
             providerId: change.providerId,

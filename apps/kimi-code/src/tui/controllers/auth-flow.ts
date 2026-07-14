@@ -172,6 +172,8 @@ export class AuthFlowController {
         getConfig: () => host.harness.getConfig({ reload: true }),
         removeProvider: (id) => host.harness.removeProvider(id),
         setConfig: (patch) => host.harness.setConfig(patch),
+        replaceModelCatalog: (expected, next) =>
+          host.harness.replaceModelCatalog(expected, next),
         resolveOAuthToken: async (providerName, oauthRef) => {
           const tokenProvider = host.harness.auth.resolveOAuthTokenProvider(providerName, oauthRef);
           return tokenProvider.getAccessToken();

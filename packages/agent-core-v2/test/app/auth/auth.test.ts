@@ -3,6 +3,7 @@
  * its dependency on the `provider` domain, and the managed OAuth provider
  * model refresh, using a fake `IOAuthToolkit` so no real network or token
  * storage is exercised.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/app/auth/auth.test.ts
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -28,17 +29,26 @@ import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { WebSearchProviderService } from '#/app/auth/webSearch/webSearchService';
 import { IAuthLegacyService } from '#/app/authLegacy/authLegacy';
 import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
-import { IConfigService } from '#/app/config/config';
-import { ConfigRegistry } from '#/app/config/configService';
+import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import { type DomainEvent, IEventService } from '#/app/event/event';
 import { ILogService } from '#/_base/log/log';
 import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
+import '#/app/model/configSection';
 import { MODELS_SECTION, type ModelAlias } from '#/app/model/model';
 import { IPlatformService, type PlatformConfig } from '#/app/platform/platform';
 import { IProviderService, type ProviderConfig, type ProvidersChangedEvent } from '#/app/provider/provider';
+import '#/app/provider/configSection';
+import { ProviderService } from '#/app/provider/providerService';
+import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
+import { TomlAtomicDocumentStore } from '#/persistence/backends/node-fs/atomicDocumentStore';
+import { IAtomicTomlDocumentStore } from '#/persistence/interface/atomicDocumentStore';
+import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-import { registerBootstrapServices } from '../bootstrap/stubs';
+import { registerBootstrapServices, stubBootstrap } from '../bootstrap/stubs';
 import { registerTelemetryServices } from '../telemetry/stubs';
+import { stubLog } from '../../_base/log/stubs';
 
 const OAUTH_PROVIDER = 'managed:kimi-code';
 const NON_OAUTH_PROVIDER = 'openai-main';
@@ -88,12 +98,14 @@ describe('OAuthService', () => {
   let providers: Record<string, ProviderConfig>;
   let models: Record<string, ModelAlias>;
   let services: Record<string, unknown> | undefined;
+  let defaultProvider: string | undefined;
   let defaultModel: string | undefined;
   let thinking: { enabled?: boolean; effort?: string } | undefined;
   let toolkit: FakeToolkit;
   let providerSet: ReturnType<typeof vi.fn>;
   let configSet: ReturnType<typeof vi.fn>;
   let configReplace: ReturnType<typeof vi.fn>;
+  let configReplaceMany: ReturnType<typeof vi.fn>;
   let events: DomainEvent[];
   let providerChangedEmitter: Emitter<ProvidersChangedEvent>;
 
@@ -113,6 +125,7 @@ describe('OAuthService', () => {
     });
     models = {};
     services = undefined;
+    defaultProvider = undefined;
     defaultModel = undefined;
     thinking = undefined;
     configSet = vi.fn(async (domain: string, value: unknown) => {
@@ -141,6 +154,25 @@ describe('OAuthService', () => {
       }
       throw new Error(`unexpected config replace: ${domain}`);
     });
+    configReplaceMany = vi.fn(async (replacements: Readonly<Record<string, unknown>>) => {
+      for (const [domain, value] of Object.entries(replacements)) {
+        if (domain === 'providers') {
+          providers = value as Record<string, ProviderConfig>;
+        } else if (domain === 'models') {
+          models = (value ?? {}) as Record<string, ModelAlias>;
+        } else if (domain === 'services') {
+          services = value as Record<string, unknown> | undefined;
+        } else if (domain === 'defaultProvider') {
+          defaultProvider = value as string | undefined;
+        } else if (domain === 'defaultModel') {
+          defaultModel = value as string | undefined;
+        } else if (domain === 'thinking') {
+          thinking = value as { enabled?: boolean; effort?: string } | undefined;
+        } else {
+          throw new Error(`unexpected config replacement: ${domain}`);
+        }
+      }
+    });
     events = [];
     toolkit = {
       login: vi.fn<(...args: any[]) => any>(),
@@ -167,6 +199,7 @@ describe('OAuthService', () => {
           })) as IConfigService['inspect'],
           set: configSet as unknown as IConfigService['set'],
           replace: configReplace as unknown as IConfigService['replace'],
+          replaceMany: configReplaceMany as unknown as IConfigService['replaceMany'],
           reload: vi.fn().mockResolvedValue(undefined) as unknown as IConfigService['reload'],
           onDidChangeConfiguration: (() => ({ dispose: () => { } })) as IConfigService['onDidChangeConfiguration'],
           onDidSectionChange: (() => ({ dispose: () => { } })) as IConfigService['onDidSectionChange'],
@@ -197,7 +230,7 @@ describe('OAuthService', () => {
   }
 
   function configBacking(): Record<string, unknown> {
-    return { providers, models, services, defaultModel, thinking };
+    return { providers, models, services, defaultProvider, defaultModel, thinking };
   }
 
   function stubManagedModelsFetch(): ReturnType<typeof vi.fn> {
@@ -411,7 +444,10 @@ describe('OAuthService', () => {
       }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
+    expect(configReplaceMany).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultModel: 'kimi-code/kimi-k2' }),
+      expect.any(Object),
+    );
   });
 
   it('startLogin returns authenticated when model refresh fails on the already-authenticated fast path', async () => {
@@ -434,7 +470,7 @@ describe('OAuthService', () => {
         oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
-    expect(configSet).not.toHaveBeenCalledWith('defaultModel', expect.any(String));
+    expect(configReplaceMany).not.toHaveBeenCalled();
   });
 
   it('keeps a device-code login authenticated when model fetch is unavailable after authorization', async () => {
@@ -452,7 +488,7 @@ describe('OAuthService', () => {
     });
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(configSet).not.toHaveBeenCalledWith('defaultModel', expect.any(String));
+    expect(configReplaceMany).not.toHaveBeenCalled();
   });
 
   it('refreshes managed models and sets the default model after a device-code login succeeds', async () => {
@@ -474,13 +510,15 @@ describe('OAuthService', () => {
         oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
-    expect(configReplace).toHaveBeenCalledWith(
-      'models',
+    expect(configReplaceMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        'kimi-code/kimi-k2': expect.objectContaining({ model: 'kimi-k2' }),
+        models: expect.objectContaining({
+          'kimi-code/kimi-k2': expect.objectContaining({ model: 'kimi-k2' }),
+        }),
+        defaultModel: 'kimi-code/kimi-k2',
       }),
+      expect.any(Object),
     );
-    expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
   });
 
   it('keeps an in-flight OAuth flow alive when unrelated providers change', async () => {
@@ -541,9 +579,15 @@ describe('OAuthService', () => {
     // key does not match its (host, baseUrl) environment, so the env-derived
     // scoped slot is the one cleared (v1 parity).
     expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, EXAMPLE_COM_SCOPED_REF);
-    expect(configReplace).toHaveBeenCalledWith('providers', {
-      [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' },
-    });
+    expect(configReplaceMany).toHaveBeenCalledTimes(1);
+    expect(configReplaceMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providers: {
+          [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' },
+        },
+      }),
+      expect.any(Object),
+    );
   });
 
   it('logout removes managed provider models and dangling defaults', async () => {
@@ -559,6 +603,7 @@ describe('OAuthService', () => {
         maxContextSize: 8192,
       },
     };
+    defaultProvider = OAUTH_PROVIDER;
     defaultModel = 'kimi-code/kimi-k2';
     thinking = { enabled: true };
     const svc = createService();
@@ -566,18 +611,33 @@ describe('OAuthService', () => {
     const result = await svc.logout(OAUTH_PROVIDER);
 
     expect(result).toEqual({ logged_out: true, provider: OAUTH_PROVIDER });
-    expect(configReplace).toHaveBeenCalledWith('providers', {
-      [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' },
-    });
-    expect(configReplace).toHaveBeenCalledWith('models', {
-      'custom-default': {
-        provider: NON_OAUTH_PROVIDER,
-        model: 'gpt-4o',
-        maxContextSize: 8192,
+    expect(configReplaceMany).toHaveBeenCalledTimes(1);
+    expect(configReplaceMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providers: {
+          [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' },
+        },
+        models: {
+          'custom-default': {
+            provider: NON_OAUTH_PROVIDER,
+            model: 'gpt-4o',
+            maxContextSize: 8192,
+          },
+        },
+        defaultProvider: undefined,
+        defaultModel: undefined,
+        thinking: undefined,
+      }),
+      {
+        expected: expect.objectContaining({
+          defaultProvider: OAUTH_PROVIDER,
+          defaultModel: 'kimi-code/kimi-k2',
+          thinking: { enabled: true },
+        }),
       },
-    });
-    expect(configSet).toHaveBeenCalledWith('defaultModel', undefined);
-    expect(configSet).toHaveBeenCalledWith('thinking', undefined);
+    );
+    expect(configReplace).not.toHaveBeenCalled();
+    expect(configSet).not.toHaveBeenCalled();
   });
 
   it('logout removes managed web services while preserving unrelated services', async () => {
@@ -603,20 +663,55 @@ describe('OAuthService', () => {
       provider: OAUTH_PROVIDER,
     });
 
-    expect(configReplace).toHaveBeenCalledWith('services', {
-      customService: {
-        baseUrl: 'https://service.example.com',
-      },
-    });
+    expect(configReplaceMany).toHaveBeenCalledTimes(1);
+    expect(configReplaceMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        services: {
+          customService: {
+            baseUrl: 'https://service.example.com',
+          },
+        },
+      }),
+      expect.any(Object),
+    );
   });
 
-  it('logout surfaces managed provider cleanup write failures', async () => {
+  it('logout leaves config state unchanged when atomic cleanup fails', async () => {
     const failure = new Error('config write failed');
-    configReplace.mockRejectedValueOnce(failure);
+    const before = structuredClone(configBacking());
+    configReplaceMany.mockRejectedValueOnce(failure);
     const svc = createService();
 
     await expect(svc.logout(OAUTH_PROVIDER)).rejects.toThrow('config write failed');
+    expect(configBacking()).toEqual(before);
+    expect(configReplace).not.toHaveBeenCalled();
+    expect(configSet).not.toHaveBeenCalled();
     expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, EXAMPLE_COM_SCOPED_REF);
+  });
+
+  it('logout preserves a concurrent catalog edit when cleanup CAS rejects', async () => {
+    configReplaceMany.mockImplementationOnce(() => {
+      providers = {
+        ...providers,
+        concurrent: { type: 'openai', apiKey: 'sk-concurrent' },
+      };
+      throw Object.assign(new Error('configuration changed'), { code: 'config.invalid' });
+    });
+    const svc = createService();
+
+    await expect(svc.logout(OAUTH_PROVIDER)).rejects.toMatchObject({ code: 'config.invalid' });
+
+    expect(providers).toEqual({
+      [OAUTH_PROVIDER]: {
+        type: 'kimi',
+        baseUrl: 'https://api.example.com',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+      [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' },
+      concurrent: { type: 'openai', apiKey: 'sk-concurrent' },
+    });
+    expect(configReplace).not.toHaveBeenCalled();
+    expect(configSet).not.toHaveBeenCalled();
   });
 
   it('status reports loggedIn based on the cached access token', async () => {
@@ -663,7 +758,7 @@ describe('OAuthService', () => {
     expect(events).toEqual([]);
   });
 
-  it('refreshOAuthProviderModels fetches models and writes back the changed sections', async () => {
+  it('refreshOAuthProviderModels commits a changed catalog in one atomic replacement', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -691,21 +786,33 @@ describe('OAuthService', () => {
         removed: 0,
       },
     ]);
-    expect(configReplace).toHaveBeenCalledWith(
-      'providers',
-      expect.objectContaining({ [OAUTH_PROVIDER]: expect.objectContaining({ type: 'kimi' }) }),
-    );
-    expect(configReplace).toHaveBeenCalledWith(
-      'models',
+    expect(configReplaceMany).toHaveBeenCalledTimes(1);
+    expect(configReplaceMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        'kimi-code/kimi-k2': expect.objectContaining({ model: 'kimi-k2' }),
+        providers: expect.objectContaining({
+          [OAUTH_PROVIDER]: expect.objectContaining({ type: 'kimi' }),
+        }),
+        models: expect.objectContaining({
+          'kimi-code/kimi-k2': expect.objectContaining({ model: 'kimi-k2' }),
+        }),
+        defaultProvider: undefined,
+        defaultModel: 'kimi-code/kimi-k2',
+        thinking: { enabled: true },
       }),
+      {
+        expected: {
+          providers: expect.objectContaining({
+            [OAUTH_PROVIDER]: expect.objectContaining({ type: 'kimi' }),
+          }),
+          models: {},
+          defaultProvider: undefined,
+          defaultModel: undefined,
+          thinking: undefined,
+        },
+      },
     );
-    expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
-    // Regression: the `[thinking] enabled` value computed by the shared oauth
-    // apply logic must be persisted, not dropped (previously only the legacy
-    // `default_thinking` key was written).
-    expect(configSet).toHaveBeenCalledWith('thinking', { enabled: true });
+    expect(configReplace).not.toHaveBeenCalled();
+    expect(configSet).not.toHaveBeenCalled();
     expect(events).toEqual([
       {
         type: 'event.model_catalog.changed',
@@ -745,6 +852,98 @@ describe('OAuthService', () => {
     // chain holds the second run until the first finishes, so the peak stays 1.
     expect(maxInFlight).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('OAuthService persisted config integration', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+
+  beforeEach(() => {
+    disposables = new DisposableStore();
+    ix = createServices(disposables, {
+      base: [registerTelemetryServices],
+      additionalServices: (reg) => {
+        reg.defineInstance(IBootstrapService, stubBootstrap('/tmp/kimi-oauth-integration'));
+        reg.defineInstance(ILogService, stubLog());
+        reg.defineInstance(IFileSystemStorageService, new InMemoryStorageService());
+        reg.define(IAtomicTomlDocumentStore, TomlAtomicDocumentStore);
+        reg.defineInstance(IConfigRegistry, new ConfigRegistry());
+        reg.define(IConfigService, ConfigService);
+        reg.define(IProviderService, ProviderService);
+        reg.definePartialInstance(IEventService, { publish: () => {} });
+        reg.definePartialInstance(IOAuthToolkit, {
+          login: vi.fn().mockResolvedValue({ providerName: OAUTH_PROVIDER, ok: true }),
+          logout: vi.fn().mockResolvedValue({ providerName: OAUTH_PROVIDER, ok: true }),
+          tokenProvider: vi.fn().mockReturnValue({
+            getAccessToken: async () => 'access-token',
+          }),
+        });
+        reg.define(IOAuthService, OAuthService);
+      },
+    });
+  });
+
+  afterEach(() => {
+    disposables.dispose();
+    vi.unstubAllGlobals();
+  });
+
+  it('refreshes models after the first OAuth provision when no models section exists', async () => {
+    const config = ix.get(IConfigService);
+    await config.ready;
+    expect(config.inspect('providers').userValue).toBeUndefined();
+    expect(config.inspect('models').userValue).toBeUndefined();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: 'kimi-k2',
+              context_length: 131072,
+              supports_reasoning: true,
+              display_name: 'Kimi K2',
+            },
+          ],
+        }),
+      }),
+    );
+
+    await expect(ix.get(IOAuthService).startLogin(OAUTH_PROVIDER)).resolves.toMatchObject({
+      provider: OAUTH_PROVIDER,
+      status: 'authenticated',
+    });
+    expect(config.inspect<Record<string, ProviderConfig>>('providers').userValue).toHaveProperty(
+      OAUTH_PROVIDER,
+    );
+    expect(config.inspect<Record<string, ModelAlias>>('models').userValue).toEqual({
+      'kimi-code/kimi-k2': expect.objectContaining({
+        provider: OAUTH_PROVIDER,
+        model: 'kimi-k2',
+      }),
+    });
+  });
+
+  it('cleans a stale default provider when the persisted providers section is absent', async () => {
+    const config = ix.get(IConfigService);
+    await config.ready;
+    await config.replace('defaultProvider', OAUTH_PROVIDER);
+    expect(config.inspect('providers').userValue).toBeUndefined();
+
+    await expect(ix.get(IOAuthService).logout(OAUTH_PROVIDER)).resolves.toEqual({
+      logged_out: true,
+      provider: OAUTH_PROVIDER,
+    });
+    await config.reload();
+
+    expect(config.inspect('defaultProvider').userValue).toBeUndefined();
+    expect(config.inspect('providers').userValue).toEqual({});
+    const persisted = await ix
+      .get(IAtomicTomlDocumentStore)
+      .get<Record<string, unknown>>('', 'config.toml');
+    expect(persisted).not.toHaveProperty('providers');
   });
 });
 

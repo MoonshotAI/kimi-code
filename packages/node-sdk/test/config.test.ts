@@ -1,3 +1,9 @@
+/**
+ * SDK config scenarios: TOML fidelity and public harness mutation behavior.
+ * Wiring: real SDK RPC/core stack over isolated temporary config files.
+ * Run: pnpm --filter @moonshot-ai/kimi-code-sdk exec vitest run test/config.test.ts
+ */
+
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -294,6 +300,62 @@ describe('KimiHarness config API', () => {
     expect(text).toContain('theme = "dark"');
     expect(text).toContain('GOOGLE_CLOUD_PROJECT = "project-1"');
     expect(text).toContain('claim_stale_after_ms = 15000');
+  });
+
+  it('replaces the model catalog through the public harness while preserving unrelated config', async () => {
+    const homeDir = await makeTempDir();
+    const configPath = join(homeDir, 'config.toml');
+    await writeFile(configPath, `default_provider = "kimi-for-coding"\n${COMPLETE_TOML}`, 'utf-8');
+    const harness = createKimiHarness({ homeDir, identity: TEST_IDENTITY });
+    const current = await harness.getConfig();
+
+    const updated = await harness.replaceModelCatalog(
+      {
+        providers: current.providers,
+        models: current.models,
+        defaultProvider: current.defaultProvider,
+        defaultModel: current.defaultModel,
+        thinking: current.thinking,
+      },
+      {
+        providers: {
+          replacement: {
+            type: 'openai',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: {
+          replacement: {
+            provider: 'replacement',
+            model: 'replacement-model',
+            maxContextSize: 262144,
+          },
+        },
+        defaultProvider: undefined,
+        defaultModel: undefined,
+        thinking: undefined,
+      },
+    );
+
+    expect(updated).toMatchObject({
+      providers: {
+        replacement: {
+          type: 'openai',
+          apiKey: 'YOUR_API_KEY',
+        },
+      },
+      models: {
+        replacement: {
+          provider: 'replacement',
+          model: 'replacement-model',
+        },
+      },
+      services: current.services,
+    });
+    expect(updated.defaultProvider).toBeUndefined();
+    expect(updated.defaultModel).toBeUndefined();
+    expect(updated.thinking).toBeUndefined();
+    expect(updated.raw?.['theme']).toBe('dark');
   });
 
   it('does not write invalid config patches', async () => {

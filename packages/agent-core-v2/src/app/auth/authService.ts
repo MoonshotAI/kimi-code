@@ -78,6 +78,7 @@ import {
 const TERMINAL_RETENTION_MS = 5 * 60 * 1000;
 const DEFAULT_DEVICE_EXPIRES_IN_SEC = 15 * 60;
 const DEFAULT_MODEL_SECTION = 'defaultModel';
+const DEFAULT_PROVIDER_SECTION = 'defaultProvider';
 const THINKING_SECTION = 'thinking';
 const SERVICES_SECTION = 'services';
 
@@ -94,6 +95,15 @@ interface FlowState {
   gcTimer: ReturnType<typeof setTimeout> | undefined;
   errorMessage: string | undefined;
   resolvedAt: string | undefined;
+}
+
+interface ManagedKimiUserConfigSnapshot {
+  readonly providers: ManagedKimiConfigShape['providers'] | undefined;
+  readonly models: ManagedKimiConfigShape['models'];
+  readonly services: ManagedKimiConfigShape['services'];
+  readonly defaultProvider: string | undefined;
+  readonly defaultModel: string | undefined;
+  readonly thinking: ManagedKimiConfigShape['thinking'];
 }
 
 export class OAuthService extends Disposable implements IOAuthService {
@@ -285,7 +295,8 @@ export class OAuthService extends Disposable implements IOAuthService {
     const failed: RefreshOAuthProviderModelsResponse['failed'] = [];
 
     await this.config.reload();
-    const current = this.readUserConfigShape();
+    const expected = this.readUserConfigSnapshot();
+    const current = this.toManagedKimiConfigShape(expected);
     const provider = current.providers[KIMI_CODE_PROVIDER_NAME];
     if (!isKimiOAuthProvider(provider)) {
       return { changed, unchanged, failed };
@@ -337,10 +348,24 @@ export class OAuthService extends Disposable implements IOAuthService {
           collectModelIdsForAliases(current, refreshedAliasKeys),
           collectModelIdsForAliases(next, refreshedAliasKeys),
         );
-        await this.config.replace(PROVIDERS_SECTION, next.providers);
-        await this.config.replace(MODELS_SECTION, next.models ?? {});
-        await this.config.set(DEFAULT_MODEL_SECTION, next.defaultModel);
-        await this.config.set(THINKING_SECTION, next.thinking);
+        await this.config.replaceMany(
+          {
+            [PROVIDERS_SECTION]: next.providers,
+            [MODELS_SECTION]: next.models,
+            [DEFAULT_PROVIDER_SECTION]: next.defaultProvider,
+            [DEFAULT_MODEL_SECTION]: next.defaultModel,
+            [THINKING_SECTION]: next.thinking,
+          },
+          {
+            expected: {
+              [PROVIDERS_SECTION]: expected.providers,
+              [MODELS_SECTION]: expected.models,
+              [DEFAULT_PROVIDER_SECTION]: expected.defaultProvider,
+              [DEFAULT_MODEL_SECTION]: expected.defaultModel,
+              [THINKING_SECTION]: expected.thinking,
+            },
+          },
+        );
         changed.push({
           provider_id: KIMI_CODE_PROVIDER_NAME,
           provider_name: 'Kimi Code',
@@ -362,21 +387,42 @@ export class OAuthService extends Disposable implements IOAuthService {
     return result;
   }
 
-  private readUserConfigShape(): ManagedKimiConfigShape {
+  private readUserConfigSnapshot(): ManagedKimiUserConfigSnapshot {
     const providers =
-      this.config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
-    const models = this.config.inspect<Record<string, ModelAlias>>(MODELS_SECTION).userValue ?? {};
+      this.config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue;
+    const models = this.config.inspect<Record<string, ModelAlias>>(MODELS_SECTION).userValue;
     const services =
       this.config.inspect<ManagedKimiConfigShape['services']>(SERVICES_SECTION).userValue;
+    const defaultProvider = this.config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue;
     const defaultModel = this.config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
     const thinking =
       this.config.inspect<ManagedKimiConfigShape['thinking']>(THINKING_SECTION).userValue;
     return {
-      providers: { ...providers } as ManagedKimiConfigShape['providers'],
-      models: { ...models } as ManagedKimiConfigShape['models'],
+      providers:
+        providers === undefined
+          ? undefined
+          : ({ ...providers } as ManagedKimiConfigShape['providers']),
+      models:
+        models === undefined
+          ? undefined
+          : ({ ...models } as ManagedKimiConfigShape['models']),
       services: services === undefined ? undefined : { ...services },
+      defaultProvider,
       defaultModel,
       thinking: thinking === undefined ? undefined : { ...thinking },
+    };
+  }
+
+  private toManagedKimiConfigShape(
+    snapshot: ManagedKimiUserConfigSnapshot,
+  ): ManagedKimiConfigShape {
+    return {
+      providers: snapshot.providers ?? {},
+      models: snapshot.models,
+      services: snapshot.services,
+      defaultProvider: snapshot.defaultProvider,
+      defaultModel: snapshot.defaultModel,
+      thinking: snapshot.thinking,
     };
   }
 
@@ -521,32 +567,46 @@ export class OAuthService extends Disposable implements IOAuthService {
 
   private async deprovisionProvider(provider: string): Promise<void> {
     if (provider !== KIMI_CODE_PROVIDER_NAME) return;
-    const next = structuredClone(this.readUserConfigShape());
+    const expected = this.readUserConfigSnapshot();
+    const current = this.toManagedKimiConfigShape(expected);
+    const next = structuredClone(current);
     const cleanup = clearManagedKimiCodeConfig(next);
+    const defaultProviderCleared = current.defaultProvider === KIMI_CODE_PROVIDER_NAME;
+    if (defaultProviderCleared) {
+      next.defaultProvider = undefined;
+    }
     if (
       !cleanup.removedProvider &&
       cleanup.removedModels.length === 0 &&
       !cleanup.defaultModelCleared &&
-      cleanup.removedServices.length === 0
+      cleanup.removedServices.length === 0 &&
+      !defaultProviderCleared
     ) {
       return;
     }
     if (cleanup.defaultModelCleared) {
       next.thinking = undefined;
     }
-    if (cleanup.removedProvider) {
-      await this.config.replace(PROVIDERS_SECTION, next.providers);
-    }
-    if (cleanup.removedModels.length > 0) {
-      await this.config.replace(MODELS_SECTION, next.models ?? {});
-    }
-    if (cleanup.removedServices.length > 0) {
-      await this.config.replace(SERVICES_SECTION, next.services);
-    }
-    if (cleanup.defaultModelCleared) {
-      await this.config.set(DEFAULT_MODEL_SECTION, undefined);
-      await this.config.set(THINKING_SECTION, undefined);
-    }
+    await this.config.replaceMany(
+      {
+        [PROVIDERS_SECTION]: next.providers,
+        [MODELS_SECTION]: next.models,
+        [SERVICES_SECTION]: next.services,
+        [DEFAULT_PROVIDER_SECTION]: next.defaultProvider,
+        [DEFAULT_MODEL_SECTION]: next.defaultModel,
+        [THINKING_SECTION]: next.thinking,
+      },
+      {
+        expected: {
+          [PROVIDERS_SECTION]: expected.providers,
+          [MODELS_SECTION]: expected.models,
+          [SERVICES_SECTION]: expected.services,
+          [DEFAULT_PROVIDER_SECTION]: expected.defaultProvider,
+          [DEFAULT_MODEL_SECTION]: expected.defaultModel,
+          [THINKING_SECTION]: expected.thinking,
+        },
+      },
+    );
   }
 
   private handleFailure(state: FlowState, err: unknown): void {

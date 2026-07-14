@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
+import { isDeepStrictEqual } from 'node:util';
 
 import { ErrorCodes, KimiError } from '#/errors';
 import { getRootLogger, log } from '#/logging/logger';
@@ -14,6 +15,7 @@ import { resolveThinkingEffort } from '../agent/config/thinking';
 import { Agent } from '../agent';
 import {
   ensureKimiHome,
+  applyEnvModelConfig,
   loadRuntimeConfigSafe,
   mergeConfigPatch,
   readConfigFileForUpdate,
@@ -91,9 +93,11 @@ import type {
   ListWorkspaceSkillsPayload,
   McpServerInfo,
   McpStartupMetrics,
+  KimiModelCatalogSnapshot,
   PluginInfo,
   PluginSummary,
   PromptPayload,
+  ReplaceKimiModelCatalogPayload,
   RunShellCommandPayload,
   ReconnectMcpServerPayload,
   RegisterToolPayload,
@@ -137,6 +141,23 @@ type SessionAgentPayload<T> = SessionScopedPayload<AgentScopedPayload<T>>;
 type RenameSessionRequest = SessionScopedPayload<RenameSessionPayload>;
 type UpdateSessionMetadataRequest = SessionScopedPayload<UpdateSessionMetadataPayload>;
 
+function kimiModelCatalogSnapshot(
+  config: KimiConfig | KimiModelCatalogSnapshot,
+): KimiModelCatalogSnapshot {
+  return {
+    providers: config.providers,
+    models: config.models,
+    defaultProvider: config.defaultProvider,
+    defaultModel: config.defaultModel,
+    thinking: config.thinking,
+  };
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  if ((typeof value !== 'object' || value === null) && typeof value !== 'function') return false;
+  return typeof (value as { readonly then?: unknown }).then === 'function';
+}
+
 export interface KimiCoreOptions {
   readonly homeDir?: string | undefined;
   readonly configPath?: string | undefined;
@@ -159,6 +180,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private runtime: ToolServices | undefined;
   private config: KimiConfig;
   private configWarnings: readonly string[] = [];
+  private configMutationChain: Promise<unknown> = Promise.resolve();
   private readonly runtimeOverride: ToolServices | undefined;
   private readonly userHomeDir: string;
   private readonly kimiRequestHeaders: Record<string, string> | undefined;
@@ -573,41 +595,85 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     return { warnings: this.configWarnings };
   }
 
+  async mutateKimiConfig<TResult>(update: (config: KimiConfig) => TResult): Promise<TResult> {
+    return this.enqueueConfigMutation(async () => {
+      const config = this.readConfigForWrite();
+      const result = update(config);
+      if (isPromiseLike(result)) {
+        void Promise.resolve(result).catch(() => undefined);
+        throw new TypeError('Config update callback must be synchronous.');
+      }
+      await writeConfigFile(this.configPath, config);
+      this.reloadRuntimeConfig();
+      return result;
+    });
+  }
+
   async setKimiConfig(input: SetKimiConfigPayload): Promise<KimiConfig> {
-    const config = mergeConfigPatch(this.readConfigForWrite(), input);
-    await writeConfigFile(this.configPath, config);
-    return this.reloadRuntimeConfig();
+    return this.enqueueConfigMutation(async () => {
+      const config = mergeConfigPatch(this.readConfigForWrite(), input);
+      await writeConfigFile(this.configPath, config);
+      return this.reloadRuntimeConfig();
+    });
   }
 
   async removeKimiProvider(input: RemoveKimiProviderPayload): Promise<KimiConfig> {
-    const config = this.readConfigForWrite();
-    delete config.providers[input.providerId];
+    return this.enqueueConfigMutation(async () => {
+      const config = this.readConfigForWrite();
+      delete config.providers[input.providerId];
 
-    let removedDefault = false;
-    const existingModels = config.models ?? {};
-    for (const [key, model] of Object.entries(existingModels)) {
-      if (
-        typeof model === 'object' &&
-        model !== null &&
-        !Array.isArray(model) &&
-        model['provider'] === input.providerId
-      ) {
-        delete existingModels[key];
-        if (config.defaultModel === key) removedDefault = true;
+      let removedDefault = false;
+      const existingModels = config.models ?? {};
+      for (const [key, model] of Object.entries(existingModels)) {
+        if (
+          typeof model === 'object' &&
+          model !== null &&
+          !Array.isArray(model) &&
+          model['provider'] === input.providerId
+        ) {
+          delete existingModels[key];
+          if (config.defaultModel === key) removedDefault = true;
+        }
       }
-    }
-    config.models = existingModels;
+      config.models = existingModels;
 
-    if (removedDefault) {
-      config.defaultModel = undefined;
-    }
+      if (removedDefault) {
+        config.defaultModel = undefined;
+      }
 
-    if (config.defaultProvider === input.providerId) {
-      config.defaultProvider = undefined;
-    }
+      if (config.defaultProvider === input.providerId) {
+        config.defaultProvider = undefined;
+      }
 
-    await writeConfigFile(this.configPath, config);
-    return this.reloadRuntimeConfig();
+      await writeConfigFile(this.configPath, config);
+      return this.reloadRuntimeConfig();
+    });
+  }
+
+  async replaceKimiModelCatalog(
+    input: ReplaceKimiModelCatalogPayload,
+  ): Promise<KimiConfig> {
+    return this.enqueueConfigMutation(async () => {
+      const config = this.readConfigForWrite();
+      const current = kimiModelCatalogSnapshot(applyEnvModelConfig(config));
+      const expected = kimiModelCatalogSnapshot(input.expected);
+      if (!isDeepStrictEqual(current, expected)) {
+        throw new KimiError(
+          ErrorCodes.CONFIG_INVALID,
+          'Model catalog changed while provider models were refreshing; retry the refresh.',
+          { details: { reason: 'stale_model_catalog' } },
+        );
+      }
+
+      const next = kimiModelCatalogSnapshot(input.next);
+      config.providers = next.providers;
+      config.models = next.models;
+      config.defaultProvider = next.defaultProvider;
+      config.defaultModel = next.defaultModel;
+      config.thinking = next.thinking;
+      await writeConfigFile(this.configPath, config);
+      return this.reloadRuntimeConfig();
+    });
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
@@ -1073,6 +1139,15 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   private readConfigForWrite(): KimiConfig {
     return readConfigFileForUpdate(this.configPath);
+  }
+
+  private enqueueConfigMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.configMutationChain.then(operation);
+    this.configMutationChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
   }
 
   private reloadRuntimeConfig(): KimiConfig {

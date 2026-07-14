@@ -1,3 +1,9 @@
+/**
+ * Scenario: agent tool registration, exposure, execution, and output budgeting.
+ * Responsibilities: expose active tools, route calls, enforce hooks, and preserve model-facing output.
+ * Wiring: real Agent components with the scripted LLM as the external boundary.
+ * Run: pnpm --filter @moonshot-ai/agent-core exec vitest run test/agent/tool.test.ts
+ */
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +12,9 @@ import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
 import { budgetToolResultForModel } from '../../src/agent/turn/tool-result-budget';
+import type { KimiConfig } from '../../src/config';
 import { HookEngine } from '../../src/session/hooks';
+import { ProviderManager } from '../../src/session/provider-manager';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
@@ -227,6 +235,69 @@ describe('Agent tools', () => {
         user: text "Which tools are active?"
     `);
     await ctx.expectResumeMatches();
+  });
+
+  it('includes active builtin tools in the first LLM request when the provider recovers after configuration', async () => {
+    let providerConfig: KimiConfig = {
+      providers: {},
+      models: {
+        'recovering-model': {
+          provider: 'recovering-provider',
+          model: 'recovering-model',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    const ctx = testAgent({
+      providerManager: new ProviderManager({ config: () => providerConfig }),
+    });
+    ctx.configure({
+      tools: ['Write', 'Bash'],
+      provider: { type: 'kimi', apiKey: 'test-key', model: 'recovering-model' },
+    });
+    providerConfig = {
+      ...providerConfig,
+      providers: {
+        'recovering-provider': { type: 'kimi', apiKey: 'test-key' },
+      },
+    };
+
+    ctx.mockNextResponse({ type: 'text', text: 'ready' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Which tools are active?' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls[0]?.tools.map((tool) => tool.name)).toEqual(['Bash', 'Write']);
+  });
+
+  it('keeps the first LLM request tool-less when the provider recovers with no active tools', async () => {
+    let providerConfig: KimiConfig = {
+      providers: {},
+      models: {
+        'recovering-model': {
+          provider: 'recovering-provider',
+          model: 'recovering-model',
+          maxContextSize: 1_000_000,
+        },
+      },
+    };
+    const ctx = testAgent({
+      providerManager: new ProviderManager({ config: () => providerConfig }),
+    });
+    ctx.configure({
+      provider: { type: 'kimi', apiKey: 'test-key', model: 'recovering-model' },
+    });
+    providerConfig = {
+      ...providerConfig,
+      providers: {
+        'recovering-provider': { type: 'kimi', apiKey: 'test-key' },
+      },
+    };
+
+    ctx.mockNextResponse({ type: 'text', text: 'ready' });
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue without tools.' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.llmCalls[0]?.tools).toEqual([]);
   });
 
   it('disables Bash background mode unless task management tools are active', async () => {

@@ -1,5 +1,6 @@
 /**
- * Scenario: agent-facing config projection, owner-registered sections, and env overlays.
+ * Scenario: agent-facing config projection, owner-registered sections, env overlays,
+ * and atomic persisted replacement.
  *
  * Exercises the public profile/config surfaces and resolves the real
  * `ConfigService` with TOML document storage while stubbing host and model
@@ -9,7 +10,7 @@
 
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { ToolCall } from '#/app/llmProtocol/message';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { AGENT_WIRE_PROTOCOL_VERSION } from '#/agent/wireRecord/wireRecord';
@@ -365,6 +366,104 @@ describe('ConfigService env overlay (live)', () => {
     expect(config.get<CronConfig>('cron').disabled).toBe(false);
 
     disposables.dispose();
+  });
+});
+
+describe('ConfigService atomic replacement', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+  let registry: ConfigRegistry;
+  let storage: InMemoryStorageService;
+  let config: IConfigService;
+
+  beforeEach(async () => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    registry = new ConfigRegistry();
+    storage = new InMemoryStorageService();
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg'));
+    ix.stub(IFileSystemStorageService, storage);
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.stub(IConfigRegistry, registry);
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    config = ix.get(IConfigService);
+    await config.ready;
+  });
+
+  afterEach(() => {
+    disposables.dispose();
+  });
+
+  it('persists all replaceMany sections with one document write', async () => {
+    const write = vi.spyOn(storage, 'write');
+
+    await config.replaceMany({ alpha: { value: 1 }, beta: 'two' });
+
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(config.inspect('alpha').userValue).toEqual({ value: 1 });
+    expect(config.inspect('beta').userValue).toBe('two');
+  });
+
+  it('rejects a stale expected snapshot without persisting replacements', async () => {
+    await config.replaceMany({ alpha: { value: 1 }, beta: 'two' });
+    const write = vi.spyOn(storage, 'write');
+
+    await expect(
+      config.replaceMany(
+        { alpha: { value: 2 }, beta: 'changed' },
+        { expected: { alpha: { value: 0 }, beta: 'two' } },
+      ),
+    ).rejects.toMatchObject({ code: 'config.invalid' });
+
+    expect(write).not.toHaveBeenCalled();
+    expect(config.inspect('alpha').userValue).toEqual({ value: 1 });
+    expect(config.inspect('beta').userValue).toBe('two');
+  });
+
+  it('reports replaceMany conflicts without exposing config contents', async () => {
+    await config.replaceMany({ credential: 'current-secret' });
+
+    const error = await config
+      .replaceMany(
+        { credential: 'next-secret' },
+        { expected: { credential: 'stale-secret' } },
+      )
+      .catch((error: unknown) => error);
+
+    expect(error).toMatchObject({ code: 'config.invalid' });
+    expect((error as Error).message).not.toMatch(/current-secret|next-secret|stale-secret/);
+  });
+
+  it('leaves every section unchanged when one replacement fails validation', async () => {
+    registry.registerSection('validated', {
+      parse(value: unknown): number {
+        if (typeof value !== 'number') throw new Error('expected a number');
+        return value;
+      },
+    });
+    await config.replaceMany({ alpha: 'before', validated: 1 });
+    const write = vi.spyOn(storage, 'write');
+
+    await expect(
+      config.replaceMany({ alpha: 'after', validated: 'invalid' }),
+    ).rejects.toThrow('expected a number');
+
+    expect(write).not.toHaveBeenCalled();
+    expect(config.inspect('alpha').userValue).toBe('before');
+    expect(config.inspect('validated').userValue).toBe(1);
+  });
+
+  it('keeps in-memory sections unchanged when the document write fails', async () => {
+    await config.replaceMany({ alpha: 'before', beta: 1 });
+    vi.spyOn(storage, 'write').mockRejectedValueOnce(new Error('storage unavailable'));
+
+    await expect(
+      config.replaceMany({ alpha: 'after', beta: 2 }),
+    ).rejects.toThrow('storage unavailable');
+
+    expect(config.inspect('alpha').userValue).toBe('before');
+    expect(config.inspect('beta').userValue).toBe(1);
   });
 });
 

@@ -64,6 +64,7 @@ export class SDKRpcClient extends SDKRpcClientBase {
       configPath: this.configPath,
       identity: this.identity,
       onRefresh: options.onOAuthRefresh,
+      atomicConfigUpdate: (update) => this.core.mutateKimiConfig(update),
     });
 
     void getRootLogger().configure(resolveLoggingConfig({ homeDir: this.homeDir }));

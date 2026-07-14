@@ -19,6 +19,7 @@ import type {
   GetConfigOptions,
   KimiConfig,
   KimiConfigPatch,
+  KimiModelCatalogSnapshot,
   KimiHostIdentity,
   ListSessionsOptions,
   RenameSessionInput,
@@ -259,6 +260,14 @@ export class KimiHarness {
 
   async removeProvider(providerId: string): Promise<KimiConfig> {
     return this.rpc.removeProvider(providerId);
+  }
+
+  /** Replace the complete model catalog only when it still matches `expected`. */
+  async replaceModelCatalog(
+    expected: KimiModelCatalogSnapshot,
+    next: KimiModelCatalogSnapshot,
+  ): Promise<KimiConfig> {
+    return this.rpc.replaceModelCatalog(expected, next);
   }
 
   async close(): Promise<void> {

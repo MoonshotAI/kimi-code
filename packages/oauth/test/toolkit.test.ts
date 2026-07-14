@@ -1,3 +1,9 @@
+/**
+ * OAuth toolkit scenarios: credential lifecycle, managed config provisioning, and cleanup.
+ * Wiring: in-memory token storage and config adapters with fetch as the external boundary.
+ * Run: pnpm --filter @moonshot-ai/kimi-code-oauth exec vitest run test/toolkit.test.ts
+ */
+
 import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -643,7 +649,9 @@ describe('KimiOAuthToolkit', () => {
   it('removes managed config on logout when an adapter supports cleanup', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('kimi-code', token('access-1'));
-    const config = { providers: { [KIMI_CODE_PROVIDER_NAME]: { type: 'kimi' } } };
+    const config: { providers: Record<string, { type: string } | undefined> } = {
+      providers: { [KIMI_CODE_PROVIDER_NAME]: { type: 'kimi' } },
+    };
     const write = vi.fn();
     const remove = vi.fn();
     const toolkit = new KimiOAuthToolkit({
@@ -666,5 +674,41 @@ describe('KimiOAuthToolkit', () => {
     expect(remove).toHaveBeenCalledWith(config);
     expect(write).toHaveBeenCalledWith(config);
     await expect(storage.load('kimi-code')).resolves.toBeUndefined();
+  });
+
+  it('removes managed config through the adapter atomic update when available', async () => {
+    const storage = new MemoryTokenStorage();
+    storage.tokens.set('kimi-code', token('access-1'));
+    const config = { providers: { [KIMI_CODE_PROVIDER_NAME]: { type: 'kimi' } } };
+    const read = vi.fn(() => config);
+    const write = vi.fn();
+    const remove = vi.fn((target: typeof config) => {
+      Reflect.deleteProperty(target.providers, KIMI_CODE_PROVIDER_NAME);
+    });
+    let atomicUpdateCalls = 0;
+    const atomicUpdate = <TResult>(update: (target: typeof config) => TResult): TResult => {
+      atomicUpdateCalls += 1;
+      return update(config);
+    };
+    const toolkit = new KimiOAuthToolkit<typeof config>({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage,
+      now: () => 100,
+      configAdapter: {
+        read,
+        write,
+        atomicUpdate,
+        apply: () => ({ defaultModel: 'kimi-code/kimi-for-coding', defaultThinking: true }),
+        remove,
+      },
+    });
+
+    await toolkit.logout();
+
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toBeUndefined();
+    expect(atomicUpdateCalls).toBe(1);
+    expect(read).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
   });
 });

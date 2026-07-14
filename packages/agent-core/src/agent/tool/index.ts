@@ -46,6 +46,7 @@ interface PendingMcpDiscovery {
 
 export class ToolManager {
   protected builtinTools: Map<string, BuiltinTool> = new Map();
+  private builtinToolsInitialized = false;
   protected readonly userTools: Map<string, ExecutableTool> = new Map();
   protected readonly mcpTools: Map<string, McpToolEntry> = new Map();
   private loopToolsOverride: readonly ExecutableTool[] | undefined;
@@ -85,9 +86,7 @@ export class ToolManager {
 
   constructor(protected readonly agent: Agent) {
     this.attachMcpTools();
-    if (agent.config.hasProvider) {
-      this.initializeBuiltinTools();
-    }
+    this.ensureBuiltinToolsInitialized();
   }
 
   protected get toolStore(): ToolStore {
@@ -135,6 +134,7 @@ export class ToolManager {
     commandId?: string,
   ): Promise<{ stdout: string; stderr: string; isError?: boolean; backgrounded?: boolean }> {
     this.agent.context.appendBashInput(command);
+    this.ensureBuiltinToolsInitialized();
     const bash = this.builtinTools.get('Bash');
     if (bash === undefined) {
       const error = 'Bash tool is not available.';
@@ -665,6 +665,7 @@ export class ToolManager {
   }
 
   data(): readonly ToolInfo[] {
+    this.ensureBuiltinToolsInitialized();
     return Array.from(this.toolInfos());
   }
 
@@ -672,7 +673,12 @@ export class ToolManager {
     return { ...this.store };
   }
 
-  initializeBuiltinTools() {
+  private ensureBuiltinToolsInitialized(): void {
+    if (this.builtinToolsInitialized || !this.agent.config.hasProvider) return;
+    this.initializeBuiltinTools();
+  }
+
+  initializeBuiltinTools(): void {
     const {
       kaos,
       toolServices,
@@ -760,6 +766,7 @@ export class ToolManager {
         .filter((tool) => !!tool)
         .map((tool) => [tool.name, tool] as const),
     );
+    this.builtinToolsInitialized = true;
   }
 
   refreshBuiltinTools(): void {
@@ -830,6 +837,7 @@ export class ToolManager {
 
   get loopTools(): readonly ExecutableTool[] {
     if (this.loopToolsOverride !== undefined) return this.loopToolsOverride;
+    this.ensureBuiltinToolsInitialized();
     const disclosure = this.progressiveDisclosure;
     const enabledMcpNames = [...this.mcpTools.keys()].filter((name) =>
       this.isMcpToolEnabled(name),

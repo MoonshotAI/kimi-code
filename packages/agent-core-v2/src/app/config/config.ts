@@ -4,10 +4,12 @@
  * Defines the config service identifiers and section models: the
  * `IConfigRegistry` for section schemas, and the App-scoped `IConfigService`
  * that resolves a value by precedence across layers (defaults → user config →
- * per-run memory overrides) and writes through a `ConfigTarget`. Owners react
- * to edits through two change events — `onDidChangeConfiguration` (a domain was touched) and
- * `onDidSectionChange` (the delivered value actually changed, deep-diffed) —
- * each carrying the delivered `value` and `previousValue`.
+ * per-run memory overrides), writes through a `ConfigTarget`, and atomically
+ * replaces multiple sections with optional compare-and-swap protection. Owners
+ * react to edits through two change events — `onDidChangeConfiguration` (a
+ * domain was touched) and `onDidSectionChange` (the delivered value actually
+ * changed, deep-diffed) — each carrying the delivered `value` and
+ * `previousValue`.
  */
 
 import type { Event } from '#/_base/event';
@@ -144,6 +146,10 @@ export interface ConfigInspectValue<T = unknown> {
   readonly memoryValue: T | undefined;
 }
 
+export interface ConfigReplaceManyOptions {
+  readonly expected?: Readonly<Record<string, unknown>>;
+}
+
 export interface IConfigService {
   readonly _serviceBrand: undefined;
 
@@ -155,6 +161,10 @@ export interface IConfigService {
   getAll(): ResolvedConfig;
   set(domain: string, patch: unknown, target?: ConfigTarget): Promise<void>;
   replace(domain: string, value: unknown, target?: ConfigTarget): Promise<void>;
+  replaceMany(
+    replacements: Readonly<Record<string, unknown>>,
+    options?: ConfigReplaceManyOptions,
+  ): Promise<void>;
   reload(): Promise<void>;
   diagnostics(): readonly ConfigDiagnostic[];
 }

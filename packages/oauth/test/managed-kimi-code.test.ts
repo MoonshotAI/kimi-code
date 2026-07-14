@@ -1,3 +1,9 @@
+/**
+ * Managed Kimi Code scenarios: model discovery, provisioning, refresh merge, and logout cleanup.
+ * Wiring: real config transforms with fetch as the only external boundary.
+ * Run: pnpm --filter @moonshot-ai/kimi-code-oauth exec vitest run test/managed-kimi-code.test.ts
+ */
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -271,6 +277,36 @@ describe('provisionManagedKimiCodeConfig', () => {
       oauth: { storage: 'file', key: 'oauth/kimi-code' },
     });
     expect(Object.keys(config.services ?? {})).toEqual(['moonshotSearch', 'moonshotFetch']);
+  });
+
+  it('commits provisioning through the adapter atomic update when available', async () => {
+    const config: ManagedKimiConfigShape = { providers: {} };
+    const read = vi.fn(() => config);
+    const write = vi.fn();
+    let atomicUpdateCalls = 0;
+    const atomicUpdate = <TResult>(
+      update: (target: ManagedKimiConfigShape) => TResult,
+    ): TResult => {
+      atomicUpdateCalls += 1;
+      return update(config);
+    };
+
+    const result = await provisionManagedKimiCodeConfig<ManagedKimiConfigShape>({
+      accessToken: 'oauth-access-token',
+      fetchImpl: vi.fn(async () => makeModelsResponse()) as unknown as typeof fetch,
+      adapter: {
+        read,
+        write,
+        atomicUpdate,
+        apply: applyManagedKimiCodeConfig,
+      },
+    });
+
+    expect(result.defaultModel).toBe('kimi-code/kimi-for-coding');
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toBeDefined();
+    expect(atomicUpdateCalls).toBe(1);
+    expect(read).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
   });
 
   it('writes scoped OAuth refs when provisioning against a non-default environment', async () => {
@@ -790,6 +826,7 @@ describe('provisionManagedKimiCodeConfig', () => {
           apiKey: 'sk-existing',
         },
       },
+      defaultProvider: KIMI_CODE_PROVIDER_NAME,
       defaultModel: 'kimi-code/kimi-for-coding',
       models: {
         'kimi-code/kimi-for-coding': {
@@ -829,6 +866,7 @@ describe('provisionManagedKimiCodeConfig', () => {
     });
     expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toBeUndefined();
     expect(config.providers['custom']).toMatchObject({ apiKey: 'sk-existing' });
+    expect(config.defaultProvider).toBeUndefined();
     expect(config.defaultModel).toBeUndefined();
     expect(config.models?.['kimi-code/kimi-for-coding']).toBeUndefined();
     expect(config.models?.['custom-default']).toMatchObject({ provider: 'custom' });

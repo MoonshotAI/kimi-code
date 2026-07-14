@@ -1,8 +1,14 @@
+/**
+ * Startup scenarios: session activation, OAuth recovery, and provider refresh ordering.
+ * Wiring: real KimiTUI orchestration with SDK/session and network boundaries stubbed.
+ * Run: pnpm --filter @moonshot-ai/kimi-code exec vitest run test/tui/kimi-tui-startup.test.ts
+ */
+
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { log, type GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
+import { log, type GoalSnapshot, type KimiConfig } from '@moonshot-ai/kimi-code-sdk';
 import type { MigrationPlan } from '@moonshot-ai/migration-legacy';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -191,6 +197,7 @@ function loginRequiredError(): Error & { readonly code: string } {
 function makeHarness(session = makeSession(), overrides: Record<string, unknown> = {}) {
   return {
     getConfig: vi.fn(async () => ({
+      providers: {},
       models: {
         k2: { model: 'moonshot-v1', maxContextSize: 100 },
       },
@@ -217,6 +224,64 @@ function makeDriver(harness: ReturnType<typeof makeHarness>, input: KimiTUIStart
   vi.spyOn(driver.state.ui, 'requestRender').mockImplementation(() => {});
   vi.spyOn(driver.state.terminal, 'setProgress').mockImplementation(() => {});
   return driver;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+type RuntimeStatus = Awaited<ReturnType<ReturnType<typeof makeSession>['getStatus']>>;
+
+const DEFAULT_RUNTIME_STATUS: RuntimeStatus = {
+  model: 'k2',
+  thinkingEffort: 'off',
+  permission: 'manual',
+  planMode: false,
+  contextTokens: 10,
+  maxContextTokens: 100,
+  contextUsage: 0.1,
+};
+
+function gateRuntimeStatus() {
+  const requested = deferred<void>();
+  const result = deferred<RuntimeStatus>();
+  const getStatus = vi.fn(() => {
+    requested.resolve();
+    return result.promise;
+  });
+  return {
+    getStatus,
+    requested: requested.promise,
+    resolve: () => {
+      result.resolve(DEFAULT_RUNTIME_STATUS);
+    },
+  };
+}
+
+function gateConfigRead(
+  readNumber: number,
+  config: KimiConfig = {
+    providers: {},
+    models: {
+      k2: { provider: 'kimi', model: 'moonshot-v1', maxContextSize: 100 },
+    },
+  },
+) {
+  const reached = deferred<void>();
+  let reads = 0;
+  const getConfig = vi.fn(async () => {
+    reads++;
+    if (reads === readNumber) reached.resolve();
+    return config;
+  });
+  return {
+    getConfig,
+    reached: reached.promise,
+  };
 }
 
 type InputListener = Parameters<TUIState['ui']['addInputListener']>[0];
@@ -277,6 +342,26 @@ describe('KimiTUI startup', () => {
     });
   });
 
+  it('starts provider refresh in the background only after a fresh session is runtime-ready', async () => {
+    const runtimeStatus = gateRuntimeStatus();
+    const session = makeSession({ getStatus: runtimeStatus.getStatus });
+    const configRead = gateConfigRead(2);
+    const harness = makeHarness(session, { getConfig: configRead.getConfig });
+    const driver = makeDriver(harness, makeStartupInput());
+
+    const init = driver.init();
+    await runtimeStatus.requested;
+
+    expect(configRead.getConfig).toHaveBeenCalledOnce();
+
+    runtimeStatus.resolve();
+    await expect(init).resolves.toBe(false);
+    await configRead.reached;
+
+    expect(driver.state.startupState).toBe('ready');
+    expect(configRead.getConfig).toHaveBeenCalledTimes(2);
+  });
+
   it('resumes the latest session for --continue and marks history for replay', async () => {
     const session = makeSession({ id: 'ses-latest' });
     const harness = makeHarness(session, {
@@ -290,6 +375,32 @@ describe('KimiTUI startup', () => {
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(driver.state.startupState).toBe('ready');
     expect(driver.state.appState.sessionId).toBe('ses-latest');
+  });
+
+  it('starts provider refresh in the background only after a resumed session is runtime-ready', async () => {
+    const runtimeStatus = gateRuntimeStatus();
+    const session = makeSession({
+      id: 'ses-latest',
+      getStatus: runtimeStatus.getStatus,
+    });
+    const configRead = gateConfigRead(2);
+    const harness = makeHarness(session, {
+      getConfig: configRead.getConfig,
+      listSessions: vi.fn(async () => [{ id: 'ses-latest' }]),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ continue: true }));
+
+    const init = driver.init();
+    await runtimeStatus.requested;
+
+    expect(configRead.getConfig).toHaveBeenCalledOnce();
+
+    runtimeStatus.resolve();
+    await expect(init).resolves.toBe(true);
+    await configRead.reached;
+
+    expect(driver.state.startupState).toBe('ready');
+    expect(configRead.getConfig).toHaveBeenCalledTimes(2);
   });
 
   it('applies --auto permission when resuming a session via --continue', async () => {
@@ -624,6 +735,50 @@ describe('KimiTUI startup', () => {
     expect(harness.createSession).not.toHaveBeenCalled();
     expect(harness.resumeSession).not.toHaveBeenCalled();
     expect(driver.state.startupState).toBe('picker');
+  });
+
+  it('starts provider refresh only after a bare-session picker activates its selection', async () => {
+    const pickedSession = makeSession({ id: 'ses-picked' });
+    const resumeRequested = deferred<void>();
+    const resumedSession = deferred<typeof pickedSession>();
+    const configRead = gateConfigRead(2);
+    const harness = makeHarness(pickedSession, {
+      getConfig: configRead.getConfig,
+      listSessions: vi.fn(async () => [
+        {
+          id: 'ses-picked',
+          title: 'Picked session',
+          workDir: '/tmp/proj-a',
+          updatedAt: Date.now(),
+        },
+      ]),
+      resumeSession: vi.fn(() => {
+        resumeRequested.resolve();
+        return resumedSession.promise;
+      }),
+    });
+    const driver = makeDriver(harness, makeStartupInput({ session: '' }));
+
+    await expect(
+      (driver as unknown as { initMainTui(): Promise<boolean> }).initMainTui(),
+    ).resolves.toBe(false);
+    await (driver as unknown as { bootstrapFromPicker(): Promise<void> }).bootstrapFromPicker();
+
+    expect(driver.state.startupState).toBe('picker');
+    expect(configRead.getConfig).toHaveBeenCalledOnce();
+
+    const picker = driver.state.editorContainer.children[0] as { handleInput(data: string): void };
+    picker.handleInput('\r');
+    await resumeRequested.promise;
+
+    expect(configRead.getConfig).toHaveBeenCalledOnce();
+
+    resumedSession.resolve(pickedSession);
+    await configRead.reached;
+
+    expect(driver.state.startupState).toBe('ready');
+    expect(driver.state.appState.sessionId).toBe('ses-picked');
+    expect(configRead.getConfig).toHaveBeenCalledTimes(2);
   });
 
   it('applies --auto after picking a session from bare --session', async () => {
@@ -1115,6 +1270,17 @@ describe('KimiTUI startup', () => {
     expect(showStatus).toHaveBeenCalledWith("New Models · +2 models.");
   });
 
+  it('does not restart provider refresh during later runtime synchronization', async () => {
+    const session = makeSession();
+    const harness = makeHarness(session);
+    const driver = makeDriver(harness, makeStartupInput());
+
+    await expect(driver.init()).resolves.toBe(false);
+    await (driver as unknown as KimiTUI).syncRuntimeState(session as never);
+
+    expect(harness.getConfig).toHaveBeenCalledTimes(2);
+  });
+
   it("starts TUI without a session when fresh startup needs OAuth login", async () => {
     const harness = makeHarness(makeSession(), {
       createSession: vi.fn(async () => {
@@ -1136,6 +1302,47 @@ describe('KimiTUI startup', () => {
       contextUsage: 0,
       sessionTitle: null,
     });
+  });
+
+  it('starts provider refresh after an OAuth-recovered session is runtime-ready', async () => {
+    const runtimeStatus = gateRuntimeStatus();
+    const session = makeSession({ getStatus: runtimeStatus.getStatus });
+    const createSession = vi
+      .fn()
+      .mockRejectedValueOnce(loginRequiredError())
+      .mockResolvedValueOnce(session);
+    const configRead = gateConfigRead(3, {
+      providers: {},
+      defaultModel: 'k2',
+      thinking: { enabled: false },
+      models: {
+        k2: { provider: 'kimi', model: 'moonshot-v1', maxContextSize: 100 },
+      },
+    });
+    const harness = makeHarness(session, {
+      getConfig: configRead.getConfig,
+      createSession,
+    });
+    const driver = makeDriver(harness, makeStartupInput());
+
+    await expect(driver.init()).resolves.toBe(false);
+    expect(configRead.getConfig).toHaveBeenCalledOnce();
+
+    vi.mocked(promptPlatformSelection).mockResolvedValue('kimi-code');
+    const login = handleLoginCommand(
+      driver as unknown as Parameters<typeof handleLoginCommand>[0],
+    );
+    await runtimeStatus.requested;
+
+    expect(configRead.getConfig).toHaveBeenCalledTimes(2);
+
+    runtimeStatus.resolve();
+    await login;
+    await configRead.reached;
+
+    expect(driver.state.startupState).toBe('ready');
+    expect(driver.state.appState.sessionId).toBe('ses-1');
+    expect(configRead.getConfig).toHaveBeenCalledTimes(3);
   });
 
   it('preserves fresh startup yolo and plan intent after OAuth login', async () => {

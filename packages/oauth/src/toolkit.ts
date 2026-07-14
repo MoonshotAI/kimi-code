@@ -232,9 +232,14 @@ export class KimiOAuthToolkit<TConfig = unknown> {
     const oauthKey = oauthRef?.key ?? this.defaultOAuthKey(undefined, oauthHost);
     await this.managerFor(name, oauthKey, oauthHost).logout();
     if (this.configAdapter?.remove !== undefined && name === KIMI_CODE_PROVIDER_NAME) {
-      const config = await this.configAdapter.read();
-      this.configAdapter.remove(config);
-      await this.configAdapter.write(config);
+      const remove = this.configAdapter.remove.bind(this.configAdapter);
+      if (this.configAdapter.atomicUpdate === undefined) {
+        const config = await this.configAdapter.read();
+        remove(config);
+        await this.configAdapter.write(config);
+      } else {
+        await this.configAdapter.atomicUpdate(remove);
+      }
     }
     return { providerName: name, ok: true };
   }

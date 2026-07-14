@@ -5,7 +5,12 @@ import {
   type RefreshProviderScope,
   type RefreshResult,
 } from '@moonshot-ai/kimi-code-oauth';
-import type { KimiConfig, KimiConfigPatch, OAuthRef } from '@moonshot-ai/kimi-code-sdk';
+import type {
+  KimiConfig,
+  KimiConfigPatch,
+  KimiModelCatalogSnapshot,
+  OAuthRef,
+} from '@moonshot-ai/kimi-code-sdk';
 
 /**
  * CLI-side host for provider-model refresh. Kept on the SDK's full config types
@@ -16,6 +21,10 @@ export interface RefreshProviderHost {
   getConfig(): Promise<KimiConfig>;
   removeProvider(providerId: string): Promise<KimiConfig>;
   setConfig(patch: KimiConfigPatch): Promise<KimiConfig>;
+  replaceModelCatalog?(
+    expected: KimiModelCatalogSnapshot,
+    next: KimiModelCatalogSnapshot,
+  ): Promise<KimiConfig>;
   resolveOAuthToken(providerName: string, oauthRef?: OAuthRef): Promise<string>;
   /** Product User-Agent sent on custom-registry (api.json) fetches. */
   readonly userAgent?: string;
@@ -37,6 +46,14 @@ export async function refreshAllProviderModels(
       getConfig: () => host.getConfig(),
       removeProvider: (providerId) => host.removeProvider(providerId),
       setConfig: (patch) => host.setConfig(patch as unknown as KimiConfigPatch),
+      replaceModelCatalog:
+        host.replaceModelCatalog === undefined
+          ? undefined
+          : (expected, next) =>
+              host.replaceModelCatalog!(
+                expected as unknown as KimiModelCatalogSnapshot,
+                next as unknown as KimiModelCatalogSnapshot,
+              ),
       resolveOAuthToken: (providerName, oauthRef) =>
         host.resolveOAuthToken(providerName, oauthRef as unknown as OAuthRef),
       userAgent: host.userAgent,

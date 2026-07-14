@@ -173,6 +173,7 @@ export interface ManagedKimiThinkingShape {
 export interface ManagedKimiConfigShape {
   providers: Record<string, ManagedKimiProviderConfig | Record<string, unknown>>;
   models?: Record<string, ManagedKimiModelAlias | Record<string, unknown>> | undefined;
+  defaultProvider?: string;
   defaultModel?: string | undefined;
   thinking?: ManagedKimiThinkingShape | undefined;
   services?: ManagedKimiServicesConfig | undefined;
@@ -182,6 +183,7 @@ export interface ManagedKimiConfigShape {
 export interface ManagedKimiConfigAdapter<TConfig> {
   read(): Promise<TConfig> | TConfig;
   write(config: TConfig): Promise<void> | void;
+  atomicUpdate?<TResult>(update: (config: TConfig) => TResult): Promise<TResult> | TResult;
   apply(
     config: TConfig,
     input: {
@@ -726,6 +728,10 @@ export function clearManagedKimiCodeConfig(
     defaultModelCleared = true;
   }
 
+  if (config.defaultProvider === KIMI_CODE_PROVIDER_NAME) {
+    config.defaultProvider = undefined;
+  }
+
   const removedServices: string[] = [];
   if (config.services?.moonshotSearch !== undefined) {
     delete config.services.moonshotSearch;
@@ -764,15 +770,22 @@ export async function provisionManagedKimiCodeConfig<TConfig>(
   options: ProvisionManagedKimiCodeConfigOptions<TConfig>,
 ): Promise<ManagedKimiCodeProvisionResult> {
   const models = await fetchManagedKimiCodeModels(options);
-  const config = await options.adapter.read();
-  const applied = options.adapter.apply(config, {
-    models,
-    baseUrl: options.baseUrl,
-    oauthKey: options.oauthKey,
-    oauthHost: options.oauthHost,
-    preserveDefaultModel: options.preserveDefaultModel,
-  });
-  await options.adapter.write(config);
+  const apply = (config: TConfig): ManagedKimiCodeApplyResult =>
+    options.adapter.apply(config, {
+      models,
+      baseUrl: options.baseUrl,
+      oauthKey: options.oauthKey,
+      oauthHost: options.oauthHost,
+      preserveDefaultModel: options.preserveDefaultModel,
+    });
+  let applied: ManagedKimiCodeApplyResult;
+  if (options.adapter.atomicUpdate === undefined) {
+    const config = await options.adapter.read();
+    applied = apply(config);
+    await options.adapter.write(config);
+  } else {
+    applied = await options.adapter.atomicUpdate(apply);
+  }
   return {
     providerName: KIMI_CODE_PROVIDER_NAME,
     defaultModel: applied.defaultModel,

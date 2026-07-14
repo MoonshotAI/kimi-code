@@ -39,6 +39,7 @@ export type {
   GoalToolResult,
   KimiConfig,
   KimiConfigPatch,
+  KimiModelCatalogSnapshot,
   LoopControl,
   McpServerInfo,
   McpStartupMetrics,

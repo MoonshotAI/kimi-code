@@ -36,6 +36,7 @@ import type {
   GoalToolResult,
   KimiConfig,
   KimiConfigPatch,
+  KimiModelCatalogSnapshot,
   ListSessionsOptions,
   McpServerInfo,
   McpStartupMetrics,
@@ -233,6 +234,15 @@ export abstract class SDKRpcClientBase {
   async removeProvider(providerId: string): Promise<KimiConfig> {
     const rpc = await this.getRpc();
     return rpc.removeKimiProvider({ providerId });
+  }
+
+  /** Replace the complete model catalog only when it still matches `expected`. */
+  async replaceModelCatalog(
+    expected: KimiModelCatalogSnapshot,
+    next: KimiModelCatalogSnapshot,
+  ): Promise<KimiConfig> {
+    const rpc = await this.getRpc();
+    return rpc.replaceKimiModelCatalog({ expected, next });
   }
 
   async prompt(input: SessionPromptRpcInput): Promise<void> {

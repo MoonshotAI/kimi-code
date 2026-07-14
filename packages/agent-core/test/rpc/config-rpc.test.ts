@@ -1,3 +1,11 @@
+/**
+ * Core configuration RPC scenarios: strict reads preserve the last good state,
+ * mutations serialize, and model-catalog snapshots commit atomically with
+ * optimistic conflict protection.
+ * Wiring: real KimiCore and filesystem persistence with only the RPC peer stubbed.
+ * Run: pnpm --filter @moonshot-ai/agent-core exec vitest run test/rpc/config-rpc.test.ts
+ */
+
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -5,6 +13,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { KimiCore } from '../../src/rpc/core-impl';
+import type { KimiModelCatalogSnapshot } from '../../src/rpc/core-api';
+import type { KimiConfig } from '../../src/config';
 
 const tempDirs: string[] = [];
 
@@ -25,6 +35,16 @@ async function makeHome(configToml?: string): Promise<string> {
 
 function makeCore(home: string): KimiCore {
   return new KimiCore(async () => ({}) as never, { homeDir: home });
+}
+
+function catalogSnapshot(config: KimiConfig): KimiModelCatalogSnapshot {
+  return {
+    providers: config.providers,
+    models: config.models,
+    defaultProvider: config.defaultProvider,
+    defaultModel: config.defaultModel,
+    thinking: config.thinking,
+  };
 }
 
 const VALID_TOML = `
@@ -169,5 +189,124 @@ read_byte_budget = 131072
     await core.getKimiConfig({ reload: true });
     expect(core.imageLimits.maxEdgePx()).toBe(2000);
     expect(core.imageLimits.readByteBudget()).toBe(256 * 1024);
+  });
+});
+
+describe('KimiCore configuration mutations', () => {
+  it('preserves both changes when independent config mutations are submitted concurrently', async () => {
+    const core = makeCore(await makeHome(VALID_TOML));
+
+    await Promise.all([
+      core.setKimiConfig({ defaultPlanMode: true }),
+      core.setKimiConfig({ thinking: { enabled: true } }),
+    ]);
+
+    await expect(core.getKimiConfig({ reload: true })).resolves.toMatchObject({
+      defaultPlanMode: true,
+      thinking: { enabled: true },
+    });
+  });
+
+  it('keeps the writer usable after rejecting an asynchronous config updater', async () => {
+    const core = makeCore(await makeHome(VALID_TOML));
+    const asynchronousUpdate = (async (config: KimiConfig) => {
+      config.defaultPlanMode = true;
+    }) as unknown as (config: KimiConfig) => never;
+
+    await expect(core.mutateKimiConfig(asynchronousUpdate)).rejects.toThrow(/synchronous/i);
+    await core.setKimiConfig({ thinking: { enabled: true } });
+
+    await expect(core.getKimiConfig({ reload: true })).resolves.toMatchObject({
+      thinking: { enabled: true },
+    });
+    expect((await core.getKimiConfig({})).defaultPlanMode).not.toBe(true);
+  });
+
+  it('replaces the complete model catalog while preserving unrelated config', async () => {
+    const core = makeCore(
+      await makeHome(`default_provider = "kimi"
+${VALID_TOML}
+
+[thinking]
+enabled = true
+
+[image]
+max_edge_px = 1400
+`),
+    );
+    const expected = catalogSnapshot(await core.getKimiConfig({}));
+
+    const updated = await core.replaceKimiModelCatalog({
+      expected,
+      next: {
+        providers: {
+          replacement: {
+            type: 'openai',
+            apiKey: 'YOUR_API_KEY',
+          },
+        },
+        models: {
+          replacement: {
+            provider: 'replacement',
+            model: 'replacement-model',
+            maxContextSize: 262144,
+          },
+        },
+        defaultProvider: undefined,
+        defaultModel: undefined,
+        thinking: undefined,
+      },
+    });
+
+    expect(catalogSnapshot(updated)).toEqual({
+      providers: {
+        replacement: {
+          type: 'openai',
+          apiKey: 'YOUR_API_KEY',
+        },
+      },
+      models: {
+        replacement: {
+          provider: 'replacement',
+          model: 'replacement-model',
+          maxContextSize: 262144,
+        },
+      },
+      defaultProvider: undefined,
+      defaultModel: undefined,
+      thinking: undefined,
+    });
+    expect(updated.image).toEqual({ maxEdgePx: 1400 });
+  });
+
+  it('rejects a stale catalog replacement without overwriting the newer config', async () => {
+    const core = makeCore(await makeHome(VALID_TOML));
+    const expected = catalogSnapshot(await core.getKimiConfig({}));
+    await core.setKimiConfig({
+      models: {
+        userAdded: {
+          provider: 'kimi',
+          model: 'user-added',
+          maxContextSize: 64000,
+        },
+      },
+    });
+
+    await expect(
+      core.replaceKimiModelCatalog({
+        expected,
+        next: {
+          providers: {},
+          models: {},
+          defaultProvider: undefined,
+          defaultModel: undefined,
+          thinking: undefined,
+        },
+      }),
+    ).rejects.toThrow(/changed while provider models were refreshing/i);
+
+    const kept = await core.getKimiConfig({ reload: true });
+    expect(kept.models?.['userAdded']).toMatchObject({ model: 'user-added' });
+    expect(kept.providers['kimi']).toBeDefined();
   });
 });

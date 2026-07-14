@@ -1,8 +1,14 @@
+/**
+ * Core process service scenarios: peer RPC routing, lifecycle, DI composition, and config writes.
+ * Wiring: real KimiCore with in-memory peer services and an isolated filesystem home.
+ * Run: pnpm --filter @moonshot-ai/agent-core exec vitest run test/services/coreProcessService.test.ts
+ */
+
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   SyncDescriptor,
@@ -24,6 +30,7 @@ import {
   IEventService,
   ILogService,
   ICoreProcessService,
+  IOAuthService,
   IQuestionService,
 } from '../../src/services';
 
@@ -131,6 +138,14 @@ function makeEnv(homeDir: string): IEnvironmentService {
   };
 }
 
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
 describe('BridgeClientAPI', () => {
   it('routes emitEvent / requestApproval / requestQuestion / toolCall to peer services', async () => {
     const { eventService, approvalService, questionService, logService } = makePeers();
@@ -211,6 +226,37 @@ describe('CoreProcessService direct construction', () => {
       const info = await core.rpc.getCoreInfo({});
       expect(info).toHaveProperty('version');
       expect(typeof info.version).toBe('string');
+    } finally {
+      core.dispose();
+    }
+  });
+
+  it('preserves both writes when atomic auth config and config RPC overlap', async () => {
+    const { eventService, approvalService, questionService, logService } = makePeers();
+    const core = new CoreProcessService(
+      {},
+      makeEnv(tmpHome),
+      eventService,
+      approvalService,
+      questionService,
+      logService,
+    );
+    const authUpdateEntered = deferred();
+    try {
+      await core.ready();
+      const authUpdate = core.atomicConfigUpdate((config) => {
+        config.defaultPlanMode = true;
+        authUpdateEntered.resolve();
+      });
+      await authUpdateEntered.promise;
+      const rpcUpdate = core.rpc.setKimiConfig({ thinking: { enabled: true } });
+
+      await Promise.all([authUpdate, rpcUpdate]);
+
+      await expect(core.rpc.getKimiConfig({ reload: true })).resolves.toMatchObject({
+        defaultPlanMode: true,
+        thinking: { enabled: true },
+      });
     } finally {
       core.dispose();
     }
@@ -297,6 +343,34 @@ describe('singleton registry composition', () => {
       } finally {
         core.dispose();
       }
+    } finally {
+      ix.dispose();
+    }
+  });
+
+  it('routes OAuth cleanup through the CoreProcess config writer resolved by DI', async () => {
+    const { eventService, approvalService, questionService } = makePeers();
+    const ix = new TestInstantiationService();
+    for (const [id, descriptor] of getSingletonServiceDescriptors()) {
+      ix.set(id, descriptor);
+    }
+    ix.stub(IEventService, eventService);
+    ix.stub(IApprovalService, approvalService);
+    ix.stub(IQuestionService, questionService);
+    ix.stub(IEnvironmentService, makeEnv(tmpHome));
+    ix.stub(ILogService, new NoopLogService());
+
+    try {
+      const core = ix.get(ICoreProcessService);
+      await core.ready();
+      if (core.atomicConfigUpdate === undefined) {
+        throw new Error('Expected CoreProcessService to expose its atomic config writer.');
+      }
+      const atomicConfigUpdate = vi.spyOn(core, 'atomicConfigUpdate');
+
+      await ix.get(IOAuthService).logout();
+
+      expect(atomicConfigUpdate).toHaveBeenCalledOnce();
     } finally {
       ix.dispose();
     }

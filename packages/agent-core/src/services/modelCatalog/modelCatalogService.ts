@@ -1,5 +1,6 @@
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
 import type { KimiConfig, ProviderConfig } from '../../config';
+import type { KimiModelCatalogSnapshot } from '../../rpc/core-api';
 import type {
   ModelCatalogItem,
   ProviderCatalogItem,
@@ -148,6 +149,11 @@ export class ModelCatalogService
       getConfig: () => this._readConfig(),
       removeProvider: (providerId) => this.core.rpc.removeKimiProvider({ providerId }),
       setConfig: (patch) => this.core.rpc.setKimiConfig(patch as Record<string, unknown>),
+      replaceModelCatalog: (expected, next) =>
+        this.core.rpc.replaceKimiModelCatalog({
+          expected: expected as unknown as KimiModelCatalogSnapshot,
+          next: next as unknown as KimiModelCatalogSnapshot,
+        }),
       resolveOAuthToken: (providerName, oauthRef) =>
         this._resolveOAuthToken(providerName, oauthRef),
       userAgent: this.core.kimiRequestHeaders?.['User-Agent'],

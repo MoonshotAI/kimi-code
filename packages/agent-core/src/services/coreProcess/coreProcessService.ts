@@ -3,6 +3,7 @@
  */
 
 import { createRPC, KimiCore } from '../../rpc';
+import type { KimiConfig } from '../../config';
 import type { ImageLimits } from '../../tools/support/image-limits';
 import { Disposable, registerSingleton, SyncDescriptor } from '../../di';
 import type { CoreAPI, CoreRPC, SDKAPI } from '../../rpc';
@@ -36,6 +37,10 @@ export class CoreProcessService extends Disposable implements ICoreProcessServic
   public readonly kimiRequestHeaders: Record<string, string> | undefined;
 
   public readonly telemetry: TelemetryClient;
+
+  public readonly atomicConfigUpdate = <TResult>(
+    update: (config: KimiConfig) => TResult,
+  ): Promise<TResult> => this._core.mutateKimiConfig(update);
 
   /** The core's owner-scoped [image] limits; see ICoreProcessService. */
   public get imageLimits(): ImageLimits {

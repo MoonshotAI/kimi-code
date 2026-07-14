@@ -14,6 +14,7 @@
 import {
   refreshProviderModels,
   type ManagedKimiConfigShape,
+  type ManagedKimiModelCatalogSnapshot,
   type ManagedKimiOAuthRef,
   type RefreshProviderHost,
   type RefreshResult,
@@ -49,6 +50,7 @@ import {
 } from './modelCatalog';
 
 const DEFAULT_MODEL_SECTION = 'defaultModel';
+const DEFAULT_PROVIDER_SECTION = 'defaultProvider';
 const THINKING_SECTION = 'thinking';
 
 export class ModelCatalogService implements IModelCatalogService {
@@ -152,6 +154,8 @@ export class ModelCatalogService implements IModelCatalogService {
       getConfig: async () => this.readUserConfigShape(),
       removeProvider: (providerId) => this.removeProviderForRefresh(providerId),
       setConfig: (patch) => this.applyRefreshPatch(patch),
+      replaceModelCatalog: (expected, next) =>
+        this.replaceModelCatalogForRefresh(expected, next),
       resolveOAuthToken: (providerName, oauthRef) => this.resolveOAuthToken(providerName, oauthRef),
       // Mirrors ModelResolverService: only the User-Agent leaves the host, so
       // device identity never reaches third-party registry endpoints.
@@ -167,14 +171,18 @@ export class ModelCatalogService implements IModelCatalogService {
   private readUserConfigShape(): ManagedKimiConfigShape {
     const providers =
       this.config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
-    const models =
-      this.config.inspect<Record<string, ModelAlias>>(MODELS_SECTION).userValue ?? {};
+    const models = this.config.inspect<Record<string, ModelAlias>>(MODELS_SECTION).userValue;
+    const defaultProvider = this.config.inspect<string>(DEFAULT_PROVIDER_SECTION).userValue;
     const defaultModel = this.config.inspect<string>(DEFAULT_MODEL_SECTION).userValue;
     const thinking =
       this.config.inspect<ManagedKimiConfigShape['thinking']>(THINKING_SECTION).userValue;
     return {
       providers: { ...providers } as ManagedKimiConfigShape['providers'],
-      models: { ...models } as ManagedKimiConfigShape['models'],
+      models:
+        models === undefined
+          ? undefined
+          : ({ ...models } as ManagedKimiConfigShape['models']),
+      defaultProvider,
       defaultModel,
       thinking: thinking === undefined ? undefined : { ...thinking },
     };
@@ -197,6 +205,31 @@ export class ModelCatalogService implements IModelCatalogService {
       providers: restProviders,
       models: restModels,
     } as ManagedKimiConfigShape;
+  }
+
+  private async replaceModelCatalogForRefresh(
+    expected: ManagedKimiModelCatalogSnapshot,
+    next: ManagedKimiModelCatalogSnapshot,
+  ): Promise<ManagedKimiConfigShape> {
+    await this.config.replaceMany(
+      {
+        [PROVIDERS_SECTION]: next.providers,
+        [MODELS_SECTION]: next.models,
+        [DEFAULT_PROVIDER_SECTION]: next.defaultProvider,
+        [DEFAULT_MODEL_SECTION]: next.defaultModel,
+        [THINKING_SECTION]: next.thinking,
+      },
+      {
+        expected: {
+          [PROVIDERS_SECTION]: expected.providers,
+          [MODELS_SECTION]: expected.models,
+          [DEFAULT_PROVIDER_SECTION]: expected.defaultProvider,
+          [DEFAULT_MODEL_SECTION]: expected.defaultModel,
+          [THINKING_SECTION]: expected.thinking,
+        },
+      },
+    );
+    return this.readUserConfigShape();
   }
 
   private async applyRefreshPatch(patch: ManagedKimiConfigShape): Promise<ManagedKimiConfigShape> {

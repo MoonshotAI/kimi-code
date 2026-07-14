@@ -1,3 +1,11 @@
+/**
+ * Provider-model refresh scenarios: remote catalogs are fetched at the network
+ * boundary and persisted through either the atomic catalog host contract or its
+ * legacy remove/set fallback.
+ * Wiring: real shared refresh orchestration with fetch and persistence boundaries stubbed.
+ * Run: pnpm --filter @moonshot-ai/kimi-code exec vitest run test/tui/utils/refresh-providers.test.ts
+ */
+
 import {
   KIMI_CODE_PROVIDER_NAME,
   resolveKimiCodeOAuthKey,
@@ -6,7 +14,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { refreshAllProviderModels } from '../../../src/tui/utils/refresh-providers';
-import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiConfig, KimiModelCatalogSnapshot } from '@moonshot-ai/kimi-code-sdk';
 
 type FetchMock = (
   input: Parameters<typeof fetch>[0],
@@ -23,6 +31,14 @@ function makeRefreshHost(initial: KimiConfig): {
   current: () => KimiConfig;
   removeProvider: ReturnType<typeof vi.fn<(providerId: string) => Promise<KimiConfig>>>;
   setConfig: ReturnType<typeof vi.fn<(patch: Partial<KimiConfig>) => Promise<KimiConfig>>>;
+  replaceModelCatalog: ReturnType<
+    typeof vi.fn<
+      (
+        expected: KimiModelCatalogSnapshot,
+        next: KimiModelCatalogSnapshot,
+      ) => Promise<KimiConfig>
+    >
+  >;
 } {
   let persisted = structuredClone(initial);
   const removeProvider = vi.fn(async (providerId: string) => {
@@ -43,10 +59,17 @@ function makeRefreshHost(initial: KimiConfig): {
     persisted = { ...persisted, ...patch };
     return structuredClone(persisted);
   });
+  const replaceModelCatalog = vi.fn(
+    async (_expected: KimiModelCatalogSnapshot, next: KimiModelCatalogSnapshot) => {
+      persisted = { ...persisted, ...next };
+      return structuredClone(persisted);
+    },
+  );
   return {
     current: () => structuredClone(persisted),
     removeProvider,
     setConfig,
+    replaceModelCatalog,
   };
 }
 
@@ -126,7 +149,7 @@ describe('refreshAllProviderModels', () => {
     expect(resolveOAuthToken).toHaveBeenCalledWith(KIMI_CODE_PROVIDER_NAME, envOauthRef);
   });
 
-  it('can refresh only the managed OAuth provider without fetching third-party registries', async () => {
+  it('persists a scoped OAuth refresh through one atomic catalog replacement', async () => {
     const baseUrl = 'https://api.example.test/coding/v1';
     const registryUrl = 'https://registry.example.test/v1/models/api.json';
     const config: KimiConfig = {
@@ -192,6 +215,7 @@ describe('refreshAllProviderModels', () => {
         getConfig: async () => host.current(),
         removeProvider: host.removeProvider,
         setConfig: host.setConfig,
+        replaceModelCatalog: host.replaceModelCatalog,
         resolveOAuthToken,
       },
       { scope: 'oauth' },
@@ -208,6 +232,9 @@ describe('refreshAllProviderModels', () => {
     ]);
     expect(result.unchanged).toEqual([]);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(host.replaceModelCatalog).toHaveBeenCalledOnce();
+    expect(host.removeProvider).not.toHaveBeenCalled();
+    expect(host.setConfig).not.toHaveBeenCalled();
     expect(host.current().models?.['kimi-code/kimi-for-coding']?.displayName).toBe('Fresh Kimi');
     expect(host.current().models?.['custom/m1']?.displayName).toBe('Custom M1');
   });

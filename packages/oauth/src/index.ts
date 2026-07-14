@@ -163,6 +163,7 @@ export type {
 
 export { refreshProviderModels } from './refreshProviderModels';
 export type {
+  ManagedKimiModelCatalogSnapshot,
   ProviderChange,
   RefreshProviderHost,
   RefreshProviderOptions,

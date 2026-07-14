@@ -11,8 +11,10 @@
  * `onDidSectionChange`. Reads config paths and the environment overlay through
  * `bootstrap`, persists the TOML document through the `storage` TOML
  * atomic-document store (reloading when the document changes on disk), and logs
- * through `log`. Late section / overlay registration re-validates the
- * already-loaded raw value and re-runs overlays. Bound at App scope.
+ * through `log`. Multi-section replacements validate and persist as one
+ * compare-and-swap state transition. Late section / overlay registration
+ * re-validates the already-loaded raw value and re-runs overlays. Bound at App
+ * scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
@@ -21,6 +23,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { ILogService } from '#/_base/log/log';
+import { Error2, ErrorCodes } from '#/errors';
 import {
   IAtomicTomlDocumentStore,
   type IAtomicDocumentStore,
@@ -35,6 +38,7 @@ import {
   type ConfigInspectValue,
   type ConfigMerge,
   type ConfigOverlayRegisteredEvent,
+  type ConfigReplaceManyOptions,
   type ConfigSchema,
   type ConfigSection,
   type ConfigSectionRegisteredEvent,
@@ -389,6 +393,46 @@ export class ConfigService extends Disposable implements IConfigService {
       }
       await this.persist(domain);
       this.rebuildEffective('set', [domain]);
+    });
+  }
+
+  async replaceMany(
+    replacements: Readonly<Record<string, unknown>>,
+    options: ConfigReplaceManyOptions = {},
+  ): Promise<void> {
+    await this.ready;
+    const domains = Object.keys(replacements);
+    if (domains.length === 0) return;
+
+    await this.enqueueStateTransition(async () => {
+      const current = this.raw;
+      for (const [domain, expected] of Object.entries(options.expected ?? {})) {
+        if (!deepEqual(current[domain], expected)) {
+          throw new Error2(
+            ErrorCodes.CONFIG_INVALID,
+            'Configuration changed before the batched replacement could be applied.',
+          );
+        }
+      }
+
+      const next: ResolvedConfig = { ...current };
+      for (const [domain, value] of Object.entries(replacements)) {
+        const stripped = this.stripEnv(domain, value);
+        if (stripped === undefined) {
+          delete next[domain];
+        } else {
+          next[domain] = this.registry.validate(domain, stripped);
+        }
+      }
+
+      const nextRawSnake = cloneRecord(this.rawSnake);
+      for (const domain of domains) {
+        applySectionToToml(nextRawSnake, domain, next[domain], this.registry);
+      }
+      await this.documentStore.set(CONFIG_SCOPE, this.configKey, nextRawSnake);
+      this.raw = next;
+      this.rawSnake = nextRawSnake;
+      this.rebuildEffective('set', domains);
     });
   }
 

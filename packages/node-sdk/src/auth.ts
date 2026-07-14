@@ -90,6 +90,9 @@ export interface KimiAuthFacadeOptions {
   readonly homeDir: string;
   readonly configPath: string;
   readonly identity?: KimiHostIdentity | undefined;
+  readonly atomicConfigUpdate?: <TResult>(
+    update: (config: KimiConfig) => TResult,
+  ) => Promise<TResult>;
   readonly onConfigUpdated?: ((config: KimiConfig) => void) | undefined;
   readonly onRefresh?: ((outcome: OAuthRefreshOutcome) => void) | undefined;
 }
@@ -112,6 +115,7 @@ export class KimiAuthFacade {
         write: async (config) => {
           await writeConfigFile(options.configPath, config);
         },
+        atomicUpdate: options.atomicConfigUpdate,
         apply: applyManagedKimiCodeConfig,
         remove: applyManagedKimiCodeLogoutConfig,
       },

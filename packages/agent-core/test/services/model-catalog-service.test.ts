@@ -1,3 +1,10 @@
+/**
+ * Model-catalog service scenarios: catalog reads and refreshes traverse the
+ * core RPC boundary, publish protocol events, and persist refreshes atomically.
+ * Wiring: real service orchestration with RPC, OAuth, fetch, and event boundaries stubbed.
+ * Run: pnpm --filter @moonshot-ai/agent-core exec vitest run test/services/model-catalog-service.test.ts
+ */
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type {
@@ -5,6 +12,7 @@ import type {
   GetKimiConfigPayload,
   KimiConfig,
   KimiConfigPatch,
+  ReplaceKimiModelCatalogPayload,
   SetKimiConfigPayload,
 } from '../../src';
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
@@ -40,10 +48,12 @@ function makeCore(configRef: { current: KimiConfig }): {
   getCalls: GetKimiConfigPayload[];
   setCalls: KimiConfigPatch[];
   removeCalls: string[];
+  replaceCalls: ReplaceKimiModelCatalogPayload[];
 } {
   const getCalls: GetKimiConfigPayload[] = [];
   const setCalls: KimiConfigPatch[] = [];
   const removeCalls: string[] = [];
+  const replaceCalls: ReplaceKimiModelCatalogPayload[] = [];
   const rpc: Partial<CoreRPC> = {
     getKimiConfig: vi.fn(async (payload: GetKimiConfigPayload) => {
       getCalls.push(payload);
@@ -78,6 +88,14 @@ function makeCore(configRef: { current: KimiConfig }): {
       };
       return configRef.current;
     }),
+    replaceKimiModelCatalog: vi.fn(async (payload: ReplaceKimiModelCatalogPayload) => {
+      replaceCalls.push(payload);
+      configRef.current = {
+        ...configRef.current,
+        ...payload.next,
+      };
+      return configRef.current;
+    }),
   };
   return {
     core: {
@@ -89,6 +107,7 @@ function makeCore(configRef: { current: KimiConfig }): {
     getCalls,
     setCalls,
     removeCalls,
+    replaceCalls,
   };
 }
 
@@ -256,7 +275,7 @@ describe('ModelCatalogService', () => {
         },
       },
     };
-    const { core, removeCalls, setCalls } = makeCore(configRef);
+    const { core, removeCalls, setCalls, replaceCalls } = makeCore(configRef);
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       data: [
         {
@@ -277,8 +296,10 @@ describe('ModelCatalogService', () => {
       failed: [],
     });
 
-    expect(removeCalls).toEqual([KIMI_CODE_PROVIDER_NAME]);
-    expect(setCalls.at(-1)).toMatchObject({
+    expect(removeCalls).toEqual([]);
+    expect(setCalls).toEqual([]);
+    expect(replaceCalls).toHaveLength(1);
+    expect(replaceCalls[0]?.next).toMatchObject({
       defaultModel: 'kimi-code/kimi-for-coding',
       thinking: { enabled: true },
       models: {
@@ -311,7 +332,7 @@ describe('ModelCatalogService', () => {
         },
       },
     };
-    const { core, setCalls } = makeCore(configRef);
+    const { core, replaceCalls } = makeCore(configRef);
     vi.stubGlobal(
       'fetch',
       vi.fn(async () =>
@@ -332,9 +353,10 @@ describe('ModelCatalogService', () => {
 
     await svc.refreshOAuthProviderModels();
 
-    const last = setCalls.at(-1) as Record<string, unknown>;
-    const providers = last['providers'] as Record<string, { type: string; baseUrl: string }>;
-    const models = last['models'] as Record<string, { provider: string; protocol?: string }>;
+    const last = replaceCalls.at(-1)?.next;
+    if (last === undefined) throw new Error('Expected an atomic model-catalog replacement.');
+    const providers = last.providers;
+    const models = last.models ?? {};
     // Provider type/baseUrl stay on the kimi wire + REST base; the anthropic
     // transport is carried on the model alias for per-model resolution.
     expect(providers[KIMI_CODE_PROVIDER_NAME]?.type).toBe('kimi');

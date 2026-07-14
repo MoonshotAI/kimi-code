@@ -30,6 +30,7 @@
  */
 
 import { createDecorator } from '../../di';
+import type { KimiConfig } from '../../config';
 import type { CoreRPC, KimiCoreOptions } from '../../rpc';
 import type { TelemetryClient } from '../../telemetry';
 import { type KimiHostIdentity } from '@moonshot-ai/kimi-code-oauth';
@@ -74,6 +75,10 @@ export interface ICoreProcessService {
    * compression uses the same settings (and reloads) as the core's own tools.
    */
   readonly imageLimits?: ImageLimits | undefined;
+
+  readonly atomicConfigUpdate?: <TResult>(
+    update: (config: KimiConfig) => TResult,
+  ) => Promise<TResult>;
 
   /**
    * Resolves once `KimiCore` is fully constructed and the SDK side of the

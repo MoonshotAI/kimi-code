@@ -301,6 +301,7 @@ export class KimiTUI {
   private readonly imageStore = new ImageAttachmentStore();
   private fdPath: string | null = detectFdPath();
   private fdDownloadStarted = false;
+  private providerModelsRefreshStarted = false;
   sessionEventUnsubscribe: (() => void) | undefined;
   cancelInFlight: (() => void) | undefined;
   deferUserMessages = false;
@@ -652,6 +653,8 @@ export class KimiTUI {
   }
 
   private async refreshProviderModelsInBackground(): Promise<void> {
+    if (this.providerModelsRefreshStarted) return;
+    this.providerModelsRefreshStarted = true;
     try {
       const result = await this.authFlow.refreshProviderModels();
       for (const c of result.changed) {
@@ -718,7 +721,6 @@ export class KimiTUI {
   private async init(): Promise<boolean> {
     setExperimentalFeatures(await this.harness.getExperimentalFeatures());
     await this.authFlow.refreshAvailableModels();
-    void this.refreshProviderModelsInBackground();
 
     const { startup } = this.options;
     const { workDir } = this.state.appState;
@@ -807,7 +809,7 @@ export class KimiTUI {
     await this.setSession(session);
     await this.syncRuntimeState(session);
     this.applyStartupPermissionAndPlanToAppState();
-    this.state.startupState = 'ready';
+    this.setStartupReady();
     return shouldReplayHistory;
   }
 
@@ -1389,6 +1391,9 @@ export class KimiTUI {
 
   setStartupReady(): void {
     this.state.startupState = 'ready';
+    if (this.session !== undefined) {
+      void this.refreshProviderModelsInBackground();
+    }
   }
 
   clearQueuedMessages(): void {
@@ -1536,6 +1541,9 @@ export class KimiTUI {
       goal: goalResult.goal,
     });
     this.syncAdditionalDirs(session);
+    if (this.state.startupState === 'ready') {
+      void this.refreshProviderModelsInBackground();
+    }
   }
 
   // Apply --auto/--yolo/--plan startup flags to a resumed session. The resumed
@@ -2891,6 +2899,7 @@ export class KimiTUI {
     if (applyStartupModes) {
       await this.applyStartupModesToResumedSession(this.requireSession());
       this.applyStartupPermissionAndPlanToAppState();
+      this.setStartupReady();
     }
     this.hideSessionPicker();
   }

@@ -1,3 +1,10 @@
+/**
+ * SDK auth scenarios: managed credential resolution, login/logout provisioning, and
+ * serialization with model-catalog writes.
+ * Wiring: real auth facade, SDK core, token storage, and filesystem; fetch is the only stub.
+ * Run: pnpm --filter @moonshot-ai/kimi-code-sdk exec vitest run test/auth-facade.test.ts
+ */
+
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +22,14 @@ import {
 } from '@moonshot-ai/kimi-code-oauth';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createKimiHarness, ErrorCodes, KimiError } from '#/index';
+import {
+  createKimiHarness,
+  ErrorCodes,
+  KimiError,
+  SDKRpcClient,
+  type KimiConfig,
+  type KimiModelCatalogSnapshot,
+} from '#/index';
 
 import { ProviderManager } from '../../agent-core/src/session/provider-manager';
 import { TEST_IDENTITY } from './test-identity';
@@ -42,6 +56,67 @@ function freshToken(): TokenInfo {
     tokenType: 'Bearer',
     expiresIn: 3600,
   };
+}
+
+function deferred(): { readonly promise: Promise<void>; readonly resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+function catalogSnapshot(config: KimiConfig): KimiModelCatalogSnapshot {
+  return {
+    providers: config.providers,
+    models: config.models,
+    defaultProvider: config.defaultProvider,
+    defaultModel: config.defaultModel,
+    thinking: config.thinking,
+  };
+}
+
+const CUSTOM_CONFIG = `
+default_model = "custom-model"
+
+[providers.custom]
+type = "openai"
+api_key = "YOUR_API_KEY"
+
+[models.custom-model]
+provider = "custom"
+model = "custom-model"
+max_context_size = 64000
+`;
+
+function stubManagedModels(
+  contextLength = 262144,
+  gate?: {
+    readonly requested: () => void;
+    readonly release: Promise<void>;
+  },
+): void {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      async () => {
+        gate?.requested();
+        await gate?.release;
+        return new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: 'kimi-for-coding',
+                context_length: contextLength,
+                supports_reasoning: true,
+              },
+            ],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      },
+    ),
+  );
 }
 
 beforeEach(async () => {
@@ -262,6 +337,106 @@ oauth = { storage = "file", key = "${oauthKey}", oauth_host = "https://auth.dev.
       storage: 'file',
       key: 'oauth/kimi-code',
     });
+  });
+
+  it('rejects a catalog replacement whose snapshot predates auth provisioning', async () => {
+    await new FileTokenStorage(join(homeDir, 'credentials')).save('kimi-code', freshToken());
+    const configPath = join(homeDir, 'config.toml');
+    await writeFile(configPath, CUSTOM_CONFIG);
+    stubManagedModels();
+    const rpc = new SDKRpcClient({ homeDir, identity: TEST_IDENTITY });
+    const expected = catalogSnapshot(await rpc.getConfig());
+
+    await rpc.auth.login();
+
+    const replaceCatalog = rpc.replaceModelCatalog(expected, {
+      providers: {
+        replacement: { type: 'openai', apiKey: 'YOUR_API_KEY' },
+      },
+      models: {
+        replacement: {
+          provider: 'replacement',
+          model: 'replacement-model',
+          maxContextSize: 128000,
+        },
+      },
+      defaultProvider: undefined,
+      defaultModel: 'replacement',
+      thinking: undefined,
+    });
+
+    await expect(replaceCatalog).rejects.toMatchObject({
+      code: ErrorCodes.CONFIG_INVALID,
+      details: { reason: 'stale_model_catalog' },
+    });
+    const config = await rpc.getConfig({ reload: true });
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toBeDefined();
+    expect(config.providers['custom']).toBeDefined();
+    expect(config.providers['replacement']).toBeUndefined();
+  });
+
+  it('preserves a catalog committed while auth is still loading managed models', async () => {
+    await new FileTokenStorage(join(homeDir, 'credentials')).save('kimi-code', freshToken());
+    const configPath = join(homeDir, 'config.toml');
+    await writeFile(configPath, CUSTOM_CONFIG);
+    const modelsRequested = deferred();
+    const releaseModels = deferred();
+    stubManagedModels(262144, {
+      requested: modelsRequested.resolve,
+      release: releaseModels.promise,
+    });
+    const rpc = new SDKRpcClient({ homeDir, identity: TEST_IDENTITY });
+    const atomicConfigUpdate = vi.spyOn(rpc.core, 'mutateKimiConfig');
+    const expected = catalogSnapshot(await rpc.getConfig());
+    const login = rpc.auth.login();
+    await modelsRequested.promise;
+    const catalogUpdate = rpc.replaceModelCatalog(expected, {
+      providers: {
+        ...expected.providers,
+        replacement: {
+          type: 'openai',
+          apiKey: 'YOUR_API_KEY',
+        },
+      },
+      models: {
+        ...expected.models,
+        replacement: {
+          provider: 'replacement',
+          model: 'replacement-model',
+          maxContextSize: 128000,
+        },
+      },
+      defaultProvider: expected.defaultProvider,
+      defaultModel: expected.defaultModel,
+      thinking: expected.thinking,
+    });
+    await catalogUpdate;
+    releaseModels.resolve();
+    await login;
+
+    expect(atomicConfigUpdate).toHaveBeenCalledOnce();
+    const config = await rpc.getConfig({ reload: true });
+    expect(config.providers['replacement']).toMatchObject({ apiKey: 'YOUR_API_KEY' });
+    expect(config.models?.['replacement']).toMatchObject({ model: 'replacement-model' });
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toBeDefined();
+    expect(config.models?.['kimi-code/kimi-for-coding']).toBeDefined();
+  });
+
+  it('allows the next config mutation when auth provisioning fails before persistence', async () => {
+    await new FileTokenStorage(join(homeDir, 'credentials')).save('kimi-code', freshToken());
+    const configPath = join(homeDir, 'config.toml');
+    await writeFile(configPath, CUSTOM_CONFIG);
+    stubManagedModels(0);
+    const rpc = new SDKRpcClient({ homeDir, identity: TEST_IDENTITY });
+
+    await expect(rpc.auth.login()).rejects.toThrow();
+    await rpc.setConfig({ defaultPlanMode: true });
+
+    const config = await rpc.getConfig({ reload: true });
+    expect(config.defaultPlanMode).toBe(true);
+    expect(config.providers['custom']).toBeDefined();
+    expect(config.providers[KIMI_CODE_PROVIDER_NAME]).toBeUndefined();
+    expect(config.models?.['kimi-code/kimi-for-coding']).toBeUndefined();
   });
 
   it('logs in against the configured scoped OAuth host and base URL when env is absent', async () => {

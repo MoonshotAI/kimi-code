@@ -381,6 +381,19 @@ export interface RemoveKimiProviderPayload {
   readonly providerId: string;
 }
 
+export interface KimiModelCatalogSnapshot {
+  readonly providers: KimiConfig['providers'];
+  readonly models: KimiConfig['models'];
+  readonly defaultProvider: KimiConfig['defaultProvider'];
+  readonly defaultModel: KimiConfig['defaultModel'];
+  readonly thinking: KimiConfig['thinking'];
+}
+
+export interface ReplaceKimiModelCatalogPayload {
+  readonly expected: KimiModelCatalogSnapshot;
+  readonly next: KimiModelCatalogSnapshot;
+}
+
 export interface GetCronTasksResult {
   readonly tasks: readonly CronTaskSnapshot[];
 }
@@ -456,6 +469,7 @@ export interface CoreAPI extends SessionAPIWithId {
   getConfigDiagnostics: (payload: EmptyPayload) => ConfigDiagnostics;
   setKimiConfig: (payload: SetKimiConfigPayload) => KimiConfig;
   removeKimiProvider: (payload: RemoveKimiProviderPayload) => KimiConfig;
+  replaceKimiModelCatalog: (payload: ReplaceKimiModelCatalogPayload) => KimiConfig;
   createSession: (payload: CreateSessionPayload) => SessionSummary;
   closeSession: (payload: CloseSessionPayload) => void;
   archiveSession: (payload: ArchiveSessionPayload) => void;
