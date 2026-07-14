@@ -83,6 +83,9 @@ describe('Session legacy status (best-effort runtime state)', () => {
       dispose: () => {},
     };
     const agents = {
+      // create is create-or-get for explicit ids: this session's main agent
+      // already exists, so return it as-is (same as whenReady).
+      create: () => Promise.resolve(agent),
       whenReady: () => Promise.resolve(agent),
     } as unknown as IAgentLifecycleService;
     const session: ISessionScopeHandle = {
