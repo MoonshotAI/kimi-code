@@ -1,6 +1,7 @@
 import { IAgentPlanService, type IAgentPlanService as AgentPlanService } from '#/agent/plan/plan';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { PlanResolvedEvent, PlanSubmittedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type {
@@ -27,6 +28,7 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
   constructor(
     @IAgentPlanService private readonly plan: AgentPlanService,
     @IAgentPermissionModeService private readonly modeService: IAgentPermissionModeService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
@@ -165,16 +167,17 @@ export class ExitPlanModeReviewAskPermissionPolicyService implements PermissionP
     this.trackPlanTelemetry('plan_resolved', { outcome: 'rejected' });
   }
 
-  private trackPlanTelemetry(event: 'plan_submitted', properties: PlanSubmittedEvent): void;
-  private trackPlanTelemetry(event: 'plan_resolved', properties: PlanResolvedEvent): void;
+  private trackPlanTelemetry(event: 'plan_submitted', properties: Omit<PlanSubmittedEvent, 'agent_id'>): void;
+  private trackPlanTelemetry(event: 'plan_resolved', properties: Omit<PlanResolvedEvent, 'agent_id'>): void;
   private trackPlanTelemetry(
     event: 'plan_submitted' | 'plan_resolved',
-    properties: PlanSubmittedEvent | PlanResolvedEvent,
+    properties: Omit<PlanSubmittedEvent, 'agent_id'> | Omit<PlanResolvedEvent, 'agent_id'>,
   ): void {
+    const withAgent = { ...properties, agent_id: this.scopeContext.agentId };
     if (event === 'plan_submitted') {
-      this.telemetry.track2('plan_submitted', properties as PlanSubmittedEvent);
+      this.telemetry.track2('plan_submitted', withAgent as PlanSubmittedEvent);
     } else {
-      this.telemetry.track2('plan_resolved', properties as PlanResolvedEvent);
+      this.telemetry.track2('plan_resolved', withAgent as PlanResolvedEvent);
     }
   }
 }

@@ -175,7 +175,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 
   async create(opts: CreateAgentOptions = {}): Promise<IAgentScopeHandle> {
-    const agentId = opts.agentId ?? `agent-${nextAgentId++}`;
+    const agentId = opts.agentId ?? (await this.nextAvailableAgentId());
     const creating = this.creating.get(agentId);
     if (creating !== undefined) return creating;
     this.assertCanCreate();
@@ -219,6 +219,20 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     } catch {
       return undefined;
     }
+  }
+
+  private async nextAvailableAgentId(): Promise<string> {
+    let maxSuffix = -1;
+    const consider = (id: string): void => {
+      const match = /^agent-(\d+)$/.exec(id);
+      if (match !== null) maxSuffix = Math.max(maxSuffix, Number(match[1]));
+    };
+    for (const id of this.handles.keys()) consider(id);
+    const persisted = (await this.sessionMetadata.read()).agents ?? {};
+    for (const id of Object.keys(persisted)) consider(id);
+    const candidate = Math.max(maxSuffix + 1, nextAgentId);
+    nextAgentId = candidate + 1;
+    return `agent-${String(candidate)}`;
   }
 
   private async bootstrapAgent(

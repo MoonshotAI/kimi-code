@@ -25,6 +25,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import type { PlanData } from '#/agent/plan/plan';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import DESCRIPTION from './exit-plan-mode.md?raw';
 
 
@@ -90,6 +91,7 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
   constructor(
     @IAgentPlanService private readonly planMode: IAgentPlanService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
@@ -137,6 +139,7 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     if (!resolvedPlan.ok) return resolvedPlan.error;
 
     this.telemetry.track2('plan_submitted', {
+      agent_id: this.scopeContext.agentId,
       has_options: args.options !== undefined && args.options.length >= 2,
     });
 
@@ -144,14 +147,20 @@ export class ExitPlanModeTool implements BuiltinTool<ExitPlanModeInput> {
     if (failed !== undefined) return failed;
 
     if (this.permissionMode.mode === 'auto') {
-      this.telemetry.track2('plan_resolved', { outcome: 'auto_approved' });
+      this.telemetry.track2('plan_resolved', {
+        agent_id: this.scopeContext.agentId,
+        outcome: 'auto_approved',
+      });
       return {
         isError: false,
         output: `Exited plan mode. ${formatAutoApprovedPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,
       };
     }
 
-    this.telemetry.track2('plan_resolved', { outcome: 'approved' });
+    this.telemetry.track2('plan_resolved', {
+      agent_id: this.scopeContext.agentId,
+      outcome: 'approved',
+    });
     return {
       isError: false,
       output: `Exited plan mode. ${formatPlanForOutput(resolvedPlan.plan, resolvedPlan.path)}`,

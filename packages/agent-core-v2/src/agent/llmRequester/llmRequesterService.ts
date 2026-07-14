@@ -155,7 +155,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       return await this.runRequest(this.resolveRequest(overrides), onPart, signal);
     } catch (error) {
       this.logRequestFailure(error, overrides, signal);
-      this.trackApiError(error, startedAt, signal);
+      this.trackApiError(error, startedAt, signal, overrides.source);
       throw error;
     }
   }
@@ -178,6 +178,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     error: unknown,
     startedAt: number,
     signal: AbortSignal | undefined,
+    source: LLMRequestSource | undefined,
   ): void {
     if (isAbortError(error) || signal?.aborted === true) return;
     const modelAlias = this.profile.data().modelAlias;
@@ -191,6 +192,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       protocol: model?.protocol,
       retryable: isRetryableGenerateError(error),
       duration_ms: Math.max(0, Date.now() - startedAt),
+      turn_id: source?.type === 'turn' ? source.turnId : undefined,
+      request_kind: requestKindForTelemetry(source),
     };
     const statusCode = apiStatusCode(error);
     if (statusCode !== undefined) properties['status_code'] = statusCode;
@@ -530,6 +533,12 @@ function logFieldsForSource(source: LLMRequestSource | undefined): LLMRequestLog
     default:
       return {};
   }
+}
+
+function requestKindForTelemetry(source: LLMRequestSource | undefined): string | undefined {
+  if (source?.type === 'turn') return 'turn';
+  if (source?.type === 'operation') return source.requestKind ?? 'operation';
+  return undefined;
 }
 
 function providerVisibleTools(tools: readonly Tool[]): readonly Tool[] {

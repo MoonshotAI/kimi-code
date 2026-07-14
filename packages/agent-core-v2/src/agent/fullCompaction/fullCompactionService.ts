@@ -20,6 +20,7 @@ import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -36,7 +37,7 @@ import { createUserMessage, type Message } from '#/app/llmProtocol/message';
 import type { Tool } from '#/app/llmProtocol/tool';
 import { inputTotal, type TokenUsage } from '#/app/llmProtocol/usage';
 import { IEventBus } from '#/app/event/eventBus';
-import type { CompactionFinishedEvent } from '#/app/telemetry/events';
+import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { IAgentWireService } from '#/wire/tokens';
@@ -111,6 +112,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   private readonly observedMaxContextTokensByModel = new Map<string, number>();
   private lastCompactedTokenCount: number | null = null;
   private consecutiveOverflowCompactions = 0;
+  private activeTurnId: number | undefined;
   private contextInjectorService: IAgentContextInjectorService | undefined;
 
   constructor(
@@ -118,6 +120,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
@@ -134,6 +137,11 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     this._register(this.wire.onRestored(() => this.normalizeAfterReplay()));
     this._register(
       this.eventBus.subscribe('turn.started', () => this.resetForTurn()),
+    );
+    this._register(
+      this.eventBus.subscribe('turn.ended', () => {
+        this.activeTurnId = undefined;
+      }),
     );
     this._register(
       this.loopService.hooks.onWillBeginStep.register('full-compaction', async (ctx, next) => {
@@ -366,6 +374,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   }
 
   private async beforeStep(signal: AbortSignal, turnId?: number): Promise<void> {
+    this.activeTurnId = turnId;
     this.checkAutoCompaction();
     if (this.strategy.shouldBlock(this.tokenCountWithPending())) {
       await this.block(signal, turnId);
@@ -607,6 +616,8 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       });
 
       const properties: CompactionFinishedEvent = {
+        agent_id: this.scopeContext.agentId,
+        turn_id: this.activeTurnId,
         source: data.source,
         tokens_before: result.tokensBefore,
         tokens_after: result.tokensAfter,
@@ -622,7 +633,9 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       return result;
     } catch (error) {
       if (isAbortError(error)) throw error;
-      this.telemetry.track2('compaction_failed', {
+      const properties: CompactionFailedEvent = {
+        agent_id: this.scopeContext.agentId,
+        turn_id: this.activeTurnId,
         source: data.source,
         tokens_before: tokensBefore,
         duration_ms: Date.now() - startedAt,
@@ -630,7 +643,8 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         retry_count: retryCount,
         thinking_effort: this.profile.data().thinkingLevel,
         error_type: error instanceof Error ? error.name : 'Unknown',
-      });
+      };
+      this.telemetry.track2('compaction_failed', properties);
       if (
         isError2(error) &&
         (error.code === ErrorCodes.AUTH_LOGIN_REQUIRED ||

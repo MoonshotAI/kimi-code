@@ -318,6 +318,9 @@ describe('AgentPermissionGate', () => {
     expect(records).toContainEqual({
       event: 'permission_policy_decision',
       properties: expect.objectContaining({
+        agent_id: 'main',
+        turn_id: 1,
+        tool_call_id: 'call-AskUserQuestion',
         policy_name: 'auto-mode-ask-user-question-deny',
         tool_name: 'AskUserQuestion',
         decision: 'deny',
@@ -460,6 +463,9 @@ describe('AgentPermissionGate', () => {
     expect(records).toContainEqual({
       event: 'permission_approval_result',
       properties: expect.objectContaining({
+        agent_id: 'main',
+        turn_id: 1,
+        tool_call_id: 'call-Bash',
         policy_name: 'fallback-ask',
         tool_name: 'Bash',
         permission_mode: 'manual',
@@ -537,6 +543,9 @@ describe('AgentPermissionGate', () => {
     expect(records).toContainEqual({
       event: 'permission_approval_result',
       properties: expect.objectContaining({
+        agent_id: 'main',
+        turn_id: 1,
+        tool_call_id: 'call-ExitPlanMode',
         policy_name: 'exit-plan-mode-review-ask',
         tool_name: 'ExitPlanMode',
         result: 'error',

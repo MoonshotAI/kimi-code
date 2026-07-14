@@ -298,6 +298,7 @@ describe('FullCompaction', () => {
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
+        agent_id: 'main',
         source: 'manual',
         tokens_before: 39,
         tokens_after: expect.any(Number),
@@ -992,6 +993,7 @@ describe('FullCompaction', () => {
     expect(records).toContainEqual({
       event: 'compaction_failed',
       properties: expect.objectContaining({
+        agent_id: 'main',
         source: 'manual',
         tokens_before: 25,
         duration_ms: expect.any(Number),
@@ -2223,6 +2225,8 @@ describe('FullCompaction', () => {
     expect(records).toContainEqual({
       event: 'compaction_finished',
       properties: expect.objectContaining({
+        agent_id: 'main',
+        turn_id: expect.any(Number),
         source: 'auto',
         thinking_effort: 'high',
       }),

@@ -8,11 +8,14 @@ import {
 } from '#/agent/plan/tools/exit-plan-mode';
 import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
+
+const scopeContext = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
 
 const options = [
   { label: 'Approach A', description: 'Small change.' },
@@ -144,6 +147,7 @@ describe('ExitPlanMode option output', () => {
       new ExitPlanModeTool(
         { ...planService(), exit },
         permissionMode(),
+        scopeContext,
         telemetry,
       ),
       {
@@ -163,7 +167,7 @@ describe('ExitPlanMode option output', () => {
     const telemetry = recordingTelemetry();
 
     const result = await executeTool(
-      new ExitPlanModeTool(planService(), permissionMode('auto'), telemetry),
+      new ExitPlanModeTool(planService(), permissionMode('auto'), scopeContext, telemetry),
       {
         turnId: 7,
         toolCallId: 'call_exit_plan_auto',
@@ -185,7 +189,7 @@ describe('ExitPlanMode option output', () => {
     const telemetry = recordingTelemetry();
 
     const result = await executeTool(
-      new ExitPlanModeTool(planService(), permissionMode('manual'), telemetry),
+      new ExitPlanModeTool(planService(), permissionMode('manual'), scopeContext, telemetry),
       {
         turnId: 7,
         toolCallId: 'call_exit_plan_rule',
@@ -200,14 +204,17 @@ describe('ExitPlanMode option output', () => {
     // so the output keeps the user-approved wording.
     expect(result.output).toContain('## Approved Plan:');
     expect(result.output).not.toContain('auto-approved');
-    expect(telemetry.track2).toHaveBeenCalledWith('plan_resolved', { outcome: 'approved' });
+    expect(telemetry.track2).toHaveBeenCalledWith('plan_resolved', {
+      agent_id: 'main',
+      outcome: 'approved',
+    });
   });
 
   it('returns success without a "User feedback:" prefix when revise has no feedback', async () => {
     const telemetry = recordingTelemetry();
 
     const result = await executeTool(
-      new ExitPlanModeTool(planService(), permissionMode(), telemetry),
+      new ExitPlanModeTool(planService(), permissionMode(), scopeContext, telemetry),
       {
         turnId: 7,
         toolCallId: 'call_exit_plan',

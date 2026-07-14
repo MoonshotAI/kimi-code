@@ -25,6 +25,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { renderToolResultForModel } from '#/agent/contextMemory/toolResultRender';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ErrorCodes, Error2 } from '#/errors';
 import type { ContentPart, Message } from '#/app/llmProtocol/message';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -37,6 +38,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
 
   constructor(
     @ILogService private readonly log: ILogService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
@@ -119,6 +121,7 @@ export class AgentContextProjectorService implements IAgentContextProjectorServi
       toolCallIds,
     });
     this.telemetry.track2('context_projection_repaired', {
+      agent_id: this.scopeContext.agentId,
       reordered,
       synthesized,
       dropped_orphan: droppedOrphan,

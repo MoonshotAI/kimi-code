@@ -90,6 +90,9 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
     const evaluation = await this.policyService.evaluate(context);
     if (evaluation === undefined) return undefined;
     this.telemetry.track2('permission_policy_decision', {
+      agent_id: this.scopeContext.agentId,
+      turn_id: context.turnId,
+      tool_call_id: context.toolCall.id,
       policy_name: evaluation.policyName,
       tool_name: context.toolCall.name,
       permission_mode: this.modeService.mode,
@@ -173,6 +176,9 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
       } catch (error) {
         if (isUserCancellation(error)) throw error;
         this.telemetry.track2('permission_approval_result', {
+          agent_id: this.scopeContext.agentId,
+          turn_id: context.turnId,
+          tool_call_id: context.toolCall.id,
           policy_name: policyName ?? null,
           tool_name: name,
           permission_mode: this.modeService.mode,
@@ -216,6 +222,9 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
       result: response,
     });
     this.telemetry.track2('permission_approval_result', {
+      agent_id: this.scopeContext.agentId,
+      turn_id: context.turnId,
+      tool_call_id: context.toolCall.id,
       policy_name: policyName ?? null,
       tool_name: name,
       permission_mode: this.modeService.mode,

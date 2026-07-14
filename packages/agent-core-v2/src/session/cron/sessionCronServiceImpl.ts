@@ -26,6 +26,7 @@ import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#
 import { IntervalTimer } from '#/_base/utils/timer';
 
 import { IConfigService } from '#/app/config/config';
+import type { CronDeletedEvent, CronScheduledEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { type ClockSources, resolveClockSources, SYSTEM_CLOCKS } from '#/app/cron/clock';
 import { type CronConfig, CRON_SECTION } from '#/app/cron/configSection';
@@ -384,14 +385,17 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     return undefined;
   }
 
-  emitScheduled(task: CronTask): void {
-    this.telemetry.track2(CRON_SCHEDULED, {
+  emitScheduled(task: CronTask, agentId?: string): void {
+    const properties: CronScheduledEvent = {
       recurring: task.recurring !== false,
-    });
+      agent_id: agentId,
+    };
+    this.telemetry.track2(CRON_SCHEDULED, properties);
   }
 
-  emitDeleted(taskId: string): void {
-    this.telemetry.track2(CRON_DELETED, { task_id: taskId });
+  emitDeleted(taskId: string, agentId?: string): void {
+    const properties: CronDeletedEvent = { task_id: taskId, agent_id: agentId };
+    this.telemetry.track2(CRON_DELETED, properties);
   }
 
 

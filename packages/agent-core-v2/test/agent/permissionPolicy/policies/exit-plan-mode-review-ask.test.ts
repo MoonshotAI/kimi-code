@@ -9,6 +9,7 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { ExitPlanModeReviewAskPermissionPolicyService } from '#/agent/permissionPolicy/policies/exit-plan-mode-review-ask';
 import { IAgentPlanService, type IAgentPlanService as AgentPlanService } from '#/agent/plan/plan';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ToolAccesses } from '#/tool/toolContract';
 
@@ -99,6 +100,10 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     ix = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IAgentPermissionModeService, stubPermissionModeService(() => mode));
+        reg.defineInstance(
+          IAgentScopeContext,
+          makeAgentScopeContext({ agentId: 'main', agentScope: '' }),
+        );
         reg.defineInstance(ITelemetryService, recordingTelemetry(records));
       },
     });
@@ -129,7 +134,7 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(result?.kind).toBe('ask');
     expect(records).toContainEqual({
       event: 'plan_submitted',
-      properties: { has_options: false },
+      properties: { agent_id: 'main', has_options: false },
     });
   });
 
@@ -155,11 +160,12 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(exitPlanMode).toHaveBeenCalledTimes(1);
     expect(records).toContainEqual({
       event: 'plan_submitted',
-      properties: { has_options: true },
+      properties: { agent_id: 'main', has_options: true },
     });
     expect(records).toContainEqual({
       event: 'plan_resolved',
       properties: {
+        agent_id: 'main',
         outcome: 'approved',
         chosen_option: 'Approach B',
       },
@@ -188,6 +194,7 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(records).toContainEqual({
       event: 'plan_resolved',
       properties: {
+        agent_id: 'main',
         outcome: 'revise',
         has_feedback: true,
       },
@@ -211,7 +218,7 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(exitPlanMode).not.toHaveBeenCalled();
     expect(records).toContainEqual({
       event: 'plan_resolved',
-      properties: { outcome: 'rejected' },
+      properties: { agent_id: 'main', outcome: 'rejected' },
     });
   });
 
@@ -232,7 +239,7 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(exitPlanMode).not.toHaveBeenCalled();
     expect(records).toContainEqual({
       event: 'plan_resolved',
-      properties: { outcome: 'dismissed' },
+      properties: { agent_id: 'main', outcome: 'dismissed' },
     });
   });
 
@@ -256,7 +263,7 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(exitPlanMode).toHaveBeenCalledTimes(1);
     expect(records).toContainEqual({
       event: 'plan_resolved',
-      properties: { outcome: 'rejected_and_exited' },
+      properties: { agent_id: 'main', outcome: 'rejected_and_exited' },
     });
   });
 
@@ -297,6 +304,7 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(records).toContainEqual({
       event: 'plan_resolved',
       properties: {
+        agent_id: 'main',
         outcome: 'approved',
         chosen_option: 'Approach C',
       },
@@ -315,11 +323,11 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     );
     expect(records).toContainEqual({
       event: 'plan_submitted',
-      properties: { has_options: false },
+      properties: { agent_id: 'main', has_options: false },
     });
     expect(records).not.toContainEqual({
       event: 'plan_resolved',
-      properties: { outcome: 'approved' },
+      properties: { agent_id: 'main', outcome: 'approved' },
     });
   });
 });

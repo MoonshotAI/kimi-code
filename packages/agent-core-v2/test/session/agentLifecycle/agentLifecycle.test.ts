@@ -343,6 +343,36 @@ describe('AgentLifecycleService', () => {
     expect(log.rewritten).toBeUndefined();
   });
 
+  it('create skips auto ids that collide with agents persisted by a previous run', async () => {
+    ix.stub(ISessionMetadata, {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChangeMetadata: () => ({ dispose: () => {} }),
+      read: () =>
+        Promise.resolve({
+          id: 'sess_test',
+          createdAt: 0,
+          updatedAt: 0,
+          archived: false,
+          agents: {
+            'agent-0': { homedir: '/tmp/kimi-agentLifecycle-test/agents/agent-0', type: 'sub' },
+            'agent-1': { homedir: '/tmp/kimi-agentLifecycle-test/agents/agent-1', type: 'sub' },
+          },
+        }),
+      update: () => Promise.resolve(),
+      setTitle: () => Promise.resolve(),
+      setArchived: () => Promise.resolve(),
+      registerAgent,
+    });
+    const svc = ix.get(IAgentLifecycleService);
+
+    const first = await svc.create({});
+    expect(first.id).toBe('agent-2');
+
+    const second = await svc.create({});
+    expect(second.id).toBe('agent-3');
+  });
+
   it('create assigns sequential ids when unspecified', async () => {
     const svc = ix.get(IAgentLifecycleService);
     const a = await svc.create({});

@@ -374,6 +374,44 @@ describe('LLMRequester service migration coverage', () => {
         }),
       });
     });
+
+    it('tags api_error with turn_id and request_kind from the request source', async () => {
+      const records: TelemetryRecord[] = [];
+      ctx = createTestAgent(
+        llmGenerateServices(async () => {
+          throw new APIConnectionError('terminated');
+        }),
+        telemetryServices(recordingTelemetry(records)),
+      );
+      const llmRequester = ctx.get(IAgentLLMRequesterService);
+
+      await expect(
+        llmRequester.request({ source: { type: 'turn', turnId: 3, step: 1 } }),
+      ).rejects.toMatchObject({ name: 'APIConnectionError' });
+      await expect(
+        llmRequester.request({ source: { type: 'operation', requestKind: 'full_compaction' } }),
+      ).rejects.toMatchObject({ name: 'APIConnectionError' });
+
+      expect(records).toContainEqual({
+        event: 'api_error',
+        properties: expect.objectContaining({
+          error_type: 'network',
+          turn_id: 3,
+          request_kind: 'turn',
+        }),
+      });
+      expect(records).toContainEqual({
+        event: 'api_error',
+        properties: expect.objectContaining({
+          error_type: 'network',
+          request_kind: 'full_compaction',
+        }),
+      });
+      const operationRecord = records.find(
+        (record) => record.properties?.['request_kind'] === 'full_compaction',
+      );
+      expect(operationRecord?.properties?.['turn_id']).toBeUndefined();
+    });
   });
 
   describe('request timing and budget', () => {

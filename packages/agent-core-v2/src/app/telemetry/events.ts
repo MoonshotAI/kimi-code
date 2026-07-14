@@ -94,6 +94,8 @@ export interface ApiErrorEvent {
   provider_type?: string;
   protocol?: string;
   input_tokens?: number;
+  turn_id?: number;
+  request_kind?: string;
 }
 
 export interface SkillInvokedEvent {
@@ -132,6 +134,9 @@ export interface AfkToggleEvent {
 export type TelemetryPermissionMode = 'manual' | 'yolo' | 'auto';
 
 export interface PermissionPolicyDecisionEvent {
+  agent_id: string;
+  turn_id: number;
+  tool_call_id: string;
   policy_name: string;
   tool_name: string;
   permission_mode: TelemetryPermissionMode;
@@ -140,6 +145,9 @@ export interface PermissionPolicyDecisionEvent {
 }
 
 export interface PermissionApprovalResultEvent {
+  agent_id: string;
+  turn_id: number;
+  tool_call_id: string;
   policy_name: string | null;
   tool_name: string;
   permission_mode: TelemetryPermissionMode;
@@ -151,10 +159,12 @@ export interface PermissionApprovalResultEvent {
 }
 
 export interface PlanSubmittedEvent {
+  agent_id: string;
   has_options: boolean;
 }
 
 export interface PlanResolvedEvent {
+  agent_id: string;
   outcome:
     | 'approved'
     | 'dismissed'
@@ -167,10 +177,13 @@ export interface PlanResolvedEvent {
 }
 
 export interface PlanEnterResolvedEvent {
+  agent_id: string;
   outcome: 'auto_approved';
 }
 
 export interface CompactionFinishedEvent {
+  agent_id: string;
+  turn_id?: number;
   source: 'manual' | 'auto';
   tokens_before: number;
   tokens_after: number;
@@ -187,6 +200,8 @@ export interface CompactionFinishedEvent {
 }
 
 export interface CompactionFailedEvent {
+  agent_id: string;
+  turn_id?: number;
   source: 'manual' | 'auto';
   tokens_before: number;
   duration_ms: number;
@@ -197,6 +212,7 @@ export interface CompactionFailedEvent {
 }
 
 export interface ContextProjectionRepairedEvent {
+  agent_id: string;
   reordered: number;
   synthesized: number;
   dropped_orphan: number;
@@ -208,10 +224,12 @@ export interface ContextProjectionRepairedEvent {
 }
 
 export interface BackgroundTaskCreatedEvent {
-  kind: 'bash' | 'agent' | 'question';
+  task_id: string;
+  kind: 'agent' | 'process' | 'question';
 }
 
 export interface BackgroundTaskCompletedEvent {
+  task_id: string;
   kind: 'agent' | 'process' | 'question';
   duration_ms: number | null;
   status: 'running' | 'completed' | 'failed' | 'timed_out' | 'killed' | 'lost';
@@ -270,7 +288,7 @@ export interface GoalStatusChangedEvent extends GoalBudgetProperties {
 }
 
 export interface ToolCallDedupDetectedEvent {
-  turn_id: number;
+  turn_id?: number;
   agent_id: string;
   step_no: number;
   tool_call_id: string;
@@ -280,6 +298,8 @@ export interface ToolCallDedupDetectedEvent {
 }
 
 export interface ToolCallRepeatEvent {
+  agent_id: string;
+  turn_id?: number;
   tool_name: string;
   repeat_count: number;
   action: 'none' | 'r1' | 'r2' | 'r3' | 'stop';
@@ -304,6 +324,7 @@ export interface SubagentCreatedEvent {
   run_in_background: boolean;
   agent_id: string;
   parent_agent_id: string;
+  parent_tool_call_id: string;
 }
 
 export interface McpConnectedEvent {
@@ -322,10 +343,12 @@ export interface CronMissedEvent {
 
 export interface CronScheduledEvent {
   recurring: boolean;
+  agent_id?: string;
 }
 
 export interface CronDeletedEvent {
   task_id: string;
+  agent_id?: string;
 }
 
 export interface CronFiredEvent {
@@ -466,6 +489,8 @@ export const telemetryEventDefinitions = {
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
       input_tokens: "Current turn's accumulated total input tokens",
+      turn_id: 'Per-agent turn index when the request belongs to a turn; omitted for out-of-turn operations',
+      request_kind: "Request source vocabulary: 'turn' for turn requests, the operation's requestKind (e.g. 'full_compaction') otherwise",
     },
   }),
   skill_invoked: defineTelemetryEvent<SkillInvokedEvent>({
@@ -511,6 +536,9 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A permission policy evaluates a tool call.',
     properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      tool_call_id: 'Provider-assigned tool call id',
       policy_name: 'Name of the deciding policy',
       tool_name: 'Tool being gated',
       permission_mode: 'Active permission mode',
@@ -521,6 +549,9 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A permission approval prompt resolves.',
     properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      tool_call_id: 'Provider-assigned tool call id',
       policy_name: 'Name of the asking policy, null when unknown',
       tool_name: 'Tool being approved',
       permission_mode: 'Active permission mode',
@@ -534,12 +565,16 @@ export const telemetryEventDefinitions = {
   plan_submitted: defineTelemetryEvent<PlanSubmittedEvent>({
     owner: 'kimi-code',
     comment: 'A plan is submitted for review.',
-    properties: { has_options: 'Whether the plan offered selectable options' },
+    properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
+      has_options: 'Whether the plan offered selectable options',
+    },
   }),
   plan_resolved: defineTelemetryEvent<PlanResolvedEvent>({
     owner: 'kimi-code',
     comment: 'A submitted plan is resolved.',
     properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
       outcome: 'How the plan was resolved',
       chosen_option: 'Label of the option the user chose',
       has_feedback: 'Whether the user attached revision feedback',
@@ -548,12 +583,17 @@ export const telemetryEventDefinitions = {
   plan_enter_resolved: defineTelemetryEvent<PlanEnterResolvedEvent>({
     owner: 'kimi-code',
     comment: 'A request to enter plan mode is resolved.',
-    properties: { outcome: 'How the request was resolved' },
+    properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
+      outcome: 'How the request was resolved',
+    },
   }),
   compaction_finished: defineTelemetryEvent<CompactionFinishedEvent>({
     owner: 'kimi-code',
     comment: 'Context compaction completes.',
     properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
+      turn_id: 'Per-agent turn index when compaction ran inside a turn; omitted for manual compaction between turns',
       source: 'Whether compaction was triggered manually or automatically',
       tokens_before: 'Token count before compaction',
       tokens_after: 'Token count after compaction',
@@ -573,6 +613,8 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'Context compaction fails.',
     properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
+      turn_id: 'Per-agent turn index when compaction ran inside a turn; omitted for manual compaction between turns',
       source: 'Whether compaction was triggered manually or automatically',
       tokens_before: 'Token count before compaction',
       duration_ms: 'Wall-clock time until failure in milliseconds',
@@ -586,6 +628,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'The context projector repairs the outgoing request to keep it wire-valid.',
     properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
       reordered: 'Tool results moved back next to their call',
       synthesized: 'Placeholder results invented for lost ones',
       dropped_orphan: 'Results with no matching call dropped',
@@ -599,12 +642,16 @@ export const telemetryEventDefinitions = {
   background_task_created: defineTelemetryEvent<BackgroundTaskCreatedEvent>({
     owner: 'kimi-code',
     comment: 'A background task is created.',
-    properties: { kind: 'Task kind, process tasks reported as bash' },
+    properties: {
+      task_id: 'Background task id; joins background_task_created with background_task_completed',
+      kind: 'Task kind',
+    },
   }),
   background_task_completed: defineTelemetryEvent<BackgroundTaskCompletedEvent>({
     owner: 'kimi-code',
     comment: 'A background task reaches a terminal state.',
     properties: {
+      task_id: 'Background task id; joins background_task_created with background_task_completed',
       kind: 'Task kind',
       duration_ms: 'Task wall-clock time in milliseconds, null when unknown',
       status: 'Terminal task status',
@@ -684,7 +731,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A duplicate tool call is detected.',
     properties: {
-      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
       agent_id: 'Agent id (main or subagent scope id)',
       step_no: 'Step index within the turn',
       tool_call_id: 'Provider-assigned tool call id',
@@ -697,6 +744,8 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A repeated tool call streak is detected.',
     properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session; omitted when no turn is active',
       tool_name: 'Registered tool name',
       repeat_count: 'Length of the repeat streak',
       action: 'Intervention action taken',
@@ -731,6 +780,7 @@ export const telemetryEventDefinitions = {
       run_in_background: 'Whether the subagent runs in the background',
       agent_id: 'Child agent id',
       parent_agent_id: 'Parent (caller) agent id',
+      parent_tool_call_id: "Tool call id of the launching call in the parent agent; '' when not launched from a tool call",
     },
   }),
   mcp_connected: defineTelemetryEvent<McpConnectedEvent>({
@@ -757,12 +807,18 @@ export const telemetryEventDefinitions = {
   cron_scheduled: defineTelemetryEvent<CronScheduledEvent>({
     owner: 'kimi-code',
     comment: 'A cron task is scheduled.',
-    properties: { recurring: 'Whether the task repeats' },
+    properties: {
+      recurring: 'Whether the task repeats',
+      agent_id: 'Agent that scheduled the task; omitted for session-level scheduling',
+    },
   }),
   cron_deleted: defineTelemetryEvent<CronDeletedEvent>({
     owner: 'kimi-code',
     comment: 'A cron task is deleted.',
-    properties: { task_id: 'Cron task id' },
+    properties: {
+      task_id: 'Cron task id',
+      agent_id: 'Agent that deleted the task; omitted for session-level deletion (e.g. stale auto-removal)',
+    },
   }),
   cron_fired: defineTelemetryEvent<CronFiredEvent>({
     owner: 'kimi-code',

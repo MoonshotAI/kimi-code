@@ -319,7 +319,8 @@ describe('AgentTaskService — event emission', () => {
       }),
     });
     expect(agent.telemetry.track2).toHaveBeenCalledWith('background_task_created', {
-      kind: 'bash',
+      task_id: taskId,
+      kind: 'process',
     });
   });
 
@@ -338,6 +339,7 @@ describe('AgentTaskService — event emission', () => {
       }),
     });
     expect(agent.telemetry.track2).toHaveBeenCalledWith('background_task_created', {
+      task_id: taskId,
       kind: 'agent',
     });
   });
@@ -359,6 +361,7 @@ describe('AgentTaskService — event emission', () => {
     expect(agent.telemetry.track2).toHaveBeenCalledWith(
       'background_task_completed',
       expect.objectContaining({
+        task_id: taskId,
         kind: 'process',
         duration_ms: expect.any(Number),
         status: 'completed',
