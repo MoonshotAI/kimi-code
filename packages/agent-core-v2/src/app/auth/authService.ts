@@ -423,18 +423,8 @@ export class OAuthService extends Disposable implements IOAuthService {
     if (affected.size === 0) return;
     for (const state of this.flows.values()) {
       if (!affected.has(state.provider)) continue;
-      // Terminal flows keep their retention — deleting them here would void
-      // the TERMINAL_RETENTION_MS window clients rely on to observe outcomes.
       if (state.status !== 'pending') continue;
       state.controller.abort();
-      // Transition the status instead of deleting from the map: the
-      // `state.status !== 'pending'` guards in handleSuccess /
-      // finalizeAuthentication then observe the invalidation even when it
-      // lands in the microtask gap after toolkit.login resolved (an abort
-      // is inert once the final poll returned). A bare delete left those
-      // guards blind and let setTerminal write 'authenticated' onto an
-      // orphaned state the client could never see. handleFailure does not
-      // run for this flow, so record the reason here.
       state.errorMessage = 'Provider configuration changed during login.';
       this.setTerminal(state, 'cancelled');
     }

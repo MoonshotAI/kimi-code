@@ -492,8 +492,6 @@ describe('OAuthService', () => {
 
     providerChangedEmitter.fire({ added: [], removed: [OAUTH_PROVIDER], changed: [] });
 
-    // The flow transitions to a visible terminal status and stays observable
-    // for the retention window instead of vanishing from the map.
     const flow = svc.getFlow(OAUTH_PROVIDER);
     expect(flow?.status).toBe('cancelled');
     expect(flow?.error_message).toBe('Provider configuration changed during login.');
@@ -516,12 +514,6 @@ describe('OAuthService', () => {
   });
 
   it('does not finalize a login whose provider changed after toolkit.login resolved', async () => {
-    // The microtask gap: the login promise has resolved but the .then
-    // handlers (handleSuccess) have not run yet. An invalidation landing in
-    // this window must still be observed — a bare map delete here is
-    // invisible to the finalization guards and would strand the flow:
-    // setTerminal would write 'authenticated' onto a state getFlow can
-    // never return.
     let resolveLogin!: (value: { providerName: string; ok: true }) => void;
     toolkit.login.mockImplementation((_provider, options) => {
       options.onDeviceCode(deviceAuth);
@@ -534,7 +526,6 @@ describe('OAuthService', () => {
     expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
 
     resolveLogin({ providerName: OAUTH_PROVIDER, ok: true });
-    // Synchronous window: loginPromise settled, .then microtasks pending.
     providerChangedEmitter.fire({ added: [], removed: [], changed: [OAUTH_PROVIDER] });
 
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('cancelled'));
