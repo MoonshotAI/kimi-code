@@ -1,6 +1,6 @@
 /**
- * Scenario: providers receive or replay a thinking block whose text is explicitly empty.
- * Responsibilities: preserve field/block presence and provider-specific opaque reasoning data.
+ * Scenario: providers receive or replay empty thinking, including Kimi histories missing the field.
+ * Responsibilities: preserve explicit field/block presence and satisfy Kimi preserved-thinking wire requirements.
  * Wiring: real provider codecs with only their remote SDK clients replaced through clientFactory.
  * Run: pnpm exec vitest run packages/agent-core-v2/test/app/llmProtocol/providers/empty-thinking-roundtrip.test.ts
  */
@@ -47,25 +47,159 @@ async function collectParts(
   return parts;
 }
 
+async function captureKimiMessages(
+  history: Message[],
+  configure?: (provider: KimiChatProvider) => KimiChatProvider,
+): Promise<Array<Record<string, unknown>>> {
+  let captured: Record<string, unknown> | undefined;
+  const create = vi.fn().mockImplementation((params: unknown) => {
+    captured = params as Record<string, unknown>;
+    return Promise.resolve(chatCompletionResponse({ role: 'assistant', content: 'done' }));
+  });
+  let provider = new KimiChatProvider({
+    model: 'kimi-k2',
+    apiKey: '',
+    stream: false,
+    clientFactory: () => ({ chat: { completions: { create } } }) as never,
+  });
+  if (configure !== undefined) {
+    provider = configure(provider);
+  }
+
+  const response = await provider.generate('', [], history);
+  await collectParts(response);
+
+  if (captured === undefined) {
+    throw new Error('Expected Kimi provider to send a request.');
+  }
+  return captured['messages'] as Array<Record<string, unknown>>;
+}
+
 describe('empty thinking round-trip', () => {
   it('Kimi sends an explicitly empty ThinkPart back as reasoning_content', async () => {
-    let captured: Record<string, unknown> | undefined;
-    const create = vi.fn().mockImplementation((params: unknown) => {
-      captured = params as Record<string, unknown>;
-      return Promise.resolve(chatCompletionResponse({ role: 'assistant', content: 'done' }));
-    });
-    const provider = new KimiChatProvider({
-      model: 'kimi-k2',
-      apiKey: '',
-      stream: false,
-      clientFactory: () => ({ chat: { completions: { create } } }) as never,
-    });
-
-    const response = await provider.generate('', [], EMPTY_THINKING_TOOL_HISTORY);
-    await collectParts(response);
-
-    const messages = captured?.['messages'] as Array<Record<string, unknown>>;
+    const messages = await captureKimiMessages(EMPTY_THINKING_TOOL_HISTORY);
     expect(messages[0]).toHaveProperty('reasoning_content', '');
+  });
+
+  it('Kimi backfills an assistant tool-call message when preserved thinking is active', async () => {
+    const history: Message[] = [
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          { type: 'function', id: 'call_1', name: 'lookup', arguments: '{"q":"test"}' },
+        ],
+      },
+    ];
+
+    const messages = await captureKimiMessages(history, (provider) =>
+      provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+    );
+
+    expect(messages[0]).toHaveProperty('reasoning_content', '');
+  });
+
+  it('Kimi backfills a text assistant message when keep=all omits thinking.type', async () => {
+    const history: Message[] = [
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Done.' }],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureKimiMessages(history, (provider) =>
+      provider.withExtraBody({ thinking: { keep: 'all' } }),
+    );
+
+    expect(messages[0]).toHaveProperty('reasoning_content', '');
+  });
+
+  it.each([
+    ['empty', ''],
+    ['non-empty', 'reasoning text'],
+  ])(
+    'Kimi sends an existing %s ThinkPart verbatim when preserved thinking is active',
+    async (_kind, think) => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think }],
+          toolCalls: [],
+        },
+      ];
+
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+      );
+
+      expect(messages[0]).toHaveProperty('reasoning_content', think);
+    },
+  );
+
+  it.each([
+    ['missing', undefined],
+    ['null', null],
+    ['false', false],
+    ['off', 'off'],
+  ])(
+    'Kimi does not backfill reasoning_content when thinking.keep is %s',
+    async (_kind, keep) => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [],
+          toolCalls: [
+            { type: 'function', id: 'call_1', name: 'lookup', arguments: '{"q":"test"}' },
+          ],
+        },
+      ];
+
+      const messages = await captureKimiMessages(history, (provider) =>
+        provider.withExtraBody({ thinking: { type: 'enabled', keep } }),
+      );
+
+      expect(messages[0]).not.toHaveProperty('reasoning_content');
+    },
+  );
+
+  it('Kimi does not backfill reasoning_content when thinking is disabled', async () => {
+    const history: Message[] = [
+      {
+        role: 'assistant',
+        content: [],
+        toolCalls: [
+          { type: 'function', id: 'call_1', name: 'lookup', arguments: '{"q":"test"}' },
+        ],
+      },
+    ];
+
+    const messages = await captureKimiMessages(history, (provider) =>
+      provider.withExtraBody({ thinking: { type: 'disabled', keep: 'all' } }),
+    );
+
+    expect(messages[0]).not.toHaveProperty('reasoning_content');
+  });
+
+  it('Kimi does not backfill reasoning_content on non-assistant messages', async () => {
+    const history: Message[] = [
+      { role: 'system', content: [{ type: 'text', text: 'System.' }], toolCalls: [] },
+      { role: 'user', content: [{ type: 'text', text: 'User.' }], toolCalls: [] },
+      {
+        role: 'tool',
+        content: [{ type: 'text', text: 'Tool result.' }],
+        toolCalls: [],
+        toolCallId: 'call_1',
+      },
+    ];
+
+    const messages = await captureKimiMessages(history, (provider) =>
+      provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+    );
+
+    for (const message of messages) {
+      expect(message).not.toHaveProperty('reasoning_content');
+    }
   });
 
   it('Kimi keeps an explicitly empty response reasoning_content as a ThinkPart', async () => {

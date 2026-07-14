@@ -2,6 +2,13 @@ import type { Message, StreamedMessagePart, VideoURLPart } from './message';
 import type { Tool } from './tool';
 import type { TokenUsage } from './usage';
 
+/**
+ * Thinking effort passed to `ChatProvider.withThinking`.
+ *
+ * `'off'` and `'on'` are local control signals. Other strings are concrete
+ * model effort values. Protocol adapters receive an already-resolved value and
+ * preserve concrete efforts when their upstream protocol has a native field.
+ */
 export type ThinkingEffort = 'off' | 'on' | (string & {});
 
 export type JsonSchemaObject = Record<string, unknown>;

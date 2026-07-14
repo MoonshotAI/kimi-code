@@ -34,7 +34,6 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
-import { coerceThinkingForModel } from '../../lib/modelThinking';
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
@@ -1073,11 +1072,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // there is nothing to persist for it.
       const planMode = rawState.planModeBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
-      // Coerce thinking against the new session's model the same way the
-      // first-prompt path does (coercePromptThinking below): a value carried
-      // over from another/default model (e.g. 'max' from an effort model) would
-      // otherwise be persisted verbatim, and the first skill turn would run at
-      // a level the UI wouldn't send for this model.
+      // Thinking is persisted verbatim — whatever the user picked is what the
+      // first skill turn runs at (same as a normal prompt, and the TUI).
       const promptSession = rawState.sessions.find((s) => s.id === sid);
       const model =
         (promptSession?.model && promptSession.model.length > 0
@@ -1089,7 +1085,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           planMode,
           swarmMode,
           permissionMode: rawState.permission,
-          thinking: coercePromptThinking(model),
+          thinking: rawState.thinking,
         },
         sid,
       );
@@ -1309,22 +1305,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  // Coerce the persisted thinking level against the prompt's target model before
-  // submitting, so a stale value carried over from another session (e.g. 'max'
-  // from an effort model) isn't sent to a model that doesn't declare it. The
-  // composer already renders the coerced value; this keeps the submitted level
-  // in sync with what's displayed. Falls back to the raw level when the model
-  // catalog hasn't loaded yet (coerceThinkingForModel preserves it).
-  function coercePromptThinking(model: string | undefined) {
-    const promptModel =
-      model === undefined
-        ? undefined
-        : modelProvider.models.value.find(
-            (m) => m.model === model || m.id === model || m.displayName === model,
-          );
-    return coerceThinkingForModel(promptModel, rawState.thinking);
-  }
-
   /** Internal: submit a prompt to a specific session, bypassing the queue check.
       Returns true when the daemon accepted the prompt. */
   async function submitPromptInternal(sid: string, text: string, attachments?: PromptAttachment[]): Promise<boolean> {
@@ -1397,7 +1377,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        thinking: coercePromptThinking(model),
+        // Verbatim: the stored level is submitted as-is (same as the TUI) —
+        // no coercion against the prompt's target model.
+        thinking: rawState.thinking,
         permissionMode: rawState.permission,
         planMode,
         swarmMode,
@@ -1537,7 +1519,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        thinking: coercePromptThinking(model),
+        // Verbatim, same as a normal send (see submitPromptInternal).
+        thinking: rawState.thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,

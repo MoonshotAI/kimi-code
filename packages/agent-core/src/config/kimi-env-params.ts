@@ -38,24 +38,21 @@ export function applyKimiEnvSamplingParams(
 }
 
 /**
- * Force a specific thinking effort via `KIMI_MODEL_THINKING_EFFORT`, bypassing
- * the model's declared `support_efforts`. Applied in `ConfigState.provider`
- * after `withThinking`, and only while thinking is on — effort has no meaning
- * when thinking is disabled. The value is forwarded verbatim as
- * `thinking.effort`, so callers can target a model that accepts an effort but
- * does not advertise one via `support_efforts`.
+ * Resolve the operational `KIMI_MODEL_THINKING_EFFORT` override after the
+ * model-aware effort has been resolved. The override intentionally bypasses
+ * `support_efforts`, but cannot turn Thinking on after the user disabled it.
  *
- * Non-Kimi providers — and an unset/blank value — are returned unchanged.
+ * Provider identity is supplied separately from the wire adapter so a Kimi
+ * provider routed through the Anthropic protocol still receives Kimi semantics.
  */
-export function applyKimiEnvThinkingEffort(
-  provider: ChatProvider,
+export function resolveKimiEnvThinkingEffort(
   thinkingEffort: ThinkingEffort,
+  kimiProvider: boolean,
   env: Env = process.env,
-): ChatProvider {
-  if (!(provider instanceof KimiChatProvider)) return provider;
+): ThinkingEffort | undefined {
+  if (!kimiProvider || thinkingEffort === 'off') return undefined;
   const effort = env['KIMI_MODEL_THINKING_EFFORT']?.trim();
-  if (effort === undefined || effort.length === 0 || thinkingEffort === 'off') return provider;
-  return provider.withExtraBody({ thinking: { effort } });
+  return effort === undefined || effort.length === 0 ? undefined : effort;
 }
 
 const KEEP_OFF_VALUES = new Set(['0', 'false', 'no', 'off', 'none', 'null']);

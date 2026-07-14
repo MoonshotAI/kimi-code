@@ -6,7 +6,9 @@ import type { ToolCall } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
 
 import { budgetToolResultForModel } from '../../src/agent/turn/tool-result-budget';
+import type { KimiConfig } from '../../src/config';
 import { HookEngine } from '../../src/session/hooks';
+import { ProviderManager } from '../../src/session/provider-manager';
 import type { SessionSubagentHost } from '../../src/session/subagent-host';
 import { FLAG_DEFINITIONS, FlagResolver } from '../../src/flags';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
@@ -267,6 +269,40 @@ describe('Agent tools', () => {
     ctx.configure({ tools: ['AgentSwarm'] });
 
     expect(ctx.agent.tools.loopTools.some((tool) => tool.name === 'AgentSwarm')).toBe(true);
+  });
+
+  it('self-heals the builtin tool table when the provider becomes resolvable after construction', () => {
+    // The ProviderManager reads this live config; it starts with no model or
+    // provider, so hasProvider is false at Agent construction and
+    // initializeBuiltinTools() is skipped — the state the asynchronous
+    // free-tokens / OAuth model registration produces.
+    const liveConfig: KimiConfig = { providers: {}, models: {} };
+    const ctx = testAgent({
+      providerManager: new ProviderManager({ config: () => liveConfig }),
+    });
+
+    // Aim at a model that cannot resolve yet and enable some tools. Neither call
+    // runs a gated re-init because hasProvider is still false, so the enabled
+    // tools have no builtin backing and are not dispatchable.
+    ctx.agent.config.update({ modelAlias: 'late-model' });
+    ctx.agent.tools.setActiveTools(['Bash', 'Read', 'Glob']);
+    expect(ctx.agent.tools.loopTools.some((tool) => tool.name === 'Bash')).toBe(false);
+
+    // The provider registers asynchronously: the config the ProviderManager reads
+    // now resolves the model, but no agent config.update fires, so none of the
+    // hasProvider-gated checkpoints re-run initializeBuiltinTools().
+    liveConfig.providers['late-provider'] = { type: 'kimi', apiKey: 'late-key' };
+    liveConfig.models!['late-model'] = {
+      provider: 'late-provider',
+      model: 'late-model',
+      maxContextSize: 1_000_000,
+      capabilities: [],
+    };
+
+    // loopTools self-heals on read: the builtin table is populated and the
+    // enabled tools become dispatchable instead of reporting "Tool not found".
+    const names = ctx.agent.tools.loopTools.map((tool) => tool.name);
+    expect(names).toEqual(expect.arrayContaining(['Bash', 'Read', 'Glob']));
   });
 
   it('routes registered user tools through tool.call request/response', async () => {

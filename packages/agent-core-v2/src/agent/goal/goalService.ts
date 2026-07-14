@@ -423,7 +423,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const snapshot = this.toSnapshot(completed);
     this.emitCompletion(completed, snapshot, input.reason, actor);
     this.trackStatusChanged(completed, actor);
-    this.clearInternal(actor);
+    this.clearInternal(actor, { preserveLiveContinuation: true });
     return snapshot;
   }
 
@@ -639,8 +639,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return status.state === 'idle' && !status.hasPendingRequests;
   }
 
-  private cancelPendingContinuation(): void {
+  private cancelPendingContinuation(preserveLiveContinuation = false): void {
     const pending = this.pendingContinuation;
+    if (preserveLiveContinuation && pending?.turnId === this.liveTurnId) return;
     this.pendingContinuation = undefined;
     pending?.receipt.abort();
   }
@@ -678,10 +679,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private clearInternal(
     actor: GoalActor,
-    opts: { readonly emit?: boolean; readonly track?: boolean } = {},
+    opts: { readonly emit?: boolean; readonly track?: boolean; readonly preserveLiveContinuation?: boolean } = {},
   ): void {
     if (this.goalState === null) return;
-    this.cancelPendingContinuation();
+    this.cancelPendingContinuation(opts.preserveLiveContinuation === true);
     this.wallClockResumedAt = undefined;
     this.wire.dispatch(clearGoal({}));
     if (opts.emit !== false) this.emitGoalUpdated(null);

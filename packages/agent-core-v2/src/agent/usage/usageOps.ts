@@ -31,6 +31,7 @@ declare module '#/app/event/eventBus' {
       swarmMode?: boolean;
       planMode?: boolean;
       model?: string;
+      thinkingEffort?: string;
       maxContextTokens?: number;
       contextTokens?: number;
       phase?: AgentPhase;

@@ -38,7 +38,7 @@ import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './api/daemon/serverAuth';
 import type { AppConfig, ThinkingLevel } from './api/types';
-import { coerceThinkingForModel, commitLevel, segmentsFor } from './lib/modelThinking';
+import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
 import Button from './components/ui/Button.vue';
 import IconButton from './components/ui/IconButton.vue';
@@ -112,18 +112,25 @@ usePageTitle({ running, showAuthGate });
 // The /thinking slash command has no popover anchor, so it steps to the next
 // segment for the active model (effort models cycle through their declared
 // levels; boolean models flip on/off; unsupported stays off).
-function nextThinkingLevel(current: ThinkingLevel): ThinkingLevel {
+function nextThinkingLevel(current: ThinkingLevel | undefined): ThinkingLevel {
   // Identity is the model id — display/model names can collide across providers.
   const model = client.models.value.find((m) => m.id === client.status.value.modelId);
   const segs = segmentsFor(model);
-  // Coerce the stored level against the active model before indexing, so a
-  // stale value (e.g. 'on' from a boolean model) doesn't resolve to index -1
-  // and jump to 'off' instead of advancing from the model's default effort.
-  const coerced = coerceThinkingForModel(model, current);
-  const idx = segs.indexOf(coerced);
+  // No stored preference means the model default is in effect — cycle from
+  // there; a level the model doesn't declare (indexOf → -1) starts the cycle
+  // at the first segment.
+  const idx = segs.indexOf(effectiveThinkingLevel(model, current));
   const next = segs[(idx + 1) % segs.length] ?? segs[0] ?? 'off';
   return commitLevel(model, next);
 }
+
+// Status panel (/status) renders current client state only — show the
+// effective thinking level so "no preference" reads as the model default that
+// will actually run, not a blank.
+const statusPanelThinking = computed<ThinkingLevel>(() => {
+  const model = client.models.value.find((m) => m.id === client.status.value.modelId);
+  return effectiveThinkingLevel(model, client.thinking.value);
+});
 
 // First-run onboarding (language + welcome greeting). Shown until the user
 // finishes it once; re-openable from the settings popover.
@@ -958,7 +965,7 @@ function openPr(url: string): void {
     <StatusPanel
       v-if="showStatusPanel"
       :status="client.status.value"
-      :thinking="client.thinking.value"
+      :thinking="statusPanelThinking"
       :plan-mode="client.planMode.value"
       :swarm-mode="client.swarmMode.value"
       :cost-usd="client.sessionCost.value"

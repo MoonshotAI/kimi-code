@@ -79,6 +79,7 @@ export interface Model {
   readonly thinkingEffort: ThinkingEffort | null;
   readonly maxCompletionTokens?: number;
   readonly alwaysThinking: boolean;
+  readonly providerType?: string;
   readonly providerName: string;
 
   readonly authProvider: AuthProvider;

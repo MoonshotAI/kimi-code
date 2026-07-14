@@ -1,8 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { emptyUsage } from '@moonshot-ai/kosong';
 
+import { InMemoryAgentRecordPersistence } from '../../src/agent/records';
 import { ProviderManager } from '../../src/session/provider-manager';
-import type { KimiConfig } from '../../src/config';
+import {
+  applyEnvModelConfig,
+  ENV_MODEL_ALIAS_KEY,
+  getDefaultConfig,
+  type KimiConfig,
+} from '../../src/config';
 import { testAgent } from './harness';
 import { createFakeKaos } from '../tools/fixtures/fake-kaos';
 
@@ -202,6 +208,22 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
           maxContextSize: 128_000,
           capabilities: ['thinking'],
         },
+        'kimi-code/ultra': {
+          provider: 'kimi',
+          model: 'kimi-ultra',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'high', 'ultra'],
+          defaultEffort: 'ultra',
+        },
+        'kimi-code/standard': {
+          provider: 'kimi',
+          model: 'kimi-standard',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+          supportEfforts: ['low', 'mid', 'high'],
+          defaultEffort: 'mid',
+        },
       },
     };
     return testAgent({
@@ -246,19 +268,53 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
     ctx.agent.config.update({ modelAlias: 'kimi-code/deep' });
     expect(ctx.agent.config.thinkingEffort).toBe('on');
   });
+
+  it('falls back to the target default when a model switch carries an unsupported effort', () => {
+    const ctx = alwaysThinkingAgent();
+    ctx.agent.config.update({ modelAlias: 'kimi-code/ultra', thinkingEffort: 'ultra' });
+
+    ctx.agent.config.update({ modelAlias: 'kimi-code/standard' });
+
+    expect(ctx.agent.config.thinkingEffort).toBe('mid');
+  });
+
+  it('projects an inherited concrete effort to on when switching to a boolean model', () => {
+    const ctx = alwaysThinkingAgent();
+    ctx.agent.config.update({ modelAlias: 'kimi-code/ultra', thinkingEffort: 'ultra' });
+
+    ctx.agent.config.update({ modelAlias: 'kimi-code/toggle' });
+
+    expect(ctx.agent.config.thinkingEffort).toBe('on');
+  });
+
+  it('rejects an unsupported effort explicitly set on the current Kimi model', () => {
+    const ctx = alwaysThinkingAgent();
+    ctx.agent.config.update({ modelAlias: 'kimi-code/standard' });
+
+    expect(() => {
+      ctx.agent.config.setThinkingEffort('ultra');
+    }).toThrow(
+      'Thinking effort "ultra" is not supported by model "kimi-code/standard"',
+    );
+  });
 });
 
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
   function kimiAgent() {
-    return testAgent({
-      providerManager: new ProviderManager({
-        config: {
-          providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
-          models: {
-            'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
-          },
+    const config: KimiConfig = {
+      providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
+      models: {
+        'kimi-code': {
+          provider: 'kimi',
+          model: 'kimi-code',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
         },
-      }),
+      },
+    };
+    return testAgent({
+      initialConfig: config,
+      providerManager: new ProviderManager({ config }),
     });
   }
 
@@ -268,7 +324,12 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     const config: KimiConfig = {
       providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
       models: {
-        'kimi-code': { provider: 'kimi', model: 'kimi-code', maxContextSize: 128_000 },
+        'kimi-code': {
+          provider: 'kimi',
+          model: 'kimi-code',
+          maxContextSize: 128_000,
+          capabilities: ['thinking'],
+        },
       },
       ...(keep !== undefined ? { thinking: { keep } } : {}),
     };
@@ -386,7 +447,7 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     }
   });
 
-  it('injects KIMI_MODEL_THINKING_EFFORT into config.provider when thinking is on', () => {
+  it('keeps the forced Kimi effort synchronized between state and provider', () => {
     vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
     try {
       const ctx = kimiAgent();
@@ -396,7 +457,105 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       const gen = Reflect.get(provider as object, '_generationKwargs') as {
         extra_body?: { thinking?: { type?: string; effort?: string } };
       };
+      expect(ctx.agent.config.data().thinkingEffort).toBe('max');
+      expect(provider.thinkingEffort).toBe('max');
       expect(gen.extra_body?.thinking).toMatchObject({ type: 'enabled', effort: 'max' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('reports the forced effort for an env-synthesized boolean Kimi model', () => {
+    vi.stubEnv('KIMI_MODEL_NAME', 'kimi-for-coding');
+    vi.stubEnv('KIMI_MODEL_API_KEY', 'test-key');
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    try {
+      const config = applyEnvModelConfig(getDefaultConfig());
+      const persistence = new InMemoryAgentRecordPersistence();
+      const ctx = testAgent({
+        initialConfig: config,
+        persistence,
+        providerManager: new ProviderManager({ config }),
+      });
+
+      ctx.agent.config.update({ modelAlias: ENV_MODEL_ALIAS_KEY });
+
+      expect(ctx.agent.config.data().thinkingEffort).toBe('max');
+      expect(persistence.records).toContainEqual(
+        expect.objectContaining({ type: 'config.update', thinkingEffort: 'max' }),
+      );
+      expect(ctx.agent.config.provider.thinkingEffort).toBe('max');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('applies the Kimi force through an Anthropic protocol override', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    try {
+      const config: KimiConfig = {
+        providers: { kimi: { type: 'kimi', apiKey: 'test-key' } },
+        models: {
+          'kimi-code-anthropic': {
+            provider: 'kimi',
+            protocol: 'anthropic',
+            model: 'kimi-code',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+          },
+        },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+      });
+
+      ctx.agent.config.update({
+        modelAlias: 'kimi-code-anthropic',
+        thinkingEffort: 'high',
+      });
+
+      expect(ctx.agent.config.data().thinkingEffort).toBe('max');
+      expect(ctx.agent.config.provider.thinkingEffort).toBe('max');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does not carry the Kimi force into a non-Kimi model switch', () => {
+    vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+    try {
+      const config: KimiConfig = {
+        providers: {
+          kimi: { type: 'kimi', apiKey: 'test-key' },
+          anthropic: { type: 'anthropic', apiKey: 'test-key' },
+        },
+        models: {
+          'kimi-code': {
+            provider: 'kimi',
+            model: 'kimi-code',
+            maxContextSize: 128_000,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high'],
+          },
+          claude: {
+            provider: 'anthropic',
+            model: 'claude-sonnet-4-6',
+            maxContextSize: 200_000,
+            capabilities: ['thinking'],
+          },
+        },
+      };
+      const ctx = testAgent({
+        initialConfig: config,
+        providerManager: new ProviderManager({ config }),
+      });
+      ctx.agent.config.update({ modelAlias: 'kimi-code', thinkingEffort: 'high' });
+
+      ctx.agent.config.update({ modelAlias: 'claude' });
+
+      expect(ctx.agent.config.data().thinkingEffort).toBe('high');
+      expect(ctx.agent.config.provider.thinkingEffort).toBe('high');
     } finally {
       vi.unstubAllEnvs();
     }
@@ -412,6 +571,8 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       const gen = Reflect.get(provider as object, '_generationKwargs') as {
         extra_body?: { thinking?: { effort?: string } };
       };
+      expect(ctx.agent.config.data().thinkingEffort).toBe('off');
+      expect(provider.thinkingEffort).toBe('off');
       expect(gen.extra_body?.thinking?.effort).toBeUndefined();
     } finally {
       vi.unstubAllEnvs();

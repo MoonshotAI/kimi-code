@@ -226,6 +226,23 @@ describe('Agent loop', () => {
     );
   });
 
+  it('reports an untyped LLM error message without an internal-code prefix', async () => {
+    profile.update({ activeToolNames: [] });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.allEvents).toContainEqual(
+      expect.objectContaining({
+        event: 'turn.step.interrupted',
+        args: expect.objectContaining({
+          reason: 'error',
+          message: 'Unexpected generate call #1',
+        }),
+      }),
+    );
+  });
+
   it('does not run loop error handlers for aborted turns', async () => {
     let called = false;
     loop.registerLoopErrorHandler({

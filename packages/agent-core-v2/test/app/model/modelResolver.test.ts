@@ -31,6 +31,7 @@ import { IProtocolAdapterRegistry, type ProtocolAdapterConfig } from '#/app/prot
 
 let generateImpl: ChatProvider['generate'];
 let uploadVideoImpl: NonNullable<ChatProvider['uploadVideo']> | undefined;
+let appliedThinkingEfforts: string[];
 
 describe('ModelResolverService', () => {
   let disposables: DisposableStore;
@@ -50,6 +51,7 @@ describe('ModelResolverService', () => {
     configValues = {};
     resolveTokenProvider = vi.fn();
     createdProtocolConfigs = [];
+    appliedThinkingEfforts = [];
     generateImpl = async () => ({
       id: null,
       usage: null,
@@ -146,16 +148,16 @@ describe('ModelResolverService', () => {
     expect(auth).toEqual({ apiKey: 'sk-model' });
   });
 
-  it('forwards declared select_tools capability to the resolved model', () => {
+  it('forwards declared dynamically_loaded_tools capability to the resolved model', () => {
     providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk-test' };
     models['m'] = {
       provider: 'p',
       model: 'wire-name',
       maxContextSize: 1000,
-      capabilities: ['select_tools'],
+      capabilities: ['dynamically_loaded_tools'],
     };
 
-    expect(ix.get(IModelResolver).resolve('m').capabilities.select_tools).toBe(true);
+    expect(ix.get(IModelResolver).resolve('m').capabilities.dynamically_loaded_tools).toBe(true);
   });
 
   it('returns an OAuth access token as ProviderRequestAuth.apiKey', async () => {
@@ -588,7 +590,7 @@ describe('ModelResolverService', () => {
       });
     });
 
-    it('passes Kimi supportEfforts through to the protocol adapter', async () => {
+    it('keeps Kimi supportEfforts as model metadata instead of adapter options', async () => {
       providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
       models['m'] = {
         provider: 'p',
@@ -597,15 +599,12 @@ describe('ModelResolverService', () => {
         supportEfforts: ['low', 'high', 'max'],
       };
 
-      const config = await resolveAndCreateProvider();
+      const model = ix.get(IModelResolver).resolve('m');
 
-      expect(config).toMatchObject({
-        protocol: 'kimi',
-        providerOptions: { supportEfforts: ['low', 'high', 'max'] },
-      });
+      expect(model.supportEfforts).toEqual(['low', 'high', 'max']);
     });
 
-    it('passes overridden Kimi supportEfforts through to the protocol adapter', async () => {
+    it('applies overridden Kimi supportEfforts to model metadata', async () => {
       providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
       models['m'] = {
         provider: 'p',
@@ -615,11 +614,46 @@ describe('ModelResolverService', () => {
         overrides: { supportEfforts: ['low', 'high'] },
       };
 
+      const model = ix.get(IModelResolver).resolve('m');
+
+      expect(model.supportEfforts).toEqual(['low', 'high']);
+    });
+
+    it('does not pass supportEfforts through for non-Kimi providers', async () => {
+      providers['p'] = { type: 'anthropic', baseUrl: 'https://example.test', apiKey: 'sk' };
+      models['m'] = {
+        provider: 'p',
+        model: 'kimi-for-coding',
+        maxContextSize: 1000,
+        supportEfforts: ['low', 'high', 'max'],
+      };
+
       const config = await resolveAndCreateProvider();
 
       expect(config).toMatchObject({
-        protocol: 'kimi',
-        providerOptions: { supportEfforts: ['low', 'high'] },
+        protocol: 'anthropic',
+      });
+      const providerOptions = config?.['providerOptions'] as
+        | { readonly supportEfforts?: readonly string[] }
+        | undefined;
+      expect(providerOptions?.supportEfforts).toBeUndefined();
+    });
+
+    it('marks the Anthropic adapter when it transports a Kimi provider', async () => {
+      providers['p'] = { type: 'kimi', baseUrl: 'https://example.test', apiKey: 'sk' };
+      models['m'] = {
+        provider: 'p',
+        protocol: 'anthropic',
+        model: 'kimi-for-coding',
+        maxContextSize: 1000,
+        supportEfforts: ['low', 'high', 'max'],
+      };
+
+      const config = await resolveAndCreateProvider();
+
+      expect(config).toMatchObject({
+        protocol: 'anthropic',
+        providerOptions: { kimiThinking: true },
       });
     });
 
@@ -693,7 +727,7 @@ describe('ModelResolverService', () => {
         thinking: true,
         tool_use: false,
         max_context_tokens: 1000,
-        select_tools: false,
+        dynamically_loaded_tools: false,
       });
     });
 
@@ -708,19 +742,23 @@ describe('ModelResolverService', () => {
         thinking: false,
         tool_use: true,
         max_context_tokens: 128000,
-        select_tools: false,
+        dynamically_loaded_tools: false,
       });
     });
   });
 
   describe('default thinking', () => {
-    function resolveEffort(capabilities?: string[]): string | null {
+    function resolveEffort(
+      capabilities?: string[],
+      supportEfforts?: string[],
+    ): string | null {
       providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
       models['m'] = {
         provider: 'p',
         model: 'wire-name',
         maxContextSize: 1000,
         ...(capabilities === undefined ? {} : { capabilities }),
+        supportEfforts,
       };
       return ix.get(IModelResolver).resolve('m').thinkingEffort;
     }
@@ -767,7 +805,70 @@ describe('ModelResolverService', () => {
 
     it('uses the configured thinking.effort', () => {
       configValues['thinking'] = { effort: 'medium' };
-      expect(resolveEffort()).toBe('medium');
+      expect(resolveEffort(['thinking'], ['low', 'medium', 'high'])).toBe('medium');
+    });
+
+    it('derives Kimi effort semantics for a flat kimi-protocol model', () => {
+      configValues['thinking'] = { effort: 'ultra' };
+      models['m'] = {
+        protocol: 'kimi',
+        baseUrl: 'https://example.test/v1',
+        apiKey: 'sk',
+        model: 'wire-name',
+        maxContextSize: 1000,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'medium', 'high'],
+        defaultEffort: 'medium',
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+
+      expect(model.providerType).toBe('kimi');
+      expect(model.thinkingEffort).toBe('medium');
+    });
+
+    it('applies the forced effort to a direct Kimi-over-Anthropic request', async () => {
+      configValues['thinking'] = { effort: 'low', forcedEffort: 'max' };
+      providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
+      models['m'] = {
+        provider: 'p',
+        protocol: 'anthropic',
+        model: 'wire-name',
+        maxContextSize: 1000,
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high'],
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+      for await (const _event of model.request({ systemPrompt: '', tools: [], messages: [] })) {
+        void _event;
+      }
+
+      expect(model.thinkingEffort).toBe('max');
+      expect(appliedThinkingEfforts).toEqual(['max']);
+      expect(createdProtocolConfigs[0]).toMatchObject({
+        protocol: 'anthropic',
+        providerOptions: { kimiThinking: true },
+      });
+    });
+
+    it('ignores the forced Kimi effort when thinking is off', async () => {
+      configValues['thinking'] = { enabled: false, forcedEffort: 'max' };
+      providers['p'] = { type: 'kimi', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
+      models['m'] = {
+        provider: 'p',
+        model: 'wire-name',
+        maxContextSize: 1000,
+        capabilities: ['thinking'],
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+      for await (const _event of model.request({ systemPrompt: '', tools: [], messages: [] })) {
+        void _event;
+      }
+
+      expect(model.thinkingEffort).toBeNull();
+      expect(appliedThinkingEfforts).toEqual([]);
     });
 
     it('clamps an explicit off back to on for always_thinking models', () => {
@@ -894,7 +995,8 @@ const fakeChatProvider: ChatProvider = {
     if (uploadVideoImpl === undefined) throw new Error('uploadVideo not configured');
     return uploadVideoImpl(input, options);
   },
-  withThinking() {
+  withThinking(effort) {
+    appliedThinkingEfforts.push(effort);
     return this;
   },
 };

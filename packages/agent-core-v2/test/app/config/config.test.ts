@@ -34,6 +34,10 @@ import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSe
 import '#/agent/media/configSection';
 import { IMAGE_SECTION, type ImageConfig } from '#/agent/media/configSection';
 import {
+  THINKING_SECTION,
+  type ThinkingConfig,
+} from '#/agent/profile/configSection';
+import {
   KEEP_ALIVE_ON_EXIT_ENV,
   resolveAgentTaskConfig,
   type AgentTaskConfig,
@@ -120,7 +124,7 @@ describe('Agent config', () => {
 
     await expect(ctx.rpc.getConfig({})).resolves.toMatchObject({
       systemPrompt: 'Changed profile prompt.',
-      thinkingLevel: 'high',
+      thinkingLevel: 'on',
       modelCapabilities: nextCapability,
     });
   });
@@ -367,6 +371,49 @@ describe('ConfigService env overlay (live)', () => {
     expect(config.get<CronConfig>('cron').disabled).toBe(true);
     env['KIMI_DISABLE_CRON'] = '0';
     expect(config.get<CronConfig>('cron').disabled).toBe(false);
+
+    disposables.dispose();
+  });
+
+  it('keeps the Kimi effort force separate from the configured effort', async () => {
+    const env: Record<string, string> = { KIMI_MODEL_THINKING_EFFORT: 'max' };
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', env));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+    await config.set(THINKING_SECTION, { effort: 'low' });
+
+    expect(config.get<ThinkingConfig>(THINKING_SECTION)).toEqual({
+      effort: 'low',
+      forcedEffort: 'max',
+    });
+
+    disposables.dispose();
+  });
+
+  it('strips the Kimi effort force before persisting thinking config', async () => {
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg'));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    await config.set(THINKING_SECTION, { effort: 'low', forcedEffort: 'max' });
+
+    expect(config.inspect<ThinkingConfig>(THINKING_SECTION).userValue).toEqual({
+      effort: 'low',
+    });
 
     disposables.dispose();
   });

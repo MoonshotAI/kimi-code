@@ -645,7 +645,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private failLoopStep(runtime: LoopRuntime, error: unknown): LoopErrorDisposition {
     const reason: LoopInterruptReason = isMaxStepsExceededError(error) ? 'max_steps' : 'error';
-    this.emitStepInterrupted(runtime.turnId, runtime.current?.number, reason, toErrorMessage(error));
+    const interruptedError =
+      isError2(error) && error.code === ErrorCodes.INTERNAL && error.cause !== undefined ? error.cause : error;
+    this.emitStepInterrupted(runtime.turnId, runtime.current?.number, reason, toErrorMessage(interruptedError));
     return { type: 'return', result: { type: 'failed', error, steps: runtime.steps } };
   }
 
