@@ -830,6 +830,23 @@ export class ToolManager {
 
   get loopTools(): readonly ExecutableTool[] {
     if (this.loopToolsOverride !== undefined) return this.loopToolsOverride;
+    // Self-heal an empty builtin table. The constructor and every config-
+    // mutation checkpoint gate initializeBuiltinTools() on hasProvider, but a
+    // provider that becomes resolvable asynchronously (OAuth / managed
+    // free-tokens model registration) trips none of them — without this the
+    // agent runs with zero tools while the system prompt still advertises them.
+    // loopTools is re-read before every step, so the table is populated on the
+    // first step after the provider resolves. Steady state short-circuits on
+    // `builtinTools.size === 0`, so hasProvider is not evaluated per read.
+    if (this.builtinTools.size === 0 && this.agent.config.hasProvider) {
+      try {
+        this.initializeBuiltinTools();
+      } catch (error) {
+        this.agent.log.warn('lazy initializeBuiltinTools failed; will retry on next read', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     const disclosure = this.progressiveDisclosure;
     const enabledMcpNames = [...this.mcpTools.keys()].filter((name) =>
       this.isMcpToolEnabled(name),
