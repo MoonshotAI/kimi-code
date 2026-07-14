@@ -260,6 +260,101 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     expect((await restart().list()).map((w) => w.id)).toEqual([a.id]);
   });
 
+  it('createOrTouch preserves external additions and tombstones written after load', async () => {
+    const dirA = join(homeDir, 'dir-a');
+    const dirB = join(homeDir, 'dir-b');
+    const dirC = join(homeDir, 'dir-c');
+    await fsp.mkdir(dirA);
+    await fsp.mkdir(dirC);
+    const registry = build();
+    await registry.createOrTouch(dirA);
+
+    // Simulate a v1 writer touching the file after the v2 registry already
+    // ran an operation: a new workspace entry plus an unrelated tombstone.
+    const onDisk = await readWorkspacesJson();
+    onDisk.workspaces[encodeWorkDirKey(dirB)] = {
+      root: dirB,
+      name: 'dir-b',
+      created_at: '2024-01-01T00:00:00.000Z',
+      last_opened_at: '2024-01-01T00:00:00.000Z',
+    };
+    await fsp.writeFile(
+      join(homeDir, 'workspaces.json'),
+      JSON.stringify({
+        version: 1,
+        workspaces: onDisk.workspaces,
+        deleted_workspace_ids: ['wd_external_tombstone'],
+      }),
+      'utf8',
+    );
+
+    await registry.createOrTouch(dirC);
+
+    const after = await readWorkspacesJson();
+    expect(Object.keys(after.workspaces).toSorted()).toEqual(
+      [encodeWorkDirKey(dirA), encodeWorkDirKey(dirB), encodeWorkDirKey(dirC)].toSorted(),
+    );
+    expect(after.deleted_workspace_ids).toEqual(['wd_external_tombstone']);
+    // Reads also see the external entry without a restart.
+    expect((await registry.list()).map((w) => w.id)).toContain(encodeWorkDirKey(dirB));
+  });
+
+  it('delete adds its tombstone on top of the current file state', async () => {
+    const dirA = join(homeDir, 'dir-a');
+    await fsp.mkdir(dirA);
+    const registry = build();
+    const a = await registry.createOrTouch(dirA);
+
+    const onDisk = await readWorkspacesJson();
+    await fsp.writeFile(
+      join(homeDir, 'workspaces.json'),
+      JSON.stringify({
+        version: 1,
+        workspaces: onDisk.workspaces,
+        deleted_workspace_ids: ['wd_external_tombstone'],
+      }),
+      'utf8',
+    );
+
+    await registry.delete(a.id);
+
+    const after = await readWorkspacesJson();
+    expect(after.workspaces[a.id]).toBeUndefined();
+    expect((after.deleted_workspace_ids as string[]).toSorted()).toEqual(
+      ['wd_external_tombstone', a.id].toSorted(),
+    );
+  });
+
+  it('update renames the current file entry and misses externally removed ids', async () => {
+    const dirA = join(homeDir, 'dir-a');
+    await fsp.mkdir(dirA);
+    const registry = build();
+    const a = await registry.createOrTouch(dirA);
+
+    // External rename on disk: the update must start from it, not stale state.
+    const onDisk = await readWorkspacesJson();
+    const entry = onDisk.workspaces[a.id];
+    if (entry === undefined) throw new Error('seed entry missing');
+    onDisk.workspaces[a.id] = { ...entry, name: 'external-name' };
+    await fsp.writeFile(
+      join(homeDir, 'workspaces.json'),
+      JSON.stringify({ version: 1, workspaces: onDisk.workspaces, deleted_workspace_ids: [] }),
+      'utf8',
+    );
+
+    const renamed = await registry.update(a.id, { name: 'local-name' });
+    expect(renamed?.name).toBe('local-name');
+    expect(renamed?.lastOpenedAt).toBe(Date.parse(entry.last_opened_at));
+
+    // External removal: update reports the id as gone instead of resurrecting.
+    await fsp.writeFile(
+      join(homeDir, 'workspaces.json'),
+      JSON.stringify({ version: 1, workspaces: {}, deleted_workspace_ids: [] }),
+      'utf8',
+    );
+    expect(await registry.update(a.id, { name: 'whatever' })).toBeUndefined();
+  });
+
   it('writes through on update and delete', async () => {
     const created = await build().createOrTouch(homeDir, 'proj');
     await build().update(created.id, { name: 'renamed' });

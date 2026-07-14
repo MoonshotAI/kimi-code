@@ -24,7 +24,7 @@ import {
   writeWorkspaceRegistryFile,
   type WorkspaceRegistryEntry,
   type WorkspaceRegistryFile,
-} from './workspaceRegistryFile';
+} from '../../session/store/workspace-registry-file';
 
 type WorkspaceRegistryEvent =
   | { type: 'event.workspace.created'; workspace: Workspace }

@@ -1,8 +1,11 @@
 /**
  * `workspaces.json` file format and atomic access — the on-disk contract of
- * the known-workspaces catalog, shared by `WorkspaceRegistryService` (which
- * adds locking and events on top) and by in-process callers that only need a
- * best-effort touch (e.g. `KimiCore` registering the cwd on session creation).
+ * the known-workspaces catalog, shared by `WorkspaceRegistryService` (the
+ * services-layer facade, which adds locking and events on top) and by
+ * in-process runtime callers that only need a best-effort touch (e.g.
+ * `KimiCore` registering the cwd on session creation). It lives next to
+ * `session-index.ts` because the runtime must not import back into
+ * `services/` (see `src/services/AGENTS.md`).
  *
  * The layout is the v1-compatible `{ version, workspaces, deleted_workspace_ids }`
  * document at `<homeDir>/workspaces.json`; agent-core-v2 reads and writes the
@@ -13,7 +16,7 @@ import { promises as fsp } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { basename as posixBasename } from 'pathe';
 
-import { encodeWorkDirKey, normalizeWorkDir } from '../../session/store';
+import { encodeWorkDirKey, normalizeWorkDir } from '#/session/store/workdir-key';
 
 const WORKSPACE_REGISTRY_FILE = 'workspaces.json';
 const WORKSPACE_REGISTRY_VERSION = 1;

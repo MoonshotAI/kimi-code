@@ -10,7 +10,7 @@ import type { IEnvironmentService } from '../../src/services/environment/environ
 import type { IEventService } from '../../src/services/event/event';
 import type { ILogService } from '../../src/services/logger/logger';
 import { WorkspaceRegistryService } from '../../src/services/workspace/workspaceRegistryService';
-import { touchWorkspaceRegistry } from '../../src/services/workspace/workspaceRegistryFile';
+import { touchWorkspaceRegistry } from '../../src/session/store/workspace-registry-file';
 import { appendSessionIndexEntry } from '../../src/session/store/session-index';
 import { encodeWorkDirKey, normalizeWorkDir } from '../../src/session/store/workdir-key';
 

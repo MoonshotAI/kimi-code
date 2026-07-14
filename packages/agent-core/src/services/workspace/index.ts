@@ -5,7 +5,6 @@ export {
   type WorkspacePatch,
 } from './workspaceRegistry';
 export { WorkspaceRegistryService, detectGit } from './workspaceRegistryService';
-export { touchWorkspaceRegistry } from './workspaceRegistryFile';
 export {
   IWorkspaceFsService,
   WorkspaceFsNotAbsoluteError,

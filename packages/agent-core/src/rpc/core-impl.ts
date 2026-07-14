@@ -48,7 +48,7 @@ import {
 } from '../session/provider-manager';
 import { SessionAPIImpl } from '../session/rpc';
 import { normalizeWorkDir, SessionStore } from '../session/store/index';
-import { touchWorkspaceRegistry } from '../services/workspace/workspaceRegistryFile';
+import { touchWorkspaceRegistry } from '../session/store/workspace-registry-file';
 import {
   noopTelemetryClient,
   withTelemetryContext,
