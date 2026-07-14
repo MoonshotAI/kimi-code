@@ -16,6 +16,7 @@ import { UpdateGoalTool, UpdateGoalToolInputSchema } from '#/agent/goal/tools/up
 import { IAgentLoopService, type AfterStepContext, type EnqueueReceipt, type Step, type Turn } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import type { ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import type { WireRecord } from '#/wire/record';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
@@ -643,6 +644,146 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.createGoal({ objective: 'new task', replace: true });
 
     expect(abort).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a replacement goal isolated from late user-turn accounting', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const oldTurn = makeTurn(42);
+    eventBus.publish({ type: 'turn.started', turnId: oldTurn.id, origin: USER_PROMPT_ORIGIN });
+
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+    await loopService.hooks.onWillBeginStep.run({
+      turnId: oldTurn.id,
+      step: 1,
+      signal: oldTurn.signal,
+    });
+    recordStepUsage(usageService, goals, oldTurn, { ...zeroUsage, output: 5 });
+    endTurn(eventBus, oldTurn);
+
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+      turnsUsed: 0,
+      tokensUsed: 0,
+    });
+    expect(loopService.hasPendingRequests()).toBe(false);
+    expect(loopService.launches).toEqual([]);
+  });
+
+  it('ignores a late outcome continuation from a replaced goal user turn', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const oldTurn = makeTurn(45);
+    eventBus.publish({ type: 'turn.started', turnId: oldTurn.id, origin: USER_PROMPT_ORIGIN });
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+
+    await runTerminalUpdateGoalResult(toolExecutor, oldTurn, 'complete', 'old outcome');
+    await loopService.hooks.onDidFinishStep.run({
+      turnId: oldTurn.id,
+      step: 1,
+      signal: oldTurn.signal,
+      usage: zeroUsage,
+      finishReason: 'completed',
+      stopTurn: false,
+    });
+
+    expect(loopService.hasPendingRequests()).toBe(false);
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+    });
+  });
+
+  it.each([
+    { name: 'UpdateGoal', args: { status: 'complete' } },
+    { name: 'SetGoalBudget', args: { value: 5, unit: 'turns' } },
+  ])('rejects a stale $name call from a replaced goal turn', async ({ name, args }) => {
+    await goals.createGoal({ objective: 'old task' });
+    const oldTurn = makeTurn(46);
+    eventBus.publish({ type: 'turn.started', turnId: oldTurn.id, origin: USER_PROMPT_ORIGIN });
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+    const toolCall: ToolCall = {
+      type: 'function',
+      id: 'call_stale_goal_tool',
+      name,
+      arguments: JSON.stringify(args),
+    };
+    const before: ToolBeforeExecuteContext = {
+      turnId: oldTurn.id,
+      signal: oldTurn.signal,
+      toolCall,
+      toolCalls: [toolCall],
+      args,
+      execution: { approvalRule: name, execute: async () => ({ output: 'executed' }) },
+    };
+
+    await toolExecutor.hooks.onBeforeExecuteTool.run(before);
+
+    expect(before.decision?.syntheticResult).toEqual({
+      output: 'Goal changed since this turn started; ignored stale goal tool call.',
+    });
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+      turnsUsed: 0,
+      tokensUsed: 0,
+    });
+  });
+
+  it.each([
+    { reason: 'cancelled' as const },
+    { reason: 'failed' as const, error: new Error('old turn failed') },
+  ])('keeps a replacement goal active after the replaced goal turn ends as $reason', async (result) => {
+    await goals.createGoal({ objective: 'old task' });
+    const oldTurn = makeTurn(43);
+    eventBus.publish({ type: 'turn.started', turnId: oldTurn.id, origin: USER_PROMPT_ORIGIN });
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+
+    endTurn(eventBus, oldTurn, result);
+
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+      turnsUsed: 0,
+      tokensUsed: 0,
+    });
+  });
+
+  it.each([
+    { reason: 'completed' as const },
+    { reason: 'failed' as const, error: new Error('old continuation failed') },
+  ])('keeps a replacement goal isolated when the replaced goal continuation settles as $reason', async (result) => {
+    await goals.createGoal({ objective: 'old task' });
+    const oldUserTurn = makeTurn(44);
+    eventBus.publish({ type: 'turn.started', turnId: oldUserTurn.id, origin: USER_PROMPT_ORIGIN });
+    await runGoalStep(loopService, oldUserTurn);
+    endTurn(eventBus, oldUserTurn);
+    await vi.waitFor(() => {
+      expect(loopService.launches).toHaveLength(1);
+    });
+
+    const continuationTurn = makeTurn(loopService.launches[0]!);
+    eventBus.publish({
+      type: 'turn.started',
+      turnId: continuationTurn.id,
+      origin: { kind: 'system_trigger', name: 'goal_continuation' },
+    });
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+
+    await loopService.hooks.onWillBeginStep.run({
+      turnId: continuationTurn.id,
+      step: 1,
+      signal: continuationTurn.signal,
+    });
+    recordStepUsage(usageService, goals, continuationTurn, { ...zeroUsage, output: 7 });
+    endTurn(eventBus, continuationTurn, result);
+
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+      turnsUsed: 0,
+      tokensUsed: 0,
+    });
+    expect(loopService.launches).toHaveLength(1);
   });
 
   it.each(['turn', 'token', 'wall-clock'] as const)(

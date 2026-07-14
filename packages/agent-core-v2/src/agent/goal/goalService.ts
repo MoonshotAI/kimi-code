@@ -24,7 +24,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { TurnEndedEvent } from '@moonshot-ai/protocol';
+import type { TurnEndedEvent, TurnStartedEvent } from '@moonshot-ai/protocol';
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -115,6 +115,8 @@ const GOAL_BUDGET_STOP_REMINDER = [
 
 const GOAL_BUDGET_TOOLS_REJECTED_MESSAGE =
   'Goal budget exhausted; tool calls are rejected. Write your final message.';
+const GOAL_STALE_TOOL_RESULT =
+  'Goal changed since this turn started; ignored stale goal tool call.';
 
 const GOAL_CONTINUATION_PROMPT = [
   'Continue working toward the active goal.',
@@ -154,6 +156,7 @@ interface GoalForkNoticeState {
 
 interface PendingContinuation {
   readonly receipt: EnqueueReceipt;
+  readonly goalId: string;
   turnId?: number;
 }
 
@@ -183,17 +186,22 @@ function isGoalForkClearedReminder(message: ContextMessage | undefined): boolean
   );
 }
 
+function isGoalContinuationOrigin(origin: TurnStartedEvent['origin']): boolean {
+  return origin.kind === 'system_trigger' && origin.name === 'goal_continuation';
+}
+
 export class AgentGoalService extends Disposable implements IAgentGoalService {
   declare readonly _serviceBrand: undefined;
 
   private wallClockResumedAt?: number;
   private liveTurnId?: number;
-  private readonly goalDrivenTurns = new Set<number>();
+  private readonly goalDrivenTurns = new Map<number, string>();
   private readonly countedGoalTurns = new Set<number>();
   private readonly goalStarterTurns = new Set<number>();
-  private readonly goalOutcomeToolResultTurns = new Set<number>();
+  private readonly goalOutcomeToolResultTurns = new Map<number, string>();
   private readonly goalOutcomeContinuationTurns = new Set<number>();
   private readonly budgetGraceTurns = new Set<number>();
+  private readonly pendingContinuationGoals = new Map<number, string>();
   private pendingContinuation?: PendingContinuation;
 
   constructor(
@@ -223,7 +231,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       }),
     );
     this._register(
-      this.eventBus.subscribe('turn.started', (e) => this.handleTurnLaunched(e.turnId)),
+      this.eventBus.subscribe('turn.started', (e) => {
+        this.handleTurnLaunched(e.turnId, e.origin);
+      }),
     );
     this._register(
       usageService.onDidRecord((ctx) => this.handleUsageRecorded(ctx)),
@@ -242,6 +252,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     );
     this._register(
       toolExecutor.hooks.onBeforeExecuteTool.register('goal-budget-reject', async (ctx, next) => {
+        if (this.isStaleGoalToolCall(ctx.turnId, ctx.toolCall.name)) {
+          ctx.decision = { syntheticResult: { output: GOAL_STALE_TOOL_RESULT } };
+          return;
+        }
         if (this.budgetGraceTurns.has(ctx.turnId)) {
           ctx.decision = {
             syntheticResult: { output: GOAL_BUDGET_TOOLS_REJECTED_MESSAGE },
@@ -253,16 +267,21 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     );
     this._register(
       toolExecutor.hooks.onDidExecuteTool.register('goal-outcome-tool-result', async (ctx, next) => {
-        if (isTerminalUpdateGoalResult(ctx.toolCall.name, ctx.args, ctx.result)) {
-          this.goalOutcomeToolResultTurns.add(ctx.turnId);
+        const goalId = this.goalDrivenTurns.get(ctx.turnId);
+        if (
+          goalId !== undefined &&
+          isTerminalUpdateGoalResult(ctx.toolCall.name, ctx.args, ctx.result)
+        ) {
+          this.goalOutcomeToolResultTurns.set(ctx.turnId, goalId);
         }
         await next();
       }),
     );
     this._register(
       this.eventBus.subscribe('turn.ended', (e) => {
+        const goalId = this.goalDrivenTurns.get(e.turnId);
         void this.handleTurnEnded(e.turnId, { reason: e.reason, error: e.error }).catch((error) =>
-          this.settleGoalAfterContinuationFailure(error),
+          this.settleGoalAfterContinuationFailure(error, goalId),
         );
       }),
     );
@@ -364,9 +383,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (budgetBlocked !== null) return budgetBlocked;
     if (this.canLaunchContinuation()) {
       try {
-        this.launchContinuationTurn();
+        this.launchContinuationTurn(state.goalId);
       } catch (error) {
-        await this.settleGoalAfterContinuationFailure(error);
+        await this.settleGoalAfterContinuationFailure(error, state.goalId);
         throw error;
       }
     }
@@ -456,9 +475,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return this.accountTokenUsage(tokenDelta);
   }
 
-  private accountTokenUsage(tokenDelta: number): GoalSnapshot | null {
+  private accountTokenUsage(tokenDelta: number, goalId?: string): GoalSnapshot | null {
     const state = this.goalState;
-    if (state === null || state.status !== 'active') return null;
+    if (state === null || state.status !== 'active' || !matchesGoal(state, goalId)) return null;
     const tokensUsed = state.tokensUsed + Math.max(0, tokenDelta);
     this.wire.dispatch(updateGoal({ tokensUsed }));
     const next = this.requireState();
@@ -466,8 +485,12 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   async incrementTurn(): Promise<GoalSnapshot | null> {
+    return this.incrementGoalTurn();
+  }
+
+  private incrementGoalTurn(goalId?: string): GoalSnapshot | null {
     const state = this.goalState;
-    if (state === null || state.status !== 'active') return null;
+    if (state === null || state.status !== 'active' || !matchesGoal(state, goalId)) return null;
     const turnsUsed = state.turnsUsed + 1;
     this.wire.dispatch(updateGoal({ turnsUsed }));
     const next = this.requireState();
@@ -476,12 +499,20 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return this.blockIfBudgetReached(next) ?? this.toSnapshot(next);
   }
 
-  private handleTurnLaunched(turnId: number): void {
+  private handleTurnLaunched(turnId: number, origin: TurnStartedEvent['origin']): void {
     this.liveTurnId = turnId;
-    const state = this.goalState;
-    if (state?.status === 'active' && this.blockIfBudgetReached(state) === null) {
-      this.goalDrivenTurns.add(turnId);
+    if (!this.goalDrivenTurns.has(turnId)) {
+      const state = this.goalState;
+      const continuationGoalId = isGoalContinuationOrigin(origin)
+        ? this.pendingContinuationGoals.get(turnId)
+        : undefined;
+      if (continuationGoalId !== undefined && state?.goalId !== continuationGoalId) {
+        this.goalDrivenTurns.set(turnId, continuationGoalId);
+      } else if (state?.status === 'active' && this.blockIfBudgetReached(state) === null) {
+        this.goalDrivenTurns.set(turnId, state.goalId);
+      }
     }
+    this.pendingContinuationGoals.delete(turnId);
     this.goalOutcomeToolResultTurns.delete(turnId);
     this.goalOutcomeContinuationTurns.delete(turnId);
   }
@@ -489,22 +520,27 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private adoptStarterTurn(): void {
     const turnId = this.liveTurnId;
     if (turnId === undefined || this.goalDrivenTurns.has(turnId)) return;
-    this.goalDrivenTurns.add(turnId);
+    const state = this.goalState;
+    if (state === null || state.status !== 'active') return;
+    this.goalDrivenTurns.set(turnId, state.goalId);
     this.countedGoalTurns.add(turnId);
     this.goalStarterTurns.add(turnId);
   }
 
   private async handleBeforeStep(ctx: BeforeStepContext): Promise<void> {
-    if (!this.goalDrivenTurns.has(ctx.turnId)) return;
+    const goalId = this.goalDrivenTurns.get(ctx.turnId);
+    if (goalId === undefined) return;
     if (this.countedGoalTurns.has(ctx.turnId)) return;
     this.countedGoalTurns.add(ctx.turnId);
-    await this.incrementTurn();
+    this.incrementGoalTurn(goalId);
   }
 
   private handleUsageRecorded(ctx: UsageRecordedContext): void {
     const source = ctx.source;
-    if (source?.type !== 'turn' || !this.goalDrivenTurns.has(source.turnId)) return;
-    this.accountTokenUsage(ctx.usage.output);
+    if (source?.type !== 'turn') return;
+    const goalId = this.goalDrivenTurns.get(source.turnId);
+    if (goalId === undefined) return;
+    this.accountTokenUsage(ctx.usage.output, goalId);
   }
 
   private handleAfterStep(ctx: AfterStepContext): void {
@@ -513,10 +549,12 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private stopAfterBudgetReached(ctx: AfterStepContext): boolean {
+    const goalId = this.goalDrivenTurns.get(ctx.turnId);
     const state = this.goalState;
     if (
-      !this.goalDrivenTurns.has(ctx.turnId) ||
+      goalId === undefined ||
       state === null ||
+      state.goalId !== goalId ||
       !this.toSnapshot(state).budget.overBudget
     ) {
       return false;
@@ -540,7 +578,12 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private enqueueGoalOutcomeContinuation(ctx: AfterStepContext): void {
     if (this.goalOutcomeContinuationTurns.has(ctx.turnId)) return;
-    if (!this.goalOutcomeToolResultTurns.delete(ctx.turnId)) return;
+    const goalId = this.goalDrivenTurns.get(ctx.turnId);
+    const outcomeGoalId = this.goalOutcomeToolResultTurns.get(ctx.turnId);
+    this.goalOutcomeToolResultTurns.delete(ctx.turnId);
+    if (goalId === undefined || outcomeGoalId !== goalId) return;
+    const state = this.goalState;
+    if (state !== null && state.goalId !== goalId) return;
     this.goalOutcomeContinuationTurns.add(ctx.turnId);
     const maxSteps = this.config.get<LoopControl>(LOOP_CONTROL_SECTION)?.maxStepsPerTurn;
     if (!hasStepBudgetRemaining(maxSteps, ctx.step)) return;
@@ -551,38 +594,45 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     turnId: number,
     result: Pick<TurnEndedEvent, 'reason' | 'error'>,
   ): Promise<void> {
-    const starterTurn = this.clearTurnTracking(turnId);
+    const { goalId, starterTurn } = this.clearTurnTracking(turnId);
+    if (goalId === undefined) return;
     if (
       result.reason === 'blocked' ||
       result.reason === 'cancelled' ||
       result.reason === 'failed'
     ) {
-      await this.settleAbnormalTurn(result);
+      await this.settleAbnormalTurn(result, goalId);
       return;
     }
-    if (starterTurn) await this.incrementTurn();
+    if (starterTurn) this.incrementGoalTurn(goalId);
 
     const state = this.goalState;
-    if (state === null || state.status !== 'active') return;
+    if (state === null || state.status !== 'active' || state.goalId !== goalId) return;
     if (this.blockIfBudgetReached(state) !== null) return;
-    this.launchContinuationTurn();
+    this.launchContinuationTurn(goalId);
   }
 
-  private clearTurnTracking(turnId: number): boolean {
+  private clearTurnTracking(
+    turnId: number,
+  ): { readonly goalId?: string; readonly starterTurn: boolean } {
     if (this.pendingContinuation?.turnId === turnId) this.pendingContinuation = undefined;
     if (this.liveTurnId === turnId) this.liveTurnId = undefined;
+    const goalId = this.goalDrivenTurns.get(turnId);
     const starterTurn = this.goalStarterTurns.delete(turnId);
     this.goalDrivenTurns.delete(turnId);
     this.countedGoalTurns.delete(turnId);
     this.goalOutcomeToolResultTurns.delete(turnId);
     this.goalOutcomeContinuationTurns.delete(turnId);
     this.budgetGraceTurns.delete(turnId);
-    return starterTurn;
+    this.pendingContinuationGoals.delete(turnId);
+    return { goalId, starterTurn };
   }
 
   private async settleAbnormalTurn(
     result: Pick<TurnEndedEvent, 'reason' | 'error'>,
+    goalId: string,
   ): Promise<boolean> {
+    if (!this.isActiveGoal(goalId)) return false;
     if (result.reason === 'blocked') {
       await this.markBlocked({ reason: 'Blocked by UserPromptSubmit hook' });
       return true;
@@ -598,7 +648,11 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return false;
   }
 
-  private async settleGoalAfterContinuationFailure(error: unknown): Promise<void> {
+  private async settleGoalAfterContinuationFailure(
+    error: unknown,
+    goalId: string | undefined,
+  ): Promise<void> {
+    if (goalId === undefined || !this.isActiveGoal(goalId)) return;
     try {
       const reason = pauseReasonWithMessage(
         GOAL_CONTINUATION_FAILURE_PAUSE_PREFIX,
@@ -608,7 +662,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     } catch {}
   }
 
-  private launchContinuationTurn(): void {
+  private launchContinuationTurn(goalId: string): void {
+    if (!this.isActiveGoal(goalId)) return;
     if (this.pendingContinuation !== undefined) return;
     const message: ContextMessage = {
       role: 'user',
@@ -621,14 +676,18 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       admission: 'newTurn',
     });
     const receipt = this.loopService.enqueue(request);
-    const pending: PendingContinuation = { receipt };
+    const pending: PendingContinuation = { receipt, goalId };
     this.pendingContinuation = pending;
     void receipt.assigned
       .then(({ turn }) => {
-        if (this.pendingContinuation === pending) pending.turnId = turn.id;
+        pending.turnId = turn.id;
+        if (!this.goalDrivenTurns.has(turn.id)) {
+          this.pendingContinuationGoals.set(turn.id, pending.goalId);
+        }
         return turn.result;
       })
       .finally(() => {
+        if (pending.turnId !== undefined) this.pendingContinuationGoals.delete(pending.turnId);
         if (this.pendingContinuation === pending) this.pendingContinuation = undefined;
       });
   }
@@ -637,6 +696,18 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (this.liveTurnId !== undefined || this.pendingContinuation !== undefined) return false;
     const status = this.loopService.status();
     return status.state === 'idle' && !status.hasPendingRequests;
+  }
+
+  private isActiveGoal(goalId: string): boolean {
+    const state = this.goalState;
+    return state?.status === 'active' && state.goalId === goalId;
+  }
+
+  private isStaleGoalToolCall(turnId: number, toolName: string): boolean {
+    if (!isGoalMutationTool(toolName)) return false;
+    const goalId = this.goalDrivenTurns.get(turnId);
+    if (goalId === undefined) return false;
+    return this.goalState?.goalId !== goalId;
   }
 
   private cancelPendingContinuation(preserveLiveContinuation = false): void {
@@ -800,6 +871,14 @@ function computeBudgetReport(state: GoalState, wallClockMs: number): GoalBudgetR
     wallClockBudgetReached,
     overBudget: tokenBudgetReached || turnBudgetReached || wallClockBudgetReached,
   };
+}
+
+function matchesGoal(state: GoalState, goalId: string | undefined): boolean {
+  return goalId === undefined || state.goalId === goalId;
+}
+
+function isGoalMutationTool(toolName: string): boolean {
+  return toolName === 'UpdateGoal' || toolName === 'SetGoalBudget';
 }
 
 function goalBudgetBlockReason(budget: GoalBudgetReport): string | undefined {

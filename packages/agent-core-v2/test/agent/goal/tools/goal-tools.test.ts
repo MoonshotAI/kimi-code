@@ -1,3 +1,9 @@
+/**
+ * Scenario: model-facing goal tool validation and delayed execution.
+ * Responsibilities: verify goal commands target the goal selected when execution is resolved.
+ * Wiring: real goal service; loop is stubbed at the agent boundary.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/goal/tools/goal-tools.test.ts`.
+ */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { ServicesAccessor } from '#/_base/di/instantiation';
@@ -92,6 +98,21 @@ describe('goal tools', () => {
     });
   });
 
+  it('SetGoalBudget does not apply a delayed execution to a replacement goal', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const execution = setGoalBudgetTool.resolveExecution({ value: 5, unit: 'turns' });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+
+    const result = await execution.execute({ turnId: 0, toolCallId: 'call_old_budget', signal });
+
+    expect(result.output).toBe('Goal budget not set: the current goal changed.');
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      budget: { turnBudget: null },
+    });
+  });
+
   it('UpdateGoal accepts only active / complete / blocked statuses', () => {
     for (const status of ['active', 'complete', 'blocked']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(true);
@@ -140,6 +161,22 @@ describe('goal tools', () => {
     expect(result.output).toContain('Goal blocked.');
     expect(result.output).toContain('Worked');
     expect(result.output).toContain('concrete blocker');
+  });
+
+  it('UpdateGoal does not apply a delayed outcome to a replacement goal', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const execution = updateGoalTool.resolveExecution({ status: 'complete' });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+
+    const result = await execution.execute({ turnId: 0, toolCallId: 'call_old_outcome', signal });
+
+    expect(result.output).toBe('Goal not completed: the current goal changed.');
+    expect(result.stopTurn).toBeFalsy();
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+    });
   });
 
   it('UpdateGoal reports no active goal when completing/blocking/resuming without one', async () => {
