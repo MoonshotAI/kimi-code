@@ -128,7 +128,7 @@ export class SessionLegacyService implements ISessionLegacyService {
           await goal.pauseGoal({});
           break;
         case 'resume':
-          await goal.resumeGoal({ continueIfBlocked: true });
+          await goal.resumeGoal({ continueIfPaused: true, continueIfBlocked: true });
           break;
         case 'cancel':
           await goal.cancelGoal({});

@@ -108,7 +108,7 @@ Write stop conditions into the objective. `/goal` does not have a separate stop-
 
 The web UI shows the current goal in a strip below the conversation. Select the strip to expand or collapse its details. When a token budget is configured, the header shows its progress; goals without a token budget do not show a progress bar.
 
-Use the strip actions to pause an active goal, resume a paused or blocked goal, or cancel the current goal. Cancellation requires confirmation because it cannot be resumed afterwards.
+Use the strip actions to pause an active goal, resume a paused or blocked goal, or cancel the current goal. Selecting Resume starts the next goal turn so the agent continues the work. Cancellation requires confirmation because it cannot be resumed afterwards.
 
 ## Queue upcoming goals
 

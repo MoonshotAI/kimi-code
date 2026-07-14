@@ -1111,14 +1111,24 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(loopService.launches).toHaveLength(1);
   });
 
-  it('does not launch a continuation when a paused goal resumes', async () => {
+  it('does not launch a continuation when a paused goal resumes by default', async () => {
     await goals.createGoal({ objective: 'finish the task' });
     await goals.pauseGoal();
 
-    const resumed = await goals.resumeGoal({ continueIfBlocked: true });
+    const resumed = await goals.resumeGoal();
 
     expect(resumed.status).toBe('active');
     expect(loopService.launches).toEqual([]);
+  });
+
+  it('starts one continuation when a caller opts to resume a paused goal', async () => {
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.pauseGoal();
+
+    const resumed = await goals.resumeGoal({ continueIfPaused: true });
+
+    expect(resumed.status).toBe('active');
+    expect(loopService.launches).toHaveLength(1);
   });
 
   it('counts an active goal turn and launches the next continuation', async () => {

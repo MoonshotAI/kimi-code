@@ -19,6 +19,7 @@ export interface GoalReasonInput {
 }
 
 export interface ResumeGoalInput extends GoalReasonInput {
+  readonly continueIfPaused?: boolean;
   readonly continueIfBlocked?: boolean;
 }
 
