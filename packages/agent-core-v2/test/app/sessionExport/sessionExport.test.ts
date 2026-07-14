@@ -869,7 +869,7 @@ function testAgentHandle(agentWire: Pick<ReturnType<typeof stubAgentWire>, 'flus
   return {
     id: 'main',
     kind: LifecycleScope.Agent,
-    accessor: accessorFrom([[IWireService, stubAgentWire([], agentWire.flush)]]),
+    accessor: accessorFrom([[IWireService, stubAgentWire(agentWire.flush)]]),
     dispose: () => {},
   };
 }

@@ -49,6 +49,11 @@ export interface ContextTranscript {
   readonly foldedLength: number;
 }
 
+export interface ContextTranscriptReducer {
+  add(record: WireRecord): void;
+  result(): ContextTranscript;
+}
+
 interface MutableMessage {
   id?: string;
   role: ContextMessage['role'];
@@ -65,6 +70,12 @@ interface MutableEntry {
 }
 
 export function reduceContextTranscript(records: Iterable<WireRecord>): ContextTranscript {
+  const reducer = createContextTranscriptReducer();
+  for (const record of records) reducer.add(record);
+  return reducer.result();
+}
+
+export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const transcript: MutableEntry[] = [];
   let foldedLength = 0;
   let clearFloor = 0;
@@ -176,7 +187,7 @@ export function reduceContextTranscript(records: Iterable<WireRecord>): ContextT
     resetOpenState();
   };
 
-  for (const record of records) {
+  const add = (record: WireRecord): void => {
     switch (record.type) {
       case 'context.append_message': {
         const entry = toMutableEntry(record['message'] as ContextMessage, record.time);
@@ -212,12 +223,15 @@ export function reduceContextTranscript(records: Iterable<WireRecord>): ContextT
       default:
         break;
     }
-  }
+  };
 
   return {
-    entries: transcript.map((e) => e.message),
-    times: transcript.map((e) => e.time),
-    foldedLength,
+    add,
+    result: () => ({
+      entries: transcript.map((e) => e.message),
+      times: transcript.map((e) => e.time),
+      foldedLength,
+    }),
   };
 }
 

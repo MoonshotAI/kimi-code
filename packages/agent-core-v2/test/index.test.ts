@@ -17,8 +17,7 @@ import {
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { setRuntimePhase } from '#/agent/runtime/runtimeOps';
-import { contextAppendMessage } from '#/agent/contextMemory/contextOps';
+import { RuntimeModel, setRuntimePhase } from '#/agent/runtime/runtimeOps';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -119,10 +118,7 @@ describe('v1 wire vocabulary', () => {
     ]);
   });
 
-  it('never persists nor emits persist:false ops, but still applies them', async () => {
-    const emissions: WireRecord[] = [];
-    disposables.add(wire.onDidDispatch((record) => emissions.push(record)));
-
+  it('applies persist:false ops without writing records', async () => {
     wire.dispatch(
       setRuntimePhase({
         phase: { kind: 'running', turnId: 0, step: 1, stepId: 's-1', since: Date.now() },
@@ -130,7 +126,7 @@ describe('v1 wire vocabulary', () => {
     );
 
     expect(await readRecords()).toEqual([]);
-    expect(emissions).toEqual([]);
+    expect(wire.getModel(RuntimeModel).phase.kind).toBe('running');
   });
 
   it('round-trips the todo list through the persisted tools.update_store record', async () => {
@@ -277,7 +273,7 @@ describe('AgentRecords persistence metadata', () => {
     expect(migrated.message.toolCalls[0]?.['function']).toBeUndefined();
   });
 
-  it('warns but continues when replaying records from a newer wire version', async () => {
+  it('replays a newer wire version without rewriting its metadata', async () => {
     persistence.records.push(
       {
         type: 'metadata',
@@ -286,9 +282,11 @@ describe('AgentRecords persistence metadata', () => {
       },
     );
 
-    const result = await ctx.restorePersisted();
-    expect(result.warning).toContain('9.9');
-    expect(result.warning).toContain(WIRE_PROTOCOL_VERSION);
+    await expect(ctx.restorePersisted()).resolves.toBeUndefined();
+    expect(persistence.records[0]).toMatchObject({
+      type: 'metadata',
+      protocol_version: '9.9',
+    });
   });
 
   it('rejects replaying records without a registered migration path', async () => {
@@ -319,7 +317,7 @@ describe('AgentRecords persistence metadata', () => {
       { type: 'goal.update', status: 'blocked', reason: 'needs credentials', actor: 'model' },
     );
 
-    await expect(ctx.restorePersisted()).resolves.toEqual({ unknownRecords: 0 });
+    await expect(ctx.restorePersisted()).resolves.toBeUndefined();
     expect(context.get()).toHaveLength(0);
     expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
       goalId: 'g1',
@@ -343,7 +341,7 @@ describe('AgentRecords persistence metadata', () => {
       { type: 'forked', time: 2 },
     );
 
-    await expect(ctx.restorePersisted()).resolves.toEqual({ unknownRecords: 0 });
+    await expect(ctx.restorePersisted()).resolves.toBeUndefined();
     expect(persistence.records.slice(0, 3).map((record) => record.type)).toEqual([
       'metadata',
       'goal.create',
@@ -371,7 +369,7 @@ describe('AgentRecords persistence metadata', () => {
       },
     );
 
-    await expect(ctx.restorePersisted()).resolves.toEqual({ unknownRecords: 0 });
+    await expect(ctx.restorePersisted()).resolves.toBeUndefined();
     expect(ctx.get(IAgentGoalService).getGoal().goal).toMatchObject({
       goalId: 'fork-goal',
       objective: 'fork work',
@@ -388,7 +386,7 @@ describe('AgentRecords persistence metadata', () => {
       { type: 'forked', time: 2 },
     );
 
-    await expect(ctx.restorePersisted()).resolves.toEqual({ unknownRecords: 0 });
+    await expect(ctx.restorePersisted()).resolves.toBeUndefined();
     expect(context.get()).toHaveLength(0);
   });
 
@@ -427,44 +425,6 @@ describe('AgentRecords persistence metadata', () => {
       measured: 42,
       estimated: 0,
     });
-  });
-});
-
-describe('IWireService.getRecordHistory()', () => {
-  it('returns restored records in order, excluding metadata', async () => {
-    const persistence = new InMemoryWireRecordPersistence([
-      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
-      { type: 'context.append_message', message: userMessage('restored') },
-    ]);
-    const records = createTestAgent({ persistence, autoConfigure: false }).wire;
-    await records.restore();
-
-    const snapshot = records.getRecordHistory();
-    const types = snapshot
-      .map((record) => record.type)
-      .filter((type) => type !== 'config.update');
-    expect(types).toEqual(['context.append_message']);
-    const lengthBefore = records.getRecordHistory().length;
-    (snapshot as unknown as WireRecord[]).pop();
-    expect(records.getRecordHistory()).toHaveLength(lengthBefore);
-  });
-
-  it('appends live-dispatched records after the restored journal', async () => {
-    const persistence = new InMemoryWireRecordPersistence([
-      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
-      { type: 'context.append_message', message: userMessage('restored') },
-    ]);
-    const ctx = createTestAgent({ persistence, autoConfigure: false });
-    await ctx.wire.restore();
-    const restoredLength = ctx.wire.getRecordHistory().length;
-
-    ctx.get(IWireService).dispatch(contextAppendMessage({ message: userMessage('live') }));
-
-    const after = ctx.wire.getRecordHistory();
-    expect(after).toHaveLength(restoredLength + 1);
-    const last = after[after.length - 1] as { type: string; message?: ContextMessage };
-    expect(last.type).toBe('context.append_message');
-    expect(last.message?.content[0]).toEqual({ type: 'text', text: 'live' });
   });
 });
 

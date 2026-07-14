@@ -53,7 +53,7 @@ import {
   type KimiErrorPayload,
 } from '#/errors';
 import { IWireService } from '#/wire/wire';
-import { defineDerivedModel } from '#/wire/model';
+import { defineModel } from '#/wire/model';
 import { IEventBus } from '#/app/event/eventBus';
 
 import { IAgentGoalService, type GoalReasonInput, type ResumeGoalInput } from './goal';
@@ -156,20 +156,22 @@ interface PendingContinuation {
   turnId?: number;
 }
 
-const GoalForkNoticeModel = defineDerivedModel<GoalForkNoticeState>(
+const GoalForkNoticeModel = defineModel<GoalForkNoticeState>(
   'goalForkNotice',
   () => ({ goalPresent: false, reminderPending: false }),
   {
-    'goal.create': (state) => ({ ...state, goalPresent: true }),
-    'goal.clear': (state) => ({ ...state, goalPresent: false }),
-    forked: (state) => ({
-      goalPresent: false,
-      reminderPending: state.goalPresent || state.reminderPending,
-    }),
-    'context.append_message': (state, payload: { message?: ContextMessage }) =>
-      state.reminderPending && isGoalForkClearedReminder(payload.message)
-        ? { ...state, reminderPending: false }
-        : state,
+    reducers: {
+      'goal.create': (state) => ({ ...state, goalPresent: true }),
+      'goal.clear': (state) => ({ ...state, goalPresent: false }),
+      forked: (state) => ({
+        goalPresent: false,
+        reminderPending: state.goalPresent || state.reminderPending,
+      }),
+      'context.append_message': (state, payload: { message?: ContextMessage }) =>
+        state.reminderPending && isGoalForkClearedReminder(payload.message)
+          ? { ...state, reminderPending: false }
+          : state,
+    },
   },
 );
 
@@ -213,7 +215,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         dynamicInjector,
       ),
     );
-    this._register(this.wire.attach(GoalForkNoticeModel));
     this._register(this.wire.onRestored(() => this.normalizeAfterReplay()));
     this._register(
       this.eventBus.subscribe('turn.started', (e) => this.handleTurnLaunched(e.turnId)),

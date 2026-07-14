@@ -470,8 +470,8 @@ export class SessionEventBroadcaster {
    * `agent.status.updated` event. The native v2 domains emit the usage /
    * context-window / model slices independently, so a usage-only event can
    * reach clients without the live contextTokens and overwrite it with a stale
-   * zero. Attaching the {@link LegacyStatusModel} to the main agent's wire and
-   * re-emitting a combined snapshot on every status-affecting Op keeps the
+   * zero. Subscribing to the {@link LegacyStatusModel} on the main agent's wire
+   * and re-emitting a combined snapshot on every status-affecting Op keeps the
    * context window consistent on the wire.
    */
   private attachLegacyStatus(sessionId: string, handle: IAgentScopeHandle): IDisposable {
@@ -480,7 +480,6 @@ export class SessionEventBroadcaster {
     // test agents and not-yet-restored agents may not expose it, in which case
     // the native partial events are simply forwarded unchanged.
     if (wire === undefined) return { dispose: () => {} };
-    const attachD = wire.attach(LegacyStatusModel);
     let lastEmitted: string | undefined;
     const subD = wire.subscribe(LegacyStatusModel, () => {
       const snapshot = readLegacyStatus(handle);
@@ -494,12 +493,7 @@ export class SessionEventBroadcaster {
         ...snapshot,
       });
     });
-    return {
-      dispose: () => {
-        subD.dispose();
-        attachD.dispose();
-      },
-    };
+    return subD;
   }
 
   private onAgentEvent(sessionId: string, agentId: string, event: DomainEvent): void {

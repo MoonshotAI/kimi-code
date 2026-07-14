@@ -7,8 +7,6 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import {
   IWireService,
-  type WireRestoreOptions,
-  type WireRestoreResult,
   type IWireService as AgentWire,
 } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
@@ -85,26 +83,43 @@ export async function restoreTestAgentWire(
   log: IAppendLogStore,
   scope: string,
   records: readonly WireRecord[],
-  options?: WireRestoreOptions,
-): Promise<WireRestoreResult> {
+): Promise<void> {
   await log.rewrite(scope, AGENT_WIRE_RECORD_KEY, records);
-  return wire.restore(options);
+  await wire.restore();
 }
 
 export function stubAgentWire(
-  records: readonly WireRecord[] = [],
   flush: () => Promise<void> = async () => {},
 ): AgentWire {
   return {
     _serviceBrand: undefined,
     dispatch: () => {},
-    restore: async () => ({ unknownRecords: 0 }),
+    restore: async () => {},
     flush,
-    attach: () => toDisposable(() => {}),
     getModel: (model) => model.initial() as never,
     subscribe: () => toDisposable(() => {}),
-    getRecordHistory: () => [...records],
-    onDidDispatch: () => toDisposable(() => {}),
     onRestored: () => toDisposable(() => {}),
+  };
+}
+
+export function recordingWireLog(
+  records: WireRecord[],
+  onAppend?: (record: WireRecord) => void,
+): IAppendLogStore {
+  return {
+    _serviceBrand: undefined,
+    append: (_scope, _key, record) => {
+      records.push(record as WireRecord);
+      onAppend?.(record as WireRecord);
+    },
+    read: async function* <R>() {
+      for (const record of records) yield record as R;
+    },
+    rewrite: async (_scope, _key, next) => {
+      records.splice(0, records.length, ...(next as readonly WireRecord[]));
+    },
+    flush: async () => {},
+    close: async () => {},
+    acquire: () => toDisposable(() => {}),
   };
 }

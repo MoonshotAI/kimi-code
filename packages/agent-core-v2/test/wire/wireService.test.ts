@@ -9,7 +9,7 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { defineModel } from '#/wire/model';
+import { defineDerivedModel, defineModel } from '#/wire/model';
 import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 import { IWireService } from '#/wire/wire';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
@@ -31,6 +31,16 @@ const counterAdd = CounterModel.defineOp('store.counter.add', {
     trace.push('apply.counter');
     return { value: s.value + p.by };
   },
+});
+
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'store.counter.add': typeof counterAdd;
+  }
+}
+
+const CounterProjection = defineDerivedModel('store.counterProjection', () => 0, {
+  'store.counter.add': (state, payload) => state + payload.by,
 });
 const otherSet = OtherModel.defineOp('store.other.set', {
   schema: z.object({ value: z.number() }),
@@ -119,6 +129,28 @@ describe('WireService', () => {
     expect(otherSeenByCounter).toBe(42);
     expect(wire.getModel(CounterModel)).toEqual({ value: 1 });
     expect(wire.getModel(OtherModel)).toEqual({ value: 42 });
+  });
+
+  it('keeps a derived projection attached until its last subscription is disposed', () => {
+    const first: number[] = [];
+    const second: number[] = [];
+    const firstSubscription = wire.subscribe(CounterProjection, (state) => first.push(state));
+    const secondSubscription = wire.subscribe(CounterProjection, (state) => second.push(state));
+
+    wire.dispatch(counterAdd({ by: 1 }));
+    firstSubscription.dispose();
+    wire.dispatch(counterAdd({ by: 2 }));
+    secondSubscription.dispose();
+    wire.dispatch(counterAdd({ by: 4 }));
+
+    const afterReattach: number[] = [];
+    const reattached = wire.subscribe(CounterProjection, (state) => afterReattach.push(state));
+    wire.dispatch(counterAdd({ by: 3 }));
+    reattached.dispose();
+
+    expect(first).toEqual([1]);
+    expect(second).toEqual([1, 3]);
+    expect(afterReattach).toEqual([3]);
   });
 
   it('replays silently: apply runs, no persist, no onChange, onRestored once', async () => {
@@ -218,11 +250,11 @@ describe('WireService', () => {
     }
   });
 
-  it('reports and counts unknown record types during replay, skipping them', async () => {
+  it('reports unknown record types during replay and skips them', async () => {
     const unexpected: unknown[] = [];
     setUnexpectedErrorHandler((error) => unexpected.push(error));
     try {
-      const result = await restoreTestAgentWire(
+      await restoreTestAgentWire(
         wire,
         log,
         testWireScope(SCOPE, KEY),
@@ -234,7 +266,6 @@ describe('WireService', () => {
       );
 
       expect(wire.getModel(CounterModel)).toEqual({ value: 5 });
-      expect(result).toEqual({ unknownRecords: 1 });
       expect(unexpected).toHaveLength(1);
       expect(unexpected[0]).toMatchObject({
         code: 'wire.unknown_record',

@@ -31,6 +31,10 @@
  * A primary Model may register cross-model reducers keyed by foreign op types:
  * `WireService` runs them on both dispatch and restore, so v1-derived
  * restore effects can stay replayable without persisting extra records.
+ * A Derived Model is instead an on-demand live projection: subscribing owns
+ * its reducer registration, and disposing the last subscription releases it.
+ * It starts from `initial()` when first subscribed and does not imply replay of
+ * records that were restored before that subscription.
  *
  * `DeepReadonly<T>` recursively maps a state type to its deeply-readonly view
  * for the references returned by `getModel` / `subscribe`: functions pass

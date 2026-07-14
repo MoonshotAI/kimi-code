@@ -13,32 +13,19 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 
 import type { DeepReadonly, DerivedModelDef, ModelDef } from './model';
 import type { Op } from './op';
-import type { WireRecord } from './record';
-
-export interface WireRestoreOptions {
-  readonly rewriteMigratedRecords?: boolean;
-}
-
-export interface WireRestoreResult {
-  readonly warning?: string;
-  readonly unknownRecords: number;
-}
 
 export interface IWireService {
   readonly _serviceBrand: undefined;
 
   dispatch(...ops: Op[]): void;
-  restore(options?: WireRestoreOptions): Promise<WireRestoreResult>;
+  restore(): Promise<void>;
   flush(): Promise<void>;
 
-  attach<S>(model: DerivedModelDef<S>): IDisposable;
-  getModel<S>(model: ModelDef<S> | DerivedModelDef<S>): DeepReadonly<S>;
+  getModel<S>(model: ModelDef<S>): DeepReadonly<S>;
   subscribe<S>(
     model: ModelDef<S> | DerivedModelDef<S>,
     handler: (state: DeepReadonly<S>, prev: DeepReadonly<S>) => void,
   ): IDisposable;
-  getRecordHistory(): readonly WireRecord[];
-  onDidDispatch(handler: (record: WireRecord) => void): IDisposable;
   onRestored(handler: () => void | Promise<void>): IDisposable;
 }
 

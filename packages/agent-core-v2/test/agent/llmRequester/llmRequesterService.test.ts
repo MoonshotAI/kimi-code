@@ -44,7 +44,7 @@ import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { registerTestAgentWire } from '../../wire/stubs';
+import { recordingWireLog, registerTestAgentWire } from '../../wire/stubs';
 
 const capabilities: ModelCapability = {
   image_in: false,
@@ -194,18 +194,15 @@ function createService(
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
-  registerTestAgentWire(ix, 'wire/llm-requester');
+  const records: WireRecord[] = [];
+  registerTestAgentWire(ix, 'wire/llm-requester', { log: recordingWireLog(records) });
   ix.set(IFaultInjectionService, new SyncDescriptor(FaultInjectionService));
   ix.set(IAgentLLMRequesterService, new SyncDescriptor(AgentLLMRequesterService));
-
-  const records: WireRecord[] = [];
-  disposables.add(
-    ix.get(IWireService).onDidDispatch((record) => records.push(record)),
-  );
 
   return {
     service: ix.get(IAgentLLMRequesterService),
     faultInjection: ix.get(IFaultInjectionService),
+    wire: ix.get(IWireService),
     records,
   };
 }
@@ -422,7 +419,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
 
   it('records repeated-413 recovery projections on the sticky later request', async () => {
     const calls = { value: 0 };
-    const { service, records } = createService(
+    const { service, wire, records } = createService(
       createModel(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
       {
         project: (messages: readonly ContextMessage[]) => messages,
@@ -434,6 +431,7 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
 
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
     await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
+    await wire.flush();
 
     expect(
       records

@@ -103,9 +103,8 @@ function makeFakeAgent(agentId: string): FakeAgent {
         }
       }
     },
-    restore: async () => ({ unknownRecords: 0 }),
+    restore: async () => {},
     flush: async () => {},
-    attach: () => toDisposable(() => {}),
     getModel: () => todoState,
     subscribe: (_model: unknown, handler: unknown) => {
       subscribedCount += 1;
@@ -115,8 +114,6 @@ function makeFakeAgent(agentId: string): FakeAgent {
         if (i >= 0) subscribers.splice(i, 1);
       });
     },
-    getRecordHistory: () => [],
-    onDidDispatch: () => toDisposable(() => {}),
     onRestored: (handler: () => void) => {
       restoredHandlers.push(handler);
       return toDisposable(() => {});

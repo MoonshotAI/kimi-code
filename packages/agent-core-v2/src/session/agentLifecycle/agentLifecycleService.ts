@@ -34,6 +34,7 @@ import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { ErrorCodes, Error2 } from '#/errors';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
+import { PermissionModeConfiguredModel } from '#/agent/permissionMode/permissionModeOps';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
 import { IAgentTaskService } from '#/agent/task/task';
@@ -246,9 +247,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     // creation through the permission service.
     const wire = handle.accessor.get(IWireService);
     const permissionMode = this.config.get<PermissionMode>(DEFAULT_PERMISSION_MODE_SECTION);
-    const hasRestoredPermissionMode = wire
-      .getRecordHistory()
-      .some((record) => record.type === 'permission.set_mode');
+    const hasRestoredPermissionMode = wire.getModel(PermissionModeConfiguredModel);
     if (permissionMode !== undefined && !hasRestoredPermissionMode) {
       handle.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
     }

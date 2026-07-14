@@ -64,13 +64,10 @@ function stubWireService(captureRestored?: (handler: RestoreHandler) => void): I
   return {
     _serviceBrand: undefined,
     dispatch: () => {},
-    restore: async () => ({ unknownRecords: 0 }),
+    restore: async () => {},
     flush: async () => {},
-    attach: () => toDisposable(() => {}),
-    getModel: () => new Map(),
+    getModel: (model) => model.initial() as never,
     subscribe: () => toDisposable(() => {}),
-    getRecordHistory: () => [],
-    onDidDispatch: () => toDisposable(() => {}),
     onRestored: (handler: RestoreHandler) => {
       captureRestored?.(handler);
       return toDisposable(() => {});

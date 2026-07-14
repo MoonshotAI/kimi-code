@@ -106,10 +106,10 @@ describe('wire.jsonl round-trip', () => {
       ...records,
       { type: 'compat.unknown.nope', foo: 1 },
     ];
-    setUnexpectedErrorHandler(() => {});
-    let replayResult;
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
     try {
-      replayResult = await restoreTestAgentWire(
+      await restoreTestAgentWire(
         replayTarget.wire,
         replayTarget.log,
         testWireScope(SCOPE, 'replay-target'),
@@ -119,7 +119,7 @@ describe('wire.jsonl round-trip', () => {
       resetUnexpectedErrorHandler();
     }
 
-    expect(replayResult.unknownRecords).toBe(1);
+    expect(unexpected).toHaveLength(1);
     expect(replayTarget.wire.getModel(CounterModel)).toEqual(
       live.wire.getModel(CounterModel),
     );

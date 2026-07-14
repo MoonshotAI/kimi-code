@@ -2,7 +2,6 @@ import type { ContentPart } from '#/app/llmProtocol/message';
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
 import { Jimp } from 'jimp';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
@@ -18,8 +17,8 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { McpOAuthService } from '#/agent/mcp/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/agent/mcp/types';
 import { IWireService } from '#/wire/wire';
+import type { WireRecord } from '#/wire/record';
 import { McpDiscoveryModel } from '#/agent/mcp/mcpDiscoveryOps';
-import { defineModel } from '#/wire/model';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -32,13 +31,8 @@ import { createTestAgent, mcpServices, type TestAgentContext } from '../../harne
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import { stubToolResultTruncationService } from '../toolResultTruncation/stubs';
-import { registerTestAgentWire } from '../../wire/stubs';
+import { recordingWireLog, registerTestAgentWire } from '../../wire/stubs';
 
-const McpTestModel = defineModel('mcp.test', () => 0);
-const mcpTestTick = McpTestModel.defineOp('mcp.test.tick', {
-  schema: z.object({}),
-  apply: (state) => state + 1,
-});
 import { discoverTools, executeTool, fakeMcpClient } from './stubs';
 
 const MCP_OUTPUT_TRUNCATED_TEXT =
@@ -163,12 +157,14 @@ describe('AgentMcpService', () => {
   let events: DomainEvent[];
   let telemetryEvents: TelemetryRecord[];
   let wire: IWireService;
+  let wireRecordListeners: Set<(record: WireRecord) => void>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     events = [];
     telemetryEvents = [];
+    wireRecordListeners = new Set();
     ix.stub(IEventBus, {
       publish: (event) => {
         events.push(event);
@@ -180,7 +176,12 @@ describe('AgentMcpService', () => {
     ix.set(IAgentToolExecutorService, new SyncDescriptor(AgentToolExecutorService));
     ix.stub(IAgentToolResultTruncationService, stubToolResultTruncationService());
     ix.stub(IAgentLoopService, stubLoopWithHooks());
-    wire = registerTestAgentWire(ix, 'mcp-test', { eventBus: ix.get(IEventBus) });
+    wire = registerTestAgentWire(ix, 'mcp-test', {
+      eventBus: ix.get(IEventBus),
+      log: recordingWireLog([], (record) => {
+        for (const listener of wireRecordListeners) listener(record);
+      }),
+    });
   });
   afterEach(() => {
     disposables.dispose();
@@ -578,12 +579,13 @@ describe('AgentMcpService', () => {
     off: { dispose(): void };
   } {
     const records: { type: string; [key: string]: unknown }[] = [];
-    const off = wire.onDidDispatch((record) => {
+    const listener = (record: WireRecord): void => {
       if (record.type === 'mcp.tools_discovered') {
         records.push(record as { type: string; [key: string]: unknown });
       }
-    });
-    return { records, off };
+    };
+    wireRecordListeners.add(listener);
+    return { records, off: toDisposable(() => wireRecordListeners.delete(listener)) };
   }
 
   it('records tools/list once after restore and dedups unchanged reconnects', async () => {
@@ -604,6 +606,7 @@ describe('AgentMcpService', () => {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
       await wire.restore();
+      await wire.flush();
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         type: 'mcp.tools_discovered',
@@ -618,6 +621,7 @@ describe('AgentMcpService', () => {
 
       manager.setResolved('grafana', client, await discoverTools(client), new Set(), rawTools);
       manager.connect('grafana');
+      await wire.flush();
       expect(records).toHaveLength(2);
     } finally {
       off.dispose();
@@ -642,6 +646,7 @@ describe('AgentMcpService', () => {
       manager.connect('grafana');
       expect(records).toHaveLength(0);
       await wire.restore();
+      await wire.flush();
       expect(records).toHaveLength(1);
     } finally {
       off.dispose();
@@ -668,37 +673,8 @@ describe('AgentMcpService', () => {
       enabledNames.clear();
       enabledNames.add('mutated_after_observation');
       await wire.restore();
+      await wire.flush();
 
-      expect(records).toHaveLength(1);
-      expect(records[0]).toMatchObject({
-        type: 'mcp.tools_discovered',
-        serverName: 'grafana',
-        tools: rawTools,
-        enabledNames: ['query_range'],
-      });
-    } finally {
-      off.dispose();
-    }
-  });
-
-  it('flushes a parked discovery after the first live wire record on a fresh session', async () => {
-    const manager = new FakeMcpManager();
-    const client = fakeMcpClient([RAW_QUERY]);
-    const rawTools = await client.listTools();
-    manager.setResolved(
-      'grafana',
-      client,
-      await discoverTools(client),
-      new Set(['query_range']),
-      rawTools,
-    );
-    createService(manager);
-
-    const { records, off } = collectDiscoveries();
-    try {
-      manager.connect('grafana');
-      expect(records).toHaveLength(0);
-      wire.dispatch(mcpTestTick({}));
       expect(records).toHaveLength(1);
       expect(records[0]).toMatchObject({
         type: 'mcp.tools_discovered',
@@ -725,6 +701,7 @@ describe('AgentMcpService', () => {
     createService(manager);
     manager.connect('graf.ana');
     await wire.restore();
+    await wire.flush();
 
     const { records, off } = collectDiscoveries();
     try {
@@ -738,11 +715,13 @@ describe('AgentMcpService', () => {
         rawTools,
       );
       manager.connect('graf_ana');
+      await wire.flush();
       expect(records).toHaveLength(1);
       expect(records[0]!['collisions']).toHaveLength(1);
 
       manager.disconnect('graf.ana');
       manager.connect('graf_ana');
+      await wire.flush();
       expect(records).toHaveLength(2);
       expect(records[1]!['collisions']).toBeUndefined();
     } finally {
