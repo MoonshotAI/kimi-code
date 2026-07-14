@@ -1,3 +1,12 @@
+/**
+ * Scenario: context projection rebuilds stored history into provider-valid messages.
+ *
+ * Responsibilities: validates tool-exchange repair, strict projection, and
+ * degraded/full-strip media projections through the public projector contract.
+ * Wiring: real AgentContextProjectorService with captured log and telemetry
+ * boundaries. Run: pnpm test -- test/agent/contextProjector/projector-tool-exchanges.test.ts
+ */
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -559,10 +568,10 @@ describe('projector tool-exchange normalization', () => {
   });
 
   describe('projectMediaStripped', () => {
-    function imageMessage(url: string): ContextMessage {
+    function imageMessage(url: string, id?: string): ContextMessage {
       return {
         role: 'user',
-        content: [{ type: 'image_url', imageUrl: { url } }],
+        content: [{ type: 'image_url', imageUrl: { url, id } }],
         toolCalls: [],
         origin: { kind: 'user' },
       };
@@ -596,13 +605,87 @@ describe('projector tool-exchange normalization', () => {
       const texts = allParts.filter((part) => part.type === 'text').map((part) => part.text);
       expect(texts).toContain('look at these');
       expect(texts).toContain('<image path="/tmp/shot.png">');
-      expect(texts.some((text) => text.includes('the provider rejected this image'))).toBe(true);
-      expect(texts.some((text) => text.includes('dropped along with a rejected image'))).toBe(true);
+      expect(texts.some((text) => text.includes('omitted for provider compatibility'))).toBe(true);
+      expect(texts.some((text) => text.includes('get conversion guidance'))).toBe(true);
     });
 
     it('returns the projected messages untouched when there is no media', () => {
       const projected = projector.projectMediaStripped([user('just text')]);
       expect(projected).toEqual(project([user('just text')]));
+    });
+
+    it('preserves media introduced after the rejected-media snapshot', () => {
+      const rejected = imageMessage('data:image/png;base64,OLD', 'old-id');
+      const snapshot = projector.captureMediaStripSnapshot([rejected]);
+
+      const projected = projector.projectMediaStripped(
+        [rejected, imageMessage('data:image/png;base64,NEW', 'new-id')],
+        snapshot,
+      );
+
+      const urls = projected
+        .flatMap((message) => message.content)
+        .filter((part) => part.type === 'image_url')
+        .map((part) => part.imageUrl.url);
+      expect(urls).toEqual(['data:image/png;base64,NEW']);
+    });
+
+    it('does not snapshot media dropped by the normal provider projection', () => {
+      const url = 'data:image/png;base64,ORPHAN';
+      const orphan: ContextMessage = {
+        role: 'tool',
+        content: [{ type: 'image_url', imageUrl: { url, id: 'orphan-id' } }],
+        toolCalls: [],
+        toolCallId: 'ghost',
+      };
+      const snapshot = projector.captureMediaStripSnapshot([
+        user('go'),
+        assistant('done'),
+        orphan,
+      ]);
+
+      const projected = projector.projectMediaStripped(
+        [imageMessage(url, 'orphan-id')],
+        snapshot,
+      );
+
+      expect(
+        projected
+          .flatMap((message) => message.content)
+          .some((part) => part.type === 'image_url'),
+      ).toBe(true);
+    });
+
+    it('strips a new media container with the same provider-visible identity', () => {
+      const snapshot = projector.captureMediaStripSnapshot([
+        imageMessage('data:image/png;base64,SAME', 'same-id'),
+      ]);
+
+      const projected = projector.projectMediaStripped(
+        [imageMessage('data:image/png;base64,SAME', 'same-id')],
+        snapshot,
+      );
+
+      expect(
+        projected
+          .flatMap((message) => message.content)
+          .some((part) => part.type === 'image_url'),
+      ).toBe(false);
+    });
+
+    it('preserves a matching URL when its provider-visible id is different', () => {
+      const url = 'https://example.test/media/image.png';
+      const snapshot = projector.captureMediaStripSnapshot([imageMessage(url, 'old-id')]);
+
+      const projected = projector.projectMediaStripped(
+        [imageMessage(url, 'new-id')],
+        snapshot,
+      );
+
+      const image = projected
+        .flatMap((message) => message.content)
+        .find((part) => part.type === 'image_url');
+      expect(image).toMatchObject({ imageUrl: { url, id: 'new-id' } });
     });
   });
 });

@@ -10,6 +10,7 @@ import {
   inputTotal,
   isContextOverflowStatusError,
   type ContentPart,
+  type Message,
   type TokenUsage,
 } from '@moonshot-ai/kosong';
 import { basename } from 'pathe';
@@ -37,6 +38,11 @@ import type { TelemetryPropertyValue } from '../../telemetry';
 import { gateImageFormatParts } from '../../tools/support/image-compress';
 import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
+import {
+  captureMediaStripSnapshot,
+  stripMediaPartsBySnapshot,
+  type MediaStripSnapshot,
+} from '../context/projector';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
@@ -727,6 +733,12 @@ export class TurnFlow {
     // appended only when the loadable set actually changed, so quiet turns
     // keep the prompt cache fully warm.
     this.agent.injection.injectToolsDiff();
+    let mediaStripSnapshot: MediaStripSnapshot | undefined;
+    const buildMessagesMediaStripped = (): Message[] => {
+      const messages = this.agent.context.messages;
+      mediaStripSnapshot ??= captureMediaStripSnapshot(messages);
+      return stripMediaPartsBySnapshot(messages, mediaStripSnapshot);
+    };
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
@@ -740,7 +752,7 @@ export class TurnFlow {
           buildMessages: () => this.agent.context.messages,
           buildMessagesStrict: () => this.agent.context.strictMessages,
           buildMessagesMediaDegraded: () => this.agent.context.mediaDegradedMessages,
-          buildMessagesMediaStripped: () => this.agent.context.mediaStrippedMessages,
+          buildMessagesMediaStripped,
           dispatchEvent: this.buildDispatchEvent(turnId),
           // Re-read per step (not snapshotted per turn) so a select_tools load
           // is dispatchable on the very next step of the same turn.

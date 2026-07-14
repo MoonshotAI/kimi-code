@@ -1020,6 +1020,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentLoopService,
   AgentLoopService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'loop',
 );

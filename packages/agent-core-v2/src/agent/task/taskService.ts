@@ -1286,6 +1286,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentTaskService,
   AgentTaskService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'task',
 );

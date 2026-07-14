@@ -673,6 +673,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionCronService,
   SessionCronServiceImpl,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'cron',
 );

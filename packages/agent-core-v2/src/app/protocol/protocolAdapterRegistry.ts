@@ -61,6 +61,6 @@ registerScopedService(
   LifecycleScope.App,
   IProtocolAdapterRegistry,
   ProtocolAdapterRegistry,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'protocol',
 );

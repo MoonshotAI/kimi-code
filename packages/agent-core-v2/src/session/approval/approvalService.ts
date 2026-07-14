@@ -55,4 +55,4 @@ function requestId(req: ApprovalRequest): string {
   return req.id ?? req.toolCallId ?? `${req.toolName}:${String(Date.now())}`;
 }
 
-registerScopedService(LifecycleScope.Session, ISessionApprovalService, SessionApprovalService, InstantiationType.Delayed, 'approval');
+registerScopedService(LifecycleScope.Session, ISessionApprovalService, SessionApprovalService, InstantiationType.Eager, 'approval');

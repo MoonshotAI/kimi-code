@@ -108,7 +108,7 @@ registerScopedService(
   LifecycleScope.App,
   IAtomicDocumentStore,
   JsonAtomicDocumentStore,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'storage',
 );
 
@@ -116,6 +116,6 @@ registerScopedService(
   LifecycleScope.App,
   IAtomicTomlDocumentStore,
   TomlAtomicDocumentStore,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'storage',
 );

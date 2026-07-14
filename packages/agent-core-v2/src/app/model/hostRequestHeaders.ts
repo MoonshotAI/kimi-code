@@ -33,6 +33,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostRequestHeaders,
   HostRequestHeaders,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'model',
 );

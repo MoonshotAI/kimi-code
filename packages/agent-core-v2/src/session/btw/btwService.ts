@@ -45,6 +45,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionBtwService,
   SessionBtwService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'session-btw',
 );

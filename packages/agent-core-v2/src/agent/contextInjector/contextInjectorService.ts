@@ -173,6 +173,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextInjectorService,
   AgentContextInjectorService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'contextInjector',
 );

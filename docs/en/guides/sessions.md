@@ -108,6 +108,10 @@ You can also export from inside the TUI without leaving the interactive session:
 - **`/export-debug-zip`**: produces the same debug ZIP as `kimi export`.
 - **`/export-md`** (alias `/export`): exports the conversation as a human-readable Markdown file, suitable for sharing or archiving. Accepts an optional path argument; without one, it writes to `kimi-export-<short-id>-<timestamp>.md` in the current working directory.
 
+In the web UI, `/export` downloads the current session as a diagnostic ZIP. It includes the persisted session data, diagnostic logs, and a bounded metadata-only `logs/kimi-web.jsonl` record of key browser events. Prompt text, WebSocket payloads, and console arguments are not copied into this browser log. This web command differs from the TUI `/export` alias above.
+
+The browser buffers the ZIP before saving it, so web exports are limited to 64 MiB. For a larger session, use `kimi export <sessionId>` or the TUI `/export-debug-zip` command.
+
 ::: tip
 Exported files may contain code, command output, and file paths that are sensitive. Review the content before sharing.
 :::

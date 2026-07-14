@@ -497,4 +497,4 @@ function freshMetadataPayload(): PayloadOf<typeof wireMetadata> {
   };
 }
 
-registerScopedService(LifecycleScope.Session, IAgentLifecycleService, AgentLifecycleService, InstantiationType.Delayed, 'agentLifecycle');
+registerScopedService(LifecycleScope.Session, IAgentLifecycleService, AgentLifecycleService, InstantiationType.Eager, 'agentLifecycle');

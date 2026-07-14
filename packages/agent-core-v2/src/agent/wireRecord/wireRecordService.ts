@@ -147,7 +147,7 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentWireRecordService,
   AgentWireRecordService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'wireRecord',
 );
 

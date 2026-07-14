@@ -57,6 +57,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionProcessRunner,
   SessionProcessRunner,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'process',
 );

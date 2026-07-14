@@ -228,6 +228,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostFileSystem,
   HostFileSystem,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'hostFs',
 );

@@ -119,6 +119,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionWorkspaceCommandService,
   SessionWorkspaceCommandService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'workspaceCommand',
 );

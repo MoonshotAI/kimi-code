@@ -1,3 +1,9 @@
+/**
+ * Agent turn integration contracts through the public RPC harness. Provider
+ * generation and host-executed user tools are the only external boundaries.
+ * Run with: pnpm --filter @moonshot-ai/agent-core test -- turn.test.ts
+ */
+
 import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
@@ -249,7 +255,7 @@ describe('Agent turn flow', () => {
     ).toContain('image/avif');
   });
 
-  describe('image-format recovery', () => {
+  describe('media recovery', () => {
     const IMAGE_CAPABLE: ModelCapability = {
       image_in: true,
       video_in: false,
@@ -285,6 +291,73 @@ describe('Agent turn flow', () => {
         finishReason: 'completed' as const,
         rawFinishReason: 'stop',
       };
+    }
+
+    const OVERSIZED_IMAGE = {
+      id: 'oversized-image',
+      url: 'data:image/png;base64,T1ZFUlNJWkVE',
+    } as const;
+
+    async function runStickyStripRecovery(recoveryImage: {
+      readonly id?: string;
+      readonly url: string;
+    }): Promise<Message[][]> {
+      let attempts = 0;
+      const histories: Message[][] = [];
+      const recoveryCall: ToolCall = {
+        type: 'function',
+        id: 'call-inspect-recovery',
+        name: 'InspectRecovery',
+        arguments: '{}',
+      };
+      const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+        attempts += 1;
+        histories.push(structuredClone(history));
+        if (attempts <= 2) {
+          throw new APIRequestTooLargeError(413, 'Request exceeds the maximum size');
+        }
+        if (attempts === 3) {
+          return {
+            id: 'mock-media-recovery-tool-call',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'text', text: 'inspect the smaller copy' }],
+              toolCalls: [recoveryCall],
+            },
+            usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+            finishReason: 'tool_calls',
+            rawFinishReason: 'tool_calls',
+          };
+        }
+        return okResponse();
+      };
+      const ctx = testAgent({ generate });
+      ctx.configure({
+        provider: { type: 'kimi', apiKey: 'test-key', model: 'kimi-code' },
+        modelCapabilities: IMAGE_CAPABLE,
+      });
+      await ctx.rpc.setPermission({ mode: 'auto' });
+      await ctx.rpc.registerTool({
+        name: 'InspectRecovery',
+        description: 'Return a model-visible recovery image.',
+        parameters: { type: 'object', properties: {}, additionalProperties: false },
+      });
+      ctx.agent.context.appendUserMessage(
+        [
+          { type: 'text', text: '<image path="/workspace/oversized.png">' },
+          { type: 'image_url', imageUrl: OVERSIZED_IMAGE },
+          { type: 'text', text: '</image>' },
+        ],
+        { kind: 'user' },
+      );
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'recover the image read' }] });
+      await ctx.untilToolCall({
+        output: [{ type: 'image_url', imageUrl: recoveryImage }],
+      });
+      await ctx.untilTurnEnd();
+
+      return histories;
     }
 
     it('strips all media and retries once on a server image-format 400', async () => {
@@ -397,6 +470,43 @@ describe('Agent turn flow', () => {
       await ctx.untilTurnEnd();
 
       expect(attempts).toBe(2);
+    });
+
+    it('keeps different media produced after the strip snapshot visible on the next model step', async () => {
+      const recoveryImage = {
+        id: 'smaller-copy',
+        url: 'data:image/png;base64,U01BTExFUl9DT1BZ',
+      } as const;
+
+      const histories = await runStickyStripRecovery(recoveryImage);
+
+      expect(histories).toHaveLength(4);
+      const finalParts = histories[3]!.flatMap((message) => message.content);
+      expect(
+        finalParts
+          .filter((part) => part.type === 'image_url')
+          .map((part) => (part.type === 'image_url' ? part.imageUrl : undefined)),
+      ).toEqual([recoveryImage]);
+      expect(
+        finalParts
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .join('\n'),
+      ).toContain('[image omitted for provider compatibility;');
+    });
+
+    it('keeps the same media stripped when a later tool result recreates its container', async () => {
+      const histories = await runStickyStripRecovery({ ...OVERSIZED_IMAGE });
+
+      expect(histories).toHaveLength(4);
+      const finalParts = histories[3]!.flatMap((message) => message.content);
+      expect(finalParts.filter((part) => part.type === 'image_url')).toHaveLength(0);
+      expect(
+        finalParts
+          .filter((part) => part.type === 'text')
+          .map((part) => part.text)
+          .filter((text) => text.includes('[image omitted for provider compatibility;')),
+      ).toHaveLength(2);
     });
   });
 

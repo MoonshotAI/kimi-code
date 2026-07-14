@@ -272,6 +272,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentActivityService,
   AgentActivityService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'activity',
 );

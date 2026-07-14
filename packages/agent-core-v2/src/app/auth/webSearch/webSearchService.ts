@@ -99,6 +99,6 @@ registerScopedService(
   LifecycleScope.App,
   IWebSearchProviderService,
   WebSearchProviderService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'auth',
 );

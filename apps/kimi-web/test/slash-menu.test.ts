@@ -3,6 +3,9 @@ import { nextTick, ref, type Ref } from 'vue';
 import type { AppSkill } from '../src/api/types';
 import { useSlashMenu } from '../src/composables/useSlashMenu';
 
+// Public slash-menu contract: matching built-ins and dispatching selected
+// commands without coupling tests to component internals.
+
 interface MockTextarea {
   value: string;
   selectionStart: number;
@@ -54,6 +57,12 @@ describe('useSlashMenu — update', () => {
     slash.update();
     expect(slash.open.value).toBe(true);
     expect(slash.items.value.map((i) => i.name)).toContain('/compact');
+  });
+
+  it('offers the session export command for an export prefix', () => {
+    const { slash } = setup('/exp');
+    slash.update();
+    expect(slash.items.value.map((item) => item.name)).toContain('/export');
   });
 
   it('closes when nothing matches', () => {

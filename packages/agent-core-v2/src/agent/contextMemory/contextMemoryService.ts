@@ -159,6 +159,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextMemoryService,
   AgentContextMemoryService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'contextMemory',
 );

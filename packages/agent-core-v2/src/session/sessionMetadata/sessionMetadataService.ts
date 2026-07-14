@@ -183,6 +183,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionMetadata,
   SessionMetadata,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionMetadata',
 );

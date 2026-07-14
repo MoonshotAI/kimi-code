@@ -329,6 +329,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentMcpService,
   AgentMcpService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'mcp',
 );

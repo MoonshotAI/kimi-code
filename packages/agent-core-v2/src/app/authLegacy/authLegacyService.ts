@@ -76,6 +76,6 @@ registerScopedService(
   LifecycleScope.App,
   IAuthLegacyService,
   AuthLegacyService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'authLegacy',
 );

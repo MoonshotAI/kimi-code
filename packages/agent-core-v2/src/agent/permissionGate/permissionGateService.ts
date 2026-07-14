@@ -285,6 +285,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPermissionGate,
   AgentPermissionGate,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'permissionGate',
 );
