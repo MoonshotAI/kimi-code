@@ -153,13 +153,10 @@ function isMissingFileError(error: unknown): boolean {
 
 export { AgentPlanService as Plan };
 
-// Stays Delayed (non-default): eager construction registers the plan_mode
-// context-injection provider too early and perturbs per-turn injection timing,
-// which breaks goal-reminder injection (test/agent/goal/injection/goalInjection).
 registerScopedService(
   LifecycleScope.Agent,
   IAgentPlanService,
   AgentPlanService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'plan',
 );
