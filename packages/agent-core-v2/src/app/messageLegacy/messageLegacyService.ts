@@ -38,7 +38,6 @@ import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import type { WireRecord } from '#/wire/record';
 
 import { IMessageLegacyService, type MessageListQuery } from './messageLegacy';
 

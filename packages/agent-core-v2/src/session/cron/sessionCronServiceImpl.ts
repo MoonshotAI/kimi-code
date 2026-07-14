@@ -91,13 +91,13 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     this._register(
       this.agentLifecycle.onDidCreate((handle) => {
         if (handle.id !== 'main') return;
-        void this.bindMainAgent(handle);
+        this.bindMainAgent(handle);
       }),
     );
 
     const existingMain = this.agentLifecycle.get('main');
     if (existingMain) {
-      void this.bindMainAgent(existingMain);
+      this.bindMainAgent(existingMain);
     }
 
     this._register(
