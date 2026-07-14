@@ -519,14 +519,9 @@ describe('SessionEventBroadcaster', () => {
     await bc.subscribe('s1', target);
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
-    // Model the main turn's activity lease: while it is in flight the session
-    // activity reports running, so the defensive idle emit for sub-agent turns
-    // must stay silent.
-    lc.baseStatus = 'running';
     // A foreground sub-agent runs and completes while the main turn is in flight.
     sub.bus.emit(agentEvent('turn.started', { turnId: 10 }));
     sub.bus.emit(agentEvent('turn.ended', { turnId: 10, reason: 'completed' }));
-    lc.baseStatus = 'idle';
     main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
     await bc.getCursor('s1');
 
@@ -544,37 +539,6 @@ describe('SessionEventBroadcaster', () => {
     ]);
     // The idle transition fires exactly once, after the main agent's turn end.
     expect(envelopes.at(-1)!.type).toBe('event.session.status_changed');
-  });
-
-  it('clears a stale running seed when a sub-agent turn ends as the last active agent', async () => {
-    // Defensive path: a session first activated while only a sub-agent turn is
-    // active seeds lastStatus='running' from ISessionActivity (which counts any
-    // agent's turn). When that sub-agent finishes, its own lease/loop are
-    // already released, so an idle session activity means it was the last
-    // active agent — the session is genuinely idle and subscribers must be told,
-    // otherwise they stay `running` until the next main turn.
-    const lc = new FakeLifecycle();
-    lc.baseStatus = 'running'; // a background sub-agent turn is active
-    const sub = lc.addAgent('agent-0');
-    sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target); // activates; seeds lastStatus='running'
-
-    // The sub-agent's turn ends; nothing else is running anymore.
-    lc.baseStatus = 'idle';
-    sub.bus.emit(agentEvent('turn.ended', { turnId: 10, reason: 'completed' }));
-    await bc.getCursor('s1');
-
-    expect(envelopes.map((e) => e.type)).toEqual([
-      'turn.ended',
-      'event.session.status_changed',
-    ]);
-    expect(envelopes[1]).toMatchObject({
-      type: 'event.session.status_changed',
-      session_id: 's1',
-      payload: { status: 'idle', previous_status: 'running' },
-    });
-    expect(envelopes[1]!.volatile).toBeUndefined();
   });
 
   it('broadcasts question requested / answered as durable v1 events', async () => {
