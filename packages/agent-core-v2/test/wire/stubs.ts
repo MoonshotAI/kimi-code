@@ -97,6 +97,7 @@ export function stubAgentWire(
     _serviceBrand: undefined,
     hooks: createHooks<WireHooks, keyof WireHooks>(['onDidRestore']),
     dispatch: () => {},
+    seal: async () => {},
     restore: async () => {},
     flush,
     getModel: (model) => model.initial() as never,

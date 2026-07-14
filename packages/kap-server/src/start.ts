@@ -116,6 +116,13 @@ export interface ServerStartOptions {
    * the API server without the web UI.
    */
   readonly webAssetsDir?: string;
+  /**
+   * Host product version, reported as `server_version` (GET /api/v1/meta), in
+   * the OpenAPI document, session exports, the lock / instance registry, and
+   * the default User-Agent. Defaults to kap-server's own package version;
+   * embedding hosts (the CLI) should pass their own version.
+   */
+  readonly version?: string;
 }
 
 export interface RunningServer {
@@ -162,7 +169,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   //     multiple servers can share the homeDir; port conflicts are resolved by
   //     the `port + 1` retry below instead of the lock.
   // Either handle is released on close and on any boot refusal below.
-  const hostVersion = getServerVersion();
+  const hostVersion = opts.version ?? getServerVersion();
   let lockHandle: AcquireLockResult | undefined;
   let registration: InstanceRegistration | undefined;
   if (isMultiServerEnabled(process.env)) {
@@ -338,7 +345,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     config: loadSnapshotConfig(),
   });
 
-  const serverVersion = getServerVersion();
+  const serverVersion = hostVersion;
 
   async function registerOpenApi(): Promise<void> {
     const { default: swagger } = await import('@fastify/swagger');

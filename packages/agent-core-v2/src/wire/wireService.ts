@@ -3,9 +3,10 @@
  *
  * `WireService` is the sole runtime owner of an Agent wire aggregate. It
  * combines the model reducer engine with the `wire.jsonl` journal protocol,
- * including metadata, migrations, atomic healing rewrites, blob dehydration
- * and rehydration plus an ordered post-restore hook. It is bound at Agent scope
- * because the aggregate identity is the Agent identity.
+ * including creation-time sealing, metadata, migrations, atomic healing
+ * rewrites, blob dehydration and rehydration plus an ordered post-restore hook.
+ * It is bound at Agent scope because the aggregate identity is the Agent
+ * identity.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -120,6 +121,14 @@ export class WireService extends Disposable implements IWireService {
       this.dispatching = false;
       this.drainDepth = 0;
     }
+  }
+
+  async seal(): Promise<void> {
+    for await (const record of this.log.read(this.wireScope, AGENT_WIRE_RECORD_KEY)) {
+      void record;
+      return;
+    }
+    this.appendRecord(createWireMetadataRecord());
   }
 
   async restore(): Promise<void> {

@@ -172,6 +172,8 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     ) as IAgentScopeHandle;
     this.handles.set(agentId, handle);
     try {
+      const wire = handle.accessor.get(IWireService);
+      await wire.seal();
       await this.sessionMetadata.registerAgent(agentId, {
         homedir: agentHomedir,
         type: agentId === 'main' ? 'main' : 'sub',
@@ -182,8 +184,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidCreateEmitter.fire(handle);
       this.igniteEagerServices(handle);
       await mcpReady;
-      await handle.accessor.get(IWireService).restore();
+      await wire.restore();
       await this.bindBootstrap(handle, opts);
+      // Bootstrap (profile binding and the force-instantiated observer
+      // services) is complete: drive the activity kernel `initializing → idle`
+      // so the agent can admit turns. Until this point `begin` rejects with
+      // `activity.initializing`.
       handle.accessor.get(IAgentActivityService).markReady();
       return handle;
     } catch (error) {

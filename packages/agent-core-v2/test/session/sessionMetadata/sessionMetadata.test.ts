@@ -51,7 +51,14 @@ describe('SessionMetadata', () => {
 
   it('creates an initial document on first read', async () => {
     const meta = ix.get(ISessionMetadata);
-    expect(await meta.read()).toMatchObject({ id: 's1', archived: false });
+    expect(await meta.read()).toMatchObject({
+      id: 's1',
+      archived: false,
+      // Seeded so released v1 builds can open a v2-created state.json
+      // (v1's Session.resume() indexes `agents` unconditionally).
+      agents: {},
+      custom: {},
+    });
     expect((await meta.read()).createdAt).toBeGreaterThan(0);
   });
 
@@ -79,6 +86,49 @@ describe('SessionMetadata', () => {
 
     const fresh = ix.createInstance(SessionMetadata);
     expect(await fresh.read()).toMatchObject({ id: 's1', title: 'persisted' });
+  });
+
+  it('backfills and persists missing agents/custom maps on a pre-fix document', async () => {
+    // Written by a v2 build predating the create-path map seeding: no
+    // agents / custom keys at all.
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    expect(await meta.read()).toMatchObject({ agents: {}, custom: {} });
+
+    // The heal is persisted: a fresh instance reads the maps from disk, and
+    // updatedAt is untouched so session listings keep their order.
+    const fresh = ix.createInstance(SessionMetadata);
+    const healed = await fresh.read();
+    expect(healed.agents).toEqual({});
+    expect(healed.custom).toEqual({});
+    expect(healed.updatedAt).toBe(1700000000000);
+  });
+
+  it('leaves existing agents/custom maps untouched', async () => {
+    const store = ix.get(IAtomicDocumentStore);
+    await store.set(META_SCOPE, 'state.json', {
+      id: 's1',
+      version: 2,
+      createdAt: 1700000000000,
+      updatedAt: 1700000000000,
+      archived: false,
+      agents: { main: { homedir: '/tmp/sessions/wd_test/s1/agents/main', type: 'main' } },
+      custom: { cwd: '/tmp/work' },
+    });
+
+    const meta = ix.get(ISessionMetadata);
+    expect(await meta.read()).toMatchObject({
+      agents: { main: { homedir: '/tmp/sessions/wd_test/s1/agents/main', type: 'main' } },
+      custom: { cwd: '/tmp/work' },
+    });
   });
 
   it('fires onDidChangeMetadata with the changed keys after update', async () => {

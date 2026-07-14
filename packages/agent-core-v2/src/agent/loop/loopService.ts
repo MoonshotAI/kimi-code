@@ -368,7 +368,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     const { mode, provider_type, protocol } = telemetryContext;
     let result: TurnResult | undefined;
     try {
-      const started: TurnStartedTelemetryEvent = { mode, provider_type, protocol };
+      const started: TurnStartedTelemetryEvent = { turn_id: turn.id, mode, provider_type, protocol };
       turnTelemetry.track2('turn_started', started);
       result = await this.run({
         turnId: turn.id,
@@ -396,6 +396,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         if (error !== undefined) this.eventBus.publish({ type: 'error', ...error });
         if (result.type !== 'completed') {
           const interrupted: TurnInterruptedEvent = {
+            turn_id: turn.id,
             at_step: result.steps,
             mode,
             interrupt_reason: interruptReasonFor(result),
@@ -406,6 +407,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         }
       }
       const ended: TurnEndedTelemetryEvent = {
+        turn_id: turn.id,
         reason: result?.type ?? 'failed',
         duration_ms: Date.now() - startedAt,
         mode,

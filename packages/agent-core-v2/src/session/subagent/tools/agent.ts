@@ -41,6 +41,7 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { IAgentProfileCatalogService, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { ILogService } from '#/_base/log/log';
+import { IConfigService } from '#/app/config/config';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { isSubagentMeta, subagentLabels, subagentParentAgentId } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionProcessRunner } from '#/session/process/processRunner';
@@ -49,6 +50,10 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 
 import { emitAgentRunSpawned, mirrorAgentRun } from '../mirrorAgentRun';
 import { ISessionSubagentService } from '../subagent';
+import {
+  formatSubagentTimeoutDescription,
+  resolveSubagentTimeoutMs,
+} from '../configSection';
 import { SubagentTask, type SubagentHandle } from './subagent-task';
 
 import AGENT_BACKGROUND_DISABLED_DESCRIPTION from './agent-background-disabled.md?raw';
@@ -57,8 +62,6 @@ import AGENT_DESCRIPTION_BASE from './agent.md?raw';
 
 const DEFAULT_PROFILE_NAME = 'coder';
 const RESUMED_LABEL = 'subagent';
-export const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
-export const DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION = '30 minutes';
 
 export const AgentToolInputSchema = z.preprocess(
   (input) => {
@@ -146,6 +149,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @ILogService private readonly log: ILogService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
+    @IConfigService private readonly config: IConfigService,
   ) {
     this.callerAgentId = scopeContext.agentId;
     this.canRunInBackground = () =>
@@ -334,6 +338,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       if (runInBackground && !allowBackground) {
         return { output: BACKGROUND_AGENT_UNAVAILABLE, isError: true };
       }
+      const timeoutMs = resolveSubagentTimeoutMs(this.config);
 
       const controller = new AbortController();
       const abortBeforeRegister = (): void => {
@@ -363,7 +368,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       try {
         const registerOptions: RegisterAgentTaskOptions = {
           detached: runInBackground,
-          timeoutMs: DEFAULT_SUBAGENT_TIMEOUT_MS,
+          timeoutMs,
           signal: runInBackground ? undefined : signal,
         };
         taskId = this.tasks.registerTask(
@@ -403,7 +408,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
           output: formatBackgroundAgentResult(taskId, handle, args.description, allowBackground),
         };
       }
-      return await this.formatForegroundResult(taskId, handle);
+      return await this.formatForegroundResult(taskId, handle, timeoutMs);
     } catch (error) {
       return { output: `subagent error: ${launchErrorMessage(error, signal)}`, isError: true };
     }
@@ -412,6 +417,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   private async formatForegroundResult(
     taskId: string,
     handle: SubagentHandle,
+    timeoutMs: number,
   ): Promise<ExecutableToolResult> {
     const info = this.tasks.getTask(taskId);
     if (info?.status === 'completed') {
@@ -421,7 +427,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     }
     const timedOut = info?.status === 'timed_out';
     const message = timedOut
-      ? `Agent timed out after ${DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION}.`
+      ? `Agent timed out after ${formatSubagentTimeoutDescription(timeoutMs)}.`
       : info?.stopReason === 'Interrupted by user'
         ? USER_INTERRUPTED_SUBAGENT_MESSAGE
         : info?.stopReason !== undefined

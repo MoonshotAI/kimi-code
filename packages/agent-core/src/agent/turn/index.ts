@@ -521,7 +521,7 @@ export class TurnFlow {
     const telemetryMode = this.telemetryMode();
     this.telemetryModeByTurn.set(turnId, telemetryMode);
     this.currentStepByTurn.set(turnId, 0);
-    this.agent.telemetry.track('turn_started', { mode: telemetryMode, ...this.requestProtocolProps() });
+    this.agent.telemetry.track('turn_started', { turn_id: turnId, mode: telemetryMode, ...this.requestProtocolProps() });
     this.agent.fullCompaction.resetForTurn();
     this.agent.usage.beginTurn();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
@@ -619,6 +619,7 @@ export class TurnFlow {
       });
     }
     this.agent.telemetry.track('turn_ended', {
+      turn_id: turnId,
       reason: ended.reason,
       duration_ms: ended.durationMs,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
@@ -1057,6 +1058,7 @@ export class TurnFlow {
       this.toolCallDupType.delete(event.toolCallId);
       const outcome = telemetryToolOutcome(event.result);
       const properties: Record<string, TelemetryPropertyValue> = {
+        turn_id: turnId,
         tool_name: started.name,
         outcome,
         duration_ms: Date.now() - started.startedAt,
@@ -1116,6 +1118,7 @@ export class TurnFlow {
     if (this.interruptedTelemetryTurnIds.has(turnId)) return;
     this.interruptedTelemetryTurnIds.add(turnId);
     this.agent.telemetry.track('turn_interrupted', {
+      turn_id: turnId,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
       at_step: atStep,
       interrupt_reason: interruptReason,

@@ -3,9 +3,10 @@
  *
  * The service owns one Agent's replayable model state and its journal as one
  * consistency boundary: restore reads, validates, migrates, rewrites, replays,
- * rehydrates, and then runs the ordered restore hook. Live dispatch applies an
- * Op and appends its record. Callers do not coordinate journal and model state
- * through separate services.
+ * rehydrates, and then runs the ordered restore hook. Seal initializes a fresh
+ * journal before session metadata makes the Agent visible to legacy readers.
+ * Live dispatch applies an Op and appends its record. Callers do not coordinate
+ * journal and model state through separate services.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -24,6 +25,7 @@ export interface IWireService {
   readonly hooks: Hooks<WireHooks>;
 
   dispatch(...ops: Op[]): void;
+  seal(): Promise<void>;
   restore(): Promise<void>;
   flush(): Promise<void>;
 
