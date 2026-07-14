@@ -70,6 +70,7 @@ describe('ModelCatalogService', () => {
   let backing: Backing;
   let configSet: ReturnType<typeof vi.fn>;
   let configReplace: ReturnType<typeof vi.fn>;
+  let configReplaceAll: ReturnType<typeof vi.fn>;
   let getCachedAccessToken: ReturnType<typeof vi.fn>;
   let resolveTokenProvider: ReturnType<typeof vi.fn>;
   let publishEvent: ReturnType<typeof vi.fn>;
@@ -89,6 +90,15 @@ describe('ModelCatalogService', () => {
     configReplace = vi.fn().mockImplementation(async (domain: string, value: unknown) => {
       (backing as unknown as Record<string, unknown>)[domain] = value;
     });
+    configReplaceAll = vi.fn().mockImplementation(async (values: Record<string, unknown>) => {
+      for (const [domain, value] of Object.entries(values)) {
+        if (value === undefined) {
+          delete (backing as unknown as Record<string, unknown>)[domain];
+        } else {
+          (backing as unknown as Record<string, unknown>)[domain] = value;
+        }
+      }
+    });
     publishEvent = vi.fn();
 
     ix = createServices(disposables, {
@@ -104,6 +114,7 @@ describe('ModelCatalogService', () => {
           })) as IConfigService['inspect'],
           set: configSet as unknown as IConfigService['set'],
           replace: configReplace as unknown as IConfigService['replace'],
+          replaceAll: configReplaceAll as unknown as IConfigService['replaceAll'],
           reload: vi.fn().mockResolvedValue(undefined) as unknown as IConfigService['reload'],
           onDidChangeConfiguration: (() => ({ dispose: () => {} })) as IConfigService['onDidChangeConfiguration'],
           onDidSectionChange: (() => ({ dispose: () => {} })) as IConfigService['onDidSectionChange'],
@@ -350,5 +361,93 @@ describe('ModelCatalogService', () => {
         headers: expect.objectContaining({ 'User-Agent': 'kimi-code-cli/test' }),
       }),
     );
+  });
+
+  it('refreshProviderModels applies managed-catalog changes in one batch commit', async () => {
+    backing.providers = {
+      [KIMI_CODE_PROVIDER_NAME]: {
+        type: 'kimi',
+        baseUrl: 'https://api.example.test/v1',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    };
+    backing.models = {};
+    resolveTokenProvider.mockReturnValue({ getAccessToken: async () => 'access-token' });
+    const fetchMock = vi.fn().mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({
+        data: [
+          {
+            id: 'kimi-k2',
+            context_length: 131072,
+            supports_reasoning: true,
+            display_name: 'Kimi K2',
+          },
+        ],
+      }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await catalog().refreshProviderModels({ scope: 'all' });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      { provider_id: KIMI_CODE_PROVIDER_NAME, provider_name: 'Kimi Code', added: 1, removed: 0 },
+    ]);
+    expect(configReplace).not.toHaveBeenCalled();
+    expect(configSet).not.toHaveBeenCalled();
+    expect(configReplaceAll).toHaveBeenCalledTimes(1);
+    const batch = configReplaceAll.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(batch['providers']).toEqual(
+      expect.objectContaining({
+        [KIMI_CODE_PROVIDER_NAME]: expect.objectContaining({ type: 'kimi' }),
+      }),
+    );
+    expect(batch['models']).toEqual(
+      expect.objectContaining({ 'kimi-code/kimi-k2': expect.objectContaining({ model: 'kimi-k2' }) }),
+    );
+    expect(batch['defaultModel']).toBe('kimi-code/kimi-k2');
+  });
+
+  it('refreshProviderModels clears the default selection when its provider leaves the registry', async () => {
+    backing.providers = {
+      acme: {
+        type: 'openai',
+        apiKey: 'sk-acme',
+        source: {
+          kind: 'apiJson',
+          url: 'https://registry.example.test/api.json',
+          apiKey: 'sk-registry',
+        },
+      },
+    };
+    backing.models = {
+      'acme/m1': { provider: 'acme', model: 'm1', maxContextSize: 8192 },
+    };
+    backing.defaultModel = 'acme/m1';
+    backing.thinking = { enabled: true };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({}), {
+          headers: { 'Content-Type': 'application/json' },
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await catalog().refreshProviderModels({ scope: 'all' });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      { provider_id: 'acme', provider_name: 'acme', added: 0, removed: 1 },
+    ]);
+    expect(configReplace).not.toHaveBeenCalled();
+    expect(configReplaceAll).toHaveBeenCalledTimes(1);
+    const batch = configReplaceAll.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(batch['providers']).toEqual({});
+    expect(batch['models']).toEqual({});
+    expect('defaultModel' in batch).toBe(true);
+    expect(batch['defaultModel']).toBeUndefined();
+    expect(backing.defaultModel).toBeUndefined();
+    expect(backing.thinking).toBeUndefined();
   });
 });

@@ -117,6 +117,20 @@ describe('Agent loop', () => {
     });
   });
 
+  it('passes the raw provider error message through turn.step.interrupted', async () => {
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Hello' }] });
+    await ctx.untilTurnEnd();
+
+    const interrupted = ctx.allEvents.find(
+      (event) => event.type === '[rpc]' && event.event === 'turn.step.interrupted',
+    );
+    expect(interrupted?.args).toMatchObject({
+      step: 1,
+      reason: 'error',
+      message: 'Unexpected generate call #1',
+    });
+  });
+
   it('marks a completed turn as truncated when the provider stops at max tokens', async () => {
     profile.update({ activeToolNames: [] });
     ctx.mockNextProviderResponse({

@@ -155,6 +155,7 @@ export interface IConfigService {
   getAll(): ResolvedConfig;
   set(domain: string, patch: unknown, target?: ConfigTarget): Promise<void>;
   replace(domain: string, value: unknown, target?: ConfigTarget): Promise<void>;
+  replaceAll(values: Readonly<Record<string, unknown>>, target?: ConfigTarget): Promise<void>;
   reload(): Promise<void>;
   diagnostics(): readonly ConfigDiagnostic[];
 }

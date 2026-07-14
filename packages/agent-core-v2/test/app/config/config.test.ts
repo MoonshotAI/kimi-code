@@ -9,7 +9,7 @@
 
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { ToolCall } from '#/app/llmProtocol/message';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { IAgentProfileService, type ResolvedAgentProfile } from '#/agent/profile/profile';
 import { AGENT_WIRE_PROTOCOL_VERSION } from '#/agent/wireRecord/wireRecord';
@@ -20,7 +20,7 @@ import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
-import { IConfigRegistry, IConfigService } from '#/app/config/config';
+import { ConfigTarget, IConfigRegistry, IConfigService } from '#/app/config/config';
 import { ConfigRegistry, ConfigService } from '#/app/config/configService';
 import '#/app/cron/configSection';
 import type { CronConfig } from '#/app/cron/configSection';
@@ -353,6 +353,100 @@ describe('ConfigService env overlay (live)', () => {
     expect(config.get<CronConfig>('cron').disabled).toBe(false);
 
     disposables.dispose();
+  });
+});
+
+describe('ConfigService.replaceAll (live)', () => {
+  let disposables: DisposableStore;
+  let ix: TestInstantiationService;
+  let config: IConfigService;
+
+  beforeEach(async () => {
+    disposables = new DisposableStore();
+    ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg', {}));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    config = ix.get(IConfigService);
+    await config.ready;
+  });
+  afterEach(() => {
+    disposables.dispose();
+  });
+
+  it('commits several sections atomically: the first change event already sees the full new state', async () => {
+    await config.replace('providers', { kimi: { type: 'kimi', apiKey: 'sk-test' } });
+    await config.replace('models', { k2: { provider: 'kimi', model: 'kimi-k2' } });
+
+    const snapshots: Array<Record<string, unknown>> = [];
+    disposables.add(
+      config.onDidChangeConfiguration(() => {
+        snapshots.push({
+          providers: config.get('providers'),
+          models: config.get('models'),
+        });
+      }),
+    );
+
+    await config.replaceAll({
+      providers: { kimi: { type: 'kimi', apiKey: 'sk-test-2' } },
+      models: { k3: { provider: 'kimi', model: 'kimi-k3' } },
+      defaultModel: 'k3',
+    });
+
+    expect(snapshots.length).toBeGreaterThan(0);
+    for (const snapshot of snapshots) {
+      expect(snapshot['providers']).toEqual({ kimi: { type: 'kimi', apiKey: 'sk-test-2' } });
+      expect(snapshot['models']).toEqual({ k3: { provider: 'kimi', model: 'kimi-k3' } });
+    }
+    expect(config.get('defaultModel')).toBe('k3');
+  });
+
+  it('deletes sections whose value is undefined', async () => {
+    await config.replace('defaultModel', 'k3');
+    await config.replace('customSection', { enabled: true });
+    expect(config.get('defaultModel')).toBe('k3');
+
+    await config.replaceAll({ defaultModel: undefined, customSection: undefined });
+
+    expect(config.get('defaultModel')).toBeUndefined();
+    expect(config.get('customSection')).toBeUndefined();
+  });
+
+  it('publishes the new effective state before the disk write completes', async () => {
+    const store = ix.get(IAtomicTomlDocumentStore);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const setSpy = vi.spyOn(store, 'set').mockImplementation(async () => {
+      await gate;
+    });
+
+    const pending = config.replaceAll({ defaultModel: 'k3', thinking: { enabled: true } });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(setSpy).toHaveBeenCalled();
+    expect(config.get('defaultModel')).toBe('k3');
+    expect(config.get('thinking')).toEqual({ enabled: true });
+
+    release();
+    await pending;
+    expect(setSpy).toHaveBeenCalledWith(
+      '',
+      expect.any(String),
+      expect.objectContaining({ default_model: 'k3' }),
+    );
+  });
+
+  it('applies memory-target overrides in one commit', async () => {
+    await config.replaceAll({ alpha: 1, beta: 2 }, ConfigTarget.Memory);
+
+    expect(config.get('alpha')).toBe(1);
+    expect(config.get('beta')).toBe(2);
   });
 });
 
