@@ -28,6 +28,7 @@ import { z } from 'zod';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { unwrapErrorCause } from '#/_base/errors/errors';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   ToolAccesses,
@@ -36,7 +37,11 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
-import { resolvePathAccessPath, type WorkspaceConfig } from '#/tool/path-access';
+import {
+  extendWorkspaceWithSkillRoots,
+  resolvePathAccessPath,
+  type WorkspaceConfig,
+} from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType } from '#/agent/media/file-type';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
@@ -238,13 +243,22 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    // Optional so unit tests that construct the tool directly (bypassing DI)
+    // keep working; always registered in production scopes.
+    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   private get workspaceConfig(): WorkspaceConfig {
-    return {
-      workspaceDir: this.workspaceCtx.workDir,
-      additionalDirs: this.workspaceCtx.additionalDirs,
-    };
+    // Skill roots are merged per call (v1 merged once at tool construction):
+    // the catalog loads asynchronously and gains roots on plugin reloads.
+    return extendWorkspaceWithSkillRoots(
+      {
+        workspaceDir: this.workspaceCtx.workDir,
+        additionalDirs: this.workspaceCtx.additionalDirs,
+      },
+      this.skillCatalog?.catalog.getSkillRoots() ?? [],
+      this.env.pathClass,
+    );
   }
 
   resolveExecution(args: ReadInput): ToolExecution {

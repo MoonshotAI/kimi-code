@@ -25,9 +25,11 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { extendWorkspaceWithSkillRoots } from '#/tool/path-access';
 
 import { IAgentMediaToolsRegistrar } from './mediaTools';
 import { createVideoUploader, registerMediaTools } from './registerMediaTools';
@@ -47,6 +49,9 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    // Optional so unit tests that construct the registrar directly (bypassing
+    // DI) keep working; always registered in production scopes.
+    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {
     super();
     this.refresh();
@@ -65,18 +70,26 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
     this.registeredKey = key;
     this.registration?.dispose();
     const workspaceCtx = this.workspaceCtx;
+    const skillCatalog = this.skillCatalog;
+    const env = this.env;
     const model = this.profile.resolveModel();
     this.registration = registerMediaTools(this.toolRegistry, {
       fs: this.fs,
       env: this.env,
       // Live view: `workDir` is runtime-mutable (`/cwd`), and the tool keeps
-      // its WorkspaceConfig across calls, so a snapshot would go stale.
+      // its WorkspaceConfig across calls, so a snapshot would go stale. Skill
+      // roots are merged per read for the same reason (the catalog loads
+      // asynchronously and gains roots on plugin reloads).
       workspace: {
         get workspaceDir() {
           return workspaceCtx.workDir;
         },
         get additionalDirs() {
-          return workspaceCtx.additionalDirs;
+          return extendWorkspaceWithSkillRoots(
+            { workspaceDir: workspaceCtx.workDir, additionalDirs: workspaceCtx.additionalDirs },
+            skillCatalog?.catalog.getSkillRoots() ?? [],
+            env.pathClass,
+          ).additionalDirs;
         },
       },
       capabilities,

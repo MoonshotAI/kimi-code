@@ -34,8 +34,10 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { IHostProcessService } from '#/os/interface/hostProcess';
 import { unwrapErrorCause } from '#/_base/errors/errors';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
+  extendWorkspaceWithSkillRoots,
   resolvePathAccessPath,
   type PathClass,
   isSensitiveFile,
@@ -200,13 +202,22 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    // Optional so unit tests that construct the tool directly (bypassing DI)
+    // keep working; always registered in production scopes.
+    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   private get workspace(): WorkspaceConfig {
-    return {
-      workspaceDir: this.workspaceCtx.workDir,
-      additionalDirs: this.workspaceCtx.additionalDirs,
-    };
+    // Skill roots are merged per call (v1 merged once at tool construction):
+    // the catalog loads asynchronously and gains roots on plugin reloads.
+    return extendWorkspaceWithSkillRoots(
+      {
+        workspaceDir: this.workspaceCtx.workDir,
+        additionalDirs: this.workspaceCtx.additionalDirs,
+      },
+      this.skillCatalog?.catalog.getSkillRoots() ?? [],
+      this.env.pathClass,
+    );
   }
 
   resolveExecution(args: GrepInput): ToolExecution {

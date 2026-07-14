@@ -79,7 +79,11 @@ function buildTool(
       reg.define(IFileEditService, FileEditService);
     },
   });
-  return ix.createInstance(EditTool);
+  // Direct construction instead of `createInstance(EditTool)`: the optional
+  // trailing `@ISessionSkillCatalog` param defeats `GetLeadingNonServiceArgs`
+  // inference (optional tuple element), so the typed overload no longer
+  // applies. DI resolves the same instances for production construction.
+  return new EditTool(ix.get(IFileEditService), env, workspace);
 }
 
 function isPromiseLike(
