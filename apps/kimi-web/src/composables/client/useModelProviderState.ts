@@ -17,7 +17,7 @@ import type {
   ThinkingLevel,
 } from '../../api/types';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
-import { coerceThinkingForModel, thinkingLevelForModelSwitch } from '../../lib/modelThinking';
+import { thinkingLevelForModelSwitch } from '../../lib/modelThinking';
 import { beginLocalTurn, settleLocalTurn } from './useWorkspaceState';
 import type { ActivityState } from '../../types';
 import type { ExtendedState } from '../useKimiWebClient';
@@ -129,15 +129,13 @@ export function useModelProviderState(
     return modelById(rawModel)?.id ?? rawModel ?? undefined;
   }
 
-  function activeThinkingModel(): AppModel | undefined {
-    return modelById(currentModelId());
-  }
-
-  function applyThinkingLevel(level: ThinkingLevel): ThinkingLevel {
-    const next = coerceThinkingForModel(activeThinkingModel(), level);
-    rawState.thinking = next;
-    saveThinkingToStorage(next);
-    return next;
+  function applyThinkingLevel(level: ThinkingLevel | undefined): ThinkingLevel | undefined {
+    // Stored verbatim — whatever the user picked is what gets submitted to the
+    // daemon (same as the TUI); no coercion against the active model. Only
+    // concrete levels are persisted; "no preference" stays in-memory.
+    rawState.thinking = level;
+    if (level !== undefined) saveThinkingToStorage(level);
+    return level;
   }
 
   async function loadSkillsForSession(sessionId: string): Promise<void> {
@@ -167,7 +165,6 @@ export function useModelProviderState(
     try {
       const api = getKimiWebApi();
       models.value = await api.listModels();
-      applyThinkingLevel(rawState.thinking);
     } catch (err) {
       pushOperationFailure('loadModels', err);
     }
@@ -227,8 +224,7 @@ export function useModelProviderState(
     // one so we can roll back if the switch never reaches the daemon.
     updateSession(sid, (s) => ({ ...s, model: modelId }));
     if (nextThinking !== prevThinking) {
-      rawState.thinking = nextThinking;
-      saveThinkingToStorage(nextThinking);
+      applyThinkingLevel(nextThinking);
     }
     try {
       await getKimiWebApi().updateSession(sid, {
@@ -242,8 +238,7 @@ export function useModelProviderState(
       // new one as if the switch succeeded, then surface the failure.
       updateSession(sid, (s) => ({ ...s, model: prevSessionModel ?? s.model }));
       if (nextThinking !== prevThinking) {
-        rawState.thinking = prevThinking;
-        saveThinkingToStorage(prevThinking);
+        applyThinkingLevel(prevThinking);
       }
       pushOperationFailure('setModel', err, { sessionId: sid });
       return false;

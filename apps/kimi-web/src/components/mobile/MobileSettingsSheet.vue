@@ -13,8 +13,8 @@ import type { AppModel, AppSession, ThinkingLevel } from '../../api/types';
 import type { ColorScheme } from '../../composables/useKimiWebClient';
 import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import {
-  coerceThinkingForModel,
   commitLevel,
+  effectiveThinkingLevel,
   effortLabel,
   modelThinkingAvailability,
   segmentsFor,
@@ -78,20 +78,14 @@ const currentModel = computed<AppModel | undefined>(() =>
 );
 const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const thinkingSegments = computed(() => segmentsFor(currentModel.value));
-// The persisted level can be stale relative to the active model (e.g. 'on'
-// from a boolean model, or 'off' while viewing an always-on effort model).
-// Coerce it before computing the active segment so the mobile sheet shows and
-// selects the same model-aware default the composer and prompt submission use.
-const coercedThinkingLevel = computed(() =>
-  coerceThinkingForModel(currentModel.value, props.thinking ?? 'off'),
-);
-// Runtime level clamped to the segments this model actually offers.
+// The stored level is shown and submitted verbatim (same as the composer and
+// the TUI) — no coercion against the active model. No stored preference shows
+// the model default (what the daemon will resolve); a level the model doesn't
+// declare simply highlights no segment.
+const thinkingLevel = computed(() => effectiveThinkingLevel(currentModel.value, props.thinking));
 const activeThinkingSegment = computed<string>(() => {
   const segs = thinkingSegments.value;
-  const level = coercedThinkingLevel.value;
-  if (segs.includes(level)) return level;
-  if (segs.includes('on')) return 'on';
-  return segs[0] ?? 'off';
+  return segs.includes(thinkingLevel.value) ? thinkingLevel.value : '';
 });
 const thinkingOptions = computed(() =>
   thinkingSegments.value.map((seg) => ({ value: seg, label: effortLabel(seg) })),
@@ -274,8 +268,8 @@ watch(
       <span
         v-else
         class="srow-val"
-        :class="{ dim: activeThinkingSegment === 'off' }"
-      >{{ activeThinkingSegment === 'off' ? t('status.planOff') : effortLabel(activeThinkingSegment) }}</span>
+        :class="{ dim: thinkingLevel === 'off' }"
+      >{{ thinkingLevel === 'off' ? t('status.planOff') : effortLabel(thinkingLevel) }}</span>
     </div>
 
     <!-- Plan mode → real toggle switch -->

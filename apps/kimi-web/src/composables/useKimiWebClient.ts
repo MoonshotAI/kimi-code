@@ -110,8 +110,9 @@ const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 // 'off'/'on', or a model-declared level (e.g. 'low'/'high'/'max'). Since the
 // set of legal levels comes from each model's support_efforts, we can't
 // whitelist values — only guard against corrupted localStorage with a charset
-// + length check. coerceThinkingForModel adapts the loaded value to the active
-// model once the catalog is available.
+// + length check. An absent/invalid value means "no explicit preference"
+// (undefined): prompts then carry no thinking override and the daemon resolves
+// the model's own default, same as a fresh TUI config.
 const PERSISTED_THINKING_LEVEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 
 // Appearance types + logic live in ./client/useAppearance; re-exported here so
@@ -145,14 +146,14 @@ function savePermissionToStorage(mode: PermissionMode): void {
   }
 }
 
-function loadThinkingFromStorage(): ThinkingLevel {
+function loadThinkingFromStorage(): ThinkingLevel | undefined {
   try {
     const v = safeGetString(THINKING_STORAGE_KEY);
     if (v && PERSISTED_THINKING_LEVEL_RE.test(v)) return v as ThinkingLevel;
   } catch {
     // ignore
   }
-  return 'high';
+  return undefined;
 }
 
 function saveThinkingToStorage(v: ThinkingLevel): void {
@@ -303,7 +304,10 @@ export interface ExtendedState extends KimiClientState {
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
-  thinking: ThinkingLevel;
+  /** Explicit thinking-level preference. Undefined = no preference: prompts
+   *  omit the override and the daemon resolves the model's default (same as
+   *  the TUI with an unset [thinking] config). */
+  thinking: ThinkingLevel | undefined;
   /** Plan-mode toggle per session. Bound to a session (not global) so toggling
    *  it in one session does not affect another. */
   planModeBySession: Record<string, boolean>;
@@ -1854,7 +1858,6 @@ const sideChat = useSideChat(rawState, {
   nextOptimisticMsgId,
   connectEventsIfNeeded,
   getEventConn: () => eventConn,
-  models: () => modelProvider.models.value,
 });
 
 const activeAppTasks = computed<AppTask[]>(() => {
@@ -1945,7 +1948,7 @@ function clearDangerousBypassAuth(): void {
 }
 
 const permission = computed<PermissionMode>(() => rawState.permission);
-const thinking = computed<ThinkingLevel>(() => rawState.thinking);
+const thinking = computed<ThinkingLevel | undefined>(() => rawState.thinking);
 // Mode toggles reflect the ACTIVE session (or the draft when no session is
 // open). Each session keeps its own value in the *BySession maps above.
 const planMode = computed<boolean>(() => {

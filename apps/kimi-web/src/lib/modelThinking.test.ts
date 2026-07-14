@@ -7,9 +7,9 @@ import {
 } from '../composables/client/useModelProviderState';
 import type { ExtendedState } from '../composables/useKimiWebClient';
 import {
-  coerceThinkingForModel,
   commitLevel,
   defaultThinkingLevelFor,
+  effectiveThinkingLevel,
   effortLabel,
   isThinkingOn,
   modelThinkingAvailability,
@@ -94,74 +94,49 @@ describe('modelThinking', () => {
     });
   });
 
-  describe('coerceThinkingForModel', () => {
-    it('keeps the requested level before models are loaded', () => {
-      expect(coerceThinkingForModel(undefined, 'high')).toBe('high');
-    });
-
-    it('forces unsupported models to off', () => {
-      expect(coerceThinkingForModel(model({ capabilities: [] }), 'on')).toBe('off');
-    });
-
-    it('forces always-on models to their default level', () => {
-      expect(coerceThinkingForModel(model({ capabilities: ['always_thinking'] }), 'off')).toBe('on');
-    });
-
-    it('keeps off for boolean toggle models', () => {
-      expect(coerceThinkingForModel(model({ capabilities: ['thinking'] }), 'off')).toBe('off');
-    });
-
-    it('normalizes non-off levels to on for boolean toggle models', () => {
-      expect(coerceThinkingForModel(model({ capabilities: ['thinking'] }), 'high')).toBe('on');
-    });
-
-    it('keeps declared effort levels', () => {
-      expect(coerceThinkingForModel(model({ capabilities: ['thinking'], supportEfforts: ['low', 'high', 'max'] }), 'high')).toBe('high');
-    });
-
-    it('falls back to default effort for undeclared effort levels', () => {
-      expect(coerceThinkingForModel(model({ capabilities: ['thinking'], supportEfforts: ['low', 'high', 'max'] }), 'medium')).toBe('high');
-    });
-
-    it('keeps off for effort models by default', () => {
-      expect(coerceThinkingForModel(model({ capabilities: ['thinking'], supportEfforts: ['low', 'high', 'max'] }), 'off')).toBe('off');
-    });
-  });
-
   const effortModel = model({ capabilities: ['thinking'], supportEfforts: ['low', 'high', 'max'], defaultEffort: 'high' });
   const booleanModel = model({ capabilities: ['thinking'] });
   const alwaysOnModel = model({ capabilities: ['always_thinking'] });
   const unsupportedModel = model({ capabilities: [] });
 
   describe('thinkingLevelForModelSwitch', () => {
-
-    it('auto-enables default effort when switching onto an effort model from off', () => {
+    it('pre-selects the target model default effort on a switch', () => {
       expect(thinkingLevelForModelSwitch(effortModel, 'off', true)).toBe('high');
+      expect(thinkingLevelForModelSwitch(effortModel, 'max', true)).toBe('high');
+      expect(thinkingLevelForModelSwitch(effortModel, undefined, true)).toBe('high');
     });
 
-    it('keeps off when re-selecting the current effort model', () => {
+    it('keeps the current level when re-selecting the same model', () => {
       expect(thinkingLevelForModelSwitch(effortModel, 'off', false)).toBe('off');
+      expect(thinkingLevelForModelSwitch(effortModel, 'max', false)).toBe('max');
+      expect(thinkingLevelForModelSwitch(effortModel, undefined, false)).toBeUndefined();
     });
 
-    it('coerces carried-over levels for effort models during a switch', () => {
-      expect(thinkingLevelForModelSwitch(effortModel, 'high', true)).toBe('high');
-      expect(thinkingLevelForModelSwitch(effortModel, 'medium', true)).toBe('high');
+    it('pre-selects on for boolean and always-on models on a switch', () => {
+      expect(thinkingLevelForModelSwitch(booleanModel, 'off', true)).toBe('on');
+      expect(thinkingLevelForModelSwitch(alwaysOnModel, 'off', true)).toBe('on');
     });
 
-    it('does not auto-enable for boolean models', () => {
-      expect(thinkingLevelForModelSwitch(booleanModel, 'off', true)).toBe('off');
-    });
-
-    it('still coerces boolean models to on when carried level is non-off', () => {
-      expect(thinkingLevelForModelSwitch(booleanModel, 'high', true)).toBe('on');
-    });
-
-    it('forces always-on models on even during re-selection', () => {
-      expect(thinkingLevelForModelSwitch(alwaysOnModel, 'off', false)).toBe('on');
-    });
-
-    it('forces unsupported models off during a switch', () => {
+    it('pre-selects off for unsupported models on a switch', () => {
       expect(thinkingLevelForModelSwitch(unsupportedModel, 'high', true)).toBe('off');
+    });
+
+    it('keeps the current level when the target model is unknown', () => {
+      expect(thinkingLevelForModelSwitch(undefined, 'max', true)).toBe('max');
+      expect(thinkingLevelForModelSwitch(undefined, undefined, true)).toBeUndefined();
+    });
+  });
+
+  describe('effectiveThinkingLevel', () => {
+    it('returns the stored level when set', () => {
+      expect(effectiveThinkingLevel(effortModel, 'max')).toBe('max');
+      expect(effectiveThinkingLevel(effortModel, 'off')).toBe('off');
+    });
+
+    it('falls back to the model default when there is no preference', () => {
+      expect(effectiveThinkingLevel(effortModel, undefined)).toBe('high');
+      expect(effectiveThinkingLevel(booleanModel, undefined)).toBe('on');
+      expect(effectiveThinkingLevel(unsupportedModel, undefined)).toBe('off');
     });
   });
 

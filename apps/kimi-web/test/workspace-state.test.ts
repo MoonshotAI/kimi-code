@@ -809,12 +809,10 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
   });
 
-  it('coerces a stale thinking level against the new session model before persisting', async () => {
-    // Regression for: rawState.thinking can be stale relative to the new
-    // session's model (e.g. 'max' carried over from an effort model). Persisting
-    // the raw value would make the first skill turn run at a level the UI
-    // wouldn't send for this model; we must coerce it like the first-prompt
-    // path does.
+  it('persists the stored thinking level verbatim, even when the new session model does not declare it', async () => {
+    // Thinking levels are never coerced onto the session model (same as the
+    // first-prompt path and the TUI): a carried-over effort like 'max' is
+    // persisted and sent as-is.
     const activateSkill2 = vi.fn().mockResolvedValue(undefined);
     const persistSessionProfile2 = vi.fn().mockResolvedValue(undefined);
     const state2 = createState();
@@ -829,8 +827,8 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
       }),
       draftModes: { planMode: true, swarmMode: false, goalMode: false },
     };
-    // 'kimi-code' declares efforts ['low','medium','high']; 'max' isn't in the
-    // list so coercion picks the default (middle) level → 'medium'.
+    // 'kimi-code' declares efforts ['low','medium','high'] — 'max' isn't in the
+    // list, and must still be persisted verbatim.
     (deps2.modelProvider as unknown as { models: unknown }).models = ref([
       {
         id: 'kimi-code',
@@ -845,10 +843,8 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 
     await ws2.startSessionAndActivateSkill('wd_1', 'pre-changelog');
 
-    // Effort model default level = middle of supportEfforts: 'medium'.
-    // Confirms the raw carry-over 'max' was coerced, not persisted verbatim.
     expect(persistSessionProfile2).toHaveBeenCalledWith(
-      expect.objectContaining({ thinking: 'medium' }),
+      expect.objectContaining({ thinking: 'max' }),
       'sess_new',
     );
     expect(activateSkill2).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
