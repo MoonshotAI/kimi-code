@@ -6,6 +6,44 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.24.0 (2026-07-14)
+
+### Features
+
+- web: Add session diagnostic export to download a session and bounded metadata-only troubleshooting logs as a ZIP. Run `/export` or pick Export session from a session's more menu. Web downloads are limited to 64 MiB.
+- Move foreground Bash commands that hit their timeout to the background instead of killing them, so long-running commands survive the timeout and report back on completion. Set `bash_auto_background_on_timeout = false` under `[background]` in config.toml to restore the kill-on-timeout behavior.
+
+### Polish
+
+- web: Refine goal mode controls with animated strip interactions, budget-aware progress, and design-system cancellation confirmation.
+- Request task-owned work to stop on session close, honoring `background.keep_alive_on_exit` for independent processes and `background.kill_grace_period_ms` before attempting force-stop.
+- Rewrite repeated-tool-call reminders to redirect the agent toward a different action instead of prohibiting the call.
+- Optimize the TaskOutput tool prompts to discourage blocking waits on background tasks.
+- Send the kimi-code-cli User-Agent on provider registry (api.json) and model catalog fetches, so registries can identify the client version.
+- Log a warning when a skill fails to parse instead of silently dropping it, and fix the skill catalog so scanned skill roots and policy-skipped skills are actually reported.
+
+### Bug Fixes
+
+- Prevent oversized image reads from poisoning sessions and recover existing request-too-large failures by removing unsafe media from provider requests.
+- Fix session fork losing everything except the conversation log: forked sessions now carry over media attachments, plan files, background task output, and cron tasks, and a failed fork no longer leaves a broken half-copy behind.
+- web: Fix several session rendering glitches when reopening, reconnecting, or resyncing a session, including the context usage indicator dropping to 0, duplicate user message bubbles, and a running multi-step turn rendering duplicated text.
+- web: Fix uploaded and persisted images failing to display on non-loopback server connections.
+- web: Continue blocked goals after the user resumes them from the goal controls.
+- web: Fix the AgentSwarm member list disappearing after a page refresh while subagents are still running.
+- web: Fix the goal card disappearing after a page refresh while a session goal is active.
+- web: Fix the workspace picker menu sizing too narrowly for its content.
+- web: Recover transient subagent rate limits without surfacing them as session errors.
+- Fix Bash auto-detection on Windows failing when git comes from a native MSYS2 toolchain (ucrt64/clang64/clangarm64).
+- Fix OAuth login hanging after browser authorization when the provider configuration changes during sign-in.
+- Surface the provider's actual rejection message instead of a misleading re-login prompt when an OAuth-managed model keeps returning 401 after a token refresh.
+- Fix providers without a configured `base_url` being rejected: anthropic/openai and other protocol providers now fall back to their official default endpoints again, as before.
+- Fix MCP tools being unavailable on the first turn after session startup.
+- Fix pasted media and images being dropped from `/skill` and plugin command arguments, and when steering with `Ctrl-S`.
+- Preserve empty model reasoning blocks across providers so multi-step tool calls can continue.
+- In auto permission mode, plan exits are now marked as auto-approved (not user-reviewed) in both the tool result and the transcript, so the agent no longer treats automatic plan approval as a user signal to start executing.
+- Store background task records per agent again, so tasks written by older versions are found on resume and one agent's restore no longer marks another agent's tasks as lost.
+- Fix a race where a heartbeat write in flight during server shutdown could recreate the instance file right after it was removed.
+
 ## 0.23.6 (2026-07-12)
 
 ### Polish
