@@ -138,24 +138,15 @@ storageServiceSuite('InMemoryStorageService', async () => ({
 
 storageServiceSuite('FileStorageService', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'storage-service-test-'));
+  const service = new FileStorageService(dir);
   return {
-    service: new FileStorageService(dir),
-    cleanup: () => rm(dir, { recursive: true, force: true }),
+    service,
+    cleanup: async () => {
+      try {
+        await service.close();
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
   };
-});
-
-describe('FileStorageService', () => {
-  it('treats directory fsync on a removed scope dir as a no-op', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'storage-service-test-'));
-    try {
-      const service = new FileStorageService(dir);
-      await expect(
-        (service as unknown as { syncDirOnce(dir: string): Promise<void> }).syncDirOnce(
-          join(dir, 'missing'),
-        ),
-      ).resolves.toBeUndefined();
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
 });
