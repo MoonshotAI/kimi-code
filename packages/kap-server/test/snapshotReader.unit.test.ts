@@ -79,6 +79,7 @@ async function makeFixtureAsync(opts?: { cacheLimit?: number }): Promise<Fixture
         seq: broadcaster.seq,
         epoch: broadcaster.epoch,
         inFlightTurn: broadcaster.inFlightTurn as never,
+        subagents: [],
       }),
     } as never,
     logger: noopLogger,
@@ -164,6 +165,7 @@ describe('SnapshotReader.read', () => {
     expect(snap.messages.items).toEqual([]);
     expect(snap.messages.has_more).toBe(false);
     expect(snap.in_flight_turn).toBeNull();
+    expect(snap.subagents).toEqual([]);
     expect(snap.pending_approvals).toEqual([]);
     expect(snap.as_of_seq).toBe(0);
     expect(snap.epoch).toBe('ep_unit');
