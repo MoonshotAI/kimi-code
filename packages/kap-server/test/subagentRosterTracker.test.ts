@@ -98,7 +98,7 @@ describe('SubagentRosterTracker', () => {
     });
   });
 
-  it("clears the roster on the MAIN agent's turn.ended only", () => {
+  it('clears the roster on the next MAIN turn.started, not on any turn.ended', () => {
     const t = new SubagentRosterTracker();
     t.apply(SID, spawn('agent-1'));
 
@@ -107,7 +107,14 @@ describe('SubagentRosterTracker', () => {
     t.apply(SID, ev({ type: 'turn.ended', agentId: 'agent-1', turnId: 1 }));
     expect(t.get(SID)).toHaveLength(1);
 
+    // The main turn.ended must not drop the roster either: the swarm result
+    // may still be queued behind the async wire append, and a refresh in that
+    // window would otherwise lose the member list.
     t.apply(SID, ev({ type: 'turn.ended', agentId: 'main', turnId: 1 }));
+    expect(t.get(SID)).toHaveLength(1);
+
+    // The next main turn.started settles the previous transcript — safe to drop.
+    t.apply(SID, ev({ type: 'turn.started', agentId: 'main', turnId: 2 }));
     expect(t.get(SID)).toEqual([]);
   });
 

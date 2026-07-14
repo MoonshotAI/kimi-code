@@ -391,7 +391,7 @@ describe('SessionEventBroadcaster', () => {
     expect(snap.inFlightTurn).toMatchObject({ turn_id: 1, assistant_text: 'Hello' });
   });
 
-  it('getSnapshotState returns the live subagent roster until the main turn ends', async () => {
+  it('getSnapshotState returns the live subagent roster until the next main turn starts', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     const sub = lc.addAgent('agent-1');
@@ -429,9 +429,16 @@ describe('SessionEventBroadcaster', () => {
     const still = await bc.getSnapshotState('s1');
     expect(still.subagents).toHaveLength(1);
 
+    // The main turn.ended keeps the roster too: the swarm result may not be
+    // durable in the wire transcript yet (async append).
     main.bus.emit(agentEvent('turn.ended', { turnId: 1 }));
     const ended = await bc.getSnapshotState('s1');
-    expect(ended.subagents).toEqual([]);
+    expect(ended.subagents).toHaveLength(1);
+
+    // The next main turn.started settles the transcript — the roster is dropped.
+    main.bus.emit(agentEvent('turn.started', { turnId: 2 }));
+    const next = await bc.getSnapshotState('s1');
+    expect(next.subagents).toEqual([]);
   });
 
   it('fans core model-catalog changes out to every session subscriber', async () => {

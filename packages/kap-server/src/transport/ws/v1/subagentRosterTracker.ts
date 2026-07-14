@@ -6,10 +6,12 @@
  * metadata — are never replayed to it.
  *
  * Ported from v1 (`packages/server/src/services/gateway/subagentRosterTracker.ts`),
- * with one adaptation: the roster is dropped only on the MAIN agent's
- * `turn.ended`. Unlike v1's firehose, every agent's events flow through the
- * same per-session dispatch queue here, so a swarm member's own `turn.ended`
- * must not wipe the roster while the swarm is still running.
+ * with two adaptations: a swarm member's own `turn.ended` never clears the
+ * roster (every agent's events flow through the same per-session dispatch
+ * queue here, unlike v1's firehose), and the main agent's `turn.ended` does
+ * not clear it either — the swarm result is only queued for the async wire
+ * append at that point, so clearing there would open a window where a
+ * reconnecting client sees neither the roster nor the transcript result.
  *
  * Without this roster a mid-swarm page refresh loses the swarm card's member
  * list: REST `/tasks` only serves the main agent's background-task store
@@ -22,11 +24,11 @@
  * dispatch queue — same pattern as `InFlightTurnTracker`, keeping the roster,
  * the journal watermark, and the fan-out order mutually consistent.
  *
- * Lifetime: the roster is dropped on the main agent's `turn.ended`. After turn
- * end the swarm's `<agent_swarm_result>` tool output is in the wire transcript
- * and becomes the restore source; this also bounds the roster's lifetime
- * (background subagents that outlive a turn are a known, pre-existing bound —
- * same trade-off as `InFlightTurnTracker`).
+ * Lifetime: the roster is dropped when the main agent starts its NEXT turn —
+ * by then the previous turn's `<agent_swarm_result>` tool output is durable in
+ * the wire transcript and takes over as the restore source. Background
+ * subagents that outlive a turn stay listed until that boundary (a known,
+ * pre-existing bound — same trade-off as `InFlightTurnTracker`).
  */
 
 import type { Event, SnapshotSubagent } from '@moonshot-ai/protocol';
@@ -94,11 +96,13 @@ export class SubagentRosterTracker {
         entry.output_preview = event.error;
         return;
       }
-      case 'turn.ended': {
-        // Only the main agent's turn end settles the swarm: after it the
-        // swarm's `<agent_swarm_result>` tool output is in the wire transcript
-        // and becomes the restore source. A subagent's own `turn.ended` flows
-        // through the same session queue and must not drop the roster mid-swarm.
+      case 'turn.started': {
+        // Settle the roster only when the main agent starts a NEW turn: by
+        // then the previous turn's swarm result is durable in the wire
+        // transcript (the restore source). Clearing at the main `turn.ended`
+        // would race the async wire append — a refresh in that window gets
+        // neither the live roster nor the transcript result. A subagent's own
+        // turn boundaries must never drop the roster mid-swarm.
         if (event.agentId === MAIN_AGENT_ID) {
           this.bySession.delete(sessionId);
         }
