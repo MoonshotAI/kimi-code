@@ -15,6 +15,7 @@ import {
   type WireMigration,
   type WireMigrationRecord,
 } from '#/agent/wireRecord/migration/migration';
+import { metadataRecord } from './metadataOps';
 import {
   IAgentWireRecordService,
   type PersistedWireRecord,
@@ -82,20 +83,27 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
       fromPersistence && (options.rewriteMigratedRecords ?? true);
     const restoredRecords: PersistedWireRecord[] | undefined =
       rewriteMigratedRecords ? [] : undefined;
-    const requireMetadata =
-      fromPersistence && this.log !== undefined;
     let migrations: readonly WireMigration[] = [];
     let shouldRewrite = false;
     let warning: string | undefined;
-    const sourceRecords: PersistedWireRecord[] = [];
 
+    const collected: PersistedWireRecord[] = [];
     for await (const record of source) {
-      sourceRecords.push(record);
+      collected.push(record);
     }
 
+    let sourceRecords = collected;
     const firstRecord = sourceRecords[0];
     if (firstRecord !== undefined) {
-      if (firstRecord.type === 'metadata') {
+      if (firstRecord.type !== 'metadata') {
+        // Envelope-less log: a fresh agent (creation no longer seals the log)
+        // or a pre-envelope legacy log. Heal it in place: synthesize the
+        // envelope at the current protocol version — records written by
+        // current builds need no migration — and rewrite so the invariant
+        // holds from now on.
+        sourceRecords = [metadataRecord(), ...sourceRecords];
+        shouldRewrite = fromPersistence;
+      } else {
         if (!isWireRecordMetadata(firstRecord)) {
           throw new Error('WireRecord restore expected metadata protocol_version');
         }
@@ -107,8 +115,6 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
           migrations = resolveWireMigrations(readVersion);
           shouldRewrite = readVersion !== AGENT_WIRE_PROTOCOL_VERSION;
         }
-      } else if (requireMetadata) {
-        throw new Error('WireRecord restore expected metadata as the first record');
       }
     }
 

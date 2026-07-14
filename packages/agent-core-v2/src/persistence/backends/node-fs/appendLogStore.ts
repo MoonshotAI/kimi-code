@@ -50,7 +50,7 @@ export class AppendLogStore implements IAppendLogStore {
     // mode (it buffers an incomplete trailing multi-byte sequence until the
     // next `decode`). Sharing one instance across reads would let leftover
     // state from an earlier read — e.g. one that returns early before flushing,
-    // like `ensureWireMetadata` bailing on the leading `metadata` record —
+    // like a wire-log scan that bails on the leading `metadata` record —
     // leak into the next read and prepend a spurious U+FFFD to its first line.
     const textDecoder = new TextDecoder();
     let pending = '';

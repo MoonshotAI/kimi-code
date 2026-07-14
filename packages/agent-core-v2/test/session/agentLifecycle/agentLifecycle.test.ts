@@ -39,7 +39,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { AGENT_WIRE_PROTOCOL_VERSION, type PersistedWireRecord } from '#/agent/wireRecord/wireRecord';
+import { type PersistedWireRecord } from '#/agent/wireRecord/wireRecord';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { _clearToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -248,60 +248,6 @@ describe('AgentLifecycleService', () => {
     expect(svc.list()).toEqual([main]);
     await svc.remove('main');
     expect(svc.get('main')).toBeUndefined();
-  });
-
-  it('seeds metadata into an empty agent wire before the first business op', async () => {
-    const log = recordingAppendLog();
-    ix.stub(IAppendLogStore, log.store);
-    stubBlobPassThrough(ix);
-    const svc = ix.get(IAgentLifecycleService);
-
-    await svc.create({ agentId: 'main' });
-
-    expect(log.appended[0]).toMatchObject({
-      type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    });
-    expect((log.appended[0] as { created_at?: number } | undefined)?.created_at).toEqual(
-      expect.any(Number),
-    );
-  });
-
-  it('prepends metadata to an existing agent wire that is missing the envelope', async () => {
-    const log = recordingAppendLog([
-      { type: 'turn.prompt', turnId: 0 } as PersistedWireRecord,
-    ]);
-    ix.stub(IAppendLogStore, log.store);
-    stubBlobPassThrough(ix);
-    const svc = ix.get(IAgentLifecycleService);
-
-    await svc.create({ agentId: 'main' });
-
-    expect(log.appended).toEqual([]);
-    expect(log.rewritten?.map((record) => record.type)).toEqual(['metadata', 'turn.prompt']);
-    expect(log.rewritten?.[0]).toMatchObject({
-      type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    });
-  });
-
-  it('leaves an existing metadata envelope in place', async () => {
-    const log = recordingAppendLog([
-      {
-        type: 'metadata',
-        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-        created_at: 1,
-      },
-      { type: 'turn.prompt', turnId: 0 } as PersistedWireRecord,
-    ]);
-    ix.stub(IAppendLogStore, log.store);
-    stubBlobPassThrough(ix);
-    const svc = ix.get(IAgentLifecycleService);
-
-    await svc.create({ agentId: 'main' });
-
-    expect(log.appended).toEqual([]);
-    expect(log.rewritten).toBeUndefined();
   });
 
   it('create assigns sequential ids when unspecified', async () => {

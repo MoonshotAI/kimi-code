@@ -129,6 +129,13 @@ export interface IInstantiationService {
     ...args: GetLeadingNonServiceArgs<ConstructorParameters<Ctor>>
   ): R;
   createChild(services: ServiceCollection, store?: DisposableStore): IInstantiationService;
+  /**
+   * Force every idle-scheduled delayed-service construction to run
+   * synchronously, to a fixpoint. Delayed services otherwise construct on a
+   * later macrotask; callers that need constructor side effects (event
+   * subscriptions, registrations) live before proceeding drain here.
+   */
+  drainIdle(): void;
   dispose(): void;
 }
 

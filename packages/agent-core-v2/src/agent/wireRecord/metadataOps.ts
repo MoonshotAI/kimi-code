@@ -6,12 +6,18 @@
  * as the first record of each agent `wire.jsonl`. It is the only persisted
  * record that opts out of the `time` stamp, matching v1. Defined through the
  * low-level `wire` registry so `WireService` can persist the envelope through
- * the same append path as every other Op. Scope-agnostic.
+ * the same append path as every other Op. `metadataRecord()` is the single
+ * shared factory for the envelope — restore-time healing and fork-time log
+ * copies both use it instead of hand-rolling the shape. Scope-agnostic.
  */
 
 import { z } from 'zod';
 
 import { defineModel } from '#/wire/model';
+import {
+  AGENT_WIRE_PROTOCOL_VERSION,
+} from '#/agent/wireRecord/migration/migration';
+import type { WireRecordMetadata } from './wireRecord';
 
 const MetadataModel = defineModel<null>('wire.metadata', () => null);
 
@@ -26,3 +32,12 @@ export const wireMetadata = MetadataModel.defineOp('metadata', {
   stamp: false,
   apply: (s) => s,
 });
+
+/** A fresh metadata envelope stamped at the current protocol version. */
+export function metadataRecord(): WireRecordMetadata {
+  return {
+    type: 'metadata',
+    protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+    created_at: Date.now(),
+  };
+}

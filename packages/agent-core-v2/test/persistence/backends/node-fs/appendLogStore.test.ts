@@ -139,9 +139,9 @@ describe('AppendLogStore', () => {
 
   it('does not leak decoder state into a later read when an earlier read returns early', async () => {
     // Regression for fork: `TextDecoder` in `stream` mode buffers a trailing
-    // incomplete multi-byte sequence. When a read returns early — the way
-    // `ensureWireMetadata` bails as soon as it sees the leading `metadata`
-    // record — it skips the final flushing `decode()`. A shared decoder would
+    // incomplete multi-byte sequence. When a read returns early — the way a
+    // wire-log scan bails as soon as it sees the leading `metadata` record —
+    // it skips the final flushing `decode()`. A shared decoder would
     // then carry that buffered sequence into the next read and prepend a
     // U+FFFD to its first line, corrupting the `metadata` record
     // (`append-log ...: corrupted line 1`) and breaking session fork.

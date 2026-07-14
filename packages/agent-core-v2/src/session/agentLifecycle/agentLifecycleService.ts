@@ -32,7 +32,6 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ErrorCodes, Error2 } from '#/errors';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
-import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
@@ -51,16 +50,7 @@ import { IImageConfigBridge } from '#/agent/media/imageConfigBridge';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
-import {
-  AGENT_WIRE_PROTOCOL_VERSION,
-  type PersistedWireRecord,
-} from '#/agent/wireRecord/wireRecord';
-import { WIRE_RECORD_FILENAME } from '#/agent/wireRecord/wireRecordService';
-import { wireMetadata } from '#/agent/wireRecord/metadataOps';
-import { IAgentWireService } from '#/wire/tokens';
-import type { PayloadOf } from '#/wire/types';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
-
 import {
   type AgentListFilter,
   type CreateAgentOptions,
@@ -97,7 +87,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
     @ISessionActivityKernel private readonly activityKernel: ISessionActivityKernel,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
-    @IAppendLogStore private readonly appendLog?: IAppendLogStore,
   ) {
     super();
     // Bridge the per-agent `IEventBus` `turn.ended` into the Session-scope
@@ -191,12 +180,22 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.onDidCreateEmitter.fire(handle);
       this.igniteEagerServices(handle);
       await mcpReady;
-      await this.ensureWireMetadata(handle, agentScope);
       await this.bindBootstrap(handle, opts);
-      // Bootstrap (wire metadata, profile binding, and the force-instantiated
-      // observer services) is complete: drive the activity kernel
-      // `initializing → idle` so the agent can admit turns. Until this point
-      // `begin` rejects with `activity.initializing`.
+      // Delayed services resolved during bootstrap (e.g. the task tools'
+      // taskService and its wire-journal dependency) are IdleValue proxies
+      // whose real instances — and constructor side effects like the record
+      // journal's onEmission subscription — only run on a later macrotask.
+      // Force them synchronously before the agent admits turns, or an
+      // immediate first op (a context append, a prompt) races ahead and its
+      // emissions are lost.
+      this.instantiation.drainIdle();
+      // Bootstrap (profile binding and the force-instantiated observer
+      // services) is complete: drive the activity kernel `initializing → idle`
+      // so the agent can admit turns. Until this point `begin` rejects with
+      // `activity.initializing`. The wire log's metadata envelope is NOT
+      // seeded here — `wireRecord.restore()` heals envelope-less logs on
+      // resume (prepend + rewrite), so creation stays free of log-format
+      // concerns.
       handle.accessor.get(IAgentActivityService).markReady();
       return handle;
     } catch (error) {
@@ -288,33 +287,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
   }
 
-  private async ensureWireMetadata(
-    handle: IAgentScopeHandle,
-    agentScope: string,
-  ): Promise<void> {
-    const appendLog = this.appendLog;
-    if (appendLog === undefined) return;
-    let firstRecord: PersistedWireRecord | undefined;
-    const remainingRecords: PersistedWireRecord[] = [];
-    for await (const record of appendLog.read<PersistedWireRecord>(agentScope, WIRE_RECORD_FILENAME)) {
-      if (firstRecord === undefined) {
-        firstRecord = record;
-        if (firstRecord.type === 'metadata') return;
-        continue;
-      }
-      remainingRecords.push(record);
-    }
-    if (firstRecord === undefined) {
-      handle.accessor.get(IAgentWireService).dispatch(wireMetadata(freshMetadataPayload()));
-      return;
-    }
-    await appendLog.rewrite(agentScope, WIRE_RECORD_FILENAME, [
-      freshMetadataRecord(),
-      firstRecord,
-      ...remainingRecords,
-    ]);
-  }
-
   async fork(sourceAgentId: string, opts?: ForkAgentOptions): Promise<IAgentScopeHandle> {
     const source = this.handles.get(sourceAgentId);
     if (source === undefined) throw new Error(`Source agent "${sourceAgentId}" does not exist`);
@@ -375,20 +347,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     handle.dispose();
     this.onDidDisposeEmitter.fire(agentId);
   }
-}
-
-function freshMetadataPayload(): PayloadOf<typeof wireMetadata> {
-  return {
-    protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    created_at: Date.now(),
-  };
-}
-
-function freshMetadataRecord(): PersistedWireRecord {
-  return {
-    type: 'metadata',
-    ...freshMetadataPayload(),
-  };
 }
 
 registerScopedService(

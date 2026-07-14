@@ -33,10 +33,10 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { DEFAULT_PLAN_MODE_SECTION } from '#/agent/plan/configSection';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import {
-  AGENT_WIRE_PROTOCOL_VERSION,
   IAgentWireRecordService,
   type PersistedWireRecord,
 } from '#/agent/wireRecord/wireRecord';
+import { metadataRecord } from '#/agent/wireRecord/metadataOps';
 import { WIRE_RECORD_FILENAME, wireRecordScope } from '#/agent/wireRecord/wireRecordService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -514,11 +514,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         WIRE_RECORD_FILENAME,
       ),
     );
-    // Ensure the log starts with a metadata envelope (restore() requires it).
+    // Keep the copied log well-formed for the target's first restore: prepend
+    // the metadata envelope when the source lacks one (restore() would heal it
+    // anyway, but the forked copy should be valid on its own).
     if (records.length === 0) {
-      records.push(freshMetadataRecord());
+      records.push(metadataRecord());
     } else if (records[0]?.type !== 'metadata') {
-      records.unshift(freshMetadataRecord());
+      records.unshift(metadataRecord());
     }
     records.push(forkedRecord());
 
@@ -569,14 +571,6 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
  */
 function createSessionId(): string {
   return `session_${randomUUID()}`;
-}
-
-function freshMetadataRecord(): PersistedWireRecord {
-  return {
-    type: 'metadata',
-    protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    created_at: Date.now(),
-  };
 }
 
 function forkedRecord(): PersistedWireRecord {
