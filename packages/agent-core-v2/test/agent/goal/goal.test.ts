@@ -1448,6 +1448,54 @@ describe('AgentGoalService mid-turn budget stop', () => {
     }
   });
 
+  it('lets an automatic continuation report final status after crossing its token budget', async () => {
+    const ctx = createTestAgent();
+    try {
+      ctx.configure({ tools: ['GetGoal'] });
+      const goals = ctx.get(IAgentGoalService);
+      await goals.createGoal({ objective: 'work' });
+      await goals.markBlocked({ reason: 'ready for a fresh continuation' });
+      await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 1 } }, 'model');
+
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'g1',
+        name: 'GetGoal',
+        arguments: JSON.stringify({}),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'Final status: budget exhausted.' });
+      ctx.mockNextResponse({ type: 'text', text: 'This step should never run.' });
+
+      const turnEnd = ctx.untilTurnEnd();
+      await goals.resumeGoal({ continueIfBlocked: true });
+      const events = await turnEnd;
+
+      expect(ctx.llmCalls).toHaveLength(2);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({ reason: 'completed' }),
+        }),
+      );
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({ reason: 'cancelled' }),
+        }),
+      );
+
+      const history = ctx.get(IAgentContextMemoryService).get();
+      expect(JSON.stringify(history)).toContain('Final status: budget exhausted.');
+      expect(JSON.stringify(history)).not.toContain('This step should never run.');
+      expect(goals.getGoal().goal).toMatchObject({
+        status: 'blocked',
+        budget: { tokenBudgetReached: true },
+      });
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
   it('rejects tool calls made during the budget grace step without executing them', async () => {
     const ctx = createTestAgent();
     try {
@@ -1544,6 +1592,42 @@ describe('AgentGoalService mid-turn budget stop', () => {
 });
 
 describe('AgentGoalService goal outcome tool result flow', () => {
+  it('lets an automatic continuation explain the blocker after UpdateGoal blocks the goal', async () => {
+    const ctx = createTestAgent();
+    try {
+      ctx.configure({ tools: ['UpdateGoal'] });
+      const goals = ctx.get(IAgentGoalService);
+      await goals.createGoal({ objective: 'work' });
+      await goals.markBlocked({ reason: 'ready for a fresh continuation' });
+
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'blocked',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'blocked' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'Blocked because credentials are unavailable.' });
+
+      const turnEnd = ctx.untilTurnEnd();
+      await goals.resumeGoal({ continueIfBlocked: true });
+      const events = await turnEnd;
+
+      expect(ctx.llmCalls).toHaveLength(2);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({ reason: 'completed' }),
+        }),
+      );
+      const history = ctx.get(IAgentContextMemoryService).get();
+      expect(JSON.stringify(history)).toContain('Blocked because credentials are unavailable.');
+      expect(history.at(-1)?.role).toBe('assistant');
+      expect(goals.getGoal().goal?.status).toBe('blocked');
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
   it('does not force a goal outcome summary after maxStepsPerTurn is exhausted', async () => {
     const ctx = createTestAgent({
       initialConfig: { providers: {}, loopControl: { maxStepsPerTurn: 1 } },

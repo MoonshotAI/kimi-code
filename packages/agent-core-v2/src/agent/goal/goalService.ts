@@ -433,7 +433,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   ): Promise<GoalSnapshot | null> {
     const state = this.goalState;
     if (state === null || state.status !== 'active') return null;
-    const snapshot = this.applyLifecycle(state, 'blocked', input.reason, actor);
+    const snapshot = this.applyLifecycle(state, 'blocked', input.reason, actor, {
+      preserveLiveContinuation: true,
+    });
     return snapshot;
   }
 
@@ -786,12 +788,13 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     status: GoalStatus,
     reason: string | undefined,
     actor: GoalActor,
+    opts: { readonly preserveLiveContinuation?: boolean } = {},
   ): GoalSnapshot {
     const wallClockMs = this.settleWallClock(state);
     if (status === 'active') {
       this.wallClockResumedAt = Date.now();
     } else if (state.status === 'active') {
-      this.cancelPendingContinuation();
+      this.cancelPendingContinuation(opts.preserveLiveContinuation === true);
       this.wallClockResumedAt = undefined;
     }
     this.wire.dispatch(updateGoal({ status, reason, wallClockMs, actor }));
@@ -866,7 +869,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (state.status !== 'active') return null;
     const reason = goalBudgetBlockReason(this.toSnapshot(state).budget);
     if (reason === undefined) return null;
-    return this.applyLifecycle(state, 'blocked', reason, 'runtime');
+    return this.applyLifecycle(state, 'blocked', reason, 'runtime', {
+      preserveLiveContinuation: true,
+    });
   }
 }
 
