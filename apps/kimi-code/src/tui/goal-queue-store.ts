@@ -1,10 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import {
-  ErrorCodes,
-  KimiError,
-} from '@moonshot-ai/kimi-code-sdk';
+import { CoreError, CoreErrorCodes } from '#/core/index';
 
 const GOAL_QUEUE_FILE = 'upcoming-goals.json';
 const GOAL_QUEUE_VERSION = 1;
@@ -152,8 +149,8 @@ async function readQueueFile(session: GoalQueueSession): Promise<GoalQueueFile> 
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    throw new KimiError(
-      ErrorCodes.CONFIG_INVALID,
+    throw new CoreError(
+      CoreErrorCodes.CONFIG_INVALID,
       `Invalid JSON in goal queue: ${describeError(error)}`,
     );
   }
@@ -205,11 +202,11 @@ function toSnapshot(file: GoalQueueFile): GoalQueueSnapshot {
 function normalizeObjective(value: string): string {
   const objective = value.trim();
   if (objective.length === 0) {
-    throw new KimiError(ErrorCodes.GOAL_OBJECTIVE_EMPTY, 'Goal objective cannot be empty');
+    throw new CoreError(CoreErrorCodes.GOAL_OBJECTIVE_EMPTY, 'Goal objective cannot be empty');
   }
   if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
-    throw new KimiError(
-      ErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
+    throw new CoreError(
+      CoreErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
       `Goal objective cannot exceed ${MAX_GOAL_OBJECTIVE_LENGTH} characters`,
     );
   }
@@ -219,7 +216,7 @@ function normalizeObjective(value: string): string {
 function findGoalIndex(file: GoalQueueFile, goalId: string): number {
   const index = file.goals.findIndex((goal) => goal.id === goalId);
   if (index === -1) {
-    throw new KimiError(ErrorCodes.GOAL_NOT_FOUND, 'No queued goal found');
+    throw new CoreError(CoreErrorCodes.GOAL_NOT_FOUND, 'No queued goal found');
   }
   return index;
 }

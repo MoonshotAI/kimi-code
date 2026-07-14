@@ -6,7 +6,7 @@
 
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
-import type { SessionUsage, TokenUsage } from '@moonshot-ai/kimi-code-sdk';
+import type { SessionUsage, TokenUsage } from '#/core/index';
 
 import {
   formatTokenCount,

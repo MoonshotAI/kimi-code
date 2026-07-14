@@ -1174,6 +1174,26 @@ describe('spawnDaemonChild', () => {
     expect(options?.cwd).not.toBe(process.cwd());
   });
 
+  it('forwards the parent execArgv ahead of a script program (dev tsx loader)', async () => {
+    const { spawn } = await import('node:child_process');
+    const spawnMock = vi.mocked(spawn);
+    spawnMock.mockClear();
+    spawnMock.mockReturnValue({ unref: vi.fn(), once: vi.fn() } as unknown as ChildProcess);
+
+    const { spawnDaemonChild, resolveDaemonProgram } = await import('#/cli/sub/server/daemon');
+    spawnDaemonChild({ port: 58627, logLevel: 'info' });
+
+    const [, args] = spawnMock.mock.calls[0]!;
+    // Only the script-entry path forwards loader flags; the execPath path
+    // (SEA / re-spawned daemon) must not receive them.
+    if (resolveDaemonProgram() === process.execPath) {
+      expect(args?.[0]).toBe('server');
+    } else {
+      expect(args?.slice(0, process.execArgv.length)).toEqual(process.execArgv);
+      expect(args?.[process.execArgv.length]).toBe(resolveDaemonProgram());
+    }
+  });
+
   it('passes --host through to the daemon child args (M6.2)', async () => {
     const { spawn } = await import('node:child_process');
     const spawnMock = vi.mocked(spawn);

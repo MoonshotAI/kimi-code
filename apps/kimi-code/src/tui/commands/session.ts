@@ -2,12 +2,12 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import type { Session } from '@moonshot-ai/kimi-code-sdk';
+import type { CoreSession } from '#/core/index';
 
 import { detectInstallSource } from '#/cli/update/source';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
-import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
 import { buildExportMarkdown } from '../utils/export-markdown';
@@ -29,11 +29,8 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
     return;
   }
 
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
 
   const newTitle = title.slice(0, 200);
   try {
@@ -48,14 +45,11 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
 
 export async function handleForkCommand(host: SlashCommandHost, args: string): Promise<void> {
   void args;
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
 
   const sourceTitle = forkSourceTitle(host, session);
-  let forked: Session;
+  let forked: CoreSession;
   try {
     forked = await host.harness.forkSession({
       id: session.id,
@@ -78,7 +72,7 @@ export async function handleForkCommand(host: SlashCommandHost, args: string): P
   }
 }
 
-function forkSourceTitle(host: SlashCommandHost, session: Session): string {
+function forkSourceTitle(host: SlashCommandHost, session: CoreSession): string {
   const currentTitle = host.state.appState.sessionTitle?.trim();
   if (currentTitle !== undefined && currentTitle.length > 0) return currentTitle;
 
@@ -88,16 +82,13 @@ function forkSourceTitle(host: SlashCommandHost, session: Session): string {
 }
 
 export async function handleExportMdCommand(host: SlashCommandHost, args: string): Promise<void> {
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
 
   host.showStatus('Exporting session as Markdown…');
   try {
     const context = await session.getContext();
-    if (context.history.length === 0) {
+    if (context.length === 0) {
       host.showError('No messages to export.');
       return;
     }
@@ -115,8 +106,10 @@ export async function handleExportMdCommand(host: SlashCommandHost, args: string
     const md = buildExportMarkdown({
       sessionId: session.id,
       workDir: host.state.appState.workDir,
-      history: context.history,
-      tokenCount: context.tokenCount,
+      history: context,
+      // TODO(v2-gap): v2 `getContext` returns the bare history array (no token
+      // count); the export `token_count` metadata field is best-effort.
+      tokenCount: 0,
       now,
     });
 
@@ -124,7 +117,7 @@ export async function handleExportMdCommand(host: SlashCommandHost, args: string
     await writeFile(outputPath, md, 'utf-8');
 
     const linked = toTerminalHyperlink(outputPath, pathToFileURL(outputPath).href);
-    host.showNotice(`Exported ${String(context.history.length)} messages`, linked);
+    host.showNotice(`Exported ${String(context.length)} messages`, linked);
   } catch (error) {
     const msg = formatErrorMessage(error);
     host.showError(`Failed to export session: ${msg}`);
@@ -132,11 +125,8 @@ export async function handleExportMdCommand(host: SlashCommandHost, args: string
 }
 
 export async function handleExportDebugZipCommand(host: SlashCommandHost): Promise<void> {
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
 
   host.showStatus('Exporting session…');
   try {
@@ -158,16 +148,17 @@ export async function handleExportDebugZipCommand(host: SlashCommandHost): Promi
 }
 
 export async function handleInitCommand(host: SlashCommandHost): Promise<void> {
-  const session = host.session;
-  if (host.state.appState.model.trim().length === 0 || session === undefined) {
+  if (host.state.appState.model.trim().length === 0) {
     host.showError(LLM_NOT_SET_MESSAGE);
     return;
   }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
 
   host.deferUserMessages = true;
   host.beginSessionRequest();
   try {
-    await session.init();
+    await session.generateAgentsMd();
     host.track('init_complete');
     host.streamingUI.finalizeTurn((item) => {
       host.sendQueuedMessage(session, item);

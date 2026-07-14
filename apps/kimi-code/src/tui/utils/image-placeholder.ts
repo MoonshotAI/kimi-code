@@ -7,11 +7,12 @@
  *     A literal `[image #999 ...]` the user typed themselves stays in
  *     the text (we can't hallucinate files for it).
  *   - Order is preserved for text/image/video segments. Image placeholders
- *     expand to image content parts so the prompt reaches the provider
- *     without relying on a model tool call. Video placeholders are copied
- *     into the shared cache (`getCacheDir()`) and expand to file-path tags,
- *     so `ReadMediaFile` — and the provider's `VideoUploader` — own video
- *     upload behavior instead of base64-inlining here.
+ *     expand to protocol `image` content parts (base64 `source`) so the
+ *     prompt reaches the provider without relying on a model tool call.
+ *     Video placeholders are copied into the shared cache (`getCacheDir()`)
+ *     and expand to file-path tags, so `ReadMediaFile` — and the provider's
+ *     `VideoUploader` — own video upload behavior instead of base64-inlining
+ *     here.
  *   - Adjacent text segments are flattened — empty / whitespace-only
  *     segments drop out so we never emit `{type:'text', text:' '}`
  *     noise between two media parts.
@@ -21,8 +22,7 @@ import { randomUUID } from 'node:crypto';
 import { copyFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { PromptPart } from '@moonshot-ai/kimi-code-sdk';
-import { buildImageCompressionCaption } from '@moonshot-ai/kimi-code-sdk';
+import { buildImageCompressionCaption, type PromptPart } from '#/core/index';
 
 import { getCacheDir } from '#/utils/paths';
 
@@ -188,10 +188,14 @@ function pushText(parts: PromptPart[], segment: string): void {
 }
 
 function imagePartForAttachment(att: ImageAttachment): PromptPart {
-  const base64 = Buffer.from(att.bytes).toString('base64');
+  // The v2 prompt surface consumes protocol `image` parts: a base64 `source`
+  // carrying the raw MIME + data, not the v1 kosong `image_url` data-URL
+  // shape. Split the MIME out of the attachment directly — `att.mime` is
+  // already the sniffed content type, so there is no data-URL to parse.
+  const data = Buffer.from(att.bytes).toString('base64');
   return {
-    type: 'image_url',
-    imageUrl: { url: `data:${att.mime};base64,${base64}` },
+    type: 'image',
+    source: { kind: 'base64', media_type: att.mime, data },
   };
 }
 

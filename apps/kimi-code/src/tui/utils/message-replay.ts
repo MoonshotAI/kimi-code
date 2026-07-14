@@ -1,12 +1,12 @@
 import type {
   AgentReplayRecord,
-  BackgroundTaskInfo,
+  AgentTaskInfo,
   ContentPart,
   ContextMessage,
   PromptOrigin,
   ResumedAgentState,
   ToolCall,
-} from '@moonshot-ai/kimi-code-sdk';
+} from '#/core/index';
 
 import type {
   AppState,
@@ -70,7 +70,7 @@ export function appStateFromResumeAgent(agent: ResumedAgentState): Partial<AppSt
   };
 }
 
-export function isTerminalBackgroundTask(info: BackgroundTaskInfo): boolean {
+export function isTerminalBackgroundTask(info: AgentTaskInfo): boolean {
   return (
     info.status === 'completed' ||
     info.status === 'failed' ||
@@ -80,7 +80,7 @@ export function isTerminalBackgroundTask(info: BackgroundTaskInfo): boolean {
   );
 }
 
-export function countActiveBackgroundTasks(tasks: ReadonlyMap<string, BackgroundTaskInfo>): {
+export function countActiveBackgroundTasks(tasks: ReadonlyMap<string, AgentTaskInfo>): {
   bashTasks: number;
   agentTasks: number;
 } {
@@ -98,7 +98,7 @@ export function countActiveBackgroundTasks(tasks: ReadonlyMap<string, Background
 }
 
 export function replayBackgroundProjection(
-  background: readonly BackgroundTaskInfo[],
+  background: readonly AgentTaskInfo[],
 ): ReplayBackgroundProjection {
   const backgroundAgentMetadata = new Map<string, BackgroundAgentMetadata>();
   for (const info of background) {
@@ -207,8 +207,8 @@ export function contentPartsToText(content: readonly ContentPart[]): string {
 
 export function backgroundOrigin(
   message: ContextMessage,
-): Extract<PromptOrigin, { kind: 'background_task' }> | undefined {
-  return message.origin?.kind === 'background_task' ? message.origin : undefined;
+): Extract<PromptOrigin, { kind: 'task' }> | undefined {
+  return message.origin?.kind === 'task' ? message.origin : undefined;
 }
 
 export function skillActivationFromOrigin(
@@ -276,10 +276,8 @@ function isReplayUserTurnRecord(record: AgentReplayRecord): boolean {
       return message.origin.trigger === 'user-slash';
     case 'plugin_command':
       return message.origin.trigger === 'user-slash';
+    case 'task':
     case 'shell_command':
-      // A `!` command's input is a user-turn anchor; its output is not.
-      return message.origin.phase === 'input';
-    case 'background_task':
     case 'compaction_summary':
     case 'cron_job':
     case 'cron_missed':

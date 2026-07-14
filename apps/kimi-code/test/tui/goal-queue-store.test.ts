@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { ErrorCodes, KimiError } from '@moonshot-ai/kimi-code-sdk';
+import { CoreError, CoreErrorCodes } from '#/core/index';
 
 import {
   appendGoalQueueItem,
@@ -130,10 +130,10 @@ describe('goal queue store', () => {
 
   it('rejects empty and over-long objectives', async () => {
     await expect(appendGoalQueueItem(session(), { objective: '  ' })).rejects.toMatchObject({
-      code: ErrorCodes.GOAL_OBJECTIVE_EMPTY,
+      code: CoreErrorCodes.GOAL_OBJECTIVE_EMPTY,
     });
     await expect(appendGoalQueueItem(session(), { objective: 'x'.repeat(4001) })).rejects.toMatchObject({
-      code: ErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
+      code: CoreErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
     });
   });
 
@@ -162,10 +162,10 @@ describe('goal queue store', () => {
 
   it('throws a goal-not-found error when the target item is missing', async () => {
     await expect(removeGoalQueueItem(session(), { goalId: 'missing' })).rejects.toBeInstanceOf(
-      KimiError,
+      CoreError,
     );
     await expect(removeGoalQueueItem(session(), { goalId: 'missing' })).rejects.toMatchObject({
-      code: ErrorCodes.GOAL_NOT_FOUND,
+      code: CoreErrorCodes.GOAL_NOT_FOUND,
     });
   });
 });

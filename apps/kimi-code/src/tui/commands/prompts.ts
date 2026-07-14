@@ -5,7 +5,7 @@ import {
   type CatalogModel,
   type ModelAlias,
   type ThinkingEffort,
-} from '@moonshot-ai/kimi-code-sdk';
+} from '#/core/index';
 import { capabilitiesForModel } from '@moonshot-ai/kimi-code-oauth';
 import type {
   ManagedKimiCodeModelInfo,

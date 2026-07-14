@@ -8,16 +8,17 @@ This file only contains rules local to `apps/kimi-code`. For cross-repo rules, s
 
 `apps/kimi-code` is the terminal UI / CLI app. The entry chain is:
 
-`src/main.ts` -> `src/cli/commands.ts` -> `src/cli/run-shell.ts` -> SDK `KimiHarness` -> `src/tui/kimi-tui.ts`
+`src/main.ts` -> `src/cli/commands.ts` -> `src/cli/run-shell.ts` -> `src/core` `CoreHarness` (agent-core-v2 facade) -> `src/tui/kimi-tui.ts`
 
 Main directories:
 
 - `src/constant/`: non-copy constants shared by CLI/TUI — product, protocol, paths, terminal control, updates, and so on.
 - `src/cli/`: command-line arguments, subcommands, and CLI startup.
+- `src/core/`: the TUI engine facade over `packages/agent-core-v2` — `CoreHarness` (app scope: bootstrap, session CRUD, config, plugins, telemetry) and `CoreSession` (session scope: prompts, modes, goals, tasks, event fan-in, approval/question pending). The only path through which the interactive TUI reaches the agent engine. Print (`src/cli/v2/`), ACP, and other subcommands do not use this module — they still consume `@moonshot-ai/kimi-code-sdk`.
 - `src/tui/`: the interactive terminal UI.
 - `src/tui/kimi-tui.ts`: the `KimiTUI` coordinator — wires state, layout, editor, session, SDK events, and dialogs together, and dispatches slash-command handlers. Heavy logic is delegated to `controllers/`, not accumulated here.
 - `src/tui/tui-state.ts`: `TUIState`, `createTUIState`, `createInitialAppState` — the single global UI-state shape.
-- `src/tui/controllers/`: independently-testable responsibilities — `session-event-handler` (SDK event routing), `streaming-ui` (streaming render), `session-replay` (resume/replay), `tasks-browser`, `editor-keyboard`, `auth-flow`.
+- `src/tui/controllers/`: independently-testable responsibilities — `session-event-handler` (core event routing), `streaming-ui` (streaming render), `session-replay` (resume/replay), `tasks-browser`, `editor-keyboard`, `auth-flow`.
 - `src/tui/commands/`: slash command definitions, parsing, ordering, and dynamic skill command generation.
 - `src/tui/components/`: pi-tui components, organized by UI type.
 - `src/tui/constant/`: non-copy constants reused across TUI modules — symbols, terminal sequences, render sizing, streaming-arg match rules, and so on.
@@ -27,7 +28,7 @@ Main directories:
 - `src/tui/components/media/`: image, diff, code highlight, and other media displays.
 - `src/tui/components/messages/`: message blocks in the transcript — assistant, user, tool call, thinking, usage, subagent, and so on.
 - `src/tui/components/panes/`: right-side / activity-area panes such as the activity pane and queue pane.
-- `src/tui/reverse-rpc/`: the adapter layer that bridges SDK approval/question callbacks to the UI.
+- `src/tui/interactions/`: consumes the core approval/question pending model — watches `CoreSession.approvals`/`questions` pending lists, drives the approval/question panels, and writes `decide`/`answer`/`dismiss` back into the kernel.
 - `src/tui/theme/`: themes, color tokens, style helpers, terminal-background detection, and the pi-tui markdown theme.
 - `src/tui/utils/`: TUI-only utility functions.
 - `src/utils/`: app-wide utilities — clipboard, git, history, image, process, usage, and so on.
@@ -35,14 +36,14 @@ Main directories:
 ## Module Responsibilities
 
 - `cli` only interprets command-line input, assembles startup arguments, and invokes the TUI. Do not put TUI interaction logic into the CLI.
-- `KimiTUI` coordinates; it does not accumulate complex business rules. New logic that can be tested independently should be split into `controllers`, `commands`, `components`, `reverse-rpc`, or `utils` first.
+- `KimiTUI` coordinates; it does not accumulate complex business rules. New logic that can be tested independently should be split into `controllers`, `commands`, `components`, `interactions`, or `utils` first.
 - `controllers` own the heavy, independently-testable slices (event routing, streaming render, session replay, tasks browser, editor keyboard, auth). Event-routing and rendering logic belong here, not on the `KimiTUI` class.
 - `commands` only owns slash-command declaration, parsing, and the parsed-result types. The actual execution can be dispatched from `KimiTUI`, but complex logic should continue to sink downward.
-- `components` only handle presentation and local interaction; they must not call the SDK directly, and must not read or write session state directly.
-- `reverse-rpc` converts SDK approval/question requests into the data shape a UI panel/dialog needs, and converts the user's choice back into an SDK response.
+- `components` only handle presentation and local interaction; they must not call the core facade directly, and must not read or write session state directly.
+- `interactions` turns the core pending approval/question entries into the data shape a UI panel/dialog needs, and writes the user's choice back through `decide`/`answer`/`dismiss`.
 - `theme` is the single source of truth for colors and styles. Components must not bypass the theme system and use chalk named colors directly.
 - `utils` holds utility functions with no UI-state dependency. Logic that needs `TUIState` or a component instance must not live under app-level `src/utils`.
-- `apps/kimi-code` may only use core capabilities through `@moonshot-ai/kimi-code-sdk`. Do not import `@moonshot-ai/agent-core` directly in app code.
+- The interactive TUI reaches the agent engine only through `src/core/` (`CoreHarness`/`CoreSession`). TUI files must not import `@moonshot-ai/agent-core-v2` or `@moonshot-ai/kimi-code-sdk` directly — add types/capabilities to the `src/core` facade instead. Print (`src/cli/v2/`), ACP, and other subcommands are exempt and still consume `@moonshot-ai/kimi-code-sdk`. No app code may import `@moonshot-ai/agent-core` (v1) directly.
 
 ## TUI Coding Conventions
 

@@ -1,4 +1,4 @@
-import type { PluginCommandDef } from '@moonshot-ai/kimi-code-sdk';
+import type { PluginCommandDef } from '#/core/index';
 
 import type { KimiSlashCommand } from './types';
 

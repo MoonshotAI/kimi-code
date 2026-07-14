@@ -1,6 +1,6 @@
 import type { Component } from '@moonshot-ai/pi-tui';
-import type { ContextMessage } from '@moonshot-ai/kimi-code-sdk';
-import { isKimiError } from '@moonshot-ai/kimi-code-sdk';
+import type { ContextMessage } from '#/core/index';
+import { isCoreError } from '#/core/index';
 
 import { WelcomeComponent } from '../components/chrome/welcome';
 import { CompactionComponent } from '../components/dialogs/compaction';
@@ -62,11 +62,7 @@ export async function handleUndoCommand(
     return;
   }
 
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  if ((await host.ensureSession()) === undefined) return;
 
   const availability = await resolveUndoAvailability(host);
   if (count > availability.maxCount) {
@@ -178,7 +174,7 @@ async function resolveUndoAvailability(
   const context = await getSessionContext(host.session);
   if (context === undefined) return local;
 
-  const activeContext = undoAvailabilityFromContext(context.history);
+  const activeContext = undoAvailabilityFromContext(context);
   return {
     maxCount: Math.min(local.maxCount, activeContext.maxCount),
     stoppedAtCompaction:
@@ -372,7 +368,7 @@ function showUndoLimitStatus(host: SlashCommandHost, message: string): void {
 function undoLimitFromError(
   error: unknown,
 ): (UndoAvailability & { readonly requestedCount: number }) | undefined {
-  if (!isKimiError(error)) return undefined;
+  if (!isCoreError(error)) return undefined;
   const details = error.details;
   if (details?.['reason'] !== 'undo_limit') return undefined;
   const requestedCount = details['requestedCount'];

@@ -28,7 +28,7 @@ import {
 
 import { highlightLines, langFromPath } from '#/tui/components/media/code-highlight';
 import { renderDiffLinesClustered } from '#/tui/components/media/diff-preview';
-import type { DiffDisplayBlock, FileContentDisplayBlock } from '#/tui/reverse-rpc/types';
+import type { DiffDisplayBlock, FileContentDisplayBlock } from '#/tui/interactions/types';
 import { currentTheme } from '#/tui/theme';
 import { printableChar } from '#/tui/utils/printable-key';
 

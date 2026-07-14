@@ -2,21 +2,18 @@ import { execSync, spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-import {
-  createKimiHarness,
-  log,
-  type KimiHarness,
-  type TelemetryClient,
-} from '@moonshot-ai/kimi-code-sdk';
+import { log } from '@moonshot-ai/kimi-code-sdk';
 import {
   setCrashPhase,
   setTelemetryContext,
   shutdownTelemetry,
   track,
   withTelemetryContext,
+  type TelemetryProperties,
 } from '@moonshot-ai/kimi-telemetry';
 
 import { CLI_SHUTDOWN_TIMEOUT_MS, CLI_UI_MODE } from '#/constant/app';
+import { createCoreHarness, type TelemetryClient } from '#/core/index';
 import { detectPendingMigration } from '#/migration/index';
 import type { TuiConfig } from '#/tui/config';
 import { loadTuiConfig, TuiConfigParseError } from '#/tui/config';
@@ -59,7 +56,7 @@ export async function runShell(
     withContext: withTelemetryContext,
     setContext: setTelemetryContext,
   };
-  const harness = createKimiHarness({
+  const harness = createCoreHarness({
     homeDir: telemetryBootstrap.homeDir,
     identity: createKimiCodeHostIdentity(version),
     skillDirs: opts.skillsDirs,
@@ -96,8 +93,23 @@ export async function runShell(
     return;
   }
   const config = await harness.getConfig();
-  for (const warning of (await harness.getConfigDiagnostics()).warnings) {
-    configWarning = combineStartupNotice(configWarning, warning);
+  const configDiagnostics = await harness.getConfigDiagnostics();
+  // v1 fail-fast: an unparseable config.toml must not silently start with an
+  // empty config. v2 downgrades TOML parse failures to `severity: 'error'`
+  // diagnostics and keeps running, so surface every error and exit before the
+  // TUI grabs the terminal.
+  const configErrors = configDiagnostics.filter((diagnostic) => diagnostic.severity === 'error');
+  if (configErrors.length > 0) {
+    for (const diagnostic of configErrors) {
+      const domain = diagnostic.domain ?? 'config';
+      process.stderr.write(`Config error [${domain}]: ${diagnostic.message}\n`);
+    }
+    await harness.close();
+    process.exit(1);
+  }
+  for (const diagnostic of configDiagnostics) {
+    if (diagnostic.severity !== 'warning') continue;
+    configWarning = combineStartupNotice(configWarning, diagnostic.message);
   }
   const configMs = Date.now() - configStartedAt;
   const tui = new KimiTUI(harness, {
@@ -114,7 +126,12 @@ export async function runShell(
   initializeCliTelemetry({
     harness,
     bootstrap: telemetryBootstrap,
-    config,
+    // The v2 config document is domain-keyed and untyped on this surface;
+    // project the two fields the telemetry bootstrap reads.
+    config: {
+      defaultModel: typeof config['defaultModel'] === 'string' ? config['defaultModel'] : undefined,
+      telemetry: typeof config['telemetry'] === 'boolean' ? config['telemetry'] : undefined,
+    },
     version,
     uiMode: CLI_UI_MODE,
   });
@@ -123,7 +140,7 @@ export async function runShell(
   const trackLifecycleForSession = (
     sessionId: string,
     event: string,
-    properties?: Parameters<KimiHarness['track']>[1],
+    properties?: TelemetryProperties,
   ) => {
     if (sessionId.length === 0) {
       harness.track(event, properties);
@@ -131,7 +148,7 @@ export async function runShell(
     }
     withTelemetryContext({ sessionId }).track(event, properties);
   };
-  const trackLifecycle = (event: string, properties?: Parameters<KimiHarness['track']>[1]) => {
+  const trackLifecycle = (event: string, properties?: TelemetryProperties) => {
     trackLifecycleForSession(tui.getCurrentSessionId(), event, properties);
   };
 

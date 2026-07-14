@@ -37,7 +37,10 @@ const mocks = vi.hoisted(() => {
       defaultModel: 'k2',
       telemetry: true,
     })),
-    harnessGetConfigDiagnostics: vi.fn(async () => ({ warnings: [] as readonly string[] })),
+    harnessGetConfigDiagnostics: vi.fn(
+      async () =>
+        [] as readonly { severity: 'warning' | 'error'; domain?: string; message: string }[],
+    ),
     harnessGetCachedAccessToken: vi.fn(),
     harnessClose: vi.fn(),
     detectPendingMigration: vi.fn<() => Promise<unknown>>(async () => null),
@@ -69,7 +72,14 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   return {
     ...actual,
     resolveKimiHome: mocks.resolveKimiHome,
-    createKimiHarness: (...args: unknown[]) => {
+  };
+});
+
+vi.mock('../../src/core/index', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/core/index')>();
+  return {
+    ...actual,
+    createCoreHarness: (...args: unknown[]) => {
       const options = args[0] as { readonly homeDir?: string } | undefined;
       const homeDir = options?.homeDir ?? '/tmp/kimi-code-test-home';
       if (mocks.harnessCreatesDeviceIdOnConstruction) {
@@ -482,30 +492,79 @@ describe('runShell', () => {
       editorCommand: null,
       notifications: { enabled: true, condition: 'unfocused' },
     });
-    mocks.harnessGetConfigDiagnostics.mockResolvedValue({
-      warnings: ['Ignored invalid config in config.toml: loop_control.'],
-    });
+    mocks.harnessGetConfigDiagnostics.mockResolvedValue([
+      { severity: 'warning', message: 'Ignored invalid config in config.toml: loop_control.' },
+    ]);
     mocks.tuiStart.mockResolvedValue(undefined);
 
-    await runShell(
-      {
-        session: '',
-        continue: false,
-        yolo: false,
-        auto: false,
-        plan: false,
-        model: undefined,
-        outputFormat: undefined,
-        prompt: undefined,
-        skillsDirs: [],
-      },
-      '1.2.3-test',
-    );
+    try {
+      await runShell(
+        {
+          session: '',
+          continue: false,
+          yolo: false,
+          auto: false,
+          plan: false,
+          model: undefined,
+          outputFormat: undefined,
+          prompt: undefined,
+          skillsDirs: [],
+        },
+        '1.2.3-test',
+      );
+    } finally {
+      // `clearAllMocks` (beforeEach) resets call history but not implementations,
+      // so restore the default empty-diagnostics implementation to avoid leaking
+      // the warning into subsequent tests.
+      mocks.harnessGetConfigDiagnostics.mockResolvedValue([]);
+    }
 
     const [, , startupInput] = mocks.kimiTuiConstructor.mock.calls[0]!;
     expect(startupInput).toMatchObject({
       startupNotice: 'Ignored invalid config in config.toml: loop_control.',
     });
+  });
+
+  it('fails fast on error-severity config diagnostics', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.harnessGetConfigDiagnostics.mockResolvedValue([
+      { severity: 'error', domain: 'providers', message: 'Unexpected end of TOML input.' },
+      { severity: 'warning', message: 'Ignored invalid config in config.toml: loop_control.' },
+    ]);
+
+    const stderr = captureProcessWrite('stderr');
+    const exitSpy = mockProcessExit();
+    try {
+      await expect(
+        runShell(
+          {
+            session: '',
+            continue: false,
+            yolo: false,
+            auto: false,
+            plan: false,
+            model: undefined,
+            outputFormat: undefined,
+            prompt: undefined,
+            skillsDirs: [],
+          },
+          '1.2.3-test',
+        ),
+      ).rejects.toMatchObject({ code: 1 });
+    } finally {
+      mocks.harnessGetConfigDiagnostics.mockResolvedValue([]);
+      exitSpy.mockRestore();
+      stderr.restore();
+    }
+
+    expect(stderr.text()).toContain('Config error [providers]: Unexpected end of TOML input.');
+    expect(stderr.text()).not.toContain('loop_control');
+    expect(mocks.harnessClose).toHaveBeenCalledOnce();
+    expect(mocks.kimiTuiConstructor).not.toHaveBeenCalled();
   });
 
   it('closes the harness when TUI startup fails', async () => {

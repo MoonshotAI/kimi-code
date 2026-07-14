@@ -1,6 +1,6 @@
-import type { BackgroundTaskInfo, Session } from '@moonshot-ai/kimi-code-sdk';
 import type { Component, ProcessTerminal, TUI } from '@moonshot-ai/pi-tui';
 
+import type { AgentTaskInfo, CoreSession } from '#/core/index';
 import { TaskOutputViewer } from '../components/dialogs/task-output-viewer';
 import { TasksBrowserApp, type TasksFilter } from '../components/dialogs/tasks-browser';
 import type { Theme } from '#/tui/theme';
@@ -14,8 +14,8 @@ export interface TasksBrowserHost {
     readonly ui: TUI;
     readonly editor: CustomEditor;
   };
-  readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
-  readonly session: Session | undefined;
+  readonly backgroundTasks: ReadonlyMap<string, AgentTaskInfo>;
+  readonly session: CoreSession | undefined;
   showError(msg: string): void;
   setTasksBrowser(value: TasksBrowserState | undefined): void;
 }
@@ -56,7 +56,7 @@ export class TasksBrowserController {
       return;
     }
 
-    let tasks: readonly BackgroundTaskInfo[] = [];
+    let tasks: readonly AgentTaskInfo[] = [];
     try {
       tasks = await session.listBackgroundTasks({ activeOnly: false });
     } catch (error) {
@@ -176,7 +176,7 @@ export class TasksBrowserController {
   // ---------------------------------------------------------------------------
 
   private pickInitialSelection(
-    tasks: readonly BackgroundTaskInfo[],
+    tasks: readonly AgentTaskInfo[],
     filter: TasksFilter,
   ): string | undefined {
     const candidates =
@@ -202,7 +202,7 @@ export class TasksBrowserController {
     const session = this.host.session;
     if (session === undefined) return;
 
-    let tasks: readonly BackgroundTaskInfo[];
+    let tasks: readonly AgentTaskInfo[];
     try {
       tasks = await session.listBackgroundTasks({ activeOnly: false });
     } catch (error) {
@@ -217,7 +217,7 @@ export class TasksBrowserController {
     this.pushProps(tasks);
   }
 
-  private pushProps(tasks: readonly BackgroundTaskInfo[]): void {
+  private pushProps(tasks: readonly AgentTaskInfo[]): void {
     const browser = this.host.state.tasksBrowser;
     if (browser === undefined) return;
     browser.component.setProps({
@@ -303,7 +303,7 @@ export class TasksBrowserController {
 
     this.flash(`Stopping ${taskId}…`, 1500);
     try {
-      await session.stopBackgroundTask(taskId, { reason: 'User initiated stop' });
+      await session.stopBackgroundTask(taskId, 'User initiated stop');
       await this.refresh({ silent: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

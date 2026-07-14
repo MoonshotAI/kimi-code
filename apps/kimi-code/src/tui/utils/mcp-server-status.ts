@@ -1,4 +1,4 @@
-import type { McpServerInfo, McpServerStatusEvent } from '@moonshot-ai/kimi-code-sdk';
+import type { McpServerInfo, McpServerStatusEvent } from '#/core/index';
 
 export type McpServerStatusSnapshot = McpServerInfo | McpServerStatusEvent['server'];
 

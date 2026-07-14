@@ -1,4 +1,4 @@
-import type { GoalSnapshot } from '@moonshot-ai/kimi-code-sdk';
+import type { GoalSnapshot } from '#/core/index';
 
 interface GoalCompletionStats {
   readonly terminalReason?: string | undefined;

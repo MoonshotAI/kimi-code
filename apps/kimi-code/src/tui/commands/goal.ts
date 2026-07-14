@@ -1,4 +1,4 @@
-import { ErrorCodes, isKimiError, type PermissionMode } from '@moonshot-ai/kimi-code-sdk';
+import { CoreErrorCodes, isCoreError, type PermissionMode } from '#/core/index';
 
 import {
   GoalStartPermissionPromptComponent,
@@ -36,6 +36,7 @@ type GoalCommandHost = Pick<
   | 'state'
   | 'session'
   | 'requireSession'
+  | 'ensureSession'
   | 'setAppState'
   | 'showError'
   | 'showStatus'
@@ -48,7 +49,12 @@ type GoalCommandHost = Pick<
 
 export interface GoalStartOptions {
   readonly beforeSend?: () => boolean | Promise<boolean>;
-  readonly sendInput?: (objective: string) => void;
+  readonly sendInput?: (objective: string) => void | Promise<void>;
+  readonly onSendError?: () => void | Promise<void>;
+  readonly sendConfirmationWithInput?: (
+    objective: string,
+    confirmation: GoalSetMessageComponent,
+  ) => Promise<void>;
 }
 
 export type ParsedGoalCommand =
@@ -146,7 +152,16 @@ export async function handleGoalCommand(host: SlashCommandHost, args: string): P
       await showGoalQueueManager(host);
       return;
     case 'create':
-      await createGoal(host, parsed, args);
+      if (
+        host.state.appState.permissionMode === 'manual' ||
+        host.state.appState.permissionMode === 'yolo'
+      ) {
+        void createGoal(host, parsed, args).catch((error: unknown) => {
+          host.showError(formatErrorMessage(error));
+        });
+      } else {
+        await createGoal(host, parsed, args);
+      }
       return;
   }
 }
@@ -189,11 +204,21 @@ async function queueNextGoal(
 
   if (!hasCurrentGoal && !isBusy(host)) {
     host.showStatus(START_NEXT_GOAL_NOW_MESSAGE);
-    await createGoal(
+    const start = createGoal(
       host,
       { kind: 'create', objective: parsed.objective, replace: false },
       `next ${parsed.objective}`,
     );
+    if (
+      host.state.appState.permissionMode !== 'manual' &&
+      host.state.appState.permissionMode !== 'yolo'
+    ) {
+      await start;
+    } else {
+      void start.catch((error: unknown) => {
+        host.showError(formatErrorMessage(error));
+      });
+    }
     return;
   }
 
@@ -323,93 +348,162 @@ export async function createGoal(
   options: GoalStartOptions = {},
 ): Promise<boolean> {
   // A goal must be able to start a model turn; refuse to create one otherwise.
-  if (host.state.appState.model.trim().length === 0 || host.session === undefined) {
+  if (host.state.appState.model.trim().length === 0) {
     host.showError(LLM_NOT_SET_MESSAGE);
     return false;
   }
 
+  const session = await host.ensureSession();
+  if (session === undefined) return false;
   if (
     host.state.appState.permissionMode === 'manual' ||
     host.state.appState.permissionMode === 'yolo'
   ) {
-    showGoalStartPermissionPrompt(host, parsed, rawArgs ?? parsed.objective, options);
-    return false;
+    return showGoalStartPermissionPrompt(
+      host,
+      session,
+      parsed,
+      rawArgs ?? parsed.objective,
+      options,
+    );
   }
 
-  return startGoal(host, parsed, options);
+  return startGoal(host, session, parsed, options);
 }
 
 function showGoalStartPermissionPrompt(
   host: GoalCommandHost,
+  session: NonNullable<GoalCommandHost['session']>,
   parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
   rawArgs: string,
   options: GoalStartOptions,
-): void {
-  const commandText = `/goal ${rawArgs.trim()}`;
-  const cancelStart = (): void => {
-    host.restoreInputText(commandText);
-    host.showStatus('Goal not started.');
-  };
-  host.mountEditorReplacement(
-    new GoalStartPermissionPromptComponent({
-      mode: host.state.appState.permissionMode === 'yolo' ? 'yolo' : 'manual',
-      onSelect: (choice) => {
-        if (choice === 'cancel') {
-          cancelStart();
-          return;
-        }
-        host.restoreEditor();
-        void startGoalWithPermission(host, parsed, choice, options);
-      },
-      onCancel: cancelStart,
-    }),
-  );
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let handled = false;
+    const claim = (): boolean => {
+      if (handled) return false;
+      handled = true;
+      return true;
+    };
+    const commandText = `/goal ${rawArgs.trim()}`;
+    const cancelStart = (): void => {
+      if (!claim()) return;
+      try {
+        host.restoreInputText(commandText);
+        host.showStatus('Goal not started.');
+      } catch (error) {
+        host.showError(formatErrorMessage(error));
+      }
+      resolve(false);
+    };
+    const disposeStart = (): void => {
+      if (!claim()) return;
+      resolve(false);
+    };
+    try {
+      host.mountEditorReplacement(
+        new GoalStartPermissionPromptComponent({
+          mode: host.state.appState.permissionMode === 'yolo' ? 'yolo' : 'manual',
+          onSelect: (choice) => {
+            if (choice === 'cancel') {
+              cancelStart();
+              return;
+            }
+            if (!claim()) return;
+            try {
+              host.restoreEditor();
+            } catch (error) {
+              host.showError(formatErrorMessage(error));
+              resolve(false);
+              return;
+            }
+            void startGoalWithPermission(host, session, parsed, choice, options).then(
+              resolve,
+              (error) => {
+                host.showError(formatErrorMessage(error));
+                resolve(false);
+              },
+            );
+          },
+          onCancel: cancelStart,
+          onDispose: disposeStart,
+        }),
+      );
+    } catch (error) {
+      if (!claim()) return;
+      host.showError(formatErrorMessage(error));
+      resolve(false);
+    }
+  });
 }
 
 async function startGoalWithPermission(
   host: GoalCommandHost,
+  session: NonNullable<GoalCommandHost['session']>,
   parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
   choice: GoalStartPermissionChoice,
   options: GoalStartOptions,
-): Promise<void> {
+): Promise<boolean> {
+  if (host.session !== session) return false;
   const previousMode = host.state.appState.permissionMode;
   const switched =
     choice !== previousMode && (choice === 'auto' || choice === 'yolo');
   if (switched) {
-    if (!(await setPermissionForGoal(host, choice))) return;
+    const permissionSet = await setPermissionForGoal(host, session, choice);
+    if (permissionSet === 'failed') return false;
+    if (permissionSet === 'session-changed') {
+      try {
+        await session.setPermission(previousMode);
+      } catch {
+        // Best effort: never surface an old-session rollback failure in the new UI.
+      }
+      return false;
+    }
   }
-  const started = await startGoal(host, parsed, options);
+
+  const started = await startGoal(host, session, parsed, options);
   // The permission switch only exists to run this goal. If creation fails
   // (e.g. a goal already exists and `replace` was not given), restore the
   // previous mode so the session is not left more permissive than before.
-  if (!started && switched) {
-    await setPermissionForGoal(host, previousMode);
+  if (!started && switched && host.session === session) {
+    await setPermissionForGoal(host, session, previousMode);
   }
+  return started;
 }
 
-async function setPermissionForGoal(host: GoalCommandHost, mode: PermissionMode): Promise<boolean> {
+async function setPermissionForGoal(
+  host: GoalCommandHost,
+  session: NonNullable<GoalCommandHost['session']>,
+  mode: PermissionMode,
+): Promise<'set' | 'failed' | 'session-changed'> {
   try {
-    await host.requireSession().setPermission(mode);
+    await session.setPermission(mode);
   } catch (error) {
-    host.showError(`Failed to set permission mode: ${formatErrorMessage(error)}`);
-    return false;
+    if (host.session === session) {
+      host.showError(`Failed to set permission mode: ${formatErrorMessage(error)}`);
+    }
+    return 'failed';
   }
+  if (host.session !== session) return 'session-changed';
   host.setAppState({ permissionMode: mode });
-  return true;
+  return 'set';
 }
 
 async function startGoal(
   host: GoalCommandHost,
+  session: NonNullable<GoalCommandHost['session']>,
   parsed: Extract<ParsedGoalCommand, { kind: 'create' }>,
   options: GoalStartOptions,
 ): Promise<boolean> {
+  if (host.session !== session) return false;
   try {
-    await host.requireSession().createGoal({
+    await session.createGoal({
       objective: parsed.objective,
       replace: parsed.replace,
     });
   } catch (error) {
-    if (isKimiError(error) && error.code === ErrorCodes.GOAL_ALREADY_EXISTS) {
+    if (host.session !== session) return false;
+    if (isCoreError(error) && error.code === CoreErrorCodes.GOAL_ALREADY_EXISTS) {
       host.showError(
         'A goal is already active. Use `/goal replace <objective>` to replace it, or `/goal status` to inspect it.',
       );
@@ -418,17 +512,63 @@ async function startGoal(
     host.showError(formatErrorMessage(error));
     return false;
   }
-  if (options.beforeSend !== undefined && !(await options.beforeSend())) {
+  if (host.session !== session) {
+    try {
+      await session.cancelGoal();
+    } catch {
+      // The originating session is no longer current; do not surface stale-session errors.
+    }
     return false;
   }
-  host.state.transcriptContainer.addChild(new GoalSetMessageComponent());
-  host.state.ui.requestRender();
-  if (options.sendInput !== undefined) {
-    options.sendInput(parsed.objective);
-  } else {
-    host.sendNormalUserInput(parsed.objective);
+  if (options.beforeSend !== undefined) {
+    try {
+      if (!(await options.beforeSend())) return false;
+    } catch (error) {
+      if (host.session === session) host.showError(formatErrorMessage(error));
+      return false;
+    }
   }
-  return true;
+  if (host.session !== session) {
+    try {
+      await session.cancelGoal();
+    } catch {
+      // The originating session is no longer current; do not surface stale-session errors.
+    }
+    return false;
+  }
+  try {
+    if (options.sendConfirmationWithInput !== undefined) {
+      await options.sendConfirmationWithInput(parsed.objective, new GoalSetMessageComponent());
+    } else {
+      host.state.transcriptContainer.addChild(new GoalSetMessageComponent());
+      host.state.ui.requestRender();
+      if (options.sendInput !== undefined) {
+        await options.sendInput(parsed.objective);
+      } else {
+        host.sendNormalUserInput(parsed.objective);
+      }
+    }
+    if (host.session !== session) {
+      try {
+        if (options.onSendError !== undefined) await options.onSendError();
+        else await session.cancelGoal();
+      } catch {
+        // The originating session is no longer current; do not surface stale-session errors.
+      }
+      return false;
+    }
+    return true;
+  } catch (error) {
+    if (host.session === session) host.showError(formatErrorMessage(error));
+    if (options.onSendError !== undefined) {
+      try {
+        await options.onSendError();
+      } catch (rollbackError) {
+        host.showError(`Failed to roll back goal start: ${formatErrorMessage(rollbackError)}`);
+      }
+    }
+    return false;
+  }
 }
 
 async function pauseGoal(host: SlashCommandHost): Promise<void> {
@@ -437,7 +577,7 @@ async function pauseGoal(host: SlashCommandHost): Promise<void> {
     await session.pauseGoal();
     if (isStreaming(host)) await session.cancel();
   } catch (error) {
-    if (isKimiError(error) && error.code === ErrorCodes.GOAL_NOT_FOUND) {
+    if (isCoreError(error) && error.code === CoreErrorCodes.GOAL_NOT_FOUND) {
       host.showStatus('No goal to pause.');
       return;
     }
@@ -449,15 +589,17 @@ async function pauseGoal(host: SlashCommandHost): Promise<void> {
 }
 
 async function resumeGoal(host: SlashCommandHost): Promise<void> {
-  if (host.state.appState.model.trim().length === 0 || host.session === undefined) {
+  if (host.state.appState.model.trim().length === 0) {
     host.showError(LLM_NOT_SET_MESSAGE);
     return;
   }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
 
   try {
-    await host.requireSession().resumeGoal();
+    await session.resumeGoal();
   } catch (error) {
-    if (isKimiError(error) && error.code === ErrorCodes.GOAL_NOT_FOUND) {
+    if (isCoreError(error) && error.code === CoreErrorCodes.GOAL_NOT_FOUND) {
       host.showStatus('No goal to resume.');
       return;
     }
@@ -474,7 +616,7 @@ async function cancelGoal(host: SlashCommandHost): Promise<void> {
     await session.cancelGoal();
     if (isStreaming(host)) await session.cancel();
   } catch (error) {
-    if (isKimiError(error) && error.code === ErrorCodes.GOAL_NOT_FOUND) {
+    if (isCoreError(error) && error.code === CoreErrorCodes.GOAL_NOT_FOUND) {
       host.showStatus('No goal to cancel.');
       return;
     }

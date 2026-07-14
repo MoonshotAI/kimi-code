@@ -1,8 +1,6 @@
-import type {
-  BackgroundTaskInfo,
-  Event,
-} from '@moonshot-ai/kimi-code-sdk';
 import type { Component } from '@moonshot-ai/pi-tui';
+
+import type { AgentTaskInfo, SessionEvent } from '#/core/index';
 
 import {
   AgentSwarmProgressComponent,
@@ -29,12 +27,12 @@ export interface SubagentInfo {
   readonly swarmIndex?: number;
 }
 
-export type SubagentLifecycleEvent = Event & { type: `subagent.${string}` };
+export type SubagentLifecycleEvent = SessionEvent & { type: `subagent.${string}` };
 type SubagentLifecycleEventOf<Type extends SubagentLifecycleEvent['type']> =
   SubagentLifecycleEvent & { type: Type };
 
 export interface SubAgentEventHandlerDependencies {
-  readonly backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>;
+  readonly backgroundTasks: ReadonlyMap<string, AgentTaskInfo>;
   readonly backgroundTaskTranscriptedTerminal: Set<string>;
   readonly syncBackgroundAgentBadge: () => void;
 }
@@ -67,8 +65,9 @@ export class SubAgentEventHandler {
     this.clearAgentSwarmProgress();
   }
 
-  routeChildAgentEvent(event: Event): boolean {
+  routeChildAgentEvent(event: SessionEvent): boolean {
     if (isSubagentLifecycleEvent(event)) return false;
+    if (event.type === 'task.started' || event.type === 'task.terminated') return false;
 
     const childAgentId = event.agentId;
     if (childAgentId === MAIN_AGENT_ID) return false;
@@ -339,7 +338,7 @@ export class SubAgentEventHandler {
   private findAgentTaskId(
     subagentId: string,
     meta: BackgroundAgentMetadata,
-    backgroundTasks: ReadonlyMap<string, BackgroundTaskInfo>,
+    backgroundTasks: ReadonlyMap<string, AgentTaskInfo>,
   ): string | undefined {
     for (const info of backgroundTasks.values()) {
       if (info.kind !== 'agent') continue;
@@ -495,7 +494,7 @@ export class SubAgentEventHandler {
 
   private applySubagentEventToSwarmProgress(
     progress: AgentSwarmProgressComponent,
-    event: Event,
+    event: SessionEvent,
     subagentId: string,
   ): void {
     if (event.type === 'assistant.delta' || event.type === 'thinking.delta') {
@@ -621,7 +620,7 @@ export class SubAgentEventHandler {
   }
 }
 
-function isSubagentLifecycleEvent(event: Event): event is SubagentLifecycleEvent {
+function isSubagentLifecycleEvent(event: SessionEvent): event is SubagentLifecycleEvent {
   return (
     event.type === 'subagent.spawned' ||
     event.type === 'subagent.started' ||

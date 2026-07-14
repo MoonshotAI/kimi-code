@@ -1,4 +1,4 @@
-import { isKimiError } from '@moonshot-ai/kimi-code-sdk';
+import { isCoreError } from '#/core/index';
 
 import {
   STREAMING_ARGS_FIELD_RE,
@@ -90,7 +90,7 @@ export function isTodoItemShape(
 }
 
 export function formatErrorMessage(error: unknown): string {
-  if (isKimiError(error)) {
+  if (isCoreError(error)) {
     return formatErrorPayload({
       code: error.code,
       message: error.message,

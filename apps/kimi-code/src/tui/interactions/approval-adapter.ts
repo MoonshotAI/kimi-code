@@ -1,8 +1,8 @@
-import type { ApprovalRequest, ApprovalResponse, ToolInputDisplay } from '@moonshot-ai/kimi-code-sdk';
+import type { ApprovalResponse, CoreApprovalRequest, ToolInputDisplay } from '#/core/index';
 
 import type { ApprovalPanelResponse } from '#/tui/components/dialogs/approval-panel';
 import { goalStartOptions } from '#/tui/components/dialogs/goal-start-permission-prompt';
-import type { ApprovalPanelChoice, ApprovalPanelData, DisplayBlock } from '#/tui/reverse-rpc/types';
+import type { ApprovalPanelChoice, ApprovalPanelData, DisplayBlock } from '#/tui/interactions/types';
 
 const DEFAULT_APPROVAL_CHOICES: ApprovalPanelChoice[] = [
   { label: 'Approve once', response: 'approved' },
@@ -16,16 +16,23 @@ const PLAN_REJECT_CHOICES: ApprovalPanelChoice[] = [
   { label: 'Revise', response: 'rejected', selected_label: 'Revise', requires_feedback: true },
 ];
 
-export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData {
-  const resolved = resolveDisplay(event.toolName, event.display, event.action);
+/**
+ * Project a core approval request into the panel view payload. `id` is the
+ * pending-interaction id used to correlate the panel with the session broker;
+ * it falls back to the request's own id / tool-call id (v2 marks both
+ * optional).
+ */
+export function adaptApprovalRequest(request: CoreApprovalRequest, id?: string): ApprovalPanelData {
+  const panelId = id ?? request.id ?? request.toolCallId ?? 'approval';
+  const resolved = resolveDisplay(request.toolName, request.display, request.action);
   return {
-    id: event.toolCallId,
-    tool_call_id: event.toolCallId,
-    tool_name: event.toolName,
-    action: event.action,
+    id: panelId,
+    tool_call_id: request.toolCallId ?? panelId,
+    tool_name: request.toolName,
+    action: request.action,
     description: resolved.description,
     display: resolved.blocks,
-    choices: adaptChoices(event.toolName, event.display),
+    choices: adaptChoices(request.toolName, request.display),
   };
 }
 

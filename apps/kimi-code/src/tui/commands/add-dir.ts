@@ -18,10 +18,8 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
     return;
   }
 
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  const ensured = await host.ensureSession();
+  if (ensured === undefined) return;
 
   host.mountEditorReplacement(
     new ChoicePickerComponent({
@@ -42,7 +40,7 @@ export async function handleAddDirCommand(host: SlashCommandHost, args: string):
         },
       ],
       onSelect: (value) => {
-        void handleAddDirChoice(host, session.id, input, value as AddDirChoice);
+        void handleAddDirChoice(host, ensured.id, input, value as AddDirChoice);
       },
       onCancel: () => {
         host.restoreEditor();
@@ -76,7 +74,7 @@ async function handleAddDirChoice(
   }
 
   try {
-    const result = await session.addAdditionalDir(path, { persist: choice === 'remember' });
+    const result = await session.addAdditionalDir({ path, persist: choice === 'remember' });
     host.setAppState({ additionalDirs: result.additionalDirs });
     host.refreshSlashCommandAutocomplete();
     host.showStatus(

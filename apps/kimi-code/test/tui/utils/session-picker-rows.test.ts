@@ -1,4 +1,4 @@
-import type { SessionSummary } from '@moonshot-ai/kimi-code-sdk';
+import type { CoreSessionSummary } from '#/core/index';
 import { describe, expect, it } from 'vitest';
 
 import { sessionRowsForPicker } from '#/tui/utils/session-picker-rows';
@@ -7,7 +7,7 @@ function summary(input: {
   readonly id: string;
   readonly title?: string;
   readonly lastPrompt?: string;
-}): SessionSummary {
+}): CoreSessionSummary {
   return {
     id: input.id,
     title: input.title,
@@ -16,6 +16,7 @@ function summary(input: {
     sessionDir: `/tmp/home/sessions/${input.id}`,
     createdAt: 1,
     updatedAt: 2,
+    archived: false,
   };
 }
 

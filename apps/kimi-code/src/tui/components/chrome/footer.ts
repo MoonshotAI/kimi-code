@@ -9,7 +9,7 @@
 import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
-import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import { effectiveModelAlias } from '#/core/index';
 
 import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';

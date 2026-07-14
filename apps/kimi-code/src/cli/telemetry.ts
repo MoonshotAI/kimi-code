@@ -8,7 +8,6 @@ import {
   type TelemetryClient,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import type { PromptHarness } from './prompt-session';
 import {
   initializeTelemetry,
   setTelemetryContext,
@@ -17,6 +16,7 @@ import {
 } from '@moonshot-ai/kimi-telemetry';
 
 import { CLI_USER_AGENT_PRODUCT, WEB_UI_MODE } from '#/constant/app';
+import type { TelemetryProperties } from '#/core/index';
 
 import { createKimiCodeHostIdentity } from './version';
 
@@ -26,8 +26,20 @@ export interface CliTelemetryBootstrap {
   readonly firstLaunch: boolean;
 }
 
+/**
+ * Minimal harness surface consumed by {@link initializeCliTelemetry}. Both the
+ * v1 SDK `KimiHarness` (print mode, `kimi export`) and the v2-backed
+ * `CoreHarness` (shell mode) satisfy it structurally — `KimiAuthFacade` is the
+ * same class on both paths.
+ */
+export interface CliTelemetryHarness {
+  readonly homeDir: string;
+  readonly auth: KimiAuthFacade;
+  track(event: string, properties?: TelemetryProperties): void;
+}
+
 export interface InitializeCliTelemetryOptions {
-  readonly harness: PromptHarness;
+  readonly harness: CliTelemetryHarness;
   readonly bootstrap: CliTelemetryBootstrap;
   readonly config: Pick<KimiConfig, 'defaultModel' | 'telemetry'>;
   readonly version: string;

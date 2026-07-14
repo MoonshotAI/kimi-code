@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { adaptApprovalRequest, adaptPanelResponse } from '#/tui/reverse-rpc/approval/adapter';
+import { adaptApprovalRequest, adaptPanelResponse } from '#/tui/interactions/approval-adapter';
 
 describe('approval adapter', () => {
   it('adapts generic command displays into shell blocks with approval choices', () => {
@@ -315,5 +315,18 @@ describe('approval adapter', () => {
       feedback: 'looks good',
       selectedLabel: 'Approve for this session',
     });
+  });
+
+  it('uses an explicit pending id when one is supplied', () => {
+    const adapted = adaptApprovalRequest(
+      {
+        toolCallId: 'tc-1',
+        toolName: 'Bash',
+        action: 'run',
+        display: { kind: 'generic', summary: 'run' },
+      },
+      'interaction-1',
+    );
+    expect(adapted.id).toBe('interaction-1');
   });
 });

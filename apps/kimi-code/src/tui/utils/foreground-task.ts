@@ -1,4 +1,4 @@
-import type { BackgroundTaskInfo } from '@moonshot-ai/kimi-code-sdk';
+import type { BackgroundTaskInfo } from '#/core/index';
 
 function isDetachableForegroundTask(t: BackgroundTaskInfo): boolean {
   return (

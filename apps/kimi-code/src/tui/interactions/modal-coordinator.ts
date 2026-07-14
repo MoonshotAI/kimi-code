@@ -1,25 +1,25 @@
 import type { ApprovalPanelData, QuestionPanelData } from './types';
 
-export type ReverseRpcModalOwner = 'approval' | 'question';
+export type InteractionModalOwner = 'approval' | 'question';
 
-export interface ReverseRpcModalUIHooks {
+export interface InteractionModalUIHooks {
   readonly showApprovalPanel: (payload: ApprovalPanelData) => void;
   readonly hideApprovalPanel: () => void;
   readonly showQuestionDialog: (payload: QuestionPanelData) => void;
   readonly hideQuestionDialog: () => void;
 }
 
-interface ReverseRpcModalEntry {
-  readonly owner: ReverseRpcModalOwner;
+interface InteractionModalEntry {
+  readonly owner: InteractionModalOwner;
   readonly show: () => void;
   readonly hide: () => void;
 }
 
-export class ReverseRpcModalCoordinator {
-  private active: ReverseRpcModalEntry | null = null;
-  private readonly queued: ReverseRpcModalEntry[] = [];
+export class InteractionModalCoordinator {
+  private active: InteractionModalEntry | null = null;
+  private readonly queued: InteractionModalEntry[] = [];
 
-  constructor(private readonly hooks: ReverseRpcModalUIHooks) {}
+  constructor(private readonly hooks: InteractionModalUIHooks) {}
 
   showApproval(payload: ApprovalPanelData): void {
     this.show({
@@ -45,7 +45,7 @@ export class ReverseRpcModalCoordinator {
     });
   }
 
-  hide(owner: ReverseRpcModalOwner): void {
+  hide(owner: InteractionModalOwner): void {
     if (this.active?.owner === owner) {
       const active = this.active;
       this.active = null;
@@ -65,7 +65,7 @@ export class ReverseRpcModalCoordinator {
     active?.hide();
   }
 
-  private show(entry: ReverseRpcModalEntry): void {
+  private show(entry: InteractionModalEntry): void {
     const active = this.active;
     if (active === null) {
       this.active = entry;

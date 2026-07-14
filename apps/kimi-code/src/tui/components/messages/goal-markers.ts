@@ -8,7 +8,7 @@
  */
 
 import { truncateToWidth, type Component } from '@moonshot-ai/pi-tui';
-import type { GoalChange } from '@moonshot-ai/kimi-code-sdk';
+import type { GoalChange } from '#/core/index';
 
 import { STATUS_BULLET } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';

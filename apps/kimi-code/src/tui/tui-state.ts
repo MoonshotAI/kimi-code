@@ -59,6 +59,8 @@ export interface TUIState {
    * this flag to avoid starting a goal ahead of the user's earlier message.
    */
   queuedMessageDispatchPending: boolean;
+  /** Invalidates deferred queued-message callbacks from older runtimes. */
+  queuedMessageDispatchGeneration: number;
   swarmModeEntry: 'manual' | 'task' | undefined;
 }
 
@@ -111,6 +113,7 @@ export function createTUIState(options: KimiTUIOptions): TUIState {
     externalEditorRunning: false,
     queuedMessages: [],
     queuedMessageDispatchPending: false,
+    queuedMessageDispatchGeneration: 0,
     swarmModeEntry: undefined,
   };
 }

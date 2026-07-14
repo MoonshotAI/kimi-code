@@ -1,4 +1,4 @@
-import type { Session } from '@moonshot-ai/kimi-code-sdk';
+import type { CoreSession } from '#/core/index';
 
 import { AgentGroupComponent } from '../components/messages/agent-group';
 import { AssistantMessageComponent } from '../components/messages/assistant-message';
@@ -25,13 +25,13 @@ import type { TUIState } from '../tui-state';
 
 export interface StreamingUIHost {
   state: TUIState;
-  session: Session | undefined;
+  session: CoreSession | undefined;
   setAppState(patch: Partial<AppState>): void;
   patchLivePane(patch: Partial<LivePaneState>): void;
   resetLivePane(): void;
   updateActivityPane(): void;
   updateQueueDisplay(): void;
-  requireSession(): Session;
+  requireSession(): CoreSession;
   deferUserMessages: boolean;
   shiftQueuedMessage(): QueuedMessage | undefined;
   pushTranscriptEntry(entry: TranscriptEntry): void;
@@ -565,9 +565,11 @@ export class StreamingUIController {
       // queued-goal promotion, which would otherwise see an empty queue and an
       // idle phase and start a goal ahead of this message.
       state.queuedMessageDispatchPending = true;
+      const dispatchGeneration = ++state.queuedMessageDispatchGeneration;
       this.host.setAppState({ streamingPhase: 'idle' });
       this.host.resetLivePane();
       setTimeout(() => {
+        if (state.queuedMessageDispatchGeneration !== dispatchGeneration) return;
         state.queuedMessageDispatchPending = false;
         sendQueued(next);
       }, 0);

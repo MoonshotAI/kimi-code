@@ -4,11 +4,12 @@ import type { SlashCommandHost } from './dispatch';
 
 export async function handleBtwCommand(host: SlashCommandHost, args: string): Promise<void> {
   const prompt = args.trim();
-  const session = host.session;
-  if (host.state.appState.model.trim().length === 0 || session === undefined) {
+  if (host.state.appState.model.trim().length === 0) {
     host.showError(LLM_NOT_SET_MESSAGE);
     return;
   }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
   host.btwPanelController.closeOrCancel();
 
   try {

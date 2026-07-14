@@ -1,9 +1,9 @@
-import type { SessionSummary } from '@moonshot-ai/kimi-code-sdk';
+import type { CoreSessionSummary } from '#/core/index';
 
 import type { SessionRow } from '#/tui/components/dialogs/session-picker';
 
 export function sessionRowsForPicker(
-  sessions: readonly SessionSummary[],
+  sessions: readonly CoreSessionSummary[],
   currentSessionId: string,
   currentSessionHasContent: boolean,
 ): SessionRow[] {

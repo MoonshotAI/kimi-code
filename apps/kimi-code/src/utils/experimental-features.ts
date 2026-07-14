@@ -1,7 +1,7 @@
 import type {
   ExperimentalFeatureState,
   ExperimentalFlagMap,
-} from '@moonshot-ai/kimi-code-sdk';
+} from '#/core/index';
 
 export function experimentalFeatureMap(
   features: readonly Pick<ExperimentalFeatureState, 'id' | 'enabled'>[],

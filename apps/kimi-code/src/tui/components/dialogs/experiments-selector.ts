@@ -6,7 +6,7 @@ import {
   visibleWidth,
   type Focusable,
 } from '@moonshot-ai/pi-tui';
-import type { ExperimentalFeatureState } from '@moonshot-ai/kimi-code-sdk';
+import type { ExperimentalFeatureState } from '#/core/index';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';
 import { currentTheme } from '#/tui/theme';

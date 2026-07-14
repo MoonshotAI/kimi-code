@@ -16,6 +16,7 @@ import {
   updateGoalQueueItem,
 } from '#/tui/goal-queue-store';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
+import { createGoal } from '#/tui/commands/goal';
 import { getBuiltInPalette } from '#/tui/theme';
 
 vi.mock('#/tui/goal-queue-store', () => ({
@@ -113,6 +114,7 @@ function makeHost(
     session: hasSession ? session : undefined,
     skillCommandMap: new Map<string, string>(),
     requireSession: () => session,
+    ensureSession: async () => (hasSession ? session : undefined),
     setAppState: vi.fn((patch: Record<string, unknown>) => Object.assign(host.state.appState, patch)),
     showError: vi.fn(),
     showStatus: vi.fn(),
@@ -264,6 +266,144 @@ describe('handleGoalCommand', () => {
     await handleGoalCommand(host, 'Ship feature X');
 
     expect(calls).toEqual([{ receiver: host, text: 'Ship feature X' }]);
+  });
+
+  it.each(['manual', 'yolo'] as const)(
+    'waits for the %s permission choice before resolving goal creation',
+    async (permissionMode) => {
+      const { host: promptHost, session: s } = makeHost({ permissionMode });
+      const result = createGoal(
+        promptHost,
+        { kind: 'create', objective: 'Ship queued goal', replace: false },
+        'Ship queued goal',
+      );
+      let settled = false;
+      void result.finally(() => {
+        settled = true;
+      });
+
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      expect(s.createGoal).not.toHaveBeenCalled();
+
+      mountedPicker(promptHost).handleInput(ENTER);
+
+      await expect(result).resolves.toBe(true);
+      expect(s.createGoal).toHaveBeenCalledWith({
+        objective: 'Ship queued goal',
+        replace: false,
+      });
+    },
+  );
+
+  it('resolves false when mounting the permission prompt throws', async () => {
+    const { host: manualHost, session: s } = makeHost({ permissionMode: 'manual' });
+    vi.mocked(manualHost.mountEditorReplacement).mockImplementationOnce(() => {
+      throw new Error('mount failed');
+    });
+
+    await expect(
+      createGoal(
+        manualHost,
+        { kind: 'create', objective: 'Ship queued goal', replace: false },
+        'Ship queued goal',
+      ),
+    ).resolves.toBe(false);
+
+    expect(manualHost.showError).toHaveBeenCalledWith('mount failed');
+    expect(s.createGoal).not.toHaveBeenCalled();
+  });
+
+  it('resolves false when another editor replacement disposes the permission prompt', async () => {
+    const { host: manualHost, session: s } = makeHost({ permissionMode: 'manual' });
+    let mounted: { dispose?: () => void } | undefined;
+    vi.mocked(manualHost.mountEditorReplacement).mockImplementation((panel) => {
+      mounted?.dispose?.();
+      mounted = panel as { dispose?: () => void };
+    });
+    const result = createGoal(
+      manualHost,
+      { kind: 'create', objective: 'Ship queued goal', replace: false },
+      'Ship queued goal',
+    );
+
+    // createGoal ensures the session (async) before mounting the prompt.
+    await vi.waitFor(() => expect(manualHost.mountEditorReplacement).toHaveBeenCalled());
+    manualHost.mountEditorReplacement({} as never);
+
+    await expect(result).resolves.toBe(false);
+    expect(s.createGoal).not.toHaveBeenCalled();
+  });
+
+  it('does not continue a permission-selected goal on a replacement session', async () => {
+    const { host: manualHost, session: oldSession } = makeHost({ permissionMode: 'manual' });
+    let releasePermission!: () => void;
+    oldSession.setPermission.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (releasePermission = resolve)),
+    );
+    const result = createGoal(
+      manualHost,
+      { kind: 'create', objective: 'Ship queued goal', replace: false },
+      'Ship queued goal',
+    );
+    // createGoal ensures the session (async) before mounting the prompt.
+    await vi.waitFor(() => expect(manualHost.mountEditorReplacement).toHaveBeenCalled());
+    mountedPicker(manualHost).handleInput(ENTER);
+    await vi.waitFor(() => {
+      expect(oldSession.setPermission).toHaveBeenCalledWith('auto');
+    });
+
+    const newSession = {
+      ...oldSession,
+      setPermission: vi.fn(async () => {}),
+      createGoal: vi.fn(async () => fakeSnapshot()),
+      cancelGoal: vi.fn(async () => fakeSnapshot()),
+    };
+    manualHost.session = newSession as never;
+    releasePermission();
+
+    await expect(result).resolves.toBe(false);
+    expect(oldSession.setPermission).toHaveBeenNthCalledWith(1, 'auto');
+    expect(oldSession.setPermission).toHaveBeenNthCalledWith(2, 'manual');
+    expect(oldSession.createGoal).not.toHaveBeenCalled();
+    expect(newSession.setPermission).not.toHaveBeenCalled();
+    expect(newSession.createGoal).not.toHaveBeenCalled();
+    expect(newSession.cancelGoal).not.toHaveBeenCalled();
+    expect(manualHost.setAppState).not.toHaveBeenCalledWith({ permissionMode: 'auto' });
+  });
+
+  it('resolves false when sending goal input throws after creation', async () => {
+    const { host: promptHost, session: s } = makeHost();
+    vi.mocked(promptHost.sendNormalUserInput).mockImplementationOnce(() => {
+      throw new Error('send failed');
+    });
+
+    await expect(
+      createGoal(
+        promptHost,
+        { kind: 'create', objective: 'Ship queued goal', replace: false },
+        'Ship queued goal',
+      ),
+    ).resolves.toBe(false);
+
+    expect(s.createGoal).toHaveBeenCalledOnce();
+    expect(promptHost.showError).toHaveBeenCalledWith('send failed');
+  });
+
+  it('resolves false when the queued-goal permission prompt is cancelled', async () => {
+    const { host: manualHost, session: s } = makeHost({ permissionMode: 'manual' });
+    const result = createGoal(
+      manualHost,
+      { kind: 'create', objective: 'Ship queued goal', replace: false },
+      'Ship queued goal',
+    );
+
+    // createGoal ensures the session (async) before mounting the prompt.
+    await vi.waitFor(() => expect(manualHost.mountEditorReplacement).toHaveBeenCalled());
+    mountedPicker(manualHost).handleInput(ESCAPE);
+
+    await expect(result).resolves.toBe(false);
+    expect(s.createGoal).not.toHaveBeenCalled();
   });
 
   it('asks before starting a goal in Manual mode', async () => {
@@ -697,11 +837,14 @@ describe('handleGoalCommand', () => {
     expect(s.createGoal).not.toHaveBeenCalled();
   });
 
-  it('creation without an active session shows LLM_NOT_SET_MESSAGE', async () => {
+  it('creation without an active session aborts when the session cannot be ensured', async () => {
     const { host: noSessionHost, session: s } = makeHost({ hasSession: false });
     await handleGoalCommand(noSessionHost, 'Ship feature X');
-    expect(noSessionHost.showError).toHaveBeenCalled();
+    // No LLM_NOT_SET error any more: goal creation defers to the host's
+    // ensureSession, which owns the login-required UX; an undefined result
+    // here means the user was already informed and the goal simply aborts.
     expect(s.createGoal).not.toHaveBeenCalled();
+    expect(noSessionHost.sendNormalUserInput).not.toHaveBeenCalled();
   });
 });
 

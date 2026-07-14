@@ -45,14 +45,14 @@ notification_condition = "always"
 [upgrade]
 auto_install = false
 `);
-    const session = { reloadSession: vi.fn() };
+    const session = { id: 'ses-1' };
     const host = makeHost({ session });
 
     await handleReloadTuiCommand(host);
 
     expect(host.harness.getConfig).not.toHaveBeenCalled();
     expect(host.harness.getExperimentalFeatures).not.toHaveBeenCalled();
-    expect(session.reloadSession).not.toHaveBeenCalled();
+    expect(host.harness.reloadSession).not.toHaveBeenCalled();
     expect(host.state.appState).toMatchObject({
       theme: 'light',
       editorCommand: 'vim',
@@ -67,12 +67,13 @@ auto_install = false
 
   it('reloads the active session, refreshes runtime config, and applies tui.toml', async () => {
     await writeTuiConfig('theme = "light"\n');
-    const session = { id: 'ses-1', reloadSession: vi.fn(async () => ({})) };
+    const session = { id: 'ses-1' };
     const host = makeHost({ session });
 
     await handleReloadCommand(host);
 
-    expect(session.reloadSession).toHaveBeenCalledWith({
+    expect(host.harness.reloadSession).toHaveBeenCalledWith({
+      id: 'ses-1',
       forcePluginSessionStartReminder: true,
     });
     expect(host.reloadCurrentSessionView).toHaveBeenCalledWith(
@@ -159,6 +160,7 @@ function makeHost({
         },
       })),
       getExperimentalFeatures: vi.fn(async () => [{ id: 'micro_compaction', enabled: true }]),
+      reloadSession: vi.fn(async () => session),
     },
     setAppState: vi.fn((patch: Record<string, unknown>) => {
       Object.assign(state.appState, patch);

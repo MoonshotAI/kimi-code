@@ -13,7 +13,7 @@
  * AskUserQuestion dialog's tab strip) — see .agents/skills/write-tui/DESIGN.md.
  */
 
-import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import type { ModelAlias } from '#/core/index';
 import {
   Container,
   Key,

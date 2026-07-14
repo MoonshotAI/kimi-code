@@ -14,7 +14,7 @@ import {
   inferWireType,
   type Catalog,
   type ThinkingEffort,
-} from '@moonshot-ai/kimi-code-sdk';
+} from '#/core/index';
 
 import { createKimiCodeUserAgent } from '#/cli/version';
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
@@ -28,6 +28,7 @@ import {
 } from '../components/dialogs/provider-manager';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { DEFAULT_OAUTH_PROVIDER_NAME } from '../constant/kimi-tui';
+import { modelsView, providersView } from '../utils/core-config-view';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import {
@@ -99,8 +100,8 @@ async function handleProviderDelete(host: SlashCommandHost, providerId: string):
     await host.authFlow.clearActiveSessionAfterLogout();
   } else {
     host.setAppState({
-      availableProviders: config.providers ?? {},
-      availableModels: config.models ?? {},
+      availableProviders: providersView(config),
+      availableModels: modelsView(config),
     });
   }
 }
@@ -205,12 +206,15 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   // entered. The model selector that follows is just a convenience to pick the
   // default model; ESC leaves the provider in place without a default selection.
   const existingConfig = await host.harness.getConfig();
-  if (existingConfig.providers[providerId] !== undefined) {
+  if (providersView(existingConfig)[providerId] !== undefined) {
     await host.harness.removeProvider(providerId);
   }
 
   const config = await host.harness.getConfig();
-  applyCatalogProvider(config, {
+  // `applyCatalogProvider` mutates the config document in place and is typed
+  // against the SDK's `KimiConfig`; the v2 resolved config is the same TOML
+  // projection at runtime, so bridge the type at this catalog boundary.
+  applyCatalogProvider(config as unknown as Parameters<typeof applyCatalogProvider>[0], {
     providerId,
     wire,
     baseUrl,
@@ -221,8 +225,8 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   });
 
   await host.harness.setConfig({
-    providers: config.providers,
-    models: config.models,
+    providers: providersView(config),
+    models: modelsView(config),
   });
 
   await host.authFlow.refreshConfigAfterLogin();
@@ -232,7 +236,7 @@ async function handleCatalogProviderAdd(host: SlashCommandHost): Promise<void> {
   // Build a merged model dictionary that includes existing models plus the
   // newly-persisted provider's models, so the tabbed selector shows every
   // provider's tab (the new provider's tab starts active via initialTabId).
-  const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
+  const stateModels = await host.harness.getConfig().then((c) => modelsView(c));
   const mergedModels = { ...stateModels };
 
   const selector = new TabbedModelSelectorComponent({
@@ -295,8 +299,8 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
       source,
     );
     await host.harness.setConfig({
-      providers: config.providers,
-      models: config.models,
+      providers: providersView(config),
+      models: modelsView(config),
     });
     await host.authFlow.refreshConfigAfterLogin();
   } catch (error) {
@@ -318,7 +322,7 @@ async function handleCustomRegistryAddViaDialog(host: SlashCommandHost): Promise
 
   // Offer the model selector so the user can pick a default, just like the
   // catalog (known-provider) flow.
-  const stateModels = await host.harness.getConfig().then((c) => c.models ?? {});
+  const stateModels = await host.harness.getConfig().then((c) => modelsView(c));
   const firstNewAlias = Object.keys(stateModels).find((a) =>
     addedProviderIds.some((pid) => a.startsWith(`${pid}/`)),
   );

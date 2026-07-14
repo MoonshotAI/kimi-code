@@ -22,7 +22,7 @@ import type {
   PendingQuestion,
   QuestionPanelResponse,
   QuestionSubmissionMethod,
-} from '#/tui/reverse-rpc/types';
+} from '#/tui/interactions/types';
 
 const NUMBER_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9'];
 const MAX_BODY_LINES = 12;

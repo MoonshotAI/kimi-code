@@ -1,23 +1,24 @@
 import type { Component, Focusable } from '@moonshot-ai/pi-tui';
+
 import type {
   AgentStatusUpdatedEvent,
+  AgentTaskInfo,
   AssistantDeltaEvent,
-  BackgroundTaskInfo,
-  BackgroundTaskStartedEvent,
-  BackgroundTaskTerminatedEvent,
   CompactionCancelledEvent,
   CompactionCompletedEvent,
   CompactionStartedEvent,
+  CoreSession,
   CronFiredEvent,
   ErrorEvent,
-  Event,
   GoalChange,
   GoalUpdatedEvent,
   HookResultEvent,
-  Session,
+  PluginCommandActivatedEvent,
+  SessionEvent,
   SessionMetaUpdatedEvent,
   SkillActivatedEvent,
-  PluginCommandActivatedEvent,
+  TaskStartedEvent,
+  TaskTerminatedEvent,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
   ToolCallStartedEvent,
@@ -29,7 +30,7 @@ import type {
   TurnStepInterruptedEvent,
   TurnStepStartedEvent,
   WarningEvent,
-} from '@moonshot-ai/kimi-code-sdk';
+} from '#/core/index';
 
 import { MoonLoader } from '../components/chrome/moon-loader';
 import { buildGoalMarker } from '../components/messages/goal-markers';
@@ -46,17 +47,10 @@ import { buildGoalCompletionMessage } from '../utils/goal-completion';
 import {
   argsRecord,
   formatErrorPayload,
-  formatErrorMessage,
   isTodoItemShape,
   serializeToolResultOutput,
   stringValue,
 } from '../utils/event-payload';
-import {
-  readGoalQueue,
-  removeGoalQueueItem,
-  restoreGoalQueueItem,
-  type UpcomingGoal,
-} from '../goal-queue-store';
 import { formatBackgroundTaskTranscript } from '../utils/background-task-status';
 import { formatHookResultMarkdown } from '../utils/hook-result-format';
 import { McpOAuthAuthorizationUrlOpener } from '../utils/mcp-oauth';
@@ -80,21 +74,23 @@ import type {
   AppState,
   LivePaneState,
   QueuedMessage,
+  SkillActivationTrigger,
   ToolCallBlockData,
   ToolResultBlockData,
   TranscriptEntry,
 } from '../types';
 import type { TUIState } from '../tui-state';
-import { createGoal as startGoalCommand } from '../commands/goal';
+import { GoalQueuePromoter } from '../goal-queue-promoter';
 
 export interface SessionEventHost {
   state: TUIState;
-  session: Session | undefined;
+  session: CoreSession | undefined;
   aborted: boolean;
   sessionEventUnsubscribe: (() => void) | undefined;
   readonly streamingUI: StreamingUIController;
 
-  requireSession(): Session;
+  requireSession(): CoreSession;
+  ensureSession(): Promise<CoreSession | undefined>;
   setAppState(patch: Partial<AppState>): void;
   patchLivePane(patch: Partial<LivePaneState>): void;
   resetLivePane(): void;
@@ -111,7 +107,12 @@ export interface SessionEventHost {
   handleShellStarted(event: { commandId: string; taskId: string }): void;
   sendNormalUserInput(text: string): void;
   updateTerminalTitle(): void;
-  sendQueuedMessage(session: Session, item: QueuedMessage): void;
+  sendQueuedMessage(session: CoreSession, item: QueuedMessage): void;
+  sendQueuedGoalMessage(
+    session: CoreSession,
+    item: QueuedMessage,
+    confirmation: Component,
+  ): Promise<void>;
   shiftQueuedMessage(): QueuedMessage | undefined;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
@@ -120,7 +121,10 @@ export interface SessionEventHost {
 export class SessionEventHandler {
   readonly subAgentEventHandler: SubAgentEventHandler;
 
+  private readonly promoter: GoalQueuePromoter;
+
   constructor(private readonly host: SessionEventHost) {
+    this.promoter = new GoalQueuePromoter(host);
     this.subAgentEventHandler = new SubAgentEventHandler(host, {
       backgroundTasks: this.backgroundTasks,
       backgroundTaskTranscriptedTerminal: this.backgroundTaskTranscriptedTerminal,
@@ -131,7 +135,7 @@ export class SessionEventHandler {
   }
 
   // Runtime state – owned by this handler, reset between sessions.
-  backgroundTasks: Map<string, BackgroundTaskInfo> = new Map();
+  backgroundTasks: Map<string, AgentTaskInfo> = new Map();
   backgroundTaskTranscriptedTerminal: Set<string> = new Set();
 
   renderedSkillActivationIds: Set<string> = new Set();
@@ -139,13 +143,8 @@ export class SessionEventHandler {
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
-  private goalCompletionAwaitingClear = false;
-  private goalCompletionTurnEnded = false;
   private currentTurnHasAssistantText = false;
   private pendingModelBlockedFallback: GoalChange | undefined;
-  private queuedGoalPromotionPending = false;
-  private queuedGoalPromotionInFlight = false;
-  private queuedGoalPromotionTimer: ReturnType<typeof setTimeout> | undefined;
 
   resetRuntimeState(): void {
     this.backgroundTasks.clear();
@@ -155,13 +154,9 @@ export class SessionEventHandler {
     this.renderedPluginCommandActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
     this.mcpServers.clear();
-    this.goalCompletionAwaitingClear = false;
-    this.goalCompletionTurnEnded = false;
     this.currentTurnHasAssistantText = false;
     this.pendingModelBlockedFallback = undefined;
-    this.queuedGoalPromotionPending = false;
-    this.queuedGoalPromotionInFlight = false;
-    this.clearQueuedGoalPromotionTimer();
+    this.promoter.reset();
     this.stopAllMcpServerStatusSpinners();
   }
 
@@ -181,6 +176,9 @@ export class SessionEventHandler {
     const { host } = this;
     const session = host.requireSession();
     const sendQueued = (item: QueuedMessage): void => {
+      if (host.aborted) return;
+      if (host.session !== session) return;
+      if (host.state.appState.sessionId !== session.id) return;
       host.sendQueuedMessage(session, item);
     };
     host.sessionEventUnsubscribe?.();
@@ -197,7 +195,7 @@ export class SessionEventHandler {
     void this.syncMcpServerStatusSnapshot(session);
   }
 
-  async syncMcpServerStatusSnapshot(session: Session): Promise<void> {
+  async syncMcpServerStatusSnapshot(session: CoreSession): Promise<void> {
     const { host } = this;
     let servers: readonly McpServerStatusSnapshot[];
     try {
@@ -232,7 +230,7 @@ export class SessionEventHandler {
     host.setAppState({ mcpServersSummary: summary || null });
   }
 
-  handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
+  handleEvent(event: SessionEvent, sendQueued: (item: QueuedMessage) => void): void {
     if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
 
     if ('turnId' in event && event.turnId !== undefined) {
@@ -272,8 +270,9 @@ export class SessionEventHandler {
       case 'subagent.completed':
       case 'subagent.failed':
         this.subAgentEventHandler.handleLifecycleEvent(event); break;
-      case 'background.task.started':
-      case 'background.task.terminated':
+      // v2 renamed the background task lifecycle events to `task.*`.
+      case 'task.started':
+      case 'task.terminated':
         this.handleBackgroundTaskEvent(event); break;
       case 'cron.fired': this.handleCronFired(event); break;
       case 'mcp.server.status': this.renderMcpServerStatus(event.server); break;
@@ -347,8 +346,7 @@ export class SessionEventHandler {
     this.host.streamingUI.finalizeTurn(sendQueued);
     this.renderPendingModelBlockedFallback();
     this.currentTurnHasAssistantText = false;
-    this.goalCompletionTurnEnded = true;
-    this.scheduleQueuedGoalPromotion();
+    this.promoter.onTurnEnded();
   }
 
   private handleStepBegin(event: TurnStepStartedEvent): void {
@@ -606,14 +604,20 @@ export class SessionEventHandler {
       this.host.state.appState.swarmMode &&
       this.host.state.swarmModeEntry === 'task';
     const patch: Partial<AppState> = {};
-    if (event.contextUsage !== undefined) patch.contextUsage = event.contextUsage;
     if (event.contextTokens !== undefined) patch.contextTokens = event.contextTokens;
     if (event.maxContextTokens !== undefined) patch.maxContextTokens = event.maxContextTokens;
+    // The v2 `agent.status.updated` payload carries no `contextUsage` (or
+    // `permission`) field, unlike the v1 protocol event: derive the usage
+    // ratio from the freshest token counts so the footer gauge stays live;
+    // permission changes flow through explicit setPermission + status sync.
+    if (event.contextTokens !== undefined || event.maxContextTokens !== undefined) {
+      const contextTokens = event.contextTokens ?? this.host.state.appState.contextTokens;
+      const maxContextTokens =
+        event.maxContextTokens ?? this.host.state.appState.maxContextTokens;
+      patch.contextUsage = maxContextTokens > 0 ? contextTokens / maxContextTokens : 0;
+    }
     if (event.planMode !== undefined) patch.planMode = event.planMode;
     if (event.swarmMode !== undefined) patch.swarmMode = event.swarmMode;
-    if (event.permission !== undefined) {
-      patch.permissionMode = event.permission;
-    }
     if (event.model !== undefined) patch.model = event.model;
     if (Object.keys(patch).length > 0) this.host.setAppState(patch);
     if (event.swarmMode === false) {
@@ -633,12 +637,8 @@ export class SessionEventHandler {
 
   private handleGoalUpdated(event: GoalUpdatedEvent): void {
     this.host.setAppState({ goal: event.snapshot });
-    if (event.snapshot === null && this.goalCompletionAwaitingClear) {
-      this.goalCompletionAwaitingClear = false;
-      this.queuedGoalPromotionPending = true;
-      this.scheduleQueuedGoalPromotion();
-    }
     if (event.snapshot === null) {
+      this.promoter.onSnapshotCleared();
       this.pendingModelBlockedFallback = undefined;
     }
     const change = event.change;
@@ -651,8 +651,7 @@ export class SessionEventHandler {
     // record, so live and replayed completion cards stay identical.
     if (change.kind === 'completion' && event.snapshot !== null) {
       this.pendingModelBlockedFallback = undefined;
-      this.goalCompletionAwaitingClear = true;
-      this.goalCompletionTurnEnded = false;
+      this.promoter.onGoalCompletion();
       this.host.appendTranscriptEntry({
         id: nextTranscriptId(),
         kind: 'assistant',
@@ -666,7 +665,7 @@ export class SessionEventHandler {
     // Lifecycle change (pause / resume / blocked) -> a low-profile,
     // ctrl+o-expandable marker.
     if (change.kind === 'lifecycle' && change.status === 'blocked') {
-      void this.notifyQueuedGoalWaitingOnBlocked();
+      void this.promoter.notifyBlocked();
       if (change.actor === 'model' || change.reason === undefined) {
         this.pendingModelBlockedFallback = this.currentTurnHasAssistantText
           ? undefined
@@ -696,150 +695,12 @@ export class SessionEventHandler {
     }
   }
 
-  private scheduleQueuedGoalPromotion(): void {
-    if (!this.queuedGoalPromotionPending || !this.goalCompletionTurnEnded) return;
-    if (this.queuedGoalPromotionInFlight) return;
-    if (this.queuedGoalPromotionTimer !== undefined) return;
-    this.queuedGoalPromotionTimer = setTimeout(() => {
-      this.queuedGoalPromotionTimer = undefined;
-      if (!this.queuedGoalPromotionPending || !this.goalCompletionTurnEnded) return;
-      if (this.queuedGoalPromotionInFlight) return;
-      if (!this.isReadyForQueuedGoalPromotion()) {
-        return;
-      }
-      this.queuedGoalPromotionInFlight = true;
-      void this.promoteNextQueuedGoal()
-        .then((complete) => {
-          if (complete) {
-            this.queuedGoalPromotionPending = false;
-            this.goalCompletionTurnEnded = false;
-            return;
-          }
-          this.goalCompletionTurnEnded = false;
-        })
-        .finally(() => {
-          this.queuedGoalPromotionInFlight = false;
-          this.scheduleQueuedGoalPromotion();
-        });
-    }, 0);
-  }
-
-  private clearQueuedGoalPromotionTimer(): void {
-    if (this.queuedGoalPromotionTimer === undefined) return;
-    clearTimeout(this.queuedGoalPromotionTimer);
-    this.queuedGoalPromotionTimer = undefined;
-  }
-
   requestQueuedGoalPromotion(): void {
-    this.queuedGoalPromotionPending = true;
-    this.goalCompletionTurnEnded = true;
-    this.scheduleQueuedGoalPromotion();
+    this.promoter.request();
   }
 
   retryQueuedGoalPromotion(): void {
-    this.scheduleQueuedGoalPromotion();
-  }
-
-  private isReadyForQueuedGoalPromotion(session?: Session): boolean {
-    return (
-      (session === undefined || this.host.session === session) &&
-      !this.host.aborted &&
-      this.host.state.appState.streamingPhase === 'idle' &&
-      this.host.state.queuedMessages.length === 0 &&
-      !this.host.state.queuedMessageDispatchPending
-    );
-  }
-
-  private async promoteNextQueuedGoal(): Promise<boolean> {
-    const { host } = this;
-    const session = host.session;
-    if (session === undefined || host.aborted) return true;
-
-    let queue;
-    try {
-      queue = await readGoalQueue(session);
-    } catch (error) {
-      host.showError(`Failed to read upcoming goals: ${formatErrorMessage(error)}`);
-      return false;
-    }
-    if (host.session !== session || host.aborted) return true;
-
-    const next = queue.goals[0];
-    if (next === undefined) return true;
-
-    if (!this.isReadyForQueuedGoalPromotion(session)) return false;
-
-    const started = await startGoalCommand(
-      host,
-      { kind: 'create', objective: next.objective, replace: false },
-      next.objective,
-      {
-        beforeSend: async () => {
-          if (!this.isReadyForQueuedGoalPromotion(session)) {
-            await this.cancelStartedQueuedGoal(session);
-            return false;
-          }
-          try {
-            await removeGoalQueueItem(session, { goalId: next.id });
-          } catch (error) {
-            host.showError(
-              `Queued goal started, but could not be removed from the queue: ${formatErrorMessage(error)}`,
-            );
-            await this.cancelStartedQueuedGoal(session);
-            return false;
-          }
-          if (this.isReadyForQueuedGoalPromotion(session)) {
-            return true;
-          }
-          await this.restoreAndCancelStartedQueuedGoal(session, next);
-          return false;
-        },
-        sendInput: (objective) => {
-          host.sendQueuedMessage(session, { text: objective });
-        },
-      },
-    );
-    return started || host.session !== session || host.aborted;
-  }
-
-  private async restoreAndCancelStartedQueuedGoal(
-    session: Session,
-    goal: UpcomingGoal,
-  ): Promise<void> {
-    try {
-      await restoreGoalQueueItem(session, goal);
-    } catch (error) {
-      this.host.showError(`Queued goal could not be restored: ${formatErrorMessage(error)}`);
-    }
-    await this.cancelStartedQueuedGoal(session);
-  }
-
-  private async cancelStartedQueuedGoal(session: Session): Promise<void> {
-    try {
-      await session.cancelGoal();
-    } catch (error) {
-      this.host.showError(`Queued goal could not be cancelled: ${formatErrorMessage(error)}`);
-    }
-  }
-
-  private async notifyQueuedGoalWaitingOnBlocked(): Promise<void> {
-    const { host } = this;
-    const session = host.session;
-    if (session === undefined || host.aborted) return;
-
-    let hasQueuedGoal = false;
-    try {
-      const queue = await readGoalQueue(session);
-      hasQueuedGoal = queue.goals.length > 0;
-    } catch {
-      return;
-    }
-    if (!hasQueuedGoal || host.session !== session || host.aborted) return;
-
-    host.showNotice(
-      'Goal blocked.',
-      'The next queued goal will start only after this goal is complete.',
-    );
+    this.promoter.retry();
   }
 
   private handleSessionMetaChanged(event: SessionMetaUpdatedEvent): void {
@@ -955,7 +816,9 @@ export class SessionEventHandler {
       skillActivationId: event.activationId,
       skillName: event.skillName,
       skillArgs: event.skillArgs,
-      skillTrigger: event.trigger,
+      // v2 declares `trigger` as a plain string; the runtime source
+      // (SkillActivationOrigin) is exactly this literal union.
+      skillTrigger: event.trigger as SkillActivationTrigger,
     });
   }
 
@@ -1012,16 +875,19 @@ export class SessionEventHandler {
     const hasActiveTurn = this.host.streamingUI.hasActiveTurn();
     if (!hasActiveTurn) {
       const next = this.host.shiftQueuedMessage();
+      let dispatchGeneration: number | undefined;
       if (next !== undefined) {
         this.host.state.queuedMessageDispatchPending = true;
+        dispatchGeneration = ++this.host.state.queuedMessageDispatchGeneration;
       }
       this.host.setAppState({
         isCompacting: false,
         streamingPhase: 'idle',
       });
       this.host.resetLivePane();
-      if (next !== undefined) {
+      if (next !== undefined && dispatchGeneration !== undefined) {
         setTimeout(() => {
+          if (this.host.state.queuedMessageDispatchGeneration !== dispatchGeneration) return;
           this.host.state.queuedMessageDispatchPending = false;
           sendQueued(next);
         }, 0);
@@ -1036,7 +902,7 @@ export class SessionEventHandler {
   // ---------------------------------------------------------------------------
 
   private handleBackgroundTaskEvent(
-    event: BackgroundTaskStartedEvent | BackgroundTaskTerminatedEvent,
+    event: TaskStartedEvent | TaskTerminatedEvent,
   ): void {
     const { state } = this.host;
     const { info } = event;
@@ -1055,7 +921,7 @@ export class SessionEventHandler {
       info.status === 'killed' ||
       info.status === 'lost';
 
-    if (event.type === 'background.task.started') {
+    if (event.type === 'task.started') {
       if (info.kind === 'agent') {
         // A foreground subagent detached via Ctrl+B: flip its card to
         // `◐ backgrounded` so it doesn't look like it completed.
@@ -1070,7 +936,7 @@ export class SessionEventHandler {
       return;
     }
 
-    if (event.type === 'background.task.terminated' && isTerminal) {
+    if (event.type === 'task.terminated' && isTerminal) {
       if (info.kind === 'agent') {
         // The Agent tool's spawn-success ToolResult is not an error, so the
         // parent toolCall card would otherwise render `✓ Completed` for any
@@ -1099,7 +965,7 @@ export class SessionEventHandler {
     this.host.tasksBrowserController.repaint();
   }
 
-  private appendBackgroundTaskEntry(info: BackgroundTaskInfo): void {
+  private appendBackgroundTaskEntry(info: AgentTaskInfo): void {
     const status = formatBackgroundTaskTranscript(info);
     const entry: TranscriptEntry = {
       id: nextTranscriptId(),

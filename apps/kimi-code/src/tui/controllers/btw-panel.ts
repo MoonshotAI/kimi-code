@@ -1,12 +1,7 @@
 import { Spacer } from '@moonshot-ai/pi-tui';
-import type {
-  Event,
-  KimiHarness,
-  Session,
-  TurnEndedEvent,
-} from '@moonshot-ai/kimi-code-sdk';
 
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import type { CoreSession, SessionEvent, TurnEndedEvent } from '#/core/index';
+import { MAIN_AGENT_ID, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { BtwPanelComponent } from '../components/panes/btw-panel';
 import { formatErrorMessage } from '../utils/event-payload';
 import { formatHookResultPlain } from '../utils/hook-result-format';
@@ -17,10 +12,15 @@ const BTW_BUSY_NOTICE = 'Wait for /btw to finish before sending another question
 
 export interface BtwPanelHost {
   state: TUIState;
-  session: Session | undefined;
-  readonly harness: KimiHarness;
+  session: CoreSession | undefined;
 
   showError(msg: string): void;
+  /**
+   * Point the TUI's interactive prompt routing at the given agent. The btw
+   * panel targets its side-question agent while active and restores 'main'
+   * on exit (the v2 facade has no ambient `withInteractiveAgent` scope).
+   */
+  setInteractiveAgentId(agentId: string): void;
 }
 
 export class BtwPanelController {
@@ -46,6 +46,7 @@ export class BtwPanelController {
     });
     this.active = { agentId, panel };
     this.panelsByAgentId.set(agentId, panel);
+    this.host.setInteractiveAgentId(agentId);
     this.mount(panel);
     panel.submit(initialPrompt);
   }
@@ -56,6 +57,7 @@ export class BtwPanelController {
       void this.cancelAgent(active.agentId);
     }
     this.active = undefined;
+    this.host.setInteractiveAgentId(MAIN_AGENT_ID);
     this.panelsByAgentId.clear();
     this.host.state.btwPanelContainer.clear();
     this.host.state.editor.connectedAbove = false;
@@ -99,7 +101,7 @@ export class BtwPanelController {
     return true;
   }
 
-  routeEvent(event: Event): boolean {
+  routeEvent(event: SessionEvent): boolean {
     const panel = this.panelsByAgentId.get(event.agentId);
     if (panel === undefined) return false;
 
@@ -153,7 +155,10 @@ export class BtwPanelController {
         this.panelsByAgentId.delete(agentId);
       }
     }
-    if (this.active?.panel === panel) this.active = undefined;
+    if (this.active?.panel === panel) {
+      this.active = undefined;
+      this.host.setInteractiveAgentId(MAIN_AGENT_ID);
+    }
   }
 
   private showBusyNotice(
@@ -172,26 +177,24 @@ export class BtwPanelController {
       this.host.state.ui.requestRender();
       return;
     }
-    void this.withInteractiveAgent(agentId, () => session.prompt(prompt)).catch((error: unknown) => {
-      panel.markFailed(`Failed to send /btw prompt: ${formatErrorMessage(error)}`);
-      this.host.state.ui.requestRender();
-    });
+    void session
+      .prompt([{ type: 'text', text: prompt }], { agentId })
+      .catch((error: unknown) => {
+        panel.markFailed(`Failed to send /btw prompt: ${formatErrorMessage(error)}`);
+        this.host.state.ui.requestRender();
+      });
   }
 
   private async cancelAgent(agentId: string): Promise<void> {
     const session = this.host.session;
     if (session === undefined) return;
-    await this.withInteractiveAgent(agentId, () => session.cancel()).catch((error: unknown) => {
+    await session.cancel({ agentId }).catch((error: unknown) => {
       this.host.showError(`Failed to cancel /btw: ${formatErrorMessage(error)}`);
     });
   }
 
   private shouldCancelOnUnmount(panel: BtwPanelComponent): boolean {
     return panel.isRunning() || panel.isEmpty();
-  }
-
-  private withInteractiveAgent<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
-    return this.host.harness.withInteractiveAgent(agentId, fn);
   }
 }
 

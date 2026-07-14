@@ -1,13 +1,14 @@
+import { COMPACTION_SUMMARY_PREFIX } from '#/core/index';
 import type {
   AgentReplayRecord,
   ContextMessage,
+  CoreSession,
   GoalChange,
   PermissionMode,
   PromptOrigin,
   ResumedAgentState,
-  Session,
   ToolCall,
-} from '@moonshot-ai/kimi-code-sdk';
+} from '#/core/index';
 
 import { ToolCallComponent } from '../components/messages/tool-call';
 import { currentTheme } from '../theme';
@@ -81,7 +82,7 @@ function unescapeBashXml(text: string): string {
 export class SessionReplayRenderer {
   constructor(private readonly host: SessionReplayHost) {}
 
-  async hydrateFromReplay(session: Session): Promise<boolean> {
+  async hydrateFromReplay(session: CoreSession): Promise<boolean> {
     this.host.setAppState({ isReplaying: true });
     try {
       const main = session.getResumeState()?.agents['main'];
@@ -291,6 +292,23 @@ export class SessionReplayRenderer {
         const out = formatBashOutputForDisplay(stdout, stderr, message.origin.isError);
         this.host.appendTranscriptEntry(replayEntry(context, 'status', out, 'plain'));
       }
+      return;
+    }
+    if (message.origin?.kind === 'compaction_summary') {
+      // Defensive fallback: the summary normally arrives as a `compaction`
+      // replay record (rendered by renderCompaction with token counts) since
+      // the facade folds wire records. Only a summary that shows up as a bare
+      // context message lands here; render the same collapsible card instead
+      // of dumping the text as a plain user message.
+      this.flushAssistant(context);
+      const text = contentPartsToText(message.content);
+      const summary = text.startsWith(COMPACTION_SUMMARY_PREFIX)
+        ? text.slice(COMPACTION_SUMMARY_PREFIX.length).trimStart()
+        : text;
+      this.host.appendTranscriptEntry({
+        ...replayEntry(context, 'status', 'Compaction complete', 'plain'),
+        compactionData: { summary },
+      });
       return;
     }
     if (message.origin?.kind === 'cron_job') {
@@ -628,7 +646,7 @@ export class SessionReplayRenderer {
     switch (result.decision) {
       case 'rejected':
         content =
-          result.selectedLabel === 'Revise' ? 'Plan sent back for revision' : 'Plan review rejected';
+          result.selected_label === 'Revise' ? 'Plan sent back for revision' : 'Plan review rejected';
         break;
       case 'cancelled':
         content = 'Plan review cancelled';
@@ -661,7 +679,7 @@ export class SessionReplayRenderer {
 
   private renderBackgroundTaskNotification(
     context: ReplayRenderContext,
-    origin: Extract<PromptOrigin, { kind: 'background_task' }>,
+    origin: Extract<PromptOrigin, { kind: 'task' }>,
   ): void {
     const { sessionEventHandler } = this.host;
     const task = sessionEventHandler.backgroundTasks.get(origin.taskId);

@@ -3,9 +3,8 @@ import {
   type ExperimentalFeatureState,
   type ModelAlias,
   type PermissionMode,
-  type Session,
   type ThinkingEffort,
-} from '@moonshot-ai/kimi-code-sdk';
+} from '#/core/index';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
@@ -22,8 +21,8 @@ import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
-import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
+import { defaultModelView, thinkingView } from '../utils/core-config-view';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
 import { setExperimentalFeatures } from './experimental-flags';
@@ -46,32 +45,58 @@ function currentTuiConfig(host: SlashCommandHost): TuiConfig {
 }
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
-
   const subcmd = args.trim().toLowerCase();
   if (subcmd === 'clear') {
+    // Plan content is session-scoped: without a live session there is no plan
+    // to clear (startup defers session creation to the first message).
+    const session = host.session;
+    if (session === undefined) {
+      host.showNotice('No active session — no plan to clear');
+      return;
+    }
     await session.clearPlan();
     host.showNotice('Plan cleared');
     return;
   }
 
-  let enabled: boolean;
-  if (subcmd.length === 0) enabled = !host.state.appState.planMode;
-  else if (subcmd === 'on') enabled = true;
-  else if (subcmd === 'off') enabled = false;
-  else {
+  const currentPlanMode = host.state.appState.planMode;
+
+  if (subcmd === 'on') {
+    if (currentPlanMode) {
+      host.showNotice('Plan mode is already on');
+      return;
+    }
+    await applyPlanMode(host, true);
+    return;
+  }
+
+  if (subcmd === 'off') {
+    if (!currentPlanMode) {
+      host.showNotice('Plan mode is already off');
+      return;
+    }
+    await applyPlanMode(host, false);
+    return;
+  }
+
+  if (subcmd.length > 0) {
     host.showError(`Unknown plan subcommand: ${subcmd}`);
     return;
   }
 
-  await applyPlanMode(host, session, enabled);
+  // no-arg toggle
+  await applyPlanMode(host, !currentPlanMode);
 }
 
-async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: boolean): Promise<void> {
+async function applyPlanMode(host: SlashCommandHost, enabled: boolean): Promise<void> {
+  // Session-less startup records the choice in appState only; the lazy session
+  // creation on the first message reads it (createSessionFromCurrentState).
+  const session = host.session;
+  if (session === undefined) {
+    host.setAppState({ planMode: enabled });
+    host.showNotice(enabled ? 'Plan mode: ON' : 'Plan mode: OFF');
+    return;
+  }
   try {
     await session.setPlanMode(enabled);
     host.setAppState({ planMode: enabled });
@@ -91,12 +116,6 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
 }
 
 export async function handleYoloCommand(host: SlashCommandHost, args: string): Promise<void> {
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
-
   const subcmd = args.trim().toLowerCase();
   const currentMode = host.state.appState.permissionMode;
 
@@ -105,8 +124,7 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
       host.showNotice('YOLO mode is already on');
       return;
     }
-    await session.setPermission('yolo');
-    host.setAppState({ permissionMode: 'yolo' });
+    await applyPermissionMode(host, 'yolo');
     host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
     return;
   }
@@ -116,31 +134,22 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
       host.showNotice('YOLO mode is already off');
       return;
     }
-    await session.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
+    await applyPermissionMode(host, 'manual');
     host.showNotice('YOLO mode: OFF');
     return;
   }
 
   // toggle
   if (currentMode === 'yolo') {
-    await session.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
+    await applyPermissionMode(host, 'manual');
     host.showNotice('YOLO mode: OFF');
   } else {
-    await session.setPermission('yolo');
-    host.setAppState({ permissionMode: 'yolo' });
+    await applyPermissionMode(host, 'yolo');
     host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
   }
 }
 
 export async function handleAutoCommand(host: SlashCommandHost, args: string): Promise<void> {
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
-
   const subcmd = args.trim().toLowerCase();
   const currentMode = host.state.appState.permissionMode;
 
@@ -149,8 +158,7 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
       host.showNotice('Auto mode is already on');
       return;
     }
-    await session.setPermission('auto');
-    host.setAppState({ permissionMode: 'auto' });
+    await applyPermissionMode(host, 'auto');
     host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
     return;
   }
@@ -160,32 +168,43 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
       host.showNotice('Auto mode is already off');
       return;
     }
-    await session.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
+    await applyPermissionMode(host, 'manual');
     host.showNotice('Auto mode: OFF');
     return;
   }
 
   // toggle
   if (currentMode === 'auto') {
-    await session.setPermission('manual');
-    host.setAppState({ permissionMode: 'manual' });
+    await applyPermissionMode(host, 'manual');
     host.showNotice('Auto mode: OFF');
   } else {
-    await session.setPermission('auto');
-    host.setAppState({ permissionMode: 'auto' });
+    await applyPermissionMode(host, 'auto');
     host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
   }
 }
 
-export async function handleCompactCommand(host: SlashCommandHost, args: string): Promise<void> {
+/**
+ * Apply a permission-mode change. With a live session this switches the
+ * session's mode; without one (session-less startup) it only records the
+ * choice in appState — the lazy session creation on the first message picks
+ * it up (createSessionFromCurrentState).
+ */
+async function applyPermissionMode(
+  host: SlashCommandHost,
+  mode: 'manual' | 'auto' | 'yolo',
+): Promise<void> {
   const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
+  if (session !== undefined) {
+    await session.setPermission(mode);
   }
+  host.setAppState({ permissionMode: mode });
+}
+
+export async function handleCompactCommand(host: SlashCommandHost, args: string): Promise<void> {
+  const session = await host.ensureSession();
+  if (session === undefined) return;
   const customInstruction = args.trim() || undefined;
-  await session.compact({ instruction: customInstruction });
+  await session.compact(customInstruction);
 }
 
 export async function handleEditorCommand(host: SlashCommandHost, args: string): Promise<void> {
@@ -408,7 +427,7 @@ async function performModelSwitch(
   const session = host.session;
   try {
     if (session === undefined && runtimeChanged) {
-      await host.authFlow.activateModelAfterLogin(alias, effort);
+      await host.authFlow.activateModelSelection(alias, effort);
     } else if (session !== undefined) {
       if (alias !== prevModel) {
         await session.setModel(alias);
@@ -472,10 +491,11 @@ async function persistModelSelection(
 ): Promise<boolean> {
   const config = await host.harness.getConfig({ reload: true });
   const patch = thinkingEffortToConfig(effort);
+  const thinking = thinkingView(config);
   if (
-    config.defaultModel === alias &&
-    config.thinking?.enabled === patch.enabled &&
-    config.thinking?.effort === patch.effort
+    defaultModelView(config) === alias &&
+    thinking?.enabled === patch.enabled &&
+    thinking?.effort === patch.effort
   ) {
     return false;
   }
@@ -607,9 +627,11 @@ export async function applyExperimentalFeatureChanges(
     host.refreshSlashCommandAutocomplete();
     host.restoreEditor();
     if (host.session !== undefined) {
-      await host.session.reloadSession();
+      // `reloadSession` returns a fresh `CoreSession`; swap the TUI's held
+      // reference via `reloadCurrentSessionView`.
+      const reloaded = await host.harness.reloadSession({ id: host.session.id });
       await host.reloadCurrentSessionView(
-        host.session,
+        reloaded,
         'Experimental features updated. Session reloaded.',
       );
     } else {

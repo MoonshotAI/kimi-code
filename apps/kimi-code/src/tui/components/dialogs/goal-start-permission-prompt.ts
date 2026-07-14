@@ -9,6 +9,7 @@ export interface GoalStartPermissionPromptOptions {
   readonly mode: 'manual' | 'yolo';
   readonly onSelect: (choice: GoalStartPermissionChoice) => void;
   readonly onCancel: () => void;
+  readonly onDispose: () => void;
 }
 
 export const GOAL_START_MANUAL_OPTIONS: readonly StartPermissionOption[] = [
@@ -78,6 +79,8 @@ const YOLO_NOTICE_LINES = [
 ] as const;
 
 export class GoalStartPermissionPromptComponent extends StartPermissionPromptComponent {
+  private readonly onDispose: () => void;
+
   constructor(opts: GoalStartPermissionPromptOptions) {
     super({
       title:
@@ -89,5 +92,10 @@ export class GoalStartPermissionPromptComponent extends StartPermissionPromptCom
       onSelect: opts.onSelect,
       onCancel: opts.onCancel,
     });
+    this.onDispose = opts.onDispose;
+  }
+
+  dispose(): void {
+    this.onDispose();
   }
 }

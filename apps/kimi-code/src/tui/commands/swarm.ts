@@ -1,4 +1,4 @@
-import type { PermissionMode } from '@moonshot-ai/kimi-code-sdk';
+import type { PermissionMode } from '#/core/index';
 
 import {
   SwarmStartPermissionPromptComponent,
@@ -8,15 +8,14 @@ import {
   SwarmModeMarkerComponent,
   type SwarmModeMarkerState,
 } from '../components/messages/swarm-markers';
-import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
 export async function handleSwarmCommand(host: SlashCommandHost, args: string): Promise<void> {
-  if (host.session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  // Swarm mode is session-scoped runtime state, so even a bare `/swarm on`
+  // creates the deferred startup session on demand.
+  if ((await host.ensureSession()) === undefined) return;
 
   const prompt = args.trim();
   const mode = swarmModeSubcommand(prompt);
@@ -129,7 +128,7 @@ async function setSwarmMode(
   trigger: 'manual' | 'task',
 ): Promise<boolean> {
   try {
-    await host.requireSession().setSwarmMode(enabled, trigger);
+    await host.requireSession().setSwarmMode(enabled, { trigger });
   } catch (error) {
     host.showError(
       `Failed to ${enabled ? 'enable' : 'disable'} swarm mode: ${formatErrorMessage(error)}`,

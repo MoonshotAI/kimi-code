@@ -69,7 +69,7 @@ describe('extractMediaAttachments', () => {
     expect(r.imageAttachmentIds).toEqual([1]);
     expect(r.parts).toEqual([
       { type: 'text', text: 'describe ' },
-      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+      { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: 'qrs=' } },
       { type: 'text', text: ' please' },
     ]);
   });
@@ -83,9 +83,9 @@ describe('extractMediaAttachments', () => {
     expect(r.imageAttachmentIds).toEqual([1, 2]);
     expect(r.parts).toEqual([
       { type: 'text', text: 'first ' },
-      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AQ==' } },
+      { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: 'AQ==' } },
       { type: 'text', text: ' then ' },
-      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,Ag==' } },
+      { type: 'image', source: { kind: 'base64', media_type: 'image/png', data: 'Ag==' } },
       { type: 'text', text: ' end' },
     ]);
   });
@@ -105,8 +105,8 @@ describe('extractMediaAttachments', () => {
       expect(r.videoAttachmentIds).toEqual([2]);
       expect(r.parts[0]).toEqual({ type: 'text', text: 'first ' });
       expect(r.parts[1]).toEqual({
-        type: 'image_url',
-        imageUrl: { url: 'data:image/png;base64,AQ==' },
+        type: 'image',
+        source: { kind: 'base64', media_type: 'image/png', data: 'AQ==' },
       });
       const cachePath = videoPathFromParts(r.parts);
       expect(cachePath.startsWith(getCacheDir())).toBe(true);
@@ -130,8 +130,8 @@ describe('extractMediaAttachments', () => {
     const r = extractMediaAttachments(placeholder, store);
     expect(r.parts).toHaveLength(1);
     expect(r.parts[0]).toEqual({
-      type: 'image_url',
-      imageUrl: { url: 'data:image/png;base64,iVBORw==' },
+      type: 'image',
+      source: { kind: 'base64', media_type: 'image/png', data: 'iVBORw==' },
     });
   });
 
@@ -195,8 +195,8 @@ describe('extractMediaAttachments', () => {
     expect(caption.text).toContain('2600x2600');
     expect(caption.text).toContain('/tmp/kimi-code-original-images/abc.png');
     expect(r.parts[1]).toEqual({
-      type: 'image_url',
-      imageUrl: { url: 'data:image/png;base64,AQID' },
+      type: 'image',
+      source: { kind: 'base64', media_type: 'image/png', data: 'AQID' },
     });
   });
 
@@ -221,7 +221,7 @@ describe('extractMediaAttachments', () => {
     const { store, placeholder } = storeWith(new Uint8Array([0xaa]));
     const r = extractMediaAttachments(placeholder, store);
     expect(r.parts).toHaveLength(1);
-    expect(r.parts[0]?.type).toBe('image_url');
+    expect(r.parts[0]?.type).toBe('image');
   });
 });
 

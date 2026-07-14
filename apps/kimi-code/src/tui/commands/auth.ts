@@ -8,10 +8,13 @@ import {
   type ManagedKimiConfigShape,
   type OpenPlatformDefinition,
 } from '@moonshot-ai/kimi-code-oauth';
-import { log } from '@moonshot-ai/kimi-code-sdk';
 
 import type { ChoiceOption } from '../components/dialogs/choice-picker';
 import { DEFAULT_OAUTH_PROVIDER_NAME, PRODUCT_NAME } from '../constant/kimi-tui';
+import {
+  modelsView,
+  providersView,
+} from '../utils/core-config-view';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { LoginProgressSpinnerHandle } from '../types';
 import {
@@ -84,12 +87,6 @@ async function handleKimiCodeOAuthLogin(host: SlashCommandHost): Promise<void> {
     });
     spinner = undefined;
     if (cancelled) return;
-    log.warn('login failed', {
-      providerName: DEFAULT_OAUTH_PROVIDER_NAME,
-      alreadyLoggedIn,
-      sessionId: host.session?.id,
-      error,
-    });
     const message = formatErrorMessage(error);
     host.showError(`Login failed: ${message}`);
   } finally {
@@ -150,12 +147,15 @@ async function handleOpenPlatformLogin(
   if (selection === undefined) return;
 
   const existingConfig = await host.harness.getConfig();
-  if (existingConfig.providers[platform.id] !== undefined) {
+  if (providersView(existingConfig)[platform.id] !== undefined) {
     await host.harness.removeProvider(platform.id);
   }
 
   const config = await host.harness.getConfig();
-  applyOpenPlatformConfig(config as ManagedKimiConfigShape, {
+  // `applyOpenPlatformConfig` mutates the config document in place (oauth
+  // package boundary), so view it as the oauth shape for the apply + read-back.
+  const managed = config as unknown as ManagedKimiConfigShape;
+  applyOpenPlatformConfig(managed, {
     platform,
     models,
     selectedModel: selection.model,
@@ -168,10 +168,10 @@ async function handleOpenPlatformLogin(
   });
 
   await host.harness.setConfig({
-    providers: config.providers,
-    models: config.models,
-    defaultModel: config.defaultModel,
-    thinking: config.thinking,
+    providers: managed.providers,
+    models: managed.models,
+    defaultModel: managed.defaultModel,
+    thinking: managed.thinking,
   });
 
   await host.authFlow.refreshConfigAfterLogin();
@@ -185,9 +185,10 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
     (p) => p.providerName === DEFAULT_OAUTH_PROVIDER_NAME && p.hasToken,
   );
   const config = await host.harness.getConfig();
+  const providers = providersView(config);
   const hasManagedRemnant =
-    hasOAuthToken || config.providers[DEFAULT_OAUTH_PROVIDER_NAME] !== undefined;
-  const apiKeyProviderIds = Object.keys(config.providers ?? {})
+    hasOAuthToken || providers[DEFAULT_OAUTH_PROVIDER_NAME] !== undefined;
+  const apiKeyProviderIds = Object.keys(providers)
     .filter((id) => id !== DEFAULT_OAUTH_PROVIDER_NAME)
     .toSorted();
 
@@ -200,7 +201,7 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
     });
   }
   for (const id of apiKeyProviderIds) {
-    const baseUrl = config.providers[id]?.baseUrl;
+    const baseUrl = providers[id]?.baseUrl;
     options.push({
       value: id,
       label: id,
@@ -231,8 +232,8 @@ export async function handleLogoutCommand(host: SlashCommandHost): Promise<void>
   } else {
     const updated = await host.harness.getConfig({ reload: true });
     host.setAppState({
-      availableModels: updated.models ?? {},
-      availableProviders: updated.providers ?? {},
+      availableModels: modelsView(updated),
+      availableProviders: providersView(updated),
     });
   }
 

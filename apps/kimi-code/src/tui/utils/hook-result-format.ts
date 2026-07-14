@@ -1,4 +1,4 @@
-import type { HookResultEvent } from '@moonshot-ai/kimi-code-sdk';
+import type { HookResultEvent } from '#/core/index';
 
 export function formatHookResultMarkdown(event: HookResultEvent): string {
   return `*${formatHookResultTitle(event)}*\n\n${formatHookResultBody(event)}`;

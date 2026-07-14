@@ -258,7 +258,13 @@ export function spawnDaemonChild(options: SpawnDaemonChildOptions): ChildProcess
   // SEA mode or when re-spawning from an already-running daemon, `program` is
   // `process.execPath` itself, so no script argument is needed.
   const execPath = process.execPath;
-  const spawnArgs = program === execPath ? args : [program, ...args];
+  // Dev sessions run the CLI through tsx (`pnpm dev:cli`): forward the
+  // parent's loader flags so the re-execed TypeScript entry does not fall
+  // back to Node's strip-only mode (which rejects parameter properties and
+  // misses the raw-text loader). `execArgv` is empty for the bundled CLI and
+  // must not be forwarded to a SEA binary, so this is a no-op outside dev.
+  const spawnArgs =
+    program === execPath ? args : [...process.execArgv, program, ...args];
 
   const logFd = openSync(logPath, 'a');
   try {

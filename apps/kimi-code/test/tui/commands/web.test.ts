@@ -40,6 +40,7 @@ function makeHost() {
   let mountedPanel: MountedPanel | null = null;
   const host = {
     session: { id: 'ses-1' },
+    ensureSession: async () => ({ id: 'ses-1' }),
     showStatus: vi.fn(),
     showError: vi.fn(),
     mountEditorReplacement: vi.fn((panel: MountedPanel) => {
@@ -84,6 +85,8 @@ describe('handleWebCommand', () => {
     const { host, getMountedPanel } = makeHost();
 
     const pending = handleWebCommand(host);
+    // The command ensures the session (async) before mounting the picker.
+    await vi.waitFor(() => expect(getMountedPanel()).not.toBeNull());
     getMountedPanel()?.handleInput('\r');
     await pending;
 
@@ -107,6 +110,8 @@ describe('handleWebCommand', () => {
     const { host, getMountedPanel } = makeHost();
 
     const pending = handleWebCommand(host);
+    // The command ensures the session (async) before mounting the picker.
+    await vi.waitFor(() => expect(getMountedPanel()).not.toBeNull());
     getMountedPanel()?.handleInput('\r');
     await pending;
 

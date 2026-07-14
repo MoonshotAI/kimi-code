@@ -1,4 +1,4 @@
-import type { PermissionMode } from '@moonshot-ai/kimi-code-sdk';
+import type { PermissionMode } from '#/core/index';
 
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 

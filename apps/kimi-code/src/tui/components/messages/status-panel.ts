@@ -11,7 +11,7 @@ import {
   type PermissionMode,
   type SessionStatus,
   type ThinkingEffort,
-} from '@moonshot-ai/kimi-code-sdk';
+} from '#/core/index';
 
 import { PRODUCT_NAME } from '#/constant/app';
 import { currentTheme } from '#/tui/theme';

@@ -7,7 +7,7 @@ import type { Component } from '@moonshot-ai/pi-tui';
 import { truncateToWidth, visibleWidth } from '@moonshot-ai/pi-tui';
 import chalk from 'chalk';
 
-import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import { effectiveModelAlias } from '#/core/index';
 
 import { isRainbowDancing, renderDanceWelcomeHeader } from '#/tui/easter-eggs/dance';
 import type { AppState } from '#/tui/types';

@@ -29,10 +29,14 @@ vi.mock('@moonshot-ai/kimi-telemetry', () => ({
   withTelemetryContext: vi.fn(),
 }));
 
-vi.mock('@moonshot-ai/kimi-code-oauth', () => ({
-  createKimiDeviceId: mocks.createKimiDeviceId,
-  KIMI_CODE_PROVIDER_NAME: 'managed:kimi-code',
-}));
+vi.mock('@moonshot-ai/kimi-code-oauth', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-oauth')>();
+  return {
+    ...actual,
+    createKimiDeviceId: mocks.createKimiDeviceId,
+    KIMI_CODE_PROVIDER_NAME: 'managed:kimi-code',
+  };
+});
 
 vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@moonshot-ai/kimi-code-sdk')>();

@@ -1,6 +1,7 @@
-import type { KimiConfig } from '@moonshot-ai/kimi-code-sdk';
+import type { CoreConfig } from '#/core/index';
 
 import { currentTheme, lightColors } from '#/tui/theme';
+import { modelsView, providersView } from '#/tui/utils/core-config-view';
 import { loadTuiConfig, type TuiConfig } from '../config';
 import type { SlashCommandHost } from './dispatch';
 import { setExperimentalFeatures } from './experimental-flags';
@@ -16,8 +17,14 @@ export async function handleReloadCommand(host: SlashCommandHost): Promise<void>
   const session = host.session;
 
   if (session !== undefined) {
-    await session.reloadSession({ forcePluginSessionStartReminder: true });
-    await host.reloadCurrentSessionView(session, 'Session reloaded.');
+    // `reloadSession` returns a fresh `CoreSession` instance; the TUI must swap
+    // its held reference via `reloadCurrentSessionView` (the old instance is
+    // closed by the harness during reload).
+    const reloaded = await host.harness.reloadSession({
+      id: session.id,
+      forcePluginSessionStartReminder: true,
+    });
+    await host.reloadCurrentSessionView(reloaded, 'Session reloaded.');
   }
 
   const config = await host.harness.getConfig({ reload: true });
@@ -52,9 +59,9 @@ export async function applyReloadedTuiConfig(
   host.state.editor.setDisablePasteBurst(config.disablePasteBurst);
 }
 
-function applyRuntimeConfig(host: SlashCommandHost, config: KimiConfig): void {
+function applyRuntimeConfig(host: SlashCommandHost, config: CoreConfig): void {
   host.setAppState({
-    availableModels: config.models ?? {},
-    availableProviders: config.providers ?? {},
+    availableModels: modelsView(config),
+    availableProviders: providersView(config),
   });
 }

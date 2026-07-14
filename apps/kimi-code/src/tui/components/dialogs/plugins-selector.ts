@@ -7,7 +7,7 @@ import {
   visibleWidth,
   type Focusable,
 } from '@moonshot-ai/pi-tui';
-import type { PluginInfo, PluginMcpServerInfo, PluginSummary } from '@moonshot-ai/kimi-code-sdk';
+import type { PluginInfo, PluginMcpServerInfo, PluginSummary } from '#/core/index';
 import chalk from 'chalk';
 
 import { SELECT_POINTER } from '#/tui/constant/symbols';

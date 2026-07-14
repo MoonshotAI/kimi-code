@@ -7,10 +7,10 @@ import type {
   PromptPart,
   ThinkingEffort,
   ToolInputDisplay,
-} from '@moonshot-ai/kimi-code-sdk';
+} from '#/core/index';
 
 import type { NotificationsConfig, UpgradePreferences } from './config';
-import type { PendingApproval, PendingQuestion } from './reverse-rpc/types';
+import type { PendingApproval, PendingQuestion } from './interactions/types';
 import type { ColorToken, ThemeName } from './theme';
 
 export type BannerDisplay = 'always' | 'once' | 'cooldown';
