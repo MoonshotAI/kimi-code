@@ -571,6 +571,7 @@ async function chooseBackend(name: BackendName): Promise<void> {
   }
   const next = await switchDevBackend(name);
   if (next === null) {
+    console.warn('[kimi-web] dev backend switch failed:', name);
     closeBackendMenu();
     return;
   }

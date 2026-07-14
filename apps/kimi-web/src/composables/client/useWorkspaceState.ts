@@ -596,7 +596,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // daemons while /sessions still works. Fall back to the legacy global
       // walk so history still shows and mergedWorkspaces can derive workspaces
       // from session cwds, instead of rendering a blank sidebar.
-      const fallback = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
+      const fallback = await listAllSessionsGlobal().catch((err) => {
+        console.warn('[kimi-web] global session fallback load failed', err);
+        return [] as AppSession[];
+      });
       rawState.sessionsHasMoreByWorkspace = {};
       rawState.sessionsCursorByWorkspace = {};
       rawState.sessionsInitialCountByWorkspace = {};
@@ -605,10 +608,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     const pages = await Promise.all(
       workspaces.map((w) =>
-        loadInitialSessionsForWorkspace(w.id).catch(() => ({
-          workspaceId: w.id,
-          page: { items: [] as AppSession[], hasMore: false },
-        })),
+        loadInitialSessionsForWorkspace(w.id).catch((err) => {
+          console.warn('[kimi-web] initial session load failed for workspace', w.id, err);
+          return {
+            workspaceId: w.id,
+            page: { items: [] as AppSession[], hasMore: false },
+          };
+        }),
       ),
     );
     const loaded: AppSession[] = [];
@@ -693,7 +699,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  first search; a no-op once the full list is loaded. */
   async function loadAllSessions(): Promise<void> {
     if (rawState.sessionsFullyLoaded) return;
-    const sessions = await listAllSessionsGlobal().catch(() => null);
+    const sessions = await listAllSessionsGlobal().catch((err) => {
+      console.warn('[kimi-web] loadAllSessions failed; search covers only loaded sessions', err);
+      return null;
+    });
     if (sessions === null) return;
     setSessionsPreservingLiveUsage(sessions);
     rawState.sessionsFullyLoaded = true;
@@ -1140,7 +1149,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       upsertWorkspacePreserveOrder(ws);
       openWorkspaceDraft(ws.id);
       return true;
-    } catch {
+    } catch (err) {
+      // The caller shows an inline error in the picker; keep the cause in the log.
+      console.warn('[kimi-web] addWorkspaceByPath failed for', trimmed, err);
       return false;
     }
   }
@@ -2079,8 +2090,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Best-effort registry cleanup; ignore failures (the hide already took effect).
     try {
       await getKimiWebApi().deleteWorkspace(id);
-    } catch {
+    } catch (err) {
       // registry delete is optional — the sidebar hide is what the user sees.
+      console.warn('[kimi-web] deleteWorkspace registry cleanup failed for', id, err);
     }
     rawState.workspaces = rawState.workspaces.filter((w) => w.id !== id && w.root !== root);
     if (removingActiveWorkspace || activeSessionInRemovedWorkspace) {
@@ -2374,7 +2386,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         size: result.size,
         lineCount: result.lineCount,
       };
-    } catch {
+    } catch (err) {
+      console.warn('[kimi-web] readFileContent failed for', path, err);
       return null;
     }
   }

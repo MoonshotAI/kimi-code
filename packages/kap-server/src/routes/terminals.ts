@@ -38,6 +38,7 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { parseActionSuffix } from './action-suffix';
 
@@ -139,6 +140,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
       try {
         const { session_id } = req.params;
         const terminal = await (await resolveTerminal(core, session_id)).create(req.body);
+        requestLog(req)?.info({ session_id, terminal_id: terminal.id }, 'terminal created');
         reply.send(okEnvelope(terminal, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);
@@ -211,6 +213,7 @@ export function registerTerminalsRoutes(app: TerminalsRouteHost, core: Scope): v
           return;
         }
         const result = await (await resolveTerminal(core, session_id)).close(parsed.id);
+        requestLog(req)?.info({ session_id, terminal_id: parsed.id }, 'terminal closed');
         reply.send(okEnvelope(result, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);

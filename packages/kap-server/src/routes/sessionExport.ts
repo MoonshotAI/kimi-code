@@ -25,6 +25,7 @@ import {
   exportSessionRequestSchema,
 } from '@moonshot-ai/protocol';
 
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 
 const MAX_WEB_SESSION_EXPORT_BYTES = 64 * 1024 * 1024;
@@ -166,7 +167,7 @@ export function registerSessionExportRoute(
           stream?.destroy();
         }
         await cleanup();
-        if (!aborted) sendMappedError(response, req.id, error);
+        if (!aborted) sendMappedError(response, req, error);
       } finally {
         if (!streaming) response.raw.off('close', onResponseClose);
       }
@@ -184,7 +185,8 @@ function sanitizeSessionId(sessionId: string): string {
   return sessionId.replaceAll(/[^A-Za-z0-9_-]/g, '_').slice(0, 48) || 'session';
 }
 
-function sendMappedError(reply: SessionExportReply, requestId: string, error: unknown): void {
+function sendMappedError(reply: SessionExportReply, req: { id: string }, error: unknown): void {
+  const requestId = req.id;
   if (isError2(error)) {
     if (error.code === ErrorCodes.SESSION_NOT_FOUND) {
       reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, error.message, requestId));
@@ -201,6 +203,7 @@ function sendMappedError(reply: SessionExportReply, requestId: string, error: un
       return;
     }
   }
+  requestLog(req)?.error({ err: error }, 'session export failed');
   reply.send(
     errEnvelope(
       ErrorCode.INTERNAL_ERROR,

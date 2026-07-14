@@ -377,7 +377,9 @@ export class SessionEventBroadcaster {
         session: payload.session,
         agentId: 'main',
         sessionId: payload.sessionId,
-      } as Event);
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(payload.sessionId, 'event.session.created', error),
+      );
       return;
     }
     if (event.type === 'session.meta.updated') {
@@ -398,7 +400,9 @@ export class SessionEventBroadcaster {
         ...payload,
         agentId: 'main',
         sessionId,
-      } as Event);
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(sessionId, 'session.meta.updated', error),
+      );
     }
   }
 
@@ -406,7 +410,7 @@ export class SessionEventBroadcaster {
     const state = await this.ensureGlobalState();
     state.queue = state.queue
       .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
-      .catch(() => {});
+      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
   }
 
   /**
@@ -431,7 +435,7 @@ export class SessionEventBroadcaster {
     if (state === undefined) return;
     state.queue = state.queue
       .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
-      .catch(() => {});
+      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
   }
 
   private attachAgents(sessionId: string, session: ISessionScopeHandle, state: SessionState): void {
@@ -523,7 +527,7 @@ export class SessionEventBroadcaster {
         } as unknown as Event;
         state.queue = state.queue
           .then(() => this.dispatch(state, wireEvent, true))
-          .catch(() => {});
+          .catch((error: unknown) => this.logDispatchDropped(state.sessionId, wireEvent.type, error));
       }
       return;
     }
@@ -555,7 +559,7 @@ export class SessionEventBroadcaster {
     const volatile = isVolatileSignal(event.type);
     state.queue = state.queue
       .then(() => this.dispatch(state, wireEvent, volatile))
-      .catch(() => {});
+      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, wireEvent.type, error));
     if (agentId === MAIN_AGENT_ID && event.type === 'turn.ended') {
       // Emit completion after the turn event. Pending interactions remain higher
       // priority; otherwise failed/cancelled/blocked turns abort and all others
@@ -573,7 +577,7 @@ export class SessionEventBroadcaster {
     if (legacy !== undefined) {
       state.queue = state.queue
         .then(() => this.dispatch(state, legacy, volatile))
-        .catch(() => {});
+        .catch((error: unknown) => this.logDispatchDropped(state.sessionId, legacy.type, error));
     }
   }
 
@@ -621,7 +625,9 @@ export class SessionEventBroadcaster {
   }
 
   private enqueueDurable(state: SessionState, event: Event): void {
-    state.queue = state.queue.then(() => this.dispatch(state, event, false)).catch(() => {});
+    state.queue = state.queue
+      .then(() => this.dispatch(state, event, false))
+      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
   }
 
   private enqueueStatusChanged(state: SessionState, status: SessionStatus): void {
@@ -642,7 +648,34 @@ export class SessionEventBroadcaster {
           false,
         );
       })
-      .catch(() => {});
+      .catch((error: unknown) =>
+        this.logDispatchDropped(state.sessionId, 'event.session.status_changed', error),
+      );
+  }
+
+  /**
+   * Log a rejected `dispatchSessionEvent` promise — the session's scope was
+   * torn down mid-dispatch, or a non-disposed error escaped `ensureState`.
+   */
+  private logDispatchError(sessionId: string, eventType: string, error: unknown): void {
+    const logger = this.opts.logger;
+    if (logger === undefined) return;
+    if (logger.error !== undefined) {
+      logger.error({ sessionId, eventType, err: error }, 'session event dispatch failed');
+    } else {
+      logger.warn({ sessionId, eventType, err: error }, 'session event dispatch failed');
+    }
+  }
+
+  /**
+   * A queued dispatch rejected: the event is permanently lost (and, for durable
+   * events, the seq is skipped). Warn instead of swallowing it silently.
+   */
+  private logDispatchDropped(sessionId: string, eventType: string, error: unknown): void {
+    this.opts.logger?.warn(
+      { sessionId, eventType, err: error },
+      'session event dispatch failed; event dropped',
+    );
   }
 
   private async dispatch(state: SessionState, event: Event, volatile: boolean): Promise<void> {

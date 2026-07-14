@@ -121,6 +121,7 @@ import type { Session, SessionStatus } from '@moonshot-ai/protocol';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
@@ -322,7 +323,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         });
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -577,7 +578,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         }
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -650,6 +651,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
             type: 'event.session.created',
             payload: { agentId: 'main', sessionId: session.id, session },
           });
+          requestLog(req)?.info(
+            { session_id: parsed.id, action: 'fork', new_session_id: session.id },
+            'session action completed',
+          );
           reply.send(okEnvelope(session, req.id));
           return;
         }
@@ -663,6 +668,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           agent.accessor
             .get(IAgentFullCompactionService)
             .begin({ source: 'manual', instruction: normalizeOptional(body.instruction) });
+          requestLog(req)?.info({ session_id: parsed.id, action: 'compact' }, 'session action completed');
           reply.send(okEnvelope({}, req.id));
           return;
         }
@@ -677,6 +683,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           // (cross-domain) and is reused here verbatim.
           agent.accessor.get(IAgentPromptService).undo(body.count);
           const history = agent.accessor.get(IAgentContextMemoryService).get();
+          requestLog(req)?.info({ session_id: parsed.id, action: 'undo' }, 'session action completed');
           const [summary, status] = await Promise.all([
             core.accessor.get(ISessionIndex).get(parsed.id),
             legacy.status(parsed.id),
@@ -703,6 +710,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           // No turnId → cancel whatever turn is active; a safe no-op when idle.
           // v1 always reports success once the session exists.
           await agent.accessor.get(IAgentRPCService).cancel({});
+          requestLog(req)?.info({ session_id: parsed.id, action: 'abort' }, 'session action completed');
           reply.send(okEnvelope({ aborted: true }, req.id));
           return;
         }
@@ -735,6 +743,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
             ctx.cwd,
             resolveSessionStatus(core, meta.id),
           );
+          requestLog(req)?.info({ session_id: parsed.id, action: 'restore' }, 'session action completed');
           reply.send(okEnvelope(session, req.id));
           return;
         }
@@ -747,9 +756,10 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${parsed.id} does not exist`);
         }
         await core.accessor.get(ISessionLifecycleService).archive(parsed.id);
+        requestLog(req)?.info({ session_id: parsed.id, action: 'archive' }, 'session action completed');
         reply.send(okEnvelope({ archived: true }, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -832,7 +842,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
             : projected;
         reply.send(okEnvelope({ items, has_more: slice.length > pageSize }, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -882,7 +892,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         });
         reply.send(okEnvelope(session, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -911,7 +921,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const status = await core.accessor.get(ISessionLegacyService).status(session_id);
         reply.send(okEnvelope(status, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -940,7 +950,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const goal = await core.accessor.get(ISessionLegacyService).goal(session_id);
         reply.send(okEnvelope(goal, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -993,7 +1003,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
               ];
         reply.send(okEnvelope({ warnings }, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -1149,9 +1159,11 @@ function buildValidationEnvelope(
 
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
-  requestId: string,
+  req: { id: string },
   err: unknown,
 ): void {
+  const requestId = req.id;
+  const log = requestLog(req);
   if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':
@@ -1202,6 +1214,7 @@ function sendMappedError(
         return;
     }
   }
+  log?.error({ err }, 'session request failed');
   reply.send(
     errEnvelope(
       ErrorCode.INTERNAL_ERROR,

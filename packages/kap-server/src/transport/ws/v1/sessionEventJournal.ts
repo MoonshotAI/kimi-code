@@ -67,6 +67,7 @@ export interface JournalEntry {
 /** Minimal logger surface — keeps the journal decoupled from the server logger. */
 export interface JournalLogger {
   warn(obj: unknown, msg: string): void;
+  error?(obj: unknown, msg: string): void;
 }
 
 const noopLogger: JournalLogger = { warn: () => {} };

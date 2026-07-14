@@ -203,10 +203,12 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   const enableShutdown = exposureClass === 'loopback' || opts.allowRemoteShutdown === true;
   const enableTerminals = exposureClass === 'loopback' || opts.allowRemoteTerminals === true;
   const debugEndpoints = exposureClass === 'loopback' && opts.debugEndpoints === true;
-  const authFailureLimiter = exposureClass === 'loopback' ? undefined : createAuthFailureLimiter();
+  const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
+  const authFailureLimiter =
+    exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
 
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
-  const guiStore = new GuiStoreService(homeDir);
+  const guiStore = new GuiStoreService(homeDir, logger);
   let authTokenService: IAuthTokenService;
   // Whether a password credential is configured (only meaningful for the real,
   // non-injected auth impl). Drives the token-only warning on a public bind.
@@ -244,7 +246,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     ...(opts.seeds ?? []),
   ]);
 
-  const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
   if (exposureClass !== 'loopback') {
     logger.warn(
       { host, exposureClass },
@@ -395,7 +396,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     enableTerminals,
     guiStore,
     onShutdown: () => {
-      void close();
+      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
@@ -404,7 +405,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   });
 
   registerRpcRoutes(app, core, { token: opts.rpcToken });
-  const wssV2 = registerWs(core, { validateCredential, registry: connectionRegistry });
+  const wssV2 = registerWs(core, { validateCredential, registry: connectionRegistry, logger });
   const wssV1 = registerWsV1(core, {
     validateCredential,
     registry: connectionRegistry,
@@ -432,11 +433,19 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     // Origin is present-only: a missing Origin is treated as a non-browser
     // client and allowed.
     if (!hostCheck.isAllowed(req.headers.host)) {
+      logger.warn(
+        { remoteAddress: req.socket.remoteAddress, path: url, reason: 'host_not_allowed' },
+        'ws upgrade rejected',
+      );
       (socket as Socket).write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       (socket as Socket).destroy();
       return;
     }
     if (!isOriginAllowed(req.headers.origin, req.headers.host, allowedOrigins)) {
+      logger.warn(
+        { remoteAddress: req.socket.remoteAddress, path: url, reason: 'origin_not_allowed' },
+        'ws upgrade rejected',
+      );
       (socket as Socket).write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       (socket as Socket).destroy();
       return;
@@ -453,11 +462,28 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
       if (candidate !== null) {
         try {
           ok = await validateCredential(candidate);
-        } catch {
+        } catch (error) {
+          logger.warn(
+            {
+              err: error,
+              remoteAddress: req.socket.remoteAddress,
+              path: url,
+              reason: 'credential_validation_error',
+            },
+            'ws upgrade rejected',
+          );
           ok = false;
         }
       }
       if (!ok) {
+        logger.warn(
+          {
+            remoteAddress: req.socket.remoteAddress,
+            path: url,
+            reason: candidate === null ? 'missing_credential' : 'invalid_credential',
+          },
+          'ws upgrade rejected',
+        );
         (socket as Socket).write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
         (socket as Socket).destroy();
         return;
@@ -472,7 +498,9 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     }
   };
   app.server.on('upgrade', (req, socket, head) => {
-    void handleUpgrade(req, socket, head);
+    void handleUpgrade(req, socket, head).catch((error: unknown) =>
+      logger.error({ err: error }, 'ws upgrade handler failed'),
+    );
   });
 
   app.addHook('onClose', async () => {

@@ -103,6 +103,7 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
@@ -283,6 +284,7 @@ export function registerSkillsRoutes(app: SkillsRouteHost, core: Scope): void {
         await agent.accessor
           .get(IAgentSkillService)
           .activate({ name: parsed.id, args: req.body.args });
+        requestLog(req)?.info({ session_id, skill_name: parsed.id }, 'skill activated');
         reply.send(okEnvelope({ activated: true, skill_name: parsed.id }, req.id));
       } catch (err) {
         sendMappedError(reply, req.id, err);

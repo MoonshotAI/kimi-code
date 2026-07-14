@@ -31,6 +31,7 @@ import {
 } from '@moonshot-ai/protocol';
 import { z } from 'zod';
 
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 
 interface FilesRouteHost {
@@ -129,7 +130,7 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
             } catch {
               // best-effort cleanup of the truncated blob
             }
-            sendMappedError(reply as unknown as FilesReply, req.id, new Error2(
+            sendMappedError(reply as unknown as FilesReply, req, new Error2(
               ErrorCodes.FILE_TOO_LARGE,
               `upload size exceeds limit ${DEFAULT_MAX_UPLOAD_BYTES} bytes`,
             ));
@@ -137,10 +138,10 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
           }
           reply.send(okEnvelope(meta, req.id));
         } catch (error) {
-          sendMappedError(reply as unknown as FilesReply, req.id, error);
+          sendMappedError(reply as unknown as FilesReply, req, error);
         }
       } catch (error) {
-        sendMappedError(reply as unknown as FilesReply, req.id, error);
+        sendMappedError(reply as unknown as FilesReply, req, error);
       }
     },
   );
@@ -194,7 +195,7 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
         r.header('content-length', size).code(200);
         return r.send(file.stream()) as unknown as void;
       } catch (error) {
-        sendMappedError(reply as unknown as FilesReply, req.id, error);
+        sendMappedError(reply as unknown as FilesReply, req, error);
         return;
       }
     },
@@ -219,9 +220,10 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
         const { file_id } = req.params;
         const store = core.accessor.get(IFileService);
         await store.delete(file_id);
+        requestLog(req)?.info({ file_id }, 'file deleted');
         reply.send(okEnvelope({ deleted: true as const }, req.id));
       } catch (error) {
-        sendMappedError(reply as unknown as FilesReply, req.id, error);
+        sendMappedError(reply as unknown as FilesReply, req, error);
       }
     },
   );
@@ -232,7 +234,8 @@ export function registerFilesRoutes(app: FilesRouteHost, core: Scope): void {
   );
 }
 
-function sendMappedError(reply: FilesReply, requestId: string, err: unknown): void {
+function sendMappedError(reply: FilesReply, req: { id: string }, err: unknown): void {
+  const requestId = req.id;
   if (err instanceof Error2 && err.code === ErrorCodes.FILE_NOT_FOUND) {
     reply.code(404).send(errEnvelope(ErrorCode.FILE_NOT_FOUND, 'file not found', requestId));
     return;
@@ -250,6 +253,7 @@ function sendMappedError(reply: FilesReply, requestId: string, err: unknown): vo
     reply.code(413).send(errEnvelope(ErrorCode.FILE_TOO_LARGE, 'upload too large (>50MB)', requestId));
     return;
   }
+  requestLog(req)?.error({ err }, 'file request failed');
   reply
     .code(500)
     .send(

@@ -46,6 +46,7 @@ import { isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 
 interface WorkspaceRouteHost {
@@ -207,6 +208,7 @@ export function registerWorkspacesRoutes(app: WorkspaceRouteHost, core: Scope): 
         return;
       }
       await registry.delete(workspace_id);
+      requestLog(req)?.info({ workspace_id }, 'workspace deleted');
       reply.send(okEnvelope({ deleted: true as const }, req.id));
     },
   );

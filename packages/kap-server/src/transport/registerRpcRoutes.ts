@@ -15,8 +15,9 @@
  */
 
 import type { Scope } from '@moonshot-ai/agent-core-v2';
-import { okEnvelope } from '@moonshot-ai/protocol';
+import { ErrorCode, okEnvelope } from '@moonshot-ai/protocol';
 
+import { requestLog } from '../lib/requestLog';
 import type { ScopeKind } from './channel';
 import { describeChannels } from './channelRegistry';
 import { dispatch } from './dispatcher';
@@ -116,7 +117,16 @@ function makeHandler(
       );
       return reply.send(okEnvelope(result, requestId));
     } catch (error) {
-      return reply.send(mapError(error, requestId));
+      const envelope = mapError(error, requestId);
+      // 50001 (including the 30s call timeout) is a server-side failure — log
+      // at error; mapped business codes (4xxxx) are expected client outcomes.
+      const log = requestLog(req);
+      if (envelope.code === ErrorCode.INTERNAL_ERROR) {
+        log?.error({ err: error, service, method }, 'rpc dispatch failed');
+      } else {
+        log?.warn({ err: error, service, method }, 'rpc dispatch failed');
+      }
+      return reply.send(envelope);
     }
   };
 }
