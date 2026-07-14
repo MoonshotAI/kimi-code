@@ -16,7 +16,6 @@ import {
   DOUBLE_ESC_WINDOW_MS,
   EXIT_CONFIRM_WINDOW_MS,
   LLM_NOT_SET_MESSAGE,
-  NO_ACTIVE_SESSION_MESSAGE,
 } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { ImageAttachmentStore } from '../utils/image-attachment-store';
@@ -37,6 +36,7 @@ export interface EditorKeyboardHost {
   harness?: CoreHarness | undefined;
 
   handleUserInput(text: string): void;
+  sendNormalUserInput(text: string): void;
   readonly btwPanelController: BtwPanelController;
   steerMessage(session: CoreSession, input: readonly SteerInputItem[]): void;
   validateMediaCapabilities(extraction: {
@@ -213,10 +213,9 @@ export class EditorKeyboardController {
     };
 
     editor.onShiftTab = () => {
-      if (host.session === undefined) {
-        host.showError(NO_ACTIVE_SESSION_MESSAGE);
-        return;
-      }
+      // Plan mode is appState-level until the lazy session exists, so the
+      // toggle works before the first message too (handlePlanCommand records
+      // the choice without a session).
       const next = !host.state.appState.planMode;
       host.track('shortcut_plan_toggle', { enabled: next });
       host.track('shortcut_mode_switch', { to_mode: next ? 'plan' : 'agent' });
@@ -304,8 +303,14 @@ export class EditorKeyboardController {
         host.state.queuedMessages = queued.filter((m) => m.mode === 'bash');
         if (!editorIsBash) editor.setText('');
         const session = host.session;
-        if (host.state.appState.model.trim().length === 0 || session === undefined) {
+        if (host.state.appState.model.trim().length === 0) {
           host.showError(LLM_NOT_SET_MESSAGE);
+        } else if (session === undefined) {
+          // No live session (startup defers creation): with no running turn
+          // these items are fresh input, not steers — route them through the
+          // normal send path, which creates the session lazily on the first
+          // one and delivers the rest in order.
+          for (const item of items) host.sendNormalUserInput(item.text);
         } else {
           host.steerMessage(session, items);
         }

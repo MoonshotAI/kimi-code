@@ -38,6 +38,7 @@ function makeHost(additionalDirs: readonly string[] = []) {
   const host = {
     state,
     session,
+    ensureSession: async () => session,
     skillCommandMap: new Map<string, string>(),
     setAppState: vi.fn((patch: Record<string, unknown>) => Object.assign(state.appState, patch)),
     refreshSlashCommandAutocomplete: vi.fn(),

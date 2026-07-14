@@ -7,7 +7,7 @@ import type { CoreSession } from '#/core/index';
 import { detectInstallSource } from '#/cli/update/source';
 import { detectShellEnvironment } from '#/utils/process/shell-env';
 import { toTerminalHyperlink } from '#/utils/terminal-hyperlink';
-import { LLM_NOT_SET_MESSAGE, NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import { LLM_NOT_SET_MESSAGE } from '../constant/kimi-tui';
 import { isAbortError } from '../utils/errors';
 import { formatErrorMessage } from '../utils/event-payload';
 import { buildExportMarkdown } from '../utils/export-markdown';
@@ -29,11 +29,8 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
     return;
   }
 
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
 
   const newTitle = title.slice(0, 200);
   try {
@@ -48,11 +45,8 @@ export async function handleTitleCommand(host: SlashCommandHost, args: string): 
 
 export async function handleForkCommand(host: SlashCommandHost, args: string): Promise<void> {
   void args;
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
 
   const sourceTitle = forkSourceTitle(host, session);
   let forked: CoreSession;
@@ -88,11 +82,8 @@ function forkSourceTitle(host: SlashCommandHost, session: CoreSession): string {
 }
 
 export async function handleExportMdCommand(host: SlashCommandHost, args: string): Promise<void> {
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
 
   host.showStatus('Exporting session as Markdown…');
   try {
@@ -134,11 +125,8 @@ export async function handleExportMdCommand(host: SlashCommandHost, args: string
 }
 
 export async function handleExportDebugZipCommand(host: SlashCommandHost): Promise<void> {
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
 
   host.showStatus('Exporting session…');
   try {

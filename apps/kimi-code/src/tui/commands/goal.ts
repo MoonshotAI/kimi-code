@@ -36,6 +36,7 @@ type GoalCommandHost = Pick<
   | 'state'
   | 'session'
   | 'requireSession'
+  | 'ensureSession'
   | 'setAppState'
   | 'showError'
   | 'showStatus'
@@ -347,12 +348,13 @@ export async function createGoal(
   options: GoalStartOptions = {},
 ): Promise<boolean> {
   // A goal must be able to start a model turn; refuse to create one otherwise.
-  if (host.state.appState.model.trim().length === 0 || host.session === undefined) {
+  if (host.state.appState.model.trim().length === 0) {
     host.showError(LLM_NOT_SET_MESSAGE);
     return false;
   }
 
-  const session = host.session;
+  const session = await host.ensureSession();
+  if (session === undefined) return false;
   if (
     host.state.appState.permissionMode === 'manual' ||
     host.state.appState.permissionMode === 'yolo'
@@ -587,13 +589,15 @@ async function pauseGoal(host: SlashCommandHost): Promise<void> {
 }
 
 async function resumeGoal(host: SlashCommandHost): Promise<void> {
-  if (host.state.appState.model.trim().length === 0 || host.session === undefined) {
+  if (host.state.appState.model.trim().length === 0) {
     host.showError(LLM_NOT_SET_MESSAGE);
     return;
   }
+  const session = await host.ensureSession();
+  if (session === undefined) return;
 
   try {
-    await host.requireSession().resumeGoal();
+    await session.resumeGoal();
   } catch (error) {
     if (isCoreError(error) && error.code === CoreErrorCodes.GOAL_NOT_FOUND) {
       host.showStatus('No goal to resume.');

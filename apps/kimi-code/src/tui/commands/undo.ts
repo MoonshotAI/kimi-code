@@ -62,11 +62,7 @@ export async function handleUndoCommand(
     return;
   }
 
-  const session = host.session;
-  if (session === undefined) {
-    host.showError(NO_ACTIVE_SESSION_MESSAGE);
-    return;
-  }
+  if ((await host.ensureSession()) === undefined) return;
 
   const availability = await resolveUndoAvailability(host);
   if (count > availability.maxCount) {

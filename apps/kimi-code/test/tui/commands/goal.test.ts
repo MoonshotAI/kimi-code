@@ -114,6 +114,7 @@ function makeHost(
     session: hasSession ? session : undefined,
     skillCommandMap: new Map<string, string>(),
     requireSession: () => session,
+    ensureSession: async () => (hasSession ? session : undefined),
     setAppState: vi.fn((patch: Record<string, unknown>) => Object.assign(host.state.appState, patch)),
     showError: vi.fn(),
     showStatus: vi.fn(),
@@ -326,6 +327,8 @@ describe('handleGoalCommand', () => {
       'Ship queued goal',
     );
 
+    // createGoal ensures the session (async) before mounting the prompt.
+    await vi.waitFor(() => expect(manualHost.mountEditorReplacement).toHaveBeenCalled());
     manualHost.mountEditorReplacement({} as never);
 
     await expect(result).resolves.toBe(false);
@@ -343,6 +346,8 @@ describe('handleGoalCommand', () => {
       { kind: 'create', objective: 'Ship queued goal', replace: false },
       'Ship queued goal',
     );
+    // createGoal ensures the session (async) before mounting the prompt.
+    await vi.waitFor(() => expect(manualHost.mountEditorReplacement).toHaveBeenCalled());
     mountedPicker(manualHost).handleInput(ENTER);
     await vi.waitFor(() => {
       expect(oldSession.setPermission).toHaveBeenCalledWith('auto');
@@ -393,6 +398,8 @@ describe('handleGoalCommand', () => {
       'Ship queued goal',
     );
 
+    // createGoal ensures the session (async) before mounting the prompt.
+    await vi.waitFor(() => expect(manualHost.mountEditorReplacement).toHaveBeenCalled());
     mountedPicker(manualHost).handleInput(ESCAPE);
 
     await expect(result).resolves.toBe(false);
@@ -830,11 +837,14 @@ describe('handleGoalCommand', () => {
     expect(s.createGoal).not.toHaveBeenCalled();
   });
 
-  it('creation without an active session shows LLM_NOT_SET_MESSAGE', async () => {
+  it('creation without an active session aborts when the session cannot be ensured', async () => {
     const { host: noSessionHost, session: s } = makeHost({ hasSession: false });
     await handleGoalCommand(noSessionHost, 'Ship feature X');
-    expect(noSessionHost.showError).toHaveBeenCalled();
+    // No LLM_NOT_SET error any more: goal creation defers to the host's
+    // ensureSession, which owns the login-required UX; an undefined result
+    // here means the user was already informed and the goal simply aborts.
     expect(s.createGoal).not.toHaveBeenCalled();
+    expect(noSessionHost.sendNormalUserInput).not.toHaveBeenCalled();
   });
 });
 

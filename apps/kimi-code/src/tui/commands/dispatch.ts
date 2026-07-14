@@ -116,6 +116,12 @@ export interface SlashCommandHost {
 
   // Session
   requireSession(): CoreSession;
+  /**
+   * Live session, created lazily from the current app state when startup
+   * deferred creation. `undefined` means the action is aborted and the user
+   * was already informed (login flow or an inline error).
+   */
+  ensureSession(): Promise<CoreSession | undefined>;
   switchToSession(session: CoreSession, message: string): Promise<void>;
   reloadCurrentSessionView(session: CoreSession, message: string): Promise<void>;
   beginSessionRequest(): void;
@@ -198,11 +204,12 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
       host.showError(`Invalid slash command: /${intent.commandName}`);
       return;
     case 'skill': {
-      const session = host.session;
-      if (host.state.appState.model.trim().length === 0 || session === undefined) {
+      if (host.state.appState.model.trim().length === 0) {
         host.showError(LLM_NOT_SET_MESSAGE);
         return;
       }
+      const session = await host.ensureSession();
+      if (session === undefined) return;
       host.track('input_command', {
         command: intent.commandName,
         skill_name: intent.skillName,
@@ -215,11 +222,8 @@ async function executeSlashCommand(host: SlashCommandHost, input: string): Promi
         host.showError(LLM_NOT_SET_MESSAGE);
         return;
       }
-      const session = host.session;
-      if (session === undefined) {
-        host.showError(LLM_NOT_SET_MESSAGE);
-        return;
-      }
+      const session = await host.ensureSession();
+      if (session === undefined) return;
       host.track('input_command', { command: `${intent.pluginId}:${intent.commandName}` });
       host.activatePluginCommand(session, intent.pluginId, intent.commandName, intent.args);
       return;

@@ -1169,20 +1169,28 @@ export class KimiTUI {
    * the runtime like `createNewSession` does, then deliver the pending input
    * as the session's first turn.
    */
-  private async sendAfterLazySessionStart(
-    text: string,
-    extraction: ReturnType<typeof extractMediaAttachments>,
-  ): Promise<void> {
+  /**
+   * Return the live session, creating it lazily from the current app state
+   * when startup deferred creation. Shared by the first user message and by
+   * slash commands that genuinely need a session — both must land on an
+   * identically-initialized session (runtime activated, dynamic commands
+   * refreshed, events subscribed). Returns `undefined` when creation cannot
+   * proceed: OAuth login-required hands off to the login flow, other failures
+   * are reported inline. Callers treat `undefined` as "aborted, user already
+   * informed".
+   */
+  async ensureSession(): Promise<CoreSession | undefined> {
+    if (this.session !== undefined) return this.session;
     let session: CoreSession;
     try {
       session = await this.createSessionFromCurrentState();
     } catch (error) {
       if (isOAuthLoginRequiredError(error)) {
         this.authFlow.enterLoginRequiredStartupState();
-        return;
+        return undefined;
       }
       this.showError(`Failed to start a session: ${formatErrorMessage(error)}`);
-      return;
+      return undefined;
     }
 
     this.resetSessionRuntime();
@@ -1192,10 +1200,10 @@ export class KimiTUI {
       await this.activateRuntime();
       await this.syncRuntimeState(session);
     } catch (error) {
-      // The session is live; keep it so the user can retry the message.
+      // The session is live; keep it so the user can retry the action.
       this.sessionEventHandler.startSubscription();
       this.showError(`Post-create setup failed: ${formatErrorMessage(error)}`);
-      return;
+      return this.session;
     }
     try {
       await this.refreshSkillCommands(this.session);
@@ -1205,6 +1213,15 @@ export class KimiTUI {
     }
     this.sessionEventHandler.startSubscription();
     void this.showSessionWarnings(session);
+    return this.session;
+  }
+
+  private async sendAfterLazySessionStart(
+    text: string,
+    extraction: ReturnType<typeof extractMediaAttachments>,
+  ): Promise<void> {
+    const session = await this.ensureSession();
+    if (session === undefined) return;
 
     if (extraction.hasMedia) {
       this.sendMessage(session, text, {

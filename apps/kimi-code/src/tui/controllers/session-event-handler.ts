@@ -90,6 +90,7 @@ export interface SessionEventHost {
   readonly streamingUI: StreamingUIController;
 
   requireSession(): CoreSession;
+  ensureSession(): Promise<CoreSession | undefined>;
   setAppState(patch: Partial<AppState>): void;
   patchLivePane(patch: Partial<LivePaneState>): void;
   resetLivePane(): void;

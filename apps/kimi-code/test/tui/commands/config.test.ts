@@ -100,12 +100,16 @@ describe('handlePlanCommand', () => {
     expect(host.showError).toHaveBeenCalledWith('Unknown plan subcommand: bogus');
   });
 
-  it('shows an error when there is no active session', async () => {
+  it('records plan mode in appState when there is no active session', async () => {
     const { host, session } = makeHost({ hasSession: false });
 
     await handlePlanCommand(host, 'on');
 
+    // Session-less startup defers session creation: the choice lands in
+    // appState and the lazily created session picks it up.
     expect(session.setPlanMode).not.toHaveBeenCalled();
-    expect(host.showError).toHaveBeenCalledOnce();
+    expect(host.setAppState).toHaveBeenCalledWith({ planMode: true });
+    expect(host.showNotice).toHaveBeenCalledWith('Plan mode: ON');
+    expect(host.showError).not.toHaveBeenCalled();
   });
 });

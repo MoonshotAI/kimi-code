@@ -42,6 +42,7 @@ function makeHost(
     },
     session: hasSession ? session : undefined,
     requireSession: () => session,
+    ensureSession: async () => (hasSession ? session : undefined),
     setAppState: vi.fn((patch: Record<string, unknown>) => Object.assign(host.state.appState, patch)),
     showError: vi.fn(),
     showStatus: vi.fn(),

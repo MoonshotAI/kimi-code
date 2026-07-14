@@ -88,6 +88,7 @@ function makeHost(
       cancelCompaction: vi.fn(),
     },
     requireSession: vi.fn(() => session),
+    ensureSession: vi.fn(async () => session),
     setAppState: vi.fn(),
     patchLivePane: vi.fn(),
     resetLivePane: vi.fn(),
