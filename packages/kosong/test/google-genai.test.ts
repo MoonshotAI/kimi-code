@@ -133,6 +133,26 @@ describe('GoogleGenAIChatProvider', () => {
       expect(config['systemInstruction']).toBe('You are helpful.');
     });
 
+    it('serializes an explicitly empty ThinkPart as a Google thought part', async () => {
+      const provider = createProvider({ stream: false });
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: '', encrypted: 'thought-signature' }],
+          toolCalls: [],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect(body['contents']).toEqual([
+        {
+          role: 'model',
+          parts: [{ text: '', thought: true, thoughtSignature: 'thought-signature' }],
+        },
+      ]);
+    });
+
     it('maps json_schema response format to response config', async () => {
       const provider = createProvider();
       const history: Message[] = [
@@ -1040,6 +1060,38 @@ describe('GoogleGenAIChatProvider', () => {
         inputCacheCreation: 0,
       });
     });
+
+    it('yields an empty ThinkPart from an explicitly empty thought part', async () => {
+      const provider = createProvider({ stream: false });
+      ((provider as any)._client.models as Record<string, unknown>)['generateContent'] = vi
+        .fn()
+        .mockResolvedValue({
+          candidates: [
+            {
+              content: {
+                role: 'model',
+                parts: [
+                  { text: '', thought: true, thoughtSignature: 'thought-signature' },
+                  { functionCall: { name: 'lookup', args: {} } },
+                ],
+              },
+            },
+          ],
+        });
+
+      const stream = await provider.generate('', [], []);
+      const parts = await collectParts(stream);
+
+      expect(parts).toEqual([
+        { type: 'think', think: '', encrypted: 'thought-signature' },
+        {
+          type: 'function',
+          id: expect.stringMatching(/^lookup_/),
+          name: 'lookup',
+          arguments: '{}',
+        },
+      ]);
+    });
   });
 
   describe('streaming', () => {
@@ -1131,6 +1183,18 @@ describe('GoogleGenAIChatProvider', () => {
         { type: 'think', think: 'thinking...' },
         { type: 'text', text: 'visible answer' },
       ]);
+    });
+
+    it('yields an empty ThinkPart from an explicitly empty thought part', async () => {
+      async function* mockStream() {
+        yield {
+          candidates: [{ content: { parts: [{ text: '', thought: true }] } }],
+        };
+      }
+
+      const msg = new GoogleGenAIStreamedMessage(mockStream(), true);
+
+      expect(await collectParts(msg)).toEqual([{ type: 'think', think: '' }]);
     });
 
     it('yields function call from stream', async () => {

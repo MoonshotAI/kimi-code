@@ -85,7 +85,7 @@ function extractReasoningContent(
   const keys: readonly string[] = explicitKey !== undefined ? [explicitKey] : KNOWN_REASONING_KEYS;
   for (const key of keys) {
     const value = record[key];
-    if (typeof value === 'string' && value.length > 0) return value;
+    if (typeof value === 'string') return value;
   }
   return undefined;
 }
@@ -163,10 +163,12 @@ function convertMessage(
   toolMessageConversion: ToolMessageConversion,
 ): OpenAIMessage {
   let reasoningContent = '';
+  let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
 
   for (const part of message.content) {
     if (part.type === 'think') {
+      hasReasoningPart = true;
       reasoningContent += part.think;
     } else {
       nonThinkParts.push(part);
@@ -236,7 +238,7 @@ function convertMessage(
   // One API gateways) work without per-provider configuration. Servers that
   // don't understand the field ignore it; servers that require a specific
   // field can override via the explicit `reasoningKey`.
-  if (reasoningContent) {
+  if (hasReasoningPart) {
     result[reasoningKey ?? DEFAULT_OUTBOUND_REASONING_KEY] = reasoningContent;
   }
 
@@ -386,7 +388,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     // Reasoning content: honor the explicit key when set, otherwise scan the
     // de facto field set so hand-written configs work without it.
     const reasoning = extractReasoningContent(message, reasoningKey);
-    if (reasoning) {
+    if (reasoning !== undefined) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
 
@@ -441,7 +443,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
         // Reasoning content: honor the explicit key when set, otherwise scan
         // the de facto field set so hand-written configs work without it.
         const reasoning = extractReasoningContent(delta, reasoningKey);
-        if (reasoning) {
+        if (reasoning !== undefined) {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 

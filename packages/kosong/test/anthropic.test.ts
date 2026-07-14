@@ -1323,6 +1323,24 @@ describe('AnthropicChatProvider', () => {
       });
     });
 
+    it('preserves unsigned empty thinking for Anthropic-compatible models', async () => {
+      const provider = createProvider();
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'think', think: '' }],
+          toolCalls: [
+            { type: 'function', id: 'toolu_1', name: 'lookup', arguments: '{"q":"test"}' },
+          ],
+        },
+      ];
+
+      const body = await captureRequestBody(provider, '', [], history);
+      const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+
+      expect(messages[0]!.content[0]).toEqual({ type: 'thinking', thinking: '' });
+    });
+
     it.each(['claude-opus-4-6', 'opus-4-6'])(
       'drops unsigned thinking for Claude model %s before tool_use blocks',
       async (model) => {
