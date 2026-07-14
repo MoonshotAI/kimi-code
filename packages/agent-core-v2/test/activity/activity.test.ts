@@ -2,10 +2,8 @@
  * `activity` kernel unit tests — drives the real `AgentActivityService` with a
  * stub Session kernel, event bus and in-memory wire service.
  *
- * Asserts the PR1 turn-lane contract: `begin` admits a turn and rejects a
- * concurrent one with `activity.agent_busy`, `cancel` moves the lane to
- * `turn(ending)` and aborts the lease signal, and `lease.end` returns the lane
- * to `idle` (idempotently). Run:
+ * Asserts turn admission and lifecycle transitions plus the live projection of
+ * streaming, tool calls, approvals, retries and step interruptions. Run:
  * `pnpm test -- test/activity/activity.test.ts`
  */
 
@@ -227,6 +225,29 @@ describe('AgentActivityService (turn lane)', () => {
     });
     lease.end('completed');
   });
+
+  it.each(['max_steps', 'error'] as const)(
+    'projects %s as the ending reason when a step is interrupted',
+    (reason) => {
+      const snapshots = collectActivity();
+      const lease = startTurn();
+
+      eventBus.publish({
+        type: 'turn.step.interrupted',
+        turnId: 1,
+        step: 1,
+        reason,
+      });
+
+      expect(snapshots.at(-1)?.turn).toMatchObject({
+        turnId: 1,
+        step: 1,
+        ending: true,
+        endingReason: reason,
+      });
+      lease.end('failed');
+    },
+  );
 
   it('cancel is a no-op when idle', () => {
     activity.markReady();

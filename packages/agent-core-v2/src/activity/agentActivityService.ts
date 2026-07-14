@@ -32,6 +32,7 @@ import type {
   ActivityRetryState,
   ActivityLease,
   ActivityLastTurnState,
+  ActivityTurnState,
   AgentActivityState,
   AgentLifecycleState,
   ApprovalRef,
@@ -43,6 +44,8 @@ import type {
 import { IAgentActivityService, ISessionActivityKernel } from './activity';
 
 let nextBackgroundId = 0;
+
+type ActivityEndingReason = NonNullable<ActivityTurnState['endingReason']>;
 
 interface BackgroundEntry {
   readonly ref: BackgroundActivityRef;
@@ -57,7 +60,7 @@ class LeaseImpl implements ActivityLease {
   private readonly controller = new AbortController();
   private _ending = false;
   private _ended = false;
-  private _endingReason: 'aborted' | 'max_steps' | 'error' | undefined;
+  private _endingReason: ActivityEndingReason | undefined;
   registration: IDisposable = Disposable.None;
 
   constructor(
@@ -78,7 +81,7 @@ class LeaseImpl implements ActivityLease {
     return this._ending;
   }
 
-  get endingReason(): 'aborted' | 'max_steps' | 'error' | undefined {
+  get endingReason(): ActivityEndingReason | undefined {
     return this._endingReason;
   }
 
@@ -87,6 +90,12 @@ class LeaseImpl implements ActivityLease {
     this._ending = true;
     this._endingReason = 'aborted';
     this.controller.abort(reason ?? userCancellationReason());
+  }
+
+  markInterrupted(reason: ActivityEndingReason): void {
+    if (this._ending || this._ended) return;
+    this._ending = true;
+    this._endingReason = reason;
   }
 
   end(outcome: 'completed' | 'cancelled' | 'failed', detail?: { error?: unknown }): void {
@@ -162,6 +171,11 @@ export class AgentActivityService extends Disposable implements IAgentActivitySe
         this.resetStepState();
         this.publishActivity();
       }),
+    );
+    this._register(
+      this.eventBus.subscribe('turn.step.interrupted', (e) =>
+        this.onStepInterrupted(e.turnId, e.reason),
+      ),
     );
     this._register(this.eventBus.subscribe('turn.ended', () => this.resetTurnState()));
     this._register(
@@ -312,6 +326,14 @@ export class AgentActivityService extends Disposable implements IAgentActivitySe
   private onStepStarted(step: number): void {
     this._step = step;
     this.resetStepState();
+    this.publishActivity();
+  }
+
+  private onStepInterrupted(turnId: number, reason: string): void {
+    if (reason !== 'aborted' && reason !== 'max_steps' && reason !== 'error') return;
+    const lease = this.activeLease;
+    if (lease === undefined || lease.turnId !== turnId) return;
+    lease.markInterrupted(reason);
     this.publishActivity();
   }
 
