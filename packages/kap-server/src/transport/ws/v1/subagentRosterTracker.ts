@@ -106,6 +106,19 @@ export class SubagentRosterTracker {
         entry.output_preview = event.error;
         return;
       }
+      case 'task.started': {
+        // A foreground subagent that detaches (Ctrl+B / timeout) re-enters as
+        // a detached background task served by REST `/tasks` under a new task
+        // id — drop its roster entry so a refresh doesn't seed both the roster
+        // row (agent id) and the REST row (task id). Registration of a
+        // background spawn emits the same event, but those were never tracked
+        // here, so the delete is a no-op for them.
+        const info = event.info;
+        if (info.kind === 'agent' && info.detached === true && info.agentId !== undefined) {
+          this.bySession.get(sessionId)?.delete(info.agentId);
+        }
+        return;
+      }
       case 'turn.ended': {
         if (event.agentId !== MAIN_AGENT_ID) return;
         const roster = this.bySession.get(sessionId);

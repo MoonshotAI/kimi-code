@@ -59,6 +59,34 @@ describe('SubagentRosterTracker', () => {
     expect(t.get(SID)).toEqual([]);
   });
 
+  it('drops the entry when a foreground subagent detaches into a background task', () => {
+    const t = new SubagentRosterTracker();
+    t.apply(SID, spawn('agent-1'));
+
+    const taskStarted = (detached: boolean): Event =>
+      ev({
+        type: 'task.started',
+        info: {
+          taskId: 'task_1',
+          kind: 'agent',
+          agentId: 'agent-1',
+          detached,
+          description: 'task agent-1',
+          status: 'running',
+          startedAt: 1,
+          endedAt: null,
+        },
+      });
+
+    // A still-foreground registration (not detached) must keep the entry.
+    t.apply(SID, taskStarted(false));
+    expect(t.get(SID)).toHaveLength(1);
+
+    // The detach transition hands the subagent to REST /tasks — drop the row.
+    t.apply(SID, taskStarted(true));
+    expect(t.get(SID)).toEqual([]);
+  });
+
   it('follows the subagent phase transitions', () => {
     const t = new SubagentRosterTracker();
     t.apply(SID, spawn('agent-1'));
