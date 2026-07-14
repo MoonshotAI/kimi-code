@@ -15,6 +15,7 @@ import Spinner from '../ui/Spinner.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
+import { openDialogCount } from '../../composables/dialogStack';
 
 const { t } = useI18n();
 
@@ -1166,6 +1167,10 @@ function handleInterrupt(): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
+  // A modal dialog open on top of the conversation owns Escape (it closes
+  // itself); don't also interrupt the running prompt underneath. Mirrors the
+  // `anyOverlayOpen` guard in App.vue's global capture-phase Escape handler (#1538).
+  if (openDialogCount.value > 0) return;
   if (event.key === 'Escape' && (props.running || props.sending)) {
     event.preventDefault();
     handleInterrupt();
