@@ -9,7 +9,7 @@ import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 
 import { MessageLegacyService } from '#/app/messageLegacy/messageLegacyService';
@@ -55,8 +55,8 @@ function buildService(opts: {
       get: (token: unknown): unknown => {
         if (token === IAgentLifecycleService) {
           return {
-            getHandle: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
-            whenReady: (id: string) => Promise.resolve(id === MAIN_AGENT_ID ? mainHandle : undefined),
+            create: async () => mainHandle,
+            get: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
           };
         }
         if (token === ISessionCronService) return {};

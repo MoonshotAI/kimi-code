@@ -54,8 +54,8 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   type AgentTaskHooks,
   type AgentTaskStopHookContext,
-  IAgentLifecycleService,
-} from '#/session/agentLifecycle/agentLifecycle';
+  ISessionSubagentService,
+} from '#/session/subagent/subagent';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { SessionExternalHooksService } from '#/session/externalHooks/externalHooksService';
 import { IAgentWireService } from '#/wire/tokens';
@@ -512,7 +512,7 @@ describe('IExternalHooksRunnerService integration', () => {
                 : `sessions/workspace-1/session-1/${subKey}`,
           });
           reg.defineInstance(ISessionLifecycleService, stubSessionLifecycle());
-          reg.definePartialInstance(IAgentLifecycleService, {
+          reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: stopAgentTask.event,
           });
@@ -522,9 +522,9 @@ describe('IExternalHooksRunnerService integration', () => {
       ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
 
       ix.get(ISessionExternalHooksService);
-      const agentLifecycle = ix.get(IAgentLifecycleService);
+      const subagents = ix.get(ISessionSubagentService);
 
-      await agentLifecycle.hooks.onWillStartAgentTask.run({
+      await subagents.hooks.onWillStartAgentTask.run({
         agentName: 'coder',
         prompt: 'Fix the bug',
         signal: new AbortController().signal,
@@ -849,7 +849,7 @@ describe('IExternalHooksRunnerService integration', () => {
                 : `sessions/workspace-1/session-1/${subKey}`,
           });
           reg.defineInstance(ISessionLifecycleService, lifecycle);
-          reg.definePartialInstance(IAgentLifecycleService, {
+          reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
           });

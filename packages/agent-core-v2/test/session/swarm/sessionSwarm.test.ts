@@ -18,11 +18,14 @@ import { APIProviderRateLimitError } from '#/app/llmProtocol/errors';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentLifecycleService,
-  type AgentTaskHooks,
   type CreateAgentOptions,
 } from '#/session/agentLifecycle/agentLifecycle';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { createHooks } from '#/hooks';
+import {
+  type AgentTaskHooks,
+  ISessionSubagentService,
+} from '#/session/subagent/subagent';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import {
   ISessionMetadata,
@@ -836,6 +839,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   let agents: Record<string, AgentMeta>;
   let handles: Map<string, IAgentScopeHandle>;
   let lifecycle: IAgentLifecycleService;
+  let subagents: ISessionSubagentService;
   let createAgent: ReturnType<typeof vi.fn>;
   let runAgent: ReturnType<typeof vi.fn>;
   let eventBus: IEventBus;
@@ -847,11 +851,13 @@ describe('SessionSwarmService metadata compatibility', () => {
     handles = new Map();
     eventBus = eventBusStub();
     lifecycle = lifecycleStub(handles, eventBus);
+    subagents = subagentStub();
     createAgent = lifecycle.create as ReturnType<typeof vi.fn>;
-    runAgent = lifecycle.run as ReturnType<typeof vi.fn>;
+    runAgent = subagents.run as ReturnType<typeof vi.fn>;
     handles.set('main', agentHandle('main', lifecycle, eventBus));
 
     ix.stub(IAgentLifecycleService, lifecycle);
+    ix.stub(ISessionSubagentService, subagents);
     ix.stub(IAgentProfileCatalogService, {
       _serviceBrand: undefined,
       get: (name: string) =>
@@ -998,7 +1004,6 @@ describe('SessionSwarmService metadata compatibility', () => {
           thinking: 'medium',
           cwd: '/repo',
         },
-        permissionMode: 'auto',
         labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
       }),
     );
@@ -1224,15 +1229,15 @@ function lifecycleStub(
   handles: Map<string, IAgentScopeHandle>,
   eventBus: IEventBus,
 ): IAgentLifecycleService {
-  const hooks = createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']);
   const lifecycle = {
     _serviceBrand: undefined,
-    hooks,
-    onDidStopAgentTask: Event.None,
     onDidCreate: Event.None,
-    onDidCreateMain: Event.None,
     onDidDispose: Event.None,
     create: vi.fn(async (opts: CreateAgentOptions = {}) => {
+      if (opts.agentId !== undefined) {
+        const existing = handles.get(opts.agentId);
+        if (existing !== undefined) return existing;
+      }
       const id = opts.agentId ?? 'agent-new';
       const handle = agentHandle(id, lifecycle as IAgentLifecycleService, eventBus, {
         profileName: opts.binding?.profile ?? 'coder',
@@ -1243,23 +1248,28 @@ function lifecycleStub(
       handles.set(id, handle);
       return handle;
     }),
-    ensureMcpReady: async () => {},
-    notifyMainCreated: () => {},
-    notifyAgentTaskStopped: () => {},
     fork: vi.fn(),
-    run: vi.fn(async (agentId: string) => ({
-      agentId,
-      turn: {} as never,
-      completion: Promise.resolve({ summary: 'child summary' }),
-    })),
-    getHandle: (agentId: string) => handles.get(agentId),
-    whenReady: (agentId: string) => Promise.resolve(handles.get(agentId)),
+    get: (agentId: string) => handles.get(agentId),
     list: () => [...handles.values()],
     remove: async (agentId: string) => {
       handles.delete(agentId);
     },
   };
   return lifecycle as IAgentLifecycleService;
+}
+
+function subagentStub(): ISessionSubagentService {
+  return {
+    _serviceBrand: undefined,
+    hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
+    onDidStopAgentTask: Event.None,
+    run: vi.fn(async (agentId: string) => ({
+      agentId,
+      turn: {} as never,
+      completion: Promise.resolve({ summary: 'child summary' }),
+    })),
+    notifyAgentTaskStopped: () => {},
+  } as ISessionSubagentService;
 }
 
 function agentHandle(

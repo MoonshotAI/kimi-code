@@ -10,46 +10,36 @@
  * agent task manager's graceful exit policy before draining activity and
  * disposing the child scope. Bound at Session scope.
  *
- * No agent id is special here: the main agent is created by its bootstrappers
- * as `create({ agentId: 'main' })` (see `mainAgent.ts`), and `fork` requires
- * its source to exist. Caller-facing orchestration (record mirroring, hooks,
- * telemetry, prompt prefixes) lives with the callers — see this domain's
- * wrapper helpers (`tools/agent.ts`, `mirrorAgentRun`).
+ * No agent id is special here: the main agent is simply the agent created
+ * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
+ * exist. Caller-facing orchestration (record mirroring, hooks, telemetry,
+ * prompt prefixes) lives with the callers — driving turns on an agent is the
+ * `subagent` domain (`ISessionSubagentService`); the session's shared MCP
+ * subsystem is the `sessionMcp` domain (`ISessionMcpService`), which this
+ * service awaits during creation.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { Disposable, type IDisposable } from '#/_base/di/lifecycle';
 import { Emitter } from '#/_base/event';
-import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
-import { SyncDescriptor } from '#/_base/di/descriptors';
 import {
   createScopedChildHandle,
   type IAgentScopeHandle,
   LifecycleScope,
   registerScopedService,
-  type ScopeSeed,
 } from '#/_base/di/scope';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
-import { ErrorCodes, Error2, makeErrorPayload } from '#/errors';
-import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { ILogService } from '#/_base/log/log';
-import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
-import { IAgentMcpService } from '#/agent/mcp/mcp';
-import { AgentMcpService } from '#/agent/mcp/mcpService';
-import { McpConnectionManager } from '#/agent/mcp/connection-manager';
-import type { McpServerConfig } from '#/agent/mcp/config-schema';
-import { McpOAuthService } from '#/agent/mcp/oauth/service';
-import { createMcpOAuthStore } from '#/agent/mcp/oauth/store';
-import { mergeCallerMcpServers, resolveSessionMcpConfig } from '#/agent/mcp/session-config';
-import { IPluginService } from '#/app/plugin/plugin';
-import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { ErrorCodes, Error2 } from '#/errors';
+import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
+import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentActivityService, ISessionActivityKernel } from '#/activity/activity';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -62,74 +52,35 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentBuiltinToolsRegistrar } from '#/agent/toolRegistry/builtinToolsRegistrar';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { IImageConfigBridge } from '#/agent/media/imageConfigBridge';
-import {
-  AGENT_WIRE_PROTOCOL_VERSION,
-  IAgentWireRecordService,
-  type PersistedWireRecord,
-} from '#/agent/wireRecord/wireRecord';
-import {
-  AgentWireRecordService,
-  missingWireMetadataError,
-  WIRE_RECORD_FILENAME,
-} from '#/agent/wireRecord/wireRecordService';
-import { wireMetadata } from '#/agent/wireRecord/metadataOps';
-import { IAgentWireService } from '#/wire/tokens';
-import type { PayloadOf } from '#/wire/types';
-import { WireService } from '#/wire/wireServiceImpl';
-import { IAgentBlobService } from '#/agent/blob/agentBlobService';
-import { AgentBlobServiceImpl } from '#/agent/blob/agentBlobServiceImpl';
+import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks';
-import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
-import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
-
-import { createHooks } from '#/hooks';
 import {
   type AgentListFilter,
-  type AgentRunHandle,
-  type AgentRunRequest,
-  type AgentTaskHooks,
-  type AgentTaskStopHookContext,
   type CreateAgentOptions,
   type ForkAgentOptions,
   IAgentLifecycleService,
-  type RunAgentOptions,
 } from './agentLifecycle';
-import { runAgentTurn } from './runAgentTurn';
 
 let nextAgentId = 0;
 
 export class AgentLifecycleService extends Disposable implements IAgentLifecycleService {
   declare readonly _serviceBrand: undefined;
-  readonly hooks = createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']);
   private readonly handles = new Map<string, IAgentScopeHandle>();
   private readonly onDidCreateEmitter = this._register(new Emitter<IAgentScopeHandle>());
-  private readonly onDidCreateMainEmitter = this._register(new Emitter<IAgentScopeHandle>());
   private readonly onDidDisposeEmitter = this._register(new Emitter<string>());
-  private readonly onDidStopAgentTaskEmitter = this._register(
-    new Emitter<AgentTaskStopHookContext>(),
-  );
-  private mcpManager: McpConnectionManager | undefined;
-  private mcpInitialLoad: Promise<void> | undefined;
   private readonly interactionBusDisposables = new Map<string, IDisposable>();
+  /** In-flight creation promises, keyed by agent id. Concurrent creations of
+   *  the same id join the in-flight one (never a duplicate scope), so a caller
+   *  always receives a fully-bootstrapped handle. */
   private readonly creating = new Map<string, Promise<IAgentScopeHandle>>();
-  private readonly mainCreatedHandles = new WeakSet<IAgentScopeHandle>();
 
   get onDidCreate() {
     return this.onDidCreateEmitter.event;
   }
-  get onDidCreateMain() {
-    return this.onDidCreateMainEmitter.event;
-  }
   get onDidDispose() {
     return this.onDidDisposeEmitter.event;
-  }
-  get onDidStopAgentTask() {
-    return this.onDidStopAgentTaskEmitter.event;
-  }
-
-  notifyAgentTaskStopped(context: AgentTaskStopHookContext): void {
-    this.onDidStopAgentTaskEmitter.fire(context);
   }
 
   constructor(
@@ -137,15 +88,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ISessionContext private readonly ctx: ISessionContext,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
-    @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
-    @IPluginService private readonly plugins: IPluginService,
-    @ILogService private readonly log: ILogService,
-    @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
-    @IAtomicDocumentStore private readonly atomicDocs: IAtomicDocumentStore,
-    @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IConfigService private readonly config: IConfigService,
+    @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
     @ISessionActivityKernel private readonly activityKernel: ISessionActivityKernel,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
-    @IAppendLogStore private readonly appendLog?: IAppendLogStore,
   ) {
     super();
     this._register(this.onDidCreate((handle) => this.subscribeInteractionBus(handle)));
@@ -175,12 +121,31 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 
   async create(opts: CreateAgentOptions = {}): Promise<IAgentScopeHandle> {
-    const agentId = opts.agentId ?? `agent-${nextAgentId++}`;
-    const creating = this.creating.get(agentId);
-    if (creating !== undefined) return creating;
+    // Create-or-get for explicit ids: join a concurrent in-flight creation or
+    // return the existing agent, so callers never see a duplicate scope or a
+    // not-yet-ready handle. Auto-minted ids always create fresh.
+    if (opts.agentId !== undefined) {
+      const inflight = this.creating.get(opts.agentId);
+      if (inflight !== undefined) return inflight;
+      const existing = this.handles.get(opts.agentId);
+      if (existing !== undefined) return existing;
+    }
     this.assertCanCreate();
-    const mcpManager = this.getMcpManager();
-    const mcpReady = this.ensureMcpReady();
+    const agentId = opts.agentId ?? `agent-${nextAgentId++}`;
+    const promise = this.doCreate(agentId, opts);
+    this.creating.set(agentId, promise);
+    try {
+      return await promise;
+    } finally {
+      this.creating.delete(agentId);
+    }
+  }
+
+  private async doCreate(agentId: string, opts: CreateAgentOptions): Promise<IAgentScopeHandle> {
+    const mcpReady = this.sessionMcp.ensureMcpReady();
+    // Per-agent homedir → the wire-record persistence key (`hashKey(homedir)`).
+    // Bootstrap computes it under the session dir, mirroring v1's
+    // `<sessionDir>/agents/<id>`; business code never assembles the path itself.
     const agentHomedir = this.bootstrap.agentHomedir(
       this.ctx.workspaceId,
       this.ctx.sessionId,
@@ -195,45 +160,16 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.instantiation,
       LifecycleScope.Agent,
       agentId,
-      { extra: this.buildAgentScopeExtras({ agentId, agentHomedir, agentScope, mcpManager }) },
+      // The only per-agent seed: identity facts. Every other agent-scope
+      // service either derives its configuration from `IAgentScopeContext`
+      // (wire, wireRecord, blob) or resolves it through the scope tree (the
+      // session's shared MCP manager via `ISessionMcpService`).
+      { extra: [[IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })]] },
     ) as IAgentScopeHandle;
     this.handles.set(agentId, handle);
-    const created = this.bootstrapAgent(handle, agentId, opts, {
-      agentHomedir,
-      agentScope,
-      mcpReady,
-    });
-    this.creating.set(agentId, created);
-    try {
-      return await created;
-    } finally {
-      if (this.creating.get(agentId) === created) this.creating.delete(agentId);
-    }
-  }
-
-  async whenReady(agentId: string): Promise<IAgentScopeHandle | undefined> {
-    const creating = this.creating.get(agentId);
-    if (creating === undefined) return this.handles.get(agentId);
-    try {
-      return await creating;
-    } catch {
-      return undefined;
-    }
-  }
-
-  private async bootstrapAgent(
-    handle: IAgentScopeHandle,
-    agentId: string,
-    opts: CreateAgentOptions,
-    bootstrap: {
-      readonly agentHomedir: string;
-      readonly agentScope: string;
-      readonly mcpReady: Promise<void>;
-    },
-  ): Promise<IAgentScopeHandle> {
     try {
       await this.sessionMetadata.registerAgent(agentId, {
-        homedir: bootstrap.agentHomedir,
+        homedir: agentHomedir,
         type: agentId === 'main' ? 'main' : 'sub',
         parentAgentId: agentId === 'main' ? undefined : 'main',
         forkedFrom: opts.forkedFrom,
@@ -241,12 +177,20 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       });
       this.onDidCreateEmitter.fire(handle);
       this.igniteEagerServices(handle);
-      await bootstrap.mcpReady;
-      await this.ensureWireMetadata(handle, bootstrap.agentScope);
+      await mcpReady;
       await this.bindBootstrap(handle, opts);
+      // Bootstrap (profile binding and the force-instantiated observer
+      // services) is complete: drive the activity kernel `initializing → idle`
+      // so the agent can admit turns. Until this point `begin` rejects with
+      // `activity.initializing`. The wire log's metadata envelope is NOT
+      // seeded here — `wireRecord.restore()` heals envelope-less logs on
+      // resume (prepend + rewrite), so creation stays free of log-format
+      // concerns.
       handle.accessor.get(IAgentActivityService).markReady();
       return handle;
     } catch (error) {
+      // Startup failed: drop the half-built agent so the next `create` starts
+      // fresh instead of returning a handle that can never admit turns.
       if (this.handles.get(agentId) === handle) this.handles.delete(agentId);
       try {
         handle.dispose();
@@ -266,38 +210,13 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
   }
 
-  private buildAgentScopeExtras(input: {
-    readonly agentId: string;
-    readonly agentHomedir: string;
-    readonly agentScope: string;
-    readonly mcpManager: McpConnectionManager;
-  }): ScopeSeed {
-    const { agentId, agentScope, mcpManager } = input;
-    return [
-      [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })],
-      [IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService)],
-      [
-        IAgentWireService,
-        new SyncDescriptor(WireService, [
-          {
-            logScope: agentScope,
-            logKey: WIRE_RECORD_FILENAME,
-          },
-        ]),
-      ],
-      [IAgentBlobService, new SyncDescriptor(AgentBlobServiceImpl)],
-      [
-        IAgentMcpService,
-        new SyncDescriptor(AgentMcpService, [
-          {
-            manager: mcpManager,
-            originalsDir: sessionMediaOriginalsDir(this.ctx.sessionDir),
-          },
-        ]),
-      ],
-    ];
-  }
-
+  // Force-instantiate the agent-scope observer/registrar services before the
+  // first turn: each exists only for its constructor side effects (registering
+  // built-in tools, subscribing hooks), so nothing injects them directly.
+  // `InstantiationType.Eager` does NOT auto-instantiate in this DI — it only
+  // skips the lazy proxy at resolve time — so they must be resolved here or
+  // their registrations (built-in tools, loop error handlers, MCP tools) would
+  // never happen.
   private igniteEagerServices(handle: IAgentScopeHandle): void {
     handle.accessor.get(IAgentBuiltinToolsRegistrar);
     handle.accessor.get(IAgentMediaToolsRegistrar);
@@ -305,6 +224,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     handle.accessor.get(IAgentToolDedupeService);
     handle.accessor.get(IAgentExternalHooksService);
     handle.accessor.get(IAgentMcpService);
+    // Agent plugin service: registers main-agent-only plugin session-start
+    // guidance before the first turn (self-gates to a no-op for other agents).
+    handle.accessor.get(IAgentPluginService);
+    // Tool-select services: precompute tool selection and the announcements
+    // derived from it before the first turn.
     handle.accessor.get(IAgentToolSelectService);
     handle.accessor.get(IAgentToolSelectAnnouncementsService);
     handle.accessor.get(IAgentStepRetryService);
@@ -318,57 +242,22 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (opts.binding !== undefined) {
       await handle.accessor.get(IAgentProfileService).bind(opts.binding);
     }
-    if (opts.permissionMode !== undefined) {
-      handle.accessor.get(IAgentPermissionModeService).setMode(opts.permissionMode);
+    // Every fresh agent starts from the configured default permission posture;
+    // dispatchers that want a specific mode (subagent inheritance) set it on
+    // the child themselves after creation. On resume the wire replay
+    // overwrites this with the persisted mode.
+    const permissionMode = this.config.get<PermissionMode>(DEFAULT_PERMISSION_MODE_SECTION);
+    if (permissionMode !== undefined) {
+      handle.accessor.get(IAgentPermissionModeService).setMode(permissionMode);
     }
-  }
-
-  private async ensureWireMetadata(
-    handle: IAgentScopeHandle,
-    agentScope: string,
-  ): Promise<void> {
-    const appendLog = this.appendLog;
-    if (appendLog === undefined) return;
-    let firstRecord: PersistedWireRecord | undefined;
-    for await (const record of appendLog.read<PersistedWireRecord>(
-      agentScope,
-      WIRE_RECORD_FILENAME,
-    )) {
-      firstRecord = record;
-      break;
-    }
-    if (firstRecord === undefined) {
-      handle.accessor.get(IAgentWireService).dispatch(wireMetadata(freshMetadataPayload()));
-      return;
-    }
-    if (firstRecord.type === 'metadata') return;
-    throw missingWireMetadataError();
-  }
-
-  ensureMcpReady(callerServers?: Readonly<Record<string, McpServerConfig>>): Promise<void> {
-    if (this.mcpInitialLoad !== undefined) return this.mcpInitialLoad;
-    const manager = this.getMcpManager();
-    const initialLoad = this.connectMcpServers(manager, callerServers).catch((error: unknown) => {
-      this.log.error('mcp initial load failed', { error });
-      const message = error instanceof Error ? error.message : String(error);
-      this.handles.get('main')?.accessor.get(IEventBus)?.publish({
-        type: 'error',
-        ...makeErrorPayload(ErrorCodes.MCP_STARTUP_FAILED, message),
-      });
-    });
-    this.mcpInitialLoad = initialLoad;
-    return initialLoad;
-  }
-
-  notifyMainCreated(handle: IAgentScopeHandle): void {
-    if (this.mainCreatedHandles.has(handle)) return;
-    this.mainCreatedHandles.add(handle);
-    this.onDidCreateMainEmitter.fire(handle);
   }
 
   async fork(sourceAgentId: string, opts?: ForkAgentOptions): Promise<IAgentScopeHandle> {
     const source = this.handles.get(sourceAgentId);
     if (source === undefined) throw new Error(`Source agent "${sourceAgentId}" does not exist`);
+    if (opts?.agentId !== undefined && this.handles.has(opts.agentId)) {
+      throw new Error(`Agent "${opts.agentId}" already exists`);
+    }
     const child = await this.create({ agentId: opts?.agentId, forkedFrom: source.id });
 
     const sourceData = source.accessor.get(IAgentProfileService).data();
@@ -398,75 +287,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     return child;
   }
 
-  run(agentId: string, request: AgentRunRequest, opts: RunAgentOptions): Promise<AgentRunHandle> {
-    const handle = this.handles.get(agentId);
-    if (handle === undefined) throw new Error(`Agent "${agentId}" does not exist`);
-    return runAgentTurn(handle, request, {
-      summaryPolicy: opts.summaryPolicy ?? this.summaryPolicyFor(handle),
-      signal: opts.signal,
-      onReady: opts.onReady,
-    });
-  }
-
-  private summaryPolicyFor(handle: IAgentScopeHandle): AgentProfileSummaryPolicy | undefined {
-    const profileName = handle.accessor.get(IAgentProfileService).data().profileName;
-    if (profileName === undefined) return undefined;
-    return this.catalog.get(profileName)?.summaryPolicy;
-  }
-
-  private getMcpManager(): McpConnectionManager {
-    if (this.mcpManager !== undefined) return this.mcpManager;
-    const oauthService = new McpOAuthService({
-      store: createMcpOAuthStore(this.atomicDocs),
-    });
-    const manager = new McpConnectionManager({
-      log: this.log,
-      oauthService,
-      stdioCwd: this.workspace.workDir,
-    });
-    this.mcpManager = manager;
-    this._register({ dispose: () => void manager.shutdown() });
-    return manager;
-  }
-
-  private async connectMcpServers(
-    manager: McpConnectionManager,
-    callerServers?: Readonly<Record<string, McpServerConfig>>,
-  ): Promise<void> {
-    const [base, pluginServers] = await Promise.all([
-      resolveSessionMcpConfig({ cwd: this.workspace.workDir, homeDir: this.bootstrap.homeDir }),
-      this.plugins.enabledMcpServers(),
-    ]);
-    const withCaller = mergeCallerMcpServers(base, callerServers);
-    const servers = { ...withCaller?.servers, ...pluginServers };
-    if (Object.keys(servers).length === 0) return;
-    await manager.connectAll(servers);
-    this.trackMcpInitialLoad(manager);
-  }
-
-  private trackMcpInitialLoad(manager: McpConnectionManager): void {
-    const entries = manager.list().filter((entry) => entry.status !== 'disabled');
-    const totalCount = entries.length;
-    if (totalCount === 0) return;
-
-    const connectedCount = entries.filter((entry) => entry.status === 'connected').length;
-    if (connectedCount > 0) {
-      this.telemetry.track2('mcp_connected', {
-        server_count: connectedCount,
-        total_count: totalCount,
-      });
-    }
-
-    const failedCount = entries.filter((entry) => entry.status === 'failed').length;
-    if (failedCount > 0) {
-      this.telemetry.track2('mcp_failed', {
-        failed_count: failedCount,
-        total_count: totalCount,
-      });
-    }
-  }
-
-  getHandle(agentId: string): IAgentScopeHandle | undefined {
+  get(agentId: string): IAgentScopeHandle | undefined {
     return this.handles.get(agentId);
   }
 
@@ -490,11 +311,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   }
 }
 
-function freshMetadataPayload(): PayloadOf<typeof wireMetadata> {
-  return {
-    protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    created_at: Date.now(),
-  };
-}
-
-registerScopedService(LifecycleScope.Session, IAgentLifecycleService, AgentLifecycleService, InstantiationType.Eager, 'agentLifecycle');
+registerScopedService(
+  LifecycleScope.Session,
+  IAgentLifecycleService,
+  AgentLifecycleService,
+  InstantiationType.Eager,
+  'agentLifecycle',
+);

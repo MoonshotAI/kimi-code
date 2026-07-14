@@ -180,7 +180,7 @@ describe('AgentRecords persistence metadata', () => {
     }
   });
 
-  it('rejects replaying a non-empty stream without metadata', async () => {
+  it('heals an envelope-less stream on restore instead of rejecting it', async () => {
     persistence.records.push(
       {
         type: 'context.append_message',
@@ -194,9 +194,19 @@ describe('AgentRecords persistence metadata', () => {
     );
 
     expectResumeMatches = false;
-    await expect(ctx.restorePersisted()).rejects.toThrow(
-      'WireRecord restore expected metadata as the first record',
-    );
+    await ctx.restorePersisted();
+
+    // The envelope was synthesized and rewritten ahead of the records.
+    expect(persistence.records.map((record) => record.type)).toEqual([
+      'metadata',
+      'context.append_message',
+    ]);
+    expect(persistence.records[0]).toMatchObject({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+    });
+    // And the orphaned message landed in the restored context.
+    expect(ctx.context.get()).toHaveLength(1);
   });
 
   it('restores existing metadata records without rewriting them', async () => {

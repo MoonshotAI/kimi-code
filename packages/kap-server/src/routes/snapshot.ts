@@ -172,7 +172,7 @@ async function readViaLegacyAssembly(
   );
 
   // Messages — most recent page of the main agent's live history.
-  const main = handle.accessor.get(IAgentLifecycleService).getHandle('main');
+  const main = handle.accessor.get(IAgentLifecycleService).get('main');
   let items: Message[] = [];
   let hasMore = false;
   if (main !== undefined) {

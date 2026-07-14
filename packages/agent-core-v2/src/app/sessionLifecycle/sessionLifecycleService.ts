@@ -39,15 +39,11 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { DEFAULT_PLAN_MODE_SECTION } from '#/agent/plan/configSection';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import {
-  AGENT_WIRE_PROTOCOL_VERSION,
   IAgentWireRecordService,
   type PersistedWireRecord,
 } from '#/agent/wireRecord/wireRecord';
-import {
-  missingWireMetadataError,
-  WIRE_RECORD_FILENAME,
-  wireRecordScope,
-} from '#/agent/wireRecord/wireRecordService';
+import { metadataRecord } from '#/agent/wireRecord/metadataOps';
+import { WIRE_RECORD_FILENAME, wireRecordScope } from '#/agent/wireRecord/wireRecordService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -68,11 +64,13 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ensureMainAgent, MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -183,8 +181,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
     void handle.accessor.get(ISessionSkillCatalog).ready;
-    await handle.accessor.get(IAgentLifecycleService).ensureMcpReady(opts.mcpServers);
+    await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
+    // Force-instantiate the session-level eager services whose subscriptions
+    // must exist before the first agent / turn (external hooks, cron).
     handle.accessor.get(ISessionExternalHooksService);
+    handle.accessor.get(ISessionCronService);
     return handle;
   }
 
@@ -245,8 +246,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       workspaceId: summary.workspaceId,
     });
     const agents = handle.accessor.get(IAgentLifecycleService);
-    if (agents.getHandle(MAIN_AGENT_ID) === undefined) {
-      const main = await ensureMainAgent(handle);
+    if (agents.get(MAIN_AGENT_ID) === undefined) {
+      const main = await agents.create({ agentId: MAIN_AGENT_ID });
+      // Resolve context memory BEFORE restoring so its reducers are registered;
+      // otherwise the wire replay applies context records into a void and the
+      // restored transcript never lands in context memory.
       main.accessor.get(IAgentContextMemoryService);
       const mainWireRecord = main.accessor.get(IAgentWireRecordService);
       await mainWireRecord.restore();
@@ -463,7 +467,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (args.sourceHandle !== undefined) {
       const agentHandle = args.sourceHandle.accessor
         .get(IAgentLifecycleService)
-        .getHandle(args.agentId);
+        .get(args.agentId);
       if (agentHandle !== undefined) {
         await agentHandle.accessor.get(IAgentWireRecordService).flush();
       }
@@ -475,10 +479,13 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         WIRE_RECORD_FILENAME,
       ),
     );
+    // Keep the copied log well-formed for the target's first restore: prepend
+    // the metadata envelope when the source lacks one (restore() would heal it
+    // anyway, but the forked copy should be valid on its own).
     if (records.length === 0) {
-      records.push(freshMetadataRecord());
+      records.push(metadataRecord());
     } else if (records[0]?.type !== 'metadata') {
-      throw missingWireMetadataError();
+      records.unshift(metadataRecord());
     }
     records.push(forkedRecord());
 
@@ -588,14 +595,6 @@ function isMissingFileError(error: unknown): boolean {
 
 function createSessionId(): string {
   return `session_${randomUUID()}`;
-}
-
-function freshMetadataRecord(): PersistedWireRecord {
-  return {
-    type: 'metadata',
-    protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    created_at: Date.now(),
-  };
 }
 
 function forkedRecord(): PersistedWireRecord {

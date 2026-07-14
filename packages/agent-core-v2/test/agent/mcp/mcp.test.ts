@@ -6,11 +6,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { McpConnectionManager, McpServerEntry } from '#/agent/mcp/connection-manager';
 import { IAgentMcpService } from '#/agent/mcp/mcp';
 import { AgentMcpService } from '#/agent/mcp/mcpService';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { McpOAuthService } from '#/agent/mcp/oauth/service';
 import type { MCPClient, MCPToolDefinition } from '#/agent/mcp/types';
 import { IAgentWireService } from '#/wire/tokens';
@@ -179,10 +182,12 @@ describe('AgentMcpService', () => {
   });
 
   function createService(manager: FakeMcpManager): AgentMcpService {
-    const svc = ix.createInstance(
-      AgentMcpService,
-      { manager: manager as unknown as McpConnectionManager },
-    );
+    ix.stub(ISessionMcpService, {
+      ensureMcpReady: () => Promise.resolve(),
+      connectionManager: () => manager as unknown as McpConnectionManager,
+    });
+    ix.stub(ISessionContext, { sessionDir: '/tmp/kimi-code-mcp-test' });
+    const svc = ix.createInstance(AgentMcpService);
     disposables.add(svc);
     return svc;
   }
@@ -206,7 +211,8 @@ describe('AgentMcpService', () => {
   });
 
   it('resolves through the IAgentMcpService binding with no manager', () => {
-    ix.set(IAgentMcpService, new SyncDescriptor(AgentMcpService, [{}]));
+    ix.set(IAgentMcpService, new SyncDescriptor(AgentMcpService));
+    createService(new FakeMcpManager());
     const svc = ix.get(IAgentMcpService);
     expect(svc.list()).toEqual([]);
   });

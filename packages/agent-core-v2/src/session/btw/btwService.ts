@@ -6,8 +6,8 @@
  * policy) and appends the side-channel system reminder. Bound at Session scope —
  * `fork('main')` is a session-level operation, so the service injects the
  * session's `IAgentLifecycleService` directly rather than resolving it through
- * the main agent's accessor. The main agent is guaranteed to exist by session
- * bootstrap (`ensureMainAgent`); forking a missing source throws.
+ * the main agent's accessor. Callers materialize the main agent first (the
+ * route resumes the session); forking a missing source throws.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

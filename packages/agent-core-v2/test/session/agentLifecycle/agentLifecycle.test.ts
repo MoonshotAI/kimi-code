@@ -21,9 +21,15 @@ import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMo
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { AgentLifecycleService } from '#/session/agentLifecycle/agentLifecycleService';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
+import { SessionMcpService } from '#/session/mcp/sessionMcpService';
+import { ISessionSubagentService } from '#/session/subagent/subagent';
+import { SessionSubagentService } from '#/session/subagent/subagentService';
+import '#/activity/agentActivityService';
+import '#/agent/mcp/mcpService';
+import '#/agent/wireRecord/agentWireService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
-import '#/activity/agentActivityService';
 import '#/agent/toolDedupe/toolDedupeService';
 import { IAgentActivityService, ISessionActivityKernel } from '#/activity/activity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -36,7 +42,7 @@ import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
-import { AGENT_WIRE_PROTOCOL_VERSION, type PersistedWireRecord } from '#/agent/wireRecord/wireRecord';
+import { type PersistedWireRecord } from '#/agent/wireRecord/wireRecord';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -253,6 +259,7 @@ describe('AgentLifecycleService', () => {
       setMode: permissionModeSetMode,
       onDidChangeMode: Event.None,
     } as unknown as IAgentPermissionModeService);
+    ix.set(ISessionMcpService, new SyncDescriptor(SessionMcpService));
     stopAllOnExit = vi.fn(async () => []);
     ix.stub(IAgentTaskService, {
       _serviceBrand: undefined,
@@ -269,10 +276,10 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const main = await svc.create({ agentId: 'main' });
     expect(main.id).toBe('main');
-    expect(svc.getHandle('main')).toBe(main);
+    expect(svc.get('main')).toBe(main);
     expect(svc.list()).toEqual([main]);
     await svc.remove('main');
-    expect(svc.getHandle('main')).toBeUndefined();
+    expect(svc.get('main')).toBeUndefined();
   });
 
   it('remove stops the agent background tasks before disposal', async () => {
@@ -289,58 +296,6 @@ describe('AgentLifecycleService', () => {
     await svc.create({ agentId: 'main' });
     expect(beforeExecuteHookIds).toContain('toolDedupe');
     expect(didExecuteHookIds).toContain('toolDedupe');
-  });
-
-  it('seeds metadata into an empty agent wire before the first business op', async () => {
-    const log = recordingAppendLog();
-    ix.stub(IAppendLogStore, log.store);
-    stubBlobPassThrough(ix);
-    const svc = ix.get(IAgentLifecycleService);
-
-    await svc.create({ agentId: 'main' });
-
-    expect(log.appended[0]).toMatchObject({
-      type: 'metadata',
-      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    });
-    expect((log.appended[0] as { created_at?: number } | undefined)?.created_at).toEqual(
-      expect.any(Number),
-    );
-  });
-
-  it('rejects an existing agent wire that is missing the metadata envelope', async () => {
-    const log = recordingAppendLog([
-      { type: 'turn.prompt', turnId: 0 } as PersistedWireRecord,
-    ]);
-    ix.stub(IAppendLogStore, log.store);
-    stubBlobPassThrough(ix);
-    const svc = ix.get(IAgentLifecycleService);
-
-    await expect(svc.create({ agentId: 'main' })).rejects.toThrow(
-      'WireRecord restore expected metadata as the first record',
-    );
-
-    expect(log.appended).toEqual([]);
-    expect(log.rewritten).toBeUndefined();
-  });
-
-  it('leaves an existing metadata envelope in place', async () => {
-    const log = recordingAppendLog([
-      {
-        type: 'metadata',
-        protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-        created_at: 1,
-      },
-      { type: 'turn.prompt', turnId: 0 } as PersistedWireRecord,
-    ]);
-    ix.stub(IAppendLogStore, log.store);
-    stubBlobPassThrough(ix);
-    const svc = ix.get(IAgentLifecycleService);
-
-    await svc.create({ agentId: 'main' });
-
-    expect(log.appended).toEqual([]);
-    expect(log.rewritten).toBeUndefined();
   });
 
   it('create assigns sequential ids when unspecified', async () => {
@@ -367,16 +322,6 @@ describe('AgentLifecycleService', () => {
       forkedFrom: 'main',
       labels: { swarmItem: 'swarm-item-1' },
     });
-  });
-
-  it('applies permissionMode when provided on create', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-
-    await svc.create({ agentId: 'auto-child', permissionMode: 'auto' });
-    expect(permissionModeSetMode).toHaveBeenLastCalledWith('auto');
-
-    await svc.create({ agentId: 'yolo-child', permissionMode: 'yolo' });
-    expect(permissionModeSetMode).toHaveBeenLastCalledWith('yolo');
   });
 
   it('leaves permission mode at the default when permissionMode is omitted', async () => {
@@ -479,8 +424,8 @@ describe('AgentLifecycleService', () => {
       .spyOn(McpConnectionManager.prototype, 'connectAll')
       .mockResolvedValue(undefined);
 
-    const svc = ix.get(IAgentLifecycleService);
-    await svc.ensureMcpReady({
+    const sessionMcp = ix.get(ISessionMcpService);
+    await sessionMcp.ensureMcpReady({
       shared: { transport: 'stdio', command: 'caller-version' },
       callerOnly: { transport: 'http', url: 'https://caller.example.com' },
     });
@@ -491,11 +436,11 @@ describe('AgentLifecycleService', () => {
       callerOnly: { transport: 'http', url: 'https://caller.example.com' },
     });
 
-    await svc.ensureMcpReady({ ignored: { transport: 'stdio', command: 'ignored' } });
+    await sessionMcp.ensureMcpReady({ ignored: { transport: 'stdio', command: 'ignored' } });
     expect(connectAll).toHaveBeenCalledTimes(1);
   });
 
-  it('whenReady waits for an in-flight creation to finish bootstrap', async () => {
+  it('exposes the in-flight handle and yields it idle after bootstrap', async () => {
     let releaseRegister!: () => void;
     registerAgent.mockImplementationOnce(
       () =>
@@ -506,24 +451,19 @@ describe('AgentLifecycleService', () => {
     const svc = ix.get(IAgentLifecycleService);
     const create = svc.create({ agentId: 'main' });
 
-    const early = svc.getHandle('main');
+    const early = svc.get('main');
     expect(early).toBeDefined();
     expect(early!.accessor.get(IAgentActivityService).lane()).toBe('initializing');
 
-    const ready = svc.whenReady('main');
-    await expect(
-      Promise.race([ready.then(() => 'ready'), Promise.resolve('pending')]),
-    ).resolves.toBe('pending');
-
+    const joined = svc.create({ agentId: 'main' });
     releaseRegister();
-    const handle = await ready;
+    const handle = await joined;
     await create;
     expect(handle).toBe(early);
     expect(handle!.accessor.get(IAgentActivityService).lane()).toBe('idle');
   });
 
   it('ensureMainAgent returns one handle when calls start concurrently', async () => {
-    ix.stub(ISessionCronService, { _serviceBrand: undefined });
     const session: ISessionScopeHandle = {
       id: 'sess_test',
       kind: LifecycleScope.Session,
@@ -541,30 +481,12 @@ describe('AgentLifecycleService', () => {
     expect(ix.get(IAgentLifecycleService).list()).toEqual([first]);
   });
 
-  it('notifyMainCreated emits once when the same handle is announced repeatedly', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-    const main = await svc.create({ agentId: 'main' });
-    const announced: string[] = [];
-    disposables.add(svc.onDidCreateMain((handle) => announced.push(handle.id)));
-
-    svc.notifyMainCreated(main);
-    svc.notifyMainCreated(main);
-
-    expect(announced).toEqual(['main']);
-  });
-
-  it('whenReady resolves undefined for an unknown agent', async () => {
-    const svc = ix.get(IAgentLifecycleService);
-    await expect(svc.whenReady('missing')).resolves.toBeUndefined();
-  });
-
   it('drops the handle when creation bootstrap fails so the next create starts clean', async () => {
     registerAgent.mockRejectedValueOnce(new Error('bootstrap boom'));
     const svc = ix.get(IAgentLifecycleService);
 
     await expect(svc.create({ agentId: 'main' })).rejects.toThrow('bootstrap boom');
-    expect(svc.getHandle('main')).toBeUndefined();
-    await expect(svc.whenReady('main')).resolves.toBeUndefined();
+    expect(svc.get('main')).toBeUndefined();
 
     const main = await svc.create({ agentId: 'main' });
     expect(main.id).toBe('main');
@@ -576,7 +498,8 @@ describe('AgentLifecycleService', () => {
   });
 
   it('run throws when the agent does not exist', () => {
-    const svc = ix.get(IAgentLifecycleService);
+    ix.set(ISessionSubagentService, new SyncDescriptor(SessionSubagentService));
+    const svc = ix.get(ISessionSubagentService);
     expect(() =>
       svc.run('missing', { kind: 'prompt', prompt: 'hi' }, { signal: new AbortController().signal }),
     ).toThrow('Agent "missing" does not exist');
@@ -594,5 +517,32 @@ describe('AgentLifecycleService', () => {
 
     await svc.remove(a.id);
     expect(disposed).toEqual([a.id]);
+  });
+
+  it('de-dupes concurrent create calls for the same agent id', async () => {
+    let resolveRegistration!: () => void;
+    const registration = new Promise<void>((resolve) => {
+      resolveRegistration = resolve;
+    });
+    registerAgent.mockReturnValue(registration);
+    const svc = ix.get(IAgentLifecycleService);
+
+    const first = svc.create({ agentId: 'main' });
+    const second = svc.create({ agentId: 'main' });
+
+    resolveRegistration();
+    const [a, b] = await Promise.all([first, second]);
+    expect(a).toBe(b);
+    expect(registerAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('create returns the existing agent on a sequential duplicate id', async () => {
+    const svc = ix.get(IAgentLifecycleService);
+
+    const first = await svc.create({ agentId: 'main' });
+    const second = await svc.create({ agentId: 'main' });
+
+    expect(second).toBe(first);
+    expect(registerAgent).toHaveBeenCalledTimes(1);
   });
 });

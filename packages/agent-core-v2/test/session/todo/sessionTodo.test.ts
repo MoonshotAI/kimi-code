@@ -4,17 +4,12 @@ import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiati
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { type IAgentScopeHandle, LifecycleScope } from '#/_base/di/scope';
-import { Emitter, Event } from '#/_base/event';
+import { Emitter } from '#/_base/event';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { createHooks } from '#/hooks';
-import {
-  type AgentTaskHooks,
-  type AgentTaskStopHookContext,
-  IAgentLifecycleService,
-} from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionTodoService } from '#/session/todo/sessionTodo';
 import { SessionTodoService } from '#/session/todo/sessionTodoService';
 import { readTodoItems, type TodoItem } from '#/session/todo/todoItem';
@@ -161,36 +156,24 @@ function makeFakeAgent(agentId: string): FakeAgent {
 interface LifecycleStub {
   readonly service: IAgentLifecycleService;
   readonly fireCreate: (handle: IAgentScopeHandle) => void;
-  readonly fireCreateMain: (handle: IAgentScopeHandle) => void;
   readonly fireDispose: (agentId: string) => void;
 }
 
 function makeLifecycleStub(handles: readonly IAgentScopeHandle[] = []): LifecycleStub {
   const onDidCreate = new Emitter<IAgentScopeHandle>();
-  const onDidCreateMain = new Emitter<IAgentScopeHandle>();
   const onDidDispose = new Emitter<string>();
   const byId = new Map(handles.map((h) => [h.id, h]));
 
   const service: IAgentLifecycleService = {
     _serviceBrand: undefined,
-    hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
-    onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
     onDidCreate: onDidCreate.event,
-    onDidCreateMain: onDidCreateMain.event,
     onDidDispose: onDidDispose.event,
-    getHandle: (id: string) => byId.get(id),
-    whenReady: (id: string) => Promise.resolve(byId.get(id)),
+    get: (id: string) => byId.get(id),
     list: () => [...byId.values()],
     create: async () => {
       throw new Error('not implemented');
     },
-    ensureMcpReady: () => Promise.resolve(),
-    notifyMainCreated: () => {},
-    notifyAgentTaskStopped: () => {},
     fork: async () => {
-      throw new Error('not implemented');
-    },
-    run: () => {
       throw new Error('not implemented');
     },
     remove: async () => {},
@@ -201,10 +184,6 @@ function makeLifecycleStub(handles: readonly IAgentScopeHandle[] = []): Lifecycl
     fireCreate: (h) => {
       byId.set(h.id, h);
       onDidCreate.fire(h);
-    },
-    fireCreateMain: (h) => {
-      byId.set(h.id, h);
-      onDidCreateMain.fire(h);
     },
     fireDispose: (id) => {
       byId.delete(id);

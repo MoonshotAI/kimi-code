@@ -18,6 +18,7 @@ import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionInitService } from '#/session/sessionInit/sessionInit';
 import { SessionInitService } from '#/session/sessionInit/sessionInitService';
+import { ISessionSubagentService } from '#/session/subagent/subagent';
 
 const WORK_DIR = '/project';
 const AGENTS_MD = 'latest project instructions';
@@ -49,7 +50,7 @@ describe('SessionInitService', () => {
         onWillStartAgentTask: { run: vi.fn(async () => {}) },
       },
       notifyAgentTaskStopped: vi.fn(),
-      getHandle: vi.fn((id: string) => handles[id]),
+      get: vi.fn((id: string) => handles[id]),
       create: vi.fn(async () => handles['agent-0']),
       run: vi.fn(async (agentId: string) => ({
         agentId,
@@ -65,13 +66,14 @@ describe('SessionInitService', () => {
     const profile = {
       data: () => ({ modelAlias: 'mock-model', thinkingLevel: 'off', cwd: WORK_DIR }),
     };
-    const permissionMode = { mode: 'auto' };
+    const permissionMode = { mode: 'auto', setMode: vi.fn() };
 
     handles['main'] = {
       id: 'main',
       accessor: {
         get: (id: unknown) => {
           if (id === IAgentLifecycleService) return lifecycle;
+          if (id === ISessionSubagentService) return lifecycle;
           if (id === IAgentProfileService) return profile;
           if (id === IAgentPermissionModeService) return permissionMode;
           if (id === IAgentSystemReminderService) return { appendSystemReminder };
@@ -86,13 +88,14 @@ describe('SessionInitService', () => {
       id: 'agent-0',
       accessor: {
         get: (id: unknown) => {
-          if (id === IAgentContextSizeService) return undefined;
+          if (id === IAgentPermissionModeService) return permissionMode;
           return undefined;
         },
       },
     };
 
     ix.stub(IAgentLifecycleService, lifecycle as unknown as IAgentLifecycleService);
+    ix.stub(ISessionSubagentService, lifecycle as unknown as ISessionSubagentService);
     ix.stub(IHostFileSystem, {
       _serviceBrand: undefined,
       stat: vi.fn(async (path: string): Promise<HostFileStat> => {
@@ -126,7 +129,6 @@ describe('SessionInitService', () => {
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]![0]).toMatchObject({
       binding: { profile: 'coder', model: 'mock-model', thinking: 'off', cwd: WORK_DIR },
-      permissionMode: 'auto',
     });
 
     expect(run).toHaveBeenCalledTimes(1);
@@ -174,9 +176,9 @@ describe('SessionInitService', () => {
 
   it('throws AGENT_NOT_FOUND when the main agent is missing', async () => {
     const lifecycle = ix.get(IAgentLifecycleService) as unknown as {
-      getHandle: ReturnType<typeof vi.fn>;
+      get: ReturnType<typeof vi.fn>;
     };
-    lifecycle.getHandle.mockReturnValue(undefined);
+    lifecycle.get.mockReturnValue(undefined);
     const svc = ix.get(ISessionInitService);
 
     const error = await svc.generateAgentsMd().catch((e) => e);

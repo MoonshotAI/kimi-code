@@ -1,5 +1,5 @@
 /**
- * `agentLifecycle` domain (L6) — helper that runs one prompt (or retry) turn on
+ * `subagent` domain (L6) — helper that runs one prompt (or retry) turn on
  * an agent and distills a summary from its context once the turn ends.
  *
  * Not a Service: `runAgentTurn` is a pure function that borrows
@@ -29,7 +29,7 @@ import { IAgentLoopService, type Turn, type TurnResult } from '#/agent/loop/loop
 import { IAgentUsageService } from '#/agent/usage/usage';
 import type { AgentProfileSummaryPolicy } from '#/app/agentProfileCatalog/agentProfileCatalog';
 
-import type { AgentRunHandle, AgentRunRequest } from './agentLifecycle';
+import type { AgentRunHandle, AgentRunRequest } from './subagent';
 
 export const AGENT_RUN_PROMPT_ORIGIN: PromptOrigin = {
   kind: 'system_trigger',

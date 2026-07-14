@@ -52,18 +52,19 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   ) {
     super();
 
-    this._register(this.agentLifecycle.onDidCreate((handle) => this.bindAgent(handle)));
-    this._register(this.agentLifecycle.onDidCreateMain((handle) => this.bindMainWire(handle)));
+    this._register(
+      this.agentLifecycle.onDidCreate((handle) => {
+        this.bindAgent(handle);
+        if (handle.id === MAIN_AGENT_ID) this.bindMainWire(handle);
+      }),
+    );
     this._register(
       this.agentLifecycle.onDidDispose((agentId) => this.disposeAgentBindings(agentId)),
     );
 
     for (const handle of this.agentLifecycle.list()) {
       this.bindAgent(handle);
-    }
-    const main = this.agentLifecycle.getHandle(MAIN_AGENT_ID);
-    if (main !== undefined) {
-      this.bindMainWire(main);
+      if (handle.id === MAIN_AGENT_ID) this.bindMainWire(handle);
     }
 
     this._register(
@@ -76,7 +77,7 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   }
 
   getTodos(): readonly TodoItem[] {
-    const main = this.agentLifecycle.getHandle(MAIN_AGENT_ID);
+    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return [];
     return main.accessor.get(IAgentWireService).getModel(TodoModel);
   }
@@ -94,7 +95,7 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   }
 
   private dispatchTodoSet(todos: readonly TodoItem[]): void {
-    const main = this.agentLifecycle.getHandle(MAIN_AGENT_ID);
+    const main = this.agentLifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) return;
     const wire = main.accessor.get(IAgentWireService);
     wire.dispatch(todoSet({ key: 'todo', value: todos }));

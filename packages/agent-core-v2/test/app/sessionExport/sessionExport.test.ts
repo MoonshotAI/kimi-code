@@ -49,10 +49,7 @@ import {
 import { IWorkspaceRegistry } from '#/app/workspaceRegistry/workspaceRegistry';
 import { Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
-import {
-  type AgentTaskHooks,
-  IAgentLifecycleService,
-} from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 import { stubBootstrap } from '../bootstrap/stubs';
@@ -906,21 +903,11 @@ function stubSessionMetadata(meta: SessionMeta): ISessionMetadata {
 function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecycleService {
   return {
     _serviceBrand: undefined,
-    hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
-    onDidStopAgentTask: noopEvent,
     onDidCreate: noopEvent,
-    onDidCreateMain: noopEvent,
     onDidDispose: noopEvent,
     create: async () => agents[0]!,
-    ensureMcpReady: async () => {},
-    notifyMainCreated: () => {},
-    notifyAgentTaskStopped: () => {},
     fork: async () => agents[0]!,
-    run: async () => {
-      throw new Error('run should not be called by session export');
-    },
-    getHandle: (agentId) => agents.find((agent) => agent.id === agentId),
-    whenReady: (agentId) => Promise.resolve(agents.find((agent) => agent.id === agentId)),
+    get: (agentId) => agents.find((agent) => agent.id === agentId),
     list: () => agents,
     remove: async () => {},
   };

@@ -89,12 +89,13 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     super();
 
     this._register(
-      this.agentLifecycle.onDidCreateMain((handle) => {
+      this.agentLifecycle.onDidCreate((handle) => {
+        if (handle.id !== 'main') return;
         void this.bindMainAgent(handle);
       }),
     );
 
-    const existingMain = this.agentLifecycle.getHandle('main');
+    const existingMain = this.agentLifecycle.get('main');
     if (existingMain) {
       void this.bindMainAgent(existingMain);
     }
@@ -269,7 +270,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     if (this.getCronConfig().disabled) return;
     if (this.tasks.size === 0) return;
 
-    const mainHandle = this.agentLifecycle.getHandle('main');
+    const mainHandle = this.agentLifecycle.get('main');
     if (!mainHandle) return;
 
     const loop = mainHandle.accessor.get(IAgentLoopService);
@@ -364,7 +365,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   ): Turn | undefined {
     if (tasks.length === 0) return undefined;
 
-    const mainHandle = this.agentLifecycle.getHandle('main');
+    const mainHandle = this.agentLifecycle.get('main');
     if (!mainHandle) return undefined;
 
     const promptService = mainHandle.accessor.get(IAgentPromptService);
@@ -410,7 +411,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     task: CronTask,
     ctx: { readonly coalescedCount: number; readonly firedAt: number },
   ): Promise<boolean> {
-    const mainHandle = this.agentLifecycle.getHandle('main');
+    const mainHandle = this.agentLifecycle.get('main');
     if (!mainHandle) return Promise.resolve(false);
 
     const promptService = mainHandle.accessor.get(IAgentPromptService);
@@ -482,13 +483,13 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
 
 
   private dispatchCron(op: Op): void {
-    const mainHandle = this.agentLifecycle.getHandle('main');
+    const mainHandle = this.agentLifecycle.get('main');
     if (!mainHandle) return;
     mainHandle.accessor.get(IAgentWireService).dispatch(op);
   }
 
   private signalCron(event: DomainEvent): void {
-    const mainHandle = this.agentLifecycle.getHandle('main');
+    const mainHandle = this.agentLifecycle.get('main');
     if (!mainHandle) return;
     mainHandle.accessor.get(IEventBus).publish(event);
   }
