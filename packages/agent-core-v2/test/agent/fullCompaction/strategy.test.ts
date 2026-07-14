@@ -89,8 +89,6 @@ describe('DefaultCompactionStrategy', () => {
       textMessage('user', 'next prompt'),
     ];
 
-    // The only valid split is before the parallel exchange (after 'old assistant'),
-    // never between tool_a and tool_b — that would leave tool_b as an orphan.
     expect(strategy.computeCompactCount(messages, 'auto')).toBe(2);
   });
 

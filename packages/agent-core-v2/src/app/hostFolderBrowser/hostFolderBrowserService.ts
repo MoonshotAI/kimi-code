@@ -151,6 +151,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostFolderBrowser,
   HostFolderBrowser,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'hostFolderBrowser',
 );

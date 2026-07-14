@@ -11,6 +11,10 @@ export default {
   thinking: { desc: '设置思考强度' },
   compact: { desc: '压缩会话历史' },
   fork: { desc: '把当前会话 fork 出一个新会话' },
+  export: {
+    desc: '将当前会话和排障日志下载为 ZIP 压缩包',
+    noSession: '请先打开一个会话再导出。',
+  },
   status: { desc: '查看会话状态' },
   undo: { desc: '撤销上一条消息' },
 };

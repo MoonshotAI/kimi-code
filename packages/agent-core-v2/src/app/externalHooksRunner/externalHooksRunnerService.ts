@@ -126,6 +126,6 @@ registerScopedService(
   LifecycleScope.App,
   IExternalHooksRunnerService,
   ExternalHooksRunnerService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'externalHooksRunner',
 );

@@ -21,18 +21,6 @@ import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 export type ExecutableToolOutput = string | ContentPart[];
 
-/**
- * Declared side channel for delivering an extra user message into context
- * memory, separate from the tool result returned to the model. The tool result
- * always pairs with its `tool_call`; `delivery` asks the agent layer to inject
- * an additional message (e.g. a steered user message) so tools do not reach
- * into `IAgentPromptService` themselves.
- *
- * The L3 contract only carries an L3-legal payload: `origin` is intentionally
- * `unknown` so the tool contract stays free of the L4 `ContextMessage` type;
- * the L4 consumer forwards it verbatim onto the steered `ContextMessage`.
- * Kinds grow with later phases.
- */
 export type ToolDeliveryKind = 'steer';
 
 export interface ToolDeliveryMessage {

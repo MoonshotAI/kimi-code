@@ -27,11 +27,6 @@ interface PlanFakes {
   readonly runner: ISessionProcessRunner;
 }
 
-/**
- * Minimal fs + runner pair with sensible plan-service defaults (mkdir /
- * readText no-op, runner throws). Individual tests override the specific
- * methods they need.
- */
 function createPlanFakes(overrides: Partial<IHostFileSystem> = {}): PlanFakes {
   const fs = createFakeHostFs({
     mkdir: vi.fn().mockResolvedValue(undefined),
@@ -113,10 +108,6 @@ describe('Plan service', () => {
     }
   });
 
-  /**
-   * A fs whose methods delegate to whichever `activeFakes.fs` is set at call
-   * time. Lets a test swap fakes mid-flight by reassigning `activeFakes`.
-   */
   function delegatingFs(): IHostFileSystem {
     return new Proxy(createPlanFakes().fs, {
       get(_target, prop, receiver) {
@@ -452,8 +443,6 @@ describe('Plan service', () => {
         type: 'function',
         id: 'call_exit_options',
         name: 'ExitPlanMode',
-        // The second option omits `description` - valid input after the
-        // schema relaxation. The approval policy must still surface both.
         arguments: JSON.stringify({
           options: [
             { label: 'Approach A', description: 'Smaller refactor.' },

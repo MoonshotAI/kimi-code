@@ -93,6 +93,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPermissionPolicyService,
   AgentPermissionPolicyService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'permissionPolicy',
 );

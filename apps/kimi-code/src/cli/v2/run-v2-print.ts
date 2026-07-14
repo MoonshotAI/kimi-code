@@ -36,6 +36,7 @@ import {
   logSeed,
   resolveKimiHome,
   resolveLoggingConfig,
+  skillCatalogRuntimeOptionsSeed,
   type DomainEvent,
   type IAgentScopeHandle,
   type ISessionScopeHandle,
@@ -115,6 +116,9 @@ export async function runV2Print(
   const { app } = bootstrap({ homeDir, clientVersion: version }, [
     ...logSeed(logging),
     ...hostRequestHeadersSeed(hostHeaders),
+    // `--skillsDir` (v1 print parity): explicit skill dirs replace default
+    // user / project discovery for this process.
+    ...skillCatalogRuntimeOptionsSeed(opts.skillsDirs),
   ]);
   const auth = app.accessor.get(IOAuthToolkit);
 

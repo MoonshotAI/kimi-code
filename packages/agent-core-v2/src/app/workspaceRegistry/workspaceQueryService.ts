@@ -27,6 +27,6 @@ registerScopedService(
   LifecycleScope.App,
   IWorkspaceQueryService,
   WorkspaceQueryService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'workspaceRegistry',
 );

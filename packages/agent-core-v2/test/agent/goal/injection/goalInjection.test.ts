@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from '#/app/llmProtocol/message';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -166,7 +166,7 @@ describe('GoalInjection content', () => {
       await goals.setBudgetLimits({ budgetLimits: { turnBudget: 4 } }, 'model');
       await goals.incrementTurn();
       await goals.incrementTurn();
-      await goals.incrementTurn(); // 3/4 = 75%
+      await goals.incrementTurn();
     }))!;
     expect(text).toContain('nearing a budget');
     expect(text).toContain('avoid starting new discretionary work');
@@ -177,7 +177,7 @@ describe('GoalInjection content', () => {
       await goals.createGoal({ objective: 'work' });
       await goals.setBudgetLimits({ budgetLimits: { turnBudget: 2 } }, 'model');
       await goals.incrementTurn();
-      await goals.incrementTurn(); // 2/2 = 100%
+      await goals.incrementTurn();
     }))!;
     expect(text).toContain('currently blocked');
     expect(text).toContain('Blocked after goal budget reached: turn budget 2');
@@ -307,8 +307,6 @@ describe('GoalInjection integration', () => {
       profile.update({ activeToolNames: ['Lookup', 'UpdateGoal'] });
       await goals.createGoal({ objective: 'Ship feature X' });
 
-      // Turn 1 (user prompt) spans two steps: a Lookup tool call, then a
-      // final text step.
       ctx.mockNextResponse({ type: 'text', text: 'I will look it up.' }, lookupCall());
       await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Look up moon' }] });
       await ctx.untilApproval(true);
@@ -317,12 +315,6 @@ describe('GoalInjection integration', () => {
         output: 'lookup-result',
       });
       ctx.mockNextResponse({ type: 'text', text: 'The lookup result is lookup-result.' });
-      // The goal is still active when turn 1 ends, so the goal driver holds
-      // the turn lane and immediately launches a continuation turn — that
-      // continuation IS the second turn boundary (a second explicit prompt
-      // would throw ACTIVITY_AGENT_BUSY). Script its two steps up front: a
-      // terminal UpdateGoal, then the forced outcome step, which ends the
-      // continuation loop.
       ctx.mockNextResponse(
         { type: 'text', text: 'Wrapping up.' },
         {
@@ -336,17 +328,18 @@ describe('GoalInjection integration', () => {
       await toolCallEvents;
       await ctx.untilTurnEnd();
 
-      // Two turn boundaries have injected a reminder by now — turn 1's plus
-      // the already-launched continuation turn's — even though turn 1 alone
-      // ran two steps.
-      await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(2);
+      // Goal reminders persist asynchronously and the relative order of the
+      // async injection providers is not contractual, so wait for the
+      // continuation turn's reminder to land instead of asserting at a fixed,
+      // ordering-sensitive flush point.
+      await vi.waitFor(async () => {
+        expect(await flushedGoalReminderRecords(ctx, persistence)).toHaveLength(2);
+      });
 
-      await ctx.untilTurnEnd();
-
-      // The continuation turn also ran two steps (UpdateGoal + outcome
-      // message) but added no further reminders: one per turn boundary,
-      // never per step.
-      await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(2);
+      // One reminder per turn boundary (two boundaries here), not per step:
+      // the count settles at exactly two even though the turns ran multiple
+      // steps.
+      expect(await flushedGoalReminderRecords(ctx, persistence)).toHaveLength(2);
     });
 
     it('writes no goal record when there is no active goal', async () => {

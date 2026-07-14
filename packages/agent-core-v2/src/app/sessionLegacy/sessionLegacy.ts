@@ -30,14 +30,9 @@ import type {
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-/**
- * Raw fields the route projects into the wire `Session` (via `toWireSession`).
- * Kept protocol-free so the edge projection stays in the server layer.
- */
 export interface SessionWireFields {
   readonly id: string;
   readonly workspaceId: string;
-  /** Workspace root — used as `cwd` when projecting to the wire `Session`. */
   readonly root: string;
   readonly title?: string;
   readonly lastPrompt?: string;
@@ -52,7 +47,6 @@ export interface ISessionLegacyService {
 
   updateProfile(sessionId: string, body: UpdateSessionProfileRequest): Promise<SessionWireFields>;
   status(sessionId: string): Promise<SessionStatusResponse>;
-  /** Current goal snapshot, or null when the session has no active goal. */
   goal(sessionId: string): Promise<GoalSnapshot | null>;
 }
 

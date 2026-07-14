@@ -63,7 +63,6 @@ function maybeStatusCode(error: unknown): number | undefined {
   if (typeof error !== 'object' || error === null) return undefined;
   const statusCode = (error as { statusCode?: unknown }).statusCode;
   if (typeof statusCode === 'number') return statusCode;
-  // Boundary-translated errors carry the HTTP status in `details`.
   const details = (error as { details?: unknown }).details;
   if (details !== null && typeof details === 'object') {
     const detailsStatus = (details as { statusCode?: unknown }).statusCode;

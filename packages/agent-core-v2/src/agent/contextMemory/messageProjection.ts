@@ -19,18 +19,15 @@ import type { Message, MessageContent, MessageRole, ToolUseContent } from '@moon
 
 import type { ContextMessage } from './types';
 
-/** Derive a stable opaque message id from (sessionId, index) — fallback for legacy records that predate intrinsic message ids. */
 function deriveMessageId(sessionId: string, index: number): string {
   const padded = String(index).padStart(6, '0');
   return `msg_${sessionId}_${padded}`;
 }
 
-/** kosong's `Role` already matches the wire `MessageRole` — pass through. */
 function toProtocolRole(role: ContextMessage['role']): MessageRole {
   return role as MessageRole;
 }
 
-/** Translate one kosong content part to a wire content part. */
 function mapContentPart(part: ContextMessage['content'][number]): MessageContent {
   switch (part.type) {
     case 'text':
@@ -53,16 +50,6 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
   }
 }
 
-/**
- * Build the protocol-shaped `Message.content[]` for one history entry:
- *   1. `tool` role → a single `tool_result` part. A result carrying media
- *      parts (e.g. ReadMediaFile) passes the raw kosong content-part array
- *      through — the same shape the live `tool.result` event stream carries —
- *      so REST consumers can still render the media; other results flatten
- *      to joined text. `is_error` mirrors `ContextMessage.isError`.
- *   2. other roles → each mapped content part, then one `tool_use` part per
- *      `ToolCall` (assistant only).
- */
 function buildProtocolContent(msg: ContextMessage): MessageContent[] {
   if (msg.role === 'tool') {
     if (msg.toolCallId === undefined) {
@@ -115,12 +102,6 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
   return base;
 }
 
-/**
- * Convert one history entry into the protocol's `Message` shape. `created_at`
- * defaults to the session's `createdAt` plus the entry index; callers that
- * know the real record time pass `createdAtMsOverride` (v1: the wire record
- * time, nudged to stay strictly increasing).
- */
 export function toProtocolMessage(
   sessionId: string,
   index: number,

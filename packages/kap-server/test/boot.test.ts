@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { pino } from 'pino';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { hostRequestHeadersSeed, IHostRequestHeaders } from '@moonshot-ai/agent-core-v2';
+import { hostRequestHeadersSeed, IHostRequestHeaders, ISkillCatalogRuntimeOptions } from '@moonshot-ai/agent-core-v2';
 
 import type { LockContents } from '../src/lock';
 import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
@@ -104,6 +104,31 @@ describe('server-v2 boot', () => {
     });
     const overridden = server.core.accessor.get(IHostRequestHeaders);
     expect(overridden.headers['User-Agent']).toBe('custom-host/9.9');
+  });
+
+  it('seeds explicit skill dirs into the core scope when skillDirs is provided', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      skillDirs: ['/skills/explicit'],
+    });
+    expect(server.core.accessor.get(ISkillCatalogRuntimeOptions).explicitDirs).toEqual([
+      '/skills/explicit',
+    ]);
+
+    // Without skillDirs the registered default carries no explicit dirs.
+    await server.close();
+    server = undefined;
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    expect(server.core.accessor.get(ISkillCatalogRuntimeOptions).explicitDirs).toBeUndefined();
   });
 });
 

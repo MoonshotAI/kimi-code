@@ -36,6 +36,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentSystemReminderService,
   AgentSystemReminderService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'systemReminder',
 );

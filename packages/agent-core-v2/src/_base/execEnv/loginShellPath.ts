@@ -29,7 +29,6 @@ import { execFileText } from './environmentProbe';
 export interface LoginShellPathDeps {
   readonly platform: string;
   readonly env: Record<string, string | undefined>;
-  /** Login shell from the OS user database; fallback when $SHELL is unset. */
   readonly userShell: () => string | undefined;
   readonly execFileText: (
     file: string,
@@ -40,31 +39,15 @@ export interface LoginShellPathDeps {
 
 const LOGIN_SHELL_ENV_TIMEOUT_MS = 5_000;
 
-/**
- * Run the user's login shell and return its PATH, or `undefined` when the probe
- * does not apply (Windows, no resolvable shell) or fails (spawn error, timeout,
- * no PATH in the output).
- */
 export async function probeLoginShellPath(deps: LoginShellPathDeps): Promise<string | undefined> {
   if (deps.platform === 'win32') return undefined;
-  // A set-but-blank $SHELL (some daemon/launchd envs) must also fall back.
   const envShell = deps.env['SHELL']?.trim();
   const shell = envShell === undefined || envShell.length === 0 ? deps.userShell() : envShell;
   if (shell === undefined || shell.length === 0) return undefined;
 
-  // `env` prints the resolved environment in every shell dialect, unlike
-  // `echo $PATH`, which fish would join with spaces. Invoke it by absolute
-  // path: a bare `env` resolves through the inherited PATH — which may carry
-  // cwd-dependent components — from the workspace cwd, so a repo-planted `env`
-  // binary could run at session startup and feed us an arbitrary PATH. The
-  // absolute path also bypasses profile function shadowing, and /usr/bin/env is
-  // guaranteed on every mainstream POSIX system (it is the canonical shebang
-  // interpreter path).
   const stdout = await deps.execFileText(shell, ['-l', '-c', '/usr/bin/env'], LOGIN_SHELL_ENV_TIMEOUT_MS);
   if (stdout === undefined) return undefined;
 
-  // Profile output lands on stdout before `env` runs, so keep the last PATH=
-  // line.
   let path: string | undefined;
   for (const line of stdout.split('\n')) {
     if (line.startsWith('PATH=')) {
@@ -75,54 +58,29 @@ export async function probeLoginShellPath(deps: LoginShellPathDeps): Promise<str
   return path;
 }
 
-/**
- * Union of the current PATH and the login-shell PATH: the current PATH string
- * is kept verbatim — including empty components, which POSIX command lookup
- * treats as the current directory — and login-shell entries the current PATH
- * lacks are appended in their own order. When nothing is missing the current
- * string is returned unchanged. Only absolute login-shell entries are imported:
- * empty, `.`, and relative components are all cwd-dependent lookup, and
- * appending one the user did not already have would widen their search path —
- * the host runs commands from arbitrary workspace directories.
- */
 export function mergeLoginShellPath(currentPath: string | undefined, loginShellPath: string): string {
   const current = currentPath ?? '';
   const seen = new Set(current.split(':').filter((entry) => entry.length > 0));
   const additions: string[] = [];
   for (const entry of loginShellPath.split(':')) {
-    // The probe only runs on POSIX (win32 bails before merging), so a leading
-    // slash is a sufficient absoluteness test. Empty components fail it too.
     if (!entry.startsWith('/') || seen.has(entry)) continue;
     seen.add(entry);
     additions.push(entry);
   }
   if (additions.length === 0) return current;
-  // `undefined` means "no PATH at all", so the additions stand alone; '' is a
-  // real (cwd-only) PATH whose empty component must survive as a leading colon.
   if (currentPath === undefined) return additions.join(':');
   return `${current}:${additions.join(':')}`;
 }
 
-/** Probe the login shell and merge its PATH into `deps.env['PATH']`. */
 export async function applyLoginShellPath(deps: LoginShellPathDeps): Promise<void> {
   const loginShellPath = await probeLoginShellPath(deps);
   if (loginShellPath === undefined) return;
   const currentPath = deps.env['PATH'];
   const merged = mergeLoginShellPath(currentPath, loginShellPath);
-  // Only write when something was appended — an unset PATH must stay unset
-  // (assigning '' would turn "implementation default search path" into
-  // "cwd-only lookup"), and a set PATH must not be rewritten.
   if (merged === (currentPath ?? '')) return;
   deps.env['PATH'] = merged;
 }
 
-/**
- * Login shell from the OS user database (`/etc/passwd` via getpwuid on Linux,
- * Directory Services on macOS). `userInfo()` throws when the uid has no
- * database entry (e.g. containers running an arbitrary uid), and service
- * accounts may carry `/usr/sbin/nologin` — the latter needs no special casing
- * here because probing it simply fails and degrades silently.
- */
 function userShellFromNode(): string | undefined {
   try {
     const shell = userInfo().shell;
@@ -134,12 +92,6 @@ function userShellFromNode(): string | undefined {
 
 let appliedLoginShellPath: Promise<void> | undefined;
 
-/**
- * Production convenience — apply the probe to `process.env` once per process.
- * Memoised like `probeHostEnvironmentFromNode`: the login-shell PATH does not
- * change for the lifetime of the process, and repeated calls must not re-spawn
- * the shell.
- */
 export function applyLoginShellPathFromNode(): Promise<void> {
   if (appliedLoginShellPath !== undefined) return appliedLoginShellPath;
   appliedLoginShellPath = applyLoginShellPath({

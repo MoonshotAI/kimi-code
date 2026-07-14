@@ -40,8 +40,6 @@ function stubWorkspace(): ISessionWorkspaceContext {
 }
 
 function fakeFs(files: Record<string, string>, symlinks: readonly string[] = []): IHostFileSystem {
-  // Keys are stored as absolute paths; fsService now resolves workspace-relative
-  // paths to absolute (`join(WORK_DIR, rel)`) before calling into `IHostFileSystem`.
   const fileMap = new Map<string, string>();
   const dirSet = new Set<string>([WORK_DIR]);
   const addAncestors = (rel: string): void => {
@@ -81,7 +79,6 @@ function fakeFs(files: Record<string, string>, symlinks: readonly string[] = [])
       return buf.subarray(0, n ?? buf.length);
     },
     readLines: async function* (): AsyncGenerator<string> {
-      // not needed by the fs surface under test
     },
     writeBytes: async () => {},
     createExclusive: async () => false,
@@ -141,8 +138,6 @@ function fakeFs(files: Record<string, string>, symlinks: readonly string[] = [])
       const recursive = options?.recursive ?? false;
       const exists = isDir(p) || fileMap.has(p);
       if (recursive) {
-        // Add every ancestor up to (but not including) WORK_DIR, mirroring
-        // `fs.mkdir(..., { recursive: true })` which never throws EEXIST.
         let current = p;
         while (current !== WORK_DIR && current.length > WORK_DIR.length) {
           dirSet.add(current);
@@ -199,11 +194,6 @@ function fakeRunner(handler: RunHandler): ISessionProcessRunner {
   };
 }
 
-/**
- * A process whose stdout yields the given `--json` lines one chunk at a time,
- * stopping when `kill()` is called. Used to assert that `fs.grep` terminates
- * `rg` early once an output cap is reached instead of draining everything.
- */
 function makeStreamingProcess(lines: readonly string[]): {
   proc: IProcess;
   wasKilled: () => boolean;
@@ -220,7 +210,6 @@ function makeStreamingProcess(lines: readonly string[]): {
       if (killed) break;
       yielded += 1;
       yield `${line}\n`;
-      // Hand control back so the consumer can kill between chunks.
       await new Promise((r) => setImmediate(r));
     }
     resolveWait(0);
@@ -419,7 +408,6 @@ describe('SessionFsService.search', () => {
     const paths = result.items.map((i) => i.path);
     expect(paths).toContain('src/link');
     expect(result.items.find((i) => i.path === 'src/link')?.kind).toBe('symlink');
-    // The symlink is never descended into, so nothing under `src/link/` appears.
     expect(paths.some((p) => p.startsWith('src/link/'))).toBe(false);
   });
 });
@@ -535,7 +523,6 @@ describe('SessionFsService.grep', () => {
     expect(result.truncated).toBe(true);
     expect(result.files[0]?.matches).toHaveLength(CAP);
     expect(streaming?.wasKilled()).toBe(true);
-    // The consumer stopped reading long before all 200 matches were produced.
     expect(streaming?.yieldedLines()).toBeLessThan(TOTAL);
   });
 });

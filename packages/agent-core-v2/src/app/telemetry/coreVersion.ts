@@ -43,7 +43,6 @@ function walkForPackageVersion(): string {
       dir = parent;
     }
   } catch {
-    // Best effort: version resolution must never break telemetry.
   }
   return UNKNOWN_VERSION;
 }

@@ -18,7 +18,6 @@ import {
 
 import { MODELS_SECTION, ModelsSectionSchema } from './model';
 
-/** Read transform: preserve alias names; camelCase each alias's fields. */
 export const modelsFromToml = (rawSnake: unknown): unknown => {
   if (!isPlainObject(rawSnake)) return rawSnake;
   const out: Record<string, unknown> = {};
@@ -36,7 +35,6 @@ export const modelsFromToml = (rawSnake: unknown): unknown => {
   return out;
 };
 
-/** Write transform: preserve alias names; snake_case each alias's fields. */
 export const modelsToToml = (value: unknown, rawSnake: unknown): unknown => {
   if (!isPlainObject(value)) return value;
   const rawSub = cloneRecord(rawSnake);

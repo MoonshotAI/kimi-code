@@ -49,11 +49,6 @@ export function parsePorcelain(
   return { branch, ahead, behind, entries, additions: 0, deletions: 0, pullRequest: null };
 }
 
-/**
- * Sum added/deleted line counts from `git diff --numstat` output. Each line is
- * `<added>\t<deleted>\t<path>`; a binary file reports `-` for both counts,
- * which we treat as 0. Returns the aggregate across all files.
- */
 export function parseNumstat(stdout: string): {
   additions: number;
   deletions: number;
@@ -132,8 +127,6 @@ function collapseXY(xy: string): FsGitStatus {
 }
 
 function posix(p: string): string {
-  // Git porcelain always emits `/`-separated paths, even on Windows; normalize
-  // the stray backslash for safety without depending on the host path style.
   return p.replaceAll('\\', '/');
 }
 

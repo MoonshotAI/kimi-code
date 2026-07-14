@@ -133,14 +133,10 @@ describe('MiniDbQueryStore', () => {
   });
 
   it('throws storage.locked when the database lock is held by another process', async () => {
-    // Simulate another kimi process holding the single-writer lock on the
-    // shared query-store directory.
     const storeDir = join(homeDir, 'cache', 'query-store');
     const lockHolder = await MiniDb.open({ dir: storeDir, valueCodec: 'json' });
     try {
       const store = build();
-      // Open failure surfaces as a coded `storage.locked` (memoized), never as
-      // a silent no-op — consumers decide how to fall back.
       await expect(store.put(COLLECTION, 'a', { id: 'a' })).rejects.toMatchObject({
         code: 'storage.locked',
       });
@@ -159,7 +155,6 @@ describe('MiniDbQueryStore', () => {
       await expect(store.query(COLLECTION).execute()).rejects.toMatchObject({
         code: 'storage.locked',
       });
-      // A locked (failed) open must not make close/dispose throw.
       await expect(store.close()).resolves.toBeUndefined();
     } finally {
       await lockHolder.close();
@@ -174,8 +169,6 @@ describe('MiniDbQueryStore', () => {
     disposeHost?.();
     disposeHost = undefined;
 
-    // Corrupt the persisted index-definition JSON so `open` throws SyntaxError,
-    // which `openOrRebuild` turns into a wipe + fresh open.
     const indexFile = join(homeDir, 'cache', 'query-store', 'db.indexes.json');
     await fsp.writeFile(indexFile, '{ definitely not valid json');
 

@@ -76,7 +76,6 @@ describe('plan ops (wire-backed)', () => {
       'plan_mode.enter',
       'plan_mode.exit',
     ]);
-    // Flat record shape: payload fields sit next to `type`, never under `payload`.
     expect(records.every((record) => 'payload' in record === false)).toBe(true);
     expect(records[0]).toEqual(
       expect.objectContaining({
@@ -139,7 +138,6 @@ describe('plan ops (wire-backed)', () => {
     expect(emissions).toEqual([]);
     expect(modelChanges).toBe(0);
 
-    // A cancelled plan replays back to inactive.
     const cancelled = buildHost('plan-replay-cancel');
     await cancelled.wire.replay(
       { type: 'plan_mode.enter', id: 'p1', planFilePath: '/w/plan/p1.md' },

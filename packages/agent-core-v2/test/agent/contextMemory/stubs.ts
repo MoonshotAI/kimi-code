@@ -21,7 +21,6 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 
-/** A no-op `IAgentWireRecordService`. */
 export function stubWireRecord(): IAgentWireRecordService {
   return {
     _serviceBrand: undefined,
@@ -33,15 +32,9 @@ export function stubWireRecord(): IAgentWireRecordService {
 }
 
 export interface StubContextMemory extends IAgentContextMemoryService {
-  /** The live backing history, exposed so tests can inspect splices. */
   readonly messages: readonly ContextMessage[];
 }
 
-/**
- * An in-memory `IAgentContextMemoryService`. Each mutation updates the backing
- * history and publishes `context.spliced`, mirroring `AgentContextMemoryService`
- * enough for collaborators (e.g. `AgentContextInjectorService`) to react.
- */
 function publishSplice(
   eventBus: IEventBus | undefined,
   input: {
@@ -100,12 +93,6 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
   };
 }
 
-/**
- * DI-constructible variant of {@link stubContextMemory}: publishes
- * `context.spliced` to the Agent-scope {@link IEventBus} so collaborators
- * (e.g. `AgentContextInjectorService`) react to splices exactly as they do
- * against the real `AgentContextMemoryService`.
- */
 class StubContextMemoryService implements IAgentContextMemoryService {
   declare readonly _serviceBrand: undefined;
   private readonly impl: StubContextMemory;
@@ -135,12 +122,6 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   }
 }
 
-/**
- * Register the default collaborators consumed by `AgentContextMemoryService`
- * (`IAgentWireRecordService`) and an in-memory `IAgentContextMemoryService`.
- * Tests that exercise the real `AgentContextMemoryService` should override
- * `IAgentContextMemoryService` via `additionalServices`.
- */
 export function registerContextMemoryServices(reg: ServiceRegistration): void {
   reg.defineInstance(IAgentWireRecordService, stubWireRecord());
   reg.define(IEventBus, EventBusService);

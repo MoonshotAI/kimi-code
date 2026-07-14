@@ -4,13 +4,16 @@
  * Wiring: real kap-server; goal-resume cases observe the agent event stream.
  * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/sessions.test.ts`.
  */
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { inflateRawSync } from 'node:zlib';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  IBootstrapService,
   type DomainEvent,
   IAgentGoalService,
   IAgentLifecycleService,
@@ -129,6 +132,91 @@ describe('server-v2 /api/v1/sessions', () => {
     } as never);
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
+
+  it('downloads a ZIP with the supplied Web log and cleans up its temporary directory', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const webLog = [
+      JSON.stringify({ event: 'websocket.connected', time: 1 }),
+      JSON.stringify({ event: 'prompt.submitted', time: 2 }),
+    ].join('\n');
+
+    const res = await fetch(`${base}/api/v1/sessions/${id}/export`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ web_log: webLog }),
+    } as never);
+    const archive = Buffer.from(await res.arrayBuffer());
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('application/zip');
+    expect(res.headers.get('content-disposition')).toBe(
+      `attachment; filename="kimi-session-${id}.zip"`,
+    );
+    expect(res.headers.get('content-length')).toBe(String(archive.length));
+    expect(res.headers.get('cache-control')).toBe('no-store');
+
+    const entries = readZipEntries(archive);
+    const manifest = JSON.parse(entries.get('manifest.json')?.toString('utf8') ?? 'null') as {
+      sessionId: string;
+      webLogPath?: string;
+    };
+    expect(entries.get('logs/kimi-web.jsonl')?.toString('utf8')).toBe(webLog);
+    expect(manifest).toMatchObject({
+      sessionId: id,
+      webLogPath: 'logs/kimi-web.jsonl',
+    });
+    await expect.poll(() => listExportTempDirs(id)).toEqual([]);
+  });
+
+  it('returns the JSON session-not-found envelope instead of a ZIP', async () => {
+    const id = 'sess_missing_export';
+    const { status, body } = await postJson<null>(`/api/v1/sessions/${id}/export`, {});
+
+    expect(status).toBe(200);
+    expect(body.code).toBe(40401);
+    await expect.poll(() => listExportTempDirs(id)).toEqual([]);
+  });
+
+  it('cleans up the temporary archive when the client cancels the download', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const id = created.body.data.id;
+    const sessionDir = (server as RunningServer).core.accessor
+      .get(IBootstrapService)
+      .sessionDir(created.body.data.workspace_id, id);
+    await writeFile(join(sessionDir, 'cancel-test.bin'), randomBytes(8 * 1024 * 1024));
+
+    const res = await fetch(`${base}/api/v1/sessions/${id}/export`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: '{}',
+    } as never);
+    const reader = res.body?.getReader();
+    expect(reader).toBeDefined();
+    const first = await reader?.read();
+    expect(first?.done).toBe(false);
+    await reader?.cancel();
+
+    await expect.poll(() => listExportTempDirs(id)).toEqual([]);
+  });
+
+  it('rejects a Web log larger than 256 KiB in UTF-8', async () => {
+    const created = await postJson<SessionWire>('/api/v1/sessions', {
+      metadata: { cwd: home as string },
+    });
+    const { status, body } = await postJson<null>(
+      `/api/v1/sessions/${created.body.data.id}/export`,
+      { web_log: '你'.repeat(87_382) },
+    );
+
+    expect(status).toBe(200);
+    expect(body.code).toBe(40001);
+    expect(body.details?.[0]?.path).toBe('web_log');
+  });
 
   async function createBlockedGoalRig() {
     const cwd = home as string;
@@ -920,6 +1008,51 @@ describe('server-v2 /api/v1/sessions', () => {
     expect((meta?.payload as { title?: string } | undefined)?.title).toBe('hello web title');
   });
 });
+
+async function listExportTempDirs(sessionId: string): Promise<string[]> {
+  const prefix = `kimi-session-export-${sessionId}-`;
+  return (await readdir(tmpdir())).filter((entry) => entry.startsWith(prefix)).toSorted();
+}
+
+function readZipEntries(archive: Buffer): Map<string, Buffer> {
+  const endSignature = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+  const endOffset = archive.lastIndexOf(endSignature);
+  if (endOffset < 0) throw new Error('ZIP end record not found');
+
+  const entryCount = archive.readUInt16LE(endOffset + 10);
+  let centralOffset = archive.readUInt32LE(endOffset + 16);
+  const entries = new Map<string, Buffer>();
+
+  for (let index = 0; index < entryCount; index += 1) {
+    if (archive.readUInt32LE(centralOffset) !== 0x02014b50) {
+      throw new Error('Invalid ZIP central directory entry');
+    }
+    const method = archive.readUInt16LE(centralOffset + 10);
+    const compressedSize = archive.readUInt32LE(centralOffset + 20);
+    const nameLength = archive.readUInt16LE(centralOffset + 28);
+    const extraLength = archive.readUInt16LE(centralOffset + 30);
+    const commentLength = archive.readUInt16LE(centralOffset + 32);
+    const localOffset = archive.readUInt32LE(centralOffset + 42);
+    const name = archive
+      .subarray(centralOffset + 46, centralOffset + 46 + nameLength)
+      .toString('utf8');
+
+    if (archive.readUInt32LE(localOffset) !== 0x04034b50) {
+      throw new Error('Invalid ZIP local entry');
+    }
+    const localNameLength = archive.readUInt16LE(localOffset + 26);
+    const localExtraLength = archive.readUInt16LE(localOffset + 28);
+    const dataOffset = localOffset + 30 + localNameLength + localExtraLength;
+    const compressed = archive.subarray(dataOffset, dataOffset + compressedSize);
+    if (method === 0) entries.set(name, Buffer.from(compressed));
+    else if (method === 8) entries.set(name, inflateRawSync(compressed));
+    else throw new Error(`Unsupported ZIP compression method: ${method}`);
+
+    centralOffset += 46 + nameLength + extraLength + commentLength;
+  }
+
+  return entries;
+}
 
 describe('server-v2 /api/v1/sessions status context window', () => {
   let server: RunningServer | undefined;

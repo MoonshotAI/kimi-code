@@ -20,11 +20,6 @@ export interface ModelCapability {
 
 const UNKNOWN_CAPABILITY_MARKER = Symbol.for('moonshot-ai.kosong.UNKNOWN_CAPABILITY');
 
-/**
- * Shared read-only default returned when a provider has not catalogued a
- * given model. Frozen so accidental mutation at one call site cannot leak
- * into another.
- */
 export const UNKNOWN_CAPABILITY: ModelCapability = Object.freeze(
   Object.defineProperty(
     {

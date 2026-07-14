@@ -82,12 +82,6 @@ export class ModelImpl implements Model {
   private readonly protocolRegistry: ProtocolAdapterRegistry;
   private readonly providerOptions: ProtocolProviderOptions;
 
-  /**
-   * Chain of transforms applied to the raw kosong `ChatProvider` before use.
-   * `withThinking` / `withMaxCompletionTokens` / `withGenerationKwargs`
-   * append to this chain; the actual `ChatProvider` is materialized lazily
-   * on the first `.request()` and cached.
-   */
   private readonly transforms: readonly ((p: ChatProvider) => ChatProvider)[];
   private cachedChatProvider: ChatProvider | undefined;
 
@@ -111,9 +105,6 @@ export class ModelImpl implements Model {
     this.transforms = transforms;
     this.alwaysThinking = init.alwaysThinking;
     this.providerName = init.providerName;
-    // thinkingEffort is materialized via `withThinking` — the transform chain
-    // owns the actual value applied to the underlying ChatProvider; we track
-    // the most recent effort on the wrapper so callers can inspect it.
     this.thinkingEffort = null;
   }
 
@@ -189,7 +180,6 @@ export class ModelImpl implements Model {
     });
   }
 
-  /** Materialize the transformed kosong ChatProvider. Cached per Model instance. */
   private resolveChatProvider(): ChatProvider {
     if (this.cachedChatProvider !== undefined) return this.cachedChatProvider;
     let provider = this.protocolRegistry.createChatProvider({
@@ -280,15 +270,10 @@ export class ModelImpl implements Model {
         );
       });
     } catch (error) {
-      // Cancellation is control flow, not a provider failure — abort shapes
-      // pass through untouched. Everything else crosses the provider boundary
-      // here, so it is translated into a coded `Error2` exactly once.
       if (isAbortError(error) || signal?.aborted === true) throw error;
       throw translateProviderError(error);
     }
 
-    // Non-streaming providers still populate `result.message`; surface its
-    // content and tool calls as parts so downstream consumers see them.
     if (!streamedAnyPart) {
       for (const part of result.message.content) {
         firstChunkAt ??= Date.now();
@@ -420,19 +405,12 @@ export function buildStreamTiming(
   return timing;
 }
 
-/**
- * Simple bearer/api-key AuthProvider suitable for the flat-Model case.
- * Wraps a static or provider-backed token retriever with optional force-
- * refresh semantics.
- */
 export class StaticAuthProvider implements AuthProvider {
   readonly canRefresh = false;
 
   constructor(private readonly apiKey: string | undefined) {}
   async getAuth(): Promise<ProviderRequestAuth | undefined> {
     if (this.apiKey === undefined || this.apiKey.trim().length === 0) return undefined;
-    // kosong's provider adapters read the bearer/api token from `apiKey`
-    // (see `requireProviderApiKey`); a headers-only shape is rejected.
     return { apiKey: this.apiKey };
   }
 }

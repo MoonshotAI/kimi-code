@@ -1,5 +1,8 @@
 /**
- * ReadMediaFileTool tests for the current output/capability contract.
+ * ReadMediaFileTool public execution contract: capability and path gating,
+ * model-safe media delivery, compression/crop behavior, and actionable
+ * failures. Real codecs are used; Kaos is the only stubbed I/O boundary.
+ * Run with: pnpm --filter @moonshot-ai/agent-core test -- read-media.test.ts
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
@@ -13,6 +16,7 @@ import {
   ReadMediaFileInputSchema,
   ReadMediaFileTool,
 } from '../../src/tools/builtin/file/read-media';
+import { MAX_IMAGE_DECODE_BYTES } from '../../src/tools/support/image-compress';
 import { ImageLimits } from '../../src/tools/support/image-limits';
 import { MEDIA_SNIFF_BYTES, sniffImageDimensions } from '../../src/tools/support/file-type';
 import type { TelemetryClient } from '../../src/telemetry';
@@ -978,23 +982,96 @@ describe('ReadMediaFileTool', () => {
       expect(systemText).toMatch(/native resolution/);
     });
 
-    it('fails full_resolution explicitly when the file exceeds the per-image budget', async () => {
+    it('returns the full_resolution limit error before loading an over-budget image', async () => {
       // PNG magic followed by 4MB of filler: recognizably an image, over the
       // 3.75MB byte budget — full_resolution must refuse, not silently shrink.
       const data = Buffer.concat([PNG_HEADER, Buffer.alloc(4 * 1024 * 1024, 1)]);
-      const result = await executeTool(toolFor(data), {
+      const readBytes = vi.fn<Kaos['readBytes']>(async (_path, n) =>
+        n === undefined ? data : data.subarray(0, n),
+      );
+      const tool = makeReadMediaTool({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({ ...DEFAULT_STAT, stSize: data.length }),
+        readBytes,
+      });
+
+      const result = await executeTool(tool, {
         turnId: 't1',
         toolCallId: 'c_fullres_big',
         args: { path: '/workspace/huge.png', full_resolution: true },
         signal,
       });
+
+      expect(result).toEqual({
+        isError: true,
+        output:
+          '"/workspace/huge.png" is 4194312 bytes (4.0 MB), over the 3932160-byte (3.8 MB) ' +
+          'per-image limit, so full_resolution cannot be honored. ' +
+          'Use region to view a crop at full fidelity instead.',
+      });
+      expect(readBytes).toHaveBeenCalledOnce();
+      expect(readBytes).toHaveBeenCalledWith('/workspace/huge.png', MEDIA_SNIFF_BYTES);
+    });
+
+    it('returns external preprocessing guidance before loading an oversized region source', async () => {
+      const readBytes = vi.fn<Kaos['readBytes']>().mockResolvedValue(PNG_HEADER);
+      const tool = makeReadMediaTool({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({
+          ...DEFAULT_STAT,
+          stSize: MAX_IMAGE_DECODE_BYTES + 1,
+        }),
+        readBytes,
+      });
+
+      const result = await executeTool(tool, {
+        turnId: 't1',
+        toolCallId: 'c_region_decode_guard',
+        args: {
+          path: '/workspace/huge.png',
+          region: { x: 0, y: 0, width: 100, height: 100 },
+        },
+        signal,
+      });
+
+      expect(result).toEqual({
+        isError: true,
+        output:
+          'Image is too large to process safely for region or full_resolution (67108865 bytes; ' +
+          'safe decode limit 67108864 bytes). The original image was not sent to the model. Do ' +
+          'not retry the same file unchanged. Use Bash or an available image-processing tool to ' +
+          'create a smaller copy or crop the needed region into a separate image, then call ' +
+          'ReadMediaFile on the resulting file.',
+      });
+      expect(readBytes).toHaveBeenCalledOnce();
+      expect(readBytes).toHaveBeenCalledWith('/workspace/huge.png', MEDIA_SNIFF_BYTES);
+    });
+
+    it('prioritizes external preprocessing guidance for full_resolution above the decode cap', async () => {
+      const readBytes = vi.fn<Kaos['readBytes']>().mockResolvedValue(PNG_HEADER);
+      const tool = makeReadMediaTool({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({
+          ...DEFAULT_STAT,
+          stSize: MAX_IMAGE_DECODE_BYTES + 1,
+        }),
+        readBytes,
+      });
+
+      const result = await executeTool(tool, {
+        turnId: 't1',
+        toolCallId: 'c_fullres_decode_guard',
+        args: { path: '/workspace/huge.png', full_resolution: true },
+        signal,
+      });
+
+      expect(result.output).toBe(
+        'Image is too large to process safely for region or full_resolution (67108865 bytes; ' +
+          'safe decode limit 67108864 bytes). The original image was not sent to the model. Do ' +
+          'not retry the same file unchanged. Use Bash or an available image-processing tool to ' +
+          'create a smaller copy or crop the needed region into a separate image, then call ' +
+          'ReadMediaFile on the resulting file.',
+      );
       expect(result.isError).toBe(true);
-      expect(result.output).toMatch(/full_resolution/);
-      expect(result.output).toMatch(/region/);
-      // Exact byte counts accompany the rounded sizes: a file a hair over
-      // budget would otherwise read "is 3.8 MB, over the 3.8 MB limit".
-      expect(result.output).toContain(`${String(data.length)} bytes`);
-      expect(result.output).toContain('3932160-byte');
+      expect(readBytes).toHaveBeenCalledOnce();
+      expect(readBytes).toHaveBeenCalledWith('/workspace/huge.png', MEDIA_SNIFF_BYTES);
     });
 
     it('rejects region and full_resolution for video files', async () => {
@@ -1208,6 +1285,113 @@ describe('ReadMediaFileTool', () => {
       },
       15_000,
     );
+
+    it('returns shrink guidance without attaching the original when a decode guard blocks compression', async () => {
+      const data = Buffer.alloc(24);
+      PNG_HEADER.copy(data);
+      data.writeUInt32BE(10_001, 16);
+      data.writeUInt32BE(10_000, 20);
+
+      const result = await executeTool(toolFor(data), {
+        turnId: 't1',
+        toolCallId: 'c_guarded_read',
+        args: { path: '/workspace/pixel-bomb.png' },
+        signal,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe(
+        'Image is too large to send safely after compression (24 bytes; limit 262144 bytes and ' +
+          '2000px on the longest edge). The original image was not sent to the model. ' +
+          'Do not retry the same file unchanged. Use Bash or an available image-processing tool ' +
+          'to create a smaller copy within both limits, then call ReadMediaFile on the smaller copy.',
+      );
+      expect(JSON.stringify(result)).not.toMatch(/image_url|blobref|base64|region/);
+    });
+
+    it('returns shrink guidance before loading a default image that exceeds the decode byte guard', async () => {
+      const readBytes = vi.fn<Kaos['readBytes']>().mockResolvedValue(PNG_HEADER);
+      const tool = makeReadMediaTool({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({
+          ...DEFAULT_STAT,
+          stSize: MAX_IMAGE_DECODE_BYTES + 1,
+        }),
+        readBytes,
+      });
+
+      const result = await executeTool(tool, {
+        turnId: 't1',
+        toolCallId: 'c_byte_guarded_read',
+        args: { path: '/workspace/huge.png' },
+        signal,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe(
+        'Image is too large to send safely after compression (67108865 bytes; limit 262144 bytes ' +
+          'and 2000px on the longest edge). The original image was not sent to the model. Do not ' +
+          'retry the same file unchanged. Use Bash or an available image-processing tool to create ' +
+          'a smaller copy within both limits, then call ReadMediaFile on the smaller copy.',
+      );
+      expect(readBytes).toHaveBeenCalledTimes(1);
+      expect(readBytes).toHaveBeenCalledWith('/workspace/huge.png', MEDIA_SNIFF_BYTES);
+    });
+
+    it('continues to the full read when an over-guard image fits the configured byte budget', async () => {
+      const png = Buffer.from(
+        '89504e470d0a1a0a0000000d49484452000000030000000408020000003a' +
+          '63dc1c0000001949444154789c63606060f8cf80019aa0a8a020' +
+          '00000000ffff03000c1d03014b0000000049454e44ae426082',
+        'hex',
+      );
+      const readBytes = vi.fn<Kaos['readBytes']>().mockResolvedValue(png);
+      const tool = makeReadMediaTool({
+        stat: vi.fn<Kaos['stat']>().mockResolvedValue({
+          ...DEFAULT_STAT,
+          stSize: MAX_IMAGE_DECODE_BYTES + 1,
+        }),
+        readBytes,
+        imageLimits: new ImageLimits(process.env, {
+          readByteBudget: MAX_IMAGE_DECODE_BYTES + 2,
+        }),
+      });
+
+      const result = await executeTool(tool, {
+        turnId: 't1',
+        toolCallId: 'c_over_guard_with_budget',
+        args: { path: '/workspace/large-budget.png' },
+        signal,
+      });
+
+      expect(result.isError).toBe(false);
+      expect(readBytes).toHaveBeenNthCalledWith(
+        1,
+        '/workspace/large-budget.png',
+        MEDIA_SNIFF_BYTES,
+      );
+      expect(readBytes).toHaveBeenNthCalledWith(2, '/workspace/large-budget.png');
+    });
+
+    it('returns shrink guidance without attaching bytes when codec failure leaves the image over budget', async () => {
+      const data = Buffer.concat([PNG_HEADER, Buffer.from([0x00])]);
+      const limits = new ImageLimits(process.env, { readByteBudget: 8 });
+
+      const result = await executeTool(toolFor(data, limits), {
+        turnId: 't1',
+        toolCallId: 'c_codec_failure',
+        args: { path: '/workspace/broken.png' },
+        signal,
+      });
+
+      expect(result.isError).toBe(true);
+      expect(result.output).toBe(
+        'Image is too large to send safely after compression (9 bytes; limit 8 bytes and 2000px ' +
+          'on the longest edge). The original image was not sent to the model. Do not retry the ' +
+          'same file unchanged. Use Bash or an available image-processing tool to create a smaller ' +
+          'copy within both limits, then call ReadMediaFile on the smaller copy.',
+      );
+      expect(JSON.stringify(result)).not.toMatch(/image_url|blobref|base64|region/);
+    });
 
     it('full_resolution ignores the read budget (per-image provider limit applies)', async () => {
       const limits = new ImageLimits(process.env, { readByteBudget: 64 * 1024 });

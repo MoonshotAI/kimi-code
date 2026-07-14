@@ -31,10 +31,6 @@ export interface LogEntry {
   readonly error?: LogEntryError;
 }
 
-/**
- * Plain sink interface (not a DI token). `*LogService` implementations own and
- * create their sinks; tests construct sinks directly.
- */
 export interface ILogWriter {
   write(entry: LogEntry): void;
   flush?(): Promise<void>;

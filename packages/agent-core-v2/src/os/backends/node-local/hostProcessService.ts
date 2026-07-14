@@ -146,7 +146,6 @@ class HostProcess implements IHostProcess {
         try {
           this._child.kill(signal ?? 'SIGTERM');
         } catch {
-          /* best effort */
         }
         return;
       }
@@ -203,6 +202,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostProcessService,
   HostProcessService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'hostProcess',
 );

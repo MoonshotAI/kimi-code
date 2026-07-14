@@ -19,7 +19,6 @@ import type { ConfigEffectiveOverlay } from './config';
 
 const _overlays: ConfigEffectiveOverlay[] = [];
 
-/** Record a config-overlay contribution for `ConfigRegistry` to drain. */
 export function registerConfigOverlay(overlay: ConfigEffectiveOverlay): void {
   _overlays.push(overlay);
 }
@@ -28,7 +27,6 @@ export function getConfigOverlayContributions(): readonly ConfigEffectiveOverlay
   return _overlays;
 }
 
-/** Test isolation — mirrors `_clearConfigSectionContributionsForTests`. */
 export function _clearConfigOverlayContributionsForTests(): void {
   _overlays.length = 0;
 }

@@ -56,12 +56,6 @@ export function isError2(error: unknown): error is Error2 {
   return error instanceof Error2;
 }
 
-/**
- * Follow `cause` links out of `Error2` wrappers down to the underlying raw
- * error. Boundary-translated errors carry the original provider/fs error as
- * `cause`, so predicates that classify raw error shapes (retryability,
- * status codes) test the unwrapped value.
- */
 export function unwrapErrorCause(error: unknown): unknown {
   let current = error;
   while (current instanceof Error2 && current.cause !== undefined) {

@@ -260,7 +260,6 @@ describe('SessionTerminalService', () => {
   });
 });
 
-// Sanity check for the App-scoped OS HostTerminalService.
 describe('HostTerminalService (App scope)', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;

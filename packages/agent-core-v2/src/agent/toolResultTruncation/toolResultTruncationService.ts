@@ -115,6 +115,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolResultTruncationService,
   ToolResultTruncationService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'toolResultTruncation',
 );

@@ -15,8 +15,6 @@ export class BufferedReadable extends Readable {
   private _ended: boolean = false;
 
   constructor(source: Readable) {
-    // Keep a modest prefetch window so wait()-then-read still works for
-    // common small/medium outputs without draining unboundedly.
     super({ highWaterMark: 128 * 1024 });
     this._source = source;
     this._source.on('data', this._onData);

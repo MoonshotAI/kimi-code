@@ -44,6 +44,7 @@ const emit = defineEmits<{
   renameSession: [id: string, title: string];
   forkSession: [id: string];
   archiveSession: [id: string];
+  exportSession: [id: string];
 }>();
 
 const ahead = computed(() => props.ahead ?? 0);
@@ -200,6 +201,15 @@ function forkSession(): void {
 }
 
 // ---------------------------------------------------------------------------
+// Export
+// ---------------------------------------------------------------------------
+function exportSession(): void {
+  if (!props.sessionId) return;
+  closeMenu();
+  emit('exportSession', props.sessionId);
+}
+
+// ---------------------------------------------------------------------------
 // Archive — modal confirm (the header has no session row to swap, so use the
 // shared ConfirmDialog instead of the inline strip used in SessionRow).
 // ---------------------------------------------------------------------------
@@ -262,23 +272,35 @@ async function startArchive(): Promise<void> {
       @click.stop
     >
       <MenuItem @click="onCopyAll">
+        <Icon :name="copied ? 'check' : 'copy'" size="sm" />
         {{ copied ? t('header.copied') : t('header.copyAll') }}
       </MenuItem>
       <MenuItem @click="onCopyFinalSummary">
+        <Icon name="file-text" size="sm" />
         {{ t('header.copyFinalSummary') }}
       </MenuItem>
       <template v-if="sessionId">
         <MenuItem separator />
         <MenuItem @click="copySessionId">
+          <Icon :name="copiedId ? 'check' : 'copy'" size="sm" />
           {{ copiedId ? t('header.copied') : t('header.copySessionId') }}
         </MenuItem>
         <MenuItem @click="startRename">
+          <Icon name="pencil" size="sm" />
           {{ t('header.renameSession') }}
         </MenuItem>
         <MenuItem @click="forkSession">
+          <Icon name="git-fork" size="sm" />
           {{ t('header.forkSession') }}
         </MenuItem>
-        <MenuItem danger @click="startArchive">{{ t('header.archiveSession') }}</MenuItem>
+        <MenuItem @click="exportSession">
+          <Icon name="download" size="sm" />
+          {{ t('header.exportSession') }}
+        </MenuItem>
+        <MenuItem danger @click="startArchive">
+          <Icon name="archive" size="sm" />
+          {{ t('header.archiveSession') }}
+        </MenuItem>
       </template>
     </Menu>
 

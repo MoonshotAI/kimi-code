@@ -295,7 +295,6 @@ describe('SkillTool', () => {
       output: 'Skill "commit" loaded inline. Follow its instructions.',
     });
     expect(result.output).not.toContain('# Commit');
-    // The tool only declares a `delivery`; the agent (L4) layer performs the steer.
     expect(prompted).toHaveLength(0);
     expect(result.delivery?.kind).toBe('steer');
     expect(result.delivery?.message.origin).toMatchObject({

@@ -33,7 +33,7 @@ export interface PluginManifest {
   readonly author?: PluginAuthor;
   readonly homepage?: string;
   readonly license?: string;
-  readonly skills?: readonly string[]; // resolved absolute paths
+  readonly skills?: readonly string[];
   readonly sessionStart?: PluginSessionStart;
   readonly mcpServers?: Readonly<Record<string, McpServerConfig>>;
   readonly hooks?: readonly HookDefConfig[];
@@ -71,14 +71,6 @@ export interface PluginCommandDef {
   readonly path: string;
 }
 
-/**
- * A resolved command file plus its namespace-preserving name.
- *
- * `name` is the path of the file relative to the declared `commands` entry
- * (without the `.md` extension, using `/` separators), so a file at
- * `commands/frontend/component.md` yields the name `frontend/component`.
- * Frontmatter `name` in the file itself takes precedence over this at load time.
- */
 export interface PluginCommandEntry {
   readonly path: string;
   readonly name: string;

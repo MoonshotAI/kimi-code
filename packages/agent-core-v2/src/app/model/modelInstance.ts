@@ -28,24 +28,12 @@ import type { Tool } from '#/app/llmProtocol/tool';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
 import type { Protocol, ProtocolProviderOptions } from '#/app/protocol/protocol';
 
-/**
- * Closure that produces a fresh `ProviderRequestAuth` on demand. Wraps an
- * OAuth token provider (with force-refresh on 401) or a static API key.
- * Reading it always returns the current material — callers must not cache.
- */
 export interface AuthProvider {
-  /** Whether this auth source can force-refresh credentials after an upstream 401. */
   readonly canRefresh?: boolean;
 
-  /**
-   * Get a `ProviderRequestAuth` for the next request. Returns `undefined`
-   * when no auth material is available (anonymous endpoint, or the caller
-   * passes secrets via `apiKey` directly on the config).
-   */
   getAuth(options?: { readonly force?: boolean }): Promise<ProviderRequestAuth | undefined>;
 }
 
-/** Per-request input for `Model.request(...)`. */
 export interface LLMRequestInput {
   readonly systemPrompt: string;
   readonly tools: readonly Tool[];
@@ -53,17 +41,11 @@ export interface LLMRequestInput {
   readonly responseFormat?: ResponseFormat;
 }
 
-/**
- * Streamed events emitted by `Model.request(...)`. `part` carries incremental
- * content / tool-call fragments; `usage` and `finish` are terminal signals;
- * `timing` reports request-level latency when available.
- */
 export type LLMEvent =
   | { readonly type: 'part'; readonly part: StreamedMessagePart }
   | { readonly type: 'usage'; readonly usage: TokenUsage; readonly model?: string }
   | {
       readonly type: 'finish';
-      /** Fully-assembled assistant message for this request. */
       readonly message: Message;
       readonly providerFinishReason?: FinishReason;
       readonly rawFinishReason?: string;
@@ -80,11 +62,8 @@ export type LLMEvent =
     };
 
 export interface Model {
-  /** Globally-unique Model id (the key in `[models.<id>]`). */
   readonly id: string;
-  /** Wire-facing model name sent to the endpoint. Required, per Phase 2 (e). */
   readonly name: string;
-  /** Free-form routing aliases; a name-based lookup matches these. */
   readonly aliases: readonly string[];
   readonly protocol: Protocol;
   readonly baseUrl?: string;
@@ -99,51 +78,23 @@ export interface Model {
   readonly defaultEffort?: string;
   readonly thinkingEffort: ThinkingEffort | null;
   readonly maxCompletionTokens?: number;
-  /**
-   * True when this Model's capabilities include `always_thinking` — the
-   * runtime should force a thinking pass even if the user's requested
-   * `thinkingLevel` is `off`.
-   */
   readonly alwaysThinking: boolean;
-  /**
-   * The config-side Provider id this Model resolves against (the entry in
-   * `[providers.*]`). For flat-case Models, this is the origin derived from
-   * `baseUrl` (e.g. `api.openai.com`).
-   */
   readonly providerName: string;
 
-  /**
-   * Fresh auth material for every request. The Model closes over the
-   * resolved `AuthProvider` so callers never handle raw tokens.
-   */
   readonly authProvider: AuthProvider;
 
-  /** Return a new Model wrapper with the given thinking effort applied. */
   withThinking(effort: ThinkingEffort): Model;
 
-  /** Return a new Model wrapper with a completion-token cap applied. */
   withMaxCompletionTokens(n: number, options?: MaxCompletionTokensOptions): Model;
 
-  /** Return a new Model wrapper with additional generation kwargs applied. */
   withGenerationKwargs(kwargs: GenerationKwargs): Model;
 
-  /** Return a new Model wrapper with additional protocol-constructor options applied. */
   withProviderOptions(options: ProtocolProviderOptions): Model;
 
   withThinkingKeep(keep: string): Model;
 
-  /**
-   * Drive one LLM request end-to-end. Streams `LLMEvent`s until the stream
-   * terminates (either normally with `usage`+`finish`, or with an error).
-   * Cancellation is via the optional `AbortSignal`.
-   */
   request(input: LLMRequestInput, signal?: AbortSignal): AsyncIterable<LLMEvent>;
 
-  /**
-   * Upload a video for multi-modal input. Present only when the underlying
-   * protocol adapter supports it (currently Kimi). Callers should feature-
-   * detect via `capabilities.video_in`.
-   */
   uploadVideo?(
     input: string | VideoUploadInput,
     options?: { readonly signal?: AbortSignal },

@@ -8,6 +8,8 @@ import {
   createSessionRequestSchema,
   archiveSessionResponseSchema,
   deleteSessionResponseSchema,
+  exportSessionParamsSchema,
+  exportSessionRequestSchema,
   forkSessionRequestSchema,
   forkSessionResponseSchema,
   getSessionProfileResponseSchema,
@@ -21,6 +23,48 @@ import {
   undoSessionRequestSchema,
   undoSessionResponseSchema,
 } from '../rest/session';
+
+describe('exportSessionRequestSchema', () => {
+  it('accepts an empty body and an optional Web log', () => {
+    expect(exportSessionRequestSchema.parse({})).toEqual({});
+    expect(exportSessionRequestSchema.parse({ web_log: '{"event":"connected"}\n' })).toEqual({
+      web_log: '{"event":"connected"}\n',
+    });
+  });
+
+  it('accepts a Web log at the 256 KiB UTF-8 boundary', () => {
+    expect(exportSessionRequestSchema.safeParse({ web_log: 'a'.repeat(256 * 1024) }).success).toBe(
+      true,
+    );
+  });
+
+  it('rejects a Web log over the 256 KiB UTF-8 boundary', () => {
+    expect(
+      exportSessionRequestSchema.safeParse({ web_log: `${'a'.repeat(256 * 1024)}b` }).success,
+    ).toBe(false);
+  });
+
+  it('measures the Web log limit in UTF-8 bytes instead of JavaScript characters', () => {
+    expect(exportSessionRequestSchema.safeParse({ web_log: '你'.repeat(87_382) }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects fields that the server owns', () => {
+    expect(
+      exportSessionRequestSchema.safeParse({ outputPath: '/tmp/export.zip' }).success,
+    ).toBe(false);
+  });
+});
+
+describe('exportSessionParamsSchema', () => {
+  it('requires a non-empty session_id', () => {
+    expect(exportSessionParamsSchema.parse({ session_id: 'sess_abc' })).toEqual({
+      session_id: 'sess_abc',
+    });
+    expect(exportSessionParamsSchema.safeParse({ session_id: '' }).success).toBe(false);
+  });
+});
 
 describe('createSessionRequestSchema', () => {
   it('accepts a minimal POST body with metadata.cwd', () => {

@@ -29,28 +29,6 @@ export function mergeRequestHeaders(
   return Object.keys(merged).length > 0 ? merged : undefined;
 }
 
-/**
- * Resolve the SDK client to use for a single provider request, applying the
- * standard precedence shared by every provider adapter:
- *
- * 1. If a `clientFactory` was supplied, delegate to it (it receives the
- *    per-request {@link ProviderRequestAuth}, defaulting to `{}`).
- * 2. Otherwise, if no per-request auth is needed AND a constructor-time
- *    client was cached, reuse the cached instance.
- * 3. Otherwise, call `build(auth)` to construct a fresh client for this
- *    request — typically using `requireProviderApiKey` plus
- *    `mergeRequestHeaders`.
- *
- * Note: when per-request `auth` is provided (e.g. an OAuth bearer token
- * resolved immediately before each call), step 3 fires and a brand-new SDK
- * client is constructed per request. This is intentional — it keeps short-lived
- * credentials out of any long-lived shared state and avoids racing concurrent
- * requests on a mutable client. The trade-off is that connection-pool / keep-
- * alive state inside the SDK client isn't reused across requests on the OAuth
- * path. For the current agent-CLI workload (one LLM call per turn step) this
- * is fine; if a future host needs high-throughput per-request auth, the
- * obvious optimization is a small LRU keyed on `(apiKey, headers digest)`.
- */
 export function resolveAuthBackedClient<TClient>(
   state: {
     readonly cachedClient: TClient | undefined;
