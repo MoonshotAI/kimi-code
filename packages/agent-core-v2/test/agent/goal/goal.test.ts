@@ -17,6 +17,7 @@ import { type AgentGoalService } from '#/agent/goal/goalService';
 import { UpdateGoalTool, UpdateGoalToolInputSchema } from '#/agent/goal/tools/update-goal';
 import { IAgentLoopService, type AfterStepContext, type EnqueueReceipt, type Step, type Turn } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
   IAgentToolExecutorService,
   type ToolExecutionResult,
@@ -1495,6 +1496,83 @@ describe('goal error catalog metadata', () => {
       public: true,
       action: 'Only paused goals can be resumed.',
     });
+    expect(errorInfo('goal.unsupported_agent')).toEqual({
+      title: 'Goals are unavailable for subagents',
+      retryable: false,
+      public: true,
+      action: 'Run goal lifecycle commands on the main agent.',
+    });
+  });
+});
+
+describe('AgentGoalService agent eligibility', () => {
+  let ctx: TestAgentContext;
+
+  beforeEach(() => {
+    ctx = createTestAgent(
+      agentService(IAgentScopeContext, {
+        _serviceBrand: undefined,
+        agentId: 'sub-1',
+        scope: (subKey?: string) =>
+          subKey === undefined ? 'test/agents/sub-1' : `test/agents/sub-1/${subKey}`,
+      }),
+    );
+  });
+
+  afterEach(async () => {
+    await ctx.dispose();
+  });
+
+  it.each([
+    ['getGoal', (goals: IAgentGoalService) => goals.getGoal()],
+    ['isGoalToolTarget', (goals: IAgentGoalService) => goals.isGoalToolTarget(1, 'goal-1')],
+    ['createGoal', (goals: IAgentGoalService) => goals.createGoal({ objective: 'work' })],
+    ['pauseGoal', (goals: IAgentGoalService) => goals.pauseGoal()],
+    ['resumeGoal', (goals: IAgentGoalService) => goals.resumeGoal()],
+    ['setBudgetLimits', (goals: IAgentGoalService) =>
+      goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } })],
+    ['cancelGoal', (goals: IAgentGoalService) => goals.cancelGoal()],
+    ['markBlocked', (goals: IAgentGoalService) => goals.markBlocked()],
+    ['markComplete', (goals: IAgentGoalService) => goals.markComplete()],
+  ] as const)(
+    '%s rejects direct goal service access when the agent is a subagent',
+    async (_name, call) => {
+      const goals = ctx.get(IAgentGoalService);
+      await expect(Promise.resolve().then<unknown>(() => call(goals))).rejects.toMatchObject({
+        code: 'goal.unsupported_agent',
+        details: { agentId: 'sub-1' },
+      });
+    },
+  );
+
+  it.each([
+    ['createGoal', () => ctx.rpc.createGoal({ objective: 'work' })],
+    ['getGoal', () => ctx.rpc.getGoal({})],
+    ['pauseGoal', () => ctx.rpc.pauseGoal({})],
+    ['resumeGoal', () => ctx.rpc.resumeGoal({})],
+    ['cancelGoal', () => ctx.rpc.cancelGoal({})],
+  ] as const)(
+    '%s rejects subagent goal RPC access with the stable goal error',
+    async (_name, call) => {
+      await expect(call()).rejects.toMatchObject({
+        code: 'goal.unsupported_agent',
+        details: { agentId: 'sub-1' },
+      });
+    },
+  );
+
+  it('does not continue a previously persisted goal when the agent is a subagent', async () => {
+    await ctx.restore([
+      { type: 'goal.create', goalId: 'legacy-subagent-goal', objective: 'work' },
+    ]);
+    ctx.mockNextResponse({ type: 'text', text: 'Handled as one normal subagent turn.' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'continue' }] });
+    await ctx.untilTurnEnd();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(ctx.llmCalls).toHaveLength(1);
   });
 });
 

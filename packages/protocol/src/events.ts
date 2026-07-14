@@ -245,6 +245,7 @@ export type KimiErrorCode =
   | 'goal.status_invalid'
   | 'goal.metadata_reserved'
   | 'goal.not_resumable'
+  | 'goal.unsupported_agent'
   | 'model.not_configured'
   | 'model.config_invalid'
   | 'profile.thinking_alias_conflict'
@@ -1148,6 +1149,7 @@ export const kimiErrorCodeSchema = z.enum([
   'goal.status_invalid',
   'goal.metadata_reserved',
   'goal.not_resumable',
+  'goal.unsupported_agent',
   'model.not_configured',
   'model.config_invalid',
   'profile.thinking_alias_conflict',
