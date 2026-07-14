@@ -192,7 +192,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       protocol: model?.protocol,
       retryable: isRetryableGenerateError(error),
       duration_ms: Math.max(0, Date.now() - startedAt),
-      turn_id: source?.type === 'turn' ? source.turnId : undefined,
+      turn_id: source?.turnId,
       request_kind: requestKindForTelemetry(source),
     };
     const statusCode = apiStatusCode(error);

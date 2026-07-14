@@ -320,7 +320,7 @@ describe('AgentTaskService — event emission', () => {
     });
     expect(agent.telemetry.track2).toHaveBeenCalledWith('background_task_created', {
       task_id: taskId,
-      kind: 'process',
+      kind: 'bash',
     });
   });
 

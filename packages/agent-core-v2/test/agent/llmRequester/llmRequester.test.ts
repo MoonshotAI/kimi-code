@@ -389,7 +389,9 @@ describe('LLMRequester service migration coverage', () => {
         llmRequester.request({ source: { type: 'turn', turnId: 3, step: 1 } }),
       ).rejects.toMatchObject({ name: 'APIConnectionError' });
       await expect(
-        llmRequester.request({ source: { type: 'operation', requestKind: 'full_compaction' } }),
+        llmRequester.request({
+          source: { type: 'operation', turnId: 7, requestKind: 'full_compaction' },
+        }),
       ).rejects.toMatchObject({ name: 'APIConnectionError' });
 
       expect(records).toContainEqual({
@@ -404,13 +406,10 @@ describe('LLMRequester service migration coverage', () => {
         event: 'api_error',
         properties: expect.objectContaining({
           error_type: 'network',
+          turn_id: 7,
           request_kind: 'full_compaction',
         }),
       });
-      const operationRecord = records.find(
-        (record) => record.properties?.['request_kind'] === 'full_compaction',
-      );
-      expect(operationRecord?.properties?.['turn_id']).toBeUndefined();
     });
   });
 

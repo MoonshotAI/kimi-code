@@ -225,7 +225,7 @@ export interface ContextProjectionRepairedEvent {
 
 export interface BackgroundTaskCreatedEvent {
   task_id: string;
-  kind: 'agent' | 'process' | 'question';
+  kind: 'bash' | 'agent' | 'question';
 }
 
 export interface BackgroundTaskCompletedEvent {
@@ -644,7 +644,7 @@ export const telemetryEventDefinitions = {
     comment: 'A background task is created.',
     properties: {
       task_id: 'Background task id; joins background_task_created with background_task_completed',
-      kind: 'Task kind',
+      kind: 'Task kind; process tasks retain the legacy bash value',
     },
   }),
   background_task_completed: defineTelemetryEvent<BackgroundTaskCompletedEvent>({

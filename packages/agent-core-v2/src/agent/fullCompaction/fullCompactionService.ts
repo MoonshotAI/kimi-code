@@ -82,6 +82,7 @@ type CompactionTelemetryProperties = Pick<
 >;
 
 interface ActiveCompaction extends FullCompactionTask {
+  readonly originTurnId?: number;
   blockedByTurn: boolean;
   bgRegistration?: IDisposable;
 }
@@ -248,7 +249,11 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     const tokenCount = this.validateCompactionStart(data.source);
     this.wire.dispatch(fullCompactionBegin(data));
 
-    const active = this.createActiveCompaction(data.source, tokenCount);
+    const active = this.createActiveCompaction(
+      data.source,
+      tokenCount,
+      data.source === 'auto' ? this.activeTurnId : undefined,
+    );
     this._compacting = active.task;
     active.task.abortController.signal.addEventListener(
       'abort',
@@ -286,6 +291,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   private createActiveCompaction(
     trigger: CompactionBeginData['source'],
     tokenCount: number,
+    originTurnId: number | undefined,
   ): {
     readonly task: ActiveCompaction;
     readonly resolve: (result: CompactionResult) => void;
@@ -304,6 +310,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         promise,
         trigger,
         tokenCount,
+        originTurnId,
         blockedByTurn: false,
         bgRegistration: this.activity.registerBackground('compaction', abortController),
       },
@@ -537,7 +544,11 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
               {
                 messages,
                 maxOutputSize: compactionMaxOutputSize,
-                source: { type: 'operation', requestKind: 'full_compaction' },
+                source: {
+                  type: 'operation',
+                  turnId: active.originTurnId,
+                  requestKind: 'full_compaction',
+                },
               },
               undefined,
               signal,
@@ -617,7 +628,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
 
       const properties: CompactionFinishedEvent = {
         agent_id: this.scopeContext.agentId,
-        turn_id: this.activeTurnId,
+        turn_id: active.originTurnId,
         source: data.source,
         tokens_before: result.tokensBefore,
         tokens_after: result.tokensAfter,
@@ -635,7 +646,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       if (isAbortError(error)) throw error;
       const properties: CompactionFailedEvent = {
         agent_id: this.scopeContext.agentId,
-        turn_id: this.activeTurnId,
+        turn_id: active.originTurnId,
         source: data.source,
         tokens_before: tokensBefore,
         duration_ms: Date.now() - startedAt,

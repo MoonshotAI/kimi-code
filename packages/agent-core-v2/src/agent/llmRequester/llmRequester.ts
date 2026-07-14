@@ -16,6 +16,7 @@ export type LLMRequestSource =
     }
   | {
       readonly type: 'operation';
+      readonly turnId?: number;
       readonly requestKind?: string;
       readonly logFields?: LLMRequestLogFields;
     };
