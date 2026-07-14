@@ -60,10 +60,10 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
       approvalRule: this.name,
       execute: async () => {
         const goalAtExecution = this.goal.getGoal().goal;
-        if (currentGoal === null) {
+        if (goalAtExecution === null || (currentGoal === null && status === 'active')) {
           return { output: missingGoalOutput(status) };
         }
-        if (goalAtExecution?.goalId !== currentGoal.goalId) {
+        if (currentGoal !== null && goalAtExecution.goalId !== currentGoal.goalId) {
           return { output: changedGoalOutput(status) };
         }
         if (status === 'active') {

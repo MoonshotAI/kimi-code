@@ -274,6 +274,29 @@ describe('goal tools', () => {
     expect(goals.getGoal().goal).toMatchObject({ objective: 'new task', status: 'active' });
   });
 
+  it.each([
+    ['complete', null, 'Goal completed successfully'],
+    ['blocked', 'blocked', 'Goal blocked.'],
+  ] as const)(
+    'UpdateGoal applies %s when the goal was created earlier in the same batch',
+    async (updateStatus, expectedCurrentStatus, expectedOutput) => {
+      eventBus.publish({ type: 'turn.started', turnId: 5, origin: USER_PROMPT_ORIGIN });
+
+      const results = await executeGoalCalls(
+        [
+          goalToolCall('call_create', 'CreateGoal', { objective: 'new task' }),
+          goalToolCall('call_outcome', 'UpdateGoal', { status: updateStatus }),
+        ],
+        5,
+      );
+
+      const outcome = results.find((result) => result.toolName === 'UpdateGoal')?.result;
+      expect(outcome?.output).toContain(expectedOutput);
+      expect(outcome?.stopTurn).toBe(true);
+      expect(goals.getGoal().goal?.status ?? null).toBe(expectedCurrentStatus);
+    },
+  );
+
   it('UpdateGoal reports no active goal when completing/blocking/resuming without one', async () => {
     const done = updateGoalTool.resolveExecution({ status: 'complete' });
     if (done.isError === true) throw new Error('execution should not be an error');
