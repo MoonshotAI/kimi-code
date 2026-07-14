@@ -1,5 +1,6 @@
 
 
+import os from 'node:os';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
@@ -115,4 +116,53 @@ function toPosixRelative(cwd: string, absolute: string): string {
   if (rel === '') return '.';
 
   return rel.split(path.sep).join('/');
+}
+
+/**
+ * Determine whether a path resides inside a system temporary directory.
+ * Covers cross-platform defaults (/tmp, /var/tmp, /dev/shm, os.tmpdir()).
+ */
+export function isTempPath(inputPath: string): boolean {
+  const normalized = path.normalize(inputPath);
+  const tmpDir = path.normalize(os.tmpdir());
+  const prefixes = [
+    '/tmp',
+    '/var/tmp',
+    '/dev/shm',
+    tmpDir,
+  ];
+  for (const p of prefixes) {
+    if (normalized === p || normalized.startsWith(p + path.sep)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Resolve a path that is known to be inside a system temp directory.
+ * Mirrors the shape of resolveSafePath but skips cwd containment checks.
+ * Rejects paths with '..' segments for safety.
+ */
+export async function resolveTempPath(
+  inputPath: string,
+): Promise<PathSafetyResult> {
+  if (inputPath === '' || inputPath === '/') {
+    throw new FsPathEscapesError(inputPath, 'empty');
+  }
+
+  const segments = inputPath.split(/[/\\]+/);
+  if (segments.some((s) => s === '..')) {
+    throw new FsPathEscapesError(inputPath, 'dotdot_segment');
+  }
+
+  if (!isTempPath(inputPath)) {
+    throw new FsPathEscapesError(inputPath, 'resolved_outside_cwd', 'not a temp path');
+  }
+
+  const resolved = path.resolve(inputPath);
+  return {
+    absolute: resolved,
+    relative: resolved,
+  };
 }
