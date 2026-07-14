@@ -59,6 +59,7 @@ import {
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
@@ -122,7 +123,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   const agent =
     agentId === undefined || agentId === MAIN_AGENT_ID
       ? await ensureMainAgent(session)
-      : session.accessor.get(IAgentLifecycleService).getHandle(agentId);
+      : session.accessor.get(IAgentLifecycleService).get(agentId);
   if (agent === undefined) {
     throw new Error2('agent.not_found', `agent ${agentId} does not exist`);
   }
@@ -152,7 +153,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         const result = projectPromptList((await resolvePrompt(core, session_id)).prompt.list());
         reply.send(okEnvelope(result, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -215,7 +216,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         } });
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -244,7 +245,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         await resolved.prompt.steer(req.body.prompt_ids);
         reply.send(okEnvelope({ steered: true, prompt_ids: [...req.body.prompt_ids] }, req.id));
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -281,13 +282,14 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         const resolved = await resolvePrompt(core, session_id);
         if (parsed.action === 'abort') {
           resolved.prompt.abort(parsed.id);
+          requestLog(req)?.info({ session_id, prompt_id: parsed.id }, 'prompt aborted');
           reply.send(okEnvelope({ aborted: true }, req.id));
         } else {
           await resolved.prompt.steer([parsed.id]);
           reply.send(okEnvelope({ steered: true, prompt_ids: [parsed.id] }, req.id));
         }
       } catch (error) {
-        sendMappedError(reply, req.id, error);
+        sendMappedError(reply, req, error);
       }
     },
   );
@@ -561,9 +563,11 @@ function escapeAttribute(value: string): string {
 
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
-  requestId: string,
+  req: { id: string },
   err: unknown,
 ): void {
+  const requestId = req.id;
+  const log = requestLog(req);
   if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':
@@ -605,6 +609,7 @@ function sendMappedError(
       case 'auth.token_missing': {
         const details = authProviderDetails(err);
         if (details === undefined) {
+          log?.error({ err }, 'prompt request failed');
           reply.send(
             errEnvelope(
               ErrorCode.INTERNAL_ERROR,
@@ -627,6 +632,7 @@ function sendMappedError(
       case 'auth.token_unauthorized': {
         const details = authProviderDetails(err);
         if (details === undefined) {
+          log?.error({ err }, 'prompt request failed');
           reply.send(
             errEnvelope(
               ErrorCode.INTERNAL_ERROR,
@@ -658,6 +664,7 @@ function sendMappedError(
         return;
     }
   }
+  log?.error({ err }, 'prompt request failed');
   reply.send(
     errEnvelope(
       ErrorCode.INTERNAL_ERROR,

@@ -99,9 +99,9 @@ export interface SessionSkillConfig {
 }
 
 export interface AgentMeta {
-  readonly homedir: string;
+  readonly homedir?: string;
   readonly type: AgentType;
-  readonly parentAgentId: string | null;
+  readonly parentAgentId?: string | null;
   readonly swarmItem?: string;
 }
 
@@ -989,7 +989,13 @@ export class Session {
         : await this.resumeAgent(parentAgentId, [...stack, id]);
 
     try {
-      const agent = this.instantiateAgent(id, meta.homedir, meta.type, {}, parentAgentId);
+      const agent = this.instantiateAgent(
+        id,
+        join(this.options.homedir, 'agents', id),
+        meta.type,
+        {},
+        parentAgentId,
+      );
       const result = await agent.resume();
       this.restoreAgentProfileHandle(agent, meta, parent?.agent);
       this.agents.set(id, agent);

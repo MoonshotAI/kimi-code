@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -10,6 +10,7 @@ import type { IEnvironmentService } from '../../src/services/environment/environ
 import type { IEventService } from '../../src/services/event/event';
 import type { ILogService } from '../../src/services/logger/logger';
 import { WorkspaceRegistryService } from '../../src/services/workspace/workspaceRegistryService';
+import { touchWorkspaceRegistry } from '../../src/session/store/workspace-registry-file';
 import { appendSessionIndexEntry } from '../../src/session/store/session-index';
 import { encodeWorkDirKey, normalizeWorkDir } from '../../src/session/store/workdir-key';
 
@@ -253,5 +254,99 @@ describe('WorkspaceRegistryService', () => {
     expect(matches[0]?.id).toBe(canonicalId);
     // Count is scoped to the representative's (canonical) bucket only.
     expect(matches[0]?.session_count).toBe(1);
+  });
+});
+
+describe('touchWorkspaceRegistry', () => {
+  let homeDir: string;
+  let tempRoots: string[] = [];
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-ws-touch-home-'));
+    tempRoots = [];
+  });
+
+  afterEach(async () => {
+    await rm(homeDir, { recursive: true, force: true });
+    for (const root of tempRoots) {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  async function makeProjectRoot(label: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), `kimi-ws-touch-${label}-`));
+    tempRoots.push(root);
+    return normalizeWorkDir(await realpath(root));
+  }
+
+  async function readRegistryFile(): Promise<{
+    version: number;
+    workspaces: Record<
+      string,
+      { root: string; name: string; created_at: string; last_opened_at: string }
+    >;
+    deleted_workspace_ids: string[];
+  }> {
+    return JSON.parse(await readFile(join(homeDir, 'workspaces.json'), 'utf-8')) as never;
+  }
+
+  it('creates a new entry in workspaces.json', async () => {
+    const root = await makeProjectRoot('new');
+
+    const result = await touchWorkspaceRegistry(homeDir, root);
+
+    expect(result.created).toBe(true);
+    expect(result.workspaceId).toBe(encodeWorkDirKey(root));
+    const file = await readRegistryFile();
+    const entry = file.workspaces[result.workspaceId];
+    expect(entry).toBeDefined();
+    expect(entry?.root).toBe(root);
+    expect(entry?.name).toBe(root.split('/').pop());
+    expect(entry?.created_at).not.toBe('');
+    expect(file.deleted_workspace_ids).toEqual([]);
+  });
+
+  it('touches an existing entry without resetting its name or created_at', async () => {
+    const root = await makeProjectRoot('touch');
+    const first = await touchWorkspaceRegistry(homeDir, root, 'custom-name');
+    const before = (await readRegistryFile()).workspaces[first.workspaceId];
+    expect(before?.name).toBe('custom-name');
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = await touchWorkspaceRegistry(homeDir, root);
+
+    expect(second.created).toBe(false);
+    const after = (await readRegistryFile()).workspaces[first.workspaceId];
+    expect(after?.name).toBe('custom-name');
+    expect(after?.created_at).toBe(before?.created_at);
+    expect(Date.parse(after?.last_opened_at ?? '')).toBeGreaterThan(
+      Date.parse(before?.last_opened_at ?? ''),
+    );
+  });
+
+  it('clears the deletion tombstone for the touched workspace', async () => {
+    const root = await makeProjectRoot('tombstone');
+    const workspaceId = encodeWorkDirKey(root);
+    await writeFile(
+      join(homeDir, 'workspaces.json'),
+      JSON.stringify({ version: 1, workspaces: {}, deleted_workspace_ids: [workspaceId] }),
+      'utf-8',
+    );
+
+    await touchWorkspaceRegistry(homeDir, root);
+
+    const file = await readRegistryFile();
+    expect(file.deleted_workspace_ids).toEqual([]);
+    expect(file.workspaces[workspaceId]).toBeDefined();
+  });
+
+  it('recovers from a malformed workspaces.json', async () => {
+    await writeFile(join(homeDir, 'workspaces.json'), '{ not json', 'utf-8');
+    const root = await makeProjectRoot('malformed');
+
+    const result = await touchWorkspaceRegistry(homeDir, root);
+
+    const file = await readRegistryFile();
+    expect(file.workspaces[result.workspaceId]?.root).toBe(root);
   });
 });

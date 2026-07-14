@@ -60,6 +60,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostTerminalService,
   HostTerminalService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'terminal',
 );

@@ -14,7 +14,7 @@ import {
 } from '#/agent/contextMemory/contextTranscript';
 import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
-import type { PersistedRecord } from '#/wire/wireService';
+import type { WireRecord } from '#/wire/record';
 
 function userMessage(text: string, origin?: PromptOrigin): ContextMessage {
   return {
@@ -29,15 +29,15 @@ function assistantMessage(text: string): ContextMessage {
   return { role: 'assistant', content: [{ type: 'text', text }], toolCalls: [] };
 }
 
-function appendMessage(message: ContextMessage): PersistedRecord {
+function appendMessage(message: ContextMessage): WireRecord {
   return { type: 'context.append_message', message };
 }
 
-function loopEvent(event: LoopRecordedEvent): PersistedRecord {
+function loopEvent(event: LoopRecordedEvent): WireRecord {
   return { type: 'context.append_loop_event', event };
 }
 
-function assistantStep(uuid: string, text: string): PersistedRecord[] {
+function assistantStep(uuid: string, text: string): WireRecord[] {
   return [
     loopEvent({ type: 'step.begin', uuid }),
     loopEvent({ type: 'content.part', stepUuid: uuid, part: { type: 'text', text } }),
@@ -50,7 +50,7 @@ function compaction(
   compactedCount: number,
   keptUserMessageCount?: number,
   keptHeadUserMessageCount?: number,
-): PersistedRecord {
+): WireRecord {
   return {
     type: 'context.apply_compaction',
     summary,
@@ -63,7 +63,7 @@ function compaction(
   };
 }
 
-function undo(count: number): PersistedRecord {
+function undo(count: number): WireRecord {
   return { type: 'context.undo', count };
 }
 

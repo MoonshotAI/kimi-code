@@ -35,6 +35,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentTelemetryContextService,
   AgentTelemetryContextService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'telemetry',
 );

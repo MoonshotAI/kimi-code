@@ -220,6 +220,8 @@ export type KimiErrorCode =
   | 'session.undo_unavailable'
   | 'session.export_not_found'
   | 'session.export_missing_version'
+  | 'session.export_output_conflict'
+  | 'session.export_too_large'
   | 'session.closed'
   | 'session.permission_mode_invalid'
   | 'session.thinking_empty'
@@ -478,6 +480,7 @@ export type AgentPhase =
 export interface AgentStatusUpdatedEvent {
   readonly type: 'agent.status.updated';
   readonly model?: string;
+  readonly thinkingEffort?: string;
   readonly contextTokens?: number;
   readonly maxContextTokens?: number;
   readonly contextUsage?: number;
@@ -1120,6 +1123,8 @@ export const kimiErrorCodeSchema = z.enum([
   'session.undo_unavailable',
   'session.export_not_found',
   'session.export_missing_version',
+  'session.export_output_conflict',
+  'session.export_too_large',
   'session.closed',
   'session.permission_mode_invalid',
   'session.thinking_empty',
@@ -1344,6 +1349,7 @@ export const agentPhaseSchema = z.discriminatedUnion('kind', [
 export const agentStatusUpdatedEventSchema = z.object({
   type: z.literal('agent.status.updated'),
   model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
   contextTokens: z.number().optional(),
   maxContextTokens: z.number().optional(),
   contextUsage: z.number().optional(),

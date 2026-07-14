@@ -401,6 +401,9 @@ async function runServerInProcess(
   const v2 = await startServer({
     host: options.host,
     port: options.port,
+    // Report the CLI's product version as `server_version` (/meta, web UI)
+    // rather than kap-server's private package version.
+    version,
     logLevel: options.logLevel,
     logger,
     debugEndpoints: options.debugEndpoints,

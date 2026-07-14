@@ -66,8 +66,7 @@ import type {
   TurnStartedEvent as TurnStartedTelemetryEvent,
 } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import { LOOP_CONTROL_SECTION, type LoopControl } from './configSection';
 import {
   createMaxStepsExceededError,
@@ -132,7 +131,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
     @IConfigService private readonly config: IConfigService,
     @IAgentActivityService private readonly activity: IAgentActivityService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
   ) {
@@ -650,7 +649,9 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private failLoopStep(runtime: LoopRuntime, error: unknown): LoopErrorDisposition {
     const reason: LoopInterruptReason = isMaxStepsExceededError(error) ? 'max_steps' : 'error';
-    this.emitStepInterrupted(runtime.turnId, runtime.current?.number, reason, toErrorMessage(error));
+    const interruptedError =
+      isError2(error) && error.code === ErrorCodes.INTERNAL && error.cause !== undefined ? error.cause : error;
+    this.emitStepInterrupted(runtime.turnId, runtime.current?.number, reason, toErrorMessage(interruptedError));
     return { type: 'return', result: { type: 'failed', error, steps: runtime.steps } };
   }
 
@@ -1024,6 +1025,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentLoopService,
   AgentLoopService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'loop',
 );

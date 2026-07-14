@@ -1813,7 +1813,7 @@ describe('FullCompaction', () => {
       modelCapabilities: {
         ...CATALOGUED_MODEL_CAPABILITIES,
         max_context_tokens: 2_000,
-        select_tools: true,
+        dynamically_loaded_tools: true,
       },
       tools: [LARGE_MCP_TOOL],
     });
@@ -2283,7 +2283,7 @@ describe('FullCompaction', () => {
         agent_id: 'main',
         turn_id: expect.any(Number),
         source: 'auto',
-        thinking_effort: 'high',
+        thinking_effort: 'on',
       }),
     });
   });
@@ -2559,6 +2559,23 @@ describe('FullCompaction', () => {
         }),
       }),
     );
+    type WireRequestEvent = {
+      type: '[wire]';
+      event: 'llm.request';
+      args: Record<string, unknown>;
+    };
+    const requestEvents = events.filter((event): event is WireRequestEvent => {
+      if (event === null || typeof event !== 'object') return false;
+      const candidate = event as { type?: unknown; event?: unknown };
+      return candidate.type === '[wire]' && candidate.event === 'llm.request';
+    });
+    expect(
+      requestEvents.map((event) => [event.args['kind'], event.args['droppedCount']]),
+    ).toEqual([
+      ['compaction', 0],
+      ['compaction', 2],
+      ['loop', undefined],
+    ]);
     expect(events).toContainEqual(
       expect.objectContaining({
         event: 'turn.ended',

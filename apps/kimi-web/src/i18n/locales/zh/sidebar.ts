@@ -20,6 +20,7 @@ export default {
   copyFailed: '复制失败',
   archive: '归档',
   fork: '分叉会话',
+  export: '导出会话',
   delete: '删除',
   removeWorkspace: '移除工作区',
   brand: 'Kimi Code',

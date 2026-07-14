@@ -382,6 +382,58 @@ describe('SnapshotReader.read', () => {
     expect((snap.messages.items.at(-1)!.content[0] as { text: string }).text).toBe('m149');
   });
 
+  it('uses the wire record time as created_at, falling back and clamping to stay increasing', async () => {
+    const f = await makeFixtureAsync();
+    const createdAt = 1700000000000;
+    const t0 = 1700001000000;
+    await seedSession(f, 'sess_times', { createdAt });
+    await writeWire(f.sessionDir('sess_times'), [
+      { type: 'context.append_message', message: userMessage('one'), time: t0 },
+      // No time stamp → falls back to createdAt + index, which is earlier than
+      // the previous real time and gets clamped to previous + 1.
+      { type: 'context.append_message', message: userMessage('two') },
+      // A time stamp EARLIER than the previous entry → clamped to previous + 1.
+      { type: 'context.append_message', message: userMessage('three'), time: t0 - 5000 },
+    ]);
+    const snap = await f.reader.read('sess_times');
+    expect(snap.messages.items.map((m) => Date.parse(m.created_at))).toEqual([t0, t0 + 1, t0 + 2]);
+  });
+
+  it('synthesizes created_at from session createdAt + index when no record carries a time', async () => {
+    const f = await makeFixtureAsync();
+    const createdAt = 1700000000000;
+    await seedSession(f, 'sess_no_times', { createdAt });
+    await writeWire(f.sessionDir('sess_no_times'), [
+      { type: 'context.append_message', message: userMessage('a') },
+      { type: 'context.append_message', message: userMessage('b') },
+    ]);
+    const snap = await f.reader.read('sess_no_times');
+    expect(snap.messages.items.map((m) => Date.parse(m.created_at))).toEqual([
+      createdAt,
+      createdAt + 1,
+    ]);
+  });
+
+  it('maps record times by global index across the page offset', async () => {
+    const f = await makeFixtureAsync();
+    const createdAt = 1700000000000;
+    const base = 1700002000000;
+    await seedSession(f, 'sess_times_paged', { createdAt });
+    await writeWire(
+      f.sessionDir('sess_times_paged'),
+      Array.from({ length: 102 }, (_, i) => ({
+        type: 'context.append_message' as const,
+        message: userMessage(`m${i}`),
+        time: base + i * 1000,
+      })),
+    );
+    const snap = await f.reader.read('sess_times_paged');
+    expect(snap.messages.items).toHaveLength(100);
+    // The page starts at global index 2, so the first item carries record[2]'s time.
+    expect(Date.parse(snap.messages.items[0]!.created_at)).toBe(base + 2000);
+    expect(Date.parse(snap.messages.items.at(-1)!.created_at)).toBe(base + 101 * 1000);
+  });
+
   it('normalizes a v1-layout state.json (ISO timestamps, no id)', async () => {
     const f = await makeFixtureAsync();
     await seedSession(f, 'sess_v1', {

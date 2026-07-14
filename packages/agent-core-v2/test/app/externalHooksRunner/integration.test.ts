@@ -54,15 +54,14 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import {
   type AgentTaskHooks,
   type AgentTaskStopHookContext,
-  IAgentLifecycleService,
-} from '#/session/agentLifecycle/agentLifecycle';
+  ISessionSubagentService,
+} from '#/session/subagent/subagent';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { SessionExternalHooksService } from '#/session/externalHooks/externalHooksService';
-import { IAgentWireService } from '#/wire/tokens';
-import { WireService } from '#/wire/wireServiceImpl';
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLoopWithHooks, stubToolExecutor } from '../../agent/loop/stubs';
+import { registerTestAgentWireServices } from '../../wire/stubs';
 
 function nodeCommand(source: string): string {
   return `node -e ${JSON.stringify(source.replaceAll(/\s*\n\s*/g, ' '))}`;
@@ -279,6 +278,7 @@ describe('IExternalHooksRunnerService integration', () => {
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
+          registerTestAgentWireServices(reg, 'wire/external-hooks');
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.definePartialInstance(IConfigService, {});
@@ -295,10 +295,6 @@ describe('IExternalHooksRunnerService integration', () => {
             hooks: createHooks(['onWillCompact']),
           });
           reg.definePartialInstance(IAgentTaskService, {});
-          reg.defineInstance(
-            IAgentWireService,
-            disposables.add(new WireService({ logScope: 'wire', logKey: 'external-hooks' })),
-          );
         },
       });
       ix.set(IExternalHooksRunnerService, stubHookRunner(hookEngine));
@@ -385,6 +381,7 @@ describe('IExternalHooksRunnerService integration', () => {
       ix = createServices(disposables, {
         strict: true,
         additionalServices: (reg) => {
+          registerTestAgentWireServices(reg, 'wire/external-hooks');
           reg.defineInstance(IBootstrapService, stubBootstrap());
           reg.defineInstance(ISessionContext, stubSessionContext());
           reg.definePartialInstance(IConfigService, {});
@@ -512,7 +509,7 @@ describe('IExternalHooksRunnerService integration', () => {
                 : `sessions/workspace-1/session-1/${subKey}`,
           });
           reg.defineInstance(ISessionLifecycleService, stubSessionLifecycle());
-          reg.definePartialInstance(IAgentLifecycleService, {
+          reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: stopAgentTask.event,
           });
@@ -522,9 +519,9 @@ describe('IExternalHooksRunnerService integration', () => {
       ix.set(ISessionExternalHooksService, new SyncDescriptor(SessionExternalHooksService));
 
       ix.get(ISessionExternalHooksService);
-      const agentLifecycle = ix.get(IAgentLifecycleService);
+      const subagents = ix.get(ISessionSubagentService);
 
-      await agentLifecycle.hooks.onWillStartAgentTask.run({
+      await subagents.hooks.onWillStartAgentTask.run({
         agentName: 'coder',
         prompt: 'Fix the bug',
         signal: new AbortController().signal,
@@ -603,10 +600,6 @@ describe('IExternalHooksRunnerService integration', () => {
             hooks: createHooks(['onWillCompact']),
           });
           reg.definePartialInstance(IAgentTaskService, {});
-          reg.defineInstance(
-            IAgentWireService,
-            disposables.add(new WireService({ logScope: 'wire', logKey: 'external-hooks' })),
-          );
           reg.define(IHostProcessService, HostProcessService);
         },
       });
@@ -849,7 +842,7 @@ describe('IExternalHooksRunnerService integration', () => {
                 : `sessions/workspace-1/session-1/${subKey}`,
           });
           reg.defineInstance(ISessionLifecycleService, lifecycle);
-          reg.definePartialInstance(IAgentLifecycleService, {
+          reg.definePartialInstance(ISessionSubagentService, {
             hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
             onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
           });

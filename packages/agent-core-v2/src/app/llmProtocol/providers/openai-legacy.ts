@@ -25,8 +25,6 @@ import {
   TOOL_RESULT_MEDIA_PLACEHOLDER,
   TOOL_RESULT_MEDIA_PROMPT,
   type ToolMessageConversion,
-  reasoningEffortToThinkingEffort,
-  thinkingEffortToReasoningEffort,
   toolToOpenAI,
 } from './openai-common';
 import {
@@ -62,7 +60,7 @@ function extractReasoningContent(
   const keys: readonly string[] = explicitKey !== undefined ? [explicitKey] : KNOWN_REASONING_KEYS;
   for (const key of keys) {
     const value = record[key];
-    if (typeof value === 'string' && value.length > 0) return value;
+    if (typeof value === 'string') return value;
   }
   return undefined;
 }
@@ -155,10 +153,12 @@ function convertMessage(
   toolMessageConversion: ToolMessageConversion,
 ): OpenAIMessage {
   let reasoningContent = '';
+  let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
 
   for (const part of message.content) {
     if (part.type === 'think') {
+      hasReasoningPart = true;
       reasoningContent += part.think;
     } else {
       nonThinkParts.push(part);
@@ -212,7 +212,7 @@ function convertMessage(
     result.tool_call_id = message.toolCallId;
   }
 
-  if (reasoningContent) {
+  if (hasReasoningPart) {
     result[reasoningKey ?? DEFAULT_OUTBOUND_REASONING_KEY] = reasoningContent;
   }
 
@@ -354,7 +354,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     if (!message) return;
 
     const reasoning = extractReasoningContent(message, reasoningKey);
-    if (reasoning) {
+    if (reasoning !== undefined) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
     }
 
@@ -405,7 +405,7 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
         const delta = choice.delta;
 
         const reasoning = extractReasoningContent(delta, reasoningKey);
-        if (reasoning) {
+        if (reasoning !== undefined) {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 
@@ -467,7 +467,8 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   get thinkingEffort(): ThinkingEffort | null {
-    return reasoningEffortToThinkingEffort(this._reasoningEffort);
+    if (this._reasoningEffort === undefined) return null;
+    return this._reasoningEffort === 'none' ? 'off' : this._reasoningEffort;
   }
 
   get maxCompletionTokens(): number | undefined {
@@ -559,7 +560,7 @@ export class OpenAILegacyChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): OpenAILegacyChatProvider {
-    const reasoningEffort = thinkingEffortToReasoningEffort(effort);
+    const reasoningEffort = effort === 'off' || effort === 'on' ? undefined : effort;
     const clone = this._clone();
     clone._reasoningEffort = reasoningEffort;
     return clone;

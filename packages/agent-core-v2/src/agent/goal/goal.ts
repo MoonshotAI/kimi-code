@@ -1,3 +1,9 @@
+/**
+ * `goal` domain (L4) — per-agent goal lifecycle contract.
+ *
+ * Defines the commands and snapshots used to create, inspect, update, and clear
+ * the durable goal state. Bound at Agent scope.
+ */
 import { createDecorator } from "#/_base/di/instantiation";
 import type {
   CreateGoalInput,
@@ -11,13 +17,18 @@ export interface GoalReasonInput {
   readonly reason?: string;
 }
 
+export interface ResumeGoalInput extends GoalReasonInput {
+  readonly continueIfBlocked?: boolean;
+}
+
 export interface IAgentGoalService {
   readonly _serviceBrand: undefined;
 
   getGoal(): GoalToolResult;
+  isGoalToolTarget(turnId: number, goalId: string): boolean;
   createGoal(input: CreateGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
   pauseGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
-  resumeGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
+  resumeGoal(input?: ResumeGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
   cancelGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
   setBudgetLimits(
     input: { readonly budgetLimits: GoalBudgetLimits },

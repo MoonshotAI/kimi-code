@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ToolCall } from '#/app/llmProtocol/message';
 
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -246,7 +246,7 @@ async function flushedGoalReminderRecords(
   ctx: TestAgentContext,
   persistence: InMemoryWireRecordPersistence,
 ) {
-  await ctx.wireRecord.flush();
+  await ctx.wire.flush();
   return goalReminderRecords(persistence);
 }
 
@@ -328,11 +328,38 @@ describe('GoalInjection integration', () => {
       await toolCallEvents;
       await ctx.untilTurnEnd();
 
-      await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(2);
+      // Goal reminders persist asynchronously and the relative order of the
+      // async injection providers is not contractual, so wait for the
+      // continuation turn's reminder to land instead of asserting at a fixed,
+      // ordering-sensitive flush point.
+      await vi.waitFor(async () => {
+        expect(await flushedGoalReminderRecords(ctx, persistence)).toHaveLength(2);
+      });
 
+      // One reminder per turn boundary (two boundaries here), not per step:
+      // the count settles at exactly two even though the turns ran multiple
+      // steps.
+      expect(await flushedGoalReminderRecords(ctx, persistence)).toHaveLength(2);
+    });
+
+    it('requests a final model response when a continuation completes the goal', async () => {
+      profile.update({ activeToolNames: ['UpdateGoal'] });
+      await goals.createGoal({ objective: 'Finish the task' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'Working on it.' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'call_complete_goal',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'Finished and verified.' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start.' }] });
+      await ctx.untilTurnEnd();
       await ctx.untilTurnEnd();
 
-      await expect(flushedGoalReminderRecords(ctx, persistence)).resolves.toHaveLength(2);
+      expect(ctx.llmCalls).toHaveLength(3);
     });
 
     it('writes no goal record when there is no active goal', async () => {

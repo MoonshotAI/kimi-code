@@ -53,6 +53,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolRegistryService,
   AgentToolRegistryService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'toolRegistry',
 );

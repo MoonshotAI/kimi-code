@@ -30,7 +30,7 @@
  */
 
 import type {
-  AgentActivitySnapshot,
+  AgentActivityState,
   ApprovalResponse,
   DomainEvent,
   GlobalEvent,
@@ -44,7 +44,6 @@ import type {
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
-  IAgentWireService,
   IEventBus,
   IEventService,
   ISessionActivity as ISessionActivityService,
@@ -66,11 +65,7 @@ import { isVolatileEventType } from '@moonshot-ai/protocol';
 
 import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';
-import {
-  LegacyStatusModel,
-  readLegacyStatus,
-  toLegacyPhase,
-} from '../../../services/legacyStatus/legacyStatus';
+import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
 import {
   type EventEnvelope,
@@ -377,7 +372,9 @@ export class SessionEventBroadcaster {
         session: payload.session,
         agentId: 'main',
         sessionId: payload.sessionId,
-      } as Event);
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(payload.sessionId, 'event.session.created', error),
+      );
       return;
     }
     if (event.type === 'session.meta.updated') {
@@ -398,7 +395,9 @@ export class SessionEventBroadcaster {
         ...payload,
         agentId: 'main',
         sessionId,
-      } as Event);
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(sessionId, 'session.meta.updated', error),
+      );
     }
   }
 
@@ -406,7 +405,7 @@ export class SessionEventBroadcaster {
     const state = await this.ensureGlobalState();
     state.queue = state.queue
       .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
-      .catch(() => {});
+      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
   }
 
   /**
@@ -431,26 +430,14 @@ export class SessionEventBroadcaster {
     if (state === undefined) return;
     state.queue = state.queue
       .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
-      .catch(() => {});
+      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
   }
 
   private attachAgents(sessionId: string, session: ISessionScopeHandle, state: SessionState): void {
     const agents = session.accessor.get(IAgentLifecycleService);
     const subscribeAgent = (handle: IAgentScopeHandle): void => {
       if (state.agentDisposables.has(handle.id)) return;
-      // Every domain emits live events via the per-agent `IEventBus`; the bus is
-      // Agent-scoped, so this sees only this agent's events.
-      const eventBus = handle.accessor.get(IEventBus);
-      const busD = eventBus.subscribe((event) =>
-        this.onAgentEvent(sessionId, handle.id, event),
-      );
-      const disposables: IDisposable[] = [busD];
-      if (handle.id === MAIN_AGENT_ID) {
-        disposables.push(this.attachLegacyStatus(sessionId, handle));
-      }
-      state.agentDisposables.set(handle.id, {
-        dispose: () => disposables.forEach((d) => d.dispose()),
-      });
+      state.agentDisposables.set(handle.id, this.attachAgent(sessionId, handle));
     };
     for (const handle of agents.list()) subscribeAgent(handle);
     state.lifecycleDisposables.push(
@@ -465,55 +452,56 @@ export class SessionEventBroadcaster {
     );
   }
 
-  /**
-   * Bridge the v2 split status slices into a single v1-style combined
-   * `agent.status.updated` event. The native v2 domains emit the usage /
-   * context-window / model slices independently, so a usage-only event can
-   * reach clients without the live contextTokens and overwrite it with a stale
-   * zero. Attaching the {@link LegacyStatusModel} to the main agent's wire and
-   * re-emitting a combined snapshot on every status-affecting Op keeps the
-   * context window consistent on the wire.
-   */
-  private attachLegacyStatus(sessionId: string, handle: IAgentScopeHandle): IDisposable {
-    const wire = handle.accessor.get(IAgentWireService);
-    // The wire service is only present on a fully-materialized agent; stub /
-    // test agents and not-yet-restored agents may not expose it, in which case
-    // the native partial events are simply forwarded unchanged.
-    if (wire === undefined) return { dispose: () => {} };
-    const attachD = wire.attach(LegacyStatusModel);
-    let lastEmitted: string | undefined;
-    const subD = wire.subscribe(LegacyStatusModel, () => {
+  private attachAgent(sessionId: string, handle: IAgentScopeHandle): IDisposable {
+    const eventBus = handle.accessor.get(IEventBus);
+    let lastLegacyStatus: string | undefined;
+    const emitLegacyStatus = (): void => {
       const snapshot = readLegacyStatus(handle);
-      // Dedupe: the derived model bumps on every watched Op, but only fan out
-      // when the projected status actually changed.
+      if (snapshot === undefined) return;
       const key = JSON.stringify(snapshot);
-      if (key === lastEmitted) return;
-      lastEmitted = key;
+      if (key === lastLegacyStatus) return;
+      lastLegacyStatus = key;
       this.onAgentEvent(sessionId, MAIN_AGENT_ID, {
         type: 'agent.status.updated',
         ...snapshot,
       });
-    });
-    return {
-      dispose: () => {
-        subD.dispose();
-        attachD.dispose();
-      },
     };
+    const disposables: IDisposable[] = [
+      eventBus.subscribe((event) => {
+        let projected = event;
+        if (
+          handle.id === MAIN_AGENT_ID &&
+          event.type === 'agent.status.updated' &&
+          event.phase === undefined
+        ) {
+          const snapshot = readLegacyStatus(handle);
+          if (snapshot !== undefined) {
+            lastLegacyStatus = JSON.stringify(snapshot);
+            projected = { ...event, ...snapshot };
+          }
+        }
+        if (handle.id === MAIN_AGENT_ID && event.type === 'context.spliced') {
+          emitLegacyStatus();
+        }
+        this.onAgentEvent(sessionId, handle.id, projected);
+      }),
+    ];
+
+    return { dispose: () => disposables.forEach((disposable) => disposable.dispose()) };
   }
 
   private onAgentEvent(sessionId: string, agentId: string, event: DomainEvent): void {
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
 
-    // Map the native v2 activity snapshot to the legacy v1 `agent.status.updated`
+    // Map the native v2 activity state to the legacy v1 `agent.status.updated`
     // phase slice at the edge, so the v1 channel picks up the corrected
     // semantics (approval-set, idle-after-ended) without the core engine
     // carrying v1 compatibility. The core's own `agent.status.updated` phase
     // slice is dropped here to avoid duplicate phase events; other slices
     // (usage / context / plan / swarm) flow through unchanged.
     if (event.type === 'agent.activity.updated') {
-      const phase = toLegacyPhase(event as unknown as AgentActivitySnapshot);
+      const phase = toLegacyPhase(event as unknown as AgentActivityState);
       if (phase !== undefined) {
         const wireEvent = {
           type: 'agent.status.updated',
@@ -523,7 +511,7 @@ export class SessionEventBroadcaster {
         } as unknown as Event;
         state.queue = state.queue
           .then(() => this.dispatch(state, wireEvent, true))
-          .catch(() => {});
+          .catch((error: unknown) => this.logDispatchDropped(state.sessionId, wireEvent.type, error));
       }
       return;
     }
@@ -539,7 +527,14 @@ export class SessionEventBroadcaster {
     // `DomainEventMap` payload types are deliberately wider than the protocol
     // contract, hence the assertion via `unknown`.
     const wireEvent = { ...event, agentId, sessionId } as unknown as Event;
-    if (event.type === 'turn.started') {
+    // Session status transitions are synthesized only from the MAIN agent's turn
+    // boundaries. Subagents share the session channel (their frames carry their
+    // own agentId and clients route them to the task view), so a subagent's
+    // turn.ended would otherwise emit a bogus `status_changed(idle)` mid-turn:
+    // the client reads that as "the turn finished" (driving notifications,
+    // sounds, unread dots and the queued-message drain), and the real turn end
+    // is then swallowed by dedup. Same main-only rule as InFlightTurnTracker.
+    if (agentId === MAIN_AGENT_ID && event.type === 'turn.started') {
       // Status is authoritative protocol state: emit it before the turn event so
       // clients enter running first. A pending interaction remains higher
       // priority than running.
@@ -548,8 +543,8 @@ export class SessionEventBroadcaster {
     const volatile = isVolatileSignal(event.type);
     state.queue = state.queue
       .then(() => this.dispatch(state, wireEvent, volatile))
-      .catch(() => {});
-    if (event.type === 'turn.ended') {
+      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, wireEvent.type, error));
+    if (agentId === MAIN_AGENT_ID && event.type === 'turn.ended') {
       // Emit completion after the turn event. Pending interactions remain higher
       // priority; otherwise failed/cancelled/blocked turns abort and all others
       // become idle.
@@ -566,7 +561,7 @@ export class SessionEventBroadcaster {
     if (legacy !== undefined) {
       state.queue = state.queue
         .then(() => this.dispatch(state, legacy, volatile))
-        .catch(() => {});
+        .catch((error: unknown) => this.logDispatchDropped(state.sessionId, legacy.type, error));
     }
   }
 
@@ -614,7 +609,9 @@ export class SessionEventBroadcaster {
   }
 
   private enqueueDurable(state: SessionState, event: Event): void {
-    state.queue = state.queue.then(() => this.dispatch(state, event, false)).catch(() => {});
+    state.queue = state.queue
+      .then(() => this.dispatch(state, event, false))
+      .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
   }
 
   private enqueueStatusChanged(state: SessionState, status: SessionStatus): void {
@@ -635,7 +632,34 @@ export class SessionEventBroadcaster {
           false,
         );
       })
-      .catch(() => {});
+      .catch((error: unknown) =>
+        this.logDispatchDropped(state.sessionId, 'event.session.status_changed', error),
+      );
+  }
+
+  /**
+   * Log a rejected `dispatchSessionEvent` promise — the session's scope was
+   * torn down mid-dispatch, or a non-disposed error escaped `ensureState`.
+   */
+  private logDispatchError(sessionId: string, eventType: string, error: unknown): void {
+    const logger = this.opts.logger;
+    if (logger === undefined) return;
+    if (logger.error !== undefined) {
+      logger.error({ sessionId, eventType, err: error }, 'session event dispatch failed');
+    } else {
+      logger.warn({ sessionId, eventType, err: error }, 'session event dispatch failed');
+    }
+  }
+
+  /**
+   * A queued dispatch rejected: the event is permanently lost (and, for durable
+   * events, the seq is skipped). Warn instead of swallowing it silently.
+   */
+  private logDispatchDropped(sessionId: string, eventType: string, error: unknown): void {
+    this.opts.logger?.warn(
+      { sessionId, eventType, err: error },
+      'session event dispatch failed; event dropped',
+    );
   }
 
   private async dispatch(state: SessionState, event: Event, volatile: boolean): Promise<void> {

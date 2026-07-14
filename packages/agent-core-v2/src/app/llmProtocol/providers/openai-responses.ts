@@ -26,8 +26,6 @@ import {
   TOOL_RESULT_MEDIA_PLACEHOLDER,
   TOOL_RESULT_MEDIA_PROMPT,
   type ToolMessageConversion,
-  reasoningEffortToThinkingEffort,
-  thinkingEffortToReasoningEffort,
 } from './openai-common';
 import {
   mergeRequestHeaders,
@@ -534,14 +532,14 @@ function convertMessage(
       if (part.type === 'think') {
         flushPendingParts();
         const encryptedValue = part.encrypted;
-        const summaries: unknown[] = [{ type: 'summary_text', text: part.think || '' }];
+        const summaries: unknown[] = [{ type: 'summary_text', text: part.think }];
         i += 1;
         while (i < n) {
           const nextPart = message.content[i];
           if (nextPart === undefined) break;
           if (nextPart.type !== 'think') break;
           if (nextPart.encrypted !== encryptedValue) break;
-          summaries.push({ type: 'summary_text', text: nextPart.think || '' });
+          summaries.push({ type: 'summary_text', text: nextPart.think });
           i += 1;
         }
         result.push({
@@ -707,13 +705,22 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
           arguments: outputItem.arguments ?? null,
         } satisfies ToolCall;
       } else if (outputItem.type === 'reasoning') {
+        let hasReasoningSummary = false;
         for (const summary of outputItem.summary) {
           const text = readStringField(summary, 'text');
           if (text === undefined) continue;
+          hasReasoningSummary = true;
           const thinkPart: StreamedMessagePart = {
             type: 'think',
             think: text,
           };
+          if (outputItem.encryptedContent !== undefined) {
+            (thinkPart as { encrypted: string }).encrypted = outputItem.encryptedContent;
+          }
+          yield thinkPart;
+        }
+        if (!hasReasoningSummary) {
+          const thinkPart: StreamedMessagePart = { type: 'think', think: '' };
           if (outputItem.encryptedContent !== undefined) {
             (thinkPart as { encrypted: string }).encrypted = outputItem.encryptedContent;
           }
@@ -985,7 +992,9 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   }
 
   get thinkingEffort(): ThinkingEffort | null {
-    return reasoningEffortToThinkingEffort(this._generationKwargs.reasoning_effort);
+    const effort = this._generationKwargs.reasoning_effort;
+    if (effort === undefined) return null;
+    return effort === 'none' ? 'off' : effort;
   }
 
   get maxCompletionTokens(): number | undefined {
@@ -1077,7 +1086,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): OpenAIResponsesChatProvider {
-    const reasoningEffort = thinkingEffortToReasoningEffort(effort);
+    const reasoningEffort = effort === 'off' || effort === 'on' ? undefined : effort;
     const clone = this._clone();
     clone._generationKwargs = {
       ...clone._generationKwargs,

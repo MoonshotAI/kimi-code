@@ -60,6 +60,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IFaultInjectionService,
   FaultInjectionService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'faultInjection',
 );

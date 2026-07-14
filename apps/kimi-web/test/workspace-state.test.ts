@@ -7,6 +7,7 @@ import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
 import { useWorkspaceState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
+import { clearTrace, traceKeyEvent } from '../src/debug/trace';
 
 const apiMock = vi.hoisted(() => ({
   abortPrompt: vi.fn(),
@@ -14,6 +15,7 @@ const apiMock = vi.hoisted(() => ({
   addWorkspace: vi.fn(),
   updateWorkspace: vi.fn(),
   createSession: vi.fn(),
+  exportSession: vi.fn(),
   updateSession: vi.fn(),
   submitPrompt: vi.fn(),
   respondQuestion: vi.fn(),
@@ -274,6 +276,128 @@ describe('useWorkspaceState — abortCurrentPrompt', () => {
 
     expect(apiMock.abortPrompt).not.toHaveBeenCalled();
     expect(apiMock.abortSession).toHaveBeenCalledWith('sess_1');
+  });
+});
+
+describe('useWorkspaceState — exportSession', () => {
+  let anchor: {
+    href: string;
+    download: string;
+    click: ReturnType<typeof vi.fn>;
+    remove: ReturnType<typeof vi.fn>;
+  };
+  let append: ReturnType<typeof vi.fn>;
+  let createObjectURL: ReturnType<typeof vi.fn>;
+  let revokeObjectURL: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    apiMock.exportSession.mockReset();
+    clearTrace();
+    anchor = { href: '', download: '', click: vi.fn(), remove: vi.fn() };
+    append = vi.fn();
+    createObjectURL = vi.fn(() => 'blob:session-export');
+    revokeObjectURL = vi.fn();
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => anchor),
+      body: { append },
+    });
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+  });
+
+  afterEach(() => {
+    clearTrace();
+    vi.unstubAllGlobals();
+  });
+
+  it('downloads the returned ZIP and reclaims its temporary browser resources', async () => {
+    const secret = 'PROMPT_TEXT_MUST_NOT_ENTER_EXPORT_REQUEST';
+    const metadata = {
+      sessionId: 'sess_1',
+      contentCount: 1,
+      mediaCount: 0,
+      text: secret,
+    };
+    traceKeyEvent('prompt:start', metadata);
+    const blob = new Blob(['zip']);
+    apiMock.exportSession.mockResolvedValue({ blob, fileName: 'sess_1.zip' });
+    const workspace = useWorkspaceState(createState(), createDeps());
+
+    await workspace.exportSession();
+
+    const webLog = apiMock.exportSession.mock.calls[0]?.[1] as string;
+    expect(webLog).toContain('prompt:start');
+    expect(webLog).toContain('contentCount');
+    expect(webLog).not.toContain(secret);
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(anchor).toMatchObject({ href: 'blob:session-export', download: 'sess_1.zip' });
+    expect(append).toHaveBeenCalledWith(anchor);
+    expect(anchor.click).toHaveBeenCalledOnce();
+    expect(anchor.remove).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledOnce();
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
+  });
+
+  it('keeps one request targeted at the session selected when export started', async () => {
+    let resolveExport!: (value: { blob: Blob; fileName: string }) => void;
+    apiMock.exportSession.mockReturnValue(
+      new Promise((resolve) => {
+        resolveExport = resolve;
+      }),
+    );
+    const state = createState();
+    const workspace = useWorkspaceState(state, createDeps());
+
+    const first = workspace.exportSession();
+    state.activeSessionId = 'sess_2';
+    const second = workspace.exportSession();
+    resolveExport({ blob: new Blob(['zip']), fileName: 'sess_1.zip' });
+    await Promise.all([first, second]);
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
+
+    expect(apiMock.exportSession).toHaveBeenCalledTimes(1);
+    expect(apiMock.exportSession).toHaveBeenCalledWith('sess_1', expect.any(String));
+  });
+
+  it('reclaims the object URL when the browser rejects the download click', async () => {
+    apiMock.exportSession.mockResolvedValue({ blob: new Blob(['zip']), fileName: 'sess_1.zip' });
+    anchor.click.mockImplementation(() => {
+      throw new Error('download blocked');
+    });
+    const deps = createDeps();
+    const workspace = useWorkspaceState(createState(), deps);
+
+    await workspace.exportSession();
+
+    expect(anchor.remove).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledOnce();
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'exportSession',
+      expect.any(Error),
+      { sessionId: 'sess_1' },
+    );
+  });
+
+  it('surfaces an error instead of silently exporting without an active session', async () => {
+    const state = createState();
+    state.activeSessionId = undefined;
+    const deps = createDeps();
+    const workspace = useWorkspaceState(state, deps);
+
+    await workspace.exportSession();
+
+    expect(apiMock.exportSession).not.toHaveBeenCalled();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'exportSession',
+      expect.any(Error),
+      expect.objectContaining({ message: expect.any(String) }),
+    );
   });
 });
 
@@ -685,12 +809,10 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
   });
 
-  it('coerces a stale thinking level against the new session model before persisting', async () => {
-    // Regression for: rawState.thinking can be stale relative to the new
-    // session's model (e.g. 'max' carried over from an effort model). Persisting
-    // the raw value would make the first skill turn run at a level the UI
-    // wouldn't send for this model; we must coerce it like the first-prompt
-    // path does.
+  it('persists the stored thinking level verbatim, even when the new session model does not declare it', async () => {
+    // Thinking levels are never coerced onto the session model (same as the
+    // first-prompt path and the TUI): a carried-over effort like 'max' is
+    // persisted and sent as-is.
     const activateSkill2 = vi.fn().mockResolvedValue(undefined);
     const persistSessionProfile2 = vi.fn().mockResolvedValue(undefined);
     const state2 = createState();
@@ -705,8 +827,8 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
       }),
       draftModes: { planMode: true, swarmMode: false, goalMode: false },
     };
-    // 'kimi-code' declares efforts ['low','medium','high']; 'max' isn't in the
-    // list so coercion picks the default (middle) level → 'medium'.
+    // 'kimi-code' declares efforts ['low','medium','high'] — 'max' isn't in the
+    // list, and must still be persisted verbatim.
     (deps2.modelProvider as unknown as { models: unknown }).models = ref([
       {
         id: 'kimi-code',
@@ -721,10 +843,8 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 
     await ws2.startSessionAndActivateSkill('wd_1', 'pre-changelog');
 
-    // Effort model default level = middle of supportEfforts: 'medium'.
-    // Confirms the raw carry-over 'max' was coerced, not persisted verbatim.
     expect(persistSessionProfile2).toHaveBeenCalledWith(
-      expect.objectContaining({ thinking: 'medium' }),
+      expect.objectContaining({ thinking: 'max' }),
       'sess_new',
     );
     expect(activateSkill2).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');

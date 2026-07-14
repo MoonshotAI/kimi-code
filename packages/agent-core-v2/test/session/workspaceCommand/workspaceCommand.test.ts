@@ -5,7 +5,7 @@ import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { LifecycleScope } from '#/_base/di/scope';
 import type { ServiceIdentifier } from '#/_base/di/instantiation';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
-import { Emitter, Event } from '#/_base/event';
+import { Emitter } from '#/_base/event';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -17,13 +17,10 @@ import {
   IHostFileSystem,
 } from '#/os/interface/hostFileSystem';
 import { FileWorkspaceLocalConfigService } from '#/persistence/backends/node-fs/workspaceLocalConfigService';
-import { createHooks } from '#/hooks';
 import {
-  type AgentTaskHooks,
-  type AgentTaskStopHookContext,
   IAgentLifecycleService,
+  MAIN_AGENT_ID,
 } from '#/session/agentLifecycle/agentLifecycle';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionWorkspaceCommandService } from '#/session/workspaceCommand/workspaceCommand';
 import { SessionWorkspaceCommandService } from '#/session/workspaceCommand/workspaceCommandService';
@@ -152,7 +149,7 @@ interface AgentsStub extends IAgentLifecycleService {
 function agentsStub(): AgentsStub {
   const mainContext = stubContextMemory();
   let mainPresent = false;
-  const mainCreated = new Emitter<IAgentScopeHandle>();
+  const created = new Emitter<IAgentScopeHandle>();
 
   const mainHandle: IAgentScopeHandle = {
     id: MAIN_AGENT_ID,
@@ -169,26 +166,16 @@ function agentsStub(): AgentsStub {
   return {
     _serviceBrand: undefined,
     mainContext,
-    hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
-    onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
-    onDidCreate: () => ({ dispose: () => {} }),
-    onDidCreateMain: mainCreated.event,
+    onDidCreate: created.event,
     onDidDispose: () => ({ dispose: () => {} }),
     create: () => Promise.reject(new Error('not implemented')),
-    ensureMcpReady: () => Promise.resolve(),
-    notifyMainCreated: (handle) => mainCreated.fire(handle),
-    notifyAgentTaskStopped: () => {},
     fork: () => Promise.reject(new Error('not implemented')),
-    run: () => {
-      throw new Error('not implemented');
-    },
-    getHandle: (id) => (id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
-    whenReady: (id) => Promise.resolve(id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
+    get: (id) => (id === MAIN_AGENT_ID && mainPresent ? mainHandle : undefined),
     list: () => [],
     remove: () => Promise.resolve(),
     setMain: (present) => {
       mainPresent = present;
-      if (present) mainCreated.fire(mainHandle);
+      if (present) created.fire(mainHandle);
     },
   };
 }

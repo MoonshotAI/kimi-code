@@ -58,6 +58,6 @@ registerScopedService(
   LifecycleScope.App,
   IFileEditService,
   FileEditService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'edit',
 );

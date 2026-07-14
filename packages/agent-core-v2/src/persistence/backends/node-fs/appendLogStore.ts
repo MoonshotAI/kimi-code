@@ -278,6 +278,6 @@ registerScopedService(
   LifecycleScope.App,
   IAppendLogStore,
   AppendLogStore,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'storage',
 );

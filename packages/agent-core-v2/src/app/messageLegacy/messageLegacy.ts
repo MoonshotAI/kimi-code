@@ -7,14 +7,12 @@
  * The native `IAgentContextMemoryService` (Agent scope, serving `/api/v2`
  * `messages:*`) holds the model's CURRENT, folded context and is NOT the full
  * transcript: after a compaction it collapses into `[...keptUserMessages,
- * compaction_summary]`. The full transcript is reduced from the main agent's
- * in-memory record journal (`IAgentWireRecordService.getRecords()`), which
- * `ISessionLifecycleService.resume` seeds from `wire.jsonl` and live dispatch
- * then keeps current — so neither a live nor a cold session is read back from
- * disk here. The `ContextMessage → Message` projection is shared with the
- * `snapshot` and `:undo` edges via `contextMemory/messageProjection`. Bound at
- * App scope — a stateless dispatcher that resolves the target session/agent per
- * call.
+ * compaction_summary]`. The full transcript is reduced on demand by streaming
+ * the main agent's `wire.jsonl`; the service does not make every live Agent
+ * retain its raw journal in memory. The `ContextMessage → Message` projection
+ * is shared with the `snapshot` and `:undo` edges via
+ * `contextMemory/messageProjection`. Bound at App scope — a stateless
+ * dispatcher that resolves the target session/agent per call.
  *
  * Error contract (mapped at the route layer):
  *   - `session.not_found`  → 40401

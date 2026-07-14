@@ -359,6 +359,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentRPCService,
   AgentRPCService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'rpc',
 );

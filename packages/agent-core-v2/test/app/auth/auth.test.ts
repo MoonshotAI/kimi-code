@@ -492,7 +492,43 @@ describe('OAuthService', () => {
 
     providerChangedEmitter.fire({ added: [], removed: [OAUTH_PROVIDER], changed: [] });
 
-    expect(svc.getFlow(OAUTH_PROVIDER)).toBeUndefined();
+    const flow = svc.getFlow(OAUTH_PROVIDER);
+    expect(flow?.status).toBe('cancelled');
+    expect(flow?.error_message).toBe('Provider configuration changed during login.');
+  });
+
+  it('marks an in-flight OAuth flow cancelled (not vanished) when its provider config changes', async () => {
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return new Promise(() => { });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+    expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
+
+    providerChangedEmitter.fire({ added: [], removed: [], changed: [OAUTH_PROVIDER] });
+
+    const flow = svc.getFlow(OAUTH_PROVIDER);
+    expect(flow?.status).toBe('cancelled');
+    expect(flow?.error_message).toBe('Provider configuration changed during login.');
+  });
+
+  it('does not finalize a login whose provider changed after toolkit.login resolved', async () => {
+    let resolveLogin!: (value: { providerName: string; ok: true }) => void;
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return new Promise((resolve) => {
+        resolveLogin = resolve;
+      });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+    expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
+
+    resolveLogin({ providerName: OAUTH_PROVIDER, ok: true });
+    providerChangedEmitter.fire({ added: [], removed: [], changed: [OAUTH_PROVIDER] });
+
+    await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('cancelled'));
   });
 
   it('cancelLogin aborts a pending flow and marks it cancelled', async () => {

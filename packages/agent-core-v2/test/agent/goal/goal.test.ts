@@ -1,3 +1,9 @@
+/**
+ * Scenario: goal lifecycle, durable wire records, and continuation scheduling.
+ * Responsibilities: verify public goal commands, replayable state, and one-turn admission.
+ * Wiring: real goal/wire services; loop is stubbed only for focused scheduling cases.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/goal/goal.test.ts`.
+ */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { TurnEndedEvent } from '@moonshot-ai/protocol';
@@ -7,10 +13,15 @@ import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import { IAgentGoalService } from '#/agent/goal/goal';
 import { type AgentGoalService } from '#/agent/goal/goalService';
 import { UpdateGoalTool, UpdateGoalToolInputSchema } from '#/agent/goal/tools/update-goal';
-import { IAgentLoopService, type AfterStepContext, type Turn } from '#/agent/loop/loop';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentLoopService, type AfterStepContext, type EnqueueReceipt, type Step, type Turn } from '#/agent/loop/loop';
+import { MessageStepRequest } from '#/agent/loop/stepRequest';
+import {
+  IAgentToolExecutorService,
+  type ToolExecutionResult,
+} from '#/agent/toolExecutor/toolExecutor';
+import type { ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentUsageService } from '#/agent/usage/usage';
-import type { PersistedWireRecord } from '#/agent/wireRecord/wireRecord';
+import type { WireRecord } from '#/wire/record';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { APIConnectionError, APIStatusError } from '#/app/llmProtocol/errors';
 import type { ToolCall } from '#/app/llmProtocol/message';
@@ -21,6 +32,7 @@ import {
   InMemoryWireRecordPersistence,
   agentService,
   createTestAgent,
+  permissionModeServices,
   telemetryServices,
   testAgent,
   wireRecordPersistenceServices,
@@ -31,7 +43,7 @@ import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/st
 import { stubLoopWithHooks, type StubLoop } from '../loop/stubs';
 
 type GoalServiceTestManager = IAgentGoalService & AgentGoalService;
-type GoalRecord = PersistedWireRecord & { type: `goal.${string}` };
+type GoalRecord = WireRecord & { type: `goal.${string}` };
 type AgentEvent = DomainEvent;
 type GoalUpdatedEvent = Extract<AgentEvent, { type: 'goal.updated' }>;
 type TurnEndedInput = {
@@ -46,17 +58,17 @@ const zeroUsage: TokenUsage = {
   output: 0,
 };
 
-function goalRecords(records: readonly PersistedWireRecord[]): readonly GoalRecord[] {
+function goalRecords(records: readonly WireRecord[]): readonly GoalRecord[] {
   return records.filter((record): record is GoalRecord => record.type.startsWith('goal.'));
 }
 
 async function restoreGoalRecords(
   ctx: TestAgentContext,
   goals: IAgentGoalService,
-  records: readonly PersistedWireRecord[],
+  records: readonly WireRecord[],
 ): Promise<void> {
   goals.getGoal();
-  await ctx.restore(records as readonly PersistedWireRecord[]);
+  await ctx.restore(records as readonly WireRecord[]);
 }
 
 function makeTurn(id: number): Turn {
@@ -120,6 +132,21 @@ async function runTerminalUpdateGoalResult(
   });
 }
 
+async function executeToolCall(
+  toolExecutor: IAgentToolExecutorService,
+  turn: Turn,
+  toolCall: ToolCall,
+): Promise<ToolExecutionResult[]> {
+  const results: ToolExecutionResult[] = [];
+  for await (const result of toolExecutor.execute([toolCall], {
+    turnId: turn.id,
+    signal: turn.signal,
+  })) {
+    results.push(result);
+  }
+  return results;
+}
+
 function endTurn(
   eventBus: IEventBus,
   turn: Turn,
@@ -139,7 +166,7 @@ describe('AgentGoalService', () => {
   let ctx: TestAgentContext;
   let context: IAgentContextMemoryService;
   let goals: GoalServiceTestManager;
-  let records: PersistedWireRecord[];
+  let records: WireRecord[];
   let events: GoalUpdatedEvent[];
   let telemetry: TelemetryRecord[];
 
@@ -234,7 +261,7 @@ describe('AgentGoalService', () => {
     it('replaces an existing goal when replace is set', async () => {
       const first = await goals.createGoal({ objective: 'first' });
       const second = await goals.createGoal({ objective: 'second', replace: true });
-      await ctx.wireRecord.flush();
+      await ctx.wire.flush();
 
       expect(second.goalId).not.toBe(first.goalId);
       expect(goals.getGoal().goal?.objective).toBe('second');
@@ -280,6 +307,51 @@ describe('AgentGoalService', () => {
       const resumed = await goals.resumeGoal();
       expect(resumed.status).toBe('active');
       expect(resumed.terminalReason).toBeUndefined();
+    });
+
+    it('continues a resumed blocked goal after its first completed turn', async () => {
+      ctx.configure({ tools: ['UpdateGoal'] });
+      ctx.mockNextResponse({ type: 'text', text: 'Made progress.' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'complete-after-resume',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'Goal completed.' });
+      const endedTurnIds: number[] = [];
+      const endedTurnReasons: string[] = [];
+      const continuationTurnIds: number[] = [];
+      const eventBus = ctx.get(IEventBus);
+      eventBus.subscribe('turn.ended', (event) => {
+        endedTurnIds.push(event.turnId);
+        endedTurnReasons.push(event.reason);
+      });
+      eventBus.subscribe('turn.started', (event) => {
+        if (
+          event.origin.kind === 'system_trigger' &&
+          event.origin.name === 'goal_continuation'
+        ) {
+          continuationTurnIds.push(event.turnId);
+        }
+      });
+
+      await goals.createGoal({ objective: 'finish the task' });
+      await goals.markBlocked({ reason: 'need credentials' });
+      const [resumed, repeated] = await Promise.all([
+        goals.resumeGoal({ continueIfBlocked: true }),
+        goals.resumeGoal({ continueIfBlocked: true }),
+      ]);
+
+      expect(resumed.status).toBe('active');
+      expect(repeated.status).toBe('active');
+      await vi.waitFor(() => {
+        expect(endedTurnIds).toHaveLength(2);
+      });
+      expect(ctx.llmCalls).toHaveLength(3);
+      expect(continuationTurnIds).toEqual(endedTurnIds);
+      expect(endedTurnReasons).toEqual(['completed', 'completed']);
+      expect(goals.getGoal().goal).toBeNull();
     });
 
     it('pauseOnInterrupt parks active goals and no-ops for stopped goals', async () => {
@@ -415,8 +487,9 @@ describe('AgentGoalService', () => {
       await goals.incrementTurn();
       await goals.setBudgetLimits({ budgetLimits: { turnBudget: 2 } }, 'model');
       await goals.markBlocked({ reason: 'stuck' });
+      await goals.resumeGoal();
       await goals.cancelGoal();
-      await ctx.wireRecord.flush();
+      await ctx.wire.flush();
 
       const recordsWithoutMetadata = goalRecords(records);
       expect(recordsWithoutMetadata).toEqual([
@@ -437,6 +510,11 @@ describe('AgentGoalService', () => {
           status: 'blocked',
           reason: 'stuck',
           actor: 'runtime',
+        }),
+        expect.objectContaining({
+          type: 'goal.update',
+          status: 'active',
+          actor: 'user',
         }),
         expect.objectContaining({ type: 'goal.clear' }),
       ]);
@@ -490,7 +568,7 @@ describe('AgentGoalService', () => {
         status: 'paused',
         terminalReason: 'Paused after agent resume',
       });
-      expect(goalRecords(records)).toEqual([
+      expect(goalRecords(records).filter((record) => record.type === 'goal.update')).toEqual([
         expect.objectContaining({
           type: 'goal.update',
           status: 'paused',
@@ -511,9 +589,10 @@ describe('AgentGoalService core workflow hooks', () => {
   let eventBus: IEventBus;
 
   beforeEach(() => {
-    loopService = stubLoopWithHooks({ hasActiveTurn: true });
+    loopService = stubLoopWithHooks();
     ctx = createTestAgent(
       agentService(IAgentLoopService, loopService),
+      permissionModeServices('auto'),
     );
     context = ctx.get(IAgentContextMemoryService);
     goals = ctx.get(IAgentGoalService);
@@ -524,6 +603,422 @@ describe('AgentGoalService core workflow hooks', () => {
 
   afterEach(async () => {
     await ctx?.dispose();
+  });
+
+  async function startLiveContinuation(
+    abortResult = true,
+  ): Promise<ReturnType<typeof vi.fn<() => boolean>>> {
+    const abort = vi.fn<() => boolean>(() => abortResult);
+    const turn: Turn = { ...makeTurn(41), result: new Promise<never>(() => {}) };
+    const step: Step = {
+      id: 'goal-continuation',
+      turnId: turn.id,
+      state: 'queued',
+      signal: turn.signal,
+      result: Promise.resolve({ type: 'completed' }),
+      cancel: () => true,
+    };
+    const receipt: EnqueueReceipt = { assigned: Promise.resolve({ turn, step }), abort };
+    vi.spyOn(loopService, 'enqueue').mockReturnValue(receipt);
+
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.markBlocked({ reason: 'need credentials' });
+    await goals.resumeGoal({ continueIfBlocked: true });
+    await Promise.resolve();
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    return abort;
+  }
+
+  it('starts a continuation when a user resumes an idle blocked goal', async () => {
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.markBlocked({ reason: 'need credentials' });
+
+    const resumed = await goals.resumeGoal({ continueIfBlocked: true });
+
+    expect(resumed.status).toBe('active');
+    expect(loopService.launches).toHaveLength(1);
+    expect(loopService.drainNextBatch(context)).toBeDefined();
+    expect(context.get().at(-1)?.origin).toEqual({
+      kind: 'system_trigger',
+      name: 'goal_continuation',
+    });
+  });
+
+  it.each([{ status: 'paused' as const }, { status: 'blocked' as const }])(
+    'queues a continuation when a live non-goal turn resumes a $status goal',
+    async ({ status }) => {
+      await goals.createGoal({ objective: 'finish the task' });
+      if (status === 'paused') {
+        await goals.pauseGoal();
+      } else {
+        await goals.markBlocked({ reason: 'need credentials' });
+      }
+      const turn = makeTurn(49);
+      eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+      await loopService.hooks.onWillBeginStep.run({
+        turnId: turn.id,
+        step: 1,
+        signal: turn.signal,
+      });
+
+      await goals.resumeGoal();
+      endTurn(eventBus, turn);
+
+      await vi.waitFor(() => {
+        expect(loopService.launches).toHaveLength(1);
+      });
+      expect(loopService.drainNextBatch(context)).toBeDefined();
+      expect(context.get().at(-1)?.origin).toEqual({
+        kind: 'system_trigger',
+        name: 'goal_continuation',
+      });
+    },
+  );
+
+  it('records a live non-goal turn against the paused goal it resumes', async () => {
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.pauseGoal();
+    const turn = makeTurn(50);
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    await loopService.hooks.onWillBeginStep.run({
+      turnId: turn.id,
+      step: 1,
+      signal: turn.signal,
+    });
+
+    await goals.resumeGoal();
+    recordStepUsage(usageService, goals, turn, { ...zeroUsage, output: 5 });
+    endTurn(eventBus, turn);
+
+    expect(goals.getGoal().goal).toMatchObject({
+      status: 'active',
+      turnsUsed: 1,
+      tokensUsed: 5,
+    });
+  });
+
+  it('aborts a live continuation when the user pauses the goal', async () => {
+    const abort = await startLiveContinuation();
+
+    await goals.pauseGoal();
+
+    expect(abort).toHaveBeenCalledOnce();
+  });
+
+  it('aborts a live continuation when the user cancels the goal', async () => {
+    const abort = await startLiveContinuation();
+
+    await goals.cancelGoal();
+
+    expect(abort).toHaveBeenCalledOnce();
+  });
+
+  it('aborts a live continuation when the user replaces the goal', async () => {
+    const abort = await startLiveContinuation();
+
+    await goals.createGoal({ objective: 'new task', replace: true });
+
+    expect(abort).toHaveBeenCalledOnce();
+  });
+
+  it('queues a continuation for a replacement goal created by its current goal turn', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const turn = makeTurn(47);
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    await loopService.hooks.onWillBeginStep.run({
+      turnId: turn.id,
+      step: 1,
+      signal: turn.signal,
+    });
+    const toolCall: ToolCall = {
+      type: 'function',
+      id: 'call_replace_goal',
+      name: 'CreateGoal',
+      arguments: JSON.stringify({ objective: 'new task', replace: true }),
+    };
+    const results = await executeToolCall(toolExecutor, turn, toolCall);
+    expect(results[0]?.result.isError).not.toBe(true);
+
+    endTurn(eventBus, turn);
+
+    await vi.waitFor(() => {
+      expect(loopService.launches).toHaveLength(1);
+    });
+    expect(goals.getGoal().goal).toMatchObject({ objective: 'new task', status: 'active' });
+    expect(loopService.drainNextBatch(context)).toBeDefined();
+    expect(context.get().at(-1)?.origin).toEqual({
+      kind: 'system_trigger',
+      name: 'goal_continuation',
+    });
+  });
+
+  it('does not charge a same-turn replacement goal for usage owned by the prior goal', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const turn = makeTurn(48);
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    await loopService.hooks.onWillBeginStep.run({
+      turnId: turn.id,
+      step: 1,
+      signal: turn.signal,
+    });
+    const toolCall: ToolCall = {
+      type: 'function',
+      id: 'call_replace_goal',
+      name: 'CreateGoal',
+      arguments: JSON.stringify({ objective: 'new task', replace: true }),
+    };
+    await executeToolCall(toolExecutor, turn, toolCall);
+
+    recordStepUsage(usageService, goals, turn, { ...zeroUsage, output: 5 });
+
+    expect(goals.getGoal().goal).toMatchObject({
+      objective: 'new task',
+      tokensUsed: 0,
+    });
+  });
+
+  it('keeps a replacement goal isolated from late user-turn accounting', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const oldTurn = makeTurn(42);
+    eventBus.publish({ type: 'turn.started', turnId: oldTurn.id, origin: USER_PROMPT_ORIGIN });
+
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+    await loopService.hooks.onWillBeginStep.run({
+      turnId: oldTurn.id,
+      step: 1,
+      signal: oldTurn.signal,
+    });
+    recordStepUsage(usageService, goals, oldTurn, { ...zeroUsage, output: 5 });
+    endTurn(eventBus, oldTurn);
+
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+      turnsUsed: 0,
+      tokensUsed: 0,
+    });
+    expect(loopService.hasPendingRequests()).toBe(false);
+    expect(loopService.launches).toEqual([]);
+  });
+
+  it('ignores a late outcome continuation from a replaced goal user turn', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const oldTurn = makeTurn(45);
+    eventBus.publish({ type: 'turn.started', turnId: oldTurn.id, origin: USER_PROMPT_ORIGIN });
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+
+    await runTerminalUpdateGoalResult(toolExecutor, oldTurn, 'complete', 'old outcome');
+    await loopService.hooks.onDidFinishStep.run({
+      turnId: oldTurn.id,
+      step: 1,
+      signal: oldTurn.signal,
+      usage: zeroUsage,
+      finishReason: 'completed',
+      stopTurn: false,
+    });
+
+    expect(loopService.hasPendingRequests()).toBe(false);
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+    });
+  });
+
+  it.each([
+    { name: 'CreateGoal', args: { objective: 'late task', replace: true } },
+    { name: 'UpdateGoal', args: { status: 'complete' } },
+    { name: 'SetGoalBudget', args: { value: 5, unit: 'turns' } },
+  ])('rejects a stale $name call from a replaced goal turn', async ({ name, args }) => {
+    await goals.createGoal({ objective: 'old task' });
+    const oldTurn = makeTurn(46);
+    eventBus.publish({ type: 'turn.started', turnId: oldTurn.id, origin: USER_PROMPT_ORIGIN });
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+    const toolCall: ToolCall = {
+      type: 'function',
+      id: 'call_stale_goal_tool',
+      name,
+      arguments: JSON.stringify(args),
+    };
+    const before: ToolBeforeExecuteContext = {
+      turnId: oldTurn.id,
+      signal: oldTurn.signal,
+      toolCall,
+      toolCalls: [toolCall],
+      args,
+      execution: { approvalRule: name, execute: async () => ({ output: 'executed' }) },
+    };
+
+    await toolExecutor.hooks.onBeforeExecuteTool.run(before);
+
+    expect(before.decision?.syntheticResult).toEqual({
+      output: 'Goal changed since this turn started; ignored stale goal tool call.',
+    });
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+      turnsUsed: 0,
+      tokensUsed: 0,
+    });
+  });
+
+  it.each([
+    { reason: 'cancelled' as const },
+    { reason: 'failed' as const, error: new Error('old turn failed') },
+  ])('keeps a replacement goal active after the replaced goal turn ends as $reason', async (result) => {
+    await goals.createGoal({ objective: 'old task' });
+    const oldTurn = makeTurn(43);
+    eventBus.publish({ type: 'turn.started', turnId: oldTurn.id, origin: USER_PROMPT_ORIGIN });
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+
+    endTurn(eventBus, oldTurn, result);
+
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+      turnsUsed: 0,
+      tokensUsed: 0,
+    });
+  });
+
+  it.each([
+    { reason: 'completed' as const },
+    { reason: 'failed' as const, error: new Error('old continuation failed') },
+  ])('keeps a replacement goal isolated when the replaced goal continuation settles as $reason', async (result) => {
+    await goals.createGoal({ objective: 'old task' });
+    const oldUserTurn = makeTurn(44);
+    eventBus.publish({ type: 'turn.started', turnId: oldUserTurn.id, origin: USER_PROMPT_ORIGIN });
+    await runGoalStep(loopService, oldUserTurn);
+    endTurn(eventBus, oldUserTurn);
+    await vi.waitFor(() => {
+      expect(loopService.launches).toHaveLength(1);
+    });
+
+    const continuationTurn = makeTurn(loopService.launches[0]!);
+    eventBus.publish({
+      type: 'turn.started',
+      turnId: continuationTurn.id,
+      origin: { kind: 'system_trigger', name: 'goal_continuation' },
+    });
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+
+    await loopService.hooks.onWillBeginStep.run({
+      turnId: continuationTurn.id,
+      step: 1,
+      signal: continuationTurn.signal,
+    });
+    recordStepUsage(usageService, goals, continuationTurn, { ...zeroUsage, output: 7 });
+    endTurn(eventBus, continuationTurn, result);
+
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      status: 'active',
+      turnsUsed: 0,
+      tokensUsed: 0,
+    });
+    expect(loopService.launches).toHaveLength(1);
+  });
+
+  it('cancels a preserved continuation turn after its original receipt settles', async () => {
+    const abort = await startLiveContinuation(false);
+    const cancel = vi.spyOn(loopService, 'cancel').mockReturnValue(true);
+    await goals.markBlocked({ reason: 'still need credentials' }, 'model');
+    await goals.cancelGoal();
+
+    expect(abort).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledWith(41);
+  });
+
+  it.each(['turn', 'token', 'wall-clock'] as const)(
+    'keeps a goal blocked when its %s budget is exhausted before resume',
+    async (budget) => {
+      if (budget === 'wall-clock') {
+        vi.useFakeTimers();
+        vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+      }
+      try {
+        await goals.createGoal({ objective: 'finish the task' });
+        if (budget === 'turn') {
+          await goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } }, 'model');
+        } else if (budget === 'token') {
+          await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 1 } }, 'model');
+        } else {
+          await goals.setBudgetLimits({ budgetLimits: { wallClockBudgetMs: 1 } }, 'model');
+          vi.advanceTimersByTime(1);
+        }
+
+        const turn = makeTurn(101);
+        eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+        if (budget === 'token') {
+          recordStepUsage(usageService, goals, turn, { ...zeroUsage, output: 1 });
+        } else {
+          await runGoalStep(loopService, turn);
+        }
+        endTurn(eventBus, turn);
+        expect(loopService.status()).toMatchObject({ state: 'idle', hasPendingRequests: false });
+
+        const resumed = await goals.resumeGoal({ continueIfBlocked: true });
+
+        expect(resumed.status).toBe('blocked');
+        expect(resumed.budget.overBudget).toBe(true);
+        expect(resumed.terminalReason).toMatch(/^Blocked after goal budget reached:/);
+        expect(loopService.launches).toEqual([]);
+      } finally {
+        if (budget === 'wall-clock') vi.useRealTimers();
+      }
+    },
+  );
+
+  it('does not launch another turn when a user resumes a blocked goal during a live turn', async () => {
+    await goals.createGoal({ objective: 'finish the task' });
+
+    const turn = loopService.startTurn();
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    await goals.markBlocked({ reason: 'need credentials' });
+    const resumed = await goals.resumeGoal({ continueIfBlocked: true });
+
+    expect(resumed.status).toBe('active');
+    expect(loopService.launches).toEqual([turn.id]);
+  });
+
+  it('does not launch a continuation when another loop request is pending', async () => {
+    loopService.enqueue(
+      new MessageStepRequest({
+        role: 'user',
+        content: [{ type: 'text', text: 'queued work' }],
+        toolCalls: [],
+        origin: USER_PROMPT_ORIGIN,
+      }),
+    );
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.markBlocked({ reason: 'need credentials' });
+
+    const resumed = await goals.resumeGoal({ continueIfBlocked: true });
+
+    expect(resumed.status).toBe('active');
+    expect(loopService.launches).toEqual([]);
+    expect(loopService.drainNextBatch(context)).toBeDefined();
+    expect(context.get().at(-1)?.origin).toEqual(USER_PROMPT_ORIGIN);
+  });
+
+  it('launches only one continuation when blocked resume is repeated', async () => {
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.markBlocked({ reason: 'need credentials' });
+
+    await goals.resumeGoal({ continueIfBlocked: true });
+    const repeated = await goals.resumeGoal({ continueIfBlocked: true });
+
+    expect(repeated.status).toBe('active');
+    expect(loopService.launches).toHaveLength(1);
+  });
+
+  it('does not launch a continuation when a paused goal resumes', async () => {
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.pauseGoal();
+
+    const resumed = await goals.resumeGoal({ continueIfBlocked: true });
+
+    expect(resumed.status).toBe('active');
+    expect(loopService.launches).toEqual([]);
   });
 
   it('counts an active goal turn and launches the next continuation', async () => {
@@ -965,6 +1460,54 @@ describe('AgentGoalService mid-turn budget stop', () => {
     }
   });
 
+  it('lets an automatic continuation report final status after crossing its token budget', async () => {
+    const ctx = createTestAgent();
+    try {
+      ctx.configure({ tools: ['GetGoal'] });
+      const goals = ctx.get(IAgentGoalService);
+      await goals.createGoal({ objective: 'work' });
+      await goals.markBlocked({ reason: 'ready for a fresh continuation' });
+      await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 1 } }, 'model');
+
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'g1',
+        name: 'GetGoal',
+        arguments: JSON.stringify({}),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'Final status: budget exhausted.' });
+      ctx.mockNextResponse({ type: 'text', text: 'This step should never run.' });
+
+      const turnEnd = ctx.untilTurnEnd();
+      await goals.resumeGoal({ continueIfBlocked: true });
+      const events = await turnEnd;
+
+      expect(ctx.llmCalls).toHaveLength(2);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({ reason: 'completed' }),
+        }),
+      );
+      expect(events).not.toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({ reason: 'cancelled' }),
+        }),
+      );
+
+      const history = ctx.get(IAgentContextMemoryService).get();
+      expect(JSON.stringify(history)).toContain('Final status: budget exhausted.');
+      expect(JSON.stringify(history)).not.toContain('This step should never run.');
+      expect(goals.getGoal().goal).toMatchObject({
+        status: 'blocked',
+        budget: { tokenBudgetReached: true },
+      });
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
   it('rejects tool calls made during the budget grace step without executing them', async () => {
     const ctx = createTestAgent();
     try {
@@ -1061,6 +1604,42 @@ describe('AgentGoalService mid-turn budget stop', () => {
 });
 
 describe('AgentGoalService goal outcome tool result flow', () => {
+  it('lets an automatic continuation explain the blocker after UpdateGoal blocks the goal', async () => {
+    const ctx = createTestAgent();
+    try {
+      ctx.configure({ tools: ['UpdateGoal'] });
+      const goals = ctx.get(IAgentGoalService);
+      await goals.createGoal({ objective: 'work' });
+      await goals.markBlocked({ reason: 'ready for a fresh continuation' });
+
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'blocked',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'blocked' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'Blocked because credentials are unavailable.' });
+
+      const turnEnd = ctx.untilTurnEnd();
+      await goals.resumeGoal({ continueIfBlocked: true });
+      const events = await turnEnd;
+
+      expect(ctx.llmCalls).toHaveLength(2);
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          event: 'turn.ended',
+          args: expect.objectContaining({ reason: 'completed' }),
+        }),
+      );
+      const history = ctx.get(IAgentContextMemoryService).get();
+      expect(JSON.stringify(history)).toContain('Blocked because credentials are unavailable.');
+      expect(history.at(-1)?.role).toBe('assistant');
+      expect(goals.getGoal().goal?.status).toBe('blocked');
+    } finally {
+      await ctx.dispose();
+    }
+  });
+
   it('does not force a goal outcome summary after maxStepsPerTurn is exhausted', async () => {
     const ctx = createTestAgent({
       initialConfig: { providers: {}, loopControl: { maxStepsPerTurn: 1 } },

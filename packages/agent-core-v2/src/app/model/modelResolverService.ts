@@ -45,11 +45,15 @@ import {
 import type { AuthProvider, Model } from './modelInstance';
 import { IModelResolver } from './modelResolver';
 import { ModelImpl, StaticAuthProvider } from './modelImpl';
-import { resolveThinkingEffortForModel } from './thinking';
+import {
+  resolveKimiThinkingEffortOverride,
+  resolveThinkingEffortForModel,
+} from './thinking';
 
 interface ThinkingSection {
   readonly enabled?: boolean;
   readonly effort?: string;
+  readonly forcedEffort?: string;
 }
 
 type MutableProtocolProviderOptions = {
@@ -93,6 +97,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     const authProvider = this.buildAuthProvider(providerName, auth);
 
     const protocol = this.resolveProtocol(id, model, providerConfig);
+    const providerType = providerConfig?.type ?? protocol;
     const resolvedBaseUrl =
       model.protocol === 'anthropic' && rawBaseUrl !== undefined
         ? stripTrailingV1(rawBaseUrl)
@@ -145,28 +150,38 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       supportEfforts: model.supportEfforts,
       defaultEffort: model.defaultEffort,
       alwaysThinking,
+      providerType,
       providerName,
       authProvider,
       protocolRegistry: this.protocolRegistry as ProtocolAdapterRegistry,
       providerOptions,
     });
 
-    const effort = this.resolveDefaultThinking(model, alwaysThinking);
+    const effort = this.resolveDefaultThinking(
+      model,
+      alwaysThinking,
+      providerType === 'kimi',
+    );
     return effort === 'off' ? impl : impl.withThinking(effort);
   }
 
   private resolveDefaultThinking(
     model: ModelConfig,
     alwaysThinking: boolean,
+    kimiProvider: boolean,
   ): ThinkingEffort {
     const thinking = this.config.get<ThinkingSection | undefined>('thinking');
-    return resolveThinkingEffortForModel(
+    const effort = resolveThinkingEffortForModel(
       undefined,
       {
         enabled: thinking?.enabled,
         effort: thinking?.effort,
       },
       { ...model, alwaysThinking },
+      kimiProvider,
+    );
+    return (
+      resolveKimiThinkingEffortOverride(thinking?.forcedEffort, effort, kimiProvider) ?? effort
     );
   }
 
@@ -300,7 +315,9 @@ function resolveModelCapabilities(
     thinking: declared.has('thinking') || declared.has('always_thinking') || detected.thinking,
     tool_use: declared.has('tool_use') || detected.tool_use,
     max_context_tokens: maxContextSize,
-    select_tools: declared.has('select_tools') || detected.select_tools === true,
+    dynamically_loaded_tools:
+      declared.has('dynamically_loaded_tools') ||
+      detected.dynamically_loaded_tools === true,
   };
 }
 
@@ -320,6 +337,7 @@ function buildProtocolProviderOptions(
     case 'anthropic':
       if (model.maxOutputSize !== undefined) options.defaultMaxTokens = model.maxOutputSize;
       if (model.adaptiveThinking !== undefined) options.adaptiveThinking = model.adaptiveThinking;
+      if (provider?.type === 'kimi') options.kimiThinking = true;
       if (model.betaApi !== undefined) options.betaApi = model.betaApi;
       break;
     case 'openai': {
@@ -328,7 +346,6 @@ function buildProtocolProviderOptions(
       break;
     }
     case 'kimi':
-      if (model.supportEfforts !== undefined) options.supportEfforts = model.supportEfforts;
       break;
     case 'vertexai': {
       const project = vertexAIProject(provider);
@@ -407,6 +424,6 @@ registerScopedService(
   LifecycleScope.App,
   IModelResolver,
   ModelResolverService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'modelResolver',
 );

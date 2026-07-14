@@ -21,6 +21,7 @@ import type {
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 import type { ModelAlias } from '#/app/model/model';
+import { effectiveModelConfig } from '#/app/model/modelAuth';
 import type { ProviderConfig } from '#/app/provider/provider';
 
 export type RefreshProviderModelsScope = 'all' | 'oauth';
@@ -51,12 +52,15 @@ export interface ProviderCredentialState {
 }
 
 export function toProtocolModel(modelId: string, alias: ModelAlias): ModelCatalogItem {
+  const effective = effectiveModelConfig(alias);
   return {
-    provider: alias.provider ?? '',
+    provider: effective.provider ?? '',
     model: modelId,
-    display_name: alias.displayName ?? alias.model ?? modelId,
-    max_context_size: alias.maxContextSize ?? 0,
-    capabilities: alias.capabilities,
+    display_name: effective.displayName ?? effective.model ?? modelId,
+    max_context_size: effective.maxContextSize ?? 0,
+    capabilities: effective.capabilities,
+    support_efforts: effective.supportEfforts,
+    default_effort: effective.defaultEffort,
   };
 }
 

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 
 import {
   InMemoryWireRecordPersistence,
@@ -63,8 +63,18 @@ describe('AgentProfileService.bind', () => {
       },
       hostEnvironmentServices(homeDir),
     );
+    ctx.configure({
+      modelCapabilities: {
+        image_in: false,
+        video_in: false,
+        audio_in: false,
+        thinking: true,
+        tool_use: true,
+        max_context_tokens: 1_000_000,
+      },
+    });
     const svc = ctx.get(IAgentProfileService);
-    await ctx.get(IAgentWireService).flush();
+    await ctx.get(IWireService).flush();
     const start = persistence.records.length;
 
     await svc.bind({
@@ -73,7 +83,7 @@ describe('AgentProfileService.bind', () => {
       thinking: 'low',
       cwd: homeDir,
     });
-    await ctx.get(IAgentWireService).flush();
+    await ctx.get(IWireService).flush();
 
     const records = persistence.records
       .slice(start)
@@ -97,7 +107,7 @@ describe('AgentProfileService.bind', () => {
     expect(records[2]).toMatchObject({
       type: 'config.update',
       modelAlias: MOCK_MODEL,
-      thinkingEffort: 'low',
+      thinkingEffort: 'on',
     });
     expect(records[2]).not.toHaveProperty('thinkingLevel');
   });

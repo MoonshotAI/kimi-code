@@ -13,16 +13,18 @@ import type {
 } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import type { McpServerEntry } from './connection-manager';
-import { IAgentMcpService, type McpServiceOptions } from './mcp';
+import { IAgentMcpService } from './mcp';
 import { qualifyMcpToolName } from './tool-naming';
 import type { MCPClient, MCPToolDefinition } from './types';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import {
   McpDiscoveryModel,
   mcpToolsDiscovered,
@@ -50,11 +52,12 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
   private discoveryWritesReady = false;
 
   constructor(
-    private readonly options: McpServiceOptions = {},
+    @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
@@ -68,44 +71,48 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
         },
       ),
     );
-    this._register(this.wire.onRestored(() => this.flushPendingDiscoveries()));
-    this._register(this.wire.onEmission(() => this.flushPendingDiscoveries()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('mcp', async (_ctx, next) => {
+        this.flushPendingDiscoveries();
+        await next();
+      }),
+    );
   }
 
   get oauthService() {
-    return this.options.manager?.oauthService;
+    return this.sessionMcp.connectionManager().oauthService;
   }
 
   waitForInitialLoad(signal?: AbortSignal): Promise<void> {
-    return this.options.manager?.waitForInitialLoad(signal) ?? Promise.resolve();
+    return this.sessionMcp.connectionManager().waitForInitialLoad(signal);
   }
 
   initialLoadDurationMs(): number {
-    return this.options.manager?.initialLoadDurationMs() ?? 0;
+    return this.sessionMcp.connectionManager().initialLoadDurationMs();
   }
 
   list() {
-    return this.options.manager?.list() ?? [];
+    return this.sessionMcp.connectionManager().list();
   }
 
   resolved(name: string) {
-    return this.options.manager?.resolved(name);
+    return this.sessionMcp.connectionManager().resolved(name);
   }
 
   getRemoteServerUrl(name: string) {
-    return this.options.manager?.getRemoteServerUrl(name);
+    return this.sessionMcp.connectionManager().getRemoteServerUrl(name);
   }
 
   async reconnect(name: string, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
-    await this.options.manager?.reconnect(name);
+    await this.sessionMcp.connectionManager().reconnect(name);
     signal?.throwIfAborted();
   }
 
   onStatusChange(listener: Parameters<IAgentMcpService['onStatusChange']>[0]) {
-    const unsubscribe = this.options.manager?.onStatusChange(listener);
+    const unsubscribe = this.sessionMcp.connectionManager().onStatusChange(listener);
     return {
-      dispose: unsubscribe ?? (() => undefined),
+      dispose: unsubscribe,
     };
   }
 
@@ -237,7 +244,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
       const disposable = this._register(
         this.registry.register(
           createMcpTool(qualified, tool, client, {
-            originalsDir: this.options.originalsDir,
+            originalsDir: sessionMediaOriginalsDir(this.sessionContext.sessionDir),
             telemetry: this.telemetry,
           }),
           { source: 'mcp' },
@@ -329,6 +336,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentMcpService,
   AgentMcpService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'mcp',
 );

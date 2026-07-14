@@ -158,6 +158,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentShellCommandService,
   AgentShellCommandService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'shellCommand',
 );

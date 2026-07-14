@@ -34,7 +34,7 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
-import { coerceThinkingForModel } from '../../lib/modelThinking';
+import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
 import type {
@@ -295,6 +295,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     fileDiffLines,
     fileDiffLoading,
   } = deps;
+  let exportInFlight = false;
 
   async function loadOlderMessages(sessionId: string): Promise<void> {
     if (rawState.messagesLoadingMoreBySession[sessionId]) return;
@@ -595,7 +596,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // daemons while /sessions still works. Fall back to the legacy global
       // walk so history still shows and mergedWorkspaces can derive workspaces
       // from session cwds, instead of rendering a blank sidebar.
-      const fallback = await listAllSessionsGlobal().catch(() => [] as AppSession[]);
+      const fallback = await listAllSessionsGlobal().catch((err) => {
+        console.warn('[kimi-web] global session fallback load failed', err);
+        return [] as AppSession[];
+      });
       rawState.sessionsHasMoreByWorkspace = {};
       rawState.sessionsCursorByWorkspace = {};
       rawState.sessionsInitialCountByWorkspace = {};
@@ -604,10 +608,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     const pages = await Promise.all(
       workspaces.map((w) =>
-        loadInitialSessionsForWorkspace(w.id).catch(() => ({
-          workspaceId: w.id,
-          page: { items: [] as AppSession[], hasMore: false },
-        })),
+        loadInitialSessionsForWorkspace(w.id).catch((err) => {
+          console.warn('[kimi-web] initial session load failed for workspace', w.id, err);
+          return {
+            workspaceId: w.id,
+            page: { items: [] as AppSession[], hasMore: false },
+          };
+        }),
       ),
     );
     const loaded: AppSession[] = [];
@@ -692,7 +699,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  first search; a no-op once the full list is loaded. */
   async function loadAllSessions(): Promise<void> {
     if (rawState.sessionsFullyLoaded) return;
-    const sessions = await listAllSessionsGlobal().catch(() => null);
+    const sessions = await listAllSessionsGlobal().catch((err) => {
+      console.warn('[kimi-web] loadAllSessions failed; search covers only loaded sessions', err);
+      return null;
+    });
     if (sessions === null) return;
     setSessionsPreservingLiveUsage(sessions);
     rawState.sessionsFullyLoaded = true;
@@ -719,6 +729,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   async function load(): Promise<void> {
+    const startedAt = Date.now();
+    let traceStatus = 'accepted';
+    traceKeyEvent('app:load:start');
     rawState.loading = true;
     // The very first load gates on /auth before anything else: a transient
     // failure there (daemon still booting, network blip, 5xx) must NOT be read
@@ -731,6 +744,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     try {
       if (firstLoad && (await waitForFirstAuth()) === 'server-auth-required') {
         authResolved = false;
+        traceStatus = 'auth-required';
         return;
       }
       const api = getKimiWebApi();
@@ -784,6 +798,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         await selectSession(sessions[0]!.id, { urlMode: 'replace' });
       }
     } catch (err) {
+      traceStatus = 'failed';
       pushOperationFailure('load', err);
       // Do not re-throw — app stays mounted with empty sessions
     } finally {
@@ -791,6 +806,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Without a definitive /auth outcome the splash stays up (retry loop or
       // ServerAuthDialog is handling it) — never expose the half-loaded app.
       if (authResolved) initialized.value = true;
+      traceKeyEvent('app:load:complete', {
+        status: traceStatus,
+        sessionId: rawState.activeSessionId,
+        sessionCount: rawState.sessions.length,
+        workspaceCount: rawState.workspaces.length,
+        durationMs: Date.now() - startedAt,
+      });
     }
   }
 
@@ -1059,11 +1081,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // there is nothing to persist for it.
       const planMode = rawState.planModeBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
-      // Coerce thinking against the new session's model the same way the
-      // first-prompt path does (coercePromptThinking below): a value carried
-      // over from another/default model (e.g. 'max' from an effort model) would
-      // otherwise be persisted verbatim, and the first skill turn would run at
-      // a level the UI wouldn't send for this model.
+      // Thinking is persisted verbatim — whatever the user picked is what the
+      // first skill turn runs at (same as a normal prompt, and the TUI).
       const promptSession = rawState.sessions.find((s) => s.id === sid);
       const model =
         (promptSession?.model && promptSession.model.length > 0
@@ -1075,7 +1094,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           planMode,
           swarmMode,
           permissionMode: rawState.permission,
-          thinking: coercePromptThinking(model),
+          thinking: rawState.thinking,
         },
         sid,
       );
@@ -1130,7 +1149,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       upsertWorkspacePreserveOrder(ws);
       openWorkspaceDraft(ws.id);
       return true;
-    } catch {
+    } catch (err) {
+      // The caller shows an inline error in the picker; keep the cause in the log.
+      console.warn('[kimi-web] addWorkspaceByPath failed for', trimmed, err);
       return false;
     }
   }
@@ -1295,22 +1316,6 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
   }
 
-  // Coerce the persisted thinking level against the prompt's target model before
-  // submitting, so a stale value carried over from another session (e.g. 'max'
-  // from an effort model) isn't sent to a model that doesn't declare it. The
-  // composer already renders the coerced value; this keeps the submitted level
-  // in sync with what's displayed. Falls back to the raw level when the model
-  // catalog hasn't loaded yet (coerceThinkingForModel preserves it).
-  function coercePromptThinking(model: string | undefined) {
-    const promptModel =
-      model === undefined
-        ? undefined
-        : modelProvider.models.value.find(
-            (m) => m.model === model || m.id === model || m.displayName === model,
-          );
-    return coerceThinkingForModel(promptModel, rawState.thinking);
-  }
-
   /** Internal: submit a prompt to a specific session, bypassing the queue check.
       Returns true when the daemon accepted the prompt. */
   async function submitPromptInternal(sid: string, text: string, attachments?: PromptAttachment[]): Promise<boolean> {
@@ -1383,7 +1388,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        thinking: coercePromptThinking(model),
+        // Verbatim: the stored level is submitted as-is (same as the TUI) —
+        // no coercion against the prompt's target model.
+        thinking: rawState.thinking,
         permissionMode: rawState.permission,
         planMode,
         swarmMode,
@@ -1523,7 +1530,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        thinking: coercePromptThinking(model),
+        // Verbatim, same as a normal send (see submitPromptInternal).
+        thinking: rawState.thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,
@@ -2082,8 +2090,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // Best-effort registry cleanup; ignore failures (the hide already took effect).
     try {
       await getKimiWebApi().deleteWorkspace(id);
-    } catch {
+    } catch (err) {
       // registry delete is optional — the sidebar hide is what the user sees.
+      console.warn('[kimi-web] deleteWorkspace registry cleanup failed for', id, err);
     }
     rawState.workspaces = rawState.workspaces.filter((w) => w.id !== id && w.root !== root);
     if (removingActiveWorkspace || activeSessionInRemovedWorkspace) {
@@ -2126,6 +2135,77 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
     } catch (err) {
       pushOperationFailure('archiveSession', err, { sessionId: id });
+    }
+  }
+
+  /** Export the given session (default: the active one). The id is captured
+   * synchronously so a later session switch cannot redirect the in-flight
+   * request, and a lock prevents duplicate ZIP generation. */
+  async function exportSession(targetSessionId?: string): Promise<void> {
+    if (exportInFlight) return;
+    const sessionId = targetSessionId ?? rawState.activeSessionId;
+    if (!sessionId) {
+      const message = t('commands.export.noSession');
+      traceKeyEvent('export:failed', { status: 'no-session' });
+      pushOperationFailure('exportSession', new Error(message), { message });
+      return;
+    }
+    exportInFlight = true;
+    const startedAt = Date.now();
+    traceKeyEvent('export:start', { sessionId });
+    try {
+      const webLog = sessionExportTraceToJsonl();
+      const { blob, fileName } = await getKimiWebApi().exportSession(sessionId, webLog);
+      if (typeof document === 'undefined') throw new Error('Document is unavailable');
+      const url = URL.createObjectURL(blob);
+      let anchor: HTMLAnchorElement | undefined;
+      try {
+        anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = fileName;
+        document.body.append(anchor);
+        anchor.click();
+      } finally {
+        anchor?.remove();
+        setTimeout(() => {
+          try {
+            URL.revokeObjectURL(url);
+          } catch {
+            // Object URL cleanup is best-effort in restricted browser contexts.
+          }
+        }, 0);
+      }
+      traceKeyEvent('export:accepted', {
+        sessionId,
+        status: 'accepted',
+        zipBytes: blob.size,
+        durationMs: Date.now() - startedAt,
+      });
+    } catch (error) {
+      const failure =
+        typeof error === 'object' && error !== null
+          ? (error as {
+              name?: unknown;
+              code?: unknown;
+              requestId?: unknown;
+              phase?: unknown;
+              status?: unknown;
+            })
+          : undefined;
+      traceKeyEvent('export:failed', {
+        sessionId,
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        errorName:
+          typeof failure?.name === 'string' ? failure.name : typeof error,
+        errorCode: typeof failure?.code === 'number' ? failure.code : undefined,
+        requestId: typeof failure?.requestId === 'string' ? failure.requestId : undefined,
+        phase: typeof failure?.phase === 'string' ? failure.phase : undefined,
+        httpStatus: typeof failure?.status === 'number' ? failure.status : undefined,
+      });
+      pushOperationFailure('exportSession', error, { sessionId });
+    } finally {
+      exportInFlight = false;
     }
   }
 
@@ -2306,7 +2386,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         size: result.size,
         lineCount: result.lineCount,
       };
-    } catch {
+    } catch (err) {
+      console.warn('[kimi-web] readFileContent failed for', path, err);
       return null;
     }
   }
@@ -2474,6 +2555,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     renameWorkspace,
     deleteWorkspace,
     archiveSession,
+    exportSession,
     restoreSession,
     loadArchivedSessions,
     logout,

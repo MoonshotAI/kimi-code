@@ -24,7 +24,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ErrorCodes, Error2 } from '#/errors';
 import { createHooks } from '#/hooks';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 
 import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks, stubToolExecutor, stubWire } from '../loop/stubs';
@@ -49,7 +49,7 @@ function harness() {
     strict: true, additionalServices: (reg) => {
       reg.defineInstance(IAgentContextMemoryService, context);
       reg.defineInstance(IAgentLoopService, loop);
-      reg.defineInstance(IAgentWireService, stubWire());
+      reg.defineInstance(IWireService, stubWire());
       reg.defineInstance(IAgentToolExecutorService, stubToolExecutor());
       reg.defineInstance(IAgentFullCompactionService, fullCompaction);
       reg.define(IEventBus, EventBusService);

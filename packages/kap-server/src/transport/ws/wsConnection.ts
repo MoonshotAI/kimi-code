@@ -19,6 +19,7 @@
  */
 
 import { ErrorCodes, Error2, type IDisposable, type Scope } from '@moonshot-ai/agent-core-v2';
+import { ErrorCode } from '@moonshot-ai/protocol';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
@@ -31,6 +32,14 @@ import type { CallMessage, ListenMessage, ServerMessage } from './wsProtocol';
 import { clientMessageSchema } from './wsProtocol';
 
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
+
+/** Minimal logger surface — keeps the connection decoupled from the server logger. */
+export interface WsConnectionLogger {
+  warn(obj: unknown, msg: string): void;
+  error(obj: unknown, msg: string): void;
+}
+
+const noopLogger: WsConnectionLogger = { warn: () => {}, error: () => {} };
 
 interface PendingEntry {
   /** Dispose the listener / drop the call result. */
@@ -54,6 +63,8 @@ export interface WsConnectionOptions {
   readonly remoteAddress: string | null;
   /** `User-Agent` header from the upgrade request. Null when absent. */
   readonly userAgent: string | null;
+  /** Server-side logger for dispatch / serialization / socket failures. */
+  readonly logger?: WsConnectionLogger;
 }
 
 export class WsConnection {
@@ -65,6 +76,7 @@ export class WsConnection {
   private readonly core: Scope;
   private readonly validateCredential?: CredentialValidator;
   private readonly callTimeoutMs: number;
+  private readonly logger: WsConnectionLogger;
 
   private closed = false;
   private gotHello = false;
@@ -82,10 +94,14 @@ export class WsConnection {
     this.core = opts.core;
     this.validateCredential = opts.validateCredential;
     this.callTimeoutMs = opts.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+    this.logger = opts.logger ?? noopLogger;
 
     this.socket.on('message', (data: RawData) => this.onMessage(data));
     this.socket.on('close', () => this.onClose());
-    this.socket.on('error', () => this.onClose());
+    this.socket.on('error', (err) => {
+      this.logger.warn({ err, connId: this.id }, 'ws socket error');
+      this.onClose();
+    });
 
     this.send({ type: 'ready' });
   }
@@ -203,6 +219,14 @@ export class WsConnection {
       if (settled || this.closed) return;
       this.pending.delete(msg.id);
       const env = mapError(error, msg.id);
+      // 50001 (incl. call timeout) is a server-side failure; mapped business
+      // codes are expected client outcomes — mirror the REST RPC route.
+      const ctx = { err: error, connId: this.id, service: msg.service, method: msg.method };
+      if (env.code === ErrorCode.INTERNAL_ERROR) {
+        this.logger.error(ctx, 'ws rpc call failed');
+      } else {
+        this.logger.warn(ctx, 'ws rpc call failed');
+      }
       this.send({ type: 'error', id: msg.id, code: env.code, msg: env.msg });
     }
   }
@@ -253,6 +277,12 @@ export class WsConnection {
       }
     } catch (error) {
       const env = mapError(error, msg.id);
+      const ctx = { err: error, connId: this.id, service: msg.service, event: msg.event };
+      if (env.code === ErrorCode.INTERNAL_ERROR) {
+        this.logger.error(ctx, 'ws listen failed');
+      } else {
+        this.logger.warn(ctx, 'ws listen failed');
+      }
       this.send({ type: 'error', id: msg.id, code: env.code, msg: env.msg });
       return;
     }
@@ -329,6 +359,12 @@ export class WsConnection {
       this.send({ type: 'event', id, eventId, data: wire });
     } catch (error) {
       const env = mapError(error, id);
+      // Serialization failures cancel the whole listen subscription below —
+      // log so the dropped event stream is diagnosable.
+      this.logger.warn(
+        { err: error, connId: this.id, event },
+        'ws event send failed; subscription cancelled',
+      );
       this.send({ type: 'error', id, code: env.code, msg: env.msg });
       this.cancel(id);
     }

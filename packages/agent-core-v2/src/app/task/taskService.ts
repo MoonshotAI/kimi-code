@@ -181,6 +181,6 @@ registerScopedService(
   LifecycleScope.App,
   ITaskService,
   TaskService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'task',
 );

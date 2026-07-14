@@ -21,6 +21,13 @@ export interface ISessionInitService {
   readonly _serviceBrand: undefined;
 
   generateAgentsMd(): Promise<void>;
+
+  /**
+   * Abort the in-flight `/init` run, if any. No-op when idle — callers like
+   * the turn-cancel path (Ctrl+C) invoke it unconditionally alongside the
+   * main agent's own turn cancel.
+   */
+  cancelInit(): void;
 }
 
 export const ISessionInitService: ServiceIdentifier<ISessionInitService> =

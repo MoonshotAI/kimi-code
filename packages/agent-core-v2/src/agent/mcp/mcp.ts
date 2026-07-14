@@ -2,10 +2,7 @@ import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
 
 import { createDecorator } from "#/_base/di/instantiation";
 import { type IDisposable } from "#/_base/di/lifecycle";
-import type {
-  McpConnectionManager,
-  McpServerEntry,
-} from './connection-manager';
+import type { McpServerEntry } from './connection-manager';
 import type { McpOAuthService } from '#/agent/mcp/oauth/service';
 import type { MCPClient, MCPToolDefinition } from './types';
 
@@ -27,11 +24,6 @@ export interface IAgentMcpService {
   getRemoteServerUrl(name: string): string | undefined;
   reconnect(name: string, signal?: AbortSignal): Promise<void>;
   onStatusChange(listener: (entry: McpServerEntry) => void): IDisposable;
-}
-
-export interface McpServiceOptions {
-  readonly manager?: McpConnectionManager;
-  readonly originalsDir?: string;
 }
 
 export const IAgentMcpService = createDecorator<IAgentMcpService>('agentMcpService');

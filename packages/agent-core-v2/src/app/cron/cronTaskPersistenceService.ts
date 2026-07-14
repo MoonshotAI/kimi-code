@@ -95,6 +95,6 @@ registerScopedService(
   LifecycleScope.App,
   ICronTaskPersistence,
   CronTaskPersistenceService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'cron',
 );

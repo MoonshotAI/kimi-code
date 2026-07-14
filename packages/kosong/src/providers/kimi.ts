@@ -47,10 +47,6 @@ export interface KimiOptions {
   stream?: boolean | undefined;
   defaultHeaders?: Record<string, string> | undefined;
   generationKwargs?: GenerationKwargs | undefined;
-  /** Efforts the model advertises (e.g. ["low", "high", "max"]). When
-   * present and non-empty, withThinking sends the chosen effort on the wire;
-   * when absent/empty, only thinking.type is sent. */
-  supportEfforts?: readonly string[] | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => OpenAI;
 }
 
@@ -116,12 +112,14 @@ function isEffectivelyEmptyContent(parts: ContentPart[]): boolean {
   return true;
 }
 
-function convertMessage(message: Message): OpenAIMessage {
+function convertMessage(message: Message, preservedThinkingEnabled: boolean): OpenAIMessage {
   let reasoningContent = '';
+  let hasReasoningPart = false;
   const nonThinkParts: ContentPart[] = [];
 
   for (const part of message.content) {
     if (part.type === 'think') {
+      hasReasoningPart = true;
       reasoningContent += part.think;
     } else {
       nonThinkParts.push(part);
@@ -168,7 +166,7 @@ function convertMessage(message: Message): OpenAIMessage {
     result.tool_call_id = message.toolCallId;
   }
 
-  if (reasoningContent) {
+  if (hasReasoningPart || (preservedThinkingEnabled && message.role === 'assistant')) {
     result.reasoning_content = reasoningContent;
   }
 
@@ -307,7 +305,7 @@ class KimiStreamedMessage implements StreamedMessage {
 
     // reasoning_content (Moonshot proprietary)
     const rc = (message as unknown as Record<string, unknown>)['reasoning_content'];
-    if (typeof rc === 'string' && rc) {
+    if (typeof rc === 'string') {
       yield { type: 'think', think: rc } satisfies StreamedMessagePart;
     }
 
@@ -365,7 +363,7 @@ class KimiStreamedMessage implements StreamedMessage {
 
         // reasoning_content (Moonshot proprietary)
         const rc = (delta as unknown as Record<string, unknown>)['reasoning_content'];
-        if (typeof rc === 'string' && rc) {
+        if (typeof rc === 'string') {
           yield { type: 'think', think: rc } satisfies StreamedMessagePart;
         }
 
@@ -405,7 +403,6 @@ export class KimiChatProvider implements ChatProvider {
   private _baseUrl: string;
   private _defaultHeaders: Record<string, string> | undefined;
   private _generationKwargs: GenerationKwargs;
-  private readonly _supportEfforts: readonly string[];
   private _client: OpenAI | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
   private _files: KimiFiles | undefined;
@@ -419,7 +416,6 @@ export class KimiChatProvider implements ChatProvider {
     this._model = options.model;
     this._stream = options.stream ?? true;
     this._generationKwargs = { ...options.generationKwargs };
-    this._supportEfforts = options.supportEfforts ?? [];
     this._client =
       this._apiKey === undefined
         ? undefined
@@ -481,9 +477,12 @@ export class KimiChatProvider implements ChatProvider {
     if (systemPrompt) {
       messages.push({ role: 'system', content: systemPrompt });
     }
+    const thinking = this._generationKwargs.extra_body?.thinking;
+    const preservedThinkingEnabled =
+      thinking?.keep === 'all' && thinking.type !== 'disabled';
     const normalizedHistory = normalizeToolCallIdsForProvider(history, KIMI_TOOL_CALL_ID_POLICY);
     for (const msg of normalizedHistory) {
-      messages.push(convertMessage(msg));
+      messages.push(convertMessage(msg, preservedThinkingEnabled));
     }
 
     const kwargs: Record<string, unknown> = {
@@ -553,12 +552,7 @@ export class KimiChatProvider implements ChatProvider {
     if (effort === 'off') {
       thinking = { type: 'disabled' };
     } else {
-      // Only efforts the model explicitly declares via `support_efforts` are
-      // sent on the wire. When `support_efforts` is absent/empty, or the
-      // requested effort is not declared, only thinking.type is sent.
-      thinking = this._supportEfforts.includes(effort)
-        ? { type: 'enabled', effort }
-        : { type: 'enabled' };
+      thinking = effort === 'on' ? { type: 'enabled' } : { type: 'enabled', effort };
     }
     // Replace extra_body.thinking wholesale so a stale `effort` from a previous
     // withThinking call can never linger on a disabled or non-effort thinking

@@ -271,6 +271,6 @@ registerScopedService(
   LifecycleScope.App,
   IPluginService,
   PluginService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'plugin',
 );

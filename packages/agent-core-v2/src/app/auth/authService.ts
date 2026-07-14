@@ -423,13 +423,10 @@ export class OAuthService extends Disposable implements IOAuthService {
     if (affected.size === 0) return;
     for (const state of this.flows.values()) {
       if (!affected.has(state.provider)) continue;
-      if (state.status === 'pending') {
-        state.controller.abort();
-      }
-      if (state.gcTimer !== undefined) {
-        clearTimeout(state.gcTimer);
-      }
-      this.flows.delete(state.provider);
+      if (state.status !== 'pending') continue;
+      state.controller.abort();
+      state.errorMessage = 'Provider configuration changed during login.';
+      this.setTerminal(state, 'cancelled');
     }
   }
 
@@ -836,6 +833,6 @@ class OAuthToolkitService extends KimiOAuthToolkit implements IOAuthToolkit {
   }
 }
 
-registerScopedService(LifecycleScope.App, IOAuthService, OAuthService, InstantiationType.Delayed, 'auth');
-registerScopedService(LifecycleScope.App, IOAuthToolkit, OAuthToolkitService, InstantiationType.Delayed, 'auth');
-registerScopedService(LifecycleScope.App, IAuthSummaryService, AuthSummaryService, InstantiationType.Delayed, 'auth');
+registerScopedService(LifecycleScope.App, IOAuthService, OAuthService, InstantiationType.Eager, 'auth');
+registerScopedService(LifecycleScope.App, IOAuthToolkit, OAuthToolkitService, InstantiationType.Eager, 'auth');
+registerScopedService(LifecycleScope.App, IAuthSummaryService, AuthSummaryService, InstantiationType.Eager, 'auth');

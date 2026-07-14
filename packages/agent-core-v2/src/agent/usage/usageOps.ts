@@ -15,9 +15,9 @@
  */
 
 import { z } from 'zod';
+import type { AgentPhase } from '@moonshot-ai/protocol';
 
 import { addUsage, type TokenUsage } from '#/app/llmProtocol/usage';
-import type { AgentPhase } from '#/agent/runtime/runtime';
 import { defineModel } from '#/wire/model';
 
 import type { UsageStatus } from './usage';
@@ -31,6 +31,7 @@ declare module '#/app/event/eventBus' {
       swarmMode?: boolean;
       planMode?: boolean;
       model?: string;
+      thinkingEffort?: string;
       maxContextTokens?: number;
       contextTokens?: number;
       phase?: AgentPhase;

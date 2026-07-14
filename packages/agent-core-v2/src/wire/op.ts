@@ -8,12 +8,12 @@
  * callable (`goalCreate(payload)`) and inspectable (`goalCreate.apply`,
  * `goalCreate.type`). Every Op carries a mandatory pure `apply` and may carry
  * an optional `toEvent` that derives an `IEventBus` fact from the payload and
- * the post-apply state (published by `WireService` on `dispatch`, never on
- * `replay`). A mandatory `schema` (zod, declared before `apply`) is the
+ * the post-apply state (published by `WireService` on live `dispatch`,
+ * never during `restore`). A mandatory `schema` (zod, declared before `apply`) is the
  * payload's single source of truth: `P` is inferred from it, so Op authors
  * never restate payload interfaces, and it is stored on the descriptor for
  * payload validation at wire boundaries; the runtime paths (`dispatch` /
- * `replay`) never consult it. The descriptor's payload is erased
+ * `restore`) never consult it. The descriptor's payload is erased
  * to `any` on `Op.descriptor` (mirroring `OP_REGISTRY`) so `Op` stays
  * covariant in `P` — a heterogeneous batch of Ops, each with a different
  * payload type, stays assignable to the single `dispatch(...ops: Op[])` rest
@@ -23,8 +23,7 @@
  * definition into the `types.ts` registries (which map op types to `typeof`
  * the Op); registration constrains only the persistence policy — a registered
  * type must honor its map, an unregistered type keeps its free `persist`
- * option. Descriptors may opt out of timestamp stamping (`stamp: false`) for
- * the metadata envelope. Scope-agnostic.
+ * option. Scope-agnostic.
  */
 
 import type { z } from 'zod';
@@ -50,7 +49,6 @@ export interface OpDescriptor<K extends string, S, P> {
   readonly apply: (state: S, payload: P) => S;
   readonly toEvent?: (payload: P, state: S) => unknown;
   readonly persist?: boolean;
-  readonly stamp?: boolean;
 }
 
 export interface Op<K extends string = string, P = unknown> {
@@ -67,7 +65,6 @@ interface OpBehaviorOptions<S, P> {
   readonly schema: z.ZodType<P>;
   readonly apply: (state: S, payload: P) => S;
   readonly toEvent?: (payload: P, state: S) => unknown;
-  readonly stamp?: boolean;
 }
 
 type RegisteredOpConstraint<K extends string> = K extends ConflictingOpType
@@ -122,7 +119,6 @@ export function defineOp<const K extends string, S, P>(
     apply: behavior.apply,
     toEvent: behavior.toEvent,
     persist: behavior.persist,
-    stamp: behavior.stamp,
   };
   OP_REGISTRY.set(type, descriptor);
   const factory = (payload: P): Op<K, P> => ({ type, payload, descriptor });

@@ -66,6 +66,6 @@ registerScopedService(
   LifecycleScope.Session,
   ILogService,
   SessionLogService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'log',
 );

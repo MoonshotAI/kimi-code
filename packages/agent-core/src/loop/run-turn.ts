@@ -53,10 +53,10 @@ export interface RunTurnInput {
   /**
    * Optional media-stripped rebuild of the request messages: EVERY media
    * part replaced by a text marker. Used to resend once after the provider
-   * rejects an image's format (see `executeLoopStep`); the poisoned image
-   * could be anywhere in the history, so only a full strip guarantees a
-   * clean request. After a successful stripped resend, later steps of the
-   * same turn build from this projection directly.
+   * rejects an image's format, or as the final fallback when a request stays
+   * too large after keeping only recent media (see `executeLoopStep`). After
+   * a successful stripped resend, later steps of the same turn build from
+   * this projection directly.
    */
   readonly buildMessagesMediaStripped?: LoopMessageBuilder | undefined;
   readonly dispatchEvent: LoopEventDispatcher;
@@ -114,8 +114,9 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
   // history is deterministically over the provider's body-size limit, so
   // rebuilding it would pay a fresh rejection on every step.
   let mediaDegradedActive = false;
-  // Same for the media-stripped resend after an image-format rejection: the
-  // poison is still in the full history, so later steps stay stripped.
+  // Same for the media-stripped resend after an image-format rejection or a
+  // second 413: the rejected media is still in history, so later steps stay
+  // stripped.
   let mediaStrippedActive = false;
   const recordStepUsage = async (
     stepUsage: TokenUsage,
@@ -143,6 +144,11 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
             : mediaDegradedActive && buildMessagesMediaDegraded !== undefined
               ? buildMessagesMediaDegraded
               : buildMessages,
+        initialMediaProjection: mediaStrippedActive
+          ? 'media-stripped'
+          : mediaDegradedActive
+            ? 'media-degraded'
+            : 'normal',
         buildMessagesStrict,
         buildMessagesMediaDegraded,
         buildMessagesMediaStripped,

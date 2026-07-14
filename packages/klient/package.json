@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/klient",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "private": true,
   "description": "Kimi client SDK — reuse agent-core-v2 service interfaces over the /api/v2 HTTP channel.",
   "license": "MIT",

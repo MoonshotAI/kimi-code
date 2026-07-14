@@ -26,8 +26,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import type { Message } from '#/app/llmProtocol/message';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 
 import { IAgentContextSizeService, type ContextSize } from './contextSize';
 import { ContextSizeModel, contextSizeMeasured } from './contextSizeOps';
@@ -39,7 +38,7 @@ export class AgentContextSizeService extends Disposable implements IAgentContext
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
   ) {
     super();
   }
@@ -95,6 +94,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextSizeService,
   AgentContextSizeService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'contextSize',
 );

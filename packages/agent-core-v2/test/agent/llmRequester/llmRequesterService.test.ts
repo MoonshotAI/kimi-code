@@ -1,14 +1,14 @@
 /**
- * Scenario: LLM requester retries once with a recovery projection after a
+ * Scenario: LLM requester uses bounded recovery projections after a
  * deterministic provider rejection — strict projection for tool-use
- * adjacency / structural rejections, media-stripped projection for
- * image-format rejections (with per-turn stickiness).
+ * adjacency, degraded media followed by full stripping for body-size 413s,
+ * and media stripping for image-format rejections.
  *
- * Responsibilities: assert retry eligibility, strict/stripped-history
- * rebuilding, request recording, and usage accounting. Wiring: real
- * AgentLLMRequesterService with stubbed context memory, projector, context
- * sizing, profile, model, telemetry, and wire/log services. Run:
- * ../../node_modules/.bin/vitest run test/llmRequester/strict-resend.test.ts
+ * Responsibilities: assert retry eligibility, projection order and bounds,
+ * per-turn recovery stickiness, request recording, and usage accounting.
+ * Wiring: real AgentLLMRequesterService with stubbed context memory,
+ * projector, context sizing, profile, model, telemetry, and wire/log services. Run:
+ * pnpm test -- test/agent/llmRequester/llmRequesterService.test.ts
  */
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -16,14 +16,17 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
+import {
+  IAgentContextProjectorService,
+  type MediaStripSnapshot,
+} from '#/agent/contextProjector/contextProjector';
+import { AgentContextProjectorService } from '#/agent/contextProjector/contextProjectorService';
 import { IFaultInjectionService } from '#/agent/faultInjection/faultInjection';
 import { FaultInjectionService } from '#/agent/faultInjection/faultInjectionService';
 import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterService';
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentUsageService } from '#/agent/usage/usage';
@@ -33,12 +36,15 @@ import { APIRequestTooLargeError, APIStatusError } from '#/app/llmProtocol/error
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import type { Message } from '#/app/llmProtocol/message';
 import type { ModelCapability } from '#/app/llmProtocol/capability';
-import type { LLMEvent, Model } from '#/app/model/modelInstance';
+import type { LLMEvent, LLMRequestInput, Model } from '#/app/model/modelInstance';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
-import { IAgentWireService } from '#/wire/tokens';
-import { WireService } from '#/wire/wireServiceImpl';
+import { Error2, ErrorCodes } from '#/errors';
+import { IWireService } from '#/wire/wire';
+import type { WireRecord } from '#/wire/record';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { recordingWireLog, registerTestAgentWire } from '../../wire/stubs';
 
 const capabilities: ModelCapability = {
   image_in: false,
@@ -53,7 +59,12 @@ const history: Message[] = [
   { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
 ];
 
-function createModel(calls: { value: number }, firstCallError?: Error | null): Model {
+function createModel(
+  calls: { value: number },
+  firstCallError?: Error | null,
+  subsequentCallErrors: readonly Error[] = [],
+  capturedInputs?: LLMRequestInput[],
+): Model {
   const build = (): Model => ({
     id: 'm',
     name: 'wire-model',
@@ -72,11 +83,17 @@ function createModel(calls: { value: number }, firstCallError?: Error | null): M
     withGenerationKwargs: () => build(),
     withProviderOptions: () => build(),
     withThinkingKeep: () => build(),
-    request: async function* () {
+    request: async function* (input) {
       calls.value += 1;
-      if (calls.value === 1 && firstCallError !== null) {
-        throw firstCallError ?? new APIStatusError(400, 'messages: `tool_use` ids must be unique');
-      }
+      capturedInputs?.push(input);
+      const error =
+        calls.value === 1
+          ? firstCallError === null
+            ? undefined
+            : (firstCallError ??
+              new APIStatusError(400, 'messages: `tool_use` ids must be unique'))
+          : subsequentCallErrors[calls.value - 2];
+      if (error !== undefined) throw error;
       yield {
         type: 'finish',
         message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
@@ -99,8 +116,17 @@ afterEach(() => disposables.dispose());
 
 function createService(
   model: Model,
-  projector: Pick<IAgentContextProjectorService, 'project' | 'projectStrict'> &
-    Partial<Pick<IAgentContextProjectorService, 'projectMediaDegraded' | 'projectMediaStripped'>>,
+  projector:
+    | (Pick<IAgentContextProjectorService, 'project' | 'projectStrict'> &
+        Partial<
+          Pick<
+            IAgentContextProjectorService,
+            | 'captureMediaStripSnapshot'
+            | 'projectMediaDegraded'
+            | 'projectMediaStripped'
+          >
+        >)
+    | undefined,
   options: { readonly flagEnabled?: boolean } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
@@ -143,10 +169,23 @@ function createService(
     shapeHistory: (messages) => messages,
   };
   const flagEnabled = options.flagEnabled ?? true;
+  const testSnapshot = Object.freeze({}) as MediaStripSnapshot;
 
   ix.stub(IAgentContextMemoryService, context);
   ix.stub(IAgentToolSelectService, toolSelect);
-  ix.stub(IAgentContextProjectorService, projector);
+  if (projector === undefined) {
+    ix.set(
+      IAgentContextProjectorService,
+      new SyncDescriptor(AgentContextProjectorService),
+    );
+  } else {
+    ix.stub(IAgentContextProjectorService, {
+      captureMediaStripSnapshot: () => testSnapshot,
+      projectMediaDegraded: projector.project,
+      projectMediaStripped: projector.project,
+      ...projector,
+    });
+  }
   ix.stub(IFlagService, { enabled: () => flagEnabled });
   ix.stub(IAgentContextSizeService, contextSize);
   ix.stub(IAgentToolRegistryService, tools);
@@ -155,17 +194,16 @@ function createService(
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
-  ix.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
-  ix.set(
-    IAgentWireService,
-    new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: 'strict-resend' }]),
-  );
+  const records: WireRecord[] = [];
+  registerTestAgentWire(ix, 'wire/llm-requester', { log: recordingWireLog(records) });
   ix.set(IFaultInjectionService, new SyncDescriptor(FaultInjectionService));
   ix.set(IAgentLLMRequesterService, new SyncDescriptor(AgentLLMRequesterService));
 
   return {
     service: ix.get(IAgentLLMRequesterService),
     faultInjection: ix.get(IFaultInjectionService),
+    wire: ix.get(IWireService),
+    records,
   };
 }
 
@@ -313,21 +351,29 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     let projectCalls = 0;
     let degradedCalls = 0;
     let strippedCalls = 0;
-    const { service } = createService(createModel(calls, BODY_TOO_LARGE_413), {
-      project: (messages: readonly ContextMessage[]) => {
-        projectCalls += 1;
-        return messages;
+    const { service } = createService(
+      createModel(
+        calls,
+        new Error2(ErrorCodes.PROVIDER_API_ERROR, 'Provider request failed', {
+          cause: BODY_TOO_LARGE_413,
+        }),
+      ),
+      {
+        project: (messages: readonly ContextMessage[]) => {
+          projectCalls += 1;
+          return messages;
+        },
+        projectStrict: (messages: readonly ContextMessage[]) => messages,
+        projectMediaDegraded: (messages: readonly ContextMessage[]) => {
+          degradedCalls += 1;
+          return messages;
+        },
+        projectMediaStripped: (messages: readonly ContextMessage[]) => {
+          strippedCalls += 1;
+          return messages;
+        },
       },
-      projectStrict: (messages: readonly ContextMessage[]) => messages,
-      projectMediaDegraded: (messages: readonly ContextMessage[]) => {
-        degradedCalls += 1;
-        return messages;
-      },
-      projectMediaStripped: (messages: readonly ContextMessage[]) => {
-        strippedCalls += 1;
-        return messages;
-      },
-    });
+    );
 
     const result = await service.request();
 
@@ -336,6 +382,135 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
     expect(projectCalls).toBe(1);
     expect(degradedCalls).toBe(1);
     expect(strippedCalls).toBe(0);
+  });
+
+  it('falls back to media-stripped when the media-degraded request still receives 413', async () => {
+    const calls = { value: 0 };
+    let projectCalls = 0;
+    let degradedCalls = 0;
+    let strippedCalls = 0;
+    const { service } = createService(
+      createModel(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
+      {
+        project: (messages: readonly ContextMessage[]) => {
+          projectCalls += 1;
+          return messages;
+        },
+        projectStrict: (messages: readonly ContextMessage[]) => messages,
+        projectMediaDegraded: (messages: readonly ContextMessage[]) => {
+          degradedCalls += 1;
+          return messages;
+        },
+        projectMediaStripped: (messages: readonly ContextMessage[]) => {
+          strippedCalls += 1;
+          return messages;
+        },
+      },
+    );
+
+    const result = await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(3);
+    expect(projectCalls).toBe(1);
+    expect(degradedCalls).toBe(1);
+    expect(strippedCalls).toBe(1);
+  });
+
+  it('records repeated-413 recovery projections on the sticky later request', async () => {
+    const calls = { value: 0 };
+    const { service, wire, records } = createService(
+      createModel(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413]),
+      {
+        project: (messages: readonly ContextMessage[]) => messages,
+        projectStrict: (messages: readonly ContextMessage[]) => messages,
+        projectMediaDegraded: (messages: readonly ContextMessage[]) => messages,
+        projectMediaStripped: (messages: readonly ContextMessage[]) => messages,
+      },
+    );
+
+    await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+    await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
+    await wire.flush();
+
+    expect(
+      records
+        .filter((record) => record.type === 'llm.request')
+        .map((record) => record['projection']),
+    ).toEqual([undefined, 'media-degraded', 'media-stripped', 'media-stripped']);
+  });
+
+  it('keeps new recovery media visible on later snapshot-stripped steps', async () => {
+    const calls = { value: 0 };
+    const capturedInputs: LLMRequestInput[] = [];
+    const oldUrl = 'data:image/png;base64,REJECTED';
+    const newUrl = 'data:image/png;base64,SMALL';
+    const imageMessage = (url: string, id: string): Message => ({
+      role: 'user',
+      content: [{ type: 'image_url', imageUrl: { url, id } }],
+      toolCalls: [],
+    });
+    const { service } = createService(
+      createModel(
+        calls,
+        BODY_TOO_LARGE_413,
+        [BODY_TOO_LARGE_413],
+        capturedInputs,
+      ),
+      undefined,
+    );
+
+    await service.request({
+      messages: [imageMessage(oldUrl, 'rejected-id')],
+      source: { type: 'turn', turnId: 1, step: 1 },
+    });
+    await service.request({
+      messages: [
+        imageMessage(oldUrl, 'rejected-id'),
+        imageMessage(newUrl, 'recovery-id'),
+      ],
+      source: { type: 'turn', turnId: 1, step: 2 },
+    });
+
+    const visibleUrls = capturedInputs
+      .at(-1)
+      ?.messages.flatMap((message) => message.content)
+      .filter((part) => part.type === 'image_url')
+      .map((part) => part.imageUrl.url);
+    expect(visibleUrls).toEqual([newUrl]);
+  });
+
+  it('stops after the media-stripped request also receives 413', async () => {
+    const calls = { value: 0 };
+    let projectCalls = 0;
+    let degradedCalls = 0;
+    let strippedCalls = 0;
+    const { service } = createService(
+      createModel(calls, BODY_TOO_LARGE_413, [BODY_TOO_LARGE_413, BODY_TOO_LARGE_413]),
+      {
+        project: (messages: readonly ContextMessage[]) => {
+          projectCalls += 1;
+          return messages;
+        },
+        projectStrict: (messages: readonly ContextMessage[]) => messages,
+        projectMediaDegraded: (messages: readonly ContextMessage[]) => {
+          degradedCalls += 1;
+          return messages;
+        },
+        projectMediaStripped: (messages: readonly ContextMessage[]) => {
+          strippedCalls += 1;
+          return messages;
+        },
+      },
+    );
+
+    await expect(
+      service.request({ source: { type: 'turn', turnId: 1, step: 1 } }),
+    ).rejects.toBe(BODY_TOO_LARGE_413);
+    expect(calls.value).toBe(3);
+    expect(projectCalls).toBe(1);
+    expect(degradedCalls).toBe(1);
+    expect(strippedCalls).toBe(1);
   });
 
   it('keeps later steps of the same turn on the degraded projection', async () => {

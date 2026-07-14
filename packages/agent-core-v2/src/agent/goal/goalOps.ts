@@ -14,8 +14,8 @@
  * replay). Each `apply` returns the same reference when nothing changes so the
  * wire's reference-equality gate stays quiet. The `goal.updated` fact is
  * published live to `IEventBus` by the service (declared here via
- * interface-merge); `wire.replay` rebuilds the Model silently and the
- * service's `wire.onRestored`
+ * interface-merge); `wire.restore` rebuilds the Model silently and the
+ * service's `wire.hooks.onDidRestore`
  * forces a replayed `active` goal back to `paused`. Consumed by the Agent-scope
  * `goalService`.
  */

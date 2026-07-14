@@ -13,8 +13,8 @@
  * roots are remembered through `workspaceRegistry`. On create / fork the
  * session is also appended to the shared `session_index.jsonl` so v1 clients
  * (TUI, export) can discover sessions created by the v2 engine. Fork flushes
- * live agent logs and rejects non-empty logs without a protocol metadata
- * envelope instead of stamping legacy data as current.
+ * live Agent wire journals, normalizes a missing protocol envelope, and
+ * appends the fork boundary before restoring the target Agent.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -35,19 +35,8 @@ import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Emitter, type Event } from '#/_base/event';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionActivityKernel } from '#/activity/activity';
-import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/agent/plan/configSection';
 import { IAgentPlanService } from '#/agent/plan/plan';
-import {
-  AGENT_WIRE_PROTOCOL_VERSION,
-  IAgentWireRecordService,
-  type PersistedWireRecord,
-} from '#/agent/wireRecord/wireRecord';
-import {
-  missingWireMetadataError,
-  WIRE_RECORD_FILENAME,
-  wireRecordScope,
-} from '#/agent/wireRecord/wireRecordService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
@@ -68,16 +57,22 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ensureMainAgent, MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
+import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { labelsFromAgentMeta } from '#/session/agentLifecycle/subagentMetadata';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/sessionContext';
+import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import { IAgentWireService } from '#/wire/tokens';
-import type { PersistedRecord } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
+import {
+  AGENT_WIRE_RECORD_KEY,
+  createWireMetadataRecord,
+  type WireRecord,
+} from '#/wire/record';
 
 import {
   type CreateChildSessionOptions,
@@ -183,8 +178,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
     void handle.accessor.get(ISessionSkillCatalog).ready;
-    await handle.accessor.get(IAgentLifecycleService).ensureMcpReady(opts.mcpServers);
+    await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
+    // Force-instantiate the session-level eager services whose subscriptions
+    // must exist before the first agent / turn (external hooks, cron).
     handle.accessor.get(ISessionExternalHooksService);
+    handle.accessor.get(ISessionCronService);
     return handle;
   }
 
@@ -245,13 +243,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       workspaceId: summary.workspaceId,
     });
     const agents = handle.accessor.get(IAgentLifecycleService);
-    if (agents.getHandle(MAIN_AGENT_ID) === undefined) {
-      const main = await ensureMainAgent(handle);
-      main.accessor.get(IAgentContextMemoryService);
-      const mainWireRecord = main.accessor.get(IAgentWireRecordService);
-      await mainWireRecord.restore();
-      const records = mainWireRecord.getRecords() as readonly PersistedRecord[];
-      await main.accessor.get(IAgentWireService).replay(...records);
+    if (agents.get(MAIN_AGENT_ID) === undefined) {
+      await agents.create({ agentId: MAIN_AGENT_ID });
     }
     await this.announceCreated({ sessionId, handle, source: 'resume' });
     return handle;
@@ -366,10 +359,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       const sourceAgents = sourceMeta?.agents ?? {};
       const agentIds = Object.keys(sourceAgents);
       for (const agentId of agentIds) {
-        const sourceHomedir = sourceAgents[agentId]!.homedir;
         await this.copyAgentWire({
           sourceHandle,
-          sourceHomedir,
+          sourceWorkspaceId: workspaceId,
+          sourceSessionId: sourceId,
           agentId,
           targetWorkspaceId: targetCtx.workspaceId,
           targetSessionId: targetCtx.sessionId,
@@ -390,15 +383,11 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
       for (const agentId of agentIds) {
         const sourceAgent = sourceAgents[agentId]!;
-        const agentHandle = await target.accessor.get(IAgentLifecycleService).create({
+        await target.accessor.get(IAgentLifecycleService).create({
           agentId,
           forkedFrom: sourceAgent.forkedFrom,
           labels: labelsFromAgentMeta(sourceAgent),
         });
-        const forkWireRecord = agentHandle.accessor.get(IAgentWireRecordService);
-        await forkWireRecord.restore();
-        const forkRecords = forkWireRecord.getRecords() as readonly PersistedRecord[];
-        await agentHandle.accessor.get(IAgentWireService).replay(...forkRecords);
       }
 
       await this.appendSessionIndexEntry(targetId, workspace.root);
@@ -455,7 +444,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
 
   private async copyAgentWire(args: {
     readonly sourceHandle: ISessionScopeHandle | undefined;
-    readonly sourceHomedir: string;
+    readonly sourceWorkspaceId: string;
+    readonly sourceSessionId: string;
     readonly agentId: string;
     readonly targetWorkspaceId: string;
     readonly targetSessionId: string;
@@ -463,33 +453,36 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (args.sourceHandle !== undefined) {
       const agentHandle = args.sourceHandle.accessor
         .get(IAgentLifecycleService)
-        .getHandle(args.agentId);
+        .get(args.agentId);
       if (agentHandle !== undefined) {
-        await agentHandle.accessor.get(IAgentWireRecordService).flush();
+        await agentHandle.accessor.get(IWireService).flush();
       }
     }
 
     const records = await collect(
-      this.appendLogStore.read<PersistedWireRecord>(
-        wireRecordScope(args.sourceHomedir, this.bootstrap.homeDir),
-        WIRE_RECORD_FILENAME,
+      this.appendLogStore.read<WireRecord>(
+        this.bootstrap.agentScope(
+          args.sourceWorkspaceId,
+          args.sourceSessionId,
+          args.agentId,
+        ),
+        AGENT_WIRE_RECORD_KEY,
       ),
     );
     if (records.length === 0) {
-      records.push(freshMetadataRecord());
+      records.push(createWireMetadataRecord());
     } else if (records[0]?.type !== 'metadata') {
-      throw missingWireMetadataError();
+      records.unshift(createWireMetadataRecord());
     }
     records.push(forkedRecord());
 
-    const targetHomedir = this.bootstrap.agentHomedir(
-      args.targetWorkspaceId,
-      args.targetSessionId,
-      args.agentId,
-    );
     await this.appendLogStore.rewrite(
-      wireRecordScope(targetHomedir, this.bootstrap.homeDir),
-      WIRE_RECORD_FILENAME,
+      this.bootstrap.agentScope(
+        args.targetWorkspaceId,
+        args.targetSessionId,
+        args.agentId,
+      ),
+      AGENT_WIRE_RECORD_KEY,
       records,
     );
   }
@@ -513,7 +506,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   ): Promise<void> {
     for (const entry of entries) {
       const rel = relBase === '' ? entry.name : `${relBase}/${entry.name}`;
-      if (rel === 'state.json' || rel === 'logs' || entry.name === WIRE_RECORD_FILENAME) {
+      if (rel === 'state.json' || rel === 'logs' || entry.name === AGENT_WIRE_RECORD_KEY) {
         continue;
       }
       if (entry.isSymbolicLink === true) continue;
@@ -569,7 +562,7 @@ registerScopedService(
   LifecycleScope.App,
   ISessionLifecycleService,
   SessionLifecycleService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionLifecycle',
 );
 
@@ -590,16 +583,8 @@ function createSessionId(): string {
   return `session_${randomUUID()}`;
 }
 
-function freshMetadataRecord(): PersistedWireRecord {
-  return {
-    type: 'metadata',
-    protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
-    created_at: Date.now(),
-  };
-}
-
-function forkedRecord(): PersistedWireRecord {
-  return { type: 'forked', time: Date.now() } as PersistedWireRecord;
+function forkedRecord(): WireRecord {
+  return { type: 'forked', time: Date.now() };
 }
 
 function forkCustomMetadata(

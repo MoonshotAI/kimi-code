@@ -159,6 +159,34 @@ describe('ModelCatalogService', () => {
     ]);
   });
 
+  it('projects support_efforts and default_effort from the model config', async () => {
+    backing.models['k2'] = {
+      ...backing.models['k2'],
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    };
+    const [k2] = await catalog().listModels();
+    expect(k2).toMatchObject({
+      model: 'k2',
+      support_efforts: ['low', 'high', 'max'],
+      default_effort: 'max',
+    });
+  });
+
+  it('projects effort fields from overrides when present', async () => {
+    backing.models['k2'] = {
+      ...backing.models['k2'],
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'high',
+      overrides: { supportEfforts: ['low', 'high', 'max'], defaultEffort: 'max' },
+    };
+    const [k2] = await catalog().listModels();
+    expect(k2).toMatchObject({
+      support_efforts: ['low', 'high', 'max'],
+      default_effort: 'max',
+    });
+  });
+
   it('lists providers with per-provider models, default model, and credential state', async () => {
     await expect(catalog().listProviders()).resolves.toEqual([
       {

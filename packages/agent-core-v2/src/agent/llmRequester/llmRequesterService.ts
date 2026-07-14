@@ -5,8 +5,10 @@
  * `LLMRequestInput` from `profile` (system prompt), `contextMemory` +
  * `contextProjector` (history), `toolRegistry` (tools), and `toolSelect`
  * (progressive-disclosure shaping of the tool and history views), applies the
- * completion-token budget, then drives a single `model.request(input, signal)`
- * attempt — retry policy lives in the loop's `stepRetry` plugin, not here.
+ * completion-token budget, then drives a bounded request chain: one primary
+ * `model.request(input, signal)` attempt plus projection rebuilds for request
+ * structure or media compatibility; general retry policy remains in the
+ * loop's `stepRetry` plugin.
  * Forwards streamed `part` events to the caller's `onPart`
  * handler, records `usage` through `IAgentUsageService`, resolves to an
  * `LLMRequestFinish` on the `finish` event, logs the request lifecycle
@@ -20,7 +22,10 @@ import { createHash } from 'node:crypto';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
-import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
+import {
+  IAgentContextProjectorService,
+  type MediaStripSnapshot,
+} from '#/agent/contextProjector/contextProjector';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import {
   IFaultInjectionService,
@@ -57,9 +62,8 @@ import { applyCompletionBudget, resolveCompletionBudget } from '#/app/model/comp
 import type { Protocol } from '#/app/protocol/protocol';
 import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 import type { PayloadOf } from '#/wire/types';
-import type { IWireService } from '#/wire/wireService';
 import { THINKING_SECTION, type ThinkingConfig } from '#/agent/profile/configSection';
 import { resolveThinkingKeep } from '#/agent/profile/thinking';
 
@@ -126,7 +130,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   private lastConfigLogSignature: string | undefined;
   private readonly turnConfigs = new Map<number, TurnRequestConfig>();
   private readonly mediaDegradedTurns = new Set<number>();
-  private readonly mediaStrippedTurns = new Set<number>();
+  private readonly mediaStrippedTurns = new Map<number, MediaStripSnapshot>();
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -139,7 +143,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IConfigService private readonly config: IConfigService,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IFaultInjectionService private readonly faultInjection: IFaultInjectionService,
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
@@ -215,8 +219,9 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     onPart: LLMRequestPartHandler,
     signal: AbortSignal | undefined,
   ): Promise<LLMRequestFinish> {
+    const shaped = this.toolSelect.shapeHistory(request.messages);
+    let mediaStripSnapshot = this.mediaStripSnapshotForTurn(request.source);
     const requestInput = (projection: RequestProjection) => {
-      const shaped = this.toolSelect.shapeHistory(request.messages);
       return {
         systemPrompt: request.systemPrompt,
         tools: request.tools,
@@ -226,7 +231,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
             : projection === 'media-degraded'
               ? this.projector.projectMediaDegraded(shaped)
               : projection === 'media-stripped'
-                ? this.projector.projectMediaStripped(shaped)
+                ? this.projector.projectMediaStripped(
+                    shaped,
+                    (mediaStripSnapshot ??=
+                      this.projector.captureMediaStripSnapshot(shaped)),
+                  )
                 : this.projector.project(shaped),
       };
     };
@@ -300,55 +309,96 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       };
     };
 
-    const initialProjection: RequestProjection = this.isRecoveryTurn(
-      this.mediaStrippedTurns,
-      request.source,
-    )
+    const initialProjection: RequestProjection = mediaStripSnapshot !== undefined
       ? 'media-stripped'
       : this.isRecoveryTurn(this.mediaDegradedTurns, request.source)
         ? 'media-degraded'
         : 'normal';
-    try {
-      return await run(initialProjection);
-    } catch (error) {
-      if (signal?.aborted === true) throw error;
-      const raw = unwrapErrorCause(error);
-      if (initialProjection === 'normal' && raw instanceof APIRequestTooLargeError) {
-        signal?.throwIfAborted();
-        this.log.warn('provider rejected request as too large; resending with degraded media', {
-          model: request.model.name,
-          ...request.logFields,
-        });
-        this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
-        return run('media-degraded');
-      }
-      if (initialProjection !== 'media-stripped' && isImageFormatError(raw)) {
-        signal?.throwIfAborted();
-        this.log.warn(
-          'provider rejected an image in the request; resending with all media stripped',
-          {
+    let projection: RequestProjection = initialProjection;
+    for (;;) {
+      try {
+        return await run(projection);
+      } catch (error) {
+        if (signal?.aborted === true) throw error;
+        const raw = unwrapErrorCause(error);
+        if (
+          raw instanceof APIRequestTooLargeError &&
+          (projection === 'normal' || projection === 'media-degraded')
+        ) {
+          signal?.throwIfAborted();
+          if (projection === 'normal') {
+            this.log.warn(
+              'provider rejected request as too large; resending with degraded media',
+              {
+                model: request.model.name,
+                ...request.logFields,
+              },
+            );
+            this.markRecoveryTurn(this.mediaDegradedTurns, request.source);
+            projection = 'media-degraded';
+          } else {
+            this.log.warn(
+              'provider rejected degraded-media request as too large; resending with rejected media stripped',
+              {
+                model: request.model.name,
+                ...request.logFields,
+              },
+            );
+            mediaStripSnapshot = this.projector.captureMediaStripSnapshot(shaped);
+            this.markMediaStrippedRecoveryTurn(mediaStripSnapshot, request.source);
+            projection = 'media-stripped';
+          }
+          continue;
+        }
+        if (projection !== 'media-stripped' && isImageFormatError(raw)) {
+          signal?.throwIfAborted();
+          this.log.warn(
+            'provider rejected an image in the request; resending with rejected media stripped',
+            {
+              model: request.model.name,
+              ...request.logFields,
+            },
+          );
+          mediaStripSnapshot = this.projector.captureMediaStripSnapshot(shaped);
+          this.markMediaStrippedRecoveryTurn(mediaStripSnapshot, request.source);
+          projection = 'media-stripped';
+          continue;
+        }
+        if (projection === 'normal' && isRecoverableRequestStructureError(raw)) {
+          signal?.throwIfAborted();
+          this.log.warn('provider rejected request structure; resending with strict projection', {
             model: request.model.name,
             ...request.logFields,
-          },
-        );
-        this.markRecoveryTurn(this.mediaStrippedTurns, request.source);
-        return run('media-stripped');
+          });
+          projection = 'strict';
+          continue;
+        }
+        throw error;
       }
-      if (initialProjection === 'normal' && isRecoverableRequestStructureError(raw)) {
-        signal?.throwIfAborted();
-        this.log.warn('provider rejected request structure; resending with strict projection', {
-          model: request.model.name,
-          ...request.logFields,
-        });
-        return run('strict');
-      }
-      throw error;
     }
   }
 
   private isRecoveryTurn(set: ReadonlySet<number>, source: LLMRequestSource | undefined): boolean {
     if (source?.type !== 'turn') return false;
     return set.has(source.turnId);
+  }
+
+  private mediaStripSnapshotForTurn(
+    source: LLMRequestSource | undefined,
+  ): MediaStripSnapshot | undefined {
+    if (source?.type !== 'turn') return undefined;
+    return this.mediaStrippedTurns.get(source.turnId);
+  }
+
+  private markMediaStrippedRecoveryTurn(
+    snapshot: MediaStripSnapshot,
+    source: LLMRequestSource | undefined,
+  ): void {
+    if (source?.type !== 'turn') return;
+    for (const id of this.mediaStrippedTurns.keys()) {
+      if (id < source.turnId) this.mediaStrippedTurns.delete(id);
+    }
+    this.mediaStrippedTurns.set(source.turnId, snapshot);
   }
 
   private markRecoveryTurn(set: Set<number>, source: LLMRequestSource | undefined): void {
@@ -626,6 +676,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentLLMRequesterService,
   AgentLLMRequesterService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'llmRequester',
 );

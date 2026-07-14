@@ -7,7 +7,7 @@
  *     normalization and the `$` builtin branch shared with top-level tools);
  *   - `Tool.deferred` stripping in `generate()` (single strip point for every
  *     provider call — the marker itself must never reach the wire);
- *   - the `select_tools` capability bit (unknown/default-off semantics).
+ *   - the `dynamically_loaded_tools` capability bit (unknown/default-off semantics).
  */
 
 import { UNKNOWN_CAPABILITY, isUnknownCapability } from '#/app/llmProtocol/capability';
@@ -318,12 +318,12 @@ describe('providers without message-level tool declarations', () => {
   });
 });
 
-describe('select_tools capability bit', () => {
+describe('dynamically_loaded_tools capability bit', () => {
   it('defaults to false on UNKNOWN_CAPABILITY', () => {
-    expect(UNKNOWN_CAPABILITY.select_tools).toBe(false);
+    expect(UNKNOWN_CAPABILITY.dynamically_loaded_tools).toBe(false);
   });
 
-  it('a capability that only has select_tools is not "unknown"', () => {
+  it('a capability that only has dynamically_loaded_tools is not "unknown"', () => {
     expect(
       isUnknownCapability({
         image_in: false,
@@ -332,16 +332,17 @@ describe('select_tools capability bit', () => {
         thinking: false,
         tool_use: false,
         max_context_tokens: 0,
-        select_tools: true,
+        dynamically_loaded_tools: true,
       }),
     ).toBe(false);
   });
 
-  it('catalog entries map select_tools and default it to false', () => {
+  it('catalog entries map dynamically_loaded_tools and default it to false', () => {
     const base = { id: 'm', limit: { context: 1000 } };
-    expect(catalogModelToCapability(base)?.capability.select_tools).toBe(false);
+    expect(catalogModelToCapability(base)?.capability.dynamically_loaded_tools).toBe(false);
     expect(
-      catalogModelToCapability({ ...base, select_tools: true })?.capability.select_tools,
+      catalogModelToCapability({ ...base, dynamically_loaded_tools: true })?.capability
+        .dynamically_loaded_tools,
     ).toBe(true);
   });
 });

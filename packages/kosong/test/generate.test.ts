@@ -269,6 +269,23 @@ describe('generate()', () => {
     expect(result.message.toolCalls.length).toBeGreaterThan(0);
   });
 
+  it('preserves an explicitly empty ThinkPart alongside a tool call', async () => {
+    const stream = createMockStream([
+      { type: 'think', think: '' },
+      {
+        type: 'function',
+        id: 'tool#1',
+        name: 'read_file',
+        arguments: '{"path":"/tmp"}',
+      },
+    ]);
+    const provider = createMockProvider(stream);
+
+    const result = await generate(provider, '', [], []);
+
+    expect(result.message.content).toEqual([{ type: 'think', think: '' }]);
+  });
+
   it('preserves stream id and usage', async () => {
     const usage: TokenUsage = {
       inputOther: 100,

@@ -40,8 +40,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import compactionInstructionTemplate from './compaction-instruction.md?raw';
 import {
   IAgentFullCompactionService,
@@ -127,7 +126,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionTodoService private readonly todo: ISessionTodoService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentActivityService private readonly activity: IAgentActivityService,
     @ILogService private readonly log: ILogService,
@@ -135,7 +134,12 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   ) {
     super();
     this.strategy = new RuntimeCompactionStrategy(() => this.resolveModelContextWithEffectiveMax());
-    this._register(this.wire.onRestored(() => this.normalizeAfterReplay()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('full-compaction', async (_ctx, next) => {
+        this.normalizeAfterReplay();
+        await next();
+      }),
+    );
     this._register(
       this.eventBus.subscribe('turn.started', () => this.resetForTurn()),
     );
@@ -279,7 +283,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     if (history.length === 0) {
       throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
     }
-    if (source === 'manual' && this.activity.lane() !== 'idle') {
+    if (source === 'manual' && !this.activity.isIdle()) {
       throw new Error2(
         ErrorCodes.COMPACTION_UNABLE,
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',
@@ -508,6 +512,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     const originalHistory = [...this.context.get()];
     const tokensBefore = estimateTokensForMessages(originalHistory);
     let retryCount = 0;
+    let thinkingEffort = this.profile.data().thinkingLevel;
 
     try {
       const signal = active.abortController.signal;
@@ -516,6 +521,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       await this.hooks.onWillCompact.run(active);
 
       const resolvedModel = this.profile.resolveModelContext();
+      thinkingEffort = resolvedModel.thinkingLevel;
       const maxContextTokens = resolvedModel.modelCapabilities.max_context_tokens;
       const defaultCompactionCap =
         maxContextTokens > 0
@@ -548,6 +554,10 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
                   type: 'operation',
                   turnId: active.originTurnId,
                   requestKind: 'full_compaction',
+                  // Per-attempt count of messages dropped by overflow/empty
+                  // shrinks so far; recorded on the llm.request wire op so a
+                  // replay can see how much history each retry round blinded.
+                  logFields: { droppedCount },
                 },
               },
               undefined,
@@ -637,7 +647,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         dropped_count: result.droppedCount,
         retry_count: retryCount,
         round: 1,
-        thinking_effort: this.profile.data().thinkingLevel,
+        thinking_effort: thinkingEffort,
         ...usageTelemetry(attempt.usage),
       };
       this.telemetry.track2('compaction_finished', properties);
@@ -652,7 +662,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         duration_ms: Date.now() - startedAt,
         round: 1,
         retry_count: retryCount,
-        thinking_effort: this.profile.data().thinkingLevel,
+        thinking_effort: thinkingEffort,
         error_type: error instanceof Error ? error.name : 'Unknown',
       };
       this.telemetry.track2('compaction_failed', properties);

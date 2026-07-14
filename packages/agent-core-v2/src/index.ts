@@ -19,9 +19,10 @@ export * from '#/_base/log/logConfig';
 export * from '#/_base/log/formatter';
 export * from '#/_base/log/fileLog';
 export * from '#/_base/log/logService';
-export { IAgentWireService, ISessionWireService } from '#/wire/tokens';
-export { type IWireService, type WireEmission } from '#/wire/wireService';
-export { defineDerivedModel, type DerivedModelDef } from '#/wire/model';
+export * from '#/wire/wire';
+export * from '#/wire/wireService';
+export * from '#/wire/record';
+export * from '#/wire/migration/migration';
 export * from '#/session/sessionLog/sessionLogService';
 export * from '#/app/telemetry/telemetry';
 export * from '#/app/telemetry/events';
@@ -189,9 +190,6 @@ export * from '#/agent/swarm/swarm';
 export * from '#/agent/swarm/swarmService';
 export * from '#/agent/usage/usage';
 export * from '#/agent/usage/usageService';
-export * from '#/agent/runtime/runtime';
-export * from '#/agent/runtime/runtimeOps';
-export * from '#/agent/runtime/runtimeService';
 export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
 import '#/agent/toolSelect/flag';
@@ -204,6 +202,12 @@ export * from '#/agent/toolSelect/toolSelectAnnouncements';
 export * from '#/agent/toolSelect/toolSelectAnnouncementsService';
 
 import '#/agent/task/configSection';
+export {
+  resolveAgentTaskConfig,
+  resolvePrintBackgroundMode,
+  type AgentTaskConfig,
+  type PrintBackgroundMode,
+} from '#/agent/task/configSection';
 import '#/agent/task/tools/task-list';
 import '#/agent/task/tools/task-output';
 import '#/agent/task/tools/task-stop';
@@ -225,11 +229,16 @@ export * from '#/session/cron/sessionCronServiceImpl';
 import '#/session/agentLifecycle/profile/profiles';
 export * from '#/session/agentLifecycle/agentLifecycle';
 export * from '#/session/agentLifecycle/agentLifecycleService';
-export * from '#/session/agentLifecycle/tools/subagent-task';
-export { AGENT_RUN_PROMPT_ORIGIN } from '#/session/agentLifecycle/runAgentTurn';
 export * from '#/session/agentLifecycle/mainAgent';
-export * from '#/session/agentLifecycle/mirrorAgentRun';
-import '#/session/agentLifecycle/tools/agent';
+export * from '#/session/mcp/sessionMcp';
+export * from '#/session/mcp/sessionMcpService';
+export * from '#/session/subagent/subagent';
+export * from '#/session/subagent/subagentService';
+export * from '#/session/subagent/tools/subagent-task';
+export { AGENT_RUN_PROMPT_ORIGIN } from '#/session/subagent/runAgentTurn';
+export * from '#/session/subagent/mirrorAgentRun';
+import '#/session/subagent/configSection';
+import '#/session/subagent/tools/agent';
 export * from '#/app/sessionLifecycle/sessionLifecycle';
 export * from '#/app/sessionLifecycle/sessionLifecycleService';
 export * from '#/session/externalHooks/externalHooks';
@@ -414,7 +423,6 @@ export * from '#/agent/prompt/promptService';
 import '#/app/messageLegacy/errors';
 export * from '#/app/messageLegacy/messageLegacy';
 export * from '#/app/messageLegacy/messageLegacyService';
-export * from '#/agent/replayBuilder/replayTimelineModel';
 export * from '#/agent/replayBuilder/types';
 export * from '#/agent/shellCommand/shellCommand';
 export * from '#/agent/shellCommand/shellCommandService';
@@ -453,6 +461,3 @@ export type { ToolContribution, ToolContributionOptions } from '#/agent/toolRegi
 export * from '#/agent/userTool/userTool';
 export * from '#/agent/userTool/userToolOps';
 export * from '#/agent/userTool/userToolService';
-export * from '#/agent/wireRecord/wireRecord';
-export * from '#/agent/wireRecord/wireRecordService';
-export * from '#/agent/wireRecord/metadataOps';

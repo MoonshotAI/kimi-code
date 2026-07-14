@@ -324,6 +324,6 @@ registerScopedService(
   LifecycleScope.App,
   ISessionIndex,
   FileSessionIndex,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionIndex',
 );

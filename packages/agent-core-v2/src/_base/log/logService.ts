@@ -170,6 +170,6 @@ registerScopedService(
   LifecycleScope.App,
   ILogService,
   AppLogService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'log',
 );

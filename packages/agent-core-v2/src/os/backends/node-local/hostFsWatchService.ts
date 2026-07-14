@@ -96,6 +96,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostFsWatchService,
   HostFsWatchService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'hostFsWatch',
 );

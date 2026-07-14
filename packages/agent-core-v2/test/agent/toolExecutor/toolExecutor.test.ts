@@ -20,14 +20,11 @@ import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/
 import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
-import { IAgentWireService } from '#/wire/tokens';
-import { WireService } from '#/wire/wireServiceImpl';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { stubWireRecord } from '../contextMemory/stubs';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { registerTestAgentWireServices } from '../../wire/stubs';
 
 type ToolExecutorEvent =
   | { readonly type: 'tool.result'; readonly toolCallId: string; readonly result: ToolResult };
@@ -49,14 +46,10 @@ beforeEach(() => {
   truncateForModel = async (input) => input.result;
   ix = createServices(disposables, {
     additionalServices: (reg) => {
+      registerTestAgentWireServices(reg, 'wire/tool-executor');
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
       reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
-      reg.defineInstance(IAgentWireRecordService, stubWireRecord());
-      reg.defineInstance(
-        IAgentWireService,
-        disposables.add(new WireService({ logScope: 'wire', logKey: 'tool-executor' })),
-      );
       reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
       reg.defineInstance(IAgentToolResultTruncationService, {
         _serviceBrand: undefined,

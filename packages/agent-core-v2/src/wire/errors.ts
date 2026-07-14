@@ -4,7 +4,7 @@
  *
  * Aggregates the wire domain's coded errors: `DuplicateOpError` (thrown by
  * `defineOp` in `op.ts`) and `CycleError` (thrown by the dispatch drain in
- * `wireServiceImpl.ts`) stay co-located with their throw sites but extend
+ * `wireService.ts`) stay co-located with their throw sites but extend
  * `WireError`; `wire.unknown_record` is constructed here for replay-time
  * reporting of records whose Op type is absent from `OP_REGISTRY`.
  */
@@ -17,6 +17,7 @@ export const WireErrors = {
     WIRE_DUPLICATE_OP: 'wire.duplicate_op',
     WIRE_CYCLE: 'wire.cycle',
     WIRE_UNKNOWN_RECORD: 'wire.unknown_record',
+    RECORDS_WRITE_FAILED: 'records.write_failed',
   },
   info: {
     'wire.duplicate_op': {
@@ -36,6 +37,11 @@ export const WireErrors = {
       retryable: false,
       public: true,
       action: 'The record was written by a newer version; upgrade or drop it.',
+    },
+    'records.write_failed': {
+      title: 'Wire journal write failed',
+      retryable: false,
+      public: true,
     },
   },
 } as const satisfies ErrorDomain;

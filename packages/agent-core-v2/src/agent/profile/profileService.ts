@@ -4,9 +4,9 @@
  * Owns the active agent's model alias, thinking level, system prompt, and
  * active-tool set; resolves the runnable god-object Model through the App-
  * scope `IModelResolver`, persists the persistent config slice (`cwd` /
- * `modelAlias` / `profileName` / resolved `thinkingLevel` / `systemPrompt`) in
- * the `wire` `ProfileModel` through the `config.update` Op and the persisted
- * active-tool set in the `wire` `ActiveToolsModel` through the
+ * `modelAlias` / `profileName` / resolved base `thinkingLevel` /
+ * `systemPrompt`) in the `wire` `ProfileModel` through the `config.update` Op
+ * and the persisted active-tool set in the `wire` `ActiveToolsModel` through the
  * `tools.set_active_tools` Op (`wire.dispatch`), and reads both through
  * `wire.getModel`. The effective active-tool set read by consumers is the
  * persisted base (`ActiveToolsModel`, rebuilt by `wire.replay`) overlaid with
@@ -32,12 +32,16 @@ import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/a
 import { type Model } from '#/app/model/modelInstance';
 import { type KimiModelOverrides } from '#/app/model/modelOverrides';
 import { IModelResolver } from '#/app/model/modelResolver';
+import {
+  normalizeRequestedThinkingEffort,
+  resolveKimiThinkingEffortOverride,
+} from '#/app/model/thinking';
 import picomatch from 'picomatch';
 
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { resolveThinkingEffort, resolveThinkingKeep } from './thinking';
+import { resolveThinkingEffort, resolveThinkingKeep, supportsThinkingEffort } from './thinking';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -51,9 +55,8 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { WarningEvent } from '@moonshot-ai/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 import type { PayloadOf } from '#/wire/types';
-import type { IWireService } from '#/wire/wireService';
 import { IEventBus } from '#/app/event/eventBus';
 import { prepareSystemPromptContext } from './context';
 import type {
@@ -65,7 +68,7 @@ import type {
   ProfileSetModelResult,
   ProfileUpdateData,
 } from './profile';
-import { IAgentProfileService } from './profile';
+import { IAgentProfileService, ProfileError, ProfileErrors } from './profile';
 import {
   THINKING_SECTION,
   type ThinkingConfig,
@@ -102,7 +105,7 @@ export class AgentProfileService implements IAgentProfileService {
   private activeProfile: ResolvedAgentProfile | undefined;
 
   constructor(
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
@@ -192,7 +195,17 @@ export class AgentProfileService implements IAgentProfileService {
 
   setThinking(level: string): void {
     const previousEffort = this.thinkingLevel;
-    this.update({ thinkingLevel: level });
+    const model = this.tryResolveRawModel();
+    const normalized = normalizeRequestedThinkingEffort(level);
+    if (normalized !== undefined && !supportsThinkingEffort(normalized, model)) {
+      const efforts = model?.supportEfforts ?? [];
+      const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
+      throw new ProfileError(
+        ProfileErrors.codes.MODEL_CONFIG_INVALID,
+        `Thinking effort "${level}" is not supported by model "${this.modelAlias}". Supported efforts: ${supported}.`,
+      );
+    }
+    this.update({ thinkingLevel: normalized ?? level });
     const effort = this.thinkingLevel;
     if (effort !== previousEffort) {
       this.telemetry.track2('thinking_toggle', {
@@ -255,6 +268,10 @@ export class AgentProfileService implements IAgentProfileService {
     };
   }
 
+  getEffectiveThinkingLevel(): ThinkingEffort {
+    return this.resolveThinkingState(this.tryResolveRawModel()).effective;
+  }
+
   resolveModelContext(): ProfileModelContext {
     const modelAlias = this.model;
     const model = this.modelFactory.resolve(modelAlias);
@@ -264,7 +281,7 @@ export class AgentProfileService implements IAgentProfileService {
       modelCapabilities: model.capabilities,
       maxOutputSize: model.maxOutputSize,
       alwaysThinking: model.alwaysThinking || undefined,
-      thinkingLevel: this.thinkingLevel,
+      thinkingLevel: this.resolveThinkingState(model).effective,
       reservedContextSize: loopControl?.reservedContextSize,
       compactionTriggerRatio: loopControl?.compactionTriggerRatio,
     };
@@ -285,12 +302,8 @@ export class AgentProfileService implements IAgentProfileService {
   resolveModel(): Model | undefined {
     if (this.modelAlias === undefined) return undefined;
     let model: Model = this.modelFactory.resolve(this.modelAlias);
-    const thinkingLevel = this.thinkingLevel;
+    const thinking = this.resolveThinkingState(model);
     const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
-    const forcedKimiThinkingEffort =
-      model.protocol === 'kimi' && thinkingLevel !== 'off'
-        ? normalizeKimiThinkingEffort(thinkingConfig?.effort)
-        : undefined;
     const kwargs: GenerationKwargs = {};
     if (model.protocol === 'kimi') {
       kwargs.prompt_cache_key = this.sessionContext.sessionId;
@@ -307,24 +320,24 @@ export class AgentProfileService implements IAgentProfileService {
     const keep = resolveThinkingKeep(
       overrides?.thinkingKeep,
       thinkingConfig?.keep,
-      thinkingLevel,
+      thinking.effective,
     );
     if (keep !== undefined) {
-      if (model.protocol === 'kimi' && forcedKimiThinkingEffort === undefined) {
+      if (model.protocol === 'kimi' && thinking.forced === undefined) {
         kwargs.extra_body = { thinking: { keep } };
       } else if (model.protocol === 'anthropic') {
         model = model.withThinkingKeep(keep);
       }
     }
     if (Object.keys(kwargs).length > 0) model = model.withGenerationKwargs(kwargs);
-    model = model.withThinking(forcedKimiThinkingEffort ?? thinkingLevel);
-    if (forcedKimiThinkingEffort !== undefined) {
-      const thinking: { type: 'enabled'; effort: string; keep?: string } = {
+    model = model.withThinking(thinking.effective);
+    if (model.protocol === 'kimi' && thinking.forced !== undefined) {
+      const requestThinking: { type: 'enabled'; effort: string; keep?: string } = {
         type: 'enabled',
-        effort: forcedKimiThinkingEffort,
+        effort: thinking.forced,
       };
-      if (keep !== undefined) thinking.keep = keep;
-      model = model.withGenerationKwargs({ extra_body: { thinking } });
+      if (keep !== undefined) requestThinking.keep = keep;
+      model = model.withGenerationKwargs({ extra_body: { thinking: requestThinking } });
     }
     return model;
   }
@@ -387,10 +400,12 @@ export class AgentProfileService implements IAgentProfileService {
     if (changed.cwd !== undefined) payload.cwd = changed.cwd;
     if (changed.modelAlias !== undefined) payload.modelAlias = changed.modelAlias;
     if (changed.profileName !== undefined) payload.profileName = changed.profileName;
-    if (changed.thinkingLevel !== undefined) {
-      const model = this.resolveModelForThinking(changed.modelAlias);
+    if (changed.thinkingLevel !== undefined || changed.modelAlias !== undefined) {
+      const model = this.resolveModelForThinking(changed.modelAlias ?? this.modelAlias);
+      const requested =
+        changed.thinkingLevel ?? (this.modelAlias === undefined ? undefined : this.thinkingLevel);
       payload.thinkingEffort = resolveThinkingEffort(
-        changed.thinkingLevel,
+        requested,
         this.config.get<ThinkingConfig>(THINKING_SECTION),
         model,
       );
@@ -407,7 +422,9 @@ export class AgentProfileService implements IAgentProfileService {
       const protocol = this.tryResolveRawModel()?.protocol;
       this.telemetryContext.set({ provider_type: protocol, protocol });
     }
-    this.emitStatusUpdated();
+    this.emitStatusUpdated(
+      changed.modelAlias !== undefined || changed.thinkingLevel !== undefined,
+    );
   }
 
   private setActiveTools(names: readonly string[]): void {
@@ -415,7 +432,7 @@ export class AgentProfileService implements IAgentProfileService {
     this.wire.dispatch(setActiveTools({ names: [...names] }));
   }
 
-  private emitStatusUpdated(): void {
+  private emitStatusUpdated(includeThinkingEffort = false): void {
     const custom = this.optionsValue.emitStatusUpdated;
     if (custom !== undefined) {
       custom();
@@ -425,6 +442,9 @@ export class AgentProfileService implements IAgentProfileService {
     this.eventBus.publish({
       type: 'agent.status.updated',
       model: this.modelAlias,
+      thinkingEffort: includeThinkingEffort
+        ? this.getEffectiveThinkingLevel()
+        : undefined,
       maxContextTokens: this.getModelCapabilities().max_context_tokens,
     });
   }
@@ -467,6 +487,19 @@ export class AgentProfileService implements IAgentProfileService {
       );
     }
     return stored;
+  }
+
+  private resolveThinkingState(model: Model | undefined): {
+    readonly effective: ThinkingEffort;
+    readonly forced: ThinkingEffort | undefined;
+  } {
+    const base = this.thinkingLevel;
+    const forced = resolveKimiThinkingEffortOverride(
+      this.config.get<ThinkingConfig>(THINKING_SECTION)?.forcedEffort,
+      base,
+      model?.providerType === 'kimi',
+    );
+    return { effective: forced ?? base, forced };
   }
 
   private get alwaysThinkingModel(): boolean {
@@ -546,15 +579,10 @@ export class AgentProfileService implements IAgentProfileService {
   }
 }
 
-function normalizeKimiThinkingEffort(raw: string | undefined): ThinkingEffort | undefined {
-  const trimmed = raw?.trim();
-  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
-}
-
 registerScopedService(
   LifecycleScope.Agent,
   IAgentProfileService,
   AgentProfileService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'profile',
 );

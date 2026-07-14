@@ -15,8 +15,7 @@ import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import {
   IAgentContextInjectorService,
   type ContextInjectionProvider,
@@ -38,7 +37,7 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
     @IAgentLoopService loopService: IAgentLoopService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IEventBus private readonly eventBus: IEventBus,
-    @IAgentWireService wire: IWireService,
+    @IWireService wire: IWireService,
   ) {
     super();
     this._register(
@@ -52,12 +51,17 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
         this.isNewTurn = true;
       }),
     );
-    this._register(this.eventBus.subscribe('context.spliced', (e) => {
-      this.handleSplice(e);
-    }));
-    this._register(wire.onRestored(() => {
-      this.resyncPositions();
-    }));
+    this._register(
+      this.eventBus.subscribe('context.spliced', (e) => {
+        this.handleSplice(e);
+      }),
+    );
+    this._register(
+      wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
+        this.resyncPositions();
+        await next();
+      }),
+    );
   }
 
   register(
@@ -173,6 +177,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextInjectorService,
   AgentContextInjectorService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'contextInjector',
 );

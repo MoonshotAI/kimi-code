@@ -94,10 +94,9 @@ const DOMAIN_LAYER = new Map([
   ['os/backends', 6],
   // L2 — data & cross-cutting capabilities
   ['records', 2],
-  ['wireRecord', 2],
-  // `wire` is the scope-agnostic Model/Op/Signal state-machine layer: it
-  // consumes `persistence/interface` (L1) and is consumed by the scope tiers,
-  // so it sits in L2 beside the other data/cross-cutting layers.
+  // `wire` owns the Agent-scoped replayable-state aggregate plus its pure
+  // Model/Op/record/migration language. It consumes only L1 infrastructure
+  // and same-layer blob storage, and is consumed by the scope tiers.
   ['wire', 2],
   ['blob', 2],
   ['file', 2],
@@ -180,6 +179,11 @@ const DOMAIN_LAYER = new Map([
   ['btw', 5],
   // L6 — coordination
   ['agentLifecycle', 6],
+  // `subagent` drives turns on other agents (`run`) and hosts the
+  // requester-side run hook/event surface (`SubagentStart`/`SubagentStop`).
+  // Its highest real dependency is `agentLifecycle` (target lookup), so it
+  // sits in L6 beside it.
+  ['subagent', 6],
   ['sessionLifecycle', 6],
   ['externalHooks', 6],
   ['externalHooksRunner', 6],
@@ -305,10 +309,12 @@ const ALLOWED_EXCEPTIONS = new Set([
   'permissionPolicy>swarm',
   'skill>loop',
   'swarm>agentLifecycle',
+  // `swarm` (L4) drives sub-agent runs through the `subagent` domain (L6) —
+  // same shape as the `swarm>agentLifecycle` spawn exception above.
+  'swarm>subagent',
   'cron>agentLifecycle',
   'cron>sessionContext',
   'todo>agentLifecycle',
-  'wireRecord>hooks',
   // L3/L4 type-sharing: tool contract + execution hook contexts now live in
   // `tool`; the remaining upward import is a `loop` error/event helper.
   'contextMemory>agentTask',
@@ -337,9 +343,6 @@ const ALLOWED_EXCEPTIONS = new Set([
   'btw>agentLifecycle',
   'toolExecutor>loop',
   'userTool>profile',
-  'wireRecord>contextMemory',
-  'wireRecord>loop',
-  'wireRecord>tool',
   'hostFolderBrowser>os/backends',
   'filestore>persistence/backends',
   'process>os/backends',

@@ -1,15 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
+import { toDisposable } from '#/_base/di/lifecycle';
 import { type IAgentScopeHandle, type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ContentPart } from '#/app/llmProtocol/message';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
+import { type IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IWireService } from '#/wire/wire';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
+import { MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 
 import { MessageLegacyService } from '#/app/messageLegacy/messageLegacyService';
@@ -29,8 +32,11 @@ function buildService(opts: {
     kind: LifecycleScope.Agent,
     accessor: {
       get: (token: unknown): unknown => {
-        if (token === IAgentWireRecordService) {
-          return { getRecords: () => opts.records };
+        if (token === IWireService) {
+          return { flush: async () => {} };
+        }
+        if (token === IAgentScopeContext) {
+          return { scope: () => 'sessions/wd/s1/agents/main' };
         }
         if (token === IAgentContextMemoryService) {
           return { get: () => opts.contextMessages };
@@ -55,8 +61,8 @@ function buildService(opts: {
       get: (token: unknown): unknown => {
         if (token === IAgentLifecycleService) {
           return {
-            getHandle: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
-            whenReady: (id: string) => Promise.resolve(id === MAIN_AGENT_ID ? mainHandle : undefined),
+            create: async () => mainHandle,
+            get: (id: string) => (id === MAIN_AGENT_ID ? mainHandle : undefined),
           };
         }
         if (token === ISessionCronService) return {};
@@ -75,7 +81,19 @@ function buildService(opts: {
     get: (sessionId: string) => Promise.resolve(sessionId === opts.summary.id ? opts.summary : undefined),
   } as unknown as ISessionIndex;
 
-  return new MessageLegacyService(lifecycle, index);
+  const appendLog: IAppendLogStore = {
+    _serviceBrand: undefined,
+    append: () => {},
+    read: async function* <R>() {
+      for (const record of opts.records) yield record as R;
+    },
+    rewrite: async () => {},
+    flush: async () => {},
+    close: async () => {},
+    acquire: () => toDisposable(() => {}),
+  };
+
+  return new MessageLegacyService(lifecycle, index, appendLog);
 }
 
 describe('MessageLegacyService', () => {
@@ -87,7 +105,7 @@ describe('MessageLegacyService', () => {
     archived: false,
   };
 
-  it('reduces the transcript from the in-memory record journal (no disk read)', async () => {
+  it('reduces the transcript from the streamed append log', async () => {
     const user = textMessage('user', 'hi');
     const assistant = textMessage('assistant', 'hello');
     const svc = buildService({

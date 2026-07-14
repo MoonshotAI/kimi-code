@@ -82,6 +82,7 @@ export interface AnthropicOptions {
   metadata?: Record<string, string> | undefined;
   stream?: boolean | undefined;
   adaptiveThinking?: boolean | undefined;
+  kimiThinking?: boolean | undefined;
   betaApi?: boolean | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => Anthropic;
 }
@@ -320,6 +321,7 @@ function budgetTokensForEffort(effort: ThinkingEffort): number {
   }
   throw new Error(`Unknown thinking effort: ${String(effort)}`);
 }
+
 const CACHE_CONTROL = { type: 'ephemeral' as const };
 
 type CacheableBlock = ContentBlockParam & { cache_control?: { type: 'ephemeral' } };
@@ -508,7 +510,7 @@ function convertMessage(message: Message, model: string): MessageParam {
           thinking: part.think,
           signature: part.encrypted,
         } satisfies ThinkingBlockParam);
-      } else if (part.think !== '' && shouldPreserveUnsignedThinking(model)) {
+      } else if (shouldPreserveUnsignedThinking(model)) {
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
       }
     } else if (part.type === 'video_url') {
@@ -828,6 +830,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private _defaultHeaders: Record<string, string | null> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => Anthropic) | undefined;
   private _adaptiveThinking: boolean | undefined;
+  private readonly _kimiThinking: boolean;
   private _betaApi: boolean;
   private _explicitMaxTokens: boolean;
 
@@ -836,6 +839,7 @@ export class AnthropicChatProvider implements ChatProvider {
     this._stream = options.stream ?? true;
     this._metadata = options.metadata;
     this._adaptiveThinking = options.adaptiveThinking;
+    this._kimiThinking = options.kimiThinking ?? false;
     this._betaApi = options.betaApi ?? false;
     this._apiKey =
       options.apiKey === undefined || options.apiKey.length === 0 ? undefined : options.apiKey;
@@ -862,21 +866,17 @@ export class AnthropicChatProvider implements ChatProvider {
     if (thinkingConfig.type === 'disabled') {
       return 'off';
     }
-    if (thinkingConfig.type === 'adaptive') {
-      const effort = this._generationKwargs.output_config?.effort;
-      if (effort === undefined || effort === null) {
-        return 'high';
-      }
-      switch (effort) {
-        case 'low':
-        case 'medium':
-        case 'high':
-        case 'xhigh':
-        case 'max':
-          return effort;
-      }
+    const effort = this._generationKwargs.output_config?.effort;
+    if (typeof effort === 'string' && effort.length > 0) {
+      return effort;
     }
-    const budget = (thinkingConfig as { budget_tokens?: number }).budget_tokens ?? 0;
+    if (thinkingConfig.type === 'adaptive') {
+      return 'high';
+    }
+    const budget = (thinkingConfig as { budget_tokens?: number }).budget_tokens;
+    if (budget === undefined) {
+      return 'on';
+    }
     if (budget <= 1024) {
       return 'low';
     }
@@ -1111,16 +1111,32 @@ export class AnthropicChatProvider implements ChatProvider {
       return clone;
     }
 
+    let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
+    if (adaptive) {
+      newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
+    }
+    if (this._kimiThinking) {
+      const clone = this._withGenerationKwargs({
+        thinking: { type: 'enabled' } as MessageCreateParams['thinking'],
+        betaFeatures: newBetas,
+      });
+      if (effort === 'on') {
+        delete clone._generationKwargs.output_config;
+      } else {
+        clone._generationKwargs.output_config = {
+          effort,
+        } as MessageCreateParams['output_config'];
+      }
+      return clone;
+    }
+
     const clamped = clampEffort(effort, this._model, adaptive);
     if (clamped === 'off') {
       throw new Error('Non-off thinking effort unexpectedly clamped to off.');
     }
     const effectiveEffort = clamped as AnthropicEffort;
 
-    let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
-
     if (adaptive) {
-      newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
       return this._withGenerationKwargs({
         thinking: { type: 'adaptive', display: 'summarized' },
         output_config: { effort: effectiveEffort },
