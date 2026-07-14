@@ -343,7 +343,7 @@ max_context_size = 1000000
     expect(createRecords).toContainEqual({
       event: 'yolo_toggle',
       sessionId: created.id,
-      properties: { enabled: true },
+      properties: { enabled: true, agent_id: 'main' },
     });
 
     await createRpc.setPermission({ sessionId: created.id, agentId: 'main', mode: 'auto' });
@@ -351,7 +351,7 @@ max_context_size = 1000000
     expect(createRecords).toContainEqual({
       event: 'afk_toggle',
       sessionId: created.id,
-      properties: { enabled: true },
+      properties: { enabled: true, agent_id: 'main' },
     });
 
     await createRpc.setKimiConfig({
@@ -380,7 +380,7 @@ max_context_size = 1000000
     expect(createRecords).toContainEqual({
       event: 'model_switch',
       sessionId: created.id,
-      properties: { model: 'gpt-alias' },
+      properties: { model: 'gpt-alias', agent_id: 'main' },
     });
 
     const resumeRecords: TelemetryContextRecord[] = [];
@@ -391,7 +391,7 @@ max_context_size = 1000000
     expect(resumeRecords).toContainEqual({
       event: 'thinking_toggle',
       sessionId: created.id,
-      properties: { enabled: false, effort: 'off', from: 'high' },
+      properties: { enabled: false, effort: 'off', from: 'high', agent_id: 'main' },
     });
   });
 
@@ -447,6 +447,7 @@ max_context_size = 1000000
         client_version: '0.1.1',
         ui_mode: 'web',
         enabled: true,
+        agent_id: 'main',
       },
     });
   });

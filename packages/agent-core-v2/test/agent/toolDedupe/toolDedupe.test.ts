@@ -641,6 +641,7 @@ describe('AgentToolDedupeService', () => {
         event: 'tool_call_dedup_detected',
         properties: {
           turn_id: 7,
+          agent_id: 'main',
           step_no: 1,
           tool_call_id: 'c2',
           tool_name: 'Read',
@@ -672,6 +673,7 @@ describe('AgentToolDedupeService', () => {
         event: 'tool_call_dedup_detected',
         properties: {
           turn_id: 7,
+          agent_id: 'main',
           step_no: 2,
           tool_call_id: 'c2',
           tool_name: 'Read',

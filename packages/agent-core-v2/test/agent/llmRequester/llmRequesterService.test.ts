@@ -23,6 +23,7 @@ import { AgentLLMRequesterService } from '#/agent/llmRequester/llmRequesterServi
 import { IAgentLLMRequesterService } from '#/agent/llmRequester/llmRequester';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentUsageService } from '#/agent/usage/usage';
@@ -154,6 +155,7 @@ function createService(
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
+  ix.stub(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
   ix.set(
     IAgentWireService,
     new SyncDescriptor(WireService, [{ logScope: 'wire', logKey: 'strict-resend' }]),

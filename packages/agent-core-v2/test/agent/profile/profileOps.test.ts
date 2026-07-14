@@ -16,6 +16,7 @@ import { IModelResolver } from '#/app/model/modelResolver';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
+import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
@@ -94,7 +95,10 @@ function buildHost(key: string): {
   host.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   host.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: key }]));
   host.stub(ITelemetryService, createTelemetryStub());
-  host.stub(IAgentTelemetryContextService, new AgentTelemetryContextService());
+  host.stub(
+    IAgentTelemetryContextService,
+    new AgentTelemetryContextService(makeAgentScopeContext({ agentId: 'main', agentScope: '' })),
+  );
   host.stub(IConfigService, createConfigStub());
   host.stub(IModelResolver, modelResolver);
   host.stub(IHostEnvironment, stubUnused());

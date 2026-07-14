@@ -363,6 +363,7 @@ describe('LLMRequester service migration coverage', () => {
         event: 'api_error',
         properties: expect.objectContaining({
           error_type: 'rate_limit',
+          agent_id: 'main',
           model: 'mock-model',
           alias: 'mock-model',
           provider_type: 'kimi',

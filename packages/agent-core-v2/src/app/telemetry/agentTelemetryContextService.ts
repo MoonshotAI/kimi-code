@@ -8,6 +8,7 @@
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import {
   IAgentTelemetryContextService,
   type AgentTelemetryContext,
@@ -15,7 +16,11 @@ import {
 
 export class AgentTelemetryContextService implements IAgentTelemetryContextService {
   declare readonly _serviceBrand: undefined;
-  private context: AgentTelemetryContext = { mode: 'agent' };
+  private context: AgentTelemetryContext;
+
+  constructor(@IAgentScopeContext scopeContext: IAgentScopeContext) {
+    this.context = { mode: 'agent', agent_id: scopeContext.agentId };
+  }
 
   get(): AgentTelemetryContext {
     return this.context;

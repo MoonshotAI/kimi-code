@@ -39,6 +39,7 @@ import {
 } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
@@ -135,6 +136,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentToolResultTruncationService
     private readonly resultTruncation: IAgentToolResultTruncationService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ILogService private readonly log?: ILogService,
   ) {}
 
@@ -275,6 +277,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     this.toolCallDupTypes.delete(toolCallId);
     const properties: ToolCallEvent = {
       turn_id: turnId,
+      agent_id: this.scopeContext.agentId,
       tool_call_id: toolCallId,
       tool_name: call.toolName,
       outcome,

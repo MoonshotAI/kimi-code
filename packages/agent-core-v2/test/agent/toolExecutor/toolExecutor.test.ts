@@ -17,6 +17,7 @@ import {
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService, parseToolCallArguments } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
+import { makeAgentScopeContext, IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
@@ -50,6 +51,7 @@ beforeEach(() => {
     additionalServices: (reg) => {
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
+      reg.defineInstance(IAgentScopeContext, makeAgentScopeContext({ agentId: 'main', agentScope: '' }));
       reg.defineInstance(IAgentWireRecordService, stubWireRecord());
       reg.defineInstance(
         IAgentWireService,
@@ -106,6 +108,7 @@ describe('AgentToolExecutorService', () => {
       event: 'tool_call',
       properties: expect.objectContaining({
         turn_id: 0,
+        agent_id: 'main',
         tool_call_id: 'call_echo',
         tool_name: 'echo',
         outcome: 'success',

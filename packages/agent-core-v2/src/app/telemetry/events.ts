@@ -44,6 +44,7 @@ export type StrictPropertyCheck<T, E> = string extends keyof T
 
 export interface TurnStartedEvent {
   turn_id: number;
+  agent_id: string;
   mode: 'agent' | 'plan';
   provider_type?: string;
   protocol?: string;
@@ -51,6 +52,7 @@ export interface TurnStartedEvent {
 
 export interface TurnInterruptedEvent {
   turn_id: number;
+  agent_id: string;
   at_step: number;
   mode: 'agent' | 'plan';
   interrupt_reason: 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
@@ -60,6 +62,7 @@ export interface TurnInterruptedEvent {
 
 export interface TurnEndedEvent {
   turn_id: number;
+  agent_id: string;
   reason: 'completed' | 'cancelled' | 'failed';
   duration_ms: number;
   mode: 'agent' | 'plan';
@@ -71,6 +74,7 @@ export type ToolCallOutcome = 'success' | 'error' | 'cancelled';
 
 export interface ToolCallEvent {
   turn_id: number;
+  agent_id: string;
   tool_call_id: string;
   tool_name: string;
   outcome: ToolCallOutcome;
@@ -81,6 +85,7 @@ export interface ToolCallEvent {
 
 export interface ApiErrorEvent {
   error_type: string;
+  agent_id: string;
   model: string;
   alias?: string;
   retryable: boolean;
@@ -260,6 +265,7 @@ export interface GoalStatusChangedEvent extends GoalBudgetProperties {
 
 export interface ToolCallDedupDetectedEvent {
   turn_id: number;
+  agent_id: string;
   step_no: number;
   tool_call_id: string;
   tool_name: string;
@@ -290,6 +296,8 @@ export interface FsGrepNodeFallbackEvent {
 export interface SubagentCreatedEvent {
   subagent_name: string;
   run_in_background: boolean;
+  agent_id: string;
+  parent_agent_id: string;
 }
 
 export interface McpConnectedEvent {
@@ -391,7 +399,8 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A turn starts running.',
     properties: {
-      turn_id: 'Per-agent turn index (main or subagent); not unique across agents in the same session',
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      agent_id: 'Agent id (main or subagent scope id)',
       mode: 'Agent mode the turn runs in',
       provider_type: 'Provider protocol type',
       protocol: 'Request protocol',
@@ -401,7 +410,8 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A running turn is interrupted.',
     properties: {
-      turn_id: 'Per-agent turn index (main or subagent); not unique across agents in the same session',
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      agent_id: 'Agent id (main or subagent scope id)',
       at_step: 'Step index the turn reached before interruption',
       mode: 'Agent mode the turn ran in',
       interrupt_reason: 'Why the turn was interrupted',
@@ -413,7 +423,8 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A turn ends, unconditionally.',
     properties: {
-      turn_id: 'Per-agent turn index (main or subagent); not unique across agents in the same session',
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      agent_id: 'Agent id (main or subagent scope id)',
       reason: 'How the turn ended',
       duration_ms: 'Turn wall-clock time in milliseconds',
       mode: 'Agent mode the turn ran in',
@@ -425,7 +436,8 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A tool call finishes execution.',
     properties: {
-      turn_id: 'Per-agent turn index (main or subagent); not unique across agents in the same session',
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      agent_id: 'Agent id (main or subagent scope id)',
       tool_call_id: 'Provider-assigned tool call id',
       tool_name: 'Registered tool name',
       outcome: 'Execution outcome',
@@ -439,6 +451,7 @@ export const telemetryEventDefinitions = {
     comment: 'An LLM API request fails.',
     properties: {
       error_type: 'Classified error category',
+      agent_id: 'Agent id (main or subagent scope id)',
       model: 'Model id the request targeted',
       alias: 'Model alias the request targeted',
       retryable: 'Whether the error is retryable',
@@ -663,7 +676,8 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A duplicate tool call is detected.',
     properties: {
-      turn_id: 'Per-agent turn index (main or subagent); not unique across agents in the same session',
+      turn_id: 'Per-agent turn index (main or subagent); pair with agent_id to locate a turn within a session',
+      agent_id: 'Agent id (main or subagent scope id)',
       step_no: 'Step index within the turn',
       tool_call_id: 'Provider-assigned tool call id',
       tool_name: 'Registered tool name',
@@ -707,6 +721,8 @@ export const telemetryEventDefinitions = {
     properties: {
       subagent_name: 'Profile name of the subagent',
       run_in_background: 'Whether the subagent runs in the background',
+      agent_id: 'Child agent id',
+      parent_agent_id: 'Parent (caller) agent id',
     },
   }),
   mcp_connected: defineTelemetryEvent<McpConnectedEvent>({
