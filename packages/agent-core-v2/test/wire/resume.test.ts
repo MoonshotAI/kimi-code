@@ -566,35 +566,33 @@ describe('Agent resume', () => {
     expect(ctx.context.get()).toHaveLength(0);
   });
 
-  it('restores an active interval into a budget-reached paused goal', async () => {
+  it('restores an envelope-less active interval into a budget-reached paused goal', async () => {
     const now = vi.spyOn(Date, 'now').mockReturnValue(6_000);
-    const persistence = new RecordingAgentPersistence([
-      {
-        type: 'metadata',
-        protocol_version: '1.4',
-        created_at: 1,
-      },
-      {
-        type: 'goal.create',
-        goalId: 'goal-1',
-        objective: 'ship work',
-        time: 100,
-      },
-      {
-        type: 'goal.update',
-        status: 'paused',
-        wallClockMs: 2_000,
-        actor: 'user',
-        time: 500,
-      },
-      {
-        type: 'goal.update',
-        status: 'active',
-        budgetLimits: { wallClockBudgetMs: 6_000 },
-        actor: 'user',
-        time: 1_000,
-      },
-    ] as unknown as WireRecord[]);
+    const persistence = new RecordingAgentPersistence(
+      [
+        {
+          type: 'goal.create',
+          goalId: 'goal-1',
+          objective: 'ship work',
+          time: 100,
+        },
+        {
+          type: 'goal.update',
+          status: 'paused',
+          wallClockMs: 2_000,
+          actor: 'user',
+          time: 500,
+        },
+        {
+          type: 'goal.update',
+          status: 'active',
+          budgetLimits: { wallClockBudgetMs: 6_000 },
+          actor: 'user',
+          time: 1_000,
+        },
+      ] as unknown as WireRecord[],
+      false,
+    );
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     try {
@@ -730,8 +728,8 @@ class RecordingAgentPersistence extends InMemoryWireRecordPersistence {
   readonly appended: WireRecord[] = [];
   rewritten: readonly WireRecord[] | undefined;
 
-  constructor(events: readonly WireRecord[]) {
-    super(withMetadata(events));
+  constructor(events: readonly WireRecord[], addMetadata = true) {
+    super(addMetadata ? withMetadata(events) : events);
   }
 
   override append(input: WireRecord): void {
