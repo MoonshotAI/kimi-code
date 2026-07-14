@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
+import { Event } from '#/_base/event';
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -83,6 +84,9 @@ function planService(exitPlanMode: ExitPlanModeFn = vi.fn()): AgentPlanService {
       content: '# Plan',
       path: '/tmp/kimi-plan.md',
     }),
+    onDidEnter: Event.None as AgentPlanService['onDidEnter'],
+    onDidExit: Event.None as AgentPlanService['onDidExit'],
+    onDidCancel: Event.None as AgentPlanService['onDidCancel'],
   };
 }
 

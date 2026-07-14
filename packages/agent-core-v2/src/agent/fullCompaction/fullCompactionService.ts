@@ -528,7 +528,11 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
               {
                 messages,
                 maxOutputSize: compactionMaxOutputSize,
-                source: { type: 'operation', requestKind: 'full_compaction' },
+                source: {
+                  type: 'operation',
+                  requestKind: 'full_compaction',
+                  logFields: { droppedCount },
+                },
               },
               undefined,
               signal,

@@ -208,7 +208,7 @@ describe('Plan service', () => {
         time: expect.any(Number),
       });
 
-      plan.exit();
+      plan.exit('approved');
       await ctx.dispatch({
         type: 'plan_mode.enter',
         id: 'stable-plan',
@@ -253,6 +253,75 @@ describe('Plan service', () => {
       await expectPlanActive(true);
       expect(ctx.llmCalls).toHaveLength(2);
       expect(toolResultText(ctx.llmCalls[1]!.history)).toContain('Plan mode is now active');
+    });
+  });
+
+  describe('plan lifecycle events', () => {
+    it('fires onDidEnter with the plan id and path on enter', async () => {
+      const entered = vi.fn();
+      plan.onDidEnter(entered);
+
+      await plan.enter('event-plan');
+
+      expect(entered).toHaveBeenCalledWith({
+        id: 'event-plan',
+        path: expectedPlanPath('event-plan'),
+      });
+    });
+
+    it('fires onDidExit with the plan id, path, and reason on exit', async () => {
+      const exited = vi.fn();
+      plan.onDidExit(exited);
+      await plan.enter('event-plan');
+
+      plan.exit('approved');
+
+      expect(exited).toHaveBeenCalledWith({
+        id: 'event-plan',
+        path: expectedPlanPath('event-plan'),
+        reason: 'approved',
+      });
+    });
+
+    it('does not fire onDidExit or onDidCancel when plan mode is already inactive', () => {
+      const exited = vi.fn();
+      const cancelled = vi.fn();
+      plan.onDidExit(exited);
+      plan.onDidCancel(cancelled);
+
+      plan.exit('host');
+      plan.cancel();
+
+      expect(exited).not.toHaveBeenCalled();
+      expect(cancelled).not.toHaveBeenCalled();
+    });
+
+    it('fires onDidCancel on cancel while plan mode is active', async () => {
+      const cancelled = vi.fn();
+      plan.onDidCancel(cancelled);
+      await plan.enter('event-plan');
+
+      plan.cancel();
+
+      expect(cancelled).toHaveBeenCalledWith({ id: 'event-plan' });
+    });
+
+    it('stays silent when plan state changes through wire replay', async () => {
+      const entered = vi.fn();
+      const exited = vi.fn();
+      const cancelled = vi.fn();
+      plan.onDidEnter(entered);
+      plan.onDidExit(exited);
+      plan.onDidCancel(cancelled);
+
+      await ctx.dispatch({ type: 'plan_mode.enter', id: 'replayed-plan' });
+      await expectPlanActive(true);
+      await ctx.dispatch({ type: 'plan_mode.exit', id: 'replayed-plan' });
+      await expectPlanActive(false);
+
+      expect(entered).not.toHaveBeenCalled();
+      expect(exited).not.toHaveBeenCalled();
+      expect(cancelled).not.toHaveBeenCalled();
     });
   });
 
@@ -722,7 +791,7 @@ describe('Plan service', () => {
       await plan.enter('test-plan', false);
       await injectDynamic();
 
-      plan.exit();
+      plan.exit('approved');
       await injectDynamic();
       const afterExit = context.get().length;
       expect(lastUserText(context.get())).toContain('Plan mode is no longer active');

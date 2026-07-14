@@ -328,10 +328,12 @@ export class OAuthService extends Disposable implements IOAuthService {
           collectModelIdsForAliases(current, refreshedAliasKeys),
           collectModelIdsForAliases(next, refreshedAliasKeys),
         );
-        await this.config.replace(PROVIDERS_SECTION, next.providers);
-        await this.config.replace(MODELS_SECTION, next.models ?? {});
-        await this.config.set(DEFAULT_MODEL_SECTION, next.defaultModel);
-        await this.config.set(THINKING_SECTION, next.thinking);
+        await this.config.replaceAll({
+          [PROVIDERS_SECTION]: next.providers,
+          [MODELS_SECTION]: next.models ?? {},
+          [DEFAULT_MODEL_SECTION]: next.defaultModel,
+          [THINKING_SECTION]: next.thinking,
+        });
         changed.push({
           provider_id: KIMI_CODE_PROVIDER_NAME,
           provider_name: 'Kimi Code',

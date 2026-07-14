@@ -88,6 +88,7 @@ describe('OAuthService', () => {
   let providerSet: ReturnType<typeof vi.fn>;
   let configSet: ReturnType<typeof vi.fn>;
   let configReplace: ReturnType<typeof vi.fn>;
+  let configReplaceAll: ReturnType<typeof vi.fn>;
   let events: DomainEvent[];
   let providerChangedEmitter: Emitter<ProvidersChangedEvent>;
 
@@ -135,6 +136,31 @@ describe('OAuthService', () => {
       }
       throw new Error(`unexpected config replace: ${domain}`);
     });
+    configReplaceAll = vi.fn(async (values: Record<string, unknown>) => {
+      for (const [domain, value] of Object.entries(values)) {
+        if (domain === 'providers') {
+          providers = (value ?? {}) as Record<string, ProviderConfig>;
+          continue;
+        }
+        if (domain === 'models') {
+          models = (value ?? {}) as Record<string, ModelAlias>;
+          continue;
+        }
+        if (domain === 'services') {
+          services = value as Record<string, unknown> | undefined;
+          continue;
+        }
+        if (domain === 'defaultModel') {
+          defaultModel = value as string | undefined;
+          continue;
+        }
+        if (domain === 'thinking') {
+          thinking = value as { enabled?: boolean; effort?: string } | undefined;
+          continue;
+        }
+        throw new Error(`unexpected config replaceAll domain: ${domain}`);
+      }
+    });
     events = [];
     toolkit = {
       login: vi.fn<(...args: any[]) => any>(),
@@ -161,6 +187,7 @@ describe('OAuthService', () => {
           })) as IConfigService['inspect'],
           set: configSet as unknown as IConfigService['set'],
           replace: configReplace as unknown as IConfigService['replace'],
+          replaceAll: configReplaceAll as unknown as IConfigService['replaceAll'],
           reload: vi.fn().mockResolvedValue(undefined) as unknown as IConfigService['reload'],
           onDidChangeConfiguration: (() => ({ dispose: () => { } })) as IConfigService['onDidChangeConfiguration'],
           onDidSectionChange: (() => ({ dispose: () => { } })) as IConfigService['onDidSectionChange'],
@@ -395,7 +422,9 @@ describe('OAuthService', () => {
       }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
+    expect(configReplaceAll).toHaveBeenCalledWith(
+      expect.objectContaining({ defaultModel: 'kimi-code/kimi-k2' }),
+    );
   });
 
   it('startLogin returns authenticated when model refresh fails on the already-authenticated fast path', async () => {
@@ -458,13 +487,14 @@ describe('OAuthService', () => {
         oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
-    expect(configReplace).toHaveBeenCalledWith(
-      'models',
+    expect(configReplaceAll).toHaveBeenCalledWith(
       expect.objectContaining({
-        'kimi-code/kimi-k2': expect.objectContaining({ model: 'kimi-k2' }),
+        models: expect.objectContaining({
+          'kimi-code/kimi-k2': expect.objectContaining({ model: 'kimi-k2' }),
+        }),
+        defaultModel: 'kimi-code/kimi-k2',
       }),
     );
-    expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
   });
 
   it('keeps an in-flight OAuth flow alive when unrelated providers change', async () => {
@@ -708,18 +738,20 @@ describe('OAuthService', () => {
         removed: 0,
       },
     ]);
-    expect(configReplace).toHaveBeenCalledWith(
-      'providers',
+    expect(configReplace).not.toHaveBeenCalled();
+    expect(configSet).not.toHaveBeenCalled();
+    expect(configReplaceAll).toHaveBeenCalledTimes(1);
+    const batch = configReplaceAll.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(batch['providers']).toEqual(
       expect.objectContaining({ [OAUTH_PROVIDER]: expect.objectContaining({ type: 'kimi' }) }),
     );
-    expect(configReplace).toHaveBeenCalledWith(
-      'models',
+    expect(batch['models']).toEqual(
       expect.objectContaining({
         'kimi-code/kimi-k2': expect.objectContaining({ model: 'kimi-k2' }),
       }),
     );
-    expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
-    expect(configSet).toHaveBeenCalledWith('thinking', { enabled: true });
+    expect(batch['defaultModel']).toBe('kimi-code/kimi-k2');
+    expect(batch['thinking']).toEqual({ enabled: true });
     expect(events).toEqual([
       {
         type: 'event.model_catalog.changed',

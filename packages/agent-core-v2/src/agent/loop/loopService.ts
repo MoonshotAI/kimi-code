@@ -35,7 +35,6 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
-import { toErrorMessage } from '#/_base/errors/errorMessage';
 import type {
   AssistantDeltaEvent,
   ThinkingDeltaEvent,
@@ -596,7 +595,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       runtime.turnId,
       runtime.current?.number,
       'aborted',
-      isUserCancellation(reason) ? undefined : toErrorMessage(reason),
+      isUserCancellation(reason) ? undefined : interruptedMessage(reason),
     );
     if (!runtime.turnSignal.aborted && step?.state === 'cancelled') {
       runtime.current = undefined;
@@ -646,7 +645,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   private failLoopStep(runtime: LoopRuntime, error: unknown): LoopErrorDisposition {
     const reason: LoopInterruptReason = isMaxStepsExceededError(error) ? 'max_steps' : 'error';
-    this.emitStepInterrupted(runtime.turnId, runtime.current?.number, reason, toErrorMessage(error));
+    this.emitStepInterrupted(runtime.turnId, runtime.current?.number, reason, interruptedMessage(error));
     return { type: 'return', result: { type: 'failed', error, steps: runtime.steps } };
   }
 
@@ -1005,6 +1004,11 @@ function interruptReasonFor(
     return 'filtered';
   }
   return 'error';
+}
+
+function interruptedMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error);
 }
 
 type StepExecutionResult = {

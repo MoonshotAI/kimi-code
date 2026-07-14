@@ -1,6 +1,7 @@
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { Event } from '#/_base/event';
 import type { IAgentPlanService, PlanData } from '#/agent/plan/plan';
 import { EnterPlanModeTool } from '#/agent/plan/tools/enter-plan-mode';
 import {
@@ -85,6 +86,9 @@ function planService({
     clear: vi.fn(async () => {}),
     exit: exit ?? vi.fn(),
     status: vi.fn(async () => status),
+    onDidEnter: Event.None as IAgentPlanService['onDidEnter'],
+    onDidExit: Event.None as IAgentPlanService['onDidExit'],
+    onDidCancel: Event.None as IAgentPlanService['onDidCancel'],
   };
 }
 

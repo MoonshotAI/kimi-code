@@ -355,6 +355,43 @@ export class ConfigService extends Disposable implements IConfigService {
     });
   }
 
+  async replaceAll(
+    values: Readonly<Record<string, unknown>>,
+    target: ConfigTarget = ConfigTarget.User,
+  ): Promise<void> {
+    await this.ready;
+    const entries = Object.entries(values);
+    if (entries.length === 0) return;
+    if (target === ConfigTarget.Memory) {
+      const domains: string[] = [];
+      for (const [domain, value] of entries) {
+        if (value === undefined) {
+          delete this.memory[domain];
+        } else {
+          this.memory[domain] = this.registry.validate(domain, value);
+        }
+        domains.push(domain);
+      }
+      this.commit('set', domains);
+      return;
+    }
+    await this.enqueueStateTransition(async () => {
+      const domains: string[] = [];
+      for (const [domain, value] of entries) {
+        const stripped = this.stripEnv(domain, value);
+        if (stripped === undefined) {
+          delete this.raw[domain];
+        } else {
+          this.raw[domain] = this.registry.validate(domain, stripped);
+        }
+        applySectionToToml(this.rawSnake, domain, this.raw[domain], this.registry);
+        domains.push(domain);
+      }
+      this.rebuildEffective('set', domains);
+      await this.documentStore.set(CONFIG_SCOPE, this.configKey, this.rawSnake);
+    });
+  }
+
   private stripEnv(domain: string, value: unknown): unknown {
     let result = value;
     const section = this.registry.getSection(domain);

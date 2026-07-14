@@ -2506,6 +2506,19 @@ describe('FullCompaction', () => {
         args: { turnId: 0, reason: 'completed' },
       }),
     );
+    type WireLlmRequestEvent = {
+      type: '[wire]';
+      event: 'llm.request';
+      args: Record<string, unknown>;
+    };
+    const compactionRequests = events.filter((event): event is WireLlmRequestEvent => {
+      if (event === null || typeof event !== 'object') return false;
+      const candidate = event as { type?: unknown; event?: unknown; args?: unknown };
+      if (candidate.type !== '[wire]' || candidate.event !== 'llm.request') return false;
+      if (candidate.args === null || typeof candidate.args !== 'object') return false;
+      return (candidate.args as Record<string, unknown>)['kind'] === 'compaction';
+    });
+    expect(compactionRequests.map((event) => event.args['droppedCount'])).toEqual([0, 2]);
     expect(inputs).toMatchInlineSnapshot(`
       [
         [

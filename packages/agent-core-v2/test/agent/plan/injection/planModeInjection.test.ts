@@ -110,7 +110,7 @@ describe('PlanModeService dynamic injection content', () => {
     await enterPlan(plan);
 
     await injectDynamic(injector);
-    plan.exit();
+    plan.exit('approved');
     await injectDynamic(injector);
 
     expect(lastPlanReminder(context)).toContain('Plan mode is no longer active');

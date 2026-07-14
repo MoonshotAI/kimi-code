@@ -176,8 +176,6 @@ export class ModelCatalogService implements IModelCatalogService {
     const restModels = Object.fromEntries(
       Object.entries(models).filter(([, alias]) => alias.provider !== providerId),
     );
-    await this.config.replace(PROVIDERS_SECTION, restProviders);
-    await this.config.replace(MODELS_SECTION, restModels);
     return {
       ...current,
       providers: restProviders,
@@ -186,17 +184,13 @@ export class ModelCatalogService implements IModelCatalogService {
   }
 
   private async applyRefreshPatch(patch: ManagedKimiConfigShape): Promise<ManagedKimiConfigShape> {
-    if (patch.providers !== undefined) {
-      await this.config.replace(PROVIDERS_SECTION, patch.providers);
-    }
-    if (patch.models !== undefined) {
-      await this.config.replace(MODELS_SECTION, patch.models);
-    }
-    if (patch.defaultModel !== undefined) {
-      await this.config.set(DEFAULT_MODEL_SECTION, patch.defaultModel);
-    }
-    if (patch.thinking !== undefined) {
-      await this.config.set(THINKING_SECTION, patch.thinking);
+    const values: Record<string, unknown> = {};
+    if (patch.providers !== undefined) values[PROVIDERS_SECTION] = patch.providers;
+    if (patch.models !== undefined) values[MODELS_SECTION] = patch.models;
+    if ('defaultModel' in patch) values[DEFAULT_MODEL_SECTION] = patch.defaultModel;
+    if ('thinking' in patch) values[THINKING_SECTION] = patch.thinking;
+    if (Object.keys(values).length > 0) {
+      await this.config.replaceAll(values);
     }
     return this.readUserConfigShape();
   }
