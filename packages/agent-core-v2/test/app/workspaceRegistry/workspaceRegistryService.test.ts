@@ -83,12 +83,23 @@ describe('WorkspaceRegistryService (file-backed)', () => {
 
   async function writeWorkspacesJson(
     workspaces: Record<string, PersistedWorkspaceEntry>,
+    extra?: { readonly deleted_workspace_ids?: unknown },
   ): Promise<void> {
     await fsp.writeFile(
       join(homeDir, 'workspaces.json'),
-      JSON.stringify({ version: 1, workspaces }),
+      JSON.stringify({ version: 1, workspaces, ...extra }),
       'utf8',
     );
+  }
+
+  async function readWorkspacesJson(): Promise<{
+    workspaces: Record<string, PersistedWorkspaceEntry>;
+    deleted_workspace_ids?: unknown;
+  }> {
+    return JSON.parse(await fsp.readFile(join(homeDir, 'workspaces.json'), 'utf8')) as {
+      workspaces: Record<string, PersistedWorkspaceEntry>;
+      deleted_workspace_ids?: unknown;
+    };
   }
 
   it('persists the catalog across registry instances', async () => {
@@ -137,8 +148,9 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     expect(await build().list()).toEqual([]);
   });
 
-  it('prefers an existing workspaces.json over the session index', async () => {
+  it('merges session-index workDirs into an existing catalog on load', async () => {
     const work = join(homeDir, 'existing');
+    const fromIndex = join(homeDir, 'from-index');
     await writeWorkspacesJson({
       [encodeWorkDirKey(work)]: {
         root: work,
@@ -150,14 +162,102 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     await seedSessionIndex([
       {
         sessionId: 's9',
-        sessionDir: join(homeDir, 'sessions', encodeWorkDirKey(join(homeDir, 'from-index')), 's9'),
-        workDir: join(homeDir, 'from-index'),
+        sessionDir: join(homeDir, 'sessions', encodeWorkDirKey(fromIndex), 's9'),
+        workDir: fromIndex,
       },
     ]);
 
     const list = await build().list();
-    expect(list.map((w) => w.id)).toEqual([encodeWorkDirKey(work)]);
-    expect(list[0]?.name).toBe('existing');
+    expect(list.map((w) => w.id).toSorted()).toEqual(
+      [encodeWorkDirKey(work), encodeWorkDirKey(fromIndex)].toSorted(),
+    );
+    const existing = list.find((w) => w.id === encodeWorkDirKey(work));
+    // The registered entry keeps its persisted data; the merged entry only
+    // gets a basename-derived name.
+    expect(existing?.name).toBe('existing');
+    expect(existing?.lastOpenedAt).toBe(Date.parse('2024-01-02T00:00:00.000Z'));
+    expect(list.find((w) => w.id === encodeWorkDirKey(fromIndex))?.name).toBe('from-index');
+
+    // The merge is persisted, so a restart sees the same catalog.
+    expect((await restart().list()).map((w) => w.id).toSorted()).toEqual(
+      list.map((w) => w.id).toSorted(),
+    );
+  });
+
+  it('merge skips tombstoned ids and tolerates a dirty deleted_workspace_ids field', async () => {
+    const work = join(homeDir, 'existing');
+    const deleted = join(homeDir, 'deleted');
+    const fresh = join(homeDir, 'fresh');
+    await writeWorkspacesJson(
+      {
+        [encodeWorkDirKey(work)]: {
+          root: work,
+          name: 'existing',
+          created_at: '2024-01-01T00:00:00.000Z',
+          last_opened_at: '2024-01-02T00:00:00.000Z',
+        },
+      },
+      { deleted_workspace_ids: [encodeWorkDirKey(deleted), 42, null] },
+    );
+    await seedSessionIndex([
+      {
+        sessionId: 's1',
+        sessionDir: join(homeDir, 'sessions', encodeWorkDirKey(deleted), 's1'),
+        workDir: deleted,
+      },
+      {
+        sessionId: 's2',
+        sessionDir: join(homeDir, 'sessions', encodeWorkDirKey(fresh), 's2'),
+        workDir: fresh,
+      },
+    ]);
+
+    const list = await build().list();
+    expect(list.map((w) => w.id).toSorted()).toEqual(
+      [encodeWorkDirKey(work), encodeWorkDirKey(fresh)].toSorted(),
+    );
+  });
+
+  it('delete tombstones the id and the merge never resurrects it', async () => {
+    const dirA = join(homeDir, 'dir-a');
+    const dirB = join(homeDir, 'dir-b');
+    await fsp.mkdir(dirA);
+    await fsp.mkdir(dirB);
+    const registry = build();
+    const a = await registry.createOrTouch(dirA);
+    await registry.createOrTouch(dirB);
+
+    await registry.delete(a.id);
+    expect((await registry.list()).map((w) => w.id)).toEqual([encodeWorkDirKey(dirB)]);
+
+    // The tombstone is on disk in the v1-compatible field.
+    const onDisk = await readWorkspacesJson();
+    expect(onDisk.deleted_workspace_ids).toEqual([a.id]);
+    expect(onDisk.workspaces[a.id]).toBeUndefined();
+
+    // Sessions referencing the deleted workDir must not resurrect it.
+    await seedSessionIndex([
+      {
+        sessionId: 's1',
+        sessionDir: join(homeDir, 'sessions', a.id, 's1'),
+        workDir: dirA,
+      },
+    ]);
+    expect((await restart().list()).map((w) => w.id)).toEqual([encodeWorkDirKey(dirB)]);
+  });
+
+  it('createOrTouch clears the deletion tombstone', async () => {
+    const dirA = join(homeDir, 'dir-a');
+    await fsp.mkdir(dirA);
+    const registry = build();
+    const a = await registry.createOrTouch(dirA);
+    await registry.delete(a.id);
+
+    await registry.createOrTouch(dirA);
+    expect((await registry.list()).map((w) => w.id)).toEqual([a.id]);
+    expect(await readWorkspacesJson().then((f) => f.deleted_workspace_ids)).toEqual([]);
+
+    expect((await restart().list()).map((w) => w.id)).toEqual([a.id]);
   });
 
   it('writes through on update and delete', async () => {

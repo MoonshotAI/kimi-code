@@ -12,6 +12,7 @@ import {
   hostRequestHeadersSeed,
   IConfigService,
   IModelCatalogService,
+  IWorkspaceRegistry,
   logSeed,
   MULTI_SERVER_FLAG_ENV,
   resolveConfigPath,
@@ -254,6 +255,20 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     core.accessor.get(IConfigService),
     logger,
   );
+
+  // Sync the workspace catalog from the legacy session index once at startup,
+  // so sessions created by the v1 TUI surface as workspaces on the very first
+  // /workspaces request. Awaited so the write completes before the server
+  // starts accepting traffic (and before embedding hosts tear the homeDir
+  // down); best-effort: a failure re-surfaces on first access.
+  try {
+    await core.accessor.get(IWorkspaceRegistry).list();
+  } catch (error) {
+    logger.warn(
+      { err: error instanceof Error ? error.message : String(error) },
+      'workspace registry startup sync failed',
+    );
+  }
 
   const app = Fastify({
     loggerInstance: logger,

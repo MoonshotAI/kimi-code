@@ -96,7 +96,7 @@ no new suffixes get reintroduced.
 | `logger/` | `logger.ts` | (adapter lives in server) | `ILogService` |
 | `fileStore/` | `fileStore.ts` | `fileStoreService.ts` | `IFileStore` |
 | `fs/` | `fs.ts`, `fsSearch.ts`, `fsGit.ts`, `fsWatcher.ts`, `fsPathSafety.ts` | `fsService.ts`, `fsSearchService.ts`, `fsGitService.ts`, `fsWatcherService.ts` | `IFsService`, `IFsSearchService`, `IFsGitService`, `IFsWatcher` |
-| `workspace/` | `workspaceRegistry.ts`, `workspaceFs.ts` | `workspaceRegistryService.ts`, `workspaceFsService.ts` | `IWorkspaceRegistry`, `IWorkspaceFsService` |
+| `workspace/` | `workspaceRegistry.ts`, `workspaceFs.ts` | `workspaceRegistryService.ts`, `workspaceRegistryFile.ts`, `workspaceFsService.ts` | `IWorkspaceRegistry`, `IWorkspaceFsService` |
 | `config/` | `config.ts` | `configService.ts` | `IConfigService` |
 | `session/` | `session.ts` | `sessionService.ts` | `ISessionService` |
 | `message/` | `message.ts` | `messageService.ts` | `IMessageService` |

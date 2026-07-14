@@ -1,20 +1,32 @@
 /**
  * `workspaceRegistry` domain (L1) — `IWorkspaceRegistry` implementation.
  *
- * Process-wide catalog of known workspaces, now durable: an in-memory cache
- * is loaded once from `IWorkspacePersistence` (`<homeDir>/workspaces.json`, v1
- * compatible) and every mutation writes back through it. When the catalog is
- * absent or malformed, it is rebuilt once from the legacy
- * `<homeDir>/session_index.jsonl` (one workspace per distinct absolute
- * `workDir`) and then persisted. All access is serialized through a
- * promise-chain mutex so load/rebuild/mutations never race.
+ * Process-wide catalog of known workspaces, durable: an in-memory cache is
+ * loaded once from `IWorkspacePersistence` (`<homeDir>/workspaces.json`, the
+ * v1-compatible file shared with agent-core) and every mutation writes back
+ * through it. Loading has two paths:
+ *
+ * 1. No usable catalog file → one-shot rebuild from the legacy
+ *    `<homeDir>/session_index.jsonl` (one workspace per distinct absolute
+ *    `workDir`), then persisted.
+ * 2. Catalog loaded → a one-time merge from the same session index adds every
+ *    workDir the file does not know about yet (e.g. sessions created by the
+ *    v1 TUI since the last merge), then persisted if anything changed.
+ *
+ * Deletion is soft: `delete` drops the entry but records the id in
+ * `deleted_workspace_ids`, and the merge never resurrects a tombstoned id.
+ * An explicit `createOrTouch` clears the tombstone — the user opening the
+ * folder again is a stronger signal than the historical index.
+ *
+ * All access is serialized through a promise-chain mutex so
+ * load/rebuild/merge/mutations never race.
  *
  * `createOrTouch` is the single choke point every workspace/session creation
  * funnels through, so it owns the root-existence contract: the root must be
  * an existing directory on the host filesystem, otherwise it throws
  * `fs.path_not_found` (mirrors v1's `WorkspaceRootNotFoundError`). The rebuild
- * path bypasses the check on purpose — it catalogs where sessions *were*, not
- * where new ones may open. Bound at App scope.
+ * and merge paths bypass the check on purpose — they catalog where sessions
+ * *were*, not where new ones may open. Bound at App scope.
  */
 
 import { basename, isAbsolute } from 'pathe';
@@ -44,6 +56,7 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
   declare readonly _serviceBrand: undefined;
 
   private cache: Map<string, Workspace> | undefined;
+  private deletedIds: Set<string> | undefined;
   private opQueue: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -96,7 +109,9 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
               lastOpenedAt: now,
             };
       cache.set(id, ws);
-      await this.store.save([...cache.values()]);
+      // An explicit add clears any prior deletion tombstone.
+      this.deletedIds?.delete(id);
+      await this.persist();
       return ws;
     });
   }
@@ -111,7 +126,7 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
         ...(patch.name !== undefined ? { name: patch.name } : {}),
       };
       cache.set(id, updated);
-      await this.store.save([...cache.values()]);
+      await this.persist();
       return updated;
     });
   }
@@ -120,45 +135,99 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
     return this.runExclusive(async () => {
       const cache = await this.ensureLoaded();
       cache.delete(id);
-      await this.store.save([...cache.values()]);
+      // Soft delete: tombstone the id so the session-index merge cannot
+      // resurrect it, even if sessions still reference the workDir.
+      this.deletedIds?.add(id);
+      await this.persist();
     });
   }
 
   private async ensureLoaded(): Promise<Map<string, Workspace>> {
     if (this.cache !== undefined) return this.cache;
     const loaded = await this.store.load();
-    if (loaded !== undefined) {
-      this.cache = new Map(loaded.map((ws) => [ws.id, ws]));
-      return this.cache;
+    if (loaded === undefined) {
+      const rebuilt = await this.rebuildFromSessionIndex();
+      this.cache = rebuilt;
+      this.deletedIds = new Set();
+      await this.persist();
+      return rebuilt;
     }
-    const rebuilt = await this.rebuildFromSessionIndex();
-    this.cache = rebuilt;
-    await this.store.save([...rebuilt.values()]);
-    return this.cache;
+    const cache = new Map(loaded.workspaces.map((ws) => [ws.id, ws]));
+    const deletedIds = new Set(loaded.deletedIds);
+    this.cache = cache;
+    this.deletedIds = deletedIds;
+    if (await this.mergeFromSessionIndex(cache, deletedIds)) {
+      await this.persist();
+    }
+    return cache;
+  }
+
+  /** Add every distinct workDir from the legacy session index that the
+   *  catalog does not know about yet. Tombstoned ids are skipped, so a
+   *  soft-deleted workspace stays deleted. Returns whether anything changed. */
+  private async mergeFromSessionIndex(
+    cache: Map<string, Workspace>,
+    deletedIds: ReadonlySet<string>,
+  ): Promise<boolean> {
+    let changed = false;
+    const now = Date.now();
+    for (const workDir of await this.readSessionIndexWorkDirs()) {
+      const id = encodeWorkDirKey(workDir);
+      if (cache.has(id) || deletedIds.has(id)) continue;
+      cache.set(id, {
+        id,
+        root: workDir,
+        name: basename(workDir),
+        createdAt: now,
+        lastOpenedAt: now,
+      });
+      changed = true;
+    }
+    return changed;
   }
 
   private async rebuildFromSessionIndex(): Promise<Map<string, Workspace>> {
     const result = new Map<string, Workspace>();
-    const bytes = await this.storage.read(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
-    if (bytes === undefined) return result;
     const now = Date.now();
+    for (const workDir of await this.readSessionIndexWorkDirs()) {
+      const id = encodeWorkDirKey(workDir);
+      if (result.has(id)) continue;
+      result.set(id, {
+        id,
+        root: workDir,
+        name: basename(workDir),
+        createdAt: now,
+        lastOpenedAt: now,
+      });
+    }
+    return result;
+  }
+
+  private async readSessionIndexWorkDirs(): Promise<readonly string[]> {
+    const bytes = await this.storage.read(SESSION_INDEX_SCOPE, SESSION_INDEX_KEY);
+    if (bytes === undefined) return [];
+    const workDirs: string[] = [];
     for (const line of textDecoder.decode(bytes).split(/\r?\n/)) {
       const trimmed = line.trim();
       if (trimmed === '') continue;
       const entry = parseSessionIndexLine(trimmed);
       if (entry === undefined) continue;
       if (!isAbsolute(entry.workDir)) continue;
-      const id = encodeWorkDirKey(entry.workDir);
-      if (result.has(id)) continue;
-      result.set(id, {
-        id,
-        root: entry.workDir,
-        name: basename(entry.workDir),
-        createdAt: now,
-        lastOpenedAt: now,
-      });
+      workDirs.push(entry.workDir);
     }
-    return result;
+    return workDirs;
+  }
+
+  private async persist(): Promise<void> {
+    const cache = this.cache;
+    const deletedIds = this.deletedIds;
+    if (cache === undefined || deletedIds === undefined) {
+      throw new Error('workspace registry mutated before load completed');
+    }
+    await this.store.save({
+      workspaces: [...cache.values()],
+      deletedIds: [...deletedIds],
+    });
   }
 
   private runExclusive<T>(op: () => Promise<T>): Promise<T> {
