@@ -188,6 +188,7 @@ describe('WorkspaceRegistryService (file-backed)', () => {
   it('derives sessions after an empty catalog has already been materialized', async () => {
     const root = join(homeDir, 'late-session');
     const workspaceId = encodeWorkDirKey(root);
+    await fsp.mkdir(root, { recursive: true });
     expect(await build().list()).toEqual([]);
     await seedSessionIndex([
       {
@@ -198,6 +199,10 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     ]);
 
     await expect(build().get(workspaceId)).resolves.toMatchObject({
+      id: workspaceId,
+      root,
+    });
+    await expect(build().createOrTouch(root)).resolves.toMatchObject({
       id: workspaceId,
       root,
     });

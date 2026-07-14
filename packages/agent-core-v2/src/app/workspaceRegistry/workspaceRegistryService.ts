@@ -133,12 +133,21 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
       );
     }
 
-    return this.mutate((catalog) => {
+    return this.mutate(async (catalog) => {
       const next = cloneCatalog(catalog);
       const id = encodeWorkDirKey(normalizedRoot);
-      const aliases = [...next.workspaces.values()].filter(
+      let aliases = [...next.workspaces.values()].filter(
         (workspace) => normalizeWorkDir(workspace.root) === normalizedRoot,
       );
+      if (aliases.length === 0) {
+        const recovered = [...(await this.rebuildFromSessionIndex()).workspaces.values()].find(
+          (workspace) => normalizeWorkDir(workspace.root) === normalizedRoot,
+        );
+        if (recovered !== undefined) {
+          next.workspaces.set(recovered.id, recovered);
+          aliases = [recovered];
+        }
+      }
       const existing = aliases.find((workspace) => workspace.id === id) ?? aliases[0];
       const representativeId = existing?.id ?? id;
       const now = Date.now();
@@ -156,10 +165,17 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
   }
 
   update(id: string, patch: WorkspaceUpdate): Promise<Workspace | undefined> {
-    return this.mutate((catalog) => {
-      const existing = findRepresentativeWorkspace([...catalog.workspaces.values()], id);
-      if (existing === undefined) return { next: catalog, value: undefined };
+    return this.mutate(async (catalog) => {
       const next = cloneCatalog(catalog);
+      let existing = findRepresentativeWorkspace([...next.workspaces.values()], id);
+      if (existing === undefined) {
+        const recovered = (await this.rebuildFromSessionIndex()).workspaces.get(id);
+        if (recovered !== undefined) {
+          next.workspaces.set(recovered.id, recovered);
+          existing = recovered;
+        }
+      }
+      if (existing === undefined) return { next: catalog, value: undefined };
       const root = normalizeWorkDir(existing.root);
       const aliases = [...next.workspaces.values()].filter(
         (workspace) => normalizeWorkDir(workspace.root) === root,
@@ -209,11 +225,14 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
     operation: (catalog: WorkspaceCatalogState) => {
       readonly next: WorkspaceCatalogState;
       readonly value: T;
-    },
+    } | Promise<{
+      readonly next: WorkspaceCatalogState;
+      readonly value: T;
+    }>,
   ): Promise<T> {
     return this.runExclusive(() =>
       this.store.withWriteLock(async () => {
-        const result = operation(await this.load());
+        const result = await operation(await this.load());
         await this.store.save(toPersistedCatalog(result.next));
         return result.value;
       }),
