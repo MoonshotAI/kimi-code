@@ -12,18 +12,8 @@ export interface PermissionApprovalResultRecord {
 
 export type PermissionRuleDecision = 'allow' | 'deny' | 'ask';
 
-/**
- * Rule provenance. `session-runtime` stores rules produced by
- * "approve for session"; `turn-override`, `project`, and `user` are
- * reserved for static-loaded rules surfaced by external callers.
- */
 export type PermissionRuleScope = 'turn-override' | 'session-runtime' | 'project' | 'user';
 
-/**
- * A single permission rule. `pattern` is the DSL form (`Read(/etc/**)`,
- * `Bash(rm *)`, or bare `Write`). Rule arguments are interpreted only by
- * tools that provide a matcher; other tools match by name only.
- */
 export interface PermissionRule {
   readonly decision: PermissionRuleDecision;
   readonly scope: PermissionRuleScope;

@@ -117,6 +117,6 @@ registerScopedService(
   LifecycleScope.App,
   IFlagService,
   FlagService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'flag',
 );

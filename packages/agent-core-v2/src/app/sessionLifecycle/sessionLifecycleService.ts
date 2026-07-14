@@ -12,10 +12,15 @@
  * sessions are discovered through the `sessionIndex` read model, and workspace
  * roots are remembered through `workspaceRegistry`. On create / fork the
  * session is also appended to the shared `session_index.jsonl` so v1 clients
- * (TUI, export) can discover sessions created by the v2 engine.
+ * (TUI, export) can discover sessions created by the v2 engine. Fork flushes
+ * live agent logs and rejects non-empty logs without a protocol metadata
+ * envelope instead of stamping legacy data as current.
  */
 
 import { randomUUID } from 'node:crypto';
+
+import { join } from 'pathe';
+import { ulid } from 'ulid';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { IInstantiationService } from '#/_base/di/instantiation';
@@ -26,6 +31,7 @@ import {
   LifecycleScope,
   registerScopedService,
 } from '#/_base/di/scope';
+import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Emitter, type Event } from '#/_base/event';
 import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionActivityKernel } from '#/activity/activity';
@@ -39,6 +45,8 @@ import {
 import { metadataRecord } from '#/agent/wireRecord/metadataOps';
 import { WIRE_RECORD_FILENAME, wireRecordScope } from '#/agent/wireRecord/wireRecordService';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
+import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { IConfigService } from '#/app/config/config';
 import { IEventService } from '#/app/event/event';
 import {
@@ -53,6 +61,7 @@ import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 import { createHooks } from '#/hooks';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
+import { IHostFileSystem, type HostDirEntry } from '#/os/interface/hostFileSystem';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
@@ -101,12 +110,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     'onDidCreateSession',
     'onWillCloseSession',
   ]);
-  /** In-flight `resume` promises, keyed by session id. De-dupes concurrent cold
-   *  loads so a hot read path (e.g. snapshot retry) cannot materialize the same
-   *  session twice and leak a handle — and doubles as the visibility gate for
-   *  `get` / `list`: while an id is present here its materialized handle is
-   *  half-initialized (main agent not yet restored + replayed) and must not be
-   *  observable. */
   private readonly resuming = new Map<string, Promise<ISessionScopeHandle | undefined>>();
 
   constructor(
@@ -117,6 +120,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     @ISessionIndex private readonly index: ISessionIndex,
     @IAppendLogStore private readonly appendLogStore: IAppendLogStore,
     @IAtomicDocumentStore private readonly docs: IAtomicDocumentStore,
+    @IHostFileSystem private readonly hostFs: IHostFileSystem,
+    @ICronTaskPersistence private readonly cronStore: ICronTaskPersistence,
     @IWorkspaceRegistry private readonly workspaceRegistry: IWorkspaceRegistry,
     @IWorkspaceLocalConfigService
     private readonly workspaceLocalConfig: IWorkspaceLocalConfigService,
@@ -143,9 +148,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const workspaceId = opts.workspaceId ?? workspace.id;
     const sessionScope = this.bootstrap.sessionScope(workspaceId, opts.sessionId);
     const sessionDir = this.bootstrap.sessionDir(workspaceId, opts.sessionId);
-    // Metadata lives at `<sessionDir>/state.json` (shared with v1's layout; the
-    // v2 document is tagged with `version: 2`). `metaScope` is therefore the
-    // session directory itself, homeDir-relative.
     const metaScope = sessionScope;
     const ctx: ISessionContext = {
       _serviceBrand: undefined,
@@ -157,21 +159,12 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       scope: (subKey?: string): string =>
         subKey === undefined || subKey === '' ? sessionScope : `${sessionScope}/${subKey}`,
     };
-    // Merge the project-local `.kimi-code/local.toml` additional dirs with the
-    // caller-supplied ones (relative paths resolve against workDir), mirroring
-    // v1's createSession/resumeSession. A broken local.toml fails the create
-    // loudly with CONFIG_INVALID, same as v1.
     const localWorkspaceDirs = await this.workspaceLocalConfig.readAdditionalDirs(opts.workDir);
     const callerAdditionalDirs = await this.workspaceLocalConfig.resolveAdditionalDirs(
       opts.workDir,
       opts.additionalDirs ?? [],
     );
     const additionalDirs = [...localWorkspaceDirs.additionalDirs, ...callerAdditionalDirs];
-    // Wait for the host-environment probe to complete before creating any
-    // Session scope — Session/Agent-scope services (bash, permission policies,
-    // path-access) read `IHostEnvironment.osKind` / `pathClass` / `homeDir`
-    // synchronously in their constructors, so the probe must have landed by
-    // the time the first Session-scoped service is resolved.
     await this.hostEnv.ready;
     const handle = createScopedChildHandle(
       this.instantiation,
@@ -181,19 +174,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         extra: [...sessionContextSeed(ctx)],
       },
     ) as ISessionScopeHandle;
-    // Construct the Session activity kernel eagerly so its lane is `restoring`
-    // for the whole materialize / replay window — edge commands that arrive
-    // before `markActive()` are rejected with `activity.session_rejected`.
     handle.accessor.get(ISessionActivityKernel);
     if (additionalDirs.length > 0) {
-      // De-duplication happens inside setAdditionalDirs (resolve + Set),
-      // matching v1's normalizeAdditionalDirs.
       handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
     }
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
     void handle.accessor.get(ISessionSkillCatalog).ready;
-    await handle.accessor.get(ISessionMcpService).ensureMcpReady();
+    await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
     // Force-instantiate the session-level eager services whose subscriptions
     // must exist before the first agent / turn (external hooks, cron).
     handle.accessor.get(ISessionExternalHooksService);
@@ -215,30 +203,16 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
     await this.hooks.onDidCreateSession.run(event);
     this._onDidCreateSession.fire(event);
-    // Deliberately broader than v1: resumes also emit, with `resumed: true` —
-    // the flag exists precisely to distinguish them (v1's resume path never
-    // emitted despite the schema having the flag).
     this.telemetry.track2('session_started', { resumed: event.source === 'resume' });
     event.handle.accessor.get(ISessionActivityKernel).markActive();
   }
 
   get(sessionId: string): ISessionScopeHandle | undefined {
-    // A session mid-resume is already materialized in `this.sessions` (so
-    // close/archive can still find it) but its main agent has not finished
-    // restore + replay — exposing it would hand callers a half-initialized
-    // handle. Hide it until `resume` settles; callers that need the handle
-    // should `await resume(sessionId)`.
     if (this.resuming.has(sessionId)) return undefined;
     return this.sessions.get(sessionId);
   }
 
   resume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
-    // Check in-flight resumes FIRST: `materializeSession` adds the session to
-    // `this.sessions` before `doResume` finishes restore/replay, so a concurrent
-    // caller that checks `sessions` first would get a half-initialized handle
-    // whose main agent has no context. Checking `resuming` first ensures
-    // concurrent callers wait for the full resume (including restore + replay)
-    // to complete.
     const inflight = this.resuming.get(sessionId);
     if (inflight !== undefined) return inflight;
     const live = this.sessions.get(sessionId);
@@ -256,8 +230,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   private async doResume(sessionId: string): Promise<ISessionScopeHandle | undefined> {
-    // Re-check after the serialized entry: a prior `resume` for the same id may
-    // have already materialized the session while this call was queued.
     const live = this.sessions.get(sessionId);
     if (live !== undefined) return live;
 
@@ -290,8 +262,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   }
 
   list(): readonly ISessionScopeHandle[] {
-    // Exclude sessions still mid-resume for the same reason as `get`: the handle
-    // exists but is not yet restored, so it must not be observable.
     const ready: ISessionScopeHandle[] = [];
     for (const [id, handle] of this.sessions) {
       if (!this.resuming.has(id)) ready.push(handle);
@@ -348,8 +318,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async fork(opts: ForkSessionOptions): Promise<ISessionScopeHandle> {
     const sourceId = opts.sourceSessionId;
 
-    // 1. Resolve the source: prefer a live handle, otherwise fall back to the
-    // persisted index (so a closed session can still be forked, like v1).
     const sourceHandle = this.sessions.get(sourceId);
     const indexSummary = await this.index.get(sourceId);
     if (sourceHandle === undefined && indexSummary === undefined) {
@@ -360,29 +328,25 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         ? sourceHandle.accessor.get(ISessionContext).workspaceId
         : indexSummary!.workspaceId;
 
-    // 2. Quiesce the live source so no new turn begins while the fork copies
-    // its wire logs — this closes the check-then-act window (矛盾 k) that the
-    // old `status() !== 'idle'` check suffered from. A closed source has no
-    // kernel to quiesce.
     const quiesce =
       sourceHandle !== undefined
         ? await sourceHandle.accessor.get(ISessionActivityKernel).quiesce('fork')
         : undefined;
+    let targetId: string | undefined;
+    let target: ISessionScopeHandle | undefined;
+    let targetSessionDir: string | undefined;
     try {
-      // 3. Resolve the work dir the fork inherits (same workspace as the source).
       const workspace = await this.workspaceRegistry.get(workspaceId);
       if (workspace === undefined) {
         throw new Error2('workspace.not_found', `workspace ${workspaceId} does not exist`);
       }
 
-      // 4. Read the source metadata (live handle or disk).
       const sourceMeta =
         sourceHandle !== undefined
           ? await sourceHandle.accessor.get(ISessionMetadata).read()
           : await this.readMetaFromDisk(workspaceId, sourceId);
 
-      // 5. Mint the target id and reject collisions.
-      const targetId = opts.newSessionId ?? createSessionId();
+      targetId = opts.newSessionId ?? createSessionId();
       if (this.sessions.has(targetId) || (await this.index.get(targetId)) !== undefined) {
         throw new Error2(
           ErrorCodes.SESSION_ALREADY_EXISTS,
@@ -390,17 +354,19 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         );
       }
 
-      // 6. Materialize the target session scope (fresh metadata + storage).
-      const target = await this.materializeSession({
+      target = await this.materializeSession({
         sessionId: targetId,
         workDir: workspace.root,
       });
       const targetCtx = target.accessor.get(ISessionContext);
+      targetSessionDir = targetCtx.sessionDir;
       const targetMeta = target.accessor.get(ISessionMetadata);
 
-      // 7. Copy every source agent's wire log into the target's per-agent log
-      // (BEFORE the target agents are created, so the logs are in place when
-      // their AgentWireRecordService restores them in step 9).
+      await this.copySessionFiles(
+        this.bootstrap.sessionDir(workspaceId, sourceId),
+        targetCtx.sessionDir,
+      );
+
       const sourceAgents = sourceMeta?.agents ?? {};
       const agentIds = Object.keys(sourceAgents);
       for (const agentId of agentIds) {
@@ -414,7 +380,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         });
       }
 
-      // 8. Rewrite the target metadata to reflect fork provenance.
       const title = opts.title ?? `Fork: ${sourceMeta?.title || sourceId}`;
       await targetMeta.update({
         title,
@@ -425,8 +390,8 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         custom: forkCustomMetadata(sourceMeta?.custom, opts.metadata),
       });
 
-      // 9. Create the target agents (same ids) and restore each from its copied
-      // log. Creating them registers fresh agent entries with TARGET homedirs.
+      await this.duplicateCronTasks(workspaceId, sourceId, targetId);
+
       for (const agentId of agentIds) {
         const sourceAgent = sourceAgents[agentId]!;
         const agentHandle = await target.accessor.get(IAgentLifecycleService).create({
@@ -448,6 +413,20 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
       });
       await this.announceCreated({ sessionId: targetId, handle: target, source: 'fork' });
       return target;
+    } catch (error) {
+      if (targetId !== undefined) {
+        this.sessions.delete(targetId);
+      }
+      if (target !== undefined) {
+        try {
+          target.dispose();
+        } catch {
+        }
+      }
+      if (targetSessionDir !== undefined) {
+        await this.hostFs.remove(targetSessionDir).catch(() => {});
+      }
+      throw error;
     } finally {
       quiesce?.dispose();
     }
@@ -457,8 +436,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     const title =
       opts.title ??
       `Child: ${(await this.resolveSourceTitle(opts.sourceSessionId)) ?? opts.sourceSessionId}`;
-    // The child markers win over any caller-supplied values so a forged
-    // `parent_session_id` / `child_session_kind` cannot reparent a session.
     const metadata = {
       ...opts.metadata,
       [PARENT_SESSION_ID_KEY]: opts.sourceSessionId,
@@ -472,12 +449,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     });
   }
 
-  /**
-   * Best-effort source title for the default `Child: <title>` name. Reads the
-   * live handle first, then the persisted index. A missing source yields
-   * `undefined`; `fork` still throws `session.not_found` for the real
-   * existence check.
-   */
   private async resolveSourceTitle(sourceId: string): Promise<string | undefined> {
     const live = this.sessions.get(sourceId);
     if (live !== undefined) {
@@ -486,11 +457,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return (await this.index.get(sourceId))?.title;
   }
 
-  /**
-   * Copy one agent's wire log from the source into the target session's
-   * per-agent log, appending a `forked` boundary record. Works for both live
-   * sources (flush then read) and closed sources (read the persisted log).
-   */
   private async copyAgentWire(args: {
     readonly sourceHandle: ISessionScopeHandle | undefined;
     readonly sourceHomedir: string;
@@ -498,7 +464,6 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     readonly targetWorkspaceId: string;
     readonly targetSessionId: string;
   }): Promise<void> {
-    // Flush the live agent so its persisted log is current before reading.
     if (args.sourceHandle !== undefined) {
       const agentHandle = args.sourceHandle.accessor
         .get(IAgentLifecycleService)
@@ -536,6 +501,66 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     );
   }
 
+  private async copySessionFiles(sourceDir: string, targetDir: string): Promise<void> {
+    let entries: readonly HostDirEntry[];
+    try {
+      entries = await this.hostFs.readdir(sourceDir);
+    } catch (error) {
+      if (isMissingFileError(error)) return;
+      throw error;
+    }
+    await this.copySessionDirEntries(sourceDir, targetDir, entries, '');
+  }
+
+  private async copySessionDirEntries(
+    sourceDir: string,
+    targetDir: string,
+    entries: readonly HostDirEntry[],
+    relBase: string,
+  ): Promise<void> {
+    for (const entry of entries) {
+      const rel = relBase === '' ? entry.name : `${relBase}/${entry.name}`;
+      if (rel === 'state.json' || rel === 'logs' || entry.name === WIRE_RECORD_FILENAME) {
+        continue;
+      }
+      if (entry.isSymbolicLink === true) continue;
+      const sourcePath = join(sourceDir, entry.name);
+      const targetPath = join(targetDir, entry.name);
+      if (entry.isDirectory) {
+        let children: readonly HostDirEntry[];
+        try {
+          children = await this.hostFs.readdir(sourcePath);
+        } catch (error) {
+          if (isMissingFileError(error)) continue;
+          throw error;
+        }
+        await this.hostFs.mkdir(targetPath, { recursive: true });
+        await this.copySessionDirEntries(sourcePath, targetPath, children, rel);
+      } else if (entry.isFile) {
+        const data = await this.hostFs.readBytes(sourcePath);
+        await this.hostFs.mkdir(targetDir, { recursive: true });
+        await this.hostFs.writeBytes(targetPath, data);
+      }
+    }
+  }
+
+  private async duplicateCronTasks(
+    workspaceId: string,
+    sourceId: string,
+    targetId: string,
+  ): Promise<void> {
+    const tasks = await this.cronStore.list({ workspaceId });
+    for (const task of tasks) {
+      if (task.tags?.[CRON_SESSION_TAG] !== sourceId) continue;
+      const clone: CronTask = {
+        ...task,
+        id: ulid(),
+        tags: { ...task.tags, [CRON_SESSION_TAG]: targetId },
+      };
+      await this.cronStore.save(workspaceId, clone);
+    }
+  }
+
   private async readMetaFromDisk(
     workspaceId: string,
     sessionId: string,
@@ -551,7 +576,7 @@ registerScopedService(
   LifecycleScope.App,
   ISessionLifecycleService,
   SessionLifecycleService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionLifecycle',
 );
 
@@ -561,14 +586,13 @@ async function collect<T>(iterable: AsyncIterable<T>): Promise<T[]> {
   return items;
 }
 
-/**
- * Mint a session id in the canonical `session_<lowercase-uuid>` form, matching
- * v1's `createSessionId` (`packages/agent-core/src/rpc/core-impl.ts`).
- * `randomUUID` already returns lowercase hex, so the result is lowercase by
- * construction. Used as the default for both `create` and `fork` when the
- * caller does not supply an id, so every session id shares one format and the
- * edge layers never mint their own.
- */
+function isMissingFileError(error: unknown): boolean {
+  const unwrapped = unwrapErrorCause(error);
+  if (unwrapped === null || typeof unwrapped !== 'object') return false;
+  const code = (unwrapped as { readonly code?: unknown }).code;
+  return code === 'ENOENT';
+}
+
 function createSessionId(): string {
   return `session_${randomUUID()}`;
 }
@@ -577,10 +601,6 @@ function forkedRecord(): PersistedWireRecord {
   return { type: 'forked', time: Date.now() } as PersistedWireRecord;
 }
 
-/**
- * Merge the source session's custom metadata with the caller-supplied metadata,
- * dropping the reserved `goal` key from both (matches v1's `forkCustomMetadata`).
- */
 function forkCustomMetadata(
   source: Record<string, unknown> | undefined,
   input: Record<string, unknown> | undefined,

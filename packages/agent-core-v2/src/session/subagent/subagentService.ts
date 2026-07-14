@@ -75,6 +75,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionSubagentService,
   SessionSubagentService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'subagent',
 );

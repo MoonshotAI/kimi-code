@@ -50,7 +50,6 @@ export const ServicesConfigSchema = z
 
 export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
 
-/** Read transform: snake_case file → camelCase in-memory `services` object. */
 export const servicesFromToml = (rawSnake: unknown): unknown => {
   if (!isPlainObject(rawSnake)) return rawSnake;
   const out: Record<string, unknown> = {};
@@ -75,11 +74,8 @@ function serviceEntryFromToml(data: Record<string, unknown>): Record<string, unk
   return out;
 }
 
-/** Write transform: camelCase in-memory `services` object → snake_case file. */
 export const servicesToToml = (value: unknown, rawSnake: unknown): unknown => {
   if (!isPlainObject(value)) return value;
-  // Preserve unknown top-level entries (e.g. a user-defined service) verbatim,
-  // mirroring v1's `servicesToToml` cloning `rawServices`.
   const out = cloneRecord(rawSnake);
   writeService(out, 'moonshot_search', value['moonshotSearch']);
   writeService(out, 'moonshot_fetch', value['moonshotFetch']);

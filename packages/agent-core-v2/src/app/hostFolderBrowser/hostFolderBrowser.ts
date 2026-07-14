@@ -18,7 +18,6 @@ import type { FsBrowseResponse, FsHomeResponse } from '@moonshot-ai/protocol';
 
 export type { FsBrowseResponse, FsHomeResponse };
 
-/** Thrown by `browse` when the requested path is not absolute. */
 export class HostFolderNotAbsoluteError extends Error {
   readonly path: string;
   constructor(path: string) {
@@ -28,7 +27,6 @@ export class HostFolderNotAbsoluteError extends Error {
   }
 }
 
-/** Thrown by `browse` when the requested path does not exist or is not a directory. */
 export class HostFolderNotFoundError extends Error {
   readonly path: string;
   constructor(path: string) {
@@ -38,7 +36,6 @@ export class HostFolderNotFoundError extends Error {
   }
 }
 
-/** Thrown by `browse` when the process lacks permission to read the path. */
 export class HostFolderPermissionError extends Error {
   readonly path: string;
   constructor(path: string) {
@@ -51,18 +48,11 @@ export class HostFolderPermissionError extends Error {
 export interface IHostFolderBrowser {
   readonly _serviceBrand: undefined;
 
-  /**
-   * List the immediate sub-directories of `absPath` (defaults to `$HOME`),
-   * annotated with git metadata. The returned `path` is the realpath of the
-   * target.
-   */
   browse(absPath?: string): Promise<FsBrowseResponse>;
-  /** `$HOME` plus the most recently opened workspace roots. */
   home(): Promise<FsHomeResponse>;
 }
 
 export const IHostFolderBrowser: ServiceIdentifier<IHostFolderBrowser> =
   createDecorator<IHostFolderBrowser>('hostFolderBrowser');
 
-/** Maximum number of recent workspace roots returned by `home()`. */
 export const RECENT_ROOTS_LIMIT = 8;

@@ -35,7 +35,6 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IBlobStore } from '#/persistence/interface/blobStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 
-// The default offload threshold is 4096 base64 chars; LARGE straddles it.
 const LARGE = 'A'.repeat(5000);
 const SMALL = 'AQID';
 

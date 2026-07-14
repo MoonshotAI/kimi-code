@@ -1,3 +1,12 @@
+/**
+ * Scenario: append-log file persistence and agent wire migration rewrites.
+ *
+ * Resolves real append-log and wire-record services by interface over file or
+ * in-memory storage. Controlled storage promises expose rewrite durability
+ * without wall-clock waits. Run with `pnpm --filter @moonshot-ai/agent-core-v2
+ * exec vitest run test/agent/wireRecord/persistence.test.ts`.
+ */
+
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -15,6 +24,12 @@ import {
   IAppendLogStore,
   type PersistedWireRecord,
 } from '#/index';
+import {
+  IAgentScopeContext,
+  makeAgentScopeContext,
+} from '#/agent/scopeContext/scopeContext';
+import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
+import { AgentWireRecordService } from '#/agent/wireRecord/wireRecordService';
 import { FileStorageService } from '#/persistence/backends/node-fs/fileStorageService';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
@@ -52,6 +67,20 @@ function createAppendLogHarness(storage: IFileSystemStorageService): IAppendLogS
   ix.stub(IFileSystemStorageService, storage);
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   return ix.get(IAppendLogStore);
+}
+
+function createWireRecordHarness(log: IAppendLogStore): IAgentWireRecordService {
+  const disposable = new DisposableStore();
+  disposables.push(disposable);
+
+  const ix = disposable.add(new TestInstantiationService());
+  ix.stub(
+    IAgentScopeContext,
+    makeAgentScopeContext({ agentId: 'main', agentScope: SCOPE }),
+  );
+  ix.stub(IAppendLogStore, log);
+  ix.set(IAgentWireRecordService, new SyncDescriptor(AgentWireRecordService));
+  return ix.get(IAgentWireRecordService);
 }
 
 async function createFileAppendLogHarness(): Promise<{
@@ -145,6 +174,7 @@ describe('AppendLogStore file persistence', () => {
       input: [{ type: 'text', text: 'old' }],
       origin: { kind: 'user' },
     });
+    await log.flush();
     await log.rewrite(SCOPE, KEY, [
       {
         type: 'metadata',
@@ -245,6 +275,7 @@ describe('wire record append-log persistence', () => {
       input: [{ type: 'text', text: 'one' }],
       origin: { kind: 'user' },
     });
+    await log.flush();
     await log.rewrite<PersistedWireRecord>(SCOPE, KEY, [
       {
         type: 'metadata',
@@ -260,5 +291,71 @@ describe('wire record append-log persistence', () => {
         created_at: 1,
       },
     ]);
+  });
+});
+
+describe('AgentWireRecordService migration rewrite', () => {
+  async function seedLegacyLog(storage: InMemoryStorageService): Promise<IAppendLogStore> {
+    const log = createAppendLogHarness(storage);
+    log.append<PersistedWireRecord>(SCOPE, KEY, {
+      type: 'metadata',
+      protocol_version: '1.0',
+      created_at: 1,
+    });
+    log.append<PersistedWireRecord>(SCOPE, KEY, {
+      type: 'turn.prompt',
+      input: [{ type: 'text', text: 'hi' }],
+      origin: { kind: 'user' },
+    });
+    await log.flush();
+    return log;
+  }
+
+  it('restore resolves only after the migration rewrite is durable', async () => {
+    const storage = new InMemoryStorageService();
+    const log = await seedLegacyLog(storage);
+    let markWriteStarted!: () => void;
+    const writeStarted = new Promise<void>((resolve) => {
+      markWriteStarted = resolve;
+    });
+    let releaseWrite!: () => void;
+    const writeGate = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const originalWrite = storage.write.bind(storage);
+    storage.write = async (...args) => {
+      markWriteStarted();
+      await writeGate;
+      return originalWrite(...args);
+    };
+
+    const svc = createWireRecordHarness(log);
+    let restored = false;
+    const restorePromise = svc.restore().then(() => {
+      restored = true;
+    });
+    await writeStarted;
+    expect(restored).toBe(false);
+
+    releaseWrite();
+    await restorePromise;
+
+    const records = await collect<PersistedWireRecord>(log);
+    expect(records[0]).toMatchObject({
+      type: 'metadata',
+      protocol_version: AGENT_WIRE_PROTOCOL_VERSION,
+    });
+  });
+
+  it('restore propagates a migration rewrite failure', async () => {
+    const storage = new InMemoryStorageService();
+    const log = await seedLegacyLog(storage);
+    storage.write = async () => {
+      throw new Error('disk full');
+    };
+
+    const svc = createWireRecordHarness(log);
+
+    await expect(svc.restore()).rejects.toThrow('disk full');
   });
 });

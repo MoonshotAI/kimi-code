@@ -1,10 +1,5 @@
 import type { GoalSnapshot, GoalToolResult } from '#/agent/goal/types';
 
-/**
- * The goalId is a random UUID with no user-facing meaning, and no goal tool
- * takes one (there is only ever one goal at a time). Keep it out of what the
- * model sees so it never echoes the id back to the user as if it mattered.
- */
 export function goalForModel(goal: GoalSnapshot): Omit<GoalSnapshot, 'goalId'> {
   const { goalId: _goalId, ...rest } = goal;
   return rest;

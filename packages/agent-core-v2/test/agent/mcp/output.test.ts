@@ -178,6 +178,20 @@ describe('convertMCPContentBlock', () => {
     });
   });
 
+  test('replaces a resource_link whose declared image format is unsupported with a notice', () => {
+    const block = assertValidMcpBlock({
+      type: 'resource_link',
+      name: 'img.avif',
+      uri: 'https://example.com/img.avif',
+      mimeType: 'image/avif',
+    });
+    const part = convertMCPContentBlock(block);
+    expect(part?.type).toBe('text');
+    const text = (part as { text: string }).text;
+    expect(text).toContain('image/avif');
+    expect(text).toContain('https://example.com/img.avif');
+  });
+
   test('converts resource_link with audio/* mimeType to AudioURLPart with URL', () => {
     const block = assertValidMcpBlock({
       type: 'resource_link',

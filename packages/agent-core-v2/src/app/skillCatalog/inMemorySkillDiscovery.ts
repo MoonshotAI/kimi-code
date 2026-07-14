@@ -63,6 +63,6 @@ registerScopedService(
   LifecycleScope.App,
   ISkillDiscovery,
   InMemorySkillDiscovery,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'skillCatalog',
 );

@@ -64,12 +64,6 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
     };
   }
 
-  /**
-   * Starting a goal switches the agent into autonomous, multi-turn work, so its
-   * approval reuses the same choice the `/goal` command offers: pick the
-   * permission mode to run under, or decline. `auto` mode auto-approves the goal
-   * upstream and never reaches this prompt, so the menu only covers manual/yolo.
-   */
   private resolveGoalStartDisplay(args: CreateGoalToolInput): ToolInputDisplay | undefined {
     const mode = this.permissionMode.mode;
     if (mode === 'auto') return undefined;

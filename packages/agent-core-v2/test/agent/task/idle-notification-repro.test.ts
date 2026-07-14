@@ -50,7 +50,6 @@ function agentTask(
   );
 }
 
-/** `task.notified` fires once per enqueued notification (after the enqueue). */
 function notifiedCount(ctx: TestAgentContext): number {
   return ctx.allEvents.filter((e) => e.event === 'task.notified').length;
 }
@@ -82,8 +81,6 @@ describe('task notification → main agent (real Agent instance)', () => {
       expect(loop.status().activeTurnId).toBeUndefined();
       expect(ctx.llmCalls.length).toBe(0);
 
-      // `activeOrNewTurn` admission: with no active turn the notification
-      // launches a fresh turn on its own — no user prompt needed.
       ctx.mockNextResponse({ type: 'text', text: 'ack from main agent' });
       const turnEnd = ctx.untilTurnEnd();
       const taskId = background.registerTask(agentTask(
@@ -112,11 +109,6 @@ describe('task notification → main agent (real Agent instance)', () => {
     });
 
     it('BUSY: completed bg agent during an active turn is flushed into an LLM call', async () => {
-      // The notification is enqueued (mergeable, agent-scoped) while the
-      // user-prompted turn runs. Depending on delivery timing it either
-      // folds into that turn's next step or launches its own follow-up turn
-      // once the first one ends — in every case it must reach an LLM call.
-      // Three scripted responses cover both branches plus the drain prompt.
       ctx.mockNextResponse({ type: 'text', text: 'first turn ack' });
       ctx.mockNextResponse({ type: 'text', text: 'notification ack' });
       ctx.mockNextResponse({ type: 'text', text: 'drain turn ack' });
@@ -125,8 +117,6 @@ describe('task notification → main agent (real Agent instance)', () => {
         input: [{ type: 'text', text: 'kick off a turn' }],
       });
 
-      // Right after kicking off, register a background task that completes
-      // immediately, so the notification is enqueued mid-turn.
       const taskId = background.registerTask(agentTask(
         Promise.resolve({ result: 'busy-state bg result' }),
         'busy-state repro',
@@ -141,8 +131,6 @@ describe('task notification → main agent (real Agent instance)', () => {
         { timeout: 2000 },
       );
 
-      // Drain whatever the first turn left queued, then assert the
-      // notification reached an LLM call whichever branch delivered it.
       await ctx.rpc.prompt({
         input: [{ type: 'text', text: 'drain the queue' }],
       });
@@ -154,7 +142,6 @@ describe('task notification → main agent (real Agent instance)', () => {
       });
       expect(delivered).toBe(true);
 
-      // …and it must be materialized in the agent's context history.
       const data = ctx.contextData();
       const flatContext = JSON.stringify(data);
       expect(flatContext).toContain('<notification');
@@ -166,10 +153,6 @@ describe('task notification → main agent (real Agent instance)', () => {
     });
 
     it('IDLE × N: a GROUP of bg agents completes — the first notification launches one turn, the rest fold in', async () => {
-      // The first idle delivery launches a turn; later notifications fold
-      // into it as mergeable requests (or launch a follow-up if they land
-      // after it ends). Three scripted responses cover the worst case of
-      // one LLM call per notification.
       ctx.mockNextResponse({ type: 'text', text: 'ack group 1' });
       ctx.mockNextResponse({ type: 'text', text: 'ack group 2' });
       ctx.mockNextResponse({ type: 'text', text: 'ack group 3' });
@@ -208,8 +191,6 @@ describe('task notification → main agent (real Agent instance)', () => {
         { timeout: 2000 },
       );
 
-      // Every notification reached an LLM call — either merged into the
-      // auto-launched turn's first batch or carried by a follow-up step.
       const flatHistoryText = JSON.stringify(ctx.llmCalls.map((call) => call.history));
       for (const id of taskIds) {
         expect(flatHistoryText).toContain(id);
@@ -224,7 +205,6 @@ describe('task notification → main agent (real Agent instance)', () => {
     });
 
     it('RACE: bg completion right after turn end launches its own turn', async () => {
-      // 1st turn: prompted by user — produces text and ends.
       ctx.mockNextResponse({ type: 'text', text: 'first user-prompted ack' });
       await ctx.rpc.prompt({
         input: [{ type: 'text', text: 'hello main agent' }],
@@ -232,8 +212,6 @@ describe('task notification → main agent (real Agent instance)', () => {
       await ctx.untilTurnEnd();
       expect(ctx.llmCalls.length).toBe(1);
 
-      // Fire the bg completion while the agent is idle: `activeOrNewTurn`
-      // admission launches a fresh turn for the notification.
       ctx.mockNextResponse({ type: 'text', text: 'ack from bg notification' });
       const turnEnd = ctx.untilTurnEnd();
       const taskId = background.registerTask(agentTask(
@@ -268,8 +246,6 @@ describe('task notification → main agent (real Agent instance)', () => {
 
     beforeEach(async () => {
       sessionDir = await mkdtemp(join(tmpdir(), 'kimi-bg-resume-repro-'));
-      // Simulate a previous session's bash bg task that completed
-      // before exit and an agent bg task that didn't (will be lost).
       const backgroundPersistence = createAgentTaskPersistence(sessionDir);
       await backgroundPersistence.writeTask({
         taskId: 'bash-prev0000',
@@ -310,48 +286,24 @@ describe('task notification → main agent (real Agent instance)', () => {
     });
 
     it('RESUME: terminal bg tasks discovered on reconcile are SILENTLY injected (no auto-turn)', async () => {
-      // Scenario the user described: kimi exits while bg tasks are
-      // running; on next start, resume() loads them from disk and
-      // reconcile() classifies them as terminal (lost for in-process
-      // agent tasks; possibly completed for bash tasks if the process
-      // wrote a terminal state). The restore path appends the
-      // notifications to context directly, NOT via the loop queue, so:
-      //   - Notification XML lands in context history ✓
-      //   - No new turn is launched ✗
-      //   - User sees nothing happen until they type
-      //
-      // This test pins that current behavior so any change shows up.
 
-      // We do NOT mock any LLM response. If the resume path
-      // mistakenly launches a turn, scripted-generate throws
-      // "Unexpected generate call" and the test fails loudly.
       const launchSpy = vi.spyOn(loop as unknown as { startTurn: () => unknown }, 'startTurn');
 
-      // Reproduce Agent.resume()'s post-replay sequence.
       await background.loadFromDisk();
       await background.reconcile();
 
-      // The agent-* running task should now be lost.
       expect(background.getTask('agent-prev0000')?.status).toBe('lost');
 
-      // Give the silent append a beat.
       await vi.waitFor(() => {
         const flatContext = JSON.stringify(ctx.contextData());
         expect(flatContext).toContain('bash-prev0000');
         expect(flatContext).toContain('agent-prev0000');
       });
 
-      // Hard assertion: no turn was launched for either restored task.
-      // The notifications were silently appended (never enqueued onto the
-      // loop), so no new turn ran.
       expect(launchSpy).not.toHaveBeenCalled();
       expect(ctx.llmCalls.length).toBe(0);
       expect(loop.status().activeTurnId).toBeUndefined();
 
-      // Both notifications are in context, waiting for the user. The
-      // completed bash task references its persisted output file rather
-      // than inlining the content (parity with the restored-notification
-      // behavior pinned in background/rpc-events.test.ts).
       const flatContext = JSON.stringify(ctx.contextData());
       expect(flatContext).toContain('<output-file');
       expect(flatContext).not.toContain('previous bash output');

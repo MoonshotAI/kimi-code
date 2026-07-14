@@ -21,6 +21,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { PathSecurityError } from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES } from '#/agent/media/file-type';
+import type { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { stubWorkspaceContext } from '../../../../session/workspaceContext/stub-workspace-context';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import {
@@ -78,10 +79,6 @@ function createTestEnv(home = '/home'): IHostEnvironment {
   };
 }
 
-/**
- * Fake fs backed by a single text content for any path. All IO methods are
- * vi.fn() spies so tests can assert on the sniff/readLines/readText calls.
- */
 function createSpiedFs(content: string) {
   const bytes = Buffer.from(content, 'utf8');
   const readBytes = vi.fn(async (_path: string, n?: number) =>
@@ -105,10 +102,6 @@ interface FakeFile {
   ) => AsyncGenerator<string>;
 }
 
-/**
- * Fake fs backed by an in-memory path → file map. `stat` throws ENOENT for
- * unknown paths; IO methods are vi.fn() spies for call assertions.
- */
 function createSpiedMapFs(files: Record<string, FakeFile>) {
   const lookup = (path: string): FakeFile | undefined => files[path];
   const readBytes = vi.fn(async (path: string, n?: number) => {
@@ -312,6 +305,25 @@ describe('ReadTool', () => {
     expect(readText).not.toHaveBeenCalled();
   });
 
+  it('allows relative traversal into a skill root the session catalog provides', async () => {
+    const { fs } = createSpiedFs('skill body');
+    const skillCatalog = {
+      _serviceBrand: undefined,
+      catalog: { getSkillRoots: () => ['/skills'] },
+    } as unknown as ISessionSkillCatalog;
+    const tool = new ReadTool(
+      fs,
+      createTestEnv(),
+      stubWorkspaceContext('/workspace/project'),
+      skillCatalog,
+    );
+
+    const result = await execute(tool, { path: '../../skills/SKILL.md' });
+
+    expect(result.isError ?? false).toBe(false);
+    expect(result.output).toBe('1\tskill body');
+  });
+
   it('allows explicit absolute paths outside the workspace', async () => {
     const { fs, readBytes, readLines } = createSpiedFs('external');
     const tool = new ReadTool(fs, createTestEnv(), stubWorkspaceContext('/workspace'));
@@ -402,9 +414,6 @@ describe('ReadTool', () => {
   });
 
   it('rejects an image-extension file whose bytes are not an image as not readable', async () => {
-    // A `.png` file with no recognisable image magic and no NUL byte is not a
-    // real image; it must fall through to the generic "not readable" error
-    // rather than being misidentified as an image and sent to ReadMediaFile.
     const plainText = Buffer.from('this is plain ascii text, not a png');
     const { fs, readText } = createSpiedMapFs({
       '/tmp/fake.png': { bytes: plainText },
@@ -635,12 +644,9 @@ describe('ReadTool', () => {
 
   it('description pins line/byte caps, tail mode, and the Grep-over-Read preference', () => {
     const tool = toolWithContent('');
-    // Numeric caps are part of the stable contract.
     expect(tool.description).toContain(String(MAX_LINES));
     expect(tool.description).toContain(String(MAX_LINE_LENGTH));
-    // Tail mode (negative line_offset) is documented.
     expect(tool.description).toMatch(/negative line_offset|reads from the end/i);
-    // Recommend Grep when searching for unknown content.
     expect(tool.description).toContain('Grep');
   });
 
@@ -761,7 +767,6 @@ describe('ReadTool', () => {
     const result = await execute(tool, { path: '/tmp/tail-trunc.txt', line_offset: -3 });
 
     expect(result.isError).toBeFalsy();
-    // Last 3 lines = 3, 4, 5; line 4 is the long one.
     expect(result.note).toContain('Total lines in file: 5.');
     expect(result.note).toContain('Lines [4] were truncated.');
   });
@@ -779,9 +784,6 @@ describe('ReadTool description and schema parity', () => {
     const tool = toolWithContent('');
 
     expect(tool.description).toContain('<system>');
-    // The status block rides the note side channel and is joined after the
-    // content at projection time, so the model still sees it after the file
-    // content.
     expect(tool.description).toMatch(/after the file content/i);
   });
 
@@ -799,7 +801,6 @@ describe('ReadTool description and schema parity', () => {
     const nLinesProperty = (tool.parameters as { properties: { n_lines: { description: string } } })
       .properties.n_lines;
 
-    // Omitting n_lines reads up to MAX_LINES; the schema description must say so.
     expect(nLinesProperty.description).toMatch(/omit/i);
     expect(nLinesProperty.description).toContain(String(MAX_LINES));
   });

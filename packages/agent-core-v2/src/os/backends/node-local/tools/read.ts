@@ -28,6 +28,7 @@ import { z } from 'zod';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { unwrapErrorCause } from '#/_base/errors/errors';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
   ToolAccesses,
@@ -36,7 +37,11 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
-import { resolvePathAccessPath, type WorkspaceConfig } from '#/tool/path-access';
+import {
+  extendWorkspaceWithSkillRoots,
+  resolvePathAccessPath,
+  type WorkspaceConfig,
+} from '#/tool/path-access';
 import { MEDIA_SNIFF_BYTES, detectFileType } from '#/agent/media/file-type';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesPathRuleSubject } from '#/tool/rule-match';
@@ -195,8 +200,6 @@ function renderEntries(
 }
 
 function isFileNotFoundError(error: unknown): boolean {
-  // hostFs translates raw errnos into `HostFsError`; classify the unwrapped
-  // cause so boundary translation stays invisible to these predicates.
   const unwrapped = unwrapErrorCause(error);
   if (typeof unwrapped !== 'object' || unwrapped === null) return false;
   const code = (unwrapped as { code?: unknown })['code'];
@@ -238,13 +241,18 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
+    @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   private get workspaceConfig(): WorkspaceConfig {
-    return {
-      workspaceDir: this.workspaceCtx.workDir,
-      additionalDirs: this.workspaceCtx.additionalDirs,
-    };
+    return extendWorkspaceWithSkillRoots(
+      {
+        workspaceDir: this.workspaceCtx.workDir,
+        additionalDirs: this.workspaceCtx.additionalDirs,
+      },
+      this.skillCatalog?.catalog.getSkillRoots() ?? [],
+      this.env.pathClass,
+    );
   }
 
   resolveExecution(args: ReadInput): ToolExecution {
@@ -477,9 +485,6 @@ export class ReadTool implements BuiltinTool<ReadInput> {
   }
 
   private finishReadResult(input: FinishReadResultInput): ExecutableToolResult {
-    // The status line rides the `note` side channel (model-only); `output` is
-    // the rendered file content and nothing else. The `<system>` wrapping is
-    // this tool's wording choice.
     return {
       output: input.renderedLines.join('\n'),
       note: `<system>${this.finishMessage(input)}</system>`,

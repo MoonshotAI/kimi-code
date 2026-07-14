@@ -51,10 +51,6 @@ export interface CloudAppenderOptions {
   readonly now?: () => number;
 }
 
-/**
- * Host identity facts the engine cannot resolve on its own. Everything else
- * (storage, client version, env, platform) comes from the accessor.
- */
 export interface CloudAppenderHostOptions {
   readonly deviceId: string;
   readonly appName: string;
@@ -65,11 +61,6 @@ export interface CloudAppenderHostOptions {
   readonly getAccessToken?: () => string | null | Promise<string | null>;
 }
 
-/**
- * Assemble a `CloudAppender` from the accessor's registered services plus
- * host identity facts. The accessor is only read synchronously during this
- * call — never stash it.
- */
 export function createCloudAppender(
   accessor: ServicesAccessor,
   host: CloudAppenderHostOptions,
@@ -191,7 +182,6 @@ function buildContext(options: CloudAppenderOptions): CloudContext {
   const context: CloudContext = {
     app_name: options.appName,
     client_version: bootstrap.clientVersion,
-    // `version` is kept as a backward-compatible alias of `client_version`.
     version: bootstrap.clientVersion,
     core_version: resolveCoreVersion(),
     runtime: 'node',

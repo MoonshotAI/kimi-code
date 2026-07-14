@@ -5,7 +5,10 @@
  * serializing same-id bootstrap and dropping incomplete handles after startup
  * failure. Seeds each agent's identity through `agent` scopeContext, wires
  * per-agent wire records and the wire state machine, the blob store, and MCP,
- * and registers the agent in the session registry. Bound at Session scope.
+ * and registers the agent in the session registry. New logs receive a metadata
+ * envelope while non-empty unversioned logs are rejected. Removal awaits the
+ * agent task manager's graceful exit policy before draining activity and
+ * disposing the child scope. Bound at Session scope.
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
@@ -32,6 +35,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ErrorCodes, Error2 } from '#/errors';
 import { DEFAULT_PERMISSION_MODE_SECTION } from '#/agent/permissionMode/configSection';
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
+import { IAgentToolDedupeService } from '#/agent/toolDedupe/toolDedupe';
+import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
@@ -89,11 +94,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
   ) {
     super();
-    // Bridge the per-agent `IEventBus` `turn.ended` into the Session-scope
-    // interaction kernel: the bus is Agent-scoped and cannot be injected into
-    // `SessionInteractionService` directly. Every agent (main + sub/forked) is
-    // created through `create()`, which fires `onDidCreate`, so subscribing here
-    // covers all of them; `onDidDispose` releases the per-agent subscription.
     this._register(this.onDidCreate((handle) => this.subscribeInteractionBus(handle)));
     this._register(
       this.onDidDispose((agentId) => {
@@ -168,8 +168,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     ) as IAgentScopeHandle;
     this.handles.set(agentId, handle);
     try {
-      // Record the agent in the session registry so a closed-session fork can
-      // enumerate every agent and relocate its wire log.
       await this.sessionMetadata.registerAgent(agentId, {
         homedir: agentHomedir,
         type: agentId === 'main' ? 'main' : 'sub',
@@ -181,14 +179,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.igniteEagerServices(handle);
       await mcpReady;
       await this.bindBootstrap(handle, opts);
-      // Delayed services resolved during bootstrap (e.g. the task tools'
-      // taskService and its wire-journal dependency) are IdleValue proxies
-      // whose real instances — and constructor side effects like the record
-      // journal's onEmission subscription — only run on a later macrotask.
-      // Force them synchronously before the agent admits turns, or an
-      // immediate first op (a context append, a prompt) races ahead and its
-      // emissions are lost.
-      this.instantiation.drainIdle();
       // Bootstrap (profile binding and the force-instantiated observer
       // services) is complete: drive the activity kernel `initializing → idle`
       // so the agent can admit turns. Until this point `begin` rejects with
@@ -204,7 +194,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       if (this.handles.get(agentId) === handle) this.handles.delete(agentId);
       try {
         handle.dispose();
-      } catch {}
+      } catch { }
       this.onDidDisposeEmitter.fire(agentId);
       throw error;
     }
@@ -228,30 +218,11 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   // their registrations (built-in tools, loop error handlers, MCP tools) would
   // never happen.
   private igniteEagerServices(handle: IAgentScopeHandle): void {
-    // Builtin-tools registrar: consumes every module-level `registerTool(...)`
-    // contribution and registers each built-in tool (with `@IX` deps resolved
-    // against this scope) into the per-agent `IAgentToolRegistryService`. Must
-    // happen before the first turn — otherwise the LLM sees an empty tool list.
-    // Separate from the registry itself to avoid a construction cycle where
-    // tool ctors transitively depend on the registry.
     handle.accessor.get(IAgentBuiltinToolsRegistrar);
-    // Media-tools registrar: media tools cannot use the contribution table
-    // (capabilities are unknown until a model binds), so this service
-    // re-registers ReadMediaFile on every `agent.status.updated`.
     handle.accessor.get(IAgentMediaToolsRegistrar);
-    // Image-config bridge: pushes the env-resolved `[image]` section into the
-    // compression support module's resolver seam before the first turn, so
-    // ReadMediaFile / MCP / prompt ingestion honor `[image] max_edge_px` and
-    // `read_byte_budget` (and their env overrides) through the implicit default.
     handle.accessor.get(IImageConfigBridge);
-    // External hook adapter: registers listeners on the agent's domain hooks
-    // before the first turn. No business service injects it directly; it
-    // observes their hooks instead.
+    handle.accessor.get(IAgentToolDedupeService);
     handle.accessor.get(IAgentExternalHooksService);
-    // Agent MCP service: attaches the (shared) manager's tools and registers
-    // the `wait-for-initial-load` hook before the first turn — otherwise
-    // plugin/session MCP servers would connect but their tools would never
-    // register until something explicitly requests the service.
     handle.accessor.get(IAgentMcpService);
     // Agent plugin service: registers main-agent-only plugin session-start
     // guidance before the first turn (self-gates to a no-op for other agents).
@@ -260,13 +231,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     // derived from it before the first turn.
     handle.accessor.get(IAgentToolSelectService);
     handle.accessor.get(IAgentToolSelectAnnouncementsService);
-    // Step-retry plugin: registers the loop error handler that retries
-    // retryable provider failures. Nothing injects it directly — it observes
-    // the loop — so it must be ignited before the first turn.
     handle.accessor.get(IAgentStepRetryService);
-    // Loop-continuation aspect: enqueues the next step whenever a step ran
-    // tools. It only observes the loop's onDidFinishStep hook, so without ignition
-    // every tool-using turn would stop after a single step.
     handle.accessor.get(IAgentLoopContinuationService);
   }
 
@@ -337,10 +302,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     const handle = this.handles.get(agentId);
     if (handle === undefined) return;
     this.handles.delete(agentId);
-    // Drive the agent activity kernel through disposal: reject new begins and
-    // abort any in-flight turn / background activity, then wait for it to drain
-    // (including the tool-execution grace window) before releasing the scope.
-    // This guarantees no async work keeps running on a disposed agent.
+    await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
     const activity = handle.accessor.get(IAgentActivityService);
     activity.beginDisposal();
     await activity.settled();
@@ -353,6 +315,6 @@ registerScopedService(
   LifecycleScope.Session,
   IAgentLifecycleService,
   AgentLifecycleService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'agentLifecycle',
 );

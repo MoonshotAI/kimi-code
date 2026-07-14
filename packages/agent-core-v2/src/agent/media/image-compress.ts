@@ -10,14 +10,23 @@
  * untouched — the common case is a fast, codec-free pass-through.
  *
  * Design notes:
- *  - Pure JS (jimp), imported lazily so the codec is only paid for when an
- *    image actually needs work; startup and the fast path stay cheap.
+ *  - Pure JS (jimp + a wasm WebP decoder), imported lazily so the codecs are
+ *    only paid for when an image actually needs work; startup and the fast
+ *    path stay cheap.
  *  - Best effort: any decode/encode failure returns the original bytes
  *    unchanged (`changed: false`), so a compression problem never blocks a
  *    prompt. Callers simply send the original instead.
- *  - Only PNG and JPEG are re-encoded. GIF is passed through to preserve
- *    animation; WebP is passed through because the default jimp build ships no
- *    WebP codec. Unknown formats are passed through.
+ *  - Format gate first: content-part lists pass through
+ *    {@link gateImageFormatParts} before any compression, so images outside
+ *    the provider-accepted set (see ./image-format-policy) are never decoded
+ *    or forwarded — one unsupported image in the session history would make
+ *    every subsequent request fail.
+ *  - PNG, JPEG, and (non-animated) WebP are re-encoded; WebP re-encodes
+ *    through the PNG/JPEG ladder after a wasm decode (see ./webp-decode).
+ *    GIF and animated WebP are passed through to preserve animation. Formats
+ *    outside the provider-accepted set never reach this module from the
+ *    content-part paths (the format gate drops them first); direct callers
+ *    get a passthrough.
  *  - Compression must never be silent to the model: results carry the
  *    original dimensions, {@link buildImageCompressionCaption} renders the
  *    shared "what was compressed, where is the original" note every ingestion
@@ -31,75 +40,42 @@
 import type { ContentPart } from '#/app/llmProtocol/message';
 
 import { sniffImageDimensions } from './file-type';
+import {
+  buildMalformedImageNotice,
+  buildUnsupportedImageNotice,
+  decodeBase64Prefix,
+  isDataUrl,
+  isModelAcceptedImageMime,
+  normalizeImageMime,
+  parseImageDataUrl,
+  resolveEffectiveImageMime,
+  unsupportedImageMimeFromUrl,
+} from './image-format-policy';
+import { decodeWebp, isAnimatedWebp } from './webp-decode';
 
-/**
- * Built-in longest-edge ceiling (px). Larger images are scaled down to fit.
- * This is the default only: the effective ceiling is resolved per call by
- * {@link resolveMaxImageEdgePx} (explicit option > `[image] max_edge_px` config
- * > this). The config value is pushed by the media-domain image-config bridge,
- * which reads the env-resolved `image` section (`KIMI_IMAGE_MAX_EDGE_PX` wins
- * over the file value over there — this module never reads env directly).
- */
 export const MAX_IMAGE_EDGE_PX = 2000;
 
-/**
- * The `[image] max_edge_px` value, pushed by the image-config bridge on load
- * and on config change. Processes that never load config (or have no `[image]`
- * section) leave this unset and get the built-in ceiling.
- */
 let configuredMaxImageEdgePx: number | undefined;
 
-/** Push (or clear, with `undefined`) the configured longest-edge ceiling. */
 export function setConfiguredMaxImageEdgePx(value: number | undefined): void {
   configuredMaxImageEdgePx = value !== undefined && isPositiveInt(value) ? value : undefined;
 }
 
-/**
- * Effective default longest-edge ceiling (px), for calls that pass no explicit
- * `maxEdge`. Precedence: configured `[image] max_edge_px` (env already folded
- * in by the config layer) > built-in {@link MAX_IMAGE_EDGE_PX}.
- */
 export function resolveMaxImageEdgePx(): number {
   return configuredMaxImageEdgePx ?? MAX_IMAGE_EDGE_PX;
 }
 
-/**
- * Raw-byte budget for a single image. base64 inflates bytes by ~4/3, so a
- * 3.75 MB raw payload stays under a 5 MB encoded ceiling. Tune to the active
- * provider's per-image limit.
- */
 export const IMAGE_BYTE_BUDGET = 3.75 * 1024 * 1024;
 
-/**
- * Built-in raw-byte budget for images the model reads for itself
- * (ReadMediaFile's default path). Far below {@link IMAGE_BYTE_BUDGET}: a
- * session that keeps screenshotting and reading images accumulates every one
- * of them in the request body on every turn, so per-image size — not the
- * provider's per-image ceiling — is what keeps the total under the provider's
- * request-size limit. 256 KB keeps a clean UI screenshot on the lossless fast
- * path while capping dense content at a readable q80/1000px JPEG; fine detail
- * stays reachable through the `region` readback, which deliberately ignores
- * this budget. Overridden by `[image] read_byte_budget` (env
- * `KIMI_IMAGE_READ_BYTE_BUDGET` folded in by the config layer) via
- * {@link resolveReadImageByteBudget}.
- */
 export const READ_IMAGE_BYTE_BUDGET = 256 * 1024;
 
-/** The `[image] read_byte_budget` value; see {@link setConfiguredMaxImageEdgePx}. */
 let configuredReadImageByteBudget: number | undefined;
 
-/** Push (or clear, with `undefined`) the configured read-image byte budget. */
 export function setConfiguredReadImageByteBudget(value: number | undefined): void {
   configuredReadImageByteBudget =
     value !== undefined && isPositiveInt(value) ? value : undefined;
 }
 
-/**
- * Effective read-image byte budget. Precedence mirrors
- * {@link resolveMaxImageEdgePx}: configured `[image] read_byte_budget` (env
- * already folded in by the config layer) > built-in
- * {@link READ_IMAGE_BYTE_BUDGET}.
- */
 export function resolveReadImageByteBudget(): number {
   return configuredReadImageByteBudget ?? READ_IMAGE_BYTE_BUDGET;
 }
@@ -107,67 +83,25 @@ export function resolveReadImageByteBudget(): number {
 function isPositiveInt(value: number): boolean {
   return Number.isInteger(value) && value > 0;
 }
-/** Progressively lower JPEG quality until the payload fits the byte budget. */
 const JPEG_QUALITY_STEPS = [80, 60, 40, 20] as const;
 
-/**
- * Longest-edge step-downs tried when the budget cannot be met at the fitted
- * size. With the built-in 2000px ceiling the first step is a no-op; it
- * matters when a larger ceiling is configured (config/env/option). The
- * sub-1000px tail exists for small (read-scale) budgets: JPEG bytes shrink
- * roughly linearly with pixel count, so stepping down to 256px lets even
- * entropy-upper-bound content (noise, photos) land within any budget of a
- * few tens of KB instead of stalling at the q20@1000px floor.
- */
 const FALLBACK_EDGES_PX = [2000, 1000, 768, 512, 384, 256] as const;
 
-/**
- * Pixel-count ceiling above which we skip compression entirely. A tiny-byte,
- * huge-dimension image (e.g. a solid 30000×30000 PNG) would otherwise be fully
- * decoded into a multi-gigabyte bitmap by Jimp before any resize — a
- * decompression-bomb OOM vector, since the byte budget alone never catches it.
- * The header sniff gives us the dimensions without decoding, so we gate on them
- * first. Set well above any legitimate photo/screenshot/scan (~100 MP); larger
- * images pass through uncompressed, exactly as they did before compression
- * existed.
- */
+const PNG_RESCALE_FLOOR_PX = 1000;
+
 const MAX_DECODE_PIXELS = 100_000_000;
 
-/**
- * Raw-byte ceiling above which compression is skipped rather than decoded. The
- * byte budget bounds the *output*, but the compressor still has to load the
- * *input* first: a huge base64 payload (e.g. an oversized or invalid image from
- * an MCP tool) would be `Buffer.from`-decoded — and possibly handed to Jimp —
- * before any downstream cap (like the 10 MB MCP per-part limit) can drop it.
- * This bounds that input allocation. Set well above legitimate
- * screenshots/photos; larger images pass through uncompressed.
- */
 const MAX_DECODE_BYTES = 64 * 1024 * 1024;
 
-/** Formats we can both decode and re-encode with the default jimp build. */
-const RECODABLE_MIME = new Set(['image/png', 'image/jpeg']);
+const RECODABLE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 export interface CompressImageOptions {
-  /** Override the longest-edge ceiling (px). */
   readonly maxEdge?: number;
-  /** Override the raw-byte budget. */
   readonly byteBudget?: number;
-  /** Override the raw-byte ceiling above which compression is skipped. */
   readonly maxDecodeBytes?: number;
-  /**
-   * Report an `image_compress` event per compression call (and an
-   * `image_crop` event per {@link cropImageForModel} call). Absent → silent.
-   */
   readonly telemetry?: ImageCompressionTelemetry;
 }
 
-/**
- * Telemetry sink for the compression events. Deliberately a loose local
- * contract — this L0 support module must not import the app-layer telemetry
- * registry, so the payload shapes are checked only where the registry lives
- * (`#/app/telemetry/events`); any object with a compatible `track` slot
- * (e.g. the app-layer `ITelemetryService`) satisfies it structurally.
- */
 export interface ImageCompressionTelemetryClient {
   track(
     event: string,
@@ -175,21 +109,11 @@ export interface ImageCompressionTelemetryClient {
   ): void;
 }
 
-/** Wiring for the optional compression telemetry events. */
 export interface ImageCompressionTelemetry {
   readonly client: ImageCompressionTelemetryClient;
-  /** Where the image entered the pipeline, e.g. 'read_media', 'tui_paste'. */
   readonly source: string;
 }
 
-/**
- * How a compression call ended, as reported in the `image_compress` event.
- * Every `passthrough_*` variant returns the input bytes unchanged: `fast` is
- * the within-budgets hot path, `guard` a decode-safety refusal (pixel bomb or
- * byte cap), `unsupported` a format the codec cannot re-encode (or empty
- * input), `unhelpful` a re-encode that saved neither bytes nor pixels, and
- * `error` a decode/encode failure.
- */
 type CompressOutcome =
   | 'compressed'
   | 'passthrough_fast'
@@ -199,35 +123,17 @@ type CompressOutcome =
   | 'passthrough_error';
 
 export interface CompressImageResult {
-  /** Bytes to send: the re-encoded image, or the original when unchanged. */
   readonly data: Uint8Array;
-  /** MIME of `data`. May differ from the input (e.g. png → jpeg). */
   readonly mimeType: string;
-  /** Pixel width of `data`; falls back to the input size when unknown. */
   readonly width: number;
-  /** Pixel height of `data`; falls back to the input size when unknown. */
   readonly height: number;
-  /**
-   * Pixel width of the input image, in display space (EXIF orientation
-   * applied): the decoded width when re-encoded, the header sniff on
-   * passthrough (0 when it cannot be determined).
-   */
   readonly originalWidth: number;
-  /** Pixel height of the input image; see {@link originalWidth}. */
   readonly originalHeight: number;
-  /** True only when `data` differs from the input bytes. */
   readonly changed: boolean;
   readonly originalByteLength: number;
   readonly finalByteLength: number;
 }
 
-/**
- * Downsample/re-encode `bytes` to fit the pixel + byte budget.
- *
- * Never throws: on any failure (unsupported format, decode error, a result
- * that would be larger than the input) the original bytes are returned with
- * `changed: false`.
- */
 export async function compressImageForModel(
   bytes: Uint8Array,
   mimeType: string,
@@ -237,7 +143,7 @@ export async function compressImageForModel(
   const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
-  const normalizedMime = normalizeMime(mimeType);
+  const normalizedMime = normalizeImageMime(mimeType);
   const dims = sniffImageDimensions(bytes);
 
   const passthrough = (): CompressImageResult => ({
@@ -263,10 +169,11 @@ export async function compressImageForModel(
   };
 
   if (bytes.length === 0) return finish('passthrough_unsupported', passthrough());
-  // Only re-encode formats the codec handles; everything else passes through.
   if (!RECODABLE_MIME.has(normalizedMime)) return finish('passthrough_unsupported', passthrough());
+  if (normalizedMime === 'image/webp' && isAnimatedWebp(bytes)) {
+    return finish('passthrough_unsupported', passthrough());
+  }
 
-  // Fast path: already within both budgets — no codec load, no allocation.
   const longestEdge = dims ? Math.max(dims.width, dims.height) : 0;
   const withinBytes = bytes.length <= byteBudget;
   const withinEdge = longestEdge > 0 && longestEdge <= maxEdge;
@@ -274,41 +181,25 @@ export async function compressImageForModel(
     return finish('passthrough_fast', passthrough());
   }
 
-  // Decompression-bomb guard: refuse to decode absurd pixel counts. The sniff
-  // above gave us the dimensions without decoding, so this costs nothing.
   if (dims && dims.width * dims.height > MAX_DECODE_PIXELS) {
     return finish('passthrough_guard', passthrough());
   }
-  // Refuse to decode very large byte payloads (e.g. a huge or invalid image
-  // from an MCP tool) that would be loaded just to be dropped downstream.
   if (bytes.length > maxDecodeBytes) return finish('passthrough_guard', passthrough());
 
   try {
-    const { Jimp } = await import('jimp');
-    const image = await Jimp.fromBuffer(Buffer.from(bytes));
-    const sourceIsPng = normalizedMime === 'image/png';
-    // The decoded bitmap is authoritative for the original size: jimp
-    // applies EXIF orientation while decoding, and this is the coordinate
-    // space the encoded result and any later crop region (see
-    // cropImageForModel, which decodes the same way) actually live in. The
-    // header sniff also reports display space, but can miss formats or
-    // nonconforming EXIF that the decoder still handles.
+    const image = await decodeToJimp(bytes, normalizedMime);
+    const preferLossless = normalizedMime !== 'image/jpeg';
     const decodedWidth = image.width;
     const decodedHeight = image.height;
 
-    // Scale so the longest edge fits maxEdge (never enlarges).
     fitWithinEdge(image, maxEdge);
 
     const encoded = await encodeWithinBudget(image, {
-      sourceIsPng,
+      preferLossless,
       byteBudget,
       fallbackEdges: FALLBACK_EDGES_PX,
     });
 
-    // Keep the result when it actually helps: fewer bytes, or fewer pixels
-    // (a smaller image costs fewer vision tokens even if the byte count is
-    // flat, as with near-solid graphics). Otherwise the re-encode bought us
-    // nothing — send the original.
     const originalPixels = decodedWidth * decodedHeight;
     const finalPixels = encoded.width * encoded.height;
     const shrankBytes = encoded.data.length < bytes.length;
@@ -327,7 +218,6 @@ export async function compressImageForModel(
       finalByteLength: encoded.data.length,
     });
   } catch {
-    // Decode/encode failure — keep the original bytes.
     return finish('passthrough_error', passthrough());
   }
 }
@@ -335,36 +225,20 @@ export async function compressImageForModel(
 export interface CompressBase64Result {
   readonly base64: string;
   readonly mimeType: string;
-  /** Pixel width of the (possibly re-encoded) payload; 0 when unknown. */
   readonly width: number;
-  /** Pixel height of the (possibly re-encoded) payload; 0 when unknown. */
   readonly height: number;
-  /**
-   * Pixel width of the input image, in display space (EXIF orientation
-   * applied): the decoded width when re-encoded, the header sniff on
-   * passthrough (0 when it cannot be determined).
-   */
   readonly originalWidth: number;
-  /** Pixel height of the input image; see {@link originalWidth}. */
   readonly originalHeight: number;
   readonly changed: boolean;
   readonly originalByteLength: number;
   readonly finalByteLength: number;
 }
 
-/**
- * Convenience wrapper for call sites that already hold base64 (MCP results,
- * data URLs). Decodes, compresses, and re-encodes to base64. Best effort:
- * returns the original base64 unchanged on any failure.
- */
 export async function compressBase64ForModel(
   base64: string,
   mimeType: string,
   options: CompressImageOptions = {},
 ): Promise<CompressBase64Result> {
-  // Skip very large payloads before allocating: base64 decodes to ~3/4 its
-  // length, so a payload whose decoded size would exceed the cap is passed
-  // through without the Buffer.from allocation (and without touching Jimp).
   const startedAt = Date.now();
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
   const approxBytes = Math.floor((base64.length * 3) / 4);
@@ -383,7 +257,7 @@ export async function compressBase64ForModel(
     reportCompressEvent(options.telemetry, {
       outcome: 'passthrough_guard',
       startedAt,
-      inputMime: normalizeMime(mimeType),
+      inputMime: normalizeImageMime(mimeType),
       exifTransposed: false,
       result,
     });
@@ -407,13 +281,12 @@ export async function compressBase64ForModel(
     reportCompressEvent(options.telemetry, {
       outcome: 'passthrough_error',
       startedAt,
-      inputMime: normalizeMime(mimeType),
+      inputMime: normalizeImageMime(mimeType),
       exifTransposed: false,
       result,
     });
     return result;
   }
-  // The event for this call is emitted inside compressImageForModel.
   const result = await compressImageForModel(bytes, mimeType, options);
   if (!result.changed) {
     return {
@@ -442,31 +315,50 @@ export async function compressBase64ForModel(
 }
 
 export interface CompressedContentParts {
-  /** The input parts with oversized inline images re-encoded in place. */
   readonly parts: ContentPart[];
-  /**
-   * One {@link buildImageCompressionCaption} note per re-encoded image, in
-   * encounter order, when `annotate` is set. Returned as data — never
-   * inserted into `parts` — so the caller picks the channel (the MCP path
-   * joins them into the tool result's `note`) and quoted caption text in
-   * the tool's own output can never be mistaken for a generated one.
-   */
   readonly captions: readonly string[];
 }
 
-/**
- * Compress any inline base64 image parts in a content-part list — used by
- * the MCP tool-result path. Image parts whose URL is not a `data:` URL
- * (e.g. a remote http(s) image) are passed through, as are non-image parts.
- * Best effort: a part that fails to compress is left unchanged.
- *
- * With `annotate` set, every image that was actually re-encoded gets a
- * caption in {@link CompressedContentParts.captions} so the model knows it
- * is looking at a downsampled copy. `annotate.persistOriginal` additionally
- * saves the pre-compression bytes and puts the returned path in the caption
- * so the model can read the original back; persistence failures degrade to
- * a caption without a path.
- */
+export function gateImageFormatParts(parts: readonly ContentPart[]): ContentPart[] {
+  const out: ContentPart[] = [];
+  for (const part of parts) {
+    if (part.type === 'image_url') {
+      const parsed = parseImageDataUrl(part.imageUrl.url);
+      if (parsed === null) {
+        if (isDataUrl(part.imageUrl.url)) {
+          out.push({ type: 'text', text: buildMalformedImageNotice(part.imageUrl.url) });
+          continue;
+        }
+        const extMime = unsupportedImageMimeFromUrl(part.imageUrl.url);
+        if (extMime !== null) {
+          out.push({
+            type: 'text',
+            text: buildUnsupportedImageNotice(extMime, part.imageUrl.url),
+          });
+          continue;
+        }
+        out.push(part);
+        continue;
+      }
+      const effectiveMime = resolveEffectiveImageMime(
+        parsed.mimeType,
+        decodeBase64Prefix(parsed.base64),
+      );
+      if (!isModelAcceptedImageMime(effectiveMime)) {
+        out.push({ type: 'text', text: buildUnsupportedImageNotice(effectiveMime) });
+        continue;
+      }
+      const canonicalUrl = `data:${normalizeImageMime(effectiveMime)};base64,${parsed.base64}`;
+      if (part.imageUrl.url !== canonicalUrl) {
+        out.push({ type: 'image_url', imageUrl: { ...part.imageUrl, url: canonicalUrl } });
+        continue;
+      }
+    }
+    out.push(part);
+  }
+  return out;
+}
+
 export async function compressImageContentParts(
   parts: readonly ContentPart[],
   options: CompressImageOptions & { readonly annotate?: CompressAnnotateOptions } = {},
@@ -474,7 +366,7 @@ export async function compressImageContentParts(
   const { annotate, ...compressOptions } = options;
   const out: ContentPart[] = [];
   const captions: string[] = [];
-  for (const part of parts) {
+  for (const part of gateImageFormatParts(parts)) {
     if (part.type === 'image_url') {
       const parsed = parseImageDataUrl(part.imageUrl.url);
       if (parsed !== null) {
@@ -524,19 +416,10 @@ export async function compressImageContentParts(
 }
 
 export interface CompressAnnotateOptions {
-  /**
-   * Persist the pre-compression original bytes somewhere the model can read
-   * them back; return the absolute path, or null when persistence failed.
-   */
   readonly persistOriginal?: (bytes: Uint8Array, mimeType: string) => Promise<string | null>;
 }
 
-// ── crop ─────────────────────────────────────────────────────────────
 
-/**
- * Crop rectangle in ORIGINAL-image pixel coordinates — the decoded,
- * EXIF-rotated space that compression results report as the original size.
- */
 export interface ImageCropRegion {
   readonly x: number;
   readonly y: number;
@@ -545,11 +428,6 @@ export interface ImageCropRegion {
 }
 
 export interface CropImageOptions extends CompressImageOptions {
-  /**
-   * Keep the crop at native resolution (no edge-fit downscale). The byte
-   * budget still applies: a crop that cannot be encoded within it fails
-   * explicitly instead of being silently degraded.
-   */
   readonly skipResize?: boolean;
 }
 
@@ -557,15 +435,11 @@ export interface CropImageSuccess {
   readonly ok: true;
   readonly data: Uint8Array;
   readonly mimeType: string;
-  /** Pixel size of the encoded crop actually produced. */
   readonly width: number;
   readonly height: number;
-  /** Pixel size of the source image the region was cut from. */
   readonly originalWidth: number;
   readonly originalHeight: number;
-  /** The region actually applied, after clamping to the image bounds. */
   readonly region: ImageCropRegion;
-  /** True when the crop was downscaled to fit the pixel/byte budget. */
   readonly resized: boolean;
   readonly originalByteLength: number;
   readonly finalByteLength: number;
@@ -573,24 +447,11 @@ export interface CropImageSuccess {
 
 export interface CropImageFailure {
   readonly ok: false;
-  /** Human/model-readable reason, safe to surface as a tool error. */
   readonly error: string;
 }
 
 export type CropImageOutcome = CropImageSuccess | CropImageFailure;
 
-/**
- * Cut `region` out of `bytes` and encode it for the model.
- *
- * Unlike {@link compressImageForModel}, cropping is an explicit request: it
- * never falls back to the full image. Anything that prevents an accurate crop
- * (unsupported format, undecodable bytes, a region outside the image, a
- * skipResize result over the byte budget) returns `ok: false` with a reason
- * the caller can hand straight back to the model.
- *
- * The default path fits the crop to the usual pixel/byte budgets; a crop no
- * larger than the edge cap is therefore delivered at native resolution.
- */
 export async function cropImageForModel(
   bytes: Uint8Array,
   mimeType: string,
@@ -601,7 +462,7 @@ export async function cropImageForModel(
   const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
   const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
-  const normalizedMime = normalizeMime(mimeType);
+  const normalizedMime = normalizeImageMime(mimeType);
 
   const fail = (errorKind: CropErrorKind, error: string): CropImageFailure => {
     reportCropEvent(options.telemetry, { startedAt, ok: false, errorKind });
@@ -618,11 +479,12 @@ export async function cropImageForModel(
   if (!RECODABLE_MIME.has(normalizedMime)) {
     return fail(
       'unsupported_format',
-      `Cropping is only supported for PNG and JPEG images; got ${mimeType}.`,
+      `Cropping is only supported for PNG, JPEG, and WebP images; got ${mimeType}.`,
     );
   }
-  // NaN slips past every </>= comparison in the bounds guard below, so gate
-  // on finiteness explicitly rather than surfacing a codec-internal error.
+  if (normalizedMime === 'image/webp' && isAnimatedWebp(bytes)) {
+    return fail('unsupported_format', 'Cropping is not supported for animated WebP images.');
+  }
   if (
     ![region.x, region.y, region.width, region.height].every((value) => Number.isFinite(value))
   ) {
@@ -644,8 +506,7 @@ export async function cropImageForModel(
   }
 
   try {
-    const { Jimp } = await import('jimp');
-    const image = await Jimp.fromBuffer(Buffer.from(bytes));
+    const image = await decodeToJimp(bytes, normalizedMime);
     const originalWidth = image.width;
     const originalHeight = image.height;
 
@@ -662,13 +523,10 @@ export async function cropImageForModel(
     const h = Math.min(Math.floor(region.height), originalHeight - y);
     const applied: ImageCropRegion = { x, y, width: w, height: h };
     image.crop({ x, y, w, h });
-    const sourceIsPng = normalizedMime === 'image/png';
+    const preferLossless = normalizedMime !== 'image/jpeg';
 
     if (options.skipResize === true) {
-      // Native resolution requested: encode once, favoring fidelity (lossless
-      // PNG, or high-quality JPEG), and refuse rather than degrade when the
-      // result cannot fit the byte budget.
-      const buffer = sourceIsPng
+      const buffer = preferLossless
         ? await image.getBuffer('image/png', { deflateLevel: 9 })
         : await image.getBuffer('image/jpeg', { quality: 90 });
       if (buffer.length > byteBudget) {
@@ -683,7 +541,7 @@ export async function cropImageForModel(
       return succeed({
         ok: true,
         data: new Uint8Array(buffer),
-        mimeType: sourceIsPng ? 'image/png' : 'image/jpeg',
+        mimeType: preferLossless ? 'image/png' : 'image/jpeg',
         width: image.width,
         height: image.height,
         originalWidth,
@@ -697,7 +555,7 @@ export async function cropImageForModel(
 
     fitWithinEdge(image, maxEdge);
     const encoded = await encodeWithinBudget(image, {
-      sourceIsPng,
+      preferLossless,
       byteBudget,
       fallbackEdges: FALLBACK_EDGES_PX,
     });
@@ -722,10 +580,8 @@ export async function cropImageForModel(
   }
 }
 
-// ── compression caption ──────────────────────────────────────────────
 
 export interface ImageVariantDescription {
-  /** Pixel size; pass 0 when unknown to omit the dimensions. */
   readonly width: number;
   readonly height: number;
   readonly byteLength: number;
@@ -735,26 +591,9 @@ export interface ImageVariantDescription {
 export interface ImageCompressionCaptionInput {
   readonly original: ImageVariantDescription;
   readonly final: ImageVariantDescription;
-  /** Absolute path where the pre-compression original can be read back. */
   readonly originalPath?: string | null;
 }
 
-/**
- * Render the shared `<system>` note placed next to a compressed image so the
- * model knows it is looking at a downsampled copy: what the original was, what
- * was actually sent, and — when the original is on disk — where to read it
- * back (via ReadMediaFile `region`) for full-fidelity detail.
- *
- * Two channels consume this note differently:
- *  - Tool results (MCP images): {@link compressImageContentParts} returns
- *    the captions as data and the MCP output pipeline joins them into the
- *    result's `note` side channel (rendered to the model at projection
- *    time, never to UIs).
- *  - User prompts must not render raw `<system>` markup in the UI, so the
- *    prompt layer detects the caption via
- *    {@link extractImageCompressionCaptions} and reroutes it through the
- *    built-in system-reminder injection (hidden by its `injection` origin).
- */
 export function buildImageCompressionCaption(input: ImageCompressionCaptionInput): string {
   const sentences = [
     `Image compressed to fit model limits: original ${describeImageVariant(input.original)} -> ` +
@@ -773,36 +612,15 @@ export function buildImageCompressionCaption(input: ImageCompressionCaptionInput
   return `<system>${sentences.join(' ')}</system>`;
 }
 
-/**
- * Fixed opening every {@link buildImageCompressionCaption} note starts with —
- * the anchor {@link extractImageCompressionCaptions} matches on. Keep the two
- * in sync.
- */
 const CAPTION_OPENING = '<system>Image compressed to fit model limits:';
 
-/**
- * A full caption embedded in arbitrary text. The body is sentences plus a
- * quoted file path and never contains `</system>`, so the non-greedy scan to
- * the closing tag is exact.
- */
 const CAPTION_PATTERN = /<system>(Image compressed to fit model limits:[\s\S]*?)<\/system>/g;
 
 export interface ImageCompressionCaptionExtraction {
-  /** Caption bodies found, in order, without the `<system>` wrapper. */
   readonly captions: readonly string[];
-  /** The input text with every caption removed. */
   readonly text: string;
 }
 
-/**
- * Find every {@link buildImageCompressionCaption} note embedded in `text` and
- * return the unwrapped caption bodies plus the text without them. Prompt
- * ingestion (server upload/base64 route, TUI paste, ACP) places the caption
- * inline next to the image — sometimes merged into an adjacent text segment —
- * and the prompt layer uses this to reroute the note through the built-in
- * system-reminder injection instead of leaving raw `<system>` markup in the
- * user-visible message.
- */
 export function extractImageCompressionCaptions(text: string): ImageCompressionCaptionExtraction {
   if (!text.includes(CAPTION_OPENING)) return { captions: [], text };
   const captions: string[] = [];
@@ -821,22 +639,13 @@ function describeImageVariant(variant: ImageVariantDescription): string {
   return size;
 }
 
-/** Human-readable byte size: `640 B`, `128 KB`, `3.8 MB`. */
 export function formatByteSize(bytes: number): string {
   if (bytes < 1024) return `${String(bytes)} B`;
   if (bytes < 1024 * 1024) return `${String(Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function parseImageDataUrl(url: string): { mimeType: string; base64: string } | null {
-  const match = /^data:([^;,]+);base64,(.*)$/s.exec(url);
-  if (match === null) return null;
-  return { mimeType: match[1]!, base64: match[2]! };
-}
 
-// ── internals ────────────────────────────────────────────────────────
-
-/** The concrete jimp image instance type, derived from the lazily-loaded module. */
 type JimpImage = Awaited<ReturnType<(typeof import('jimp'))['Jimp']['fromBuffer']>>;
 
 interface EncodedImage {
@@ -847,28 +656,26 @@ interface EncodedImage {
 }
 
 interface EncodeOptions {
-  readonly sourceIsPng: boolean;
+  readonly preferLossless: boolean;
   readonly byteBudget: number;
   readonly fallbackEdges: readonly number[];
 }
 
-/**
- * Encode `image` (already fitted to the edge ceiling) under the byte budget.
- *
- * Strategy — prefer the source format so a downscaled screenshot stays lossless
- * PNG (preserving text and transparency), and only fall back to lossy JPEG when
- * PNG cannot meet the byte budget:
- *  - PNG source: PNG at the fitted size → smaller PNG rescales, stepping down
- *    the fallback edges → JPEG ladder.
- *  - JPEG source: the full quality ladder at the fitted size, then again at
- *    each fallback edge — a smaller rescale must not skip the high-quality
- *    rungs its extra pixels just paid for.
- *
- * Always returns the smallest buffer it produced, even if no attempt met the
- * budget — the caller still gates on whether it actually helped.
- */
+async function decodeToJimp(bytes: Uint8Array, normalizedMime: string): Promise<JimpImage> {
+  const { Jimp } = await import('jimp');
+  if (normalizedMime === 'image/webp') {
+    const decoded = await decodeWebp(bytes);
+    return Jimp.fromBitmap({
+      data: Buffer.from(decoded.data.buffer, decoded.data.byteOffset, decoded.data.byteLength),
+      width: decoded.width,
+      height: decoded.height,
+    });
+  }
+  return Jimp.fromBuffer(Buffer.from(bytes));
+}
+
 async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promise<EncodedImage> {
-  const { sourceIsPng, byteBudget, fallbackEdges } = opts;
+  const { preferLossless, byteBudget, fallbackEdges } = opts;
   let smallest: EncodedImage | null = null;
 
   const consider = (data: Buffer, mimeType: string): EncodedImage => {
@@ -879,59 +686,50 @@ async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promis
     return candidate;
   };
 
-  if (sourceIsPng) {
-    // Lossless PNG first: best for screenshots/UI (sharp text) and keeps alpha.
+  const jpegLadder = async (): Promise<EncodedImage | null> => {
+    for (const quality of JPEG_QUALITY_STEPS) {
+      const jpeg = await image.getBuffer('image/jpeg', { quality });
+      if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
+      consider(jpeg, 'image/jpeg');
+    }
+    return null;
+  };
+
+  if (preferLossless) {
     const png = await image.getBuffer('image/png', { deflateLevel: 9 });
     if (png.length <= byteBudget) return consider(png, 'image/png');
     consider(png, 'image/png');
 
-    // Over budget: progressively smaller PNGs before going lossy.
     for (const edge of fallbackEdges) {
+      if (edge < PNG_RESCALE_FLOOR_PX) break;
       if (!fitWithinEdge(image, edge)) continue;
       const smallerPng = await image.getBuffer('image/png', { deflateLevel: 9 });
       if (smallerPng.length <= byteBudget) return consider(smallerPng, 'image/png');
       consider(smallerPng, 'image/png');
     }
 
-    // Last resort: lossy JPEG ladder (drops transparency) to meet the budget.
-    for (const quality of JPEG_QUALITY_STEPS) {
-      const jpeg = await image.getBuffer('image/jpeg', { quality });
-      if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
-      consider(jpeg, 'image/jpeg');
+    const atFloor = await jpegLadder();
+    if (atFloor !== null) return atFloor;
+    for (const edge of fallbackEdges) {
+      if (edge >= PNG_RESCALE_FLOOR_PX) continue;
+      if (!fitWithinEdge(image, edge)) continue;
+      const atEdge = await jpegLadder();
+      if (atEdge !== null) return atEdge;
     }
     return smallest!;
   }
 
-  // JPEG source: quality ladder at the fitted size, then the full ladder
-  // again at each fallback rescale.
-  for (const quality of JPEG_QUALITY_STEPS) {
-    const jpeg = await image.getBuffer('image/jpeg', { quality });
-    if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
-    consider(jpeg, 'image/jpeg');
-  }
+  const atFitted = await jpegLadder();
+  if (atFitted !== null) return atFitted;
   for (const edge of fallbackEdges) {
     if (!fitWithinEdge(image, edge)) continue;
-    for (const quality of JPEG_QUALITY_STEPS) {
-      const jpeg = await image.getBuffer('image/jpeg', { quality });
-      if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
-      consider(jpeg, 'image/jpeg');
-    }
+    const atEdge = await jpegLadder();
+    if (atEdge !== null) return atEdge;
   }
 
   return smallest!;
 }
 
-/**
- * Scale `image` so its longest edge is at most `edge`, preserving aspect
- * ratio. No-op (returns false) when the image already fits.
- *
- * Deliberately passes no `mode`: without one, jimp's default resizer
- * downscales with a full-coverage area average (every source pixel
- * contributes to the output), which does not alias. The named
- * ResizeStrategy modes (BILINEAR, BICUBIC, …) switch to point-sampled
- * interpolation that skips source pixels beyond ~2x reduction and produces
- * moiré on text and fine patterns — do not "upgrade" this call to one.
- */
 function fitWithinEdge(image: JimpImage, edge: number): boolean {
   const longest = Math.max(image.width, image.height);
   if (longest <= edge) return false;
@@ -943,14 +741,7 @@ function fitWithinEdge(image: JimpImage, edge: number): boolean {
   return true;
 }
 
-function normalizeMime(mimeType: string): string {
-  const lower = mimeType.trim().toLowerCase();
-  return lower === 'image/jpg' ? 'image/jpeg' : lower;
-}
 
-// ── telemetry ────────────────────────────────────────────────────────
-
-/** Failure classification carried by the `image_crop` event. */
 type CropErrorKind =
   | 'empty'
   | 'unsupported_format'
@@ -960,7 +751,6 @@ type CropErrorKind =
   | 'budget'
   | 'decode_failed';
 
-/** The subset of a compression result the `image_compress` event reads. */
 interface CompressEventResult {
   readonly mimeType: string;
   readonly width: number;
@@ -971,11 +761,6 @@ interface CompressEventResult {
   readonly finalByteLength: number;
 }
 
-/**
- * Emit the `image_compress` event. Properties are all numeric/enum — never
- * paths or content — and a throwing client is swallowed so telemetry can
- * never affect the compression result.
- */
 function reportCompressEvent(
   telemetry: ImageCompressionTelemetry | undefined,
   input: {
@@ -992,7 +777,7 @@ function reportCompressEvent(
       source: telemetry.source,
       outcome: input.outcome,
       input_mime: input.inputMime,
-      output_mime: normalizeMime(input.result.mimeType),
+      output_mime: normalizeImageMime(input.result.mimeType),
       original_bytes: input.result.originalByteLength,
       final_bytes: input.result.finalByteLength,
       original_width: input.result.originalWidth,
@@ -1003,14 +788,9 @@ function reportCompressEvent(
       duration_ms: Date.now() - input.startedAt,
     });
   } catch {
-    // Telemetry must never affect the compression result.
   }
 }
 
-/**
- * Emit the `image_crop` event. Reports the region as a share of the original
- * pixel area rather than raw coordinates.
- */
 function reportCropEvent(
   telemetry: ImageCompressionTelemetry | undefined,
   input: {
@@ -1040,6 +820,5 @@ function reportCropEvent(
       duration_ms: Date.now() - input.startedAt,
     });
   } catch {
-    // Telemetry must never affect the crop outcome.
   }
 }

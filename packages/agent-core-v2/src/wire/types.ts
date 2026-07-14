@@ -20,16 +20,11 @@ type StringKey<T> = Extract<keyof T, string>;
 type PersistedOpKey = StringKey<PersistedOpMap>;
 type TransientOpKey = StringKey<TransientOpMap>;
 
-// Everything here is key-level: the maps' member types (`typeof` an Op) are
-// resolved only by `OpPayload`, never by the classification aliases — an
-// intersection of the maps would normalize members and re-enter Op
-// definitions, forming a type cycle.
 export type ConflictingOpType = Extract<PersistedOpKey, TransientOpKey>;
 export type PersistedOpType = Exclude<PersistedOpKey, ConflictingOpType>;
 export type TransientOpType = Exclude<TransientOpKey, ConflictingOpType>;
 export type OpType = PersistedOpType | TransientOpType;
 
-/** Payload carried by a defined Op (the result of `Model.defineOp(...)`). */
 export type PayloadOf<T> = T extends (payload: infer P) => unknown ? P : never;
 
 export type OpPayload<K extends OpType> = K extends PersistedOpType

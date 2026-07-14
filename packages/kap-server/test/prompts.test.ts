@@ -326,6 +326,88 @@ describe('server-v2 /api/v1 prompts', () => {
     });
   });
 
+  function avifBytes(): Buffer {
+    // Minimal ftyp box: size(4) + 'ftyp' + major_brand 'avif' + minor(4) + compat(8).
+    const buf = Buffer.alloc(24);
+    buf.writeUInt32BE(24, 0);
+    buf.write('ftyp', 4, 'latin1');
+    buf.write('avif', 8, 'latin1');
+    buf.write('avif', 16, 'latin1');
+    return buf;
+  }
+
+  it('replaces an inline base64 image in an unsupported format with a text notice', async () => {
+    // An AVIF payload (accepted by no provider) must never enter the session
+    // history as an image part — the bytes are authoritative, so even a
+    // mislabeled media_type is gated on the sniffed format.
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        {
+          type: 'image',
+          source: {
+            kind: 'base64',
+            media_type: 'image/png',
+            data: avifBytes().toString('base64'),
+          },
+        },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    const notice = content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+  });
+
+  it('replaces an uploaded image file in an unsupported format with a text notice', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const form = new FormData();
+    form.set('file', new Blob([avifBytes()], { type: 'image/avif' }), 'photo.avif');
+    const uploadRes = await fetch(`${base}/api/v1/files`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer),
+      body: form,
+    } as never);
+    const uploaded = (await uploadRes.json()) as Envelope<{ id: string }>;
+    expect(uploaded.code).toBe(0);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.data.id } }],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    const notice = content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(notice.text).toContain('photo.avif');
+  });
+
+  it('replaces a remote image URL with an unsupported extension with a text notice', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'image', source: { kind: 'url', url: 'https://example.com/pic.avif' } }],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    const notice = content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    // The notice keeps the URL so the model can fetch and convert the image.
+    expect(notice.text).toContain('https://example.com/pic.avif');
+  });
+
   it('returns 40402 when aborting a prompt that already settled', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

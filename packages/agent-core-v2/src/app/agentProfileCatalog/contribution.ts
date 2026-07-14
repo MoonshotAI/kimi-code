@@ -25,10 +25,6 @@ export function getAgentProfileContributions(): readonly AgentProfile[] {
   return _profileContributions;
 }
 
-/**
- * Test hook. Clears the module-level contribution list so a test can register
- * a bounded set (mirrors `_clearToolContributionsForTests`).
- */
 export function _clearAgentProfileContributionsForTests(): void {
   _profileContributions.length = 0;
 }

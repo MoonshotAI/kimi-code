@@ -217,8 +217,6 @@ describe('AgentUsageService (wire-backed)', () => {
       context: { type: 'turn', turnId: 9, step: 3 },
     });
 
-    // The model carries only the per-model totals; the per-turn accumulator is
-    // live-only service state and never comes back from replay.
     expect(fresh.getModel(UsageModel)).toEqual({
       byModel: { 'model-a': a1 },
     });

@@ -15,13 +15,6 @@ import * as retry from 'retry';
 import { isUserCancellation } from '#/_base/utils/abort';
 import type { SessionSwarmRunResult, SessionSwarmTask } from './sessionSwarm';
 
-// ── Launcher contract ────────────────────────────────────────────────
-//
-// The scheduler drives agent-run attempts through a small launcher
-// interface. Consumers (currently only `SessionSwarmService`) implement it
-// on top of `IAgentLifecycleService.create({ binding })` + `run` +
-// `mirrorAgentRun`; the option shapes are defined here so the scheduler has
-// a stable contract regardless of how launches are wired.
 
 export interface AgentRunAttemptOptions {
   readonly parentToolCallId: string;
@@ -49,26 +42,6 @@ export type AgentRunAttemptHandle = {
   }>;
 };
 
-/*
-Agent-run batch scheduling contract:
-Normal phase:
-- Return results in input order; empty input returns an empty list.
-- Start up to 5 tasks immediately, then 1 more every 700 ms while queued work remains. By default active tasks do not cap this ramp; when KIMI_CODE_AGENT_SWARM_MAX_CONCURRENCY is set to a positive integer, the ramp additionally stops while active tasks reach that cap, and resumes as tasks complete.
-- Launch priority: previous agent id saved after a rate limit, explicit resume, then new spawn.
-- Readiness can be reported while the attempt is active. Ready normal launches seed the first rate-limit capacity.
-- The first provider rate limit stops the ramp and enters rate-limit phase.
-
-Rate-limit phase:
-- A provider rate limit requeues while there is other unfinished work. Save the agent id for same-agent retry, emit suspended, and requeue the task at the front; its own eligibility delays are 3000 ms, 6000 ms, 12000 ms, then doubling.
-- If the rate-limited attempt is the only unfinished task, fail that task instead of suspending the whole batch forever.
-- Enter with capacity equal to ready normal launches, minimum 1; set the next global launch no earlier than 3000 ms later; then shrink capacity by 1, minimum 1. Later rate limits shrink by 1, minimum 1, at most once per 2000 ms.
-- Each pass starts at most 1 task: active attempts must be below capacity, global launch time reached, and task eligibility reached. Choose the first eligible queued task, then set next global launch to now plus the current interval. If blocked by time or queued work remains after a launch, wake at the earlier of next launch/eligibility and next capacity recovery.
-- Core recovery rule: in rate-limit phase, if work is queued and no provider rate limit happened for 3 minutes, capacity increases by 1, which can launch one more task immediately. This can happen once per quiet window; a new rate limit restarts the window. If active attempts still fill capacity, wake at the next recovery time.
-
-Results and cancellation:
-- Completed, failed, aborted, and timed-out attempts occupy their input slots; when all slots have results, return the ordered list. A task timeout fails only that task and does not enter rate-limit phase or stop others.
-- The first task signal is the batch signal. User cancellation preserves existing results, marks ready or agent-known unfinished tasks aborted/started, and marks never-started tasks aborted/not_started. Non-user cancellation rejects.
-*/
 
 const INITIAL_LAUNCH_LIMIT = 5;
 const INITIAL_LAUNCH_INTERVAL_MS = 700;
@@ -126,11 +99,6 @@ type ActiveAttempt<T> = {
 };
 
 export type AgentRunBatchOptions = {
-  /**
-   * Optional cap on how many agent runs may execute concurrently during the normal
-   * phase. `undefined` means no cap (legacy ramp behavior). The rate-limit
-   * phase is governed by its own capacity logic and is not affected.
-   */
   readonly maxConcurrency?: number;
 };
 
@@ -667,13 +635,6 @@ export class AgentRunBatch<T> {
   }
 }
 
-/**
- * Resolve the optional AgentSwarm normal-phase concurrency cap from the environment.
- *
- * Returns `undefined` when the variable is unset/empty. A present value must be a
- * positive integer; invalid input fails fast so a misconfigured cap never silently
- * reverts to the uncapped ramp.
- */
 export function resolveSwarmMaxConcurrency(
   env: Readonly<Record<string, string | undefined>> = process.env,
 ): number | undefined {

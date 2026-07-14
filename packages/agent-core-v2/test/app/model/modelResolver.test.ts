@@ -356,7 +356,7 @@ describe('ModelResolverService', () => {
       expect(events).toContainEqual({ type: 'part', part: { type: 'text', text: 'recovered' } });
     });
 
-    it('throws login_required when force-refresh and replay both 401', async () => {
+    it('throws provider auth error when force-refresh and replay both 401', async () => {
       configureOAuthModel();
       const authKeys: string[] = [];
       resolveTokenProvider.mockReturnValue({
@@ -378,7 +378,9 @@ describe('ModelResolverService', () => {
           void _event;
         }
       }).rejects.toMatchObject({
-        code: 'auth.login_required',
+        code: 'provider.auth_error',
+        name: 'APIStatusError',
+        message: 'Unauthorized',
         details: {
           statusCode: 401,
           requestId: 'req-401',
@@ -399,10 +401,6 @@ describe('ModelResolverService', () => {
         tools: [],
         messages: [],
       });
-      // No OAuth material on the model, so there is no force-refresh/replay:
-      // the raw status error crosses the model boundary once, translated into
-      // a coded Error2 with the HTTP fields in `details` and the raw error
-      // preserved as `cause`.
       await expect(async () => {
         for await (const _event of events) {
           void _event;
@@ -491,7 +489,6 @@ describe('ModelResolverService', () => {
         expect(createdProtocolConfigs[0]).toMatchObject({
           defaultHeaders: {
             'X-Env': 'env-val',
-            // provider customHeaders override the env header on conflict
             'X-Shared': 'from-provider',
             'X-Provider': 'p',
           },
@@ -507,19 +504,16 @@ describe('ModelResolverService', () => {
       try {
         const host = { 'User-Agent': 'kimi-code-cli/1.0', 'X-Msh-Device-Id': 'dev' };
 
-        // kimi provider → full identity (even when routed through anthropic)
         expect(resolveOutboundHeaders('kimi', undefined, host)).toEqual({
           'User-Agent': 'kimi-code-cli/1.0',
           'X-Msh-Device-Id': 'dev',
         });
-        // non-kimi providers → User-Agent only
         expect(resolveOutboundHeaders('openai', undefined, host)).toEqual({
           'User-Agent': 'kimi-code-cli/1.0',
         });
         expect(resolveOutboundHeaders('anthropic', undefined, host)).toEqual({
           'User-Agent': 'kimi-code-cli/1.0',
         });
-        // provider customHeaders win on conflict
         expect(resolveOutboundHeaders('kimi', { 'User-Agent': 'custom' }, host)).toEqual({
           'User-Agent': 'custom',
           'X-Msh-Device-Id': 'dev',
@@ -816,7 +810,11 @@ describe('ModelResolverService', () => {
       );
     });
 
-    function resolveBaseUrl(protocol: string, providerType: string, baseUrl: string): string {
+    function resolveBaseUrl(
+      protocol: string,
+      providerType: string,
+      baseUrl: string,
+    ): string | undefined {
       providers['p'] = { type: providerType, baseUrl, apiKey: 'sk' } as ProviderConfig;
       models['m'] = { provider: 'p', model: 'wire-name', maxContextSize: 1000, protocol } as ModelConfig;
       return ix.get(IModelResolver).resolve('m').baseUrl;
@@ -850,6 +848,36 @@ describe('ModelResolverService', () => {
     it('does not strip /v1 for non-anthropic protocols', () => {
       expect(resolveBaseUrl('kimi', 'kimi', 'https://example.test/coding/v1')).toBe(
         'https://example.test/coding/v1',
+      );
+    });
+
+    it.each(['anthropic', 'openai', 'openai_responses', 'kimi', 'google-genai'] as const)(
+      'resolves a %s provider without base_url to an undefined baseUrl (protocol default applies)',
+      (type) => {
+        providers['p'] = { type, apiKey: 'sk' };
+        models['m'] = { provider: 'p', model: 'wire-name', maxContextSize: 1000 };
+
+        expect(ix.get(IModelResolver).resolve('m').baseUrl).toBeUndefined();
+      },
+    );
+
+    it('resolves an anthropic-protocol override without base_url without stripping', () => {
+      providers['p'] = { type: 'kimi', apiKey: 'sk' };
+      models['m'] = {
+        provider: 'p',
+        model: 'wire-name',
+        maxContextSize: 1000,
+        protocol: 'anthropic',
+      };
+
+      expect(ix.get(IModelResolver).resolve('m').baseUrl).toBeUndefined();
+    });
+
+    it('still rejects a flat model with neither providerId nor baseUrl', () => {
+      models['m'] = { model: 'wire-name', maxContextSize: 1000 };
+
+      expect(() => ix.get(IModelResolver).resolve('m')).toThrow(
+        'Model "m" must set either providerId or baseUrl in config.toml.',
       );
     });
   });

@@ -14,17 +14,11 @@ import type { SessionSummary } from '#/app/sessionIndex/sessionIndex';
 
 export type { SessionSummary };
 
-/** Number of recent sessions returned by `listRecentSessions`. */
 export const RECENT_SESSIONS_LIMIT = 20;
 
 export interface IWorkspaceQueryService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * List the `RECENT_SESSIONS_LIMIT` (20) most recent sessions in
-   * `workspaceId`, newest first (by `updatedAt`). Returns an empty array when
-   * the workspace has no sessions or is unknown to the session index.
-   */
   listRecentSessions(workspaceId: string): Promise<readonly SessionSummary[]>;
 }
 

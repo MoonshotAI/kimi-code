@@ -110,10 +110,8 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    // History ran turnId 0 and 1, so the counter must be restored to 1.
     expect(turnCurrentId(ctx)).toBe(1);
 
-    // After 2 historical turns (turnId 0 and 1), the next fresh turn must be 2.
     ctx.mockNextResponse({ type: 'text', text: 'Fresh response.' });
     await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Fresh prompt' }] });
     await ctx.untilTurnEnd();
@@ -126,14 +124,11 @@ describe('Agent resume', () => {
   });
 
   it('restores the turn counter past goal-continuation turns that have no turn.prompt record', async () => {
-    // A goal drive allocates a fresh turnId per continuation turn even though
-    // the internally-driven turns do not have user prompt records.
     const persistence = new RecordingAgentPersistence(goalContinuationResumeHistory() as unknown as PersistedWireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     await ctx.restorePersisted();
 
-    // History ran turnId 0 (prompted) plus continuation turns 1 and 2.
     expect(turnCurrentId(ctx)).toBe(2);
 
     ctx.mockNextResponse({ type: 'text', text: 'Fresh response after goal resume.' });
@@ -148,8 +143,6 @@ describe('Agent resume', () => {
   });
 
   it('keeps turnIds monotonic across repeated resume cycles', async () => {
-    // Mirrors a real session that was cold-started several times: each resume
-    // must continue the counter, never restart it and collide with history.
     const persistence = new RecordingAgentPersistence(multiTurnResumeHistory() as unknown as PersistedWireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
@@ -159,8 +152,6 @@ describe('Agent resume', () => {
     await ctx.untilTurnEnd();
     expect(turnCurrentId(ctx)).toBe(2);
 
-    // Cold-start again from everything persisted so far (history + the turn just
-    // run). The fresh agent must restore the counter to 2 and allocate 3 next.
     const persistence2 = new RecordingAgentPersistence(persistence.records as unknown as PersistedWireRecord[]);
     const ctx2 = testAgent({ persistence: persistence2, autoConfigure: false });
 
@@ -439,30 +430,6 @@ describe('Agent resume', () => {
     ]);
   });
 
-  // TODO(phase-4.6): rewrite against wire resume — buildReplay() facade deleted
-  // it('projects restored cancelled compactions into replay records', async () => {
-  //   const persistence = new RecordingAgentPersistence([
-  //     {
-  //       type: 'full_compaction.begin',
-  //       source: 'manual',
-  //       instruction: 'preserve implementation notes',
-  //     },
-  //     {
-  //       type: 'full_compaction.cancel',
-  //     },
-  //   ] as unknown as PersistedWireRecord[]);
-  //   const ctx = testAgent({ persistence, autoConfigure: false });
-  //
-  //   await ctx.restorePersisted();
-  //
-  //   expect(ctx.get(IAgentRecordService).buildReplay()).toEqual([
-  //     expect.objectContaining({
-  //       type: 'compaction',
-  //       result: 'cancelled',
-  //       instruction: 'preserve implementation notes',
-  //     }),
-  //   ]);
-  // });
 
   it('persists undelivered restored background notifications during resume', async () => {
     const persistence = new RecordingAgentPersistence([
@@ -502,8 +469,6 @@ describe('Agent resume', () => {
             message.origin.taskId === 'agent-new00000',
         ),
       ).toBe(true);
-      // The newly delivered notification is persisted through the current
-      // context append primitive.
       expect(persistence.appended).toContainEqual(
         expect.objectContaining({
           type: 'context.append_message',
@@ -522,61 +487,6 @@ describe('Agent resume', () => {
     }
   });
 
-  // TODO(phase-4.6): rewrite against wire resume — buildReplay() facade deleted
-  // it('preserves failed tool result state in replay messages', async () => {
-  //   const persistence = new RecordingAgentPersistence([
-  //     {
-  //       type: 'metadata',
-  //       protocol_version: '1.4',
-  //       created_at: 1,
-  //     },
-  //     {
-  //       type: 'context.append_loop_event',
-  //       event: {
-  //         type: 'step.begin',
-  //         uuid: 'failed-step',
-  //         turnId: '0',
-  //         step: 1,
-  //       },
-  //     },
-  //     {
-  //       type: 'context.append_loop_event',
-  //       event: {
-  //         type: 'tool.call',
-  //         uuid: 'failed-call',
-  //         turnId: '0',
-  //         step: 1,
-  //         stepUuid: 'failed-step',
-  //         toolCallId: 'call_failed_bash',
-  //         name: 'Bash',
-  //         args: { command: 'false' },
-  //       },
-  //     },
-  //     {
-  //       type: 'context.append_loop_event',
-  //       event: {
-  //         type: 'tool.result',
-  //         parentUuid: 'failed-call',
-  //         toolCallId: 'call_failed_bash',
-  //         result: { output: 'failed', isError: true },
-  //       },
-  //     },
-  //   ] as unknown as PersistedWireRecord[]);
-  //   const ctx = testAgent({ persistence, autoConfigure: false });
-  //
-  //   await ctx.restorePersisted();
-  //
-  //   expect(ctx.get(IAgentRecordService).buildReplay()).toContainEqual(
-  //     expect.objectContaining({
-  //       type: 'message',
-  //       message: expect.objectContaining({
-  //         role: 'tool',
-  //         toolCallId: 'call_failed_bash',
-  //         isError: true,
-  //       }),
-  //     }),
-  //   );
-  // });
 
   it('drops an orphan tool result whose call was never recorded', async () => {
     const persistence = new RecordingAgentPersistence([
@@ -616,13 +526,11 @@ describe('Agent resume', () => {
 
     await ctx.restorePersisted();
 
-    // Raw history keeps the orphan result as recorded.
     expect(ctx.context.get().map((message) => message.role)).toEqual([
       'user',
       'assistant',
       'tool',
     ]);
-    // The projector drops the orphan (its call was never recorded).
     expect(ctx.project().map((message) => message.role)).toEqual(['user', 'assistant']);
     expect(ctx.project().some((message) => message.role === 'tool')).toBe(false);
     await ctx.expectResumeMatches();
@@ -1061,8 +969,6 @@ function canonicalContinuationTurn(
   ];
 }
 
-// Loop events for one fully-run turn: a single step that emits text and ends.
-// Used to represent both prompted turns and internal (goal-continuation) turns.
 function loopEventsForTurn(turnId: string, responseText: string): PersistedWireRecord[] {
   return [
     {
@@ -1107,7 +1013,6 @@ function multiTurnResumeHistory(): PersistedWireRecord[] {
   ];
 }
 
-// One prompted turn (turnId 0) followed by two internally-driven turns (1, 2).
 function goalContinuationResumeHistory(): PersistedWireRecord[] {
   return [
     resumeConfigRecord(),

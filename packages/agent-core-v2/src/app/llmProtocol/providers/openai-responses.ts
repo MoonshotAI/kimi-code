@@ -40,15 +40,6 @@ import {
   type ToolCallIdPolicy,
 } from './tool-call-id';
 
-/**
- * Normalize the Responses API status / incomplete_details into the unified
- * {@link FinishReason} enum.
- *
- * Note: the Responses API has no `tool_calls`-style status. When a response
- * completes with `function_call` items inline the status is still
- * `'completed'`; callers detect tool calls via `message.toolCalls.length`,
- * not via finishReason.
- */
 function normalizeResponsesFinishReason(
   status: string | null | undefined,
   incompleteReason: string | null | undefined,
@@ -385,9 +376,6 @@ function responseFormatToResponsesText(format: ResponseFormat): Record<string, u
     },
   };
 }
-// The Responses API has no input type for video, and only mp3/wav audio can
-// be inlined as input_file data. Degrade such parts to placeholder text so
-// the model still learns an attachment existed instead of silently losing it.
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: unsupported audio format)';
 const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
 
@@ -416,7 +404,6 @@ function contentPartsToInputItems(parts: ContentPart[]): unknown[] {
         items.push({ type: 'input_text', text: OMITTED_VIDEO_PLACEHOLDER });
         break;
       case 'think':
-        // Handled separately as reasoning items.
         break;
     }
   }
@@ -446,11 +433,6 @@ function messageContentToFunctionOutputItems(content: ContentPart[]): unknown[] 
         items.push({ type: 'input_image', image_url: part.imageUrl.url });
         break;
       case 'audio_url': {
-        // Tool results can legitimately include audio (e.g. a TTS tool
-        // returning generated speech). The user-message path already
-        // encodes audio via `mapAudioUrlToInputItem`; without the same
-        // branch here, audio returned by a tool would be dropped on the
-        // next turn.
         const mapped = mapAudioUrlToInputItem(part.audioUrl.url);
         items.push(mapped ?? { type: 'input_text', text: OMITTED_AUDIO_PLACEHOLDER });
         break;
@@ -459,7 +441,6 @@ function messageContentToFunctionOutputItems(content: ContentPart[]): unknown[] 
         items.push({ type: 'input_text', text: OMITTED_VIDEO_PLACEHOLDER });
         break;
       case 'think':
-        // Handled separately as reasoning items.
         break;
     }
   }
@@ -501,15 +482,10 @@ function convertMessage(
     role = 'developer';
   }
 
-  // tool role -> function_call_output
   if (role === 'tool') {
     const callId = message.toolCallId ?? '';
     let output: string | unknown[];
     if (toolMessageConversion === 'extract_text') {
-      // Plain-string output for backends that reject structured
-      // function_call_output. Media parts are reattached as a user message
-      // by `convertHistoryMessages`; when the result carries no text at
-      // all, point the model at that follow-up message.
       const text = extractText(message);
       output =
         text.length === 0 && message.content.some(isMediaPart)
@@ -529,7 +505,6 @@ function convertMessage(
 
   const result: ResponseInputItem[] = [];
 
-  // Process content parts
   if (message.content.length > 0) {
     const pendingParts: ContentPart[] = [];
 
@@ -557,9 +532,7 @@ function convertMessage(
       const part = message.content[i];
       if (part === undefined) break;
       if (part.type === 'think') {
-        // Flush accumulated non-reasoning parts first
         flushPendingParts();
-        // Aggregate consecutive ThinkParts with the same `encrypted` value
         const encryptedValue = part.encrypted;
         const summaries: unknown[] = [{ type: 'summary_text', text: part.think || '' }];
         i += 1;
@@ -582,11 +555,9 @@ function convertMessage(
       }
     }
 
-    // Handle remaining trailing non-reasoning parts
     flushPendingParts();
   }
 
-  // Handle tool calls
   for (const toolCall of message.toolCalls) {
     result.push({
       arguments: toolCall.arguments ?? '{}',
@@ -609,12 +580,6 @@ function convertTool(tool: Tool): ResponseToolParam {
   };
 }
 
-/**
- * Convert the history, buffering tool-result media when `extract_text`
- * flattens tool outputs to plain strings. The buffered media items are
- * reattached as a single user message after each run of consecutive tool
- * messages — mirroring the OpenAI Chat Completions provider.
- */
 function convertHistoryMessages(
   history: readonly Message[],
   modelName: string,
@@ -863,10 +828,6 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
           case 'response.created':
           case 'response.in_progress': {
             const responseObject = requireObjectField(chunk, 'response', type);
-            // Initial events carry the Responses API `response.id`. Record it
-            // here so callers that inspect `stream.id` before the stream
-            // completes see the actual response id rather than a later
-            // output-item identifier.
             const respId = readStringField(responseObject, 'id');
             if (respId !== undefined) {
               this._id = respId;
@@ -876,15 +837,7 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
           case 'response.output_item.added': {
             const item = readResponseOutputItem(chunk['item'], `${type}.item`);
             const outputIndex = readNumberField(chunk, 'output_index');
-            // NOTE: `item.id` here is an output-item identifier, not the
-            // Responses API `response.id`. Do NOT overwrite `this._id` — it
-            // would clobber the real response id (or leave it undefined for
-            // tool-call items that have no `item.id`).
             if (item.type === 'function_call') {
-              // The Responses API routes streaming argument deltas via
-              // `item_id`, which matches `item.id` on output_item.added.
-              // Preserve it so the generate loop can dispatch interleaved
-              // deltas across parallel function calls correctly.
               const streamIndex = responseStreamIndex(item.itemId, outputIndex);
               setFunctionCallArguments(streamIndex, item.arguments ?? '');
               const tc: ToolCall = {
@@ -903,7 +856,6 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
           case 'response.output_item.done': {
             const item = readResponseOutputItem(chunk['item'], `${type}.item`);
             const outputIndex = readNumberField(chunk, 'output_index');
-            // Same as output_item.added: `item.id` is not the response id.
             if (item.type === 'reasoning') {
               const thinkPart: StreamedMessagePart = { type: 'think', think: '' };
               if (item.encryptedContent !== undefined) {
@@ -917,8 +869,6 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
             break;
           }
           case 'response.function_call_arguments.delta': {
-            // `item_id` uniquely identifies the function_call output item this
-            // delta belongs to; use it as the streaming index.
             const streamIndex = responseStreamIndex(
               readStringField(chunk, 'item_id'),
               readNumberField(chunk, 'output_index'),
@@ -953,8 +903,6 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
           case 'response.completed':
           case 'response.incomplete': {
             const responseObject = requireObjectField(chunk, 'response', type);
-            // Final event confirms the Responses API `response.id`. Prefer
-            // it over any earlier value in case the API refines it.
             const respId = readStringField(responseObject, 'id');
             if (respId !== undefined) {
               this._id = respId;
@@ -991,7 +939,6 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
             );
           }
           default:
-            // Unknown future event types carry no data we currently consume.
             break;
         }
       }
@@ -1020,7 +967,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     this._baseUrl = options.baseUrl ?? 'https://api.openai.com/v1';
     this._defaultHeaders = options.defaultHeaders;
     this._model = options.model;
-    this._stream = true; // Responses API always supports streaming
+    this._stream = true;
     this._generationKwargs = {};
     this._toolMessageConversion = options.toolMessageConversion ?? null;
     this._httpClient = options.httpClient;
@@ -1081,7 +1028,6 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
       kwargs['include'] = ['reasoning.encrypted_content'];
     }
 
-    // Remove undefined values
     for (const key of Object.keys(kwargs)) {
       if (kwargs[key] === undefined) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete

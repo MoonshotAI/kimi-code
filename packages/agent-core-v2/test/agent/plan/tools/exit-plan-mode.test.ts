@@ -6,6 +6,8 @@ import {
   ExitPlanModeTool,
   type ExitPlanModeInput,
 } from '#/agent/plan/tools/exit-plan-mode';
+import type { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
@@ -46,6 +48,15 @@ function recordingTelemetry(): ITelemetryService {
     setEnabled: () => {},
     flush: () => Promise.resolve(),
     shutdown: () => Promise.resolve(),
+  };
+}
+
+function permissionMode(mode: PermissionMode = 'auto'): IAgentPermissionModeService {
+  return {
+    _serviceBrand: undefined,
+    mode,
+    setMode: () => {},
+    onDidChangeMode: () => ({ dispose: () => {} }),
   };
 }
 
@@ -132,6 +143,7 @@ describe('ExitPlanMode option output', () => {
     const result = await executeTool(
       new ExitPlanModeTool(
         { ...planService(), exit },
+        permissionMode(),
         telemetry,
       ),
       {
@@ -147,15 +159,62 @@ describe('ExitPlanMode option output', () => {
     expect(result.output).toContain('Exited plan mode');
   });
 
+  it('marks the direct-execution output as auto-approved, not user-reviewed, in auto mode', async () => {
+    const telemetry = recordingTelemetry();
+
+    const result = await executeTool(
+      new ExitPlanModeTool(planService(), permissionMode('auto'), telemetry),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_plan_auto',
+        args: {},
+        signal,
+      },
+    );
+
+    expect(result.isError).toBeFalsy();
+    // In auto permission mode no interactive review can happen, so the
+    // output must not read as if the user had approved the plan.
+    expect(result.output).toContain('## Plan (auto-approved, not user-reviewed):');
+    expect(result.output).not.toContain('## Approved Plan:');
+    expect(result.output).toContain('the user has NOT explicitly approved it');
+    expect(result.output).toContain('# Plan');
+  });
+
+  it('keeps the user-approved output when a rule lets the call through outside auto mode', async () => {
+    const telemetry = recordingTelemetry();
+
+    const result = await executeTool(
+      new ExitPlanModeTool(planService(), permissionMode('manual'), telemetry),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_plan_rule',
+        args: {},
+        signal,
+      },
+    );
+
+    expect(result.isError).toBeFalsy();
+    // Outside auto mode the direct-execution path means a configured or
+    // session allow/ask rule approved the call — an explicit user decision,
+    // so the output keeps the user-approved wording.
+    expect(result.output).toContain('## Approved Plan:');
+    expect(result.output).not.toContain('auto-approved');
+    expect(telemetry.track2).toHaveBeenCalledWith('plan_resolved', { outcome: 'approved' });
+  });
+
   it('returns success without a "User feedback:" prefix when revise has no feedback', async () => {
     const telemetry = recordingTelemetry();
 
-    const result = await executeTool(new ExitPlanModeTool(planService(), telemetry), {
-      turnId: 7,
-      toolCallId: 'call_exit_plan',
-      args: { options },
-      signal,
-    });
+    const result = await executeTool(
+      new ExitPlanModeTool(planService(), permissionMode(), telemetry),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_plan',
+        args: { options },
+        signal,
+      },
+    );
 
     expect(result.isError).toBeFalsy();
     expect(result.output).not.toContain('User feedback:');

@@ -275,7 +275,6 @@ export class AgentRuntimeService extends Disposable implements IAgentRuntimeServ
     const resume = this.priorForApproval;
     this.priorForApproval = undefined;
     if (this.pendingApprovals.size > 0) {
-      // Another approval is still pending — stay in `awaiting_approval` (矛盾 d).
       this.setPhase({
         kind: 'awaiting_approval',
         turnId: this.cursor.turnId,
@@ -341,6 +340,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentRuntimeService,
   AgentRuntimeService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'runtime',
 );

@@ -8,6 +8,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import {
   clearManagedKimiCodeConfig,
+  resolveKimiCodeOAuthKey,
   resolveKimiCodeRuntimeAuth,
 } from '@moonshot-ai/kimi-code-oauth';
 
@@ -52,6 +53,21 @@ const deviceAuth = {
 };
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+const EXAMPLE_COM_SCOPED_REF = {
+  storage: 'file',
+  key: resolveKimiCodeOAuthKey({ baseUrl: 'https://api.example.com' }),
+  oauthHost: 'https://auth.kimi.com',
+} as const;
+
+const ENV_SCOPED_REF = {
+  storage: 'file',
+  key: resolveKimiCodeOAuthKey({
+    oauthHost: 'https://env-auth.example.com',
+    baseUrl: 'https://env-api.example.com/coding/v1',
+  }),
+  oauthHost: 'https://env-auth.example.com',
+} as const;
 
 interface FakeToolkit {
   readonly login: Mock<(...args: any[]) => any>;
@@ -167,6 +183,7 @@ describe('OAuthService', () => {
   afterEach(() => {
     disposables.dispose();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   function createService(): IOAuthService {
@@ -214,7 +231,11 @@ describe('OAuthService', () => {
     });
     expect(toolkit.login).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
-      expect.objectContaining({ oauthRef: { storage: 'file', key: 'oauth/kimi-code' } }),
+      expect.objectContaining({
+        oauthRef: EXAMPLE_COM_SCOPED_REF,
+        baseUrl: 'https://api.example.com',
+        oauthHost: undefined,
+      }),
     );
 
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
@@ -236,12 +257,12 @@ describe('OAuthService', () => {
         type: 'kimi',
         baseUrl: 'https://api.example.com',
         apiKey: '',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
   });
 
-  it('startLogin resolves a default oauth ref for the managed provider without oauth config', async () => {
+  it('startLogin resolves an env-scoped oauth ref for the managed provider without oauth config', async () => {
     providers[OAUTH_PROVIDER] = { type: 'kimi', baseUrl: 'https://api.example.com' };
     stubManagedModelsFetch();
     toolkit.login.mockImplementation((_provider, options) => {
@@ -254,7 +275,8 @@ describe('OAuthService', () => {
     expect(toolkit.login).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
       expect.objectContaining({
-        oauthRef: expect.objectContaining({ storage: 'file', key: expect.any(String) }),
+        oauthRef: EXAMPLE_COM_SCOPED_REF,
+        baseUrl: 'https://api.example.com',
       }),
     );
     await flush();
@@ -262,7 +284,85 @@ describe('OAuthService', () => {
       OAUTH_PROVIDER,
       expect.objectContaining({
         type: 'kimi',
-        oauth: expect.objectContaining({ storage: 'file', key: expect.any(String) }),
+        baseUrl: 'https://api.example.com',
+        oauth: EXAMPLE_COM_SCOPED_REF,
+      }),
+    );
+  });
+
+  it('startLogin reuses the configured oauth ref when it matches the login environment', async () => {
+    providers[OAUTH_PROVIDER] = {
+      type: 'kimi',
+      baseUrl: 'https://api.kimi.com/coding/v1',
+      oauth: { storage: 'file', key: 'oauth/kimi-code' },
+    };
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+
+    expect(toolkit.login).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        oauthRef: { storage: 'file', key: 'oauth/kimi-code' },
+        baseUrl: 'https://api.kimi.com/coding/v1',
+      }),
+    );
+  });
+
+  it('startLogin honors KIMI_CODE_BASE_URL / KIMI_CODE_OAUTH_HOST for the login environment', async () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://env-api.example.com/coding/v1');
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://env-auth.example.com');
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+
+    expect(toolkit.login).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        oauthRef: ENV_SCOPED_REF,
+        baseUrl: 'https://env-api.example.com/coding/v1',
+        oauthHost: 'https://env-auth.example.com',
+      }),
+    );
+    await flush();
+    expect(providerSet).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        type: 'kimi',
+        baseUrl: 'https://env-api.example.com/coding/v1',
+        oauth: ENV_SCOPED_REF,
+      }),
+    );
+  });
+
+  it('resolves the runtime credential slot to the env environment after an env-scoped login', async () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://env-api.example.com/coding/v1');
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://env-auth.example.com');
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+    await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
+
+    await svc.status(OAUTH_PROVIDER);
+    expect(toolkit.getCachedAccessToken).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        key: resolveKimiCodeOAuthKey({
+          oauthHost: 'https://env-auth.example.com',
+          baseUrl: 'https://env-api.example.com/coding/v1',
+        }),
       }),
     );
   });
@@ -291,7 +391,7 @@ describe('OAuthService', () => {
       expect.objectContaining({
         type: 'kimi',
         baseUrl: 'https://api.example.com',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -315,7 +415,7 @@ describe('OAuthService', () => {
       expect.objectContaining({
         type: 'kimi',
         baseUrl: 'https://api.example.com',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
     expect(configSet).not.toHaveBeenCalledWith('defaultModel', expect.any(String));
@@ -355,7 +455,7 @@ describe('OAuthService', () => {
       OAUTH_PROVIDER,
       expect.objectContaining({
         type: 'kimi',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
     expect(configReplace).toHaveBeenCalledWith(
@@ -392,7 +492,43 @@ describe('OAuthService', () => {
 
     providerChangedEmitter.fire({ added: [], removed: [OAUTH_PROVIDER], changed: [] });
 
-    expect(svc.getFlow(OAUTH_PROVIDER)).toBeUndefined();
+    const flow = svc.getFlow(OAUTH_PROVIDER);
+    expect(flow?.status).toBe('cancelled');
+    expect(flow?.error_message).toBe('Provider configuration changed during login.');
+  });
+
+  it('marks an in-flight OAuth flow cancelled (not vanished) when its provider config changes', async () => {
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return new Promise(() => { });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+    expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
+
+    providerChangedEmitter.fire({ added: [], removed: [], changed: [OAUTH_PROVIDER] });
+
+    const flow = svc.getFlow(OAUTH_PROVIDER);
+    expect(flow?.status).toBe('cancelled');
+    expect(flow?.error_message).toBe('Provider configuration changed during login.');
+  });
+
+  it('does not finalize a login whose provider changed after toolkit.login resolved', async () => {
+    let resolveLogin!: (value: { providerName: string; ok: true }) => void;
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return new Promise((resolve) => {
+        resolveLogin = resolve;
+      });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+    expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
+
+    resolveLogin({ providerName: OAUTH_PROVIDER, ok: true });
+    providerChangedEmitter.fire({ added: [], removed: [], changed: [OAUTH_PROVIDER] });
+
+    await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('cancelled'));
   });
 
   it('cancelLogin aborts a pending flow and marks it cancelled', async () => {
@@ -421,10 +557,7 @@ describe('OAuthService', () => {
 
     const result = await svc.logout(OAUTH_PROVIDER);
     expect(result).toEqual({ logged_out: true, provider: OAUTH_PROVIDER });
-    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, {
-      storage: 'file',
-      key: 'oauth/kimi-code',
-    });
+    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, EXAMPLE_COM_SCOPED_REF);
     expect(configReplace).toHaveBeenCalledWith('providers', {
       [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' },
     });
@@ -500,10 +633,7 @@ describe('OAuthService', () => {
     const svc = createService();
 
     await expect(svc.logout(OAUTH_PROVIDER)).rejects.toThrow('config write failed');
-    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, {
-      storage: 'file',
-      key: 'oauth/kimi-code',
-    });
+    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, EXAMPLE_COM_SCOPED_REF);
   });
 
   it('status reports loggedIn based on the cached access token', async () => {
@@ -589,9 +719,6 @@ describe('OAuthService', () => {
       }),
     );
     expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
-    // Regression: the `[thinking] enabled` value computed by the shared oauth
-    // apply logic must be persisted, not dropped (previously only the legacy
-    // `default_thinking` key was written).
     expect(configSet).toHaveBeenCalledWith('thinking', { enabled: true });
     expect(events).toEqual([
       {
@@ -628,8 +755,6 @@ describe('OAuthService', () => {
 
     await Promise.all([svc.refreshOAuthProviderModels(), svc.refreshOAuthProviderModels()]);
 
-    // Without the refresh chain both remote fetches would overlap (peak 2); the
-    // chain holds the second run until the first finishes, so the peak stays 1.
     expect(maxInFlight).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });

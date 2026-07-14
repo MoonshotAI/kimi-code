@@ -101,8 +101,6 @@ describe('AgentPermissionPolicyService chain', () => {
     });
 
     registration.dispose();
-    // After disposal the built-in chain no longer sees the deny-all policy, so
-    // a benign builtin tool is no longer rejected by it.
     await expect(evaluate({ toolName: 'Read', args: { path: 'src/a.ts' } })).resolves.not.toMatchObject({
       policyName: 'deny-all',
     });

@@ -103,5 +103,5 @@ export class WSGateway implements IWSGateway {
   }
 }
 
-registerScopedService(LifecycleScope.App, IRestGateway, RestGateway, InstantiationType.Delayed, 'gateway');
-registerScopedService(LifecycleScope.App, IWSGateway, WSGateway, InstantiationType.Delayed, 'gateway');
+registerScopedService(LifecycleScope.App, IRestGateway, RestGateway, InstantiationType.Eager, 'gateway');
+registerScopedService(LifecycleScope.App, IWSGateway, WSGateway, InstantiationType.Eager, 'gateway');

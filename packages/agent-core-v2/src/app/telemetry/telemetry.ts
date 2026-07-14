@@ -44,17 +44,7 @@ export interface TelemetryServiceOptions {
 export interface ITelemetryService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Low-level untyped event sink — appender plumbing and tests only.
-   * Business events must go through `track2` so the event name and its
-   * properties are checked against the registry in `events.ts`.
-   */
   track(event: string, properties?: TelemetryProperties): void;
-  /**
-   * Track a registered business event. The event name must exist in
-   * `telemetryEventDefinitions` and the properties must match the registered
-   * type exactly (checked at compile time, zero runtime cost).
-   */
   track2<K extends TelemetryEventName, E extends TelemetryEventProperties<K> = never>(
     event: K,
     properties?: StrictPropertyCheck<TelemetryEventProperties<K>, E>,
@@ -77,11 +67,6 @@ export const nullTelemetryAppender: ITelemetryAppender = {
   shutdown: () => {},
 };
 
-/**
- * No-op `ITelemetryService` for callers that want to accept an optional
- * telemetry service (e.g. tools constructed outside DI in tests). Mirrors v1's
- * `noopTelemetryClient`.
- */
 export const noopTelemetryService: ITelemetryService = {
   _serviceBrand: undefined,
   track: () => {},

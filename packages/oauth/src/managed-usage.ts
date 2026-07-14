@@ -31,11 +31,15 @@ export function isManagedKimiCode(providerKey?: string | null): boolean {
 }
 
 export function kimiCodeBaseUrl(): string {
-  return process.env['KIMI_CODE_BASE_URL'] ?? DEFAULT_KIMI_CODE_BASE_URL;
+  // Single source of truth for the canonical base-url shape: normalize the
+  // env override here instead of letting a trailing slash leak into the
+  // persisted provider entry, where a later normalized rewrite would diff
+  // against it and emit a spurious providers-changed event during login.
+  return (process.env['KIMI_CODE_BASE_URL'] ?? DEFAULT_KIMI_CODE_BASE_URL).replace(/\/+$/, '');
 }
 
 export function kimiCodeUsageUrl(): string {
-  return `${kimiCodeBaseUrl().replace(/\/+$/, '')}/usages`;
+  return `${kimiCodeBaseUrl()}/usages`;
 }
 
 export interface UsageRow {

@@ -88,11 +88,8 @@ describe('wire.jsonl round-trip', () => {
     live.wire.dispatch(tagsAdd({ tag: 'a' }), tagsAdd({ tag: 'b' }));
     await live.log.flush();
 
-    // Read the bytes back through a fresh reader over the same on-disk storage.
     const records = await collect(makeReader(storage));
 
-    // Format zero-change: flat `{ type, ...payload }` (plus the engine-stamped
-    // `time`), no nested `payload` key.
     expect(records).toEqual([
       { type: 'compat.counter.set', value: 3, time: expect.any(Number) },
       { type: 'compat.tags.add', tag: 'a', time: expect.any(Number) },
@@ -102,14 +99,11 @@ describe('wire.jsonl round-trip', () => {
       expect('payload' in record).toBe(false);
     }
 
-    // Replay (with an injected unknown-type record) into a fresh service.
     const replayTarget = makeContainer(storage, 'replay-target');
     const withUnknown: PersistedRecord[] = [
       ...records,
       { type: 'compat.unknown.nope', foo: 1 },
     ];
-    // Swallow the onUnexpectedError report for the injected unknown record;
-    // the dedicated unknown-record test asserts that reporting path.
     setUnexpectedErrorHandler(() => {});
     let replayResult;
     try {
@@ -118,8 +112,6 @@ describe('wire.jsonl round-trip', () => {
       resetUnexpectedErrorHandler();
     }
 
-    // Rebuilt state equals the live state; the unknown record was skipped and
-    // counted so the caller knows the replay was lossy.
     expect(replayResult.unknownRecords).toBe(1);
     expect(replayTarget.wire.getModel(CounterModel)).toEqual(
       live.wire.getModel(CounterModel),

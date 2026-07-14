@@ -157,6 +157,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPluginService,
   AgentPluginService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'agentPlugin',
 );

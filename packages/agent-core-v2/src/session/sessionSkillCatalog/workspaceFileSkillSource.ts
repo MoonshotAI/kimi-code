@@ -67,6 +67,6 @@ registerScopedService(
   LifecycleScope.Session,
   IWorkspaceFileSkillSource,
   WorkspaceFileSkillSource,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionSkillCatalog',
 );

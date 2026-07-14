@@ -131,10 +131,6 @@ export class InstantiationService implements IInstantiationService {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly _servicesToMaybeDispose = new Set<any>();
 
-  /** Idle-scheduled constructions awaiting their macrotask, tracked on the
-   *  root container so {@link drainIdle} can force them synchronously. */
-  private _pendingIdle?: Set<GlobalIdleValue<unknown>>;
-
   private _disposed = false;
 
   constructor(
@@ -485,7 +481,6 @@ export class InstantiationService implements IInstantiationService {
       this._constructionOrder.push(result);
       return result;
     });
-    this._trackIdle(idle);
 
     return new Proxy(Object.create(null), {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -576,42 +571,6 @@ export class InstantiationService implements IInstantiationService {
     if (this._strict) {
       throw new Error(msg);
     }
-  }
-
-  /**
-   * Force every idle-scheduled delayed-service construction to run
-   * synchronously, to a fixpoint: constructions may resolve further delayed
-   * services (whose idle values join the set), so loop until nothing is left
-   * pending. Delayed services otherwise construct on a later macrotask
-   * (`GlobalIdleValue`'s `setTimeout`), and a caller that needs their
-   * constructor side effects — event subscriptions, registrations — to be live
-   * NOW cannot await that. Used by scope bootstrap before marking a scope
-   * ready.
-   */
-  drainIdle(): void {
-    const root = this._root();
-    const pending = root._pendingIdle;
-    if (pending === undefined) return;
-    while (pending.size > 0) {
-      const batch = [...pending];
-      pending.clear();
-      for (const idle of batch) {
-        try {
-          // `get value()` runs the construction synchronously when pending
-          // (and is a no-op once it already ran). Construction errors are
-          // cached on the idle value and rethrown on the next access — do not
-          // let one broken service block the rest of the drain.
-          void idle.value;
-        } catch {
-          // Re-thrown on the owning proxy's next access.
-        }
-      }
-    }
-  }
-
-  private _trackIdle(idle: GlobalIdleValue<unknown>): void {
-    const root = this._root();
-    (root._pendingIdle ??= new Set()).add(idle);
   }
 
   private _root(): InstantiationService {

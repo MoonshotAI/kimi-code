@@ -96,6 +96,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentSwarmService,
   AgentSwarmService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'swarm',
 );

@@ -32,29 +32,14 @@ export const MAIN_AGENT_ID = 'main';
 
 export interface CreateAgentOptions {
   readonly agentId?: string;
-  /**
-   * Profile + Model to bind at creation so the agent is born runnable
-   * (`Profile + Model ⇒ Agent`). May be omitted by exactly two callers:
-   * session resume/fork (the binding is restored from the wire log) and the
-   * edge-bootstrapped main agent (the edge binds a model right after). Every
-   * other creation path must pass a full binding.
-   */
   readonly binding?: BindAgentInput;
   /** Agent this one is derived from (provenance only; not used by business logic). */
   readonly forkedFrom?: string;
-  /**
-   * Business-defined recorded values (e.g. the swarm's `swarmItem`). Persisted
-   * verbatim into the session's agent registry; never interpreted here.
-   */
   readonly labels?: Readonly<Record<string, string>>;
 }
 
 export interface ForkAgentOptions {
   readonly agentId?: string;
-  /**
-   * Overrides merged over the source agent's binding (e.g. a title generator
-   * forking `main` onto a cheaper model).
-   */
   readonly binding?: Partial<BindAgentInput>;
 }
 

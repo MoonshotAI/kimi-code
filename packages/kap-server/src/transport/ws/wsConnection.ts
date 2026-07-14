@@ -4,10 +4,13 @@
  * Multiplexes RPC `call`s and event `listen`s over one socket, carrying the
  * safety features from v1's `WsConnection` and VSCode's `ChannelServer`:
  *   - request ids + active-request table (cancel / unlisten disposes them)
- *   - heartbeat (ping / pong timeout → terminate)
  *   - schema validation (invalid frames are dropped, not fatal)
  *   - graceful cleanup on close (dispose listeners, cancel pending)
  *   - no stack traces over the wire
+ *
+ * The server never initiates a disconnect: there is no heartbeat / pong
+ * timeout — a connection stays open until the client closes it or the process
+ * shuts down.
  *
  * Captures per-connection metadata (`connectedAt`, `remoteAddress`,
  * `userAgent`, handshake state) and tracks the session ids of active
@@ -27,8 +30,6 @@ import { resolveEventSource } from './eventMap';
 import type { CallMessage, ListenMessage, ServerMessage } from './wsProtocol';
 import { clientMessageSchema } from './wsProtocol';
 
-const DEFAULT_PING_INTERVAL_MS = 30_000;
-const DEFAULT_PONG_TIMEOUT_MS = 10_000;
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
 
 interface PendingEntry {
@@ -46,8 +47,6 @@ export interface WsConnectionOptions {
    * When omitted, the handshake accepts any client (upgrade already ran).
    */
   readonly validateCredential?: CredentialValidator;
-  readonly pingIntervalMs?: number;
-  readonly pongTimeoutMs?: number;
   readonly callTimeoutMs?: number;
   /** ISO 8601 timestamp the socket was accepted at; defaults to `now`. */
   readonly connectedAt?: string;
@@ -65,8 +64,6 @@ export class WsConnection {
   private readonly socket: WebSocket;
   private readonly core: Scope;
   private readonly validateCredential?: CredentialValidator;
-  private readonly pingIntervalMs: number;
-  private readonly pongTimeoutMs: number;
   private readonly callTimeoutMs: number;
 
   private closed = false;
@@ -75,8 +72,6 @@ export class WsConnection {
   private readonly eventWaits = new Map<string, Map<string, () => void>>();
   /** Active session/agent-scoped `listen`s: listen id → session id. */
   private readonly subscriptions = new Map<string, string>();
-  private pingTimer?: ReturnType<typeof setInterval>;
-  private pongTimer?: ReturnType<typeof setTimeout>;
 
   constructor(opts: WsConnectionOptions) {
     this.id = `conn_${ulid()}`;
@@ -86,16 +81,13 @@ export class WsConnection {
     this.socket = opts.socket;
     this.core = opts.core;
     this.validateCredential = opts.validateCredential;
-    this.pingIntervalMs = opts.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
-    this.pongTimeoutMs = opts.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS;
     this.callTimeoutMs = opts.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
 
     this.socket.on('message', (data: RawData) => this.onMessage(data));
     this.socket.on('close', () => this.onClose());
     this.socket.on('error', () => this.onClose());
 
-    this.startHeartbeat();
-    this.send({ type: 'ready', heartbeatMs: this.pingIntervalMs });
+    this.send({ type: 'ready' });
   }
 
   /** Whether the client has completed the `hello` (auth) handshake. */
@@ -132,9 +124,6 @@ export class WsConnection {
     switch (msg.type) {
       case 'hello':
         this.onHello(msg.token);
-        return;
-      case 'pong':
-        this.onPong();
         return;
       case 'call':
         void this.onCall(msg);
@@ -355,35 +344,6 @@ export class WsConnection {
   }
 
   // -------------------------------------------------------------------------
-  // Heartbeat
-  // -------------------------------------------------------------------------
-
-  private startHeartbeat(): void {
-    this.pingTimer = setInterval(() => {
-      if (this.closed) return;
-      this.send({ type: 'ping' });
-      if (this.pongTimer !== undefined) clearTimeout(this.pongTimer);
-      this.pongTimer = setTimeout(() => {
-        if (this.closed) return;
-        try {
-          this.socket.terminate();
-        } catch {
-          // ignore
-        }
-      }, this.pongTimeoutMs);
-      this.pongTimer.unref?.();
-    }, this.pingIntervalMs);
-    this.pingTimer.unref?.();
-  }
-
-  private onPong(): void {
-    if (this.pongTimer !== undefined) {
-      clearTimeout(this.pongTimer);
-      this.pongTimer = undefined;
-    }
-  }
-
-  // -------------------------------------------------------------------------
   // Close
   // -------------------------------------------------------------------------
 
@@ -399,8 +359,6 @@ export class WsConnection {
   private onClose(): void {
     if (this.closed) return;
     this.closed = true;
-    if (this.pingTimer !== undefined) clearInterval(this.pingTimer);
-    if (this.pongTimer !== undefined) clearTimeout(this.pongTimer);
     for (const entry of this.pending.values()) {
       try {
         entry.cancel();

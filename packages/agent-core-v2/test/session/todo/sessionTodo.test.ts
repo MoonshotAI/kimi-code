@@ -100,7 +100,6 @@ function makeFakeAgent(agentId: string): FakeAgent {
           todoState = readTodoItems(record['value']);
         }
       }
-      // Replay is silent: subscribers are NOT notified. onRestored fires after.
       for (const h of restoredHandlers) h();
       return { unknownRecords: 0 };
     },
@@ -248,8 +247,6 @@ describe('SessionTodoService', () => {
   it('does not append to the wire when the main agent is absent', () => {
     const lifecycle = makeLifecycleStub();
     const service = new SessionTodoService(lifecycle.service);
-    // Should not throw even without a main agent. With no main wire there is
-    // no source of truth to read from, so the list stays empty.
     expect(() => service.setTodos([{ title: 'x', status: 'pending' }])).not.toThrow();
     expect(service.getTodos()).toEqual([]);
   });
@@ -264,9 +261,6 @@ describe('SessionTodoService', () => {
     lifecycle.fireCreate(main.handle);
     lifecycle.fireCreate(sub.handle);
 
-    // The TodoList tool itself is contributed via `registerTool` and registered
-    // by the Agent-scope builtin-tools registrar — SessionTodoService only owns
-    // the per-agent reminder.
     expect(main.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
     expect(sub.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
   });
@@ -301,7 +295,6 @@ describe('SessionTodoService', () => {
     lifecycle.fireCreate(main.handle);
 
     expect(main.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
-    // Disposal should not throw and should leave the service usable.
     expect(() => lifecycle.fireDispose('main')).not.toThrow();
     expect(service.getTodos()).toEqual([]);
   });

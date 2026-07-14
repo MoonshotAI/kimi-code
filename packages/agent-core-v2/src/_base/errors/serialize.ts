@@ -30,7 +30,6 @@ export interface CodedErrorShape {
   readonly details?: Readonly<Record<string, unknown>>;
 }
 
-/** Caps `cause` recursion so cyclic / pathological chains stay serializable. */
 const MAX_CAUSE_DEPTH = 8;
 
 export function isCodedError(error: unknown): error is CodedErrorShape {
