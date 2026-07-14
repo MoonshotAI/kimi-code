@@ -182,6 +182,6 @@ registerScopedService(
   LifecycleScope.App,
   IFileService,
   FileServiceImpl,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'file',
 );

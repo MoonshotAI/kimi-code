@@ -21,9 +21,7 @@ import { registerConfigSection } from '#/app/config/configSectionContributions';
 export const MODEL_CATALOG_SECTION = 'modelCatalog';
 
 export const ModelCatalogConfigSchema = z.object({
-  /** Interval (ms) between automatic provider-model refreshes. `0` disables. */
   refreshIntervalMs: z.number().int().min(0).optional(),
-  /** Refresh once shortly after the daemon starts. */
   refreshOnStart: z.boolean().optional(),
 });
 

@@ -20,12 +20,6 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 export interface ISessionInitService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Run `/init`: launch the `coder` subagent with the init brief, await its
-   * completion, reload `AGENTS.md`, and append an `init` system reminder to the
-   * main agent. Throws `SESSION_INIT_FAILED` wrapping the underlying error when
-   * the subagent run or the AGENTS.md reload fails.
-   */
   generateAgentsMd(): Promise<void>;
 }
 

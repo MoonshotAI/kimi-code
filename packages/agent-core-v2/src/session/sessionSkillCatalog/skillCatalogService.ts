@@ -130,6 +130,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionSkillCatalog,
   SessionSkillCatalogService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionSkillCatalog',
 );

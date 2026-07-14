@@ -57,28 +57,13 @@ export interface AgentRunSpawnedMeta {
 }
 
 export interface MirrorAgentRunOptions {
-  /** Profile the target runs under; only used for hooks / record labels. */
   readonly profileName: string;
-  /**
-   * Prompt text submitted to the target. When present the requester-side
-   * `SubagentStart` external hook runs (via `IAgentLifecycleService`); omit for
-   * retry turns, which skip the hook.
-   */
   readonly prompt?: string;
-  /** Skip the requester-side `subagent.failed` record for provider-rate-limit / aborted failures. */
   readonly suppressRateLimitFailureEvent?: boolean;
-  /** The requester's cancellation signal (passed through to the start hook slot). */
   readonly signal: AbortSignal;
-  /** Called to abort the underlying run when the start hook slot aborts/rejects it. */
   readonly cancel?: (reason?: unknown) => void;
 }
 
-/**
- * Emit the requester-side "an agent run was launched" record + telemetry.
- * Called once per launch (spawn or resume), before or right after the run is
- * submitted, because it carries tool-call provenance (`parentToolCallId`,
- * `swarmIndex`, `runInBackground`) only the requester knows.
- */
 export function emitAgentRunSpawned(
   requester: IAgentScopeHandle,
   targetAgentId: string,
@@ -102,11 +87,6 @@ export function emitAgentRunSpawned(
   });
 }
 
-/**
- * Mirror a running agent turn onto the requester's record stream + external
- * hooks and await its completion. Returns the distilled summary/usage;
- * rethrows the run's failure after emitting the requester-side failure record.
- */
 export async function mirrorAgentRun(
   requester: IAgentScopeHandle,
   run: AgentRunHandle,

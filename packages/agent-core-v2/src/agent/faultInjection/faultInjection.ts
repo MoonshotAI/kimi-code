@@ -18,37 +18,22 @@
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-/** The deterministic failures the requester can be armed to raise. */
 export type FaultKind = 'request-too-large' | 'image-format';
 
 export interface FaultInjectionStatus {
-  /** The armed one-shot fault, if any (consumed by the next request attempt). */
   readonly armed: FaultKind | undefined;
-  /** Faults that actually fired, in fire order. */
   readonly fired: readonly FaultKind[];
 }
 
 export interface IFaultInjectionService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Arm a one-shot fault: the next LLM request attempt raises it before
-   * hitting the provider. Refused unless the `fault-injection` experimental
-   * flag is enabled.
-   */
   arm(kind: FaultKind): void;
 
-  /** Current arming and fire history. */
   status(): FaultInjectionStatus;
 
-  /** Clear the armed fault and the fire history. */
   clear(): void;
 
-  /**
-   * Consume the armed one-shot fault — the requester's consumption point,
-   * called once per request attempt. Returns undefined when nothing is
-   * armed; a consumed fault is recorded in {@link FaultInjectionStatus.fired}.
-   */
   take(): FaultKind | undefined;
 }
 

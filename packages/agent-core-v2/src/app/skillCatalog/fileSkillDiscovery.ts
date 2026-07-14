@@ -17,8 +17,6 @@ import type { SkillDiscoveryResult, ISkillDiscovery } from './skillDiscovery';
 import type { SkillDefinition, SkillRoot, SkippedSkill } from './types';
 import { normalizeSkillName } from './types';
 
-// Bounds recursion so a directory symlink cycle inside a skill root cannot
-// loop forever. Real skill trees are 1-3 levels deep.
 const MAX_SKILL_SCAN_DEPTH = 8;
 
 export class FileSkillDiscovery implements ISkillDiscovery {
@@ -51,8 +49,6 @@ export async function discoverFileSkills(
 
     let entries: readonly string[];
     try {
-      // Sorted so first-wins collision resolution across sibling directories
-      // is deterministic rather than dependent on filesystem readdir order.
       entries = [...(await fs.readdir(dirPath))].toSorted();
     } catch {
       return;
@@ -62,8 +58,6 @@ export async function discoverFileSkills(
     const subdirs: string[] = [];
     for (const entry of entries) {
       const entryPath = path.join(dirPath, entry);
-      // A directory holding SKILL.md is a skill bundle: register it, then keep
-      // descending so nested SKILL.md bundles remain discoverable as sub-skills.
       if (await isFile(path.join(entryPath, 'SKILL.md'))) {
         directorySkills.add(entry);
       }
@@ -87,12 +81,7 @@ export async function discoverFileSkills(
       }
     }
 
-    // Flat .md skills count only at a root's top level; deeper .md files are
-    // skill payload (e.g. references/foo.md), not skills.
     if (isTopLevel) {
-      // A SKILL.md placed directly at a plugin skill root (e.g. plugin root
-      // fallback) is treated as a single skill bundle. This only applies to
-      // plugin-derived roots, not to user/project skill directories.
       if (root.plugin !== undefined) {
         const rootSkillMd = path.join(dirPath, 'SKILL.md');
         if (await isFile(rootSkillMd)) {

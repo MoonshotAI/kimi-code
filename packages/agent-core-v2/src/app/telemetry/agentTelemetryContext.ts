@@ -12,24 +12,15 @@
 import { createDecorator } from '#/_base/di/instantiation';
 
 export type AgentTelemetryContext = {
-  /** Current agent mode; owned by the `plan` domain. */
   mode: 'agent' | 'plan';
-  /**
-   * Resolved model protocol, mirrored to v1's `provider_type` — v2 has no
-   * separate provider type, so both keys carry the protocol. Undefined when
-   * the bound model is unresolvable. Owned by the `profile` domain.
-   */
   provider_type?: string;
-  /** Resolved model protocol; undefined when the bound model is unresolvable. */
   protocol?: string;
 };
 
 export interface IAgentTelemetryContextService {
   readonly _serviceBrand: undefined;
 
-  /** Current ambient telemetry properties for this agent. */
   get(): AgentTelemetryContext;
-  /** Merge a patch into the ambient telemetry context. */
   set(patch: Partial<AgentTelemetryContext>): void;
 }
 

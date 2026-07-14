@@ -23,8 +23,6 @@ const BUDGET_UNITS = ['turns', 'tokens', 'milliseconds', 'seconds', 'minutes', '
 
 export const SetGoalBudgetToolInputSchema = z
   .object({
-    // Keep the provider-facing schema simple. Fractional turn/token budgets
-    // are normalized during execution instead of rejected at schema validation.
     value: z.number().positive().describe('The positive numeric budget value.'),
     unit: z.enum(BUDGET_UNITS),
   })

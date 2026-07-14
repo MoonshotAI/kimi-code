@@ -44,17 +44,9 @@ import {
   type ToolCallIdPolicy,
 } from './tool-call-id';
 
-// Inbound: scan in priority order; first string value wins. Outbound: the first
-// entry doubles as the default field we serialize ThinkPart back into. Both
-// arms can be overridden by an explicit `reasoningKey` on the provider config.
 const KNOWN_REASONING_KEYS = ['reasoning_content', 'reasoning_details', 'reasoning'] as const;
 const DEFAULT_OUTBOUND_REASONING_KEY = KNOWN_REASONING_KEYS[0];
 
-/**
- * Hard upper bound on `max_tokens` for OpenAI-compatible chat-completions
- * endpoints. Many third-party providers reject `max_tokens` above this limit
- * (the documented range is `[1, 131072]`).
- */
 const CHAT_COMPLETIONS_MAX_OUTPUT_TOKENS_CEILING = 128 * 1024;
 const OPENAI_CHAT_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
@@ -173,17 +165,9 @@ function convertMessage(
     }
   }
 
-  // Build the OpenAI message.
   const result: OpenAIMessage = { role: message.role };
 
   if (message.role === 'tool') {
-    // OpenAI Chat Completions `tool` messages only accept text content.
-    // Any non-text content parts (image_url, audio_url, video_url) would be
-    // rejected by the API with a 400. Detect multimodal tool output and
-    // force the `extract_text` path in that case, regardless of the caller's
-    // `toolMessageConversion` setting. For pure-text tool results we honor
-    // the configured strategy (or fall through to the default content-part
-    // array when it is unset).
     const hasNonTextPart = message.content.some((p) => p.type !== 'text' && p.type !== 'think');
     const effectiveConversion: ToolMessageConversion = hasNonTextPart
       ? 'extract_text'
@@ -192,8 +176,6 @@ function convertMessage(
     if (effectiveConversion !== null) {
       result.content = convertToolMessageContentForChat(message, effectiveConversion);
     } else {
-      // Pure-text tool result with no conversion configured: serialize via the
-      // generic content-part path so single-text messages become a plain string.
       const firstPart = nonThinkParts[0];
       if (nonThinkParts.length === 1 && firstPart?.type === 'text') {
         result.content = firstPart.text;
@@ -204,7 +186,6 @@ function convertMessage(
       }
     }
   } else {
-    // content: serialize to string if single text, array otherwise
     const firstPart = nonThinkParts[0];
     if (nonThinkParts.length === 1 && firstPart?.type === 'text') {
       result.content = firstPart.text;
@@ -231,11 +212,6 @@ function convertMessage(
     result.tool_call_id = message.toolCallId;
   }
 
-  // Round-trip thinking content back to the server. Default to the de facto
-  // `reasoning_content` field so OpenAI-compatible reasoners (DeepSeek, Qwen,
-  // One API gateways) work without per-provider configuration. Servers that
-  // don't understand the field ignore it; servers that require a specific
-  // field can override via the explicit `reasoningKey`.
   if (reasoningContent) {
     result[reasoningKey ?? DEFAULT_OUTBOUND_REASONING_KEY] = reasoningContent;
   }
@@ -243,9 +219,6 @@ function convertMessage(
   return result;
 }
 
-// Chat Completions has no url-based audio/video content part (only base64
-// `input_audio`), so unlike images these cannot be reattached as user input.
-// Note the omission inline in the tool message text instead.
 const OMITTED_AUDIO_PLACEHOLDER = '(audio omitted: not supported by this provider)';
 const OMITTED_VIDEO_PLACEHOLDER = '(video omitted: not supported by this provider)';
 
@@ -380,8 +353,6 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
     const message = response.choices[0]?.message;
     if (!message) return;
 
-    // Reasoning content: honor the explicit key when set, otherwise scan the
-    // de facto field set so hand-written configs work without it.
     const reasoning = extractReasoningContent(message, reasoningKey);
     if (reasoning) {
       yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
@@ -427,28 +398,21 @@ export class OpenAILegacyStreamedMessage implements StreamedMessage {
         const choice = chunk.choices[0];
         if (!choice) continue;
 
-        // Capture finish_reason whenever the chunk carries one. Chat
-        // Completions only sets it on the final chunk for a given choice.
         if (choice.finish_reason !== null && choice.finish_reason !== undefined) {
           this._captureFinishReason(choice.finish_reason);
         }
 
         const delta = choice.delta;
 
-        // Reasoning content: honor the explicit key when set, otherwise scan
-        // the de facto field set so hand-written configs work without it.
         const reasoning = extractReasoningContent(delta, reasoningKey);
         if (reasoning) {
           yield { type: 'think', think: reasoning } satisfies StreamedMessagePart;
         }
 
-        // text content
         if (delta.content) {
           yield { type: 'text', text: delta.content } satisfies StreamedMessagePart;
         }
 
-        // tool calls — preserve `index` on every yielded part so the generate
-        // loop can route interleaved argument deltas from parallel tool calls.
         for (const toolCall of delta.tool_calls ?? []) {
           for (const part of convertChatCompletionStreamToolCall(toolCall, bufferedToolCalls)) {
             yield part;
@@ -483,10 +447,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
     this._defaultHeaders = options.defaultHeaders;
     this._model = options.model;
     this._stream = options.stream ?? true;
-    // Normalize blank/whitespace reasoningKey to unset. ModelAliasSchema
-    // accepts `z.string().optional()`, so `reasoning_key = ""` in config.toml
-    // would otherwise disable the default field scan and route reads/writes
-    // through an empty property name.
     const normalizedReasoningKey = options.reasoningKey?.trim();
     this._reasoningKey =
       normalizedReasoningKey !== undefined && normalizedReasoningKey.length > 0
@@ -545,15 +505,8 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       this._generationKwargs,
     );
 
-    // Determine reasoning_effort
     let reasoningEffort: string | undefined = this._reasoningEffort;
 
-    // Auto-enable reasoning_effort when the history contains ThinkPart but reasoning
-    // was not explicitly configured. This prevents server validation errors from APIs
-    // (e.g. One API) that require reasoning_effort when messages contain reasoning_content.
-    // Skip when the caller already pinned reasoning_effort via withGenerationKwargs —
-    // their value would otherwise be silently overwritten below.
-    // See: https://github.com/MoonshotAI/kimi-code/issues/1616
     if (reasoningEffort === undefined && kwargs['reasoning_effort'] === undefined) {
       const hasThinkPart = history.some((message) =>
         message.content.some((part) => part.type === 'think'),
@@ -563,7 +516,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       }
     }
 
-    // Remove undefined values from kwargs
     for (const key of Object.keys(kwargs)) {
       if (kwargs[key] === undefined) {
         // eslint-disable-next-line @typescript-eslint/no-dynamic-delete
@@ -571,7 +523,6 @@ export class OpenAILegacyChatProvider implements ChatProvider {
       }
     }
 
-    // Build the create params
     const createParams: Record<string, unknown> = {
       model: this._model,
       messages,

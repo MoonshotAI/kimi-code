@@ -48,11 +48,6 @@ export async function loadPluginCommand(input: {
   }
 }
 
-/**
- * Expand `$ARGUMENTS` placeholders in a plugin command body with the typed args.
- * If the body has no placeholder but args are present, append them so nothing
- * is silently dropped.
- */
 export function expandCommandArguments(body: string, args: string): string {
   const replaced = body.replaceAll('$ARGUMENTS', args);
   if (!body.includes('$ARGUMENTS') && args.length > 0) {

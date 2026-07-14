@@ -12,7 +12,7 @@ import {
   type TestAgentContext,
 } from '../../harness';
 import {
-  TASK_TEST_SESSION_SCOPE,
+  TASK_TEST_AGENT_SCOPE,
   createAgentTaskPersistence,
   type TaskServiceTestManager,
 } from './stubs';
@@ -24,7 +24,7 @@ beforeEach(async () => {
     tmpdir(),
     `kimi-bg-persist-compat-${Date.now()}-${Math.random().toString(36).slice(2)}`,
   );
-  await mkdir(join(sessionDir, TASK_TEST_SESSION_SCOPE, 'tasks'), { recursive: true });
+  await mkdir(join(sessionDir, TASK_TEST_AGENT_SCOPE, 'tasks'), { recursive: true });
 });
 
 afterEach(async () => {
@@ -33,7 +33,7 @@ afterEach(async () => {
 
 async function writeLegacyTask(taskId: string, task: Record<string, unknown>): Promise<void> {
   await writeFile(
-    join(sessionDir, TASK_TEST_SESSION_SCOPE, 'tasks', `${taskId}.json`),
+    join(sessionDir, TASK_TEST_AGENT_SCOPE, 'tasks', `${taskId}.json`),
     JSON.stringify(task),
     'utf-8',
   );
@@ -125,7 +125,7 @@ describe('AgentTaskPersistence legacy compatibility', () => {
       });
       const raw = JSON.parse(
         await readFile(
-          join(sessionDir, TASK_TEST_SESSION_SCOPE, 'tasks', 'bash-orphan01.json'),
+          join(sessionDir, TASK_TEST_AGENT_SCOPE, 'tasks', 'bash-orphan01.json'),
           'utf-8',
         ),
       ) as Record<string, unknown>;

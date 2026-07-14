@@ -33,14 +33,12 @@ import type {
   FsStatResponse,
 } from '@moonshot-ai/protocol';
 
-/** Absolute + workspace-relative path resolution for a session file. */
 export interface FsPathResolved {
   readonly absolute: string;
   readonly relative: string;
   readonly isDirectory: boolean;
 }
 
-/** Metadata needed by the download route to stream a session file. */
 export interface FsDownloadResolved {
   readonly absolute: string;
   readonly relative: string;

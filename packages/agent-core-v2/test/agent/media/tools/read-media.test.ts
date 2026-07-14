@@ -1,14 +1,16 @@
 /**
- * ReadMediaFileTool tests for the v2 output/capability contract.
+ * Scenario: ReadMediaFile exposes safe, capability-aware model media reads.
  *
- * Self-contained: builds a minimal fake `IHostFileSystem` inline so the tool can
- * be exercised without the missing composition root.
+ * Responsibilities: validates access resolution, media delivery, compression
+ * budget refusal, capability gates, and registration. Wiring: real
+ * ReadMediaFileTool with an in-memory host-filesystem boundary and real image
+ * compression. Run: pnpm test -- test/agent/media/tools/read-media.test.ts
  */
 
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { ContentPart } from '#/app/llmProtocol/message';
 import { Jimp } from 'jimp';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -19,6 +21,10 @@ import {
   type ReadMediaFileInput,
   type VideoUploader,
 } from '#/agent/media/tools/read-media';
+import {
+  MAX_IMAGE_DECODE_BYTES,
+  setConfiguredReadImageByteBudget,
+} from '#/agent/media/image-compress';
 import { createVideoUploader, registerMediaTools } from '#/agent/media/registerMediaTools';
 import { AgentMediaToolsRegistrar } from '#/agent/media/mediaToolsRegistrar';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
@@ -40,15 +46,17 @@ const WORKSPACE: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs:
 const PNG_WIDTH = 1920;
 const PNG_HEIGHT = 1080;
 
-function pngBuffer(): Buffer {
+afterEach(() => {
+  setConfiguredReadImageByteBudget(undefined);
+});
+
+function pngBuffer(width = PNG_WIDTH, height = PNG_HEIGHT): Buffer {
   const buf = Buffer.alloc(24);
-  // PNG signature
   buf.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a], 0);
-  // IHDR length (13) + 'IHDR'
   buf.writeUInt32BE(13, 8);
   buf.write('IHDR', 12, 'latin1');
-  buf.writeUInt32BE(PNG_WIDTH, 16);
-  buf.writeUInt32BE(PNG_HEIGHT, 20);
+  buf.writeUInt32BE(width, 16);
+  buf.writeUInt32BE(height, 20);
   return buf;
 }
 
@@ -62,28 +70,23 @@ function mp4Buffer(): Buffer {
   ]);
 }
 
-/**
- * Wrap a baseline JPEG in an EXIF APP1 segment carrying the given Orientation
- * tag, so decoders (and the header sniff) see a rotated image.
- */
 function withExifOrientation(jpeg: Uint8Array, orientation: number): Buffer {
-  // TIFF body, little-endian: 8-byte header + IFD0 with a single entry.
   const tiff = Buffer.alloc(26);
   tiff.write('II', 0, 'latin1');
   tiff.writeUInt16LE(42, 2);
-  tiff.writeUInt32LE(8, 4); // offset of IFD0
-  tiff.writeUInt16LE(1, 8); // one directory entry
-  tiff.writeUInt16LE(0x0112, 10); // tag: Orientation
-  tiff.writeUInt16LE(3, 12); // type: SHORT
-  tiff.writeUInt32LE(1, 14); // count
-  tiff.writeUInt16LE(orientation, 18); // value, left-aligned in the 4-byte field
-  tiff.writeUInt32LE(0, 22); // no next IFD
+  tiff.writeUInt32LE(8, 4);
+  tiff.writeUInt16LE(1, 8);
+  tiff.writeUInt16LE(0x0112, 10);
+  tiff.writeUInt16LE(3, 12);
+  tiff.writeUInt32LE(1, 14);
+  tiff.writeUInt16LE(orientation, 18);
+  tiff.writeUInt32LE(0, 22);
   const exifBody = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff]);
   const app1Header = Buffer.alloc(4);
   app1Header.writeUInt16BE(0xff_e1, 0);
   app1Header.writeUInt16BE(exifBody.length + 2, 2);
   return Buffer.concat([
-    Buffer.from(jpeg.subarray(0, 2)), // SOI
+    Buffer.from(jpeg.subarray(0, 2)),
     app1Header,
     exifBody,
     Buffer.from(jpeg.subarray(2)),
@@ -134,7 +137,10 @@ interface FakeFile {
 function createTestFs(files: Record<string, FakeFile>): IHostFileSystem {
   const lookup = (path: string): FakeFile | undefined => files[path];
   return {
-    readBytes: vi.fn(async (path: string, _n?: number) => lookup(path)?.data ?? Buffer.alloc(0)),
+    readBytes: vi.fn(async (path: string, n?: number) => {
+      const data = lookup(path)?.data ?? Buffer.alloc(0);
+      return n === undefined ? data : data.subarray(0, n);
+    }),
     stat: vi.fn(async (path: string) => {
       const file = lookup(path);
       return {
@@ -181,8 +187,6 @@ async function execute(
   args: ReadMediaFileInput,
 ): Promise<ExecutableToolResult> {
   const execution = tool.resolveExecution(args);
-  // `resolveExecution` may return a validation error result directly (e.g. an
-  // empty path) instead of a runnable execution.
   if (!('execute' in execution)) {
     return execution;
   }
@@ -200,9 +204,6 @@ function outputParts(result: ExecutableToolResult): ContentPart[] {
   return result.output as ContentPart[];
 }
 
-// The media summary rides the result's `note` side channel (rendered to the
-// model at projection time, never to UIs); the tool keeps its own `<system>`
-// wrapping as a wording choice.
 function noteText(result: ExecutableToolResult): string {
   expect(typeof result.note).toBe('string');
   return result.note as string;
@@ -299,9 +300,7 @@ describe('ReadMediaFileTool', () => {
     expect(systemText).toMatch(/^<system>.*<\/system>$/s);
     expect(systemText).toContain('Mime type: image/png');
     expect(systemText).toContain(`Original dimensions: ${PNG_WIDTH}x${PNG_HEIGHT}`);
-    // With the original size known, the coordinate guidance is included.
     expect(systemText).toMatch(/relative coordinates first/i);
-    // The re-read reminder is included regardless of dimensions.
     expect(systemText).toMatch(/read the result back/i);
 
     const parts = outputParts(result);
@@ -324,18 +323,13 @@ describe('ReadMediaFileTool', () => {
       path: '/workspace/big.png',
     });
 
-    // The <system> note keeps the ORIGINAL size so coordinate mapping holds.
     const systemText = noteText(result);
     expect(systemText).toContain('2200x2200');
     expect(systemText).toContain(`${String(big.length)} bytes`);
-    // Wording must not depend on serialization order: some providers keep
-    // the note inline after the media, others flatten tool text and
-    // re-attach the image after it — so no "above"/"below".
     expect(systemText).toMatch(/The attached image was downsampled to 2000x2000/);
     expect(systemText).toMatch(/fine detail/i);
     expect(systemText).toContain('region');
 
-    // The image actually sent to the model is downsampled to the edge cap.
     const parts = outputParts(result);
     const url = (parts[1] as { imageUrl: { url: string } }).imageUrl.url;
     const match = /^data:(image\/[a-z]+);base64,(.+)$/.exec(url);
@@ -344,9 +338,98 @@ describe('ReadMediaFileTool', () => {
     expect(Math.max(dims!.width, dims!.height)).toBeLessThanOrEqual(2000);
   });
 
+  it('returns an actionable error when compression cannot meet the byte budget', async () => {
+    const oversized = Buffer.concat([pngBuffer(), Buffer.alloc(256 * 1024, 1)]);
+
+    const result = await execute(
+      makeTool({ '/workspace/oversized.png': { data: oversized } }),
+      { path: '/workspace/oversized.png' },
+    );
+
+    expect(result).toEqual({
+      isError: true,
+      output:
+        'Image is too large to send safely after compression (262168 bytes; limit 262144 bytes and 2000px on the longest edge). ' +
+        'The original image was not sent to the model. Do not retry the same file unchanged. ' +
+        'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
+        'then call ReadMediaFile on the smaller copy.',
+    });
+  });
+
+  it('returns an actionable error when compression cannot meet the pixel budget', async () => {
+    const result = await execute(
+      makeTool({ '/workspace/wide.png': { data: pngBuffer(2001, 1000) } }),
+      { path: '/workspace/wide.png' },
+    );
+
+    expect(result).toEqual({
+      isError: true,
+      output:
+        'Image is too large to send safely after compression (24 bytes; limit 262144 bytes and 2000px on the longest edge). ' +
+        'The original image was not sent to the model. Do not retry the same file unchanged. ' +
+        'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
+        'then call ReadMediaFile on the smaller copy.',
+    });
+  });
+
+  it('reads only the sniff header when the default image exceeds the safe decode allocation', async () => {
+    const fs = createTestFs({
+      '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
+    });
+    const tool = new ReadMediaFileTool(fs, createTestEnv(), WORKSPACE, capabilities());
+
+    const result = await execute(tool, { path: '/workspace/huge.png' });
+
+    expect(result).toEqual({
+      isError: true,
+      output:
+        'Image is too large to send safely after compression (67108865 bytes; limit 262144 bytes and 2000px on the longest edge). ' +
+        'The original image was not sent to the model. Do not retry the same file unchanged. ' +
+        'Use Bash or an available image-processing tool to create a smaller copy within both limits, ' +
+        'then call ReadMediaFile on the smaller copy.',
+    });
+    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
+    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
+  });
+
+  it('does not treat the decode allocation cap as a hard limit when the configured delivery budget accepts the file', async () => {
+    setConfiguredReadImageByteBudget(70 * 1024 * 1024);
+    const fs = createTestFs({
+      '/workspace/large.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
+    });
+    const tool = new ReadMediaFileTool(fs, createTestEnv(), WORKSPACE, capabilities());
+
+    const result = await execute(tool, { path: '/workspace/large.png' });
+
+    expect(result.isError).toBe(false);
+    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(fs.readBytes)).toHaveBeenLastCalledWith('/workspace/large.png');
+  });
+
+  it('returns external preprocessing guidance before loading an oversized region source', async () => {
+    const fs = createTestFs({
+      '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
+    });
+    const tool = new ReadMediaFileTool(fs, createTestEnv(), WORKSPACE, capabilities());
+
+    const result = await execute(tool, {
+      path: '/workspace/huge.png',
+      region: { x: 0, y: 0, width: 100, height: 100 },
+    });
+
+    expect(result).toEqual({
+      isError: true,
+      output:
+        'Image is too large to process safely for region or full_resolution (67108865 bytes; safe decode limit 67108864 bytes). ' +
+        'The original image was not sent to the model. Do not retry the same file unchanged. ' +
+        'Use Bash or an available image-processing tool to create a smaller copy or crop the needed ' +
+        'region into a separate image, then call ReadMediaFile on the resulting file.',
+    });
+    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
+    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
+  });
+
   it('does not claim downsampling for an image sent untouched', async () => {
-    // A real 3x4 PNG passes through unchanged — the <system> note must not
-    // carry a downsample note (that would be its own kind of misreporting).
     const png = Buffer.from(
       '89504e470d0a1a0a0000000d49484452000000030000000408020000003a' +
         '63dc1c0000001949444154789c63606060f8cf80019aa0a8a020' +
@@ -361,9 +444,6 @@ describe('ReadMediaFileTool', () => {
 
   it('reads image regions at native resolution', async () => {
     const big = Buffer.from(
-      // Over the 2000px edge cap on purpose: region reads must crop from the
-      // original coordinate space, which a sub-cap fixture cannot distinguish
-      // from cropping the downsampled delivery.
       await new Jimp({ width: 2100, height: 2100, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
@@ -387,8 +467,6 @@ describe('ReadMediaFileTool', () => {
 
   it('rejects a region outside the image with the original size in the error', async () => {
     const big = Buffer.from(
-      // Over the edge cap so "original size" is distinguishable from any
-      // downsampled delivery size.
       await new Jimp({ width: 2100, height: 2100, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
@@ -401,7 +479,6 @@ describe('ReadMediaFileTool', () => {
 
   it('serves full_resolution when the bytes fit the per-image budget', async () => {
     const big = Buffer.from(
-      // Over the edge cap, tiny in bytes.
       await new Jimp({ width: 2100, height: 1050, color: 0x3366ccff }).getBuffer('image/png'),
     );
     const result = await execute(makeTool({ '/workspace/big.png': { data: big } }), {
@@ -416,28 +493,50 @@ describe('ReadMediaFileTool', () => {
     expect(noteText(result)).toMatch(/native resolution/);
   });
 
-  it('fails full_resolution explicitly when the file exceeds the per-image budget', async () => {
-    // PNG magic followed by 4MB of filler: recognizably an image, over the
-    // 3.75MB byte budget — full_resolution must refuse, not silently shrink.
+  it('returns the existing full_resolution limit error before loading an over-budget image', async () => {
     const data = Buffer.concat([pngBuffer(), Buffer.alloc(4 * 1024 * 1024, 1)]);
-    const result = await execute(makeTool({ '/workspace/huge.png': { data } }), {
+    const fs = createTestFs({ '/workspace/huge.png': { data } });
+    const tool = new ReadMediaFileTool(fs, createTestEnv(), WORKSPACE, capabilities());
+
+    const result = await execute(tool, {
       path: '/workspace/huge.png',
       full_resolution: true,
     });
-    expect(result.isError).toBe(true);
-    expect(result.output).toMatch(/full_resolution/);
-    expect(result.output).toMatch(/region/);
-    // Exact byte counts accompany the rounded sizes: a file a hair over
-    // budget would otherwise read "is 3.8 MB, over the 3.8 MB limit".
-    expect(result.output).toContain(`${String(data.length)} bytes`);
-    expect(result.output).toContain('3932160-byte');
+    expect(result).toEqual({
+      isError: true,
+      output:
+        '"/workspace/huge.png" is 4194328 bytes (4.0 MB), over the 3932160-byte (3.8 MB) ' +
+        'per-image limit, so full_resolution cannot be honored. ' +
+        'Use region to view a crop at full fidelity instead.',
+    });
+    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
+    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
+  });
+
+  it('prioritizes external preprocessing guidance for full_resolution above the decode cap', async () => {
+    const fs = createTestFs({
+      '/workspace/huge.png': { data: pngBuffer(), size: MAX_IMAGE_DECODE_BYTES + 1 },
+    });
+    const tool = new ReadMediaFileTool(fs, createTestEnv(), WORKSPACE, capabilities());
+
+    const result = await execute(tool, {
+      path: '/workspace/huge.png',
+      full_resolution: true,
+    });
+
+    expect(result).toEqual({
+      isError: true,
+      output:
+        'Image is too large to process safely for region or full_resolution (67108865 bytes; safe decode limit 67108864 bytes). ' +
+        'The original image was not sent to the model. Do not retry the same file unchanged. ' +
+        'Use Bash or an available image-processing tool to create a smaller copy or crop the needed ' +
+        'region into a separate image, then call ReadMediaFile on the resulting file.',
+    });
+    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledOnce();
+    expect(vi.mocked(fs.readBytes)).toHaveBeenCalledWith('/workspace/huge.png', 512);
   });
 
   it('reports an EXIF-rotated original in the decoded coordinate space', async () => {
-    // Orientation 6 (rotate 90° CW): the header says 2200x1100, but jimp
-    // decodes to 1100x2200 — the space the sent image and any region
-    // readback live in. The note's original size must match that space,
-    // not the pre-rotation header sniff.
     const portrait = withExifOrientation(
       new Uint8Array(
         await new Jimp({ width: 2200, height: 1100, color: 0x3366ccff }).getBuffer('image/jpeg', {
@@ -456,8 +555,6 @@ describe('ReadMediaFileTool', () => {
   }, 15000);
 
   it('reports the decoded size for a region read of an EXIF-rotated image', async () => {
-    // Region coordinates live in the decoded (rotated) space; the note's
-    // original size must agree with it even when the header sniff succeeds.
     const portrait = withExifOrientation(
       new Uint8Array(
         await new Jimp({ width: 120, height: 80, color: 0x3366ccff }).getBuffer('image/jpeg', {
@@ -475,9 +572,6 @@ describe('ReadMediaFileTool', () => {
   });
 
   it('reports display-space dimensions for an EXIF-rotated image sent untouched', async () => {
-    // Within both budgets the original bytes are sent without decoding; the
-    // note must still report the display-space size so coordinates derived
-    // from it agree with a later region readback (which decodes).
     const portrait = withExifOrientation(
       new Uint8Array(
         await new Jimp({ width: 120, height: 80, color: 0x3366ccff }).getBuffer('image/jpeg', {
@@ -646,7 +740,6 @@ describe('registerMediaTools', () => {
       capabilities: capabilities({ image_in: false, video_in: false }),
     });
     expect(registry.resolve('ReadMediaFile')).toBeUndefined();
-    // Disposing the no-op registration is safe.
     expect(() => disposable.dispose()).not.toThrow();
   });
 });
@@ -731,7 +824,6 @@ describe('AgentMediaToolsRegistrar', () => {
     bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
     const first = registry.resolve('ReadMediaFile');
 
-    // Same alias, same media capabilities — e.g. a thinking-level update.
     bindModel('vision-model', capabilities({ image_in: true, video_in: true }));
     expect(registry.resolve('ReadMediaFile')).toBe(first);
   });
@@ -743,7 +835,6 @@ describe('AgentMediaToolsRegistrar', () => {
 
     registrar.dispose();
     expect(registry.resolve('ReadMediaFile')).toBeUndefined();
-    // A status update after dispose must not resurrect the tool.
     bindModel('vision-model-2', capabilities({ image_in: true, video_in: true }));
     expect(registry.resolve('ReadMediaFile')).toBeUndefined();
   });
@@ -822,7 +913,6 @@ describe('createVideoUploader', () => {
   });
 
   function heicBytes(): Buffer {
-    // Minimal ftyp box: size(4) + 'ftyp' + major_brand 'heic' + minor(4) + compat(8).
     return Buffer.from([
       0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
       0x68, 0x65, 0x69, 0x63, 0x00, 0x00, 0x00, 0x00,
@@ -838,12 +928,10 @@ describe('createVideoUploader', () => {
     expect(result.output).toContain('image/heic');
     expect(result.output).toContain('Convert it to JPEG first');
     expect(result.output).toContain('/workspace/photo.jpg');
-    // The exact command depends on the host osKind; accept any of the named tools.
     expect(result.output).toMatch(/sips -s format jpeg|heif-convert|magick/);
   });
 
   function ftypBytes(brand: string): Buffer {
-    // Minimal ftyp box with the given major_brand (avif, bmp, …).
     const buf = Buffer.alloc(24);
     buf.writeUInt32BE(24, 0);
     buf.write('ftyp', 4, 'latin1');
@@ -853,9 +941,6 @@ describe('createVideoUploader', () => {
   }
 
   it('refuses every format outside the provider-accepted set, not just HEIC', async () => {
-    // AVIF/BMP/TIFF/ICO are no more accepted than HEIC: once the image_url
-    // lands in the history every later request fails, so the tool refuses
-    // with conversion guidance instead of passing the bytes through.
     const result = await execute(makeTool({ '/workspace/photo.avif': { data: ftypBytes('avif') } }), {
       path: '/workspace/photo.avif',
     });
@@ -864,8 +949,6 @@ describe('createVideoUploader', () => {
     expect(result.output).toContain('image/avif');
     expect(result.output).toContain('Convert it to JPEG first');
     expect(result.output).toContain('/workspace/photo.jpg');
-    // AVIF has no dedicated Linux decoder in the policy, so the guidance is
-    // sips (macOS) or ImageMagick — never heif-convert.
     expect(result.output).toMatch(/sips -s format jpeg|magick/);
     expect(result.output).not.toContain('heif-convert');
   });

@@ -46,6 +46,6 @@ registerScopedService(
   LifecycleScope.App,
   IBlobStore,
   BlobStoreService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'blobStore',
 );

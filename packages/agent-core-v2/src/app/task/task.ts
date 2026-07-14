@@ -49,20 +49,7 @@ export interface IDeferredHandle<T = unknown> extends ITaskHandle<T> {
 export interface ITaskService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Create a task that actively runs `fn`. The function receives an
-   * `AbortSignal` (cancelled when the handle is cancelled/disposed) and
-   * an `output` callback for streaming data (e.g. process stdout).
-   *
-   * State: pending → running → completed | failed | cancelled.
-   */
   run<T>(fn: (signal: AbortSignal, output: (data: string) => void) => Promise<T>): ITaskHandle<T>;
-  /**
-   * Create a passive task whose settlement is controlled by the caller
-   * through the returned `resolve` / `reject` methods.
-   *
-   * State: pending → completed | failed | cancelled.
-   */
   defer<T>(): IDeferredHandle<T>;
 }
 

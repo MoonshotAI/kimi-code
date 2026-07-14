@@ -52,6 +52,6 @@ registerScopedService(
   LifecycleScope.Session,
   IPluginSkillSource,
   PluginSkillSource,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionSkillCatalog',
 );

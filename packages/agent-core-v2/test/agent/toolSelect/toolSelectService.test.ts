@@ -657,9 +657,6 @@ describe('AgentToolSelectService.load', () => {
     expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
     expect(h.sut.load([MCP_BETA]).alreadyAvailable).toEqual([MCP_BETA]);
 
-    // Undo-style rewrite (v2's undo slices the tail wholesale): beta's schema
-    // message is gone while alpha's survives; the event is published after the
-    // memory service has rewritten history.
     h.contextMemory.history.splice(1, 1);
     h.eventBus.emit('context.spliced', { start: 1, deleteCount: 2, messages: [] });
 

@@ -40,23 +40,10 @@ export interface ModelChange<S> {
   readonly prev: S;
 }
 
-/**
- * Outcome of a `replay`: how many records were skipped because their Op type
- * is absent from `OP_REGISTRY`. Skips are also reported individually through
- * `onUnexpectedError` (`wire.unknown_record`); the count lets callers detect a
- * lossy restore without subscribing to the global error hook.
- */
 export interface ReplayResult {
   readonly unknownRecords: number;
 }
 
-/**
- * Live append-log observation: `dispatch` emits each persisted record here so
- * observers (the test harness's `[wire]` capture, audit tooling) see the record
- * stream as it happens. Op-derived *facts* (`toEvent`) go to `IEventBus`
- * instead — they are not records and are not emitted here. The `signal`
- * variant that used to share this channel was retired in favor of `IEventBus`.
- */
 export interface WireEmission {
   readonly type: 'record';
   readonly record: PersistedRecord;

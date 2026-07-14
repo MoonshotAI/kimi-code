@@ -106,6 +106,6 @@ registerScopedService(
   LifecycleScope.App,
   ITelemetryService,
   TelemetryService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'telemetry',
 );

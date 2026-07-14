@@ -101,13 +101,6 @@ function configUpdateThinkingLevel(
   return p.thinkingLevel;
 }
 
-/**
- * The agent's active-tool set. `undefined` means "every tool is active" (the
- * unrestricted default before any `tools.set_active_tools`); a concrete array
- * restricts the set. Kept distinct from `[]` (which would mean "no tools
- * active"), so the initial `undefined` preserves the all-active default rather
- * than collapsing it to an empty allowlist.
- */
 export type ActiveToolsState = readonly string[] | undefined;
 
 export const ActiveToolsModel = defineModel<ActiveToolsState>(

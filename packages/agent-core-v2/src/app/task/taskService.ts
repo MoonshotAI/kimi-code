@@ -67,7 +67,6 @@ class RunHandle<T> implements ITaskHandle<T> {
       },
     );
 
-    // Prevent unhandled rejection warnings when nobody has attached a handler yet.
     void this.result.catch(() => {});
   }
 
@@ -182,6 +181,6 @@ registerScopedService(
   LifecycleScope.App,
   ITaskService,
   TaskService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'task',
 );

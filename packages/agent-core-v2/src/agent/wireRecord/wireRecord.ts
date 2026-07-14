@@ -24,14 +24,6 @@ export interface WireRecordRestoreResult {
 export interface IAgentWireRecordService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Snapshot of every record held in memory, in order, excluding the leading
-   * `metadata` envelope: the records seeded by {@link restore} plus every record
-   * persisted by live dispatch afterwards (appended in dispatch order). Intended
-   * for callers that need to replay or reduce the same history without
-   * re-reading `wire.jsonl` (e.g. session fork, the messages/snapshot
-   * transcript).
-   */
   getRecords(): readonly PersistedWireRecord[];
   restore(
     records?: readonly PersistedWireRecord[],

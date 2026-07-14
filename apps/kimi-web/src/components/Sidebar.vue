@@ -111,6 +111,7 @@ const emit = defineEmits<{
   rename: [id: string, title: string];
   archive: [id: string];
   fork: [id: string];
+  export: [id: string];
   renameWorkspace: [id: string, name: string];
   deleteWorkspace: [id: string];
   reorderWorkspaces: [ids: string[]];
@@ -792,6 +793,7 @@ onBeforeUnmount(() => {
               @rename-session="(id, title) => emit('rename', id, title)"
               @archive-session="(id) => emit('archive', id)"
               @fork-session="(id) => emit('fork', id)"
+              @export-session="(id) => emit('export', id)"
               @load-more="onLoadMore"
               @toggle-expand="toggleExpand"
               @confirm-rename="confirmRenameWorkspace"

@@ -82,7 +82,6 @@ export class CycleError extends WireError {
       WireErrors.codes.WIRE_CYCLE,
       `Wire dispatch cascade exceeded MAX_DRAIN (${depth}); possible op cycle`,
       {
-        // Cap the sample so `details` stays small and JSON-serializable.
         details: { depth, opTypes: opTypes.slice(0, 20) },
       },
     );
@@ -228,9 +227,6 @@ export class WireService extends Disposable implements IWireService {
       const record = records[index]!;
       const descriptor = OP_REGISTRY.get(record.type);
       if (descriptor === undefined) {
-        // Unknown record types (written by a newer version, or by a retired op)
-        // are skipped for compatibility, but never silently: report each skip
-        // and return the count so the caller knows the replay was lossy.
         unknownRecords++;
         onUnexpectedError(
           new WireError(

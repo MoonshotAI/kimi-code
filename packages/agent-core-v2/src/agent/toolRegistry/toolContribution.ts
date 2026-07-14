@@ -30,26 +30,8 @@ export type AnyExecutableTool = ExecutableTool<any>;
 export type ToolCtor<T extends AnyExecutableTool = AnyExecutableTool> = new (...args: any[]) => T;
 
 export interface ToolContributionOptions {
-  /**
-   * Origin tag stored alongside the tool in the runtime registry. Defaults to
-   * `'builtin'` when omitted (mirroring the current runtime `register()`
-   * default). External contributors would pass `'user'`, `'plugin'`, etc.
-   */
   readonly source?: ToolSource;
-  /**
-   * Optional per-Agent predicate. Evaluated once when the Agent's tool registry
-   * is constructed; if it returns `false`, the contribution is skipped for that
-   * Agent. Runs inside an `invokeFunction` so it can `.get()` any Agent-scope
-   * service.
-   */
   readonly when?: (accessor: ServicesAccessor) => boolean;
-  /**
-   * Optional supplier of leading static arguments passed to the tool
-   * constructor before any DI-injected services (matching the SyncDescriptor
-   * convention). Also invoked with a `ServicesAccessor`, so runtime config
-   * values (`IConfigService.get(...)`) can flow through here without a
-   * dedicated wrapper class.
-   */
   readonly staticArgs?: (accessor: ServicesAccessor) => readonly unknown[];
 }
 
@@ -71,11 +53,6 @@ export function getToolContributions(): readonly ToolContribution[] {
   return _toolContributions;
 }
 
-/**
- * Test hook. Clears the module-level contribution list so a test can register
- * a bounded set (mirrors `_clearScopedRegistryForTests`). Not for production
- * code — the tool table is meant to accumulate over the process lifetime.
- */
 export function _clearToolContributionsForTests(): void {
   _toolContributions.length = 0;
 }

@@ -37,6 +37,7 @@ const emit = defineEmits<{
   rename: [id: string, title: string];
   archive: [id: string];
   fork: [id: string];
+  export: [id: string];
 }>();
 
 // Full, absolute timestamp shown on hover (the row's `time` is a short relative
@@ -161,6 +162,12 @@ function forkRow(): void {
   emit('fork', props.session.id);
 }
 
+// Export this session as a ZIP
+function exportRow(): void {
+  closeMenu();
+  emit('export', props.session.id);
+}
+
 // Archive confirm — modal, consistent with remove-workspace.
 async function startArchive(): Promise<void> {
   closeMenu();
@@ -264,6 +271,7 @@ defineExpose({ closeMenu });
     <Teleport to="body">
       <Menu ref="menuRef" v-if="menuOpen" class="menu" :style="menuStyle" @click.stop>
         <MenuItem :danger="copyFailed" @click="copySessionId">
+          <Icon :name="copiedId ? 'check' : 'copy'" size="sm" />
           {{
             copyFailed
               ? t('sidebar.copyFailed')
@@ -273,9 +281,22 @@ defineExpose({ closeMenu });
           }}
         </MenuItem>
         <MenuItem separator />
-        <MenuItem @click="startRename">{{ t('sidebar.rename') }}</MenuItem>
-        <MenuItem @click="forkRow">{{ t('sidebar.fork') }}</MenuItem>
-        <MenuItem danger @click="startArchive">{{ t('sidebar.archive') }}</MenuItem>
+        <MenuItem @click="startRename">
+          <Icon name="pencil" size="sm" />
+          {{ t('sidebar.rename') }}
+        </MenuItem>
+        <MenuItem @click="forkRow">
+          <Icon name="git-fork" size="sm" />
+          {{ t('sidebar.fork') }}
+        </MenuItem>
+        <MenuItem @click="exportRow">
+          <Icon name="download" size="sm" />
+          {{ t('sidebar.export') }}
+        </MenuItem>
+        <MenuItem danger @click="startArchive">
+          <Icon name="archive" size="sm" />
+          {{ t('sidebar.archive') }}
+        </MenuItem>
         <MenuItem separator />
         <div class="menu-time">{{ fullTime }}</div>
       </Menu>

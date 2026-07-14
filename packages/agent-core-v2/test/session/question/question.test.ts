@@ -128,9 +128,6 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
 
     controller.abort();
 
-    // v1 broker semantics: the abort settles the entry as a dismissal, so the
-    // caller sees the same `null` result (→ `event.question.dismissed`) as an
-    // explicit dismiss instead of a rejection.
     await expect(pending).resolves.toBeNull();
     expect(questions.listPending()).toEqual([]);
     expect(resolved).toEqual([{ id: 'q1', response: null }]);
@@ -145,7 +142,6 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     questions.answer('q1', { answers: { q_0: 'Yes' } });
 
     await expect(pending).resolves.toEqual({ answers: { q_0: 'Yes' } });
-    // A late abort is a no-op: the entry is already settled.
     controller.abort();
     expect(questions.listPending()).toEqual([]);
   });
@@ -159,7 +155,6 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     expect(questionsA.listPending().map((r) => r.id)).toEqual(['q1']);
     expect(questionsB.listPending()).toEqual([]);
 
-    // Answering from B is a no-op — the id lives in A's kernel.
     questionsB.answer('q1', { answers: { q_0: 'Yes' } });
     expect(questionsA.listPending().map((r) => r.id)).toEqual(['q1']);
   });

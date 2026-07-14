@@ -1,11 +1,6 @@
 import type { ModelCapability } from './capability';
 import type { ProviderType } from './providers/providers';
 
-/**
- * models.dev-style catalog: a public map of provider/model metadata. Callers
- * consume a snapshot of this shape to populate provider + model configuration
- * without hand-writing context windows or capabilities.
- */
 export interface CatalogModelEntry {
   readonly id?: string;
   readonly name?: string;
@@ -24,21 +19,15 @@ export interface CatalogModelEntry {
 export interface CatalogProviderEntry {
   readonly id?: string;
   readonly name?: string;
-  /** Base URL for the provider; may be empty (some SDKs hardcode it). */
   readonly api?: string;
-  /** Env var names carrying credentials — surfaced as a hint by callers. */
   readonly env?: readonly string[];
-  /** models.dev SDK package id; used to infer the wire type when `type` is absent. */
   readonly npm?: string;
-  /** Explicit wire type extension; inferred from `npm`/`id` when absent. */
   readonly type?: string;
   readonly models?: Record<string, CatalogModelEntry>;
 }
 
-/** Top-level catalog: `{ [providerId]: ProviderEntry }` (e.g. models.dev/api.json). */
 export type Catalog = Record<string, CatalogProviderEntry>;
 
-/** A normalized catalog model: identity plus its {@link ModelCapability}. */
 export interface CatalogModel {
   readonly id: string;
   readonly name?: string;
@@ -76,11 +65,6 @@ function isUsableChatModel(model: CatalogModelEntry): boolean {
   );
 }
 
-/**
- * Resolves a catalog provider entry to a supported wire type. Honors an
- * explicit `type`, otherwise infers from `npm`/`id`. Unknown providers return
- * `undefined` so callers can omit them instead of writing an invalid config.
- */
 export function inferWireType(entry: CatalogProviderEntry): ProviderType | undefined {
   if (isWireType(entry.type)) return entry.type;
   const npm = (entry.npm ?? '').toLowerCase();
@@ -96,17 +80,6 @@ export function inferWireType(entry: CatalogProviderEntry): ProviderType | undef
   return undefined;
 }
 
-/**
- * Resolves the base URL to store for a catalog provider, adapting the catalog's
- * `api` to the wire's SDK convention.
- *
- * models.dev `api` URLs are written for the SDK named in `npm` (e.g.
- * `@ai-sdk/anthropic`), whose base already includes the `/v1` version segment.
- * We route the `anthropic` wire through the official `@anthropic-ai/sdk`, which
- * appends `/v1/messages` itself — so a catalog `api` ending in `/v1` would POST
- * to `/v1/v1/messages` (404). Strip the trailing `/v1` for anthropic. OpenAI
- * family SDKs append `/chat/completions` to a `/v1` base, so those pass through.
- */
 export function catalogBaseUrl(
   entry: CatalogProviderEntry,
   wire: ProviderType,
@@ -117,7 +90,6 @@ export function catalogBaseUrl(
   return api;
 }
 
-/** Normalizes one catalog model entry into a {@link CatalogModel}; skips invalid entries. */
 export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel | undefined {
   if (typeof model.id !== 'string' || model.id.length === 0) return undefined;
   const context = model.limit?.context;
@@ -143,16 +115,12 @@ export function catalogModelToCapability(model: CatalogModelEntry): CatalogModel
 }
 
 function catalogReasoningKey(interleaved: CatalogModelEntry['interleaved']): string | undefined {
-  // models.dev allows `interleaved: true` as "general support" — read it as
-  // the default `reasoning_content` field so providers without an explicit
-  // field name (e.g. some openai-compatible gateways) still round-trip.
   if (interleaved === true) return 'reasoning_content';
   if (typeof interleaved !== 'object' || interleaved === null) return undefined;
   const field = interleaved.field?.trim();
   return field !== undefined && field.length > 0 ? field : undefined;
 }
 
-/** Extracts the valid, normalized models from a catalog provider entry. */
 export function catalogProviderModels(entry: CatalogProviderEntry): CatalogModel[] {
   const models = entry.models ?? {};
   return Object.values(models)

@@ -145,7 +145,6 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
 }
 
 function isMissingFileError(error: unknown): boolean {
-  // hostFs wraps raw errnos in `HostFsError`; classify the unwrapped cause.
   const unwrapped = unwrapErrorCause(error);
   if (unwrapped === null || typeof unwrapped !== 'object') return false;
   const code = (unwrapped as { readonly code?: unknown }).code;
@@ -158,6 +157,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPlanService,
   AgentPlanService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'plan',
 );

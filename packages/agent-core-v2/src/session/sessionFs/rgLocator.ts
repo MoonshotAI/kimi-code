@@ -23,36 +23,19 @@
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-/** Where the resolved `rg` came from. Used for fallback telemetry. */
 export type RgResolutionSource = 'system-path' | 'share-bin-cached';
 
 export interface RgResolution {
-  /** Command or absolute path to pass as argv[0] when spawning `rg`. */
   readonly path: string;
   readonly source: RgResolutionSource;
 }
 
-/**
- * Minimal probe surface the locator runs against. Lets the same locator run
- * over Glob's and Grep's `ISessionProcessRunner` without depending on either
- * directly.
- */
 export interface RgProbe {
-  /** Run `argv` and resolve with the process exit code. */
   exec(args: readonly string[]): Promise<{ readonly exitCode: number }>;
 }
 
 export interface EnsureRgPathOptions {
-  /**
-   * Cancels this caller's wait. Checked between probe steps; an aborted signal
-   * makes {@link ensureRgPath} throw an `AbortError`.
-   */
   readonly signal?: AbortSignal;
-  /**
-   * When true, fall back to the cached binary at `<share>/bin/rg` if `rg` is
-   * not on PATH. Defaults to false so callers with their own fallback (Grep's
-   * node walker) keep deterministic behavior.
-   */
   readonly allowCachedFallback?: boolean;
 }
 
@@ -66,7 +49,6 @@ function getShareDir(): string {
   return join(homedir(), '.kimi-code');
 }
 
-/** Absolute path of the cached `rg` binary, if one has been installed. */
 export function getShareBinRgPath(): string {
   return join(getShareDir(), 'bin', rgBinaryName());
 }
@@ -77,11 +59,6 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
   }
 }
 
-/**
- * Resolve a usable `rg`. Probes `rg --version` through `probe`; on a non-zero
- * exit (and only when `allowCachedFallback` is set) tries the cached binary
- * before giving up. Throws when no working `rg` can be found.
- */
 export async function ensureRgPath(
   probe: RgProbe,
   options: EnsureRgPathOptions = {},
@@ -105,10 +82,6 @@ export async function ensureRgPath(
   throw new Error('ripgrep (rg) is not available on PATH');
 }
 
-/**
- * User-facing message when {@link ensureRgPath} throws. Kept in one place so
- * the Glob / Grep plumbing surfaces the same actionable hint.
- */
 export function rgUnavailableMessage(cause: unknown): string {
   const detail =
     cause instanceof Error ? cause.message : typeof cause === 'string' ? cause : 'unknown error';

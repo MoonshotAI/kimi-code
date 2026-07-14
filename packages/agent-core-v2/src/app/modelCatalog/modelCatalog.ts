@@ -27,7 +27,6 @@ export type RefreshProviderModelsScope = 'all' | 'oauth';
 
 export interface RefreshProviderModelsOptions {
   readonly scope?: RefreshProviderModelsScope;
-  /** Refresh only this provider id. When set, `scope` is ignored. */
   readonly providerId?: string;
 }
 
@@ -38,17 +37,6 @@ export interface IModelCatalogService {
   listProviders(): Promise<readonly ProviderCatalogItem[]>;
   getProvider(providerId: string): Promise<ProviderCatalogItem>;
   setDefaultModel(modelId: string): Promise<SetDefaultModelResponse>;
-  /**
-   * Refresh remote model metadata for the configured providers. Defaults to
-   * every refreshable provider (`scope: 'all'`); pass `scope: 'oauth'` for the
-   * managed OAuth provider only, or `providerId` for a single provider. Throws
-   * `provider.not_found` when `providerId` is unknown. Publishes
-   * `event.model_catalog.changed` when the catalog actually changes.
-   *
-   * Only providers with a discoverable catalog endpoint are refreshed
-   * (managed OAuth, open platforms, custom registries); plain API-key
-   * providers have no server-side catalog and are a no-op, matching v1.
-   */
   refreshProviderModels(
     options?: RefreshProviderModelsOptions,
   ): Promise<RefreshProviderModelsResponse>;

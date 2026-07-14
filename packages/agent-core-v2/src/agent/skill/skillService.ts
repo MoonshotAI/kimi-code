@@ -139,6 +139,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentSkillService,
   AgentSkillService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'skill',
 );

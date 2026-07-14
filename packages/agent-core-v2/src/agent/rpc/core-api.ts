@@ -77,11 +77,6 @@ export interface ResumeSessionPayload {
 
 export interface ReloadSessionPayload {
   readonly sessionId: string;
-  /**
-   * When true, the reloaded session force-appends a fresh plugin session-start
-   * reminder (or a neutralizing reminder when none are active) so the model
-   * picks up reloaded plugin guidance. Mirrors the `/reload` re-injection flow.
-   */
   readonly forcePluginSessionStartReminder?: boolean | undefined;
 }
 
@@ -120,11 +115,6 @@ export interface PromptPayload {
 }
 export interface RunShellCommandPayload {
   readonly command: string;
-  /**
-   * TUI-generated correlation id echoed back on every `shell.output` live event
-   * so the client can route chunks to the matching entry and drop stale events
-   * from a prior run. Optional for callers that don't stream.
-   */
   readonly commandId?: string;
 }
 export interface ShellCommandResult {
@@ -180,7 +170,6 @@ export interface SetActiveToolsPayload {
 }
 export interface StopTaskPayload {
   readonly taskId: string;
-  /** Free-form human-readable reason persisted with the task record. */
   readonly reason?: string;
 }
 export interface DetachTaskPayload {
@@ -191,13 +180,7 @@ export interface GetTaskOutputPayload {
   readonly tail?: number;
 }
 export interface GetTasksPayload {
-  /**
-   * When omitted, returns all tasks (including terminal/lost). Pass
-   * `true` to filter down to active-only — useful for model-facing
-   * surfaces. UI/TUI consumers should leave it undefined.
-   */
   readonly activeOnly?: boolean;
-  /** Caps the number of tasks returned. When omitted, returns all matching tasks. */
   readonly limit?: number;
 }
 export interface SkillSummary {
@@ -283,10 +266,6 @@ export interface UpdateSessionMetadataPayload {
   readonly metadata: SessionMetadataPatch;
 }
 
-// Goal lifecycle payloads and re-exported goal value types. These describe the
-// deterministic user/SDK control surface; the goal's terminal status is decided
-// by the model via the UpdateGoal tool (or the goal driver on budget/error),
-// not set through this API.
 export type {
   GoalBudgetLimits,
   GoalBudgetReport,
@@ -307,7 +286,6 @@ export interface GetKimiConfigPayload {
 }
 
 export interface ConfigDiagnostics {
-  /** Warnings from the most recent config.toml load attempt; empty when the config is fully valid. */
   readonly warnings: readonly string[];
 }
 
@@ -317,13 +295,6 @@ export interface RemoveKimiProviderPayload {
   readonly providerId: string;
 }
 
-/**
- * Result returned when a prompt/steer submission is accepted. The turn is the
- * submission's identity and lifecycle (`turn.started` / `turn.ended` carry the
- * rest over the event stream), so the handle is just the turn id. `undefined`
- * means no turn was launched (e.g. the agent was busy, or a prompt hook blocked
- * before launch).
- */
 export interface PromptLaunchResult {
   readonly turn_id: number;
 }

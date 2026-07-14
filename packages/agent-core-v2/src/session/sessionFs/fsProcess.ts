@@ -21,7 +21,6 @@ export interface RunResult {
 export interface RunCommandOptions {
   readonly cwd?: string;
   readonly env?: Record<string, string>;
-  /** When aborted, the child is killed with `SIGKILL`. */
   readonly signal?: AbortSignal;
 }
 

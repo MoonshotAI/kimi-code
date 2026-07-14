@@ -64,12 +64,6 @@ export class AgentToolSelectService extends Disposable implements IAgentToolSele
     this._register(
       eventBus.subscribe('context.spliced', (splice) => {
         if (splice.deleteCount === 0 || this.pendingLoaded.size === 0) return;
-        // The pending set is only a defer-window lead over the history-backed
-        // ledger, so any deletion splice can falsify it: v2's undo slices the
-        // tail wholesale (v1 keeps `injection`-origin schema messages in place),
-        // which makes full-prefix detection insufficient. Re-fold the pending
-        // set against the surviving history — the event is published after the
-        // memory service has rewritten it.
         const landed = collectLoadedDynamicToolNames(this.context.get());
         for (const name of this.pendingLoaded) {
           if (!landed.has(name)) this.pendingLoaded.delete(name);

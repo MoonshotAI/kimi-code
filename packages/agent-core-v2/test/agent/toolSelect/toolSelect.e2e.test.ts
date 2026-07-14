@@ -28,7 +28,6 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { TOOL_SELECT_FLAG_ENV } from '#/agent/toolSelect/flag';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentToolSelectAnnouncementsService } from '#/agent/toolSelect/toolSelectAnnouncements';
-// Registers the select_tools tool contribution (mirrors src/index.ts).
 import '#/agent/toolSelect/tools/select-tools';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
@@ -107,12 +106,8 @@ describe('progressive tool disclosure end-to-end', () => {
   let registration: { dispose(): void } | undefined;
 
   beforeEach(async () => {
-    // Stubbed before createTestAgent snapshots the env into bootstrap.
     vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
     ctx = createTestAgent();
-    // Production mounts these through AgentLifecycleService.create's eager
-    // gets; the harness builds the Agent scope directly, so force the same
-    // instantiation here before any loop step runs.
     ctx.get(IAgentToolSelectService);
     ctx.get(IAgentToolSelectAnnouncementsService);
     ctx.get(IAgentToolExecutorService);
@@ -143,7 +138,6 @@ describe('progressive tool disclosure end-to-end', () => {
 
     expect(ctx.llmCalls).toHaveLength(3);
 
-    // Turn-boundary manifest announcement reached the model on the first request.
     const firstWire = ctx.llmCalls[0]!;
     expect(toolNames(firstWire.tools)).not.toContain(MCP_ALPHA);
     expect(toolNames(firstWire.tools)).toContain('select_tools');
@@ -155,7 +149,6 @@ describe('progressive tool disclosure end-to-end', () => {
     expect(announcementText).toContain('<tools_added>');
     expect(announcementText).toContain(MCP_ALPHA);
 
-    // The record carries the disclosure gate state (v1 recorder parity).
     const requests = wireEvents(ctx, 'llm.request').filter(
       (event) => (event.args as { kind?: string }).kind === 'loop',
     );
@@ -164,7 +157,6 @@ describe('progressive tool disclosure end-to-end', () => {
       expect((request.args as { toolSelect?: boolean }).toolSelect).toBe(true);
     }
 
-    // Loaded schema rides the next request as a message-level declaration.
     const secondWire = ctx.llmCalls[1]!;
     const schemaMessages = secondWire.history.filter(
       (message) => message.tools?.some((tool) => tool.name === MCP_ALPHA),
@@ -174,18 +166,13 @@ describe('progressive tool disclosure end-to-end', () => {
     const alphaFromSchema = schemaMessages[0]!.tools!.find((tool) => tool.name === MCP_ALPHA)!;
     expect(alphaFromSchema.parameters).toEqual(alpha.parameters);
 
-    // Top-level table is byte-stable across the load (v1 prompt-cache contract):
-    // the provider-visible table of the post-load request equals the pre-load one.
     expect(secondWire.tools).toEqual(firstWire.tools);
     expect(wireEvents(ctx, 'llm.tools_snapshot')).toHaveLength(1);
 
-    // The loaded tool is dispatchable on a later step of the same turn.
     expect(alpha.calls).toBe(1);
   });
 
   it('re-injects a selected schema after undo slices the tail of the loaded exchange', async () => {
-    // Seed an older real user prompt so the undo cut lands at start > 0: the
-    // F1 stale-ledger window only opens when the cut is not full-prefix.
     ctx.get(IAgentContextMemoryService).append({
       role: 'user',
       content: [{ type: 'text', text: 'earlier question' }],

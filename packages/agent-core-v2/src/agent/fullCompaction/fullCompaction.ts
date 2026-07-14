@@ -28,7 +28,6 @@ export interface IAgentFullCompactionService {
     onWillCompact: FullCompactionTask;
   }>;
 
-  /** Fires once a compaction finishes (after the summary lands on the wire). */
   readonly onDidFinishCompaction: Event<FullCompactionTask>;
 }
 
