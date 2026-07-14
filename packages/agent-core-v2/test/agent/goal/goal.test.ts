@@ -1112,6 +1112,34 @@ describe('AgentGoalService core workflow hooks', () => {
     expect(loopService.launches).toHaveLength(1);
   });
 
+  it('requests a blocked outcome step when the final allowed turn blocks the goal', async () => {
+    await goals.createGoal({ objective: 'finish the task' });
+    await goals.setBudgetLimits({ budgetLimits: { turnBudget: 1 } }, 'model');
+
+    const turn = makeTurn(15);
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    await loopService.hooks.onWillBeginStep.run({
+      turnId: turn.id,
+      step: 1,
+      signal: turn.signal,
+    });
+    await goals.markBlocked({}, 'model');
+    await runTerminalUpdateGoalResult(toolExecutor, turn, 'blocked', 'outcome prompt');
+
+    const afterStep: AfterStepContext = {
+      turnId: turn.id,
+      step: 1,
+      signal: turn.signal,
+      usage: zeroUsage,
+      finishReason: 'completed',
+      stopTurn: false,
+    };
+    await loopService.hooks.onDidFinishStep.run(afterStep);
+
+    expect(loopService.hasPendingRequests()).toBe(true);
+    expect(goals.getGoal().goal).toMatchObject({ status: 'blocked', turnsUsed: 1 });
+  });
+
   it('accounts recorded turn usage for active goal turns', async () => {
     await goals.createGoal({ objective: 'finish the task' });
     await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 7 } }, 'model');
