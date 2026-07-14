@@ -649,7 +649,7 @@ describe('Agent resume', () => {
         wallClockMs: 3_000,
         time: 4_000,
       },
-    ] as unknown as PersistedWireRecord[]);
+    ] as unknown as WireRecord[]);
     const ctx = testAgent({ persistence, autoConfigure: false });
 
     try {

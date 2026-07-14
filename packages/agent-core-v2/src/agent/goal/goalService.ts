@@ -5,9 +5,10 @@
  * `GoalModel` (`GoalState | null`) through the `goal.create` / `goal.update` /
  * `goal.clear` Ops (`wire.dispatch`), reads it through `wire.getModel`,
  * publishes `goal.updated` live to `IEventBus`, and forces a replayed `active`
- * goal back to `paused` via `wire.hooks.onDidRestore`. The accumulated `wallClockMs`
- * lives in the Model (set from each Op payload, never by `Date.now()` inside
- * `apply`); the active interval's epoch-ms `wallClockResumedAt` anchor is
+ * goal back to `paused` via `wire.hooks.onDidRestore`. The accumulated
+ * `wallClockMs` lives in the Model (set from each Op payload, never by
+ * `Date.now()` inside `apply`); the active interval's epoch-ms
+ * `wallClockResumedAt` anchor is
  * persisted at create/resume boundaries so recovery can settle crash-spanning
  * elapsed time without periodic writes. A `forked` wire Op clears the Model
  * at a fork boundary; the `goal.*` payload shapes are registered in
