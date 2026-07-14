@@ -46,11 +46,19 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
   ) {}
 
   resolveExecution(args: CreateGoalToolInput): ToolExecution {
+    const goalAtResolution = this.goal.getGoal().goal;
     return {
       description: 'Creating a goal',
       display: this.resolveGoalStartDisplay(args),
       approvalRule: this.name,
-      execute: async () => {
+      execute: async ({ turnId }) => {
+        const currentGoal = this.goal.getGoal().goal;
+        if (
+          currentGoal?.goalId !== goalAtResolution?.goalId &&
+          (currentGoal === null || !this.goal.isGoalToolTarget(turnId, currentGoal.goalId))
+        ) {
+          return { output: 'Goal not created: the current goal changed.' };
+        }
         const snapshot = await this.goal.createGoal(
           {
             objective: args.objective,

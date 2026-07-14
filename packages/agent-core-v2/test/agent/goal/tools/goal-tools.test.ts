@@ -28,6 +28,7 @@ import {
   type ToolExecutionResult,
 } from '#/agent/toolExecutor/toolExecutor';
 import { getToolContributions } from '#/agent/toolRegistry/toolContribution';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 
 import {
@@ -64,6 +65,49 @@ describe('goal tools', () => {
 
   afterEach(async () => {
     await ctx.dispose();
+  });
+
+  it('CreateGoal does not apply a delayed execution to a replacement goal', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    eventBus.publish({ type: 'turn.started', turnId: 6, origin: USER_PROMPT_ORIGIN });
+    const tool = ctx.get(IAgentToolRegistryService).resolve('CreateGoal');
+    if (tool === undefined) throw new Error('CreateGoal should be registered');
+    const execution = await tool.resolveExecution({ objective: 'stale task', replace: true });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    const replacement = await goals.createGoal({ objective: 'new task', replace: true });
+
+    const result = await execution.execute({
+      turnId: 6,
+      toolCallId: 'call_old_create',
+      signal,
+    });
+
+    expect(result.output).toBe('Goal not created: the current goal changed.');
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: replacement.goalId,
+      objective: 'new task',
+    });
+  });
+
+  it('CreateGoal does not apply a no-goal execution to an externally created goal', async () => {
+    eventBus.publish({ type: 'turn.started', turnId: 7, origin: USER_PROMPT_ORIGIN });
+    const tool = ctx.get(IAgentToolRegistryService).resolve('CreateGoal');
+    if (tool === undefined) throw new Error('CreateGoal should be registered');
+    const execution = await tool.resolveExecution({ objective: 'stale task', replace: true });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    const created = await goals.createGoal({ objective: 'external task' });
+
+    const result = await execution.execute({
+      turnId: 7,
+      toolCallId: 'call_old_create',
+      signal,
+    });
+
+    expect(result.output).toBe('Goal not created: the current goal changed.');
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: created.goalId,
+      objective: 'external task',
+    });
   });
 
   it('SetGoalBudget reports no current goal without failing', async () => {
