@@ -38,7 +38,6 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
   declare readonly _serviceBrand: undefined;
 
   private registration: IDisposable | undefined;
-  /** `alias|image_in|video_in` of the last registration; re-register on change. */
   private registeredKey: string | undefined;
 
   constructor(
@@ -49,8 +48,6 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    // Optional so unit tests that construct the registrar directly (bypassing
-    // DI) keep working; always registered in production scopes.
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {
     super();
@@ -76,10 +73,6 @@ export class AgentMediaToolsRegistrar extends Disposable implements IAgentMediaT
     this.registration = registerMediaTools(this.toolRegistry, {
       fs: this.fs,
       env: this.env,
-      // Live view: `workDir` is runtime-mutable (`/cwd`), and the tool keeps
-      // its WorkspaceConfig across calls, so a snapshot would go stale. Skill
-      // roots are merged per read for the same reason (the catalog loads
-      // asynchronously and gains roots on plugin reloads).
       workspace: {
         get workspaceDir() {
           return workspaceCtx.workDir;

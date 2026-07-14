@@ -41,8 +41,6 @@ function createProfileStub(): IAgentProfileService & ProfileStub {
   return {
     active,
     _serviceBrand: undefined,
-    // `undefined` = every tool active (the unrestricted default), matching the
-    // real profile service's `ActiveToolsModel` initial state.
     getActiveToolNames: () => undefined,
     addActiveTool: (name: string) => {
       active.add(name);
@@ -177,7 +175,6 @@ describe('AgentUserToolService (wire-backed)', () => {
     svc.register(toolA);
     const before = modelOf(wire);
     svc.register(toolA);
-    // apply returns the same reference when the registration is already equal.
     expect(modelOf(wire)).toBe(before);
   });
 
@@ -186,10 +183,6 @@ describe('AgentUserToolService (wire-backed)', () => {
     svc.register(toolB);
     const records = await readRecords();
 
-    // Fresh host + wire: replay the persisted records and confirm the post-
-    // restore side effect (registry.register + profile.addActiveTool) runs from
-    // the rebuilt model, while the replay itself does not register anything
-    // before onRestored fires.
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
@@ -205,7 +198,6 @@ describe('AgentUserToolService (wire-backed)', () => {
 
     const wire2 = ix2.get(IAgentWireService);
     const registry2 = ix2.get(IAgentToolRegistryService);
-    // Realize the service so its ctor registers `wire.onRestored` BEFORE replay.
     ix2.get(IAgentUserToolService);
 
     expect(registry2.resolve(toolA.name)).toBeUndefined();
@@ -213,13 +205,11 @@ describe('AgentUserToolService (wire-backed)', () => {
 
     expect(modelOf(wire2).get(toolA.name)).toEqual(toolA);
     expect(modelOf(wire2).get(toolB.name)).toEqual(toolB);
-    // onRestored re-derived the live side effects from the rebuilt model.
     expect(registry2.resolve(toolA.name)).toBeDefined();
     expect(registry2.resolve(toolB.name)).toBeDefined();
     expect(profile2.active.has(toolA.name)).toBe(true);
     expect(profile2.active.has(toolB.name)).toBe(true);
 
-    // Replay is silent: nothing was written back to the replay wire log.
     const written: PersistedRecord[] = [];
     for await (const record of ix2
       .get(IAppendLogStore)

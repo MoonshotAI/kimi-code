@@ -200,8 +200,6 @@ function renderEntries(
 }
 
 function isFileNotFoundError(error: unknown): boolean {
-  // hostFs translates raw errnos into `HostFsError`; classify the unwrapped
-  // cause so boundary translation stays invisible to these predicates.
   const unwrapped = unwrapErrorCause(error);
   if (typeof unwrapped !== 'object' || unwrapped === null) return false;
   const code = (unwrapped as { code?: unknown })['code'];
@@ -243,14 +241,10 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     @IHostFileSystem private readonly fs: IHostFileSystem,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
-    // Optional so unit tests that construct the tool directly (bypassing DI)
-    // keep working; always registered in production scopes.
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   private get workspaceConfig(): WorkspaceConfig {
-    // Skill roots are merged per call (v1 merged once at tool construction):
-    // the catalog loads asynchronously and gains roots on plugin reloads.
     return extendWorkspaceWithSkillRoots(
       {
         workspaceDir: this.workspaceCtx.workDir,
@@ -491,9 +485,6 @@ export class ReadTool implements BuiltinTool<ReadInput> {
   }
 
   private finishReadResult(input: FinishReadResultInput): ExecutableToolResult {
-    // The status line rides the `note` side channel (model-only); `output` is
-    // the rendered file content and nothing else. The `<system>` wrapping is
-    // this tool's wording choice.
     return {
       output: input.renderedLines.join('\n'),
       note: `<system>${this.finishMessage(input)}</system>`,

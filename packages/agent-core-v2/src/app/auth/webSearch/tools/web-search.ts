@@ -28,7 +28,6 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { IWebSearchProviderService } from '../webSearch';
 import DESCRIPTION from './web-search.md?raw';
 
-// ── Provider interface (host-injected) ───────────────────────────────
 
 export interface WebSearchResult {
   title: string;
@@ -48,7 +47,6 @@ export interface WebSearchProvider {
   ): Promise<WebSearchResult[]>;
 }
 
-// ── Input schema ─────────────────────────────────────────────────────
 
 export const WebSearchInputSchema = z.object({
   query: z.string().describe('The query text to search for.'),
@@ -56,7 +54,6 @@ export const WebSearchInputSchema = z.object({
 
 export type WebSearchInput = z.infer<typeof WebSearchInputSchema>;
 
-// ── Implementation ───────────────────────────────────────────────────
 
 export class WebSearchTool implements BuiltinTool<WebSearchInput> {
   readonly name = 'WebSearch' as const;
@@ -102,18 +99,12 @@ export class WebSearchTool implements BuiltinTool<WebSearchInput> {
         builder.write(`Snippet: ${result.snippet}\n\n`);
       }
 
-      // Keep the citation reminder next to the data (not just in the static tool
-      // description), so it is present on every search. Cite the page actually
-      // relied on — after a FetchURL follow-up, that is the fetched page.
       builder.write(
         'When you rely on a result in your answer, cite it inline as a markdown link, e.g. [title](url).',
       );
 
       return builder.ok();
     } catch (error) {
-      // Propagate in-flight cancellation so the executor can classify it
-      // (including user cancellation) instead of surfacing it as a generic
-      // search error that the model may retry.
       if (signal.aborted) throw error;
       return {
         isError: true,
@@ -123,15 +114,7 @@ export class WebSearchTool implements BuiltinTool<WebSearchInput> {
   }
 }
 
-// ── Error classification ─────────────────────────────────────────────
 
-/**
- * Maps a thrown search error to a categorised, human-readable message.
- *
- * The original error text is always preserved so the model can still see the
- * underlying detail; the prefix only adds a category so failures are easier to
- * reason about (e.g. retry vs. surface to the user).
- */
 function classifySearchError(error: unknown): string {
   const name = error instanceof Error ? error.name : '';
   const message = error instanceof Error ? error.message : String(error);

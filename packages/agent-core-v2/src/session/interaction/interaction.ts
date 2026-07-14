@@ -33,19 +33,15 @@ export interface Interaction<TPayload = unknown> {
   readonly kind: InteractionKind;
   readonly payload: TPayload;
   readonly origin: InteractionOrigin;
-  /** Epoch ms when the interaction was parked. */
   readonly createdAt: number;
 }
 
-/** Emitted by {@link ISessionInteractionService.onDidResolve} when a request is responded to. */
 export interface InteractionResolution {
   readonly id: string;
   readonly response: unknown;
 }
 
-/** Emitted by {@link ISessionInteractionService.onDidChangePending} when the pending set changes. */
 export interface InteractionPendingChangedEvent {
-  /** Ids of the currently pending interactions, in insertion order. */
   readonly pending: readonly string[];
 }
 
@@ -53,32 +49,12 @@ export interface ISessionInteractionService {
   readonly _serviceBrand: undefined;
 
   request<TPayload, TResponse>(req: InteractionRequest<TPayload>): Promise<TResponse>;
-  /**
-   * Park a request without blocking on its response. Returns the created
-   * `Interaction` (with its resolved `id`) immediately; the outcome is
-   * delivered through {@link onDidResolve}. Used by edge callers that stream
-   * the response rather than awaiting a Promise.
-   */
   enqueue<TPayload>(req: InteractionRequest<TPayload>): Interaction;
   respond(id: string, response: unknown): void;
   listPending(kind?: InteractionKind): readonly Interaction[];
-  /**
-   * Whether `id` was responded to within the recent-resolution window. Lets
-   * edge callers distinguish a duplicate resolve (idempotent conflict) from an
-   * unknown id. The window is bounded (see {@link SessionInteractionService}) and
-   * exists purely for idempotency signaling.
-   */
   isRecentlyResolved(id: string): boolean;
-  /**
-   * Cancel every pending interaction whose {@link InteractionOrigin.turnId}
-   * matches `turnId`, resolving each as `{ cancelled: true, reason: 'turn_ended' }`.
-   * Driven from the per-agent `IEventBus` `turn.ended` via the Session-scope
-   * `IAgentLifecycleService` bridge — the bus is Agent-scoped and cannot be
-   * injected here directly. No-op when no pending interaction matches.
-   */
   cancelPendingForTurn(turnId: number): void;
   readonly onDidChangePending: Event<InteractionPendingChangedEvent>;
-  /** Fires when a pending request is responded to, carrying its id and response. */
   readonly onDidResolve: Event<InteractionResolution>;
 }
 

@@ -60,38 +60,11 @@ const defaultLog: Logger = {
 
 export interface McpConnectionManagerOptions {
   readonly envLookup?: (name: string) => string | undefined;
-  /**
-   * Session workspace cwd for stdio MCP servers whose config omits `cwd`.
-   * Relative `cwd` values are resolved from this base, matching v1 Session MCP.
-   */
   readonly stdioCwd?: string;
-  /**
-   * Optional OAuth orchestrator. When provided, remote servers without a
-   * static bearer token participate in the OAuth-via-synthetic-tool flow:
-   *  - If `oauthService.hasTokens(name, url)` is true, the provider is
-   *    attached to the transport so the SDK can refresh tokens on 401.
-   *  - Connection failures that look like 401 / `UnauthorizedError` flip
-   *    the entry into `needs-auth` instead of `failed`; `/mcp-config`
-   *    drives the browser flow through the synthetic auth tool.
-   */
   readonly oauthService?: McpOAuthService;
-  /**
-   * Parent logger. The Session-scoped lifecycle injects the session logger
-   * (the Session binding of `ILogService`) so MCP events are written to the
-   * per-session log file; falls back to a no-op when omitted.
-   */
   readonly log?: Logger;
 }
 
-/**
- * Owns the lifecycle of every configured MCP server for a Session.
- *
- * Servers are connected in parallel; per-server failures are isolated so a
- * crashed or misconfigured entry never blocks Session startup. State
- * transitions are surfaced through {@link onStatusChange} so callers (the
- * Session) can react — registering tools onto the main agent, emitting
- * wire events, or updating the TUI.
- */
 export class McpConnectionManager {
   private readonly entries = new Map<string, InternalEntry>();
   private readonly listeners = new Set<McpStatusListener>();
@@ -100,11 +73,6 @@ export class McpConnectionManager {
   private initialLoadStartedAt: number | undefined;
   private initialLoadFinishedAt: number | undefined;
 
-  /**
-   * OAuth orchestrator injected at construction time. Consumed by the
-   * {@link ToolManager} `needs-auth` branch to build the synthetic
-   * `authenticate` tool.
-   */
   readonly oauthService: McpOAuthService | undefined;
   private readonly log: Logger;
 
@@ -113,11 +81,6 @@ export class McpConnectionManager {
     this.log = options.log ?? defaultLog;
   }
 
-  /**
-   * Returns the URL of a remote MCP server by name, or `undefined` for
-   * unknown / non-remote / disabled entries. Used by the synthetic auth tool
-   * to drive OAuth discovery against the right base URL.
-   */
   getRemoteServerUrl(name: string): string | undefined {
     const entry = this.entries.get(name);
     if (entry === undefined) return undefined;
@@ -125,10 +88,6 @@ export class McpConnectionManager {
     return entry.config.url;
   }
 
-  /**
-   * @deprecated Use {@link getRemoteServerUrl}. Kept for in-repo callers that
-   * were written before legacy SSE support shared the same OAuth path.
-   */
   getHttpServerUrl(name: string): string | undefined {
     return this.getRemoteServerUrl(name);
   }
@@ -149,13 +108,6 @@ export class McpConnectionManager {
     return entry !== undefined ? toPublicEntry(entry) : undefined;
   }
 
-  /**
-   * Returns the MCP client, the discovered tools, and the allow-list of tool
-   * names for a given connected server, or `undefined` if the server is not
-   * currently connected. The allow-list combines the server's `enabledTools`
-   * and `disabledTools` filters; callers should only register names in the
-   * set.
-   */
   resolved(
     name: string,
   ):
@@ -299,7 +251,6 @@ export class McpConnectionManager {
         this.connectAndDiscoverTools(startupClient),
         timeoutMs,
         () => {
-          // Best-effort cleanup if the startup promise is still racing.
           void this.closeRuntimeClient(startupClient);
         },
       );
@@ -329,7 +280,6 @@ export class McpConnectionManager {
       entry.tools = undefined;
       entry.enabledNames = undefined;
       entry.rawTools = undefined;
-      // Drop the client reference so a later reconnect builds a fresh one.
       await this.closeClient(entry);
     }
     if (!this.isCurrent(entry, attemptId)) return;
@@ -342,8 +292,6 @@ export class McpConnectionManager {
     attemptId: number,
   ): void {
     client.onUnexpectedClose((reason) => {
-      // The client may have outlived its entry (shutdown / reconnect already
-      // moved on). Drop the event if so — the new attempt owns the state.
       if (!this.isCurrent(entry, attemptId)) return;
       if (entry.client !== client) return;
       entry.status = 'failed';
@@ -352,8 +300,6 @@ export class McpConnectionManager {
       entry.enabledNames = undefined;
       entry.rawTools = undefined;
       entry.client = undefined;
-      // Best-effort close; the transport is already gone, but this lets the
-      // SDK release timers and pending request handlers.
       void this.closeRuntimeClient(client);
       this.emit(entry);
     });
@@ -391,10 +337,6 @@ export class McpConnectionManager {
     if (oauthService === undefined) return undefined;
     if (!isRemoteMcpConfig(config)) return undefined;
     if (config.bearerTokenEnvVar !== undefined) return undefined;
-    // Only attach the provider once tokens have been minted; before that,
-    // the transport should propagate a clean 401 so we can flip the entry
-    // into `needs-auth` rather than getting tangled in the SDK's auth()
-    // flow (which would try DCR before we have an active redirect URL).
     if (!(await oauthService.hasTokens(name, config.url))) return undefined;
     return oauthService.getProvider(name, config.url);
   }
@@ -403,10 +345,6 @@ export class McpConnectionManager {
     if (this.oauthService === undefined) return false;
     if (!isRemoteMcpConfig(entry.config)) return false;
     if (entry.config.bearerTokenEnvVar !== undefined) return false;
-    // If the user pinned a static `headers` block, treat 401s as a bad header
-    // rather than hijacking them into the OAuth flow — the real error is more
-    // actionable than "run /mcp-config login" for a server that doesn't speak
-    // OAuth.
     if (entry.config.headers !== undefined) return false;
     return isUnauthorizedLikeError(error);
   }
@@ -437,8 +375,6 @@ export class McpConnectionManager {
     try {
       await client.close();
     } catch {
-      // Suppress close errors — the server is going away regardless and we
-      // don't want them masking the original startup failure.
     }
   }
 
@@ -460,7 +396,6 @@ export class McpConnectionManager {
       try {
         listener(view);
       } catch {
-        // Listener faults must not break the connection manager.
       }
     }
   }
@@ -497,12 +432,9 @@ function computeEnabledNames(config: McpServerConfig, tools: readonly Tool[]): S
 function isUnauthorizedLikeError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if (error.name === 'UnauthorizedError') return true;
-  // SDK transport errors typically expose the HTTP status as `.code`.
   const code = (error as { code?: unknown }).code;
   if (typeof code === 'number' && code === 401) return true;
   if (typeof code === 'string' && code === '401') return true;
-  // Fall back to a message sniff so server-specific error shapes still flip
-  // us into needs-auth instead of failed.
   return /\b401\b/.test(error.message) || /unauthorized/i.test(error.message);
 }
 

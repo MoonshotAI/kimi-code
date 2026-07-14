@@ -200,8 +200,6 @@ describe('Agent context', () => {
       },
     ];
 
-    // Empty tool output never reaches the model as a blank block (and no
-    // longer throws): the projection renders the empty-output status text.
     expect(ctx.project(history)).toEqual([
       {
         role: 'assistant',
@@ -399,11 +397,7 @@ describe('Agent context', () => {
       },
     );
 
-    // Raw history records the reminder in insertion order, behind the open
-    // exchange.
     expect(context.get().map((message) => message.role)).toEqual(['user', 'assistant', 'user']);
-    // The projector keeps the reminder behind the exchange — closing the open
-    // calls (synthetic results) and placing the reminder after them.
     expect(ctx.project().map((message) => message.role)).toEqual([
       'user',
       'assistant',
@@ -420,7 +414,6 @@ describe('Agent context', () => {
         toolCallId: 'call_write',
       },
     );
-    // The real result is pulled up; the still-open call is synthesized.
     expect(ctx.project().map((message) => message.role)).toEqual([
       'user',
       'assistant',
@@ -526,7 +519,6 @@ describe('Agent context', () => {
 
   it('get(start, end) returns the size of a context-message range', () => {
     ctx.appendAssistantTextWithUsage(1, 'previous answer', 1_000);
-    // The measured prefix covers the user + assistant pair (2 messages, 1_000 tokens).
     expect(contextSize.get()).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
 
     ctx.appendUserMessage([{ type: 'text', text: 'pending one'.repeat(20) }]);
@@ -535,14 +527,12 @@ describe('Agent context', () => {
     const messages = context.get();
     const tailEstimate = estimateTokensForMessages(messages.slice(2));
 
-    // Whole context: measured prefix + estimated tail.
     expect(contextSize.get()).toEqual({
       size: 1_000 + tailEstimate,
       measured: 1_000,
       estimated: tailEstimate,
     });
 
-    // A range fully inside the pending tail is purely estimated.
     const firstPending = estimateTokensForMessages(messages.slice(2, 3));
     expect(contextSize.get(2, 3)).toEqual({
       size: firstPending,
@@ -550,10 +540,8 @@ describe('Agent context', () => {
       estimated: firstPending,
     });
 
-    // The full measured prefix uses the deterministic aggregate.
     expect(contextSize.get(0, 2)).toEqual({ size: 1_000, measured: 1_000, estimated: 0 });
 
-    // A sub-range of the prefix falls back to a per-message estimate.
     const prefixHead = estimateTokensForMessages(messages.slice(0, 1));
     expect(contextSize.get(0, 1)).toEqual({
       size: prefixHead,
@@ -561,7 +549,6 @@ describe('Agent context', () => {
       estimated: 0,
     });
 
-    // A range spanning the measured/tail boundary splits both sides.
     const assistant = estimateTokensForMessages(messages.slice(1, 2));
     expect(contextSize.get(1, 3)).toEqual({
       size: assistant + firstPending,
@@ -569,7 +556,6 @@ describe('Agent context', () => {
       estimated: firstPending,
     });
 
-    // Negative indices resolve like `Array.prototype.slice`.
     expect(contextSize.get(-2)).toEqual({
       size: tailEstimate,
       measured: 0,
@@ -582,7 +568,6 @@ describe('Agent context', () => {
       estimated: firstPending,
     });
 
-    // An inverted range is empty.
     expect(contextSize.get(-1, -3)).toEqual({ size: 0, measured: 0, estimated: 0 });
   });
 
@@ -598,7 +583,6 @@ describe('Agent context', () => {
   it('rebases the measured prefix to an estimate when undo truncates it', () => {
     ctx.appendAssistantTextWithUsage(1, 'a1', 1_000);
     ctx.appendAssistantTextWithUsage(2, 'a2', 2_000);
-    // The measured prefix covers the full four-message context.
     expect(contextSize.get().measured).toBe(2_000);
 
     ctx.undoHistory(1);
@@ -606,7 +590,6 @@ describe('Agent context', () => {
     const surviving = context.get();
     expect(surviving.map((m) => m.role)).toEqual(['user', 'assistant']);
     const estimate = estimateTokensForMessages(surviving);
-    // The truncated prefix is rebased to an estimate of the surviving context.
     expect(contextSize.get()).toEqual({ size: estimate, measured: estimate, estimated: 0 });
   });
 
@@ -625,7 +608,6 @@ describe('Agent context', () => {
     ctx.appendAssistantText(1, 'first response');
     ctx.appendAssistantText(2, 'second response');
 
-    // Append a task notification (role: 'user' but not a real prompt)
     context.append(
       {
         role: 'user',
@@ -650,7 +632,6 @@ describe('Agent context', () => {
 
     ctx.undoHistory(1);
 
-    // Should remove the background notification, the second assistant, and the second user prompt
     expect(context.get().map((m) => m.role)).toEqual(['user', 'assistant']);
   });
 
@@ -674,10 +655,6 @@ describe('Agent context', () => {
 
     ctx.undoHistory(1);
 
-    // v2 undo cuts at the oldest undone real-user prompt regardless of origin:
-    // injections inside the removed range go with the turn (unlike v1, which
-    // kept them); dynamic context such as plan-mode notices and tool schemas
-    // self-heals via re-injection on the next turn boundary.
     expect(context.get()).toEqual([
       expect.objectContaining({
         role: 'user',

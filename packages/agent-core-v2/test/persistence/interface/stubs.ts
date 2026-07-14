@@ -11,7 +11,6 @@ import {
   type Page,
 } from '#/persistence/interface/queryStore';
 
-/** A no-op `IQueryStore`: every read is empty / undefined, every write is dropped. */
 export function stubQueryStore(): IQueryStore {
   return {
     _serviceBrand: undefined,

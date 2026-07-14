@@ -105,10 +105,6 @@ interface ManagedTask {
   readonly outputChunks: string[];
   outputSizeBytes: number;
   retainedOutputBytes: number;
-  /**
-   * True once a command has crossed `MAX_TASK_OUTPUT_BYTES` and termination has
-   * been requested. One-shot guard so the ceiling fires exactly once.
-   */
   outputLimitTripped: boolean;
   status: AgentTaskStatus;
   options: RegisterAgentTaskOptions & { description?: string };
@@ -132,21 +128,10 @@ interface ManagedTask {
   handleSubscription?: { dispose(): void };
 }
 
-const MAX_OUTPUT_BYTES = 1024 * 1024; // 1 MiB
+const MAX_OUTPUT_BYTES = 1024 * 1024;
 
-/**
- * Hard ceiling on the combined output a single shell command may stream before
- * it is force-terminated (SIGTERM → grace → SIGKILL). It guards both the
- * live-forward path and the on-disk `output.log` write chain from a runaway
- * command (e.g. `b3sum --length <huge>`) whose output would otherwise grow
- * without bound, filling the disk or retaining each pending-write chunk until
- * Node aborts with an out-of-memory crash. Scoped to process tasks (foreground
- * and background); subagent and user-question results are appended once and must
- * always be persisted, so they are intentionally not capped here.
- */
-const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024; // 16 MiB
+const MAX_TASK_OUTPUT_BYTES = 16 * 1024 * 1024;
 
-/** Terminal `stopReason` recorded when a command trips the output ceiling. */
 function outputLimitReason(): string {
   const mib = Math.floor(MAX_TASK_OUTPUT_BYTES / (1024 * 1024));
   return (
@@ -170,14 +155,6 @@ export function isAgentTaskTerminal(status: AgentTaskStatus): boolean {
   return TERMINAL_STATUSES.has(status);
 }
 
-/**
- * A manager-driven deadline (`timeoutMs` / `detachTimeoutMs`) sets
- * `entry.timedOut` before aborting. A process task that self-settles on that
- * abort reports `killed` (its signal was aborted); rewrite it to `timed_out`
- * so the terminal status always reflects the deadline, matching v1's
- * `settlementForOutcome` where a timeout outcome is forced to `timed_out`
- * regardless of how the worker responded to SIGTERM.
- */
 function coerceTimeoutSettlement(
   entry: ManagedTask,
   settlement: AgentTaskSettlement,
@@ -264,13 +241,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
   }
 
   private async restoreAfterReplay(): Promise<void> {
-    // `wire.replay` has rebuilt `TaskModel` from the persisted task.started /
-    // task.terminated records. Seed the restored "ghosts" from it first (the
-    // wire-replay contribution), THEN load from disk and reconcile — all inside
-    // this single onRestored handler so the ordering (wire ghosts -> disk
-    // ghosts -> reconcile) holds. loadFromDisk / reconcile are async (disk
-    // I/O); awaiting them keeps restore observable only after task state has
-    // reached the same shape as v1's resumed background-task manager.
     this.restoreGhostsFromWire();
     await this.loadFromDisk({ replace: false });
     await this.reconcile();
@@ -570,11 +540,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     return this.detachEntry(entry, false);
   }
 
-  /**
-   * Move a foreground task to the background, releasing its tool-call waiter.
-   * `viaTimeout` marks an automatic detach triggered by the task deadline (vs.
-   * an explicit user/RPC detach) so the waiter can word its result.
-   */
   private detachEntry(entry: ManagedTask, viaTimeout: boolean): AgentTaskInfo | undefined {
     if (TERMINAL_STATUSES.has(entry.status)) return this.toInfo(entry);
 
@@ -591,7 +556,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
         (entry.task === undefined ? undefined : entry.task.onDetach?.bind(entry.task));
       onDetach?.();
     } catch {
-      /* detach has already succeeded; hooks must not make RPC fail */
     }
     this.startOutputPersist(entry);
     void this.persistLive(entry);
@@ -613,12 +577,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     }
   }
 
-  /**
-   * Arm a manager-owned deadline (`timeoutMs` / `detachTimeoutMs`). A
-   * foreground task opted into auto-background survives its first deadline by
-   * detaching to the background — `detachEntry` re-arms `detachTimeoutMs` —
-   * instead of being killed; every other deadline terminates with grace.
-   */
   private armManagerTimeout(entry: ManagedTask, timeoutMs: number): void {
     entry.timeoutHandle = setTimeout(() => {
       entry.timeoutHandle = undefined;
@@ -634,10 +592,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     entry.timeoutHandle.unref?.();
   }
 
-  /**
-   * Foreground tasks opted into auto-background survive their first deadline
-   * by detaching to the background instead of being killed.
-   */
   private canAutoBackgroundOnTimeout(entry: ManagedTask): boolean {
     return entry.options.autoBackgroundOnTimeout === true && !this.isDetached(entry);
   }
@@ -653,18 +607,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     });
   }
 
-  /**
-   * Manager-driven teardown shared by every termination path: explicit `stop`,
-   * the wall-clock `timeoutMs` deadline, and the post-detach `detachTimeoutMs`
-   * deadline. It sends SIGTERM (or `handle.cancel()`), gives the task up to
-   * `SIGTERM_GRACE_MS` to settle, escalates to `forceStop` (SIGKILL) when it is
-   * still alive, and records `finalStatus`.
-   *
-   * This mirrors v1's `settlementForOutcome`, where timeout and stop always
-   * shared the same grace + force-stop sequence. Routing the deadline paths
-   * through here is what keeps a runaway process that ignores SIGTERM from
-   * leaking when its deadline fires.
-   */
   private async terminateWithGrace(
     entry: ManagedTask,
     options: {
@@ -678,7 +620,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       return this.toInfo(entry);
     }
 
-    // Disarm a pending wall-clock deadline so it cannot re-enter teardown.
     if (entry.timeoutHandle !== undefined) {
       clearTimeout(entry.timeoutHandle);
       entry.timeoutHandle = undefined;
@@ -720,7 +661,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
           (entry.task === undefined ? undefined : entry.task.forceStop?.bind(entry.task));
         await forceStop?.();
       } catch {
-        /* best effort */
       }
     }
 
@@ -866,13 +806,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     entry.outputSizeBytes += chunkBytes;
     this.appendRetainedOutput(entry, chunk, chunkBytes);
 
-    // Output ceiling: a single shell command must not grow the unbounded
-    // live-forward buffer or the on-disk write chain until the process runs out
-    // of memory or fills the disk. Trip once, then request graceful termination
-    // through the shared stop path (SIGTERM → grace → SIGKILL). Scoped to
-    // process tasks (foreground and background): subagent and user-question tasks
-    // append their bounded result in one shot and must always persist it, so they
-    // are intentionally not capped here.
     if (
       !entry.outputLimitTripped &&
       entry.task?.kind === 'process' &&
@@ -882,11 +815,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       void this.stop(entry.taskId, outputLimitReason());
     }
 
-    // Once the cap has tripped the task is being terminated: keep only the
-    // bounded in-memory ring buffer above and stop feeding the (unbounded) disk
-    // write chain. A producer that ignores SIGTERM could otherwise keep the
-    // chain — and the chunk strings each pending write retains — growing through
-    // the grace window until SIGKILL, re-introducing the OOM this cap prevents.
     if (entry.outputLimitTripped) return;
 
     if (!entry.outputPersistStarted) {

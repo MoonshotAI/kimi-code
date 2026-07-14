@@ -81,10 +81,6 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     matcherValue?: string,
     signal?: AbortSignal,
   ): void {
-    // Genuinely fire-and-forget: never throw on an already-aborted signal. A
-    // cancelled tool still finalizes its result (e.g. the "manually interrupted"
-    // output), and throwing here would clobber that with a finalize-abort error.
-    // The runner mirrors the legacy fire-and-forget behavior.
     try {
       void this.runner.fireAndForgetTrigger(event, {
         matcherValue,
@@ -182,9 +178,6 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
         if (
           ctx.finishReason === 'tool_calls' ||
           ctx.finishReason === 'filtered' ||
-          // The turn already continues on its own (a queued steer or
-          // orchestrator continuation), so a Stop-hook continuation would
-          // pile a redundant step onto it.
           loop.hasPendingRequests()
         ) {
           return;
@@ -192,9 +185,6 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
         const reason = await this.runStop(ctx);
         if (reason !== undefined) {
           this.stopHookContinuationUsed = true;
-          // The message lands immediately so it stays in history even when the
-          // turn dies before the next step (e.g. max-steps); the queued
-          // message-less request only drives the continuation step.
           this.context.append({
             role: 'user',
             content: [{ type: 'text', text: reason }],

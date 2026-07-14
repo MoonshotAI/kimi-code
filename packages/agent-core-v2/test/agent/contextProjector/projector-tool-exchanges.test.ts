@@ -44,11 +44,6 @@ function repairPayloads(warnings: WarningCall[]): Record<string, unknown>[] {
     .map((call) => call.payload as Record<string, unknown>);
 }
 
-// Tests for how the projector normalizes tool exchanges: results are pulled up
-// right after their call, messages that landed between a call and its results
-// are deferred to after the exchange, unanswered calls are closed with a
-// synthetic error result, stale duplicate results are dropped, and orphan
-// results are dropped in a real projection (but kept in a bare slice).
 
 const INTERRUPTED = 'Tool result is not available in the current context';
 
@@ -210,8 +205,6 @@ describe('projector tool-exchange normalization', () => {
   });
 
   it('drops a stale duplicate result for an already-answered call', () => {
-    // The call is closed (synthetically) when the next assistant turn starts;
-    // the trailing duplicate result for the same call is dropped.
     const history = [
       user('go'),
       assistant('', ['c1']),
@@ -246,9 +239,6 @@ describe('projector tool-exchange normalization', () => {
   });
 
   it('drops a partial assistant exchange without stranding its results', () => {
-    // A partial assistant (stream interrupted) is removed before the exchange
-    // normalization, so its recorded results become orphans and are dropped,
-    // and no synthetic result is invented for its open calls.
     const history: ContextMessage[] = [
       user('go'),
       { ...assistant('', ['c1', 'c2']), partial: true },
@@ -259,7 +249,6 @@ describe('projector tool-exchange normalization', () => {
   });
 
   it('keeps a bare result slice with no preceding assistant (used for sizing)', () => {
-    // A leading result is kept rather than treated as an orphan.
     expect(shape([toolResult('c1', 'partial result')])).toEqual(['tool:c1']);
   });
 
@@ -328,9 +317,6 @@ describe('projector tool-exchange normalization', () => {
   });
 
   it('passes raw media parts through as the tool_result output', () => {
-    // ReadMediaFile-style result: the live tool.result event carries the raw
-    // kosong content-part array, so the protocol projection must emit the same
-    // shape — otherwise media rendering is lost after reload/resume.
     const result: ContextMessage = {
       role: 'tool',
       content: [
@@ -607,9 +593,6 @@ describe('projector tool-exchange normalization', () => {
       const allParts = projected.flatMap((message) => message.content);
       expect(allParts.some((part) => part.type === 'image_url')).toBe(false);
       expect(allParts.some((part) => part.type === 'video_url')).toBe(false);
-      // The strip is full — the poisoned image could be anywhere — but the
-      // text around it survives, including the ReadMediaFile wrapper the
-      // model needs to re-read the file for conversion guidance.
       const texts = allParts.filter((part) => part.type === 'text').map((part) => part.text);
       expect(texts).toContain('look at these');
       expect(texts).toContain('<image path="/tmp/shot.png">');

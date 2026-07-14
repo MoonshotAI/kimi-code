@@ -19,18 +19,15 @@ import type { Message, MessageContent, MessageRole, ToolUseContent } from '@moon
 
 import type { ContextMessage } from './types';
 
-/** Derive a stable opaque message id from (sessionId, index) — fallback for legacy records that predate intrinsic message ids. */
 function deriveMessageId(sessionId: string, index: number): string {
   const padded = String(index).padStart(6, '0');
   return `msg_${sessionId}_${padded}`;
 }
 
-/** kosong's `Role` already matches the wire `MessageRole` — pass through. */
 function toProtocolRole(role: ContextMessage['role']): MessageRole {
   return role as MessageRole;
 }
 
-/** Translate one kosong content part to a wire content part. */
 function mapContentPart(part: ContextMessage['content'][number]): MessageContent {
   switch (part.type) {
     case 'text':
@@ -53,12 +50,6 @@ function mapContentPart(part: ContextMessage['content'][number]): MessageContent
   }
 }
 
-/**
- * Build the protocol-shaped `Message.content[]` for one history entry:
- *   1. `tool` role → a single `tool_result` part.
- *   2. other roles → each mapped content part, then one `tool_use` part per
- *      `ToolCall` (assistant only).
- */
 function buildProtocolContent(msg: ContextMessage): MessageContent[] {
   if (msg.role === 'tool') {
     if (msg.toolCallId === undefined) {
@@ -111,11 +102,6 @@ function buildProtocolContent(msg: ContextMessage): MessageContent[] {
   return base;
 }
 
-/**
- * Convert one history entry into the protocol's `Message` shape. `created_at`
- * is synthesized from the session's `createdAt` plus the entry index so it
- * increases monotonically across the array.
- */
 export function toProtocolMessage(
   sessionId: string,
   index: number,

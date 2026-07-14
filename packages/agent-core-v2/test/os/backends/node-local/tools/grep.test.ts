@@ -50,9 +50,6 @@ vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
 
 const signal = new AbortController().signal;
 const workspace: WorkspaceConfig = { workspaceDir: '/workspace', additionalDirs: ['/extra'] };
-// `--max-columns` is applied only outside `content` output mode, so it is kept
-// as a separate segment: non-content modes use `DEFAULT_RG_ARGS`, while
-// `content` mode uses `CONTENT_RG_ARGS` without the column cap.
 const MAX_COLUMNS_RG_ARGS = ['--max-columns', '500'] as const;
 const COMMON_RG_ARGS = [
   '--null',
@@ -298,8 +295,6 @@ describe('GrepTool', () => {
           reg.defineInstance(IHostEnvironment, createTestEnv(kaos));
           reg.defineInstance(ISessionWorkspaceContext, stubWorkspaceContext('/workspace'));
           reg.defineInstance(ITelemetryService, noopTelemetryService);
-          // Registered at Session scope in production (the strict container
-          // throws on unresolvable deps, so the stub mirrors that).
           reg.defineInstance(ISessionSkillCatalog, {
             _serviceBrand: undefined,
             catalog: { getSkillRoots: () => [] },
@@ -417,7 +412,6 @@ describe('GrepTool', () => {
         properties: Record<string, { description?: string }>;
       };
       expect(params.properties['output_mode']?.description).toContain('count_matches');
-      // count_matches emits per-file `path:count`, not a single total (grep.ts).
       expect(params.properties['output_mode']?.description).toContain('per-file');
     });
 
@@ -426,7 +420,6 @@ describe('GrepTool', () => {
       const params = tool.parameters as {
         properties: Record<string, { description?: string }>;
       };
-      // grep.ts sorts files_with_matches by mtime descending (b.mtime - a.mtime).
       expect(params.properties['output_mode']?.description).toContain('most-recently-modified');
     });
 
@@ -1483,9 +1476,6 @@ describe('GrepTool', () => {
   });
 
   it('keeps the count summary ahead of the body so the char cap cannot drop it', async () => {
-    // With head_limit: 0 the count rows are unbounded and can exceed ToolResultBuilder's
-    // char cap. The aggregate total must still reach the model, so it leads the output
-    // (a header before the rows) — truncation can only eat the rows, never the total.
     const fileCount = 5000;
     const stdout =
       Array.from({ length: fileCount }, (_, i) => `/workspace/f${String(i)}.txt:3`).join('\n') + '\n';
@@ -1501,7 +1491,6 @@ describe('GrepTool', () => {
     const output = toolContentString(result);
     const summary = `Found ${String(fileCount * 3)} total occurrences across ${String(fileCount)} files.`;
     expect(output).toContain(summary);
-    // The body was large enough to truncate; the summary survives because it leads it.
     expect(output).toContain('[...truncated]');
     expect(output.indexOf(summary)).toBeLessThan(output.indexOf('[...truncated]'));
   });
@@ -1524,10 +1513,6 @@ describe('GrepTool', () => {
   });
 
   it('forces filename in count_matches argv so single-file searches stay consistent', async () => {
-    // ripgrep omits the filename in --count-matches output when only one file
-    // is searched, so the tool must pass --with-filename. Otherwise the
-    // per-file display line and the summary disagree (e.g. `25850` followed by
-    // `Found 0 total occurrences across 0 files.`).
     const stdout = `${nullRecord('/workspace/src/only.ts', '25850')}\n`;
     const exec = vi.fn().mockResolvedValue(processWithOutput(stdout));
     const tool = new GrepTool(createFakeKaos({ exec }), workspace);
@@ -1740,9 +1725,6 @@ describe('GrepTool', () => {
   });
 
   it('appends the count-mode summary and pagination to the model-visible output', async () => {
-    // The "Found N occurrences" summary and the pagination notice must ride in `output`:
-    // `result.message` is dropped before the result reaches the model, so a side channel
-    // would hide the total and the "use offset=N to see more" cue.
     const counts = Array.from(
       { length: 10 },
       (_, i) => `/workspace/f${String(i)}.txt:3`,
@@ -1760,16 +1742,13 @@ describe('GrepTool', () => {
 
     const output = toolContentString(result);
     const dataLines = output.split('\n').filter((line) => /^f\d+\.txt:3$/.test(line));
-    expect(dataLines).toHaveLength(3); // head_limit=3 path:count lines
+    expect(dataLines).toHaveLength(3);
     expect(output).toContain('Found 30 total occurrences across 10 files.');
     expect(output).toContain('Results truncated to 3 lines (total: 10). Use offset=3 to see more.');
-    // ...and nothing model-relevant is hidden in the dropped message channel.
     expect((result as { message?: string }).message ?? '').not.toContain('Found');
   });
 
   it('truncates extremely long rg output with a byte-level safety cap message', async () => {
-    // py applies a DEFAULT_MAX_CHARS truncation in addition to head_limit;
-    // checks the message contains "Output is truncated".
     const longLine = '/workspace/big.txt:1:' + 'x'.repeat(100);
     const stdout = `${Array.from({ length: 5000 }, () => longLine).join('\n')}\n`;
     const exec = vi.fn().mockResolvedValue(processWithOutput(stdout));
@@ -1916,7 +1895,6 @@ describe('GrepTool', () => {
     );
 
     const flags = exec.mock.calls[0] as string[];
-    // -C takes precedence over -A/-B in content mode (matches existing TS lockdown)
     expect(flags).toContain('-i');
     expect(flags).toContain('-U');
     expect(flags).toContain('--multiline-dotall');
@@ -1930,9 +1908,6 @@ describe('GrepTool', () => {
     expect(flags[ddIdx + 1]).toBe('test');
     expect(flags[ddIdx + 2]).toBe('/workspace');
 
-    // expanduser on ~ in path: assert the exact post-expansion path so
-    // the test fails if Grep silently treats `~` as a literal directory
-    // (canonicalizes to "/home/test/~/foo") instead of expanding it.
     const homeTool = new GrepTool(
       createFakeKaos({ exec, gethome: () => '/home/test' }),
       { workspaceDir: '/home/test', additionalDirs: [] },
@@ -2070,8 +2045,6 @@ describe('GrepTool', () => {
     const output = toolContentString(result);
     expect(output).toContain('/tmp/abc/file.py');
     expect(output).toContain('file.py');
-    // The /tmp/a entry should be relativized to "file.py"; the /tmp/abc
-    // entry must stay absolute so it does not collide with the relative form.
     expect(output.split('\n')).toEqual(expect.arrayContaining(['file.py', '/tmp/abc/file.py']));
   });
 

@@ -17,24 +17,16 @@ export type HostFsChangeKind = 'file' | 'directory';
 export type HostFsChangeAction = 'created' | 'modified' | 'deleted';
 
 export interface HostFsChange {
-  /** Absolute path that changed. */
   readonly path: string;
   readonly action: HostFsChangeAction;
   readonly kind: HostFsChangeKind;
 }
 
 export interface HostFsWatchOptions {
-  /** Watch recursively into subdirectories. Defaults to `true`. */
   readonly recursive?: boolean;
-  /**
-   * Predicate returning `true` for paths the watcher should ignore. Defaults
-   * to a filter that suppresses `.git` directories. Replaces the default when
-   * provided.
-   */
   readonly ignored?: (path: string) => boolean;
 }
 
-/** A live watch subscription. Dispose to stop receiving events. */
 export interface IHostFsWatchHandle extends IDisposable {
   readonly onDidChange: Event<HostFsChange>;
 }
@@ -42,11 +34,6 @@ export interface IHostFsWatchHandle extends IDisposable {
 export interface IHostFsWatchService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Watch `path` (absolute, file or directory) and return a handle that fires
-   * for changes beneath it. Synchronous — the underlying watcher is armed
-   * immediately; dispose the handle to stop.
-   */
   watch(path: string, options?: HostFsWatchOptions): IHostFsWatchHandle;
 }
 

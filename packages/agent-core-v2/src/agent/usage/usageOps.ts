@@ -26,8 +26,6 @@ export type UsageRecordScope = 'session' | 'turn';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
-    // Canonical declaration for the agent status-bar event (`IEventBus`); each
-    // domain derives/publishes a subset.
     'agent.status.updated': {
       usage?: UsageStatus;
       swarmMode?: boolean;

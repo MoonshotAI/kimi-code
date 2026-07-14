@@ -22,21 +22,11 @@ import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import type { SystemPromptContext } from './profile';
 
-// Soft budget for the combined AGENTS.md content injected into the system
-// prompt. ~32 KB is roughly 8K–20K tokens (≈1.5–3% of a 262144-token context),
-// large enough to leave the bulk of the context window to the conversation
-// while still catching accidental oversized instruction files. Exceeding it no
-// longer truncates content; it only surfaces a user-visible warning so the user
-// can trim oversized instruction files.
 export const AGENTS_MD_RECOMMENDED_MAX_BYTES = 32 * 1024;
 
 export const LIST_DIR_ROOT_WIDTH = 30;
 export const LIST_DIR_CHILD_WIDTH = 10;
 
-/**
- * Small dep bag threaded through the context helpers so they only depend on
- * the filesystem primitive plus the host home directory, not on `IKaos`.
- */
 interface ProfileContextDeps {
   readonly fs: IHostFileSystem;
   readonly homeDir: string;
@@ -46,7 +36,6 @@ export interface PreparedSystemPromptContext extends SystemPromptContext {
   readonly cwdListing?: string;
   readonly agentsMd?: string;
   readonly additionalDirsInfo?: string;
-  /** Present when the combined AGENTS.md content exceeds the recommended size. */
   readonly agentsMdWarning?: string;
 }
 
@@ -106,14 +95,10 @@ async function loadAgentsMdForRoots(
     return true;
   };
 
-  // User-level files come first so any project-level AGENTS.md overrides them.
-  // The brand dir follows KIMI_CODE_HOME (default ~/.kimi-code); the generic
-  // .agents dir stays under the real OS home so it can be shared across tools.
   const realHome = deps.homeDir;
   const brandDir = brandHome ?? join(realHome, '.kimi-code');
   await collect(join(brandDir, 'AGENTS.md'));
 
-  // Generic user-level dir (.agents) matches skill discovery.
   const genericDirs = [join(realHome, '.agents')];
   const genericFiles = genericDirs.flatMap((dir) =>
     ['AGENTS.md', 'agents.md'].map((name) => join(dir, name)),
@@ -250,11 +235,6 @@ function dedupeDirs(dirs: readonly string[]): string[] {
   return result;
 }
 
-// ---------------------------------------------------------------------------
-// listDirectory — compact 2-level directory tree for LLM context.
-// Port of v1 `packages/agent-core/src/tools/support/list-directory.ts`, driven
-// through the os `IHostFileSystem` (`readdir` + `stat`).
-// ---------------------------------------------------------------------------
 
 interface ListDirectoryOptions {
   readonly collapseHiddenDirs?: boolean;

@@ -16,22 +16,10 @@ import type { FsChangeEvent } from '@moonshot-ai/protocol';
 export interface ISessionFsWatchService {
   readonly _serviceBrand: undefined;
 
-  /**
-   * Replace the set of workspace-relative paths to observe. `'.'` watches the
-   * whole workspace. Passing an empty array stops the underlying watcher.
-   * Paths are confined to the workspace; absolute / `..` / escaping inputs
-   * throw `FS_PATH_ESCAPES`.
-   */
   setWatchedPaths(paths: readonly string[]): void;
 
-  /** Currently observed workspace-relative paths (posix). */
   readonly watchedPaths: readonly string[];
 
-  /**
-   * Coalesced change feed. Each event carries the changes for one debounce
-   * window; when the window overflows, `changes` is emptied and `truncated`
-   * (with `count`) is set so consumers can fall back to a full refresh.
-   */
   readonly onDidChangeFiles: Event<FsChangeEvent>;
 }
 

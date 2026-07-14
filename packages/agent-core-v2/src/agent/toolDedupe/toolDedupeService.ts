@@ -212,8 +212,6 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     args: unknown,
     dupType: ToolCallDupType,
   ): void {
-    // Tag the call so the executor's `tool_call` telemetry can carry dup_type;
-    // both same_step (placeholder path) and cross_step dups reach trackToolCall.
     this.toolExecutor.recordDupType(toolCallId, dupType);
     this.telemetry.track2('tool_call_dedup_detected', {
       turn_id: this.activeTurnId ?? 0,

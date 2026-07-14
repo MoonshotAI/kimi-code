@@ -29,11 +29,6 @@ export class SkillCatalogRuntimeOptions implements ISkillCatalogRuntimeOptions {
   constructor(readonly explicitDirs?: readonly string[]) {}
 }
 
-/**
- * Seed {@link ISkillCatalogRuntimeOptions} with caller-supplied explicit skill
- * dirs (v1's SDK `skillDirs`). Empty/absent input seeds nothing so the
- * registered default (no explicit dirs) stays in effect.
- */
 export function skillCatalogRuntimeOptionsSeed(
   explicitDirs: readonly string[] | undefined,
 ): ScopeSeed {

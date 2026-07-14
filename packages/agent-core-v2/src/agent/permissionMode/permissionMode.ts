@@ -13,7 +13,6 @@ export interface IAgentPermissionModeService {
   readonly mode: PermissionMode;
   setMode(mode: PermissionMode): void;
 
-  /** Fires when the effective mode actually changes (no-op re-dispatch stays silent). */
   readonly onDidChangeMode: Event<PermissionModeChangedContext>;
 }
 

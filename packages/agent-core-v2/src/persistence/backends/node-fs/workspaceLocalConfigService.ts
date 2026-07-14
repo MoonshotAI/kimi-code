@@ -299,7 +299,6 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 }
 
 function isPathMissing(error: unknown): boolean {
-  // hostFs wraps raw errnos in `HostFsError`; classify the unwrapped cause.
   const code = getErrorCode(unwrapErrorCause(error));
   return code === 'ENOENT' || code === 'ENOTDIR';
 }

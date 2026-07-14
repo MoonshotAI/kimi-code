@@ -50,13 +50,6 @@ export interface TerminalProcess {
   kill(): void;
 }
 
-/**
- * App-scoped OS terminal process service.
- *
- * Owns the actual PTY process layer for the whole process. It does not know
- * about sessions, workspace paths, or output buffering; it only spawns and
- * exposes `TerminalProcess` handles directly via `node-pty`.
- */
 export interface IHostTerminalService {
   readonly _serviceBrand: undefined;
 

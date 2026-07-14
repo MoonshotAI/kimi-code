@@ -29,8 +29,6 @@ import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { IWorkspaceRegistry, type Workspace, type WorkspaceUpdate } from './workspaceRegistry';
 import { IWorkspacePersistence } from './workspacePersistence';
 
-// Legacy v1 session index, read only for the one-shot rebuild. Empty scope
-// resolves to `<homeDir>/<key>` (join skips empty segments).
 const SESSION_INDEX_SCOPE = '';
 const SESSION_INDEX_KEY = 'session_index.jsonl';
 
@@ -45,7 +43,6 @@ interface SessionIndexLine {
 export class WorkspaceRegistryService implements IWorkspaceRegistry {
   declare readonly _serviceBrand: undefined;
 
-  /** `undefined` until the first access loads/rebuilds the catalog. */
   private cache: Map<string, Workspace> | undefined;
   private opQueue: Promise<unknown> = Promise.resolve();
 
@@ -72,14 +69,10 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
   createOrTouch(root: string, name?: string): Promise<Workspace> {
     return this.runExclusive(async () => {
       const cache = await this.ensureLoaded();
-      // Refuse to catalog a root that is not a live directory: every consumer
-      // of a workspace (session cwd, fs tools, Bash spawn) assumes it exists,
-      // and failing here beats a misleading spawn ENOENT at prompt time.
       let stat;
       try {
         stat = await this.hostFs.stat(root);
       } catch (error) {
-        // hostFs wraps raw errnos in `HostFsError`; classify the unwrapped cause.
         const code = (unwrapErrorCause(error) as NodeJS.ErrnoException | undefined)?.code;
         if (code === 'ENOENT' || code === 'ENOTDIR') {
           throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} does not exist`);
@@ -200,14 +193,6 @@ function parseSessionIndexLine(line: string): SessionIndexLine | undefined {
   }
 }
 
-/**
- * Collapse registered workspaces that share a `root`. The persisted catalog
- * (v1-compatible `workspaces.json`) can hold legacy entries whose id was
- * computed by an older `encodeWorkDirKey` (e.g. realpath-based on Windows) for
- * the same folder, so one root may map to multiple ids. Prefer the entry whose
- * id matches the current canonical key so current sessions' `workspace_id`
- * still resolves and the same folder is not listed twice.
- */
 function dedupeByRoot(cache: ReadonlyMap<string, Workspace>): Workspace[] {
   const byRoot = new Map<string, Workspace>();
   for (const ws of cache.values()) {

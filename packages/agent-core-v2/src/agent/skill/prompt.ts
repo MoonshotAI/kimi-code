@@ -8,13 +8,6 @@ export interface RenderSkillPromptInput {
   readonly skillArgs: string;
   readonly skillContent: string;
   readonly skillSource?: SkillSource | undefined;
-  /**
-   * Absolute directory containing the skill's SKILL.md and any bundled
-   * resources (scripts, templates, data files). Surfaced on the loaded
-   * block so the agent can locate those resources with relative paths —
-   * without it, a skill that ships helper scripts is unusable unless the
-   * author manually embeds `${KIMI_SKILL_DIR}` in the body.
-   */
   readonly skillDir?: string | undefined;
 }
 

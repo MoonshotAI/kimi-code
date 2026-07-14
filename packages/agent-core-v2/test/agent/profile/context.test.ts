@@ -8,11 +8,6 @@ import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { loadAgentsMd, prepareSystemPromptContext } from '#/agent/profile/context';
 
-/**
- * Build an os-backed `IHostFileSystem`. The v2 profile context loaders take
- * `{ fs, homeDir }` and read every AGENTS.md through the fs's `readText` /
- * `readdir` / `stat` using absolute paths, so no cwd rooting is needed.
- */
 function createFs(): IHostFileSystem {
   return new HostFileSystem();
 }
@@ -129,7 +124,6 @@ describe('loadAgentsMd nested project hierarchy', () => {
     extraDirs.push(projectRoot);
     const leaf = join(projectRoot, 'packages', 'app');
     await mkdir(leaf, { recursive: true });
-    // Mark the project root so findProjectRoot stops here.
     await mkdir(join(projectRoot, '.git'));
     await writeFile(join(projectRoot, 'AGENTS.md'), 'root instructions', 'utf-8');
     await writeFile(join(projectRoot, 'packages', 'AGENTS.md'), 'packages instructions', 'utf-8');

@@ -207,13 +207,11 @@ describe('isRetryableGenerateError', () => {
 
 describe('isImageFormatError', () => {
   it('matches documented provider image format/data rejections', () => {
-    // OpenAI
     expect(
       isImageFormatError(
         new APIStatusError(400, 'The image data you provided does not represent a valid image'),
       ),
     ).toBe(true);
-    // Anthropic media_type enum violation
     expect(
       isImageFormatError(
         new APIStatusError(
@@ -222,16 +220,13 @@ describe('isImageFormatError', () => {
         ),
       ),
     ).toBe(true);
-    // Anthropic decode failure
     expect(isImageFormatError(new APIStatusError(400, 'Could not process image'))).toBe(true);
-    // Moonshot/Kimi (from the Kimi Code error reference)
     expect(
       isImageFormatError(
         new APIStatusError(400, 'Invalid request: unsupported image url: /tmp/photo.avif'),
       ),
     ).toBe(true);
     expect(isImageFormatError(new APIStatusError(400, 'unsupported image format'))).toBe(true);
-    // Gemini
     expect(isImageFormatError(new APIStatusError(400, 'Unable to process input image'))).toBe(true);
     expect(
       isImageFormatError(
@@ -266,9 +261,6 @@ describe('isImageFormatError', () => {
   });
 
   it('does not match image count/size/support errors that stripping media cannot fix', () => {
-    // Stripping media to zero would let these requests "succeed" with the
-    // model blind to the user's images — hiding the real error. They must
-    // surface instead of triggering a media-stripped resend.
     expect(isImageFormatError(new APIStatusError(400, 'too many images in request'))).toBe(false);
     expect(
       isImageFormatError(new APIStatusError(400, 'image dimension 5000 exceeds maximum 2048')),
@@ -277,9 +269,6 @@ describe('isImageFormatError', () => {
       isImageFormatError(new APIStatusError(400, 'image input is disabled for this model')),
     ).toBe(false);
     expect(isImageFormatError(new APIStatusError(400, 'image_url is not allowed'))).toBe(false);
-    // Documented provider messages that are image-shaped but not
-    // format/data errors: Anthropic's per-image size cap, Moonshot's
-    // capability code, Gemini's unsupported-inlineData rejection.
     expect(
       isImageFormatError(
         new APIStatusError(
@@ -292,9 +281,6 @@ describe('isImageFormatError', () => {
     expect(
       isImageFormatError(new APIStatusError(400, "`inlineData` isn't supported by this model.")),
     ).toBe(false);
-    // Video/audio media_type errors are NOT image errors: they must surface
-    // (no conversion-guidance path exists for video) instead of triggering a
-    // blind media-stripped resend.
     expect(
       isImageFormatError(
         new APIStatusError(
@@ -303,7 +289,6 @@ describe('isImageFormatError', () => {
         ),
       ),
     ).toBe(false);
-    // Bare "media type" phrasings for audio/video inputs likewise surface.
     expect(
       isImageFormatError(new APIStatusError(400, 'unsupported media type for audio input')),
     ).toBe(false);
@@ -311,9 +296,6 @@ describe('isImageFormatError', () => {
   });
 
   it('is excluded from the transient-retry fallback so dedicated recovery fires first', () => {
-    // A base ChatProviderError is normally retried as an unclassified
-    // transient; image-format errors must not be, or the run would burn the
-    // retry budget on an identical request before reaching the media strip.
     expect(isRetryableGenerateError(new ChatProviderError('transient blip'))).toBe(true);
     expect(
       isRetryableGenerateError(
@@ -437,18 +419,11 @@ describe('normalizeAPIStatusError', () => {
   });
 
   it.each([
-    // Moonshot / Kimi 413 observed in the field when accumulated media pushed
-    // the request body over the provider's byte ceiling.
     [413, 'Request exceeds the maximum size'],
-    // Reverse-proxy (nginx-style) 413 with an HTML body.
     [413, '413 <html><head><title>413 Request Entity Too Large</title></head></html>'],
-    // Anthropic request_too_large: body over the 32 MB API ceiling.
     [413, 'request_too_large: Request exceeds the maximum allowed number of bytes'],
-    // RFC 9110 reason phrase / Node-style wording.
     [413, 'Payload Too Large'],
     [413, 'Content Too Large'],
-    // Plain wordings without "entity": generic gateways say "Request too
-    // large"; Go's http.MaxBytesReader says "http: request body too large".
     [413, 'Request too large'],
     [413, 'Request body too large'],
     [413, 'http: request body too large'],
@@ -460,19 +435,13 @@ describe('normalizeAPIStatusError', () => {
   });
 
   it('keeps a 413 with token-overflow wording as APIContextOverflowError', () => {
-    // Vertex phrases prompt-too-long as a 413; that is a token problem
-    // (recoverable by compaction), not a request-body-size problem.
     const error = normalizeAPIStatusError(413, 'prompt is too long: 210000 tokens > 200000 maximum');
     expect(error).toBeInstanceOf(APIContextOverflowError);
     expect(error).not.toBeInstanceOf(APIRequestTooLargeError);
   });
 
   it.each([
-    // A bare 413 with unrecognized wording stays unclassified: Vertex abuses
-    // 413 for prompt-too-long, so the status alone is not proof of a
-    // body-size rejection.
     [413, 'Request failed'],
-    // Size wording without the 413 status is not classified either.
     [400, 'Payload too large'],
     [422, 'Request entity too large'],
   ])('keeps %i "%s" as plain APIStatusError', (statusCode, message) => {
@@ -502,8 +471,6 @@ describe('parseRetryAfterMs', () => {
 });
 
 describe('isToolExchangeAdjacencyError', () => {
-  // The exact Anthropic message observed in the field when a tool_use was not
-  // immediately followed by its tool_result.
   const ANTHROPIC_MISSING_RESULT =
     'messages.142: `tool_use` ids were found without `tool_result` blocks immediately after: ' +
     'toolu_01MWFhDRqdbB4nzCJNuWYiun. Each `tool_use` block must have a corresponding ' +
@@ -536,10 +503,6 @@ describe('isToolExchangeAdjacencyError', () => {
     );
   });
 
-  // The exact OpenAI-compatible (Moonshot / Kimi) message observed in the field
-  // when a `tool` message's `tool_call_id` has no matching `tool_calls` entry in
-  // the preceding assistant message. The doubled space is verbatim from the
-  // provider.
   const MOONSHOT_TOOL_CALL_ID_NOT_FOUND = '400 tool_call_id  is not found';
 
   it('matches the OpenAI/Moonshot tool_call_id-not-found 400', () => {
@@ -557,10 +520,6 @@ describe('isToolExchangeAdjacencyError', () => {
     ).toBe(true);
   });
 
-  // OpenAI / DeepSeek / vLLM and other OpenAI-compatible providers phrase the
-  // orphan-`tool`-result case as a `role 'tool'` message that has no preceding
-  // assistant `tool_calls`. Observed verbatim in the field (see zed #41531,
-  // llama_index #13715). Quote style varies by provider (straight or backtick).
   it('matches the OpenAI/DeepSeek role-tool-without-tool_calls 400', () => {
     expect(
       isToolExchangeAdjacencyError(
@@ -580,10 +539,6 @@ describe('isToolExchangeAdjacencyError', () => {
     ).toBe(true);
   });
 
-  // The mirror-image OpenAI-compatible rejection: an assistant `tool_calls`
-  // message with no following `tool` results. OpenAI/Portkey (#6621, error
-  // 10067) spell it out; Qwen/DashScope (#454) uses double quotes; some
-  // providers emit the terse "(insufficient tool messages following ...)".
   it('matches the assistant-tool_calls-without-response 400', () => {
     expect(
       isToolExchangeAdjacencyError(
@@ -615,11 +570,7 @@ describe('isToolExchangeAdjacencyError', () => {
       isToolExchangeAdjacencyError(new APIContextOverflowError(400, 'context length exceeded')),
     ).toBe(false);
     expect(isToolExchangeAdjacencyError(new APIStatusError(400, 'Bad request'))).toBe(false);
-    // A bare "not found" without a tool_call_id anchor must not match, so an
-    // unrelated 404-style body cannot trip the tool-exchange recovery.
     expect(isToolExchangeAdjacencyError(new APIStatusError(400, 'resource not found'))).toBe(false);
-    // A model-availability 400 (observed alongside this family in the field) is a
-    // config error, not a tool-exchange defect — strict resend must not fire.
     expect(
       isToolExchangeAdjacencyError(
         new APIStatusError(400, '400 Not supported model mimo-v2.5-pro-ultraspeed'),

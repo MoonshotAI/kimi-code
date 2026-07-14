@@ -83,11 +83,6 @@ describe('AgentContextInjectorService', () => {
     disposables.dispose();
   });
 
-  /**
-   * Splice the stub's backing history directly and publish `context.spliced`,
-   * standing in for the removed `IAgentContextMemoryService.splice` so the
-   * injector still observes non-append splices (compaction, deletions).
-   */
   function spliceContext(
     start: number,
     deleteCount: number,

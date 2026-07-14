@@ -85,9 +85,6 @@ export function resolveThinkingEffortForModel(
   const normalized = nonEmpty(requested)?.toLowerCase();
   let effort: ThinkingEffort;
   if (normalized !== undefined) {
-    // A requested effort is taken verbatim — including 'on', which is a valid
-    // wire value for boolean thinking models. Normalizing 'on' to a concrete
-    // effort is the UI boundary's job, not the resolver's (v1 parity).
     effort = normalized as ThinkingEffort;
   } else if (defaults?.enabled === false) {
     effort = 'off';
@@ -96,10 +93,6 @@ export function resolveThinkingEffortForModel(
   }
 
   if (effort === 'off' && model?.alwaysThinking === true) {
-    // always_thinking forces thinking on, but an explicitly configured effort
-    // is still honored — `enabled = false` only expresses the intent to
-    // disable, it should not also discard a chosen effort. Fall back to the
-    // model default only when no effort is configured.
     return configured ?? defaultThinkingEffortForModel(model);
   }
   return effort;

@@ -54,7 +54,6 @@ export class MessageLegacyService implements IMessageLegacyService {
 
   async list(sessionId: string, query: MessageListQuery): Promise<PageResponse<Message>> {
     const all = await this.loadMessages(sessionId);
-    // v1 / SCHEMAS §1.3: newest first (`created_at desc`).
     const desc = [...all].reverse();
 
     let pivotIndex = -1;
@@ -66,13 +65,10 @@ export class MessageLegacyService implements IMessageLegacyService {
 
     let slice: Message[];
     if (query.before_id !== undefined && pivotIndex >= 0) {
-      // before_id = older entries → tail of the desc array, exclusive of pivot.
       slice = desc.slice(pivotIndex + 1);
     } else if (query.after_id !== undefined && pivotIndex >= 0) {
-      // after_id = newer entries → head of the desc array, exclusive of pivot.
       slice = desc.slice(0, pivotIndex);
     } else {
-      // Unknown cursor → fall through to the full list, matching v1.
       slice = desc;
     }
 
@@ -81,15 +77,12 @@ export class MessageLegacyService implements IMessageLegacyService {
     const page = slice.slice(0, pageSize);
     const hasMore = slice.length > pageSize;
 
-    // Role filter is applied AFTER pagination, matching v1.
     const filtered = query.role !== undefined ? page.filter((m) => m.role === query.role) : page;
 
     return { items: filtered, has_more: hasMore };
   }
 
   async get(sessionId: string, messageId: string): Promise<Message> {
-    // Resolve the session first: an unknown sid maps to 40401 even when the
-    // message id is malformed or belongs to another session (40403).
     const all = await this.loadMessages(sessionId);
     const entry = all.find((m) => m.id === messageId);
     if (entry === undefined) {
@@ -101,12 +94,6 @@ export class MessageLegacyService implements IMessageLegacyService {
     return entry;
   }
 
-  /**
-   * Full main-agent transcript projected into the v1 `Message` wire shape,
-   * oldest-first. Throws `session.not_found` (→ 40401) when the session is
-   * unknown. An unreachable cold session (workspace gone) yields an empty
-   * transcript rather than an error.
-   */
   private async loadMessages(sessionId: string): Promise<Message[]> {
     const summary = await this.index.get(sessionId);
     if (summary === undefined) {
@@ -115,15 +102,8 @@ export class MessageLegacyService implements IMessageLegacyService {
 
     const session = await this.lifecycle.resume(sessionId);
     if (session === undefined) return [];
-    // Materialize the main agent so the live context is available for the
-    // unflushed-tail merge below. `resume` already restored + replayed the
-    // wire for a cold session; a live session is already current.
     const agent = await ensureMainAgent(session);
 
-    // Reduce the transcript from the main agent's in-memory record journal
-    // (seeded by `resume` from disk and kept current by live dispatch) instead
-    // of re-reading `wire.jsonl`. The journal is always at least as new as the
-    // live context, so the tail merge below can only append (mirrors v1).
     const transcript = this.readTranscript(agent);
     const contextMessages = agent.accessor.get(IAgentContextMemoryService).get();
     const entries = mergeLiveTail(transcript, contextMessages);
@@ -131,7 +111,6 @@ export class MessageLegacyService implements IMessageLegacyService {
     return entries.map((msg, index) => toProtocolMessage(sessionId, index, msg, summary.createdAt));
   }
 
-  /** Reduce the main agent's in-memory record journal into the full transcript. */
   private readTranscript(agent: IAgentScopeHandle): ContextTranscript {
     const records = agent
       .accessor.get(IAgentWireRecordService)
@@ -140,13 +119,6 @@ export class MessageLegacyService implements IMessageLegacyService {
   }
 }
 
-/**
- * Append the unflushed live tail: when the in-memory (folded) context is
- * longer than the journal-derived `foldedLength`, the surplus is records that
- * have landed in the live context within the same dispatch but not yet in the
- * journal, and must be appended so a read on a live session does not trail
- * memory.
- */
 function mergeLiveTail(
   transcript: ContextTranscript,
   contextMessages: readonly ContextMessage[],

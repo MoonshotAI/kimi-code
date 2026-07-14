@@ -25,11 +25,6 @@ const LEGACY_SESSION_APPROVAL_ACTION_TO_PATTERN: Readonly<Record<string, string>
   'write file': 'Write',
 };
 
-// v1.1 cached these action labels directly but did not have enough stable data
-// to reconstruct an equivalent v1.2 rule. Migrating to broad `Bash` would
-// expand the approval, and there is no safe `Bash(...)` subject to recover —
-// in particular, `run background command` would need to encode
-// `run_in_background=true`, which `Bash`'s `matchesRule` cannot express.
 const LEGACY_SESSION_APPROVAL_UNRESTORABLE_ACTIONS = new Set<string>([
   'run command in plan mode',
   'run background command',

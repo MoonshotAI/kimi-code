@@ -123,7 +123,6 @@ describe('SessionLogService', () => {
     const log = session.accessor.get(ILogService);
     log.info('on-dispose');
     host.dispose();
-    // dispose() is synchronous and uses flushSync; read after the call returns.
     return readSessionLog().then((text) => {
       expect(text).toContain('on-dispose');
     });
@@ -132,9 +131,6 @@ describe('SessionLogService', () => {
 
 describe('ILogService cross-scope resolution', () => {
   beforeEach(() => {
-    // The module-level hook registers only the Session binding; override with the
-    // production layout — one token bound at both App and Session — to pin how the
-    // single ILogService token resolves across scopes.
     _clearScopedRegistryForTests();
     registerScopedService(LifecycleScope.App, ILogService, AppLogService, InstantiationType.Delayed, 'log');
     registerScopedService(LifecycleScope.Session, ILogService, SessionLogService, InstantiationType.Delayed, 'log');
@@ -151,10 +147,8 @@ describe('ILogService cross-scope resolution', () => {
 
     expect(appLog).toBeInstanceOf(AppLogService);
     expect(sessionLog).toBeInstanceOf(SessionLogService);
-    // Agent has no own binding and falls back to the Session logger.
     expect(agentLog).toBeInstanceOf(SessionLogService);
 
-    // Each scope is its own singleton; Agent shares the Session instance.
     expect(appLog).not.toBe(sessionLog);
     expect(agentLog).toBe(sessionLog);
 

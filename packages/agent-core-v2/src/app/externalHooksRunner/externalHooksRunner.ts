@@ -17,12 +17,7 @@ export interface ExternalHooksRunnerTriggerArgs {
   readonly matcherValue?: HookMatcherValue;
   readonly inputData?: Record<string, unknown>;
   readonly signal?: AbortSignal;
-  /**
-   * Working directory passed to hooks without their own `cwd`. Defaults to the
-   * app bootstrap cwd when the caller omits it.
-   */
   readonly cwd?: string;
-  /** Session id written into the hook input payload. Defaults to `''`. */
   readonly sessionId?: string;
 }
 

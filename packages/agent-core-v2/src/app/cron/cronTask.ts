@@ -20,9 +20,4 @@ export interface CronTask {
 
 export type CronTaskInit = Omit<CronTask, 'id' | 'createdAt'>;
 
-/**
- * `tags` key carrying the id of the session a task belongs to. The Session
- * projection (`ISessionCronService`) filters the workspace-level store on
- * this tag, and session fork rewrites it when cloning tasks for the fork.
- */
 export const CRON_SESSION_TAG = 'sessionId';

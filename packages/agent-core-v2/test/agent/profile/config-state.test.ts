@@ -224,10 +224,6 @@ describe('ConfigState prompt cache hint', () => {
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     profile.update({ modelAlias: 'kimi-code' });
 
-    // The session id is now applied to the resolved `Model`'s generation kwargs
-    // (`prompt_cache_key`) by `AgentProfileService.resolveModel` for kimi
-    // models; the `Model` god-object no longer exposes the raw provider config,
-    // so we assert the resolved protocol and the "not stored on Agent" invariant.
     expect(profile.resolveModel()?.protocol).toBe('kimi');
     expect('sessionId' in ctx).toBe(false);
   });
@@ -302,9 +298,6 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
   it('builds the provider with thinking enabled even after thinking was set off', async () => {
     profile.update({ modelAlias: 'kimi-code/deep', thinkingLevel: 'off' });
 
-    // The Model god-object carries no raw kwargs; the thinking state is
-    // materialized into the kimi ChatProvider's `_generationKwargs` at request
-    // time, so inspect the provider the request actually ran with.
     await requester.request({}, undefined, new AbortController().signal);
 
     const gen = Reflect.get(capturedProvider as object, '_generationKwargs') as {
@@ -379,10 +372,6 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     requester = ctx.get(IAgentLLMRequesterService);
   }
 
-  // The env-derived request overrides ride on the resolved Model as lazy
-  // transforms; they materialize into the kimi ChatProvider's
-  // `_generationKwargs` only when a request runs, so drive one and inspect the
-  // provider it ran with (the provider compaction requests use the same path).
   function generationKwargs(): Record<string, unknown> {
     return Reflect.get(capturedProvider as object, '_generationKwargs') as Record<string, unknown>;
   }

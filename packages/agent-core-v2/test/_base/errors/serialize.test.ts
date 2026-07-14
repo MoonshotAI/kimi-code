@@ -1,7 +1,5 @@
 import { describe, expect, it } from 'vitest';
 
-// Side effect: populate the error-code registry through the facade, the way
-// the package entrypoint does.
 import '#/errors';
 
 import { Error2 } from '#/_base/errors/errors';

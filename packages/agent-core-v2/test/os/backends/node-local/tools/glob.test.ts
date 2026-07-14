@@ -36,10 +36,6 @@ import { probeHostEnvironmentFromNode } from '#/_base/execEnv/environmentProbe';
 import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/telemetry';
 import type { ExecutableToolContext, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';
 
-// The ripgrep binary locator is mocked out for unit tests so they assert on
-// argument building and output parsing without probing a real `rg`. The
-// integration suite below imports the real locator and feeds its resolution
-// back into this mock, matching the v1 test flow.
 vi.mock('#/os/backends/node-local/tools/rgLocator', () => ({
   ensureRgPath: vi.fn(async (): Promise<{ path: string; source: string }> => ({
     path: 'rg',
@@ -60,7 +56,6 @@ function fileStat(): HostFileStat {
   return { isFile: true, isDirectory: false, size: 0 };
 }
 
-/** Fake fs with a spied `stat` for the directory pre-check. */
 function createTestFs(opts: { stat?: ReturnType<typeof vi.fn>; readdir?: ReturnType<typeof vi.fn> } = {}) {
   const stat = opts.stat ?? vi.fn(async (): Promise<HostFileStat> => dirStat());
   const readdir = opts.readdir ?? vi.fn(async (): Promise<readonly string[]> => []);
@@ -68,7 +63,6 @@ function createTestFs(opts: { stat?: ReturnType<typeof vi.fn>; readdir?: ReturnT
   return { fs, stat, readdir };
 }
 
-/** Build a fake `IHostProcess` that emits `stdout` / `stderr` then exits with `exitCode`. */
 function fakeProcess(stdout: string, stderr = '', exitCode = 0): IHostProcess {
   const stdoutStream = Readable.from([Buffer.from(stdout)]);
   const stderrStream = Readable.from([Buffer.from(stderr)]);
@@ -119,7 +113,6 @@ function createRealRgProbe(processService: IHostProcessService): RgProbe {
       try {
         proc.stdin.end();
       } catch {
-        /* already gone */
       }
       proc.stdout.resume();
       proc.stderr.resume();
@@ -127,18 +120,12 @@ function createRealRgProbe(processService: IHostProcessService): RgProbe {
       try {
         proc.dispose();
       } catch {
-        /* best-effort cleanup */
       }
       return { exitCode };
     },
   };
 }
 
-/**
- * `withCwd(dir)` shim — the v1 tests asserted on `kaos.withCwd(dir)`; the v2
- * tool passes the search root via `options.cwd` to `processService.spawn`, so
- * translate that into a `withCwd` spy for the assertion sites.
- */
 function withCwdOf(exec: ReturnType<typeof vi.fn>): { toHaveBeenCalledWith: (dir: string) => void; toHaveBeenCalled: () => void; not: { toHaveBeenCalled: () => void; toHaveBeenCalledWith: (dir: string) => void } } {
   const cwds = () =>
     (
@@ -159,7 +146,6 @@ function withCwdOf(exec: ReturnType<typeof vi.fn>): { toHaveBeenCalledWith: (dir
 }
 
 function execArgs(exec: ReturnType<typeof vi.fn>): string[] {
-  // spawn(command, args, options) — the rg argv is the second parameter.
   return (exec.mock.calls[0] as ReadonlyArray<unknown>)[1] as string[];
 }
 
@@ -220,7 +206,6 @@ function toolContentString(result: ExecutableToolResult): string {
   return c;
 }
 
-/** Build a `GlobTool` with the given spawn spy, using a fake env + process service. */
 function makeTool(
   workspaceConfig: ISessionWorkspaceContext,
   opts: {
@@ -839,10 +824,6 @@ describe('splitCompletePaths', () => {
 });
 
 describe('GlobTool integration (real ripgrep)', () => {
-  // Spawns the actual `rg` binary through a real `HostProcessService` so the
-  // ripgrep semantics the tool relies on (sort direction, recursion, brace
-  // handling, cwd-relative matching) are exercised end-to-end — not just the
-  // argument plumbing.
 
   let tmpDir: string | undefined;
   let realEnv: IHostEnvironment;
@@ -862,7 +843,6 @@ describe('GlobTool integration (real ripgrep)', () => {
       vi.mocked(ensureRgPath).mockResolvedValue(resolution);
       runRealRg = true;
     } catch {
-      // rg unavailable in this environment; beforeEach skips the suite.
     }
   });
 

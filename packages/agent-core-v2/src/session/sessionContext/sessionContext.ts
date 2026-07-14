@@ -25,15 +25,7 @@ export interface ISessionContext {
   readonly workspaceId: string;
   readonly sessionDir: string;
   readonly metaScope: string;
-  /** Absolute working directory frozen at session creation. */
   readonly cwd: string;
-  /**
-   * Persistence scope rooted at this session. `scope()` returns the session
-   * scope itself; `scope(subKey)` returns `${sessionScope}/${subKey}`. The
-   * returned string is what business code passes to `IFileSystemStorageService` /
-   * `IAtomicDocumentStore` / `IAppendLogStore` — it is bootstrap-resolved and
-   * business code should not perform further path arithmetic on it.
-   */
   scope(subKey?: string): string;
 }
 
@@ -44,12 +36,6 @@ export function sessionContextSeed(ctx: ISessionContext): ScopeSeed {
   return [[ISessionContext as ServiceIdentifier<unknown>, ctx]];
 }
 
-/**
- * Build an `ISessionContext` from its scope-and-directory facts, wiring the
- * `scope(subKey?)` helper automatically. `sessionScope` is the session's
- * persistence root (typically `sessions/<workspaceId>/<sessionId>`); `subKey`
- * concatenation happens inside the returned function.
- */
 export function makeSessionContext(input: {
   readonly sessionId: string;
   readonly workspaceId: string;

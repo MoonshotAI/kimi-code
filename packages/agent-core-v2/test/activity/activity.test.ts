@@ -56,7 +56,6 @@ describe('AgentActivityService (turn lane)', () => {
 
   it('starts initializing and admits a turn only after markReady', () => {
     expect(activity.lane()).toBe('initializing');
-    // Admission is rejected while the bootstrap has not finished.
     expect(() => activity.begin('turn')).toThrowError(
       expect.objectContaining({ code: ErrorCodes.ACTIVITY_INITIALIZING }),
     );
@@ -92,7 +91,6 @@ describe('AgentActivityService (turn lane)', () => {
     expect(activity.cancel('stop')).toBe(true);
     expect(lease.signal.aborted).toBe(true);
     expect(lease.ending).toBe(true);
-    // Lane stays `turn` (ending) until the lease is returned.
     expect(activity.lane()).toBe('turn');
     lease.end('cancelled');
     expect(activity.lane()).toBe('idle');

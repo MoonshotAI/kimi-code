@@ -33,8 +33,6 @@ function storageServiceSuite(
       await cleanup?.();
     });
 
-    // chokidar-backed storage attaches the OS watcher asynchronously; give it a
-    // moment to register before mutating. Harmless for the in-memory backend.
     const settle = (): Promise<void> =>
       new Promise((resolve) => setTimeout(resolve, 100));
 
