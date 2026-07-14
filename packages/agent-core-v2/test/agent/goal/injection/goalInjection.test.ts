@@ -342,6 +342,26 @@ describe('GoalInjection integration', () => {
       expect(await flushedGoalReminderRecords(ctx, persistence)).toHaveLength(2);
     });
 
+    it('requests a final model response when a continuation completes the goal', async () => {
+      profile.update({ activeToolNames: ['UpdateGoal'] });
+      await goals.createGoal({ objective: 'Finish the task' });
+
+      ctx.mockNextResponse({ type: 'text', text: 'Working on it.' });
+      ctx.mockNextResponse({
+        type: 'function',
+        id: 'call_complete_goal',
+        name: 'UpdateGoal',
+        arguments: JSON.stringify({ status: 'complete' }),
+      });
+      ctx.mockNextResponse({ type: 'text', text: 'Finished and verified.' });
+
+      await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start.' }] });
+      await ctx.untilTurnEnd();
+      await ctx.untilTurnEnd();
+
+      expect(ctx.llmCalls).toHaveLength(3);
+    });
+
     it('writes no goal record when there is no active goal', async () => {
       await injectDynamic(injector);
 

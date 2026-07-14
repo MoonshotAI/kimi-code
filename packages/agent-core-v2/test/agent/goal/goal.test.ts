@@ -298,6 +298,7 @@ describe('AgentGoalService', () => {
         name: 'UpdateGoal',
         arguments: JSON.stringify({ status: 'complete' }),
       });
+      ctx.mockNextResponse({ type: 'text', text: 'Goal completed.' });
       const endedTurnIds: number[] = [];
       const endedTurnReasons: string[] = [];
       const continuationTurnIds: number[] = [];
@@ -327,7 +328,7 @@ describe('AgentGoalService', () => {
       await vi.waitFor(() => {
         expect(endedTurnIds).toHaveLength(2);
       });
-      expect(ctx.llmCalls).toHaveLength(2);
+      expect(ctx.llmCalls).toHaveLength(3);
       expect(continuationTurnIds).toEqual(endedTurnIds);
       expect(endedTurnReasons).toEqual(['completed', 'completed']);
       expect(goals.getGoal().goal).toBeNull();
