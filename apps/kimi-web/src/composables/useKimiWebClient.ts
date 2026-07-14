@@ -1234,7 +1234,6 @@ function pushOperationFailure(
 ): void {
   // Always-on logging: a surfaced failure must be diagnosable from the console
   // and from the exported web log (session export), not just from the toast.
-  // Logging stays unconditional even when the toast below is deduped.
   console.error(`[kimi-web] operation failed: ${operation}`, err);
   const api = isDaemonApiError(err);
   const network = isDaemonNetworkError(err);
@@ -1248,18 +1247,7 @@ function pushOperationFailure(
     phase: network ? err.phase : undefined,
     httpStatus: network ? err.status : undefined,
   });
-  const notice = operationFailureNotice(operation, err, opts);
-  // Anti-flood: while the same operation's identical failure is still visible
-  // (error toasts auto-dismiss after ~12s), don't stack a duplicate. Repeated
-  // clicks on a failing action — or a multi-step flow failing at every step —
-  // then surface exactly one toast instead of a wall of them.
-  const duplicate = rawState.warnings.some((w) => {
-    if (typeof w !== 'object' || w === null || w.severity !== 'error') return false;
-    if (w.title !== notice.title || w.message !== notice.message) return false;
-    const wOperation = w.details?.find((d) => d.label === 'operation')?.value;
-    return wOperation === operation;
-  });
-  if (!duplicate) pushWarning(notice);
+  pushWarning(operationFailureNotice(operation, err, opts));
 }
 
 // Goal-specific protocol error codes (40913–40918). The daemon now returns
