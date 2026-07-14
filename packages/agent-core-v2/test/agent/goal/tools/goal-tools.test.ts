@@ -113,6 +113,20 @@ describe('goal tools', () => {
     });
   });
 
+  it('SetGoalBudget applies a delayed execution to a goal created earlier in the same batch', async () => {
+    const execution = setGoalBudgetTool.resolveExecution({ value: 5, unit: 'turns' });
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    const created = await goals.createGoal({ objective: 'new task' });
+
+    const result = await execution.execute({ turnId: 0, toolCallId: 'call_new_budget', signal });
+
+    expect(result.output).toBe('Goal budget set: 5 turns.');
+    expect(goals.getGoal().goal).toMatchObject({
+      goalId: created.goalId,
+      budget: { turnBudget: 5 },
+    });
+  });
+
   it('UpdateGoal accepts only active / complete / blocked statuses', () => {
     for (const status of ['active', 'complete', 'blocked']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(true);

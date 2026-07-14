@@ -54,10 +54,10 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
       approvalRule: this.name,
       execute: async () => {
         const currentGoal = this.goal.getGoal().goal;
-        if (goalAtResolution === null && currentGoal === null) {
+        if (currentGoal === null) {
           return { output: 'Goal budget not set: no current goal.' };
         }
-        if (goalAtResolution === null || currentGoal?.goalId !== goalAtResolution.goalId) {
+        if (goalAtResolution !== null && currentGoal.goalId !== goalAtResolution.goalId) {
           return { output: 'Goal budget not set: the current goal changed.' };
         }
         if (budget === null) {

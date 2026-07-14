@@ -878,7 +878,7 @@ function matchesGoal(state: GoalState, goalId: string | undefined): boolean {
 }
 
 function isGoalMutationTool(toolName: string): boolean {
-  return toolName === 'UpdateGoal' || toolName === 'SetGoalBudget';
+  return toolName === 'CreateGoal' || toolName === 'UpdateGoal' || toolName === 'SetGoalBudget';
 }
 
 function goalBudgetBlockReason(budget: GoalBudgetReport): string | undefined {

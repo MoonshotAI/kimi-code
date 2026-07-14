@@ -694,6 +694,7 @@ describe('AgentGoalService core workflow hooks', () => {
   });
 
   it.each([
+    { name: 'CreateGoal', args: { objective: 'late task', replace: true } },
     { name: 'UpdateGoal', args: { status: 'complete' } },
     { name: 'SetGoalBudget', args: { value: 5, unit: 'turns' } },
   ])('rejects a stale $name call from a replaced goal turn', async ({ name, args }) => {
