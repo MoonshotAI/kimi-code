@@ -34,11 +34,6 @@ export interface ISessionApprovalService {
   readonly _serviceBrand: undefined;
 
   request(req: ApprovalRequest): Promise<ApprovalResponse>;
-  /**
-   * Submit an approval request without blocking on the decision. Returns the
-   * request with its resolved `id`; the decision is delivered through the
-   * interaction `onDidResolve` stream.
-   */
   enqueue(req: ApprovalRequest): ApprovalRequest & { readonly id: string };
   decide(id: string, response: ApprovalResponse): void;
   listPending(): readonly ApprovalRequest[];

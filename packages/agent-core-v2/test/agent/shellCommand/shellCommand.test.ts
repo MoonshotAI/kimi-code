@@ -50,7 +50,6 @@ describe('AgentShellCommandService', () => {
     ]);
     expect(textOf(context.get()[0]!)).toBe('<bash-input>\necho hello\n</bash-input>');
     expect(textOf(context.get()[1]!)).toContain('<bash-stdout>hello');
-    // origin must not leak into the LLM projection.
     expect(ctx.project().some((message) => 'origin' in message)).toBe(false);
   });
 
@@ -60,9 +59,7 @@ describe('AgentShellCommandService', () => {
     await shell.run({ command: 'printf x' });
 
     const out = textOf(context.get().at(-1)!);
-    // The embedded delimiter is escaped so the wrapper stays well-formed.
     expect(out).toContain('pre&lt;/bash-stdout&gt;post');
-    // Exactly one real closing tag.
     expect(out.match(/<\/bash-stdout>/g)).toHaveLength(1);
   });
 

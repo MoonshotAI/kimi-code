@@ -316,15 +316,11 @@ describe('AgentLLMRequesterService media-stripped resend', () => {
       },
     });
 
-    // Step 1: normal projection rejected, media-stripped resend recovers.
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
     expect(calls.value).toBe(2);
     expect(projectCalls).toBe(1);
     expect(strippedCalls).toBe(1);
 
-    // Step 2 of the same turn: the poison is still in the full history, so
-    // the request builds from the stripped projection directly — no fresh
-    // rejection, no normal projection.
     await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
     expect(calls.value).toBe(3);
     expect(projectCalls).toBe(1);
@@ -537,14 +533,11 @@ describe('AgentLLMRequesterService media-degraded resend', () => {
       },
     });
 
-    // Step 1: normal projection rejected with 413, degraded resend recovers.
     await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
     expect(calls.value).toBe(2);
     expect(projectCalls).toBe(1);
     expect(degradedCalls).toBe(1);
 
-    // Step 2 of the same turn: the accumulated media is still in the full
-    // history, so the request builds from the degraded projection directly.
     await service.request({ source: { type: 'turn', turnId: 1, step: 2 } });
     expect(calls.value).toBe(3);
     expect(projectCalls).toBe(1);
@@ -596,8 +589,6 @@ describe('AgentLLMRequesterService fault injection (experimental)', () => {
 
     const result = await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
 
-    // The fault fired before the provider was contacted, so the model only
-    // ever saw the degraded resend.
     expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
     expect(calls.value).toBe(1);
     expect(projectCalls).toBe(1);
@@ -625,7 +616,6 @@ describe('AgentLLMRequesterService fault injection (experimental)', () => {
     expect(strippedCalls).toBe(1);
     expect(faultInjection.status().fired).toEqual(['image-format']);
 
-    // One-shot: the next request fires nothing and builds normally.
     const result = await service.request({ source: { type: 'turn', turnId: 2, step: 1 } });
     expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
     expect(faultInjection.status().fired).toEqual(['image-format']);

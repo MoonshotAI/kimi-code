@@ -44,21 +44,10 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
     @IAgentWireService private readonly wire?: IWireService,
   ) {
     super();
-    // The agent scope carries its persistence scope (`sessions/<ws>/<sid>/
-    // agents/<aid>`); the wire log is the fixed `wire.jsonl` beneath it —
-    // the same scope `WireService` appends to, so `restore()` reads back
-    // what live dispatch wrote.
     this.wireScope = scopeContext.scope();
     if (this.log !== undefined) {
       this._register(this.log.acquire(this.wireScope, WIRE_RECORD_FILENAME));
     }
-    // Keep the in-memory journal current with live dispatch: `restore()` seeds
-    // it from disk and every persisted record afterwards is appended here in
-    // dispatch order, so transcript readers reduce memory instead of re-reading
-    // `wire.jsonl`. Metadata envelopes are excluded to honor `getRecords()`.
-    // `wire` is optional so direct construction (tests, migration round-trips)
-    // keeps the restore-only journal; live tracking is active whenever DI
-    // supplies the agent wire service.
     if (wire !== undefined) {
       this._register(
         wire.onEmission((emission) => {
@@ -145,10 +134,6 @@ export class AgentWireRecordService extends Disposable implements IAgentWireReco
   }
 
   async flush(): Promise<void> {
-    // Drain the wire service's async persist pipeline first: with a model blob
-    // codec, appends are queued on a microtask chain and only
-    // reach the log store once that queue settles. Flushing the log alone
-    // would miss records still in flight.
     await this.wire?.flush();
     await this.log?.flush();
   }
@@ -170,22 +155,12 @@ function isWireRecordMetadata(record: PersistedWireRecord): record is WireRecord
   return record.type === 'metadata' && typeof record['protocol_version'] === 'string';
 }
 
-/**
- * File name of every agent's wire log, written beneath the agent's homedir
- * (`<homeDir>/sessions/<ws>/<sid>/agents/<aid>/wire.jsonl`).
- */
 export const WIRE_RECORD_FILENAME = 'wire.jsonl';
 
 export function missingWireMetadataError(): Error {
   return new Error('WireRecord restore expected metadata as the first record');
 }
 
-/**
- * Store `scope` of an agent's wire log: its homedir made relative to the app
- * `homeDir`. Paired with {@link WIRE_RECORD_FILENAME} by callers that read /
- * rewrite a wire log through `IAppendLogStore` without holding a live agent
- * handle (e.g. session fork).
- */
 export function wireRecordScope(homedir: string, homeDir: string): string {
   return relative(homeDir, homedir);
 }

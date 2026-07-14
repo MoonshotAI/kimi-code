@@ -13,7 +13,6 @@ import { IAgentTaskService } from '#/agent/task/task';
 import { TERMINAL_STATUSES } from '#/agent/task/types';
 import TASK_STOP_DESCRIPTION from './task-stop.md?raw';
 
-// ── Input schema ─────────────────────────────────────────────────────
 
 export const TaskStopInputSchema = z.object({
   task_id: z.string().describe('The background task ID to stop.'),
@@ -26,7 +25,6 @@ export const TaskStopInputSchema = z.object({
 
 export type TaskStopInput = z.infer<typeof TaskStopInputSchema>;
 
-// ── Implementation ───────────────────────────────────────────────────
 
 export class TaskStopTool implements BuiltinTool<TaskStopInput> {
   readonly name = 'TaskStop' as const;
@@ -46,8 +44,6 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
           return { isError: true, output: `Task not found: ${args.task_id}` };
         }
 
-        // A blank or whitespace-only reason falls back to the default. `?? default`
-        // would not cover the empty-string case, so trim and coalesce explicitly.
         const trimmedReason = args.reason?.trim();
         const reason =
           trimmedReason === undefined || trimmedReason.length === 0
@@ -55,14 +51,10 @@ export class TaskStopTool implements BuiltinTool<TaskStopInput> {
             : trimmedReason;
 
         if (TERMINAL_STATUSES.has(info.status)) {
-          // Already-terminal tasks report their current state using the same
-          // structured multi-line format as the normal stop path below.
           return {
             output:
               `task_id: ${info.taskId}\n` +
               `status: ${info.status}\n` +
-              // A task persisted by an older build may carry a blank stopReason;
-              // `??` would not coalesce `''`, so trim-and-`||` to the placeholder.
               `reason: ${terminalStopReason(info.stopReason)}`,
             isError: false,
           };

@@ -24,10 +24,6 @@ export const LEGACY_BACKGROUND_SECTION = 'background';
 export const AgentTaskConfigSchema = z.object({
   maxRunningTasks: z.number().int().min(1).optional(),
   keepAliveOnExit: z.boolean().optional(),
-  /**
-   * When a foreground Bash command times out, move it to the background
-   * instead of killing it. Defaults to true when unset.
-   */
   bashAutoBackgroundOnTimeout: z.boolean().optional(),
   killGracePeriodMs: z.number().int().min(0).optional(),
   printWaitCeilingS: z.number().int().min(1).optional(),

@@ -13,7 +13,6 @@ import type { ContextMessage } from '#/agent/contextMemory/types';
 
 declare const mediaStripSnapshotBrand: unique symbol;
 
-/** Opaque provider-visible media identities captured at a strip transition. */
 export interface MediaStripSnapshot {
   readonly [mediaStripSnapshotBrand]: undefined;
 }
@@ -24,12 +23,7 @@ export interface IAgentContextProjectorService {
   project(messages: readonly ContextMessage[]): readonly Message[];
   projectStrict(messages: readonly ContextMessage[]): readonly Message[];
   projectMediaDegraded(messages: readonly ContextMessage[]): readonly Message[];
-  /** Capture only media that survives the normal provider projection. */
   captureMediaStripSnapshot(messages: readonly ContextMessage[]): MediaStripSnapshot;
-  /**
-   * Strip the captured identities. Omitting `snapshot` preserves the legacy
-   * one-shot behavior by capturing and stripping every currently visible item.
-   */
   projectMediaStripped(
     messages: readonly ContextMessage[],
     snapshot?: MediaStripSnapshot,

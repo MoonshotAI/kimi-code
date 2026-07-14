@@ -526,8 +526,6 @@ describe('TaskOutputTool', () => {
     expect(result.isError ?? false).toBe(false);
     expect(output).toContain('retrieval_status: timeout');
     expect(output).toContain('status: running');
-    // A blocking wait that timed out must steer the caller away from blocking
-    // again — the completion notification arrives on its own.
     expect(output).toContain('next_step:');
     expect(output).toContain('Do not block on it again');
     expect(tasks.waitCalls).toEqual([{ taskId, timeoutMs: 1_000 }]);

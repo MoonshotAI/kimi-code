@@ -131,8 +131,6 @@ declare module '#/wire/types' {
   }
 }
 
-// `ContextMessage` / `LoopRecordedEvent` are large domain unions owned by
-// sibling modules; `z.custom` keeps their exact types without restating them.
 const contextMessageSchema = z.custom<ContextMessage>();
 const loopRecordedEventSchema = z.custom<LoopRecordedEvent>();
 
@@ -294,15 +292,6 @@ export interface UndoCut {
   readonly stoppedAtCompaction: boolean;
 }
 
-/**
- * Locate the trailing cut for an undo of `count` real-user prompts: the oldest
- * index of the Nth-from-tail real-user prompt (skipping `injection` messages and
- * stopping at a `compaction_summary` boundary). `removedCount` is how many
- * real-user prompts were found; `cutIndex` is where the trailing exchange begins
- * (everything from there to the end is removed), or `-1` when none was found.
- * Shared by the `context.undo` reducer and the live service so dispatch and
- * replay produce identical state.
- */
 export function computeUndoCut(state: readonly ContextMessage[], count: number): UndoCut {
   let remaining = count;
   let cutIndex = -1;
@@ -324,22 +313,12 @@ export function computeUndoCut(state: readonly ContextMessage[], count: number):
   return { cutIndex, removedCount, stoppedAtCompaction };
 }
 
-/** Whether a {@link computeUndoCut} result satisfied the full requested `count`. */
 export function isFullyUndoable(cut: UndoCut, count: number): boolean {
   return cut.cutIndex >= 0 && cut.removedCount >= count;
 }
 
-/** Structured reason an undo cannot proceed, derived from a {@link UndoCut}. */
 export type UndoUnavailableReason = 'empty' | 'compaction_boundary' | 'insufficient';
 
-/**
- * Result of checking whether `count` real-user prompts can be undone. Returns
- * `{ ok: true }` when the cut is fully undoable, otherwise a structured reason
- * (`empty` when no real-user prompt exists, `compaction_boundary` when the scan
- * hits a compaction summary first, `insufficient` when some exist but fewer
- * than `count`) plus the number that *could* be undone. Shared by the live
- * `IAgentPromptService.undo` (which throws on `!ok`) and tests.
- */
 export type UndoPrecheck =
   | { readonly ok: true }
   | {
@@ -349,7 +328,6 @@ export type UndoPrecheck =
       readonly undoable: number;
     };
 
-/** Classify a history against an undo `count` (wraps {@link computeUndoCut}). */
 export function precheckUndo(history: readonly ContextMessage[], count: number): UndoPrecheck {
   const cut = computeUndoCut(history, count);
   if (isFullyUndoable(cut, count)) return { ok: true };
@@ -361,7 +339,6 @@ export function precheckUndo(history: readonly ContextMessage[], count: number):
   return { ok: false, reason, requested: count, undoable: cut.removedCount };
 }
 
-/** Wire-facing message for a failed {@link precheckUndo} (`session.undo_unavailable`). */
 export function formatUndoUnavailableMessage(
   precheck: Extract<UndoPrecheck, { ok: false }>,
 ): string {

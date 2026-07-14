@@ -96,14 +96,11 @@ describe('MessageLegacyService', () => {
         { type: 'context.append_message', message: user },
         { type: 'context.append_message', message: assistant },
       ],
-      // Folded context length matches the journal-derived foldedLength, so the
-      // live-tail merge is a no-op and the output is purely the journal.
       contextMessages: [user, assistant],
     });
 
     const page = await svc.list('s1', {});
 
-    // Newest first; both entries come from the journal, not from wire.jsonl.
     expect(page.items.map((m) => m.role)).toEqual(['assistant', 'user']);
     expect(page.items[1]?.content[0]).toEqual({ type: 'text', text: 'hi' });
     expect(page.has_more).toBe(false);

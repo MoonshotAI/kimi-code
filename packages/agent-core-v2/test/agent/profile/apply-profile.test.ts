@@ -47,9 +47,6 @@ describe('AgentProfileService.applyProfile', () => {
   });
 
   function buildContext(): { ctx: TestAgentContext; profile: IAgentProfileService } {
-    // Real session-scoped fs anchored at workDir, plus a hermetic home dir
-    // (empty temp dir) so a developer's real ~/.kimi-code / ~/.agents files
-    // never leak into the assertions.
     const fs = new HostFileSystem();
     ctx = createTestAgent(
       execEnvServices({ hostFs: fs }),

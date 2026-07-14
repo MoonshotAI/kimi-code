@@ -160,8 +160,6 @@ export const GrepOutputSchema = z.object({
 export type GrepInput = z.infer<typeof GrepInputSchema>;
 export type GrepOutput = z.infer<typeof GrepOutputSchema>;
 
-// Column cap applied to non-content output modes only; `content` mode returns
-// matching lines in full so the cap is intentionally skipped there.
 const RG_MAX_COLUMNS = 500;
 const DEFAULT_HEAD_LIMIT = 250;
 const MTIME_STAT_CONCURRENCY = 32;
@@ -182,14 +180,6 @@ const SENSITIVE_GLOBS_TO_EXCLUDE = [
   '**/.gcp/credentials/**',
 ] as const;
 
-// Line formats produced by ripgrep:
-//   content match with --null:   "file.py<NUL>10:matched text"
-//   context line with --null:    "file.py<NUL>9-context text"
-//   count_matches with --null:   "file.py<NUL>2"
-//   non-NUL content fallback:    "file.py:10:matched text"
-//   context divider: "--"
-// Runtime rg output uses NUL as the path boundary; the regex handles
-// line-oriented output without NUL delimiters.
 const CONTENT_LINE_RE = /^(.*?)([:-])(\d+)\2/;
 
 export class GrepTool implements BuiltinTool<GrepInput> {
@@ -202,14 +192,10 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    // Optional so unit tests that construct the tool directly (bypassing DI)
-    // keep working; always registered in production scopes.
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   private get workspace(): WorkspaceConfig {
-    // Skill roots are merged per call (v1 merged once at tool construction):
-    // the catalog loads asynchronously and gains roots on plugin reloads.
     return extendWorkspaceWithSkillRoots(
       {
         workspaceDir: this.workspaceCtx.workDir,
@@ -303,8 +289,6 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     const { exitCode, stderrText, bufferTruncated, stderrTruncated, timedOut } = runResult;
     let { stdoutText } = runResult;
 
-    // rg exit codes: 0 = matches, 1 = no matches, 2 = error. Timeout kills
-    // usually surface as a signal exit code; keep any complete partial records.
     if (exitCode !== 0 && exitCode !== 1 && !timedOut) {
       return {
         isError: true,
@@ -350,12 +334,6 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     const limited = limitActive ? afterOffset.slice(0, headLimit) : afterOffset;
     const paginationTruncated = limitActive && afterOffset.length > headLimit;
 
-    // Notices ride in `output` (not `result.message`, which is dropped before the
-    // result reaches the model). The count-mode aggregate — the total and the
-    // "use offset=N to see more" cue — leads the output as a HEADER, written before
-    // the rows, so ToolResultBuilder's char cap can only ever truncate the rows, not
-    // the total (count rows are unbounded with head_limit: 0). Incidental notices
-    // trail the body.
     const headerLines: string[] = [];
     const messages: string[] = [];
     if (filteredSensitive.size > 0) {
@@ -427,7 +405,6 @@ export class GrepTool implements BuiltinTool<GrepInput> {
         try {
           proc.stdin.end();
         } catch {
-          /* already gone */
         }
         proc.stdout.resume();
         proc.stderr.resume();
@@ -435,7 +412,6 @@ export class GrepTool implements BuiltinTool<GrepInput> {
         try {
           proc.dispose();
         } catch {
-          /* best-effort cleanup */
         }
         return { exitCode };
       },
@@ -459,7 +435,6 @@ export class GrepTool implements BuiltinTool<GrepInput> {
             const mtimeMs = (await this.fs.stat(path)).mtimeMs ?? 0;
             mtime = Math.trunc(mtimeMs / 1000);
           } catch {
-            // Keep stat failures visible; use mtime=0 so they sort after known files.
           }
         }
         return { line, mtime, index };
@@ -481,8 +456,6 @@ function formatSpawnError(error: unknown): string {
 }
 
 function errorCode(error: unknown): string | undefined {
-  // hostFs / hostProcess translate raw errnos into coded errors; classify the
-  // unwrapped cause so boundary translation stays invisible here.
   const unwrapped = unwrapErrorCause(error);
   if (unwrapped !== null && typeof unwrapped === 'object' && 'code' in unwrapped) {
     const code = (unwrapped as { code?: unknown }).code;
@@ -552,10 +525,6 @@ function buildRgArgs(
   if (singleThreaded) cmd.push('-j', '1');
   cmd.push('--hidden');
   const mode = args.output_mode ?? 'files_with_matches';
-  // `content` mode returns matching lines verbatim. Capping columns here would
-  // make rg replace any line wider than the cap with a placeholder, silently
-  // dropping the actual match text. The cap is only useful outside `content`
-  // mode, where line text is never surfaced.
   if (mode !== 'content') {
     cmd.push('--max-columns', String(RG_MAX_COLUMNS));
   }
@@ -566,9 +535,6 @@ function buildRgArgs(
 
   if (mode === 'files_with_matches') cmd.push('-l');
   else if (mode === 'count_matches') {
-    // rg omits the filename when only one file is searched, so pin it on. Without
-    // this, the per-file line collapses to a bare count and the summary parser
-    // disagrees with the displayed number.
     cmd.push('--count-matches', '--with-filename');
   }
 
@@ -592,14 +558,8 @@ function buildRgArgs(
   if (args.multiline) cmd.push('-U', '--multiline-dotall');
   if (args.include_ignored) cmd.push('--no-ignore');
   for (const glob of SENSITIVE_GLOBS_TO_EXCLUDE) {
-    // Appended after user globs so a broad include such as `**/.env` cannot
-    // undo this first-pass exclusion. Explicit file paths are still protected
-    // by the post-processing filter because rg intentionally searches them.
     cmd.push('--glob', `!${glob}`);
   }
-  // Do not forward `head_limit` to `rg --max-count`: omitted means "use the
-  // tool default", head_limit=0 means "unlimited", while `rg --max-count 0`
-  // means "zero matches per file". Pagination happens in post-processing.
 
   cmd.push('--', args.pattern, ...searchPaths);
   return cmd;
@@ -608,7 +568,6 @@ function buildRgArgs(
 function splitRgLines(text: string): string[] {
   if (text === '') return [];
   const lines = text.split('\n');
-  // Strip the trailing empty line left by a final newline.
   while (lines.length > 0 && lines.at(-1) === '') {
     lines.pop();
   }
@@ -699,11 +658,6 @@ function formatDisplayLine(
   return text;
 }
 
-/**
- * If `candidate` is under `base`, return the portion after `base/`.
- * Otherwise return `candidate` unchanged. Both arguments should be
- * canonical absolute paths in the active backend path class.
- */
 function relativizeIfUnder(candidate: string, base: string, pathClass: PathClass): string {
   const normCandidate = normalize(candidate);
   const normBase = normalize(base);

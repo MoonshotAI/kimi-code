@@ -78,9 +78,7 @@ export type PromptOrigin =
   | RetryOrigin;
 
 export type ContextMessage = Message & {
-  /** Stable local message id (`msg_<ulid>`), assigned when the message enters context. */
   readonly id?: string;
-  /** Provider-assigned response/message id (e.g. Anthropic `msg_…`, `chatcmpl-…`, `resp_…`). */
   readonly providerMessageId?: string;
   readonly origin?: PromptOrigin | undefined;
   readonly isError?: boolean;

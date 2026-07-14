@@ -73,7 +73,6 @@ describe('LLMRequester service migration coverage', () => {
     ];
 
     beforeEach(() => {
-      // Stubbed before createTestAgent snapshots the env into bootstrap.
       vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
       ctx = createTestAgent();
       llmRequester = ctx.get(IAgentLLMRequesterService);
@@ -89,9 +88,6 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('records one tools snapshot per unique provider-visible tool table and one request per outbound call', async () => {
-      // Gate the scenario on like v1's recorder contract requires: `toolSelect`
-      // in the record is the disclosure gate (flag × capability), not the
-      // presence of deferred entries in this request's tool table.
       ctx.configure({
         modelCapabilities: {
           image_in: false,
@@ -516,12 +512,8 @@ describe('LLMRequester service migration coverage', () => {
       const timing = finish.timing;
 
       expect(timing?.firstTokenLatencyMs).toBeGreaterThanOrEqual(0);
-      // kosong accounts the decode window (server wait vs. client consume) and
-      // the requester surfaces it on the timing event.
       expect(timing?.serverDecodeMs).toBeGreaterThanOrEqual(0);
       expect(timing?.clientConsumeMs).toBeGreaterThanOrEqual(0);
-      // The scripted provider does not fire onRequestSent, so the TTFT split is
-      // not reported through the requester event.
       expect(timing?.requestBuildMs).toBeUndefined();
       expect(timing?.serverFirstTokenMs).toBeUndefined();
     });

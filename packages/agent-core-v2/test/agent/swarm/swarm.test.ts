@@ -106,8 +106,6 @@ describe('AgentSwarmService', () => {
     expect(events).toEqual([
       { type: 'agent.status.updated', swarmMode: true },
       { type: 'agent.status.updated', swarmMode: false },
-      // Exit pops the swarm-mode enter reminder via the ContextModel
-      // cross-reducer; the service mirrors the pop as a live context.spliced.
       { type: 'context.spliced', start: 0, deleteCount: 1, messages: [] },
     ]);
   });
@@ -296,8 +294,6 @@ describe('AgentSwarmTool', () => {
   it('description states the enforced input requirements', () => {
     const host = mockSwarmHost();
     const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode());
-    // Mirrors the throws in createAgentSwarmSpecs (agent-swarm.ts): min-2-unless-resume,
-    // prompt_template required + must contain {{item}}, distinct resulting prompts.
     expect(tool.description).toContain('at least 2');
     expect(tool.description).toContain('{{item}}');
     expect(tool.description.toLowerCase()).toContain('distinct');

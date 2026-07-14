@@ -46,25 +46,13 @@ function createTestEnv(home = '/home'): IHostEnvironment {
 }
 
 interface WriteFsOptions {
-  /** Override readText. Default rejects with ENOENT (file missing). */
   readText?: (path: string) => Promise<string>;
-  /** Override writeText. Default no-op. */
   writeText?: (path: string, data: string) => Promise<void>;
-  /** Override appendText. Default no-op. */
   appendText?: (path: string, data: string) => Promise<void>;
-  /** Override stat. Default reports an existing directory. */
   stat?: (path: string) => Promise<HostFileStat>;
-  /** Override mkdir. Default no-op. */
   mkdir?: (path: string) => Promise<void>;
 }
 
-/**
- * Fake fs for WriteTool. All IO methods are `vi.fn()` spies so tests can
- * assert on the readText/writeText/stat/mkdir calls. By default `stat`
- * reports an existing directory (so `ensureParentDirectory` passes without
- * creating anything) and `readText` rejects with ENOENT (so an append to a
- * missing file treats existing content as empty).
- */
 function createWriteFs(options: WriteFsOptions = {}) {
   const readText = vi.fn(
     options.readText ??
@@ -122,8 +110,6 @@ describe('WriteTool', () => {
     expect(tool.name).toBe('Write');
     expect(tool.description).toContain('append adds content at EOF without adding a newline');
     expect(tool.description).toContain('\\n stays LF, \\r\\n stays CRLF');
-    // The prompt steers the agent toward Edit for partial changes to an
-    // existing file. Pin the prohibition so accidental weakening is caught.
     expect(tool.description).toContain('Write is NOT ALLOWED for incremental changes');
     expect(tool.parameters).toMatchObject({
       type: 'object',
@@ -194,8 +180,6 @@ describe('WriteTool', () => {
   it('guides batching large content across multiple write calls', () => {
     const { tool } = makeTool();
 
-    // The guidance must mention that a file too large for one call should be
-    // chunked, and spell out the first-overwrite-then-append ordering.
     expect(tool.description).toMatch(/large/i);
     expect(tool.description).toContain('content too large for one call');
     expect(tool.description).toMatch(/overwrite[^.]*first chunk[^.]*then[^.]*append/i);
@@ -236,9 +220,6 @@ describe('WriteTool', () => {
   });
 
   it('reports the real UTF-8 byte count for non-ASCII content', async () => {
-    // Six Japanese characters: each encodes to 3 UTF-8 bytes → 18 bytes total,
-    // even though the JS string length is 6. The reported count must reflect
-    // the bytes that land on disk, not the code-unit count.
     const content = 'こんにちは。';
     const expectedBytes = Buffer.byteLength(content, 'utf8');
     expect(expectedBytes).toBe(18);
@@ -252,11 +233,6 @@ describe('WriteTool', () => {
   });
 
   it('reports the real UTF-8 byte count for content with surrogate-pair emoji', async () => {
-    // 'hi😀': the emoji is a single code point encoded as a UTF-16 surrogate
-    // pair, so JS string length is 4 (2 for 'hi' + 2 code units), but the
-    // UTF-8 encoding is 6 bytes (2 for 'hi' + 4 for the emoji). The reported
-    // count must reflect the bytes on disk, not the code-unit count — this
-    // is the sharpest edge of the byte-counting bug.
     const content = 'hi😀';
     expect(content.length).toBe(4);
     const expectedBytes = Buffer.byteLength(content, 'utf8');
@@ -312,7 +288,6 @@ describe('WriteTool', () => {
   });
 
   it('rejects writing when the parent path is not a directory', async () => {
-    // A regular file standing where a directory is expected.
     const { tool, writeText } = makeTool({
       stat: vi.fn().mockResolvedValue({ isFile: true, isDirectory: false, size: 0 }),
     });
@@ -397,11 +372,6 @@ describe('WriteTool', () => {
   });
 
   it('still reports parent-directory ENOENT surfaced by writeText itself', async () => {
-    // When the proactive parent check is inconclusive (e.g. the environment
-    // has no `stat`) and the underlying write then fails with ENOENT — for
-    // example a parent directory removed between the check and the write —
-    // the tool still surfaces a clear "parent directory does not exist"
-    // message rather than a raw host error.
     const { tool } = makeTool({
       writeText: vi
         .fn()
@@ -417,8 +387,6 @@ describe('WriteTool', () => {
   });
 
   it('appending to a nonexistent file creates it with just the appended bytes', async () => {
-    // Native append (fs.appendFile) creates the file when it is missing, so
-    // append mode on a new path succeeds and writes exactly the appended bytes.
     const { tool, readText, appendText } = makeTool();
 
     const result = await execute(tool, {
@@ -434,8 +402,6 @@ describe('WriteTool', () => {
   });
 
   it('allows absolute writes to a sibling dir that merely shares the work-dir prefix', async () => {
-    // Path policy must distinguish "shares a prefix with workspaceDir" from
-    // "is inside workspaceDir". /workspace-sneaky/* is outside /workspace.
     const { tool, writeText } = makeTool({}, stubWorkspaceContext('/workspace'));
 
     const result = await execute(tool, { path: '/workspace-sneaky/file.txt', content: 'content' });

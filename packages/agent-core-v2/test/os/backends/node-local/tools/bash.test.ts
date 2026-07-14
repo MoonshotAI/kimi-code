@@ -61,7 +61,6 @@ const windowsBashEnv: IHostEnvironment = {
   ready: Promise.resolve(),
 };
 
-// ── Fake IProcess factories ──────────────────────────────────────────
 
 function processWithOutput(
   options: {
@@ -283,7 +282,6 @@ function processWithOpenStreamsThatExitOnKill(): IProcess {
   };
 }
 
-// ── Fake IHostEnvironment / ISessionContext ────────────────────────────
 
 function createTestEnv(env: IHostEnvironment = posixEnv): IHostEnvironment {
   return env;
@@ -299,7 +297,6 @@ function createTestCtx(cwd = '/workspace'): ISessionContext {
   });
 }
 
-// ── Fake ISessionProcessRunner ──────────────────────────────────────────────
 
 function createTestRunner(proc: IProcess | ReturnType<typeof vi.fn>) {
   const exec = typeof proc === 'function' ? proc : vi.fn().mockResolvedValue(proc);
@@ -307,7 +304,6 @@ function createTestRunner(proc: IProcess | ReturnType<typeof vi.fn>) {
   return { runner, exec };
 }
 
-// ── Fake IAgentTaskService ──────────────────────────────────────────
 
 const TERMINAL_STATUSES: ReadonlySet<AgentTaskStatus> = new Set([
   'completed',
@@ -432,7 +428,6 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
       try {
         await entry.task.forceStop?.();
       } catch {
-        /* best effort */
       }
     }
     if (isTerminal(entry.status)) return entryToInfo(entry);
@@ -464,7 +459,6 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
     try {
       entry.task.onDetach?.();
     } catch {
-      /* detach already succeeded */
     }
     release.resolve(viaTimeout ? 'timeout_detached' : 'detached');
     return entryToInfo(entry);
@@ -513,9 +507,6 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
       const timeoutMs = registerOptions.timeoutMs;
       if (timeoutMs !== undefined && timeoutMs > 0) {
         entry.timeoutHandle = setTimeout(() => {
-          // Mirror production: a foreground task opted into auto-background
-          // detaches to the background on its first deadline instead of
-          // being killed.
           if (
             registerOptions.autoBackgroundOnTimeout === true &&
             entry.foregroundRelease !== undefined
@@ -607,7 +598,6 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
     },
 
     async suppressTerminalNotification(): Promise<void> {
-      /* no-op in the fake */
     },
 
     detach(taskId: string): AgentTaskInfo | undefined {
@@ -678,7 +668,6 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
   return { service, tasks, persisted };
 }
 
-// ── Test execution helper ────────────────────────────────────────────
 
 function context(
   args: BashInput,
@@ -728,7 +717,6 @@ function bashTool(
   return new BashTool(runner, env, ctx, background, profile, config);
 }
 
-// ── Tests ────────────────────────────────────────────────────────────
 
 describe('BashTool', () => {
   it('exposes current metadata and schema', () => {
@@ -995,8 +983,6 @@ describe('BashTool', () => {
       await vi.advanceTimersByTimeAsync(1);
       const result = await running;
 
-      // The 2s deadline is interpreted as seconds — and instead of killing,
-      // the command moves to the background (auto-background is on by default).
       expect(proc.kill).not.toHaveBeenCalled();
       expect(result).toMatchObject({
         isError: false,
@@ -1176,7 +1162,6 @@ describe('BashTool', () => {
     expect(output).toContain('[...truncated]');
     expect(output).toContain('[Full output saved]');
     expect(taskId).toBeTruthy();
-    // The inline truncation must have started early persistence of the full log.
     expect(persisted.has(taskId!)).toBe(true);
     expect(output).toContain(`output_path: /fake/tasks/${taskId}/output.log`);
     expect(output).toContain('Use Read with output_path');
@@ -1249,8 +1234,6 @@ describe('BashTool', () => {
     expect(description).toContain('**Guidelines for efficiency:**');
     expect(description).toContain('run_in_background=true');
     expect(description).toContain('automatically notified');
-    // Moved here from system.md: the "don't block on a background task" nudge belongs in
-    // the background-enabled Bash description, the only place that documents it.
     expect(description).toContain('returning control to the user');
   });
 
@@ -1264,8 +1247,6 @@ describe('BashTool', () => {
       stubProfile((name) => name !== 'TaskList'),
     );
 
-    // Background management needs TaskList, TaskOutput, and TaskStop; without
-    // TaskList the description must fall back to the disabled variant.
     expect(tool.description).toContain('Background execution is disabled for this agent');
 
     const result = await executeTool(
@@ -1294,7 +1275,6 @@ describe('BashTool', () => {
     expect(killOnTimeout.description).not.toContain('moved to the background instead of being killed');
     expect(killOnTimeout.description).toContain('hits its timeout is killed');
 
-    // The legacy [background] section opts out the same way while configs migrate.
     const legacyKillOnTimeout = bashTool(
       runner,
       createTestEnv(),
@@ -1431,8 +1411,6 @@ describe('BashTool background mode', () => {
       expect(taskId).toBeDefined();
       expect(service.getTask(taskId!)).toMatchObject({ status: 'running', detached: true });
 
-      // The backgrounded command keeps streaming output and settles through
-      // the manager like any other background task.
       (proc.stdout as PassThrough).write('after timeout\n');
       finish(0);
       await vi.advanceTimersByTimeAsync(1);
@@ -1556,7 +1534,6 @@ describe('BashTool background mode', () => {
     expect(result.output).toContain('automatic_notification: true');
     expect(result).toMatchObject({ message: 'Background task started.' });
     expect((result as { brief?: string }).brief).toMatch(/^Started bash-[0-9a-z]{8}$/);
-    // The launch message must steer away from waiting, not invite a TaskOutput peek.
     expect(result.output).toContain('do NOT wait, poll, or call TaskOutput on it');
     expect(result.output).not.toContain('block=false');
     expect(service.list(false)).toHaveLength(1);
@@ -1792,9 +1769,6 @@ describe('BashTool prompt / runtime consistency', () => {
   it('reports unavailable background using only tools the prompt documents', async () => {
     const { runner } = createTestRunner(processWithOutput());
 
-    // The set of background tools the prompt actually introduces — taken from
-    // the background-enabled prompt, which is the only variant that documents
-    // any Task* tool.
     const enabledTool = bashTool(runner);
     const promptToolNames = new Set(
       [...enabledTool.description.matchAll(/`(Task[A-Za-z]+)`/g)].map((match) => match[1]),
@@ -1812,9 +1786,6 @@ describe('BashTool prompt / runtime consistency', () => {
       (match) => match[1],
     );
 
-    // The unavailable-background error message must not name a tool that the
-    // prompt never introduces, otherwise the model is told about a tool it
-    // has no guidance for.
     for (const name of errorToolNames) {
       expect(promptToolNames).toContain(name);
     }
@@ -1825,8 +1796,6 @@ describe('BashTool prompt / runtime consistency', () => {
     const { runner } = createTestRunner(processWithOutput());
     const tool = bashTool(runner);
 
-    // The implementation reports failures as plain text inside the output
-    // (`Command failed with exit code: N`), never via a system tag.
     expect(tool.description).not.toMatch(/exit code will be provided in a system tag/);
   });
 });

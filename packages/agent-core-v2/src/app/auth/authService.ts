@@ -86,7 +86,6 @@ interface FlowState {
   readonly provider: string;
   readonly controller: AbortController;
   readonly oauthRef: OAuthRef | undefined;
-  /** Base URL of the environment the login targeted (env-aware); drives the provisioned provider entry. */
   readonly loginBaseUrl: string | undefined;
   device: DeviceAuthorization | undefined;
   status: OAuthFlowStatus;
@@ -100,12 +99,6 @@ export class OAuthService extends Disposable implements IOAuthService {
   declare readonly _serviceBrand: undefined;
   private readonly flows = new Map<string, FlowState>();
 
-  /**
-   * Serializes managed-provider model refreshes so a refresh triggered by
-   * login completion and a manual `:refresh_oauth` (or two overlapping manual
-   * ones) never race on reading/patching the persisted config. Mirrors v1's
-   * `_refreshChain`.
-   */
   private refreshChain: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -234,8 +227,6 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   async logout(provider = KIMI_CODE_PROVIDER_NAME): Promise<OAuthLogoutResponse> {
-    // Delete the token from the slot the runtime actually reads (v1 parity):
-    // env-aware for kimi-code, so an env-scoped login's token is removed too.
     const oauthRef =
       provider === KIMI_CODE_PROVIDER_NAME
         ? this.resolveRuntimeOAuthRef(provider)
@@ -380,14 +371,6 @@ export class OAuthService extends Disposable implements IOAuthService {
     };
   }
 
-  /**
-   * Resolve the environment the login should target (v1's
-   * `managedAuth.login`): env-aware via `resolveKimiCodeLoginAuth`, so
-   * `KIMI_CODE_BASE_URL` / `KIMI_CODE_OAUTH_HOST` steer the credential slot
-   * the token is written to the same way they steer the runtime token reads
-   * (`resolveKimiCodeRuntimeAuth`). A mismatched slot is the "login succeeds
-   * but every call 401s" bug.
-   */
   private resolveLoginAuth(provider: string): {
     readonly oauthRef: OAuthRef | undefined;
     readonly baseUrl: string | undefined;
@@ -401,12 +384,6 @@ export class OAuthService extends Disposable implements IOAuthService {
       configuredBaseUrl: config?.baseUrl,
       configuredOAuthRef: config?.oauth,
     });
-    // Always resolve to a concrete ref for kimi-code: when the login env
-    // overrides the configured one, the provisioned entry must record the
-    // env-scoped slot explicitly (v1's `provisionManagedKimiCodeConfig`
-    // writes the login (oauthKey, oauthHost)) — not only so the runtime can
-    // find it, but so `isKimiOAuthProvider` still holds and the post-login
-    // model refresh runs.
     const oauthRef =
       loginAuth.oauthRef ??
       resolveKimiCodeOAuthRef({
@@ -442,10 +419,6 @@ export class OAuthService extends Disposable implements IOAuthService {
   }
 
   private invalidateFlows(event: ProvidersChangedEvent): void {
-    // Only abort flows whose OAuth provider was actually removed or whose
-    // config changed. Refreshes that merely rewrite the `providers` section
-    // (e.g. model catalog refreshes on startup) must not trip in-flight logins
-    // for unaffected providers.
     const affected = new Set([...event.removed, ...event.changed]);
     if (affected.size === 0) return;
     for (const state of this.flows.values()) {
@@ -494,10 +467,6 @@ export class OAuthService extends Disposable implements IOAuthService {
     oauthRef: OAuthRef | undefined,
     loginBaseUrl: string | undefined,
   ): Promise<void> {
-    // `baseUrl` comes from the login environment (env-aware), not a stale
-    // configured one, and `oauth` records the login credential slot — v1
-    // parity: `provisionManagedKimiCodeConfig` rewrites both from the login
-    // auth. Non-kimi providers without a ref keep the old skip.
     if (oauthRef === undefined && provider !== KIMI_CODE_PROVIDER_NAME) return;
     const baseUrl =
       loginBaseUrl ?? this.providerService.get(provider)?.baseUrl ?? kimiCodeBaseUrl();
@@ -695,7 +664,6 @@ function providerNameFromFlatModel(model: ModelAlias): string | undefined {
   return baseUrl === undefined ? undefined : deriveProviderId(baseUrl);
 }
 
-/** Structural view of a managed-config model alias (the fields the refresh reads/writes). */
 interface ManagedModel {
   readonly provider: string;
   readonly model: string;
@@ -840,8 +808,6 @@ function restoreDefaultSelection(
 ): void {
   if (defaultModel === undefined || config.models?.[defaultModel] === undefined) return;
   config.defaultModel = defaultModel;
-  // A refresh may have just learned that the default model cannot disable
-  // thinking — never restore a stale thinking-off selection onto it.
   const capabilities = managedModel(config, defaultModel)?.capabilities ?? [];
   const enabled = capabilities.includes('always_thinking') ? true : defaultEnabled;
   if (enabled !== undefined) {

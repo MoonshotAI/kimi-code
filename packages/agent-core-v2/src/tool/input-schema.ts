@@ -19,12 +19,6 @@
 
 import { z } from 'zod';
 
-/**
- * Convert a zod schema into the input JSON Schema exposed to the model.
- *
- * @param schema - The zod schema describing the tool's parameters.
- * @returns A draft-07 JSON Schema rendered with the input view.
- */
 export function toInputJsonSchema(schema: z.ZodType): Record<string, unknown> {
   const jsonSchema = z.toJSONSchema(schema, {
     target: 'draft-7',
@@ -34,20 +28,6 @@ export function toInputJsonSchema(schema: z.ZodType): Record<string, unknown> {
   return jsonSchema;
 }
 
-/**
- * Re-assert `additionalProperties: false` on every object node.
- *
- * The input view drops `additionalProperties: false` from `z.object` nodes
- * because, before unknown-key stripping, an *input* object may legally carry
- * extra keys. But a tool's parameter schema is a model-facing contract that
- * the runtime validates with AJV only — there is no zod parse/strip step
- * before dispatch — so without the closed-object guard a misspelled argument
- * passes validation and is silently ignored. Restoring it keeps unknown
- * arguments rejected, matching the output view's pre-input-view behavior.
- *
- * Nodes that already declare `additionalProperties` (e.g. `z.record`) are
- * left untouched.
- */
 function closeObjectNodes(value: unknown): void {
   if (Array.isArray(value)) {
     for (const item of value) closeObjectNodes(item);

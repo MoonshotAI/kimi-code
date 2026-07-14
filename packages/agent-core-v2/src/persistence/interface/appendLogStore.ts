@@ -28,12 +28,6 @@ import { type IDisposable } from '#/_base/di/lifecycle';
 
 import { StorageError, StorageErrors } from '#/persistence/interface/storage';
 
-/**
- * A non-final line of an append log failed to parse — real corruption (a torn
- * final line is dropped silently instead). Carries `storage.corrupted`; the
- * scope/key/lineNumber coordinates live in `details` and the underlying parse
- * error is preserved as `cause`.
- */
 export class AppendLogCorruptedError extends StorageError {
   constructor(scope: string, key: string, lineNumber: number, cause: unknown) {
     super(

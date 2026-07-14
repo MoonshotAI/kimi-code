@@ -41,54 +41,29 @@ export interface AgentTaskOutputSnapshot {
 }
 
 export interface RegisterAgentTaskOptions {
-  /**
-   * When false, the task is tracked by the manager while a foreground tool call
-   * still waits for it. It can later be detached through RPC.
-   */
   readonly detached?: boolean;
-  /** Deadline owned by the task manager. `0` and `undefined` do not arm a timer. */
   readonly timeoutMs?: number;
-  /** Deadline to apply if a foreground task is detached. `0` and `undefined` do not arm a timer. */
   readonly detachTimeoutMs?: number;
-  /**
-   * When true, a foreground task whose deadline fires is detached to the
-   * background (re-armed to `detachTimeoutMs`) instead of being killed.
-   * Only meaningful for non-detached registrations.
-   */
   readonly autoBackgroundOnTimeout?: boolean;
-  /** Foreground caller signal. Ignored for tasks created already detached. */
   readonly signal?: AbortSignal;
 }
 
 export type ForegroundTaskReleaseReason = 'detached' | 'timeout_detached' | 'terminal';
 
-/**
- * Options for tracking a TaskHandle with the Agent task service.
- * Callers create the handle via `taskService.run()`, then pass it here.
- */
 export interface AgentTaskTrackOptions {
   readonly idPrefix?: string;
   readonly description: string;
-  /** If `true`, the task is immediately detached (background). Default: `true`. */
   readonly detached?: boolean;
-  /** Deadline after which the handle is cancelled. */
   readonly timeoutMs?: number;
-  /** Deadline to apply if a foreground task is detached. */
   readonly detachTimeoutMs?: number;
-  /** Foreground caller signal (ignored for detached tasks). */
   readonly signal?: AbortSignal;
-  /** Callback to force-stop the underlying work (e.g., SIGKILL). */
   readonly forceStop?: () => Promise<void>;
-  /** Hook called when a foreground task is detached. */
   readonly onDetach?: () => void;
-  /** Produce the typed `AgentTaskInfo` from the base fields. */
   readonly toInfo: (base: AgentTaskInfoBase) => AgentTaskInfo;
 }
 
-/** Returned by `track()` so callers can race `handle.result` against detach. */
 export interface IAgentTaskEntry {
   readonly taskId: string;
-  /** Resolves with `'detached'` when the RPC layer detaches this task. */
   readonly onDidDetach: Promise<ForegroundTaskReleaseReason>;
 }
 
@@ -104,9 +79,7 @@ export interface AgentTaskNotificationContext {
 export interface IAgentTaskService {
   readonly _serviceBrand: undefined;
 
-  /** Track a `ITaskHandle` (from `taskService.run()`). */
   track(handle: ITaskHandle, options: AgentTaskTrackOptions): IAgentTaskEntry;
-  /** @deprecated Use `taskService.run()` + `track()` instead. */
   registerTask(task: AgentTask, options?: RegisterAgentTaskOptions): string;
   getTask(taskId: string): AgentTaskInfo | undefined;
   list(activeOnly?: boolean, limit?: number): readonly AgentTaskInfo[];

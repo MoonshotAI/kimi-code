@@ -31,14 +31,11 @@ export async function collectFilesRecursive(root: string): Promise<string[]> {
 
 export type ExtraZipEntry =
   | {
-      /** Absolute path on disk. */
       readonly source: string;
-      /** zip-relative target path. */
       readonly target: string;
     }
   | {
       readonly data: Buffer;
-      /** zip-relative target path. */
       readonly target: string;
     };
 

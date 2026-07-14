@@ -42,11 +42,6 @@ export const setRuntimePhase = RuntimeModel.defineOp('runtime.set_phase', {
   toEvent: (p) => ({ type: 'agent.status.updated' as const, phase: p.phase }),
 });
 
-/**
- * Structural equality for phase transitions, ignoring the `since` / `at`
- * timestamps so that re-entering the same logical phase (e.g. a burst of
- * same-stream deltas) is treated as a no-op.
- */
 export function phaseEqual(a: AgentPhase, b: AgentPhase): boolean {
   if (a.kind !== b.kind) return false;
   switch (a.kind) {
@@ -96,18 +91,6 @@ export function phaseEqual(a: AgentPhase, b: AgentPhase): boolean {
 
 import type { AgentActivitySnapshot } from '#/activity/activity';
 
-/**
- * `runtime` domain (L5) — wire Model (`ActivityModel`) and the
- * `activity.set_snapshot` Op that holds the agent's structured activity
- * snapshot (`AgentActivitySnapshot`).
- *
- * Live-only (`persist: false`): nothing is persisted or replayed; a resumed
- * agent starts back at `lane: idle`. The projector (`runtimeService`) is the
- * sole dispatcher; `apply` returns the SAME reference when the snapshot is
- * unchanged under `snapshotEqual` (ignoring timestamps) so high-frequency
- * deltas collapse into one record. The Op's `toEvent` emits the native
- * `agent.activity.updated` fact (published on `dispatch`, never on `replay`).
- */
 export const ActivityModel = defineModel<AgentActivitySnapshot>('activity', () => ({
   lane: 'idle',
   background: [],
@@ -120,10 +103,6 @@ export const setActivitySnapshot = ActivityModel.defineOp('activity.set_snapshot
   toEvent: (p) => ({ type: 'agent.activity.updated' as const, ...p.next }),
 });
 
-/**
- * Structural equality for snapshots, ignoring the `since` / `at` timestamps so
- * re-entering the same logical state does not flood subscribers.
- */
 export function snapshotEqual(a: AgentActivitySnapshot, b: AgentActivitySnapshot): boolean {
   if (a.lane !== b.lane) return false;
   if (a.background.length !== b.background.length) return false;

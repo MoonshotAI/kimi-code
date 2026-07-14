@@ -19,12 +19,6 @@ export interface CallbackResult {
 
 export interface CallbackServer {
   readonly redirectUri: string;
-  /**
-   * Resolves with the OAuth callback payload, or rejects when:
-   *  - `signal` aborts → AbortError
-   *  - `timeoutMs` elapses → Error('OAuth callback timed out')
-   *  - the user's authorization server returns an error → Error('OAuth error: <code>')
-   */
   waitForCode(opts: { signal?: AbortSignal; timeoutMs?: number }): Promise<CallbackResult>;
   close(): Promise<void>;
 }

@@ -28,17 +28,10 @@ import { type AgentTaskStatus, TERMINAL_STATUSES } from '#/agent/task/types';
 import { formatPlainObject } from './format';
 import TASK_OUTPUT_DESCRIPTION from './task-output.md?raw';
 
-/**
- * Maximum bytes of output included inline as a preview. Output larger
- * than this is truncated to its tail; the full log is read separately
- * via the `Read` tool with the returned `output_path`.
- */
-const OUTPUT_PREVIEW_BYTES = 32 * 1024; // 32 KiB
+const OUTPUT_PREVIEW_BYTES = 32 * 1024;
 
-/** Number of lines the paging hint suggests reading per `Read` call. */
 const PAGING_HINT_LINES = 300;
 
-// ── Input schema ─────────────────────────────────────────────────────
 
 export const TaskOutputInputSchema = z.object({
   task_id: z.string().describe('The background task ID to inspect.'),
@@ -61,7 +54,6 @@ export const TaskOutputInputSchema = z.object({
 
 export type TaskOutputInput = z.infer<typeof TaskOutputInputSchema>;
 
-// ── Implementation ───────────────────────────────────────────────────
 
 function retrievalStatus(
   status: AgentTaskStatus,
@@ -125,15 +117,11 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
       await this.tasks.wait(args.task_id, (args.timeout ?? 30) * 1000, signal);
     }
 
-    // Re-fetch after potential wait.
     const current = this.tasks.getTask(args.task_id);
     if (!current) {
       return { isError: true, output: `Task not found: ${args.task_id}` };
     }
 
-    // A single manager-owned snapshot drives the tail window and every
-    // reported metric below. Persisted logs remain authoritative when
-    // available; detached managers fall back to their live ring buffer.
     const output = await this.tasks.getOutputSnapshot(args.task_id, OUTPUT_PREVIEW_BYTES);
 
     const lines = [
@@ -149,7 +137,6 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
         fullOutputTool:
           output.fullOutputAvailable && output.outputPath !== undefined ? 'Read' : undefined,
         fullOutputHint: fullOutputHint(output),
-        // Nudge at the exact point of misuse: a blocking wait that timed out.
         nextStep:
           args.block === true && !TERMINAL_STATUSES.has(current.status)
             ? 'The task is still running after waiting. Do not block on it again — continue with other work or hand back to the user; you will be notified automatically when it completes.'
@@ -158,9 +145,6 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
       '',
     ];
 
-    // When the preview omits the head of the log, emit an explicit
-    // banner just before the `[output]` marker so the model knows it is
-    // looking at a tail, not the full output.
     if (output.truncated) {
       lines.push(
         output.fullOutputAvailable && output.outputPath !== undefined
@@ -170,9 +154,6 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
     }
     lines.push('[output]', output.preview || '[no output available]');
 
-    // Side-channel brief for the host UI / log readers. Distinct from
-    // the `output` body which is parsed by the LLM. Kept short so log
-    // readers can render it as a one-liner.
     return {
       output: lines.join('\n'),
       isError: false,

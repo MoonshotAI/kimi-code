@@ -13,13 +13,6 @@ import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
 
 import { createTestAgent, llmGenerateServices, type TestAgentContext } from '../../harness';
 
-/**
- * The `stepRetry` plugin drives loop-level retries of retryable provider
- * failures: it claims the error from the loop's handler registry, backs off,
- * and re-runs the failed driver as the same step. Backoff sleeps use
- * `setTimeout`, so the suite runs on fake timers and flushes them between the
- * loop's `run()` promise and its resolution.
- */
 describe('stepRetry plugin', () => {
   let ctx: TestAgentContext;
 
@@ -87,7 +80,6 @@ describe('stepRetry plugin', () => {
     expect(
       rpcEvents('turn.step.started').map((event) => (event.args as { step: number }).step),
     ).toEqual([1, 2]);
-    // A recovered error never surfaces as an interruption.
     expect(rpcEvents('turn.step.interrupted')).toEqual([]);
     expect(ctx.contextData().history).toEqual([
       expect.objectContaining({

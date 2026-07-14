@@ -33,7 +33,6 @@ import { ISessionFsWatchService } from './fsWatch';
 const DEFAULT_DEBOUNCE_MS = 200;
 const DEFAULT_MAX_CHANGES_PER_WINDOW = 500;
 
-/** Positive-int env read for the test-only window overrides below. */
 function readPositiveIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
@@ -56,9 +55,6 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
   private rawCount = 0;
   private truncated = false;
 
-  // Env-overridable for tests: the burst-truncation e2e cannot rely on
-  // chokidar delivering >500 events inside one 200ms window under CPU
-  // contention. Production leaves both unset and gets the defaults.
   private readonly debounceMs = readPositiveIntEnv(
     'KIMI_CODE_FS_WATCH_DEBOUNCE_MS',
     DEFAULT_DEBOUNCE_MS,
@@ -68,7 +64,6 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
     DEFAULT_MAX_CHANGES_PER_WINDOW,
   );
 
-  /** Always present; starts with `.git/` and is augmented with `.gitignore` once loaded. */
   private readonly matcher: Ignore = ignore().add('.git/');
   private gitignoreLoaded = false;
 

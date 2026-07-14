@@ -14,24 +14,16 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
 
-/** Hard upload cap mirrored from the v1 server (50 MiB). */
 export const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 
 export interface SaveOptions {
-  /** Display name override; defaults to the uploaded filename. */
   readonly name?: string;
-  /** MIME type; defaults to `application/octet-stream`. */
   readonly mimeType?: string;
-  /** Optional TTL in seconds; recorded as `expires_at` on the metadata. */
   readonly expiresInSec?: number;
 }
 
 export interface GetResult {
   readonly meta: FileMeta;
-  /**
-   * Open a fresh stream over the stored blob. `range` is inclusive and lets
-   * callers serve byte ranges without first buffering the whole file.
-   */
   readonly stream: (range?: FileReadRange) => Readable;
 }
 
@@ -50,9 +42,6 @@ export interface IFileService {
 
 export const IFileService: ServiceIdentifier<IFileService> = createDecorator<IFileService>('fileService');
 
-// ---------------------------------------------------------------------------
-// Error domain
-// ---------------------------------------------------------------------------
 
 export const FileErrors = {
   codes: {

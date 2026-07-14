@@ -143,13 +143,6 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
     this.eventBus.publish({ type: 'context.spliced', ...input });
   }
 
-  /**
-   * Cascade a `context_size.measured` Op when an undo truncates the measured
-   * prefix (`ContextSizeModel.length`). If the surviving context still covers
-   * the measured prefix, the measurement stays valid and nothing is emitted;
-   * otherwise the prefix is rebased to an estimate of the surviving messages
-   * (an aggregate measured count can't be truncated without per-message data).
-   */
   private sizeOpsForCut(cutIndex: number, history: readonly ContextMessage[]): Op[] {
     const model = this.wire.getModel(ContextSizeModel);
     if (model.length <= cutIndex) return [];

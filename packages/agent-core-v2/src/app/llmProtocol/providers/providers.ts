@@ -43,14 +43,6 @@ export function createProvider(config: ProviderConfig): ChatProvider {
   }
 }
 
-/**
- * Look up the declared {@link ModelCapability} for a `(wire, model)` pair.
- *
- * This is a pure static table lookup — it does not instantiate a provider.
- * Unknown / uncatalogued models (and the Kimi wire, whose capabilities come
- * from the host's catalog/config rather than the model name) return
- * {@link UNKNOWN_CAPABILITY} so capability checks stay non-fatal.
- */
 export function getModelCapability(wire: ProviderType, modelName: string): ModelCapability {
   switch (wire) {
     case 'anthropic':

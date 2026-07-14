@@ -140,9 +140,6 @@ describe('AgentLifecycleService', () => {
   let didExecuteHookIds: string[];
 
   beforeEach(() => {
-    // The unit under test force-instantiates the builtin-tools registrar per
-    // created agent; clear module-level tool contributions so no real tool
-    // (with its own service dependencies) is constructed in this unit test.
     _clearToolContributionsForTests();
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
@@ -215,8 +212,6 @@ describe('AgentLifecycleService', () => {
       resolve: () => undefined,
       list: () => [],
     } as unknown as IAgentToolRegistryService);
-    // Media registration is capability-driven and exercised in its own tests;
-    // stub the registrar so agent creation does not need profile/host services.
     ix.stub(IAgentMediaToolsRegistrar, {
       _serviceBrand: undefined,
     } as IAgentMediaToolsRegistrar);
@@ -290,10 +285,6 @@ describe('AgentLifecycleService', () => {
   });
 
   it('ignites the self-wiring toolDedupe plugin so its hooks exist before the first turn', async () => {
-    // `AgentToolDedupeService` only acts through the loop/executor hooks its
-    // constructor registers; nothing injects it, so agent creation must ignite
-    // it explicitly (its ordering ahead of `permission` is enforced by the
-    // ignition order in `igniteEagerServices`).
     const svc = ix.get(IAgentLifecycleService);
     await svc.create({ agentId: 'main' });
     expect(beforeExecuteHookIds).toContain('toolDedupe');
@@ -500,8 +491,6 @@ describe('AgentLifecycleService', () => {
       callerOnly: { transport: 'http', url: 'https://caller.example.com' },
     });
 
-    // The initial load is single-flight: later calls only await it and never
-    // re-merge a different caller payload.
     await svc.ensureMcpReady({ ignored: { transport: 'stdio', command: 'ignored' } });
     expect(connectAll).toHaveBeenCalledTimes(1);
   });

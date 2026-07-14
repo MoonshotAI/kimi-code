@@ -41,9 +41,6 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import editDescriptionTemplate from './edit.md?raw';
 
-// `old_string` must be non-empty: the non-replace_all branch walks
-// occurrences with `content.indexOf("", pos)`, which would loop forever
-// on an empty search string.
 export const EditInputSchema = z.object({
   path: z
     .string()
@@ -78,14 +75,10 @@ export class EditTool implements BuiltinTool<EditInput> {
     @IFileEditService private readonly editor: IFileEditService,
     @IHostEnvironment private readonly env: IHostEnvironment,
     @ISessionWorkspaceContext private readonly workspaceCtx: ISessionWorkspaceContext,
-    // Optional so unit tests that construct the tool directly (bypassing DI)
-    // keep working; always registered in production scopes.
     @ISessionSkillCatalog private readonly skillCatalog?: ISessionSkillCatalog,
   ) {}
 
   private get workspaceConfig(): WorkspaceConfig {
-    // Skill roots are merged per call (v1 merged once at tool construction):
-    // the catalog loads asynchronously and gains roots on plugin reloads.
     return extendWorkspaceWithSkillRoots(
       {
         workspaceDir: this.workspaceCtx.workDir,

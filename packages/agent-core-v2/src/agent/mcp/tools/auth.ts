@@ -39,7 +39,7 @@ import {
 import { AlreadyAuthorizedError, type McpOAuthService } from '#/agent/mcp/oauth/service';
 import { qualifyMcpToolName } from '#/agent/mcp/tool-naming';
 
-const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
 
 const AUTH_TOOL_TOOL_NAME = 'authenticate';
 
@@ -61,22 +61,10 @@ Take no arguments. Treat the URL as sensitive — do not modify it or strip
 query parameters.`;
 
 export interface CreateMcpAuthToolOptions {
-  /** Friendly MCP server name as configured in `mcp.json`. */
   readonly serverName: string;
-  /** Base URL of the MCP server (used for OAuth resource metadata discovery). */
   readonly serverUrl: string;
-  /** OAuth orchestrator, typically `Session`-scoped. */
   readonly oauthService: McpOAuthService;
-  /**
-   * Triggers a manager-level reconnect once tokens land on disk. Implemented
-   * by the {@link McpConnectionManager} and bound in the {@link ToolManager}
-   * `needs-auth` branch.
-   */
   readonly reconnect: (signal?: AbortSignal) => Promise<void>;
-  /**
-   * Overrides the per-call OAuth wait timeout. Tests set this to a small
-   * number; production callers should accept the default.
-   */
   readonly timeoutMs?: number;
 }
 
@@ -84,7 +72,6 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
   const { serverName, serverUrl, oauthService, reconnect, timeoutMs } = options;
   const name = qualifyMcpToolName(serverName, AUTH_TOOL_TOOL_NAME);
   const description = DESCRIPTION_TEMPLATE(serverName);
-  // No arguments; an empty object schema keeps providers happy across SDKs.
   const parameters = toInputJsonSchema(z.object({}));
   const execute = async (ctx: ExecutableToolContext): Promise<ExecutableToolResult> => {
     const { signal, onUpdate } = ctx;

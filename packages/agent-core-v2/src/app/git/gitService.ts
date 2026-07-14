@@ -21,8 +21,6 @@ import { IHostProcessService } from '#/os/interface/hostProcess';
 import { IGitService } from './git';
 import { parseNumstat, parsePorcelain, parsePullRequest } from './gitParsers';
 
-/** Cap a single file's unified diff so a runaway generated file cannot blow up
- *  the envelope; the response carries `truncated` so the UI can say so. */
 const DIFF_MAX_BYTES = 1_048_576;
 
 const PR_SPAWN_TIMEOUT_MS = 5_000;
@@ -54,11 +52,6 @@ export class GitService implements IGitService {
 
     const result = parsePorcelain(porc.stdout, pathFilter);
 
-    // Aggregate line stats against HEAD. Only worth a second spawn when the
-    // tree is dirty AND there is a HEAD to diff against (a repo with no commits
-    // yet has neither side); otherwise the stats stay 0. Dirtiness is read from
-    // the UNFILTERED porcelain and the numstat is NOT scoped by `pathFilter` —
-    // the header counter reflects the whole working tree.
     const dirty = porc.stdout
       .split('\n')
       .some((line) => line.length > 0 && !line.startsWith('## '));
@@ -90,15 +83,11 @@ export class GitService implements IGitService {
     }
     const untracked = statusRes.stdout.startsWith('??');
 
-    // A repo with no commits yet has no HEAD to diff against — every changed
-    // file is all-new there, same as the untracked case.
     const headRes = await this.runCommand('git', ['rev-parse', '--verify', '--quiet', 'HEAD'], cwd);
     const hasHead = headRes.exitCode === 0;
 
     let diffStdout: string;
     if (untracked || !hasHead) {
-      // An untracked file has no HEAD side; diff it against /dev/null so the UI
-      // gets an all-added hunk. `git diff --no-index` exits 1 when files differ.
       const res = await this.runCommand(
         'git',
         ['diff', '--no-color', '--no-index', '--', '/dev/null', relPath],
@@ -114,8 +103,6 @@ export class GitService implements IGitService {
         throw this.gitUnavailable(cwd, res.stderr.trim() || `git diff exit ${res.exitCode}`);
       }
       if (res.stdout.length === 0 && statusRes.stdout.length === 0) {
-        // Not changed at all — distinguish "clean file" (empty diff is fine)
-        // from a path that does not exist anywhere.
         const exists = await this.fs.stat(absPath).then(
           () => true,
           () => false,
@@ -171,9 +158,6 @@ export class GitService implements IGitService {
         () => ({ ok: false as const }),
       );
     if (!spawned.ok) {
-      // The binary is missing or failed to start (e.g. ENOENT). Mirror the old
-      // "exit code -1" so callers surface FS_GIT_UNAVAILABLE / skip the
-      // optional PR lookup uniformly instead of leaking HostProcessError.
       return { exitCode: -1, stdout: '', stderr: '' };
     }
     const { proc } = spawned;
@@ -183,7 +167,6 @@ export class GitService implements IGitService {
       collect(proc.stderr),
       proc.wait().catch(() => -1),
     ] as const);
-    // Keep the rejection handled if the timeout race below abandons `work`.
     work.catch(() => {});
 
     let timer: ReturnType<typeof setTimeout> | undefined;

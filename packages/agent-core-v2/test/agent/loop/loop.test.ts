@@ -151,9 +151,6 @@ describe('Agent loop', () => {
   });
 
   it('stops the turn when provider reports tool_calls without any tool call structure', async () => {
-    // Mirrors v1 turn-lifecycle "treats provider tool_calls without tool call
-    // structure as unknown": a bare 'tool_calls' signal with no tool calls must
-    // end the turn instead of looping on the bare signal until maxSteps.
     profile.update({ activeToolNames: [] });
     ctx.mockNextProviderResponse({
       parts: [{ type: 'text', text: 'done' }],
@@ -703,8 +700,6 @@ describe('step timing split propagation', () => {
       const stepCompleted = ctx.allEvents.find(
         (event) => event.type === '[rpc]' && event.event === 'turn.step.completed',
       );
-      // The protocol event is copied field-by-field from the step.end event, so
-      // these exact values also prove the split survived on step.end.
       expect(stepCompleted?.args).toMatchObject({
         llmFirstTokenLatencyMs: 100,
         llmStreamDurationMs: 200,

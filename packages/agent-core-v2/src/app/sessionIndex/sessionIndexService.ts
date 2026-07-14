@@ -54,7 +54,6 @@ const META_KEY = 'state.json';
 const SESSION_COLLECTION = 'session';
 const READ_MODEL_FLAG = 'persistence_minidb_readmodel';
 
-/** Accept both v2 (epoch ms number) and v1 (ISO string) timestamps. */
 function parseTime(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
@@ -64,13 +63,6 @@ function parseTime(value: unknown): number {
   return 0;
 }
 
-/**
- * Recover the session's frozen working directory from its metadata document.
- *
- * Precedence: v2 `cwd` → v1 `workDir` → older v1 `custom.cwd`. Returns
- * `undefined` only for documents predating every cwd record; the edge falls
- * back to the workspace registry for those.
- */
 function recoverCwd(meta: Record<string, unknown>): string | undefined {
   if (typeof meta['cwd'] === 'string' && meta['cwd'].length > 0) return meta['cwd'];
   if (typeof meta['workDir'] === 'string' && meta['workDir'].length > 0) {
@@ -84,12 +76,6 @@ function recoverCwd(meta: Record<string, unknown>): string | undefined {
   return undefined;
 }
 
-/**
- * Whether a summary is a direct child of `parentId` per the v1 child markers:
- * `custom.parent_session_id === parentId` AND `custom.child_session_kind ===
- * 'child'`. A missing/blank `parentId` (no `childOf` filter) matches every
- * summary. A spoofed kind is ignored.
- */
 function matchesChildOf(summary: SessionSummary, parentId: string | undefined): boolean {
   if (parentId === undefined) return true;
   const custom = summary.custom;
@@ -103,11 +89,6 @@ export class FileSessionIndex implements ISessionIndex {
   declare readonly _serviceBrand: undefined;
 
   private indexesEnsured = false;
-  /**
-   * Set when the read model reports `storage.locked` (another process holds
-   * the query-store writer lock): warn once, then serve every call from the
-   * legacy disk path for the rest of the process lifetime.
-   */
   private readModelDisabled = false;
 
   constructor(
@@ -143,13 +124,6 @@ export class FileSessionIndex implements ISessionIndex {
     );
   }
 
-  /**
-   * Run a read-model operation, falling back to the legacy disk path when the
-   * query store is locked by another process (`storage.locked`). The fallback
-   * is sticky: the first lock disables the read model for the process
-   * lifetime, so the warning is emitted once and a contended lock is not
-   * hammered. Other errors propagate.
-   */
   private async withReadModelFallback<T>(op: () => Promise<T>, legacy: () => Promise<T>): Promise<T> {
     if (this.readModelDisabled) return legacy();
     try {
@@ -194,7 +168,6 @@ export class FileSessionIndex implements ISessionIndex {
   private async getFromReadModel(id: string): Promise<SessionSummary | undefined> {
     const cached = await this.queryStore.get<SessionSummary>(SESSION_COLLECTION, id);
     if (cached !== undefined) return cached;
-    // Cold miss: locate the session on disk, then read + backfill.
     for (const workspaceId of await this.listWorkspaceIds()) {
       if (!(await this.hasSession(workspaceId, id))) continue;
       return this.getCachedSummary(workspaceId, id);
@@ -231,10 +204,6 @@ export class FileSessionIndex implements ISessionIndex {
     this.indexesEnsured = true;
   }
 
-  /**
-   * Resolve a summary through the read model, backfilling from disk on a cold
-   * miss. The read model is keyed by session id (globally unique).
-   */
   private async getCachedSummary(
     workspaceId: string,
     sessionId: string,
@@ -322,10 +291,6 @@ export class FileSessionIndex implements ISessionIndex {
     sessionId: string,
   ): Promise<SessionSummary | undefined> {
     const base = `${this.sessionsScope}/${workspaceId}/${sessionId}`;
-    // `<sessionDir>/state.json` is the unified metadata document: v2 (tagged
-    // `version: 2`) and v1 (no version) both write here. Fall back to the
-    // legacy v2 `session-meta/` subdir for sessions written before the layouts
-    // were unified.
     const meta = (await this.readMeta(base)) ?? (await this.readMeta(`${base}/${META_SCOPE}`));
     if (meta === undefined) return undefined;
     const rawCustom = meta['custom'];

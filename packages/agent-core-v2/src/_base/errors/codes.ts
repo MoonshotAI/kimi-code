@@ -11,7 +11,6 @@
 
 import type { KimiErrorCode } from '@moonshot-ai/protocol';
 
-/** Wire-stable code carried by every `Error2`. Sourced from the protocol. */
 export type ErrorCode = KimiErrorCode;
 
 export interface ErrorInfo {
@@ -21,11 +20,6 @@ export interface ErrorInfo {
   readonly action?: string;
 }
 
-/**
- * A domain's error contribution: the `codes` const (name → wire code) plus the
- * optional retryable list and per-code human-facing overrides. Every value in
- * `codes` must be a protocol-known `ErrorCode`.
- */
 export interface ErrorDomain {
   readonly codes: { readonly [name: string]: ErrorCode };
   readonly retryable?: ReadonlyArray<ErrorCode>;
@@ -36,10 +30,6 @@ const registeredCodes = new Set<ErrorCode>();
 const retryableCodes = new Set<ErrorCode>();
 const infoOverrides: { [code: string]: ErrorInfo } = {};
 
-/**
- * Merge a domain's error contribution into the runtime registry. Each domain's
- * error module calls this at load; re-registering an identical code is a no-op.
- */
 export function registerErrorDomain(domain: ErrorDomain): void {
   for (const code of Object.values(domain.codes)) {
     registeredCodes.add(code);
@@ -66,7 +56,6 @@ export function errorInfo(code: ErrorCode): ErrorInfo {
   };
 }
 
-/** Domain-independent codes shared by every consumer. */
 export const CoreErrors = {
   codes: {
     INTERNAL: 'internal',

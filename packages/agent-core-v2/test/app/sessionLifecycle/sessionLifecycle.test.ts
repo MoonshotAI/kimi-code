@@ -422,9 +422,6 @@ describe('SessionLifecycleService', () => {
       InstantiationType.Delayed,
       'activity',
     );
-    // The unit under test copies session files through hostFs on fork; the
-    // real backend has no dependencies and operates on the tmp paths the
-    // fork tests seed, so register it instead of stubbing.
     registerScopedService(
       LifecycleScope.App,
       IHostFileSystem,
@@ -483,8 +480,6 @@ describe('SessionLifecycleService', () => {
   it('create seeds identity and materializes metadata', async () => {
     const svc = build();
     const h = await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
-    // create() awaits ISessionMetadata.ready, so a resolved handle implies the
-    // metadata service was resolved inside the new session scope.
     expect(h.kind).toBe(LifecycleScope.Session);
   });
 
@@ -796,8 +791,6 @@ describe('SessionLifecycleService', () => {
     const resumed = svc.resume('s1');
     await tick();
 
-    // materialize has registered the handle in `sessions` and is now blocked on
-    // ensureMcpReady with `resuming` set — the handle must not be observable yet.
     expect(svc.get('s1')).toBeUndefined();
     expect(svc.list()).toEqual([]);
 
@@ -834,9 +827,6 @@ describe('SessionLifecycleService', () => {
     expect(archived).toEqual(['s1']);
   });
 
-  // Mirrors v1's runtime.test.ts additional-dirs coverage: session
-  // creation/resume must merge `.kimi-code/local.toml` dirs with caller
-  // additionalDirs into the session workspace context.
   describe('additional dirs', () => {
     beforeEach(() => {
       registerScopedService(
@@ -1030,9 +1020,6 @@ describe('SessionLifecycleService', () => {
       await writeFile(join(srcDir, 'agents', 'main', 'tasks', 'bash-1', 'output.log'), 'out');
       await mkdir(join(srcDir, 'media-originals'), { recursive: true });
       await writeFile(join(srcDir, 'media-originals', 'x.png'), 'png');
-      // Excluded from the copy: state.json (rewritten with fork provenance),
-      // the wire logs (copied with a fork boundary record), and the source's
-      // debug log.
       await writeFile(join(srcDir, 'state.json'), '{"source":true}');
       await writeFile(join(srcDir, 'agents', 'main', 'wire.jsonl'), '{"type":"metadata"}\n');
       await mkdir(join(srcDir, 'logs'), { recursive: true });
@@ -1056,8 +1043,6 @@ describe('SessionLifecycleService', () => {
       await expect(readFile(join(dstDir, 'media-originals', 'x.png'), 'utf8')).resolves.toBe(
         'png',
       );
-      // The materialize path is stubbed to write nothing, so any of these in
-      // the target could only have come from the copy.
       await expect(stat(join(dstDir, 'state.json'))).rejects.toThrow();
       await expect(stat(join(dstDir, 'agents', 'main', 'wire.jsonl'))).rejects.toThrow();
       await expect(stat(join(dstDir, 'logs'))).rejects.toThrow();
@@ -1078,8 +1063,6 @@ describe('SessionLifecycleService', () => {
         }),
       ]);
       await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
-      // Seed one file so the copy materializes the target dir before the
-      // (stubbed) agent creation rejects.
       await mkdir(join(srcDir, 'agents', 'main', 'plans'), { recursive: true });
       await writeFile(join(srcDir, 'agents', 'main', 'plans', 'p1.md'), '# plan');
       const dstDir = join(root, 'sessions', 'wd_stub', 'dst');
@@ -1090,8 +1073,6 @@ describe('SessionLifecycleService', () => {
 
       expect(svc.get('dst')).toBeUndefined();
       await expect(stat(dstDir)).rejects.toThrow();
-      // The registry rollback unblocks a retry with the same ids: it fails
-      // again at agent creation, not with SESSION_ALREADY_EXISTS.
       await expect(svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' })).rejects.toThrow(
         'not implemented',
       );

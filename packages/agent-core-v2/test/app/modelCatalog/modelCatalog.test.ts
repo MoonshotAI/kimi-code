@@ -238,7 +238,6 @@ describe('ModelCatalogService', () => {
   });
 
   it('registers and validates the modelCatalog config section', () => {
-    // Constructing the service registers the section as a side effect.
     catalog();
     const registry = ix.get(IConfigRegistry);
     expect(registry.getSection(MODEL_CATALOG_SECTION)).toBeDefined();
@@ -266,16 +265,12 @@ describe('ModelCatalogService', () => {
   });
 
   it('refreshProviderModels returns an empty result and stays silent when nothing is refreshable', async () => {
-    // `kimi` (api_key) and `openai` are plain API-key providers with no
-    // server-side catalog endpoint, so the orchestrator has nothing to refresh.
     const result = await catalog().refreshProviderModels({ scope: 'all' });
     expect(result).toEqual({ changed: [], unchanged: [], failed: [] });
     expect(publishEvent).not.toHaveBeenCalled();
   });
 
   it('serializes concurrent refreshProviderModels runs so they never overlap', async () => {
-    // Seed the managed OAuth provider so the orchestrator actually refreshes it
-    // (a plain api-key provider is a no-op and would not exercise the chain).
     backing.providers = {
       [KIMI_CODE_PROVIDER_NAME]: {
         type: 'kimi',
@@ -314,8 +309,6 @@ describe('ModelCatalogService', () => {
       catalog().refreshProviderModels({ scope: 'all' }),
     ]);
 
-    // Without the refresh chain both remote fetches would overlap (peak 2); the
-    // chain holds the second run until the first finishes, so the peak stays 1.
     expect(maxInFlight).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });

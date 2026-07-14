@@ -131,10 +131,6 @@ describe('AgentPromptService', () => {
   });
 
   it('replaces an unsupported prompt image with a text notice at the history funnel', async () => {
-    // The format gate is the last funnel before prompt content lands in the
-    // session history: an AVIF data-URL image (accepted by no provider)
-    // must never be appended as an image_url — one poisoned part makes every
-    // later request in the session fail.
     const { prompt, context, loop } = harness();
     const avifUrl = `data:image/avif;base64,${Buffer.from([1, 2, 3]).toString('base64')}`;
     const handle = await prompt.enqueue({

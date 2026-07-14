@@ -20,11 +20,6 @@ export interface ConfigSectionContribution {
 
 const _contributions: ConfigSectionContribution[] = [];
 
-/**
- * Record a config-section contribution. Generic so `envBindings(...)` /
- * `stripEnv` keep their owner-specific types at the call site; the contribution
- * is stored in its erased form for `ConfigRegistry` to drain.
- */
 export function registerConfigSection<T>(
   domain: string,
   schema: ConfigSchema<T>,
@@ -41,7 +36,6 @@ export function getConfigSectionContributions(): readonly ConfigSectionContribut
   return _contributions;
 }
 
-/** Test isolation — mirrors `_clearScopedRegistryForTests`. */
 export function _clearConfigSectionContributionsForTests(): void {
   _contributions.length = 0;
 }

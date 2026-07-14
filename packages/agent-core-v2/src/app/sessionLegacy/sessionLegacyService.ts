@@ -58,10 +58,6 @@ export class SessionLegacyService implements ISessionLegacyService {
       await metadata.setTitle(body.title);
     }
 
-    // v1 `ISessionService.update` writes the wire metadata patch straight into
-    // `custom` (replace, not deep-merge); `toProtocolSession` then spreads
-    // `custom` back onto the wire `Session.metadata`. An empty patch is a no-op
-    // (matches v1's `Object.keys(...).length > 0` guard).
     const metadataPatch = body.metadata;
     if (metadataPatch !== undefined && Object.keys(metadataPatch).length > 0) {
       await metadata.update({ custom: { ...(metadataPatch as Record<string, unknown>) } });
@@ -74,9 +70,6 @@ export class SessionLegacyService implements ISessionLegacyService {
     }
 
     const meta = await metadata.read();
-    // `ISessionContext` carries the frozen work dir (gap G3 closed), so an
-    // unregistered workspace does not collapse `cwd` here — matches v1, which
-    // stores `workDir` on the session itself.
     const ctx = session.accessor.get(ISessionContext);
     return {
       id: meta.id,
@@ -91,18 +84,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     };
   }
 
-  // --- internals -------------------------------------------------------------
 
-  /**
-   * Apply the v1 `agent_config` patch onto the main agent. Mirrors v1's
-   * `IPromptService.applyAgentState` (`promptService.ts:650-743`) in both order
-   * (model → thinking → permission → plan → swarm → goal) and diff behaviour:
-   * the non-idempotent `plan.enter` / `swarm.enter` are guarded behind a state
-   * read so a repeated `true` does not throw ('Already in plan mode'); the
-   * idempotent setters (model / thinking / permission) fire directly. Goal
-   * actions are one-shot and let domain errors (`goal.*`) propagate to the
-   * route's `sendMappedError`.
-   */
   private async applyAgentConfig(
     agent: IAgentScopeHandle,
     agentConfig: NonNullable<UpdateSessionProfileRequest['agent_config']>,
@@ -156,12 +138,6 @@ export class SessionLegacyService implements ISessionLegacyService {
   }
 
   private async resolveMainAgent(sessionId: string): Promise<IAgentScopeHandle> {
-    // `resume` (not `get`) so a persisted-but-cold session — freshly opened in
-    // the web UI before any prompt, or created by a previous process — is loaded
-    // from disk instead of being reported as `session.not_found`. Mirrors v1's
-    // `SessionService.undo`/`compact`, which call `resumeSession` first; `resume`
-    // returns `undefined` only when the session is unknown or its workspace is
-    // gone, so a genuinely missing session still 404s.
     const session = await this.lifecycle.resume(sessionId);
     if (session === undefined) {
       throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} does not exist`);
@@ -188,17 +164,8 @@ export class SessionLegacyService implements ISessionLegacyService {
     const profileData = profile.data();
     const model = profile.getModel();
     const caps = profile.getModelCapabilities() as { max_context_tokens?: number };
-    // v1 binds the default model to the main agent at session creation, so its
-    // status always reports a real context window. v2 creates the main agent
-    // lazily without binding a model until the first prompt/profile update, so a
-    // fresh session has no model and `max_context_tokens` resolves to 0 — the
-    // status line then shows "0/0". Mirror v1 by falling back to the configured
-    // default model's context window whenever the agent has no model bound yet.
     const maxTokens =
       model === '' ? resolveDefaultModelContextTokens(agent) : (caps.max_context_tokens ?? 0);
-    // `size` (measured + estimated) mirrors v1's `context.tokenCount`: it
-    // reflects the live context even before the first measured exchange, whereas
-    // `measured` stays 0 until the first LLM response lands.
     const tokens = contextSize.get().size;
     const planData = await plan.status();
 
@@ -221,12 +188,6 @@ export class SessionLegacyService implements ISessionLegacyService {
   }
 }
 
-/**
- * Resolve the configured default model's context window for the status line
- * when the main agent has no model bound yet (fresh session before the first
- * prompt). Returns 0 when no default model is configured or it cannot be
- * resolved (e.g. auth not ready), matching v1's "unknown" fallback.
- */
 function resolveDefaultModelContextTokens(agent: IAgentScopeHandle): number {
   const defaultModel = agent.accessor.get(IConfigService).get<string>('defaultModel');
   if (typeof defaultModel !== 'string' || defaultModel.length === 0) return 0;

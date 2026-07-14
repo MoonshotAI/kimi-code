@@ -58,11 +58,6 @@ const RESUMED_LABEL = 'subagent';
 export const DEFAULT_SUBAGENT_TIMEOUT_MS = 30 * 60 * 1000;
 export const DEFAULT_SUBAGENT_TIMEOUT_DESCRIPTION = '30 minutes';
 
-// ── Input schema ────────────────────────────────────────────────────
-//
-// Wire arg name `subagent_type` is kept for compatibility (a rename would
-// invalidate the tool_call args in existing session recordings). Internally
-// the value is treated as a profile name from `IAgentProfileCatalogService`.
 export const AgentToolInputSchema = z.preprocess(
   (input) => {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
@@ -107,7 +102,6 @@ export const AgentToolInputSchema = z.preprocess(
 
 export type AgentToolInput = z.infer<typeof AgentToolInputSchema>;
 
-// ── Output schema (drift-guard only) ─────────────────────────────────
 
 export const AgentToolOutputSchema = z.object({
   result: z.string().describe('Aggregated text output from the subagent'),
@@ -130,7 +124,6 @@ const RESUME_WITH_TYPE_UNAVAILABLE =
 const USER_INTERRUPTED_SUBAGENT_MESSAGE =
   "The user manually interrupted this subagent (and any sibling agents launched alongside it). This was a deliberate user action, not a system error, a timeout, or a capacity/concurrency limit. Do not retry automatically or speculate about why it failed — wait for the user's next instruction.";
 
-// ── AgentTool class ──────────────────────────────────────────────────
 
 export class AgentTool implements BuiltinTool<AgentToolInput> {
   readonly name: string = 'Agent';
@@ -207,13 +200,6 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     return target.accessor.get(IAgentProfileService).data().profileName;
   }
 
-  /**
-   * Launch (or resume) the target agent and start its turn: create from an
-   * explicit Profile + Model binding inherited from this agent's own config,
-   * submit the prompt via `lifecycle.run`, and mirror the run onto this
-   * agent's record stream. Returns a handle whose completion carries the
-   * distilled result text.
-   */
   private async launch(
     args: AgentToolInput,
     toolCallId: string,
@@ -252,9 +238,6 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       if (own.modelAlias === undefined) {
         throw new Error('Caller agent has no model bound');
       }
-      // Explicit inheritance: the new agent runs the requested profile on this
-      // agent's own model / thinking level / cwd, and inherits this agent's
-      // permission mode so it does not fall back to `manual`.
       const created = await this.lifecycle.create({
         binding: {
           profile: profile.name,
@@ -373,8 +356,6 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         throw error;
       }
 
-      // Wrap the run handle in a background task so the LLM can interact
-      // with it via TaskList / TaskOutput / TaskStop.
       let taskId: string;
       try {
         const registerOptions: RegisterAgentTaskOptions = {
@@ -452,7 +433,6 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
 
 registerTool(AgentTool);
 
-// ── formatting helpers ───────────────────────────────────────────────
 
 function buildProfileDescriptions(
   profiles: readonly AgentProfile[],

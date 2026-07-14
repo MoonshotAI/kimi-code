@@ -48,8 +48,6 @@ export class ProcessTask implements AgentTask {
       observeProcessStream(this.proc.stdout, 'stdout', sink, this.onOutput),
       observeProcessStream(this.proc.stderr, 'stderr', sink, this.onOutput),
     ]).then(() => undefined);
-    // Attach a rejection handler immediately; start() still awaits the same
-    // promise after proc.wait() so stream errors keep failing the task.
     void streamDrained.catch(() => {});
 
     const requestStop = (): void => {
@@ -107,7 +105,6 @@ export class ProcessTask implements AgentTask {
     try {
       await this.proc.dispose();
     } catch {
-      /* best-effort cleanup */
     }
   }
 }
@@ -131,7 +128,6 @@ async function waitForStreamDrainSettled(streamDrained: Promise<void>): Promise<
   try {
     await waitForStreamDrain(streamDrained);
   } catch {
-    /* original process/stream error wins */
   }
 }
 
@@ -145,11 +141,6 @@ function observeProcessStream(
   const onData = (chunk: string): void => {
     if (chunk.length === 0) return;
     sink.appendOutput(chunk);
-    // Once the manager has begun terminating the task — an output-limit trip
-    // (see MAX_TASK_OUTPUT_BYTES), a user interrupt, or a timeout —
-    // `appendOutput` above may synchronously abort the signal. Stop forwarding
-    // live output from that point so the unbounded forward buffer cannot keep
-    // growing while the process is being killed.
     if (sink.signal.aborted) return;
     onOutput?.(kind, chunk);
   };
@@ -180,8 +171,6 @@ function observeProcessStream(
       fail(createPrematureCloseError());
     };
     const onError = (error: Error): void => {
-      // When the task is aborted we intentionally destroy the streams, which
-      // can emit errors. Swallow those expected errors; surface anything else.
       if (sink.signal.aborted) {
         done();
       } else {
@@ -204,11 +193,6 @@ export interface ProcessTaskResult {
   readonly exitCode: number | null;
 }
 
-/**
- * Create a `taskService.run()`-compatible executor that drives a spawned
- * process to completion.  Returns a resolved `ProcessTaskResult` on exit 0,
- * throws on non-zero exit or abort.
- */
 export function createProcessExecutor(
   proc: IProcess,
   onOutput?: ProcessTaskOutputCallback,
@@ -300,7 +284,7 @@ function observeProcessStreamRaw(
 }
 
 async function disposeProcess(proc: IProcess): Promise<void> {
-  try { await proc.dispose(); } catch { /* best-effort */ }
+  try { await proc.dispose(); } catch {   }
 }
 
 function createPrematureCloseError(): Error {

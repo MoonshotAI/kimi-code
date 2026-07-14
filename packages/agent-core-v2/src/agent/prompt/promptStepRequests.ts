@@ -30,12 +30,6 @@ abstract class UserMessageStepRequest extends StepRequest {
     options?: StepRequestOptions,
   ) {
     super(options);
-    // The last funnel before a prompt lands in the session history: images
-    // in formats providers reject (AVIF, HEIC, …) become text notices here,
-    // so no caller — REST, RPC, or tool-delivered inject — can poison the
-    // session. Upstream ingestion points already gate; this is the backstop,
-    // applied to both the recorded turn seed and the appended context
-    // message (v1 parity: the turn.prompt/steer gate).
     this.message = { ...message, content: gateImageFormatParts(message.content) };
   }
 
@@ -53,8 +47,6 @@ abstract class UserMessageStepRequest extends StepRequest {
   }
 
   resolveContextMessages(): readonly ContextMessage[] {
-    // A message whose content was caption-only is dropped entirely rather than
-    // appended empty (the reminders still landed).
     return this.message.content.length > 0 ? [this.message] : [];
   }
 }

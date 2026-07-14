@@ -31,7 +31,6 @@ export class StepRequestQueue {
     }
   }
 
-  /** True while any non-aborted request is queued. */
   hasPendingRequests(): boolean {
     return this.items.some((item) => !item.aborted);
   }
@@ -59,7 +58,6 @@ export class StepRequestQueue {
     return this.items.splice(0);
   }
 
-  /** Abort every queued turn-scoped request (run-end cleanup); agent-scoped requests survive. */
   abortTurnScoped(): void {
     for (const item of this.items) {
       if (item.turnScoped) item.abort();

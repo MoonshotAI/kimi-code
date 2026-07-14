@@ -191,7 +191,6 @@ export class AgentTaskPersistence {
       try {
         task = await this.docs.get<DiskPersistedTask>(this.tasksScope(root), key);
       } catch {
-        // Skip files that fail to read / parse (corrupt or partially written).
         continue;
       }
       if (task === undefined || !isReadablePersistedTask(task)) continue;

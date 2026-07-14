@@ -84,7 +84,6 @@ export class HostFsError extends Error2 {
   }
 }
 
-/** Short human-readable reason per code; keeps `message` free of paths/errnos. */
 const REASONS: Record<HostFsErrorCode, string> = {
   'os.fs.not_found': 'path does not exist',
   'os.fs.is_directory': 'path is a directory',
@@ -129,12 +128,6 @@ function mapErrno(errno: string | undefined): HostFsErrorCode {
   }
 }
 
-/**
- * Translate a raw backend error into a `HostFsError`. Idempotent: a
- * `HostFsError` (or any nested backend already translated) passes through
- * unchanged. The original error is preserved as `cause`; path/op/errno live in
- * `details` (always JSON-serializable), never in the message.
- */
 export function toHostFsError(error: unknown, ctx: { path: string; op: string }): HostFsError {
   if (error instanceof HostFsError) return error;
   const errno = readErrno(error);

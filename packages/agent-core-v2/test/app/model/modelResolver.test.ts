@@ -401,10 +401,6 @@ describe('ModelResolverService', () => {
         tools: [],
         messages: [],
       });
-      // No OAuth material on the model, so there is no force-refresh/replay:
-      // the raw status error crosses the model boundary once, translated into
-      // a coded Error2 with the HTTP fields in `details` and the raw error
-      // preserved as `cause`.
       await expect(async () => {
         for await (const _event of events) {
           void _event;
@@ -493,7 +489,6 @@ describe('ModelResolverService', () => {
         expect(createdProtocolConfigs[0]).toMatchObject({
           defaultHeaders: {
             'X-Env': 'env-val',
-            // provider customHeaders override the env header on conflict
             'X-Shared': 'from-provider',
             'X-Provider': 'p',
           },
@@ -509,19 +504,16 @@ describe('ModelResolverService', () => {
       try {
         const host = { 'User-Agent': 'kimi-code-cli/1.0', 'X-Msh-Device-Id': 'dev' };
 
-        // kimi provider → full identity (even when routed through anthropic)
         expect(resolveOutboundHeaders('kimi', undefined, host)).toEqual({
           'User-Agent': 'kimi-code-cli/1.0',
           'X-Msh-Device-Id': 'dev',
         });
-        // non-kimi providers → User-Agent only
         expect(resolveOutboundHeaders('openai', undefined, host)).toEqual({
           'User-Agent': 'kimi-code-cli/1.0',
         });
         expect(resolveOutboundHeaders('anthropic', undefined, host)).toEqual({
           'User-Agent': 'kimi-code-cli/1.0',
         });
-        // provider customHeaders win on conflict
         expect(resolveOutboundHeaders('kimi', { 'User-Agent': 'custom' }, host)).toEqual({
           'User-Agent': 'custom',
           'X-Msh-Device-Id': 'dev',

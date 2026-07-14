@@ -29,11 +29,6 @@ export class SessionQuestionService implements ISessionQuestionService {
       origin: { turnId: req.turnId },
     });
 
-    // Mirrors the v1 broker: when the caller aborts (turn interrupted,
-    // background task killed) — or was aborted before parking — the entry is
-    // dismissed so listPending()/session status don't stay stuck in
-    // awaiting_question, and the caller receives the same `null` (dismissed)
-    // result as an explicit dismiss.
     const signal = options?.signal;
     if (signal !== undefined) {
       if (signal.aborted) {

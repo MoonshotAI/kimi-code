@@ -74,7 +74,6 @@ describe('fullCompaction ops (wire-backed)', () => {
       'full_compaction.begin',
       'full_compaction.cancel',
     ]);
-    // Flat record shape: payload fields sit next to `type`, never under `payload`.
     expect(records.every((record) => 'payload' in record === false)).toBe(true);
     expect(records[0]).toEqual(
       expect.objectContaining({
@@ -114,12 +113,10 @@ describe('fullCompaction ops (wire-backed)', () => {
     });
 
     await host.wire.replay(...records);
-    // Model rebuilt (begin then complete → idle), but replay is silent.
     expect(host.wire.getModel(CompactionModel).phase).toBe('idle');
     expect(emissions).toEqual([]);
     expect(modelChanges).toBe(0);
 
-    // A log stranded mid-compaction replays to `running`.
     const stranded = buildHost('full-compaction-stranded');
     await stranded.wire.replay({ type: 'full_compaction.begin', source: 'auto' });
     expect(stranded.wire.getModel(CompactionModel).phase).toBe('running');

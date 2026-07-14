@@ -34,7 +34,6 @@ import type { Edge, EdgeKind, EdgeRef, Graph, ServiceNode, ServiceScope } from '
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-/** Repo root — three levels above `scripts/dep-graph/analyzer/`. */
 export const PKG_ROOT = resolve(__dirname, '..', '..', '..');
 export const REPO_ROOT = resolve(PKG_ROOT, '..', '..');
 export const SRC_ROOT = join(PKG_ROOT, 'src');
@@ -53,16 +52,6 @@ const EVENT_METHOD_KIND: Record<string, EdgeKind> = {
 const SCOPE_ORDER: ServiceScope[] = ['App', 'Session', 'Agent'];
 const SCOPE_LEVEL: Record<ServiceScope, number> = { App: 0, Session: 1, Agent: 2 };
 
-/**
- * Framework tokens seeded via `ServiceCollection.set(id, value)` at scope
- * construction time rather than `registerScopedService`. The analyzer never
- * sees a `registerScopedService` for them, so we synthesise virtual bindings
- * so edges targeting them resolve rather than showing up as "unresolved".
- *
- * The scope tags reflect *where the seed lives*: `ISessionContext` is set
- * on the Session collection, `IKaos` on App, etc. — this matches the
- * bootstrap composition roots in `bootstrap/appContainer.ts` and friends.
- */
 const FRAMEWORK_BINDINGS: readonly { token: string; scope: ServiceScope; impl: string }[] = [
   { token: 'IInstantiationService', scope: 'App', impl: 'InstantiationService' },
   { token: 'IKaos', scope: 'App', impl: 'Kaos' },
@@ -72,52 +61,17 @@ const FRAMEWORK_BINDINGS: readonly { token: string; scope: ServiceScope; impl: s
   { token: 'IAgentScopeContext', scope: 'Agent', impl: 'AgentScopeContext' },
 ];
 
-/**
- * Production composition-root bindings seeded by `bootstrap()` via
- * `ScopeOptions.extra`. `buildCollection` applies `extra` AFTER the static
- * `registerScopedService` registry, so these take precedence at runtime: they
- * override a static default where one exists (e.g. `ISkillDiscovery` →
- * `FileSkillDiscovery`) and supply the binding where the layer ships no
- * in-package default (`IFileSystemStorageService` → `FileStorageService`, the
- * byte layer the node-fs Store backends are built on). The analyzer mirrors
- * that so the graph reflects the backend that actually runs in production.
- *
- * Each entry's `file`/`line`/`domain` are derived from the impl class
- * declaration at analysis time, so the node points at the real backend rather
- * than any registration site it replaces.
- */
 const PRODUCTION_OVERRIDES: readonly { token: string; scope: ServiceScope; impl: string }[] = [
   { token: 'IFileSystemStorageService', scope: 'App', impl: 'FileStorageService' },
   { token: 'ISkillDiscovery', scope: 'App', impl: 'FileSkillDiscovery' },
 ];
 
-/**
- * Turn a `(scope, token)` pair into the unique node id used across the
- * graph. This matches the DI registration identity: one `registerScopedService`
- * call = one id.
- */
 export function nodeId(scope: ServiceScope, token: string): string {
   return `${scope}::${token}`;
 }
 
-/**
- * Bindings map — `token → scope → ServiceNode`. Used by edge resolution to
- * find the impl visible from a given source scope.
- */
 type Bindings = Map<string, Map<ServiceScope, ServiceNode>>;
 
-/**
- * Return the `ServiceNode` that a source at `sourceScope` would receive when
- * it asks for `token`. Walks the source's scope tree from the source scope
- * downward toward App (parent), picking the innermost binding visible.
- *
- *   Source scope = Session → check Session, then App
- *   Source scope = Agent   → check Agent, then Session, then App
- *   Source scope = App     → check App only
- *
- * Returns `undefined` if nothing is registered at any visible scope — the
- * container would crash trying to resolve `token` from this source.
- */
 function resolveFromScope(
   bindings: Bindings,
   token: string,
@@ -126,7 +80,6 @@ function resolveFromScope(
   const scopeMap = bindings.get(token);
   if (!scopeMap) return undefined;
   const sourceLevel = SCOPE_LEVEL[sourceScope];
-  // Walk from source (innermost visible) up to App (root).
   for (let lvl = sourceLevel; lvl >= 0; lvl--) {
     const s = SCOPE_ORDER[lvl];
     const hit = scopeMap.get(s);
@@ -137,7 +90,6 @@ function resolveFromScope(
 
 interface EdgeAccumulator {
   services: ServiceNode[];
-  /** `key = fromId|toId|kind` → Edge (refs merged). */
   edges: Map<string, Edge>;
   bindings: Bindings;
   unknownRefs: Set<string>;
@@ -158,19 +110,10 @@ function pushEdge(
   token: string,
   kind: EdgeKind,
   ref: EdgeRef,
-  /**
-   * When set, resolve `token` from this scope instead of the source service's
-   * scope. Used for `<handle>.accessor.get(IX)` where the handle is statically
-   * known to belong to an inner scope (e.g. an `IAgentScopeHandle`), so the
-   * lookup resolves against that inner scope rather than the source's.
-   */
   overrideScope?: ServiceScope,
 ): void {
   const target = resolveFromScope(acc.bindings, token, overrideScope ?? source.scope);
 
-  // Classify a miss: the token is either unknown everywhere (genuinely
-  // unresolved) or registered at a scope the resolution scope can't see (a
-  // scope mismatch). The two render differently in the viewer.
   let toId: string;
   let extra: Pick<Edge, 'unresolved' | 'scopeMismatch' | 'actualScope'>;
   if (target) {
@@ -230,17 +173,6 @@ function sameRef(a: EdgeRef, b: EdgeRef): boolean {
   );
 }
 
-/**
- * Collect every top-level `interface` declaration in the tree, keyed by
- * name. Used to pull each service's public callable surface out of its
- * token interface (e.g. `interface IAgentSystemReminderService { ... }`)
- * so the graph view can render every method as a port row even when
- * nothing calls into it yet.
- *
- * Duplicate names win latest — TS itself would merge them via declaration
- * merging, but the codebase does not intentionally split a service
- * interface across files, so ties here are effectively edge cases.
- */
 function collectInterfaces(sourceFiles: SourceFile[]): Map<string, InterfaceDeclaration> {
   const out = new Map<string, InterfaceDeclaration>();
   for (const file of sourceFiles) {
@@ -253,14 +185,6 @@ function collectInterfaces(sourceFiles: SourceFile[]): Map<string, InterfaceDecl
   return out;
 }
 
-/**
- * Return the public callable surface names on an interface — every method
- * signature name plus every property name — sorted and de-duplicated.
- * Skips `_serviceBrand` (the DI type-erased identity marker) and index /
- * call signatures (they have no member name to render as a port). TS
- * interfaces cannot declare `private` members, so every remaining name is
- * part of the public API by construction.
- */
 function collectInterfaceMembers(iface: InterfaceDeclaration): string[] {
   const names = new Set<string>();
   for (const member of iface.getMembers()) {
@@ -277,10 +201,6 @@ function collectInterfaceMembers(iface: InterfaceDeclaration): string[] {
   return [...names].sort();
 }
 
-/**
- * Extract the token identifier from a `registerScopedService(...)` call.
- * Returns `undefined` if the call doesn't match the expected shape.
- */
 function readRegistration(
   call: CallExpression,
 ): { token: string; impl: string; scope: ServiceScope; domain: string; line: number } | undefined {
@@ -292,7 +212,6 @@ function readRegistration(
   const implArg = args[2];
   const domainArg = args[4];
 
-  // scope: `LifecycleScope.App | .Session | .Agent`
   if (scopeArg.getKind() !== SyntaxKind.PropertyAccessExpression) return undefined;
   const scopeText = scopeArg.getText();
   const scope = scopeText.split('.').at(-1);
@@ -320,12 +239,6 @@ function domainOf(absPath: string): string {
   return rel.split('/')[0] ?? 'unknown';
 }
 
-/**
- * Pass 1 — collect every `registerScopedService(...)` call and every impl
- * class declaration in the tree. Records the service list, the
- * impl-class-name → decl map, and the token → scope → node bindings map
- * for pass 2's edge resolution.
- */
 function collectServices(sourceFiles: SourceFile[]): {
   services: ServiceNode[];
   implClasses: Map<string, ClassDeclaration>;
@@ -364,9 +277,6 @@ function collectServices(sourceFiles: SourceFile[]): {
         scopeMap = new Map();
         bindings.set(reg.token, scopeMap);
       }
-      // If the same (scope, token) is registered twice we keep the first —
-      // the DI container would honor the earliest binding too; a duplicate
-      // is a source-code bug, not an analyzer concern.
       if (!scopeMap.has(reg.scope)) scopeMap.set(reg.scope, node);
     }
   }
@@ -374,13 +284,6 @@ function collectServices(sourceFiles: SourceFile[]): {
   return { services, implClasses, bindings };
 }
 
-/**
- * From a class ctor, list `{decorator, param}` for every `@IToken`-decorated
- * parameter, in declaration order. Also returns the "injected fields": params
- * lifted to a class field via a visibility modifier, keyed by field name and
- * mapped to the token they're bound to. That map lets pass 2 attribute
- * `this.<field>.<method>()` call sites back to the correct ctor edge.
- */
 function readCtor(cls: ClassDeclaration): {
   ctorDeps: { token: string; line: number }[];
   injectedFields: Map<string, string>;
@@ -409,12 +312,6 @@ function readCtor(cls: ClassDeclaration): {
   return { ctorDeps, injectedFields };
 }
 
-/**
- * Constructor parameter with `private readonly foo: IX` becomes a field
- * named `foo`. When only `@IX foo: IX` (no visibility modifier) is present,
- * TypeScript doesn't lift it to a field, but the codebase always uses the
- * lifted form for injected deps, so this covers the observed patterns.
- */
 function fieldNameOf(param: ParameterDeclaration): string | undefined {
   const modifiers = param.getModifiers().map((m) => m.getText());
   if (modifiers.some((m) => m === 'private' || m === 'protected' || m === 'public')) {
@@ -423,13 +320,6 @@ function fieldNameOf(param: ParameterDeclaration): string | undefined {
   return undefined;
 }
 
-/**
- * Walk parents from `node` to the nearest class-body scope so we can label
- * a call site by the source method that contains it. Arrow functions and
- * `function` expressions are transparent — we want the surrounding method,
- * not the closure. Returns `undefined` when the call sits directly in a
- * class body but outside any declared member (rare — decorators, etc.).
- */
 function enclosingMethodName(node: Node): string | undefined {
   let cur: Node | undefined = node.getParent();
   while (cur) {
@@ -457,13 +347,6 @@ function enclosingMethodName(node: Node): string | undefined {
   return undefined;
 }
 
-/**
- * When a `.get(IToken)` call is immediately chained with a method call —
- * `<expr>.get(IX).<method>(...)` — return that method name. This is the
- * only accessor pattern we can attribute without a type checker; results
- * stored in a local variable are indistinguishable from other locals and
- * would need dataflow tracking to follow.
- */
 function chainedMethodName(getCall: CallExpression): string | undefined {
   const parent = getCall.getParent();
   if (!parent || parent.getKind() !== SyntaxKind.PropertyAccessExpression) return undefined;
@@ -476,11 +359,6 @@ function chainedMethodName(getCall: CallExpression): string | undefined {
   return pae.getName();
 }
 
-/**
- * Map scope-typed handle aliases (and the generic `IScopeHandle<LifecycleScope.X>`
- * form) to their scope. Used to resolve `<handle>.accessor.get(IX)` against the
- * handle's real scope rather than the source service's scope.
- */
 const HANDLE_ALIAS_SCOPE: Record<string, ServiceScope> = {
   IAppScopeHandle: 'App',
   ISessionScopeHandle: 'Session',
@@ -497,7 +375,6 @@ const FUNCTION_LIKE_KINDS = new Set<SyntaxKind>([
   SyntaxKind.SetAccessor,
 ]);
 
-/** Strip `Promise<...>`, `| undefined` / `| null`, array brackets, `readonly`. */
 function stripTypeWrappers(text: string): string {
   let t = text.trim();
   t = t.replace(/\s*\|\s*(undefined|null)\s*/g, '').trim();
@@ -518,7 +395,6 @@ function handleScopeFromTypeText(text: string | undefined): ServiceScope | undef
   return undefined;
 }
 
-/** Nearest function-like ancestor (method / function / arrow / ctor / accessor). */
 function enclosingFunction(node: Node): Node | undefined {
   let cur: Node | undefined = node.getParent();
   while (cur) {
@@ -528,7 +404,6 @@ function enclosingFunction(node: Node): Node | undefined {
   return undefined;
 }
 
-/** Parameters of a function-like node (all such nodes carry `getParameters`). */
 function getParams(fn: Node): ParameterDeclaration[] {
   return (fn as unknown as { getParameters(): ParameterDeclaration[] }).getParameters();
 }
@@ -538,10 +413,6 @@ function isAccessorReceiver(node: Node): boolean {
   return node.asKindOrThrow(SyntaxKind.PropertyAccessExpression).getName() === 'accessor';
 }
 
-/**
- * Per-interface method → declared return-type text. Lets the analyzer resolve
- * what `agents.getHandle(...)` returns once it knows `agents: IAgentLifecycleService`.
- */
 function collectInterfaceMethodReturns(
   interfacesByName: Map<string, InterfaceDeclaration>,
 ): Map<string, Map<string, string>> {
@@ -560,17 +431,6 @@ function collectInterfaceMethodReturns(
   return out;
 }
 
-/**
- * Best-effort, parse-only type-text inference for an expression within a
- * function. Handles just enough to follow scope-typed handles:
- *  - parameter / variable annotations,
- *  - `<x>.accessor.get(IToken)` → the token (DI accessor returns its type),
- *  - `this.method(...)` → the class method's declared return type,
- *  - `<base>.method(...)` → the interface method's declared return type,
- *  - `await X` and single-step identifier aliases.
- * Returns `undefined` when it can't tell — callers fall back to source scope.
- * `depth` bounds identifier-chasing so we don't loop on aliased locals.
- */
 function inferExprTypeText(
   expr: Node,
   cls: ClassDeclaration,
@@ -599,19 +459,16 @@ function inferExprTypeText(
     const methodName = pae.getName();
     const base = pae.getExpression();
 
-    // `<x>.accessor.get(IToken)` → the DI accessor returns the token's type.
     if (methodName === 'get' && isAccessorReceiver(base)) {
       const first = call.getArguments()[0];
       if (first && first.getKind() === SyntaxKind.Identifier) return first.getText();
       return undefined;
     }
 
-    // `this.method(...)` → class method's declared return type.
     if (base.getKind() === SyntaxKind.ThisKeyword) {
       return cls.getMethod(methodName)?.getReturnTypeNode()?.getText();
     }
 
-    // `<base>.method(...)` → resolve base to an interface, look up the method.
     const baseType = inferExprTypeText(base, cls, ifaceMethods, fn, depth + 1);
     if (baseType === undefined) return undefined;
     return ifaceMethods.get(stripTypeWrappers(baseType))?.get(methodName);
@@ -621,8 +478,6 @@ function inferExprTypeText(
     return resolveIdentifierTypeText(expr, cls, ifaceMethods, fn, depth + 1);
   }
 
-  // `this.<field>` → the field's declared type (ctor parameter property or
-  // class property annotation).
   if (kind === SyntaxKind.PropertyAccessExpression) {
     const pae = expr.asKindOrThrow(SyntaxKind.PropertyAccessExpression);
     if (pae.getExpression().getKind() === SyntaxKind.ThisKeyword) {
@@ -631,7 +486,6 @@ function inferExprTypeText(
     return undefined;
   }
 
-  // `a ?? b` → either branch's type.
   if (kind === SyntaxKind.BinaryExpression) {
     const bin = expr.asKindOrThrow(SyntaxKind.BinaryExpression);
     if (bin.getOperatorToken().getKind() === SyntaxKind.QuestionQuestionToken) {
@@ -643,7 +497,6 @@ function inferExprTypeText(
     return undefined;
   }
 
-  // `cond ? a : b` → either branch's type.
   if (kind === SyntaxKind.ConditionalExpression) {
     const cond = expr.asKindOrThrow(SyntaxKind.ConditionalExpression);
     return (
@@ -656,7 +509,6 @@ function inferExprTypeText(
 }
 
 function thisFieldTypeText(cls: ClassDeclaration, fieldName: string): string | undefined {
-  // Constructor parameter property: `constructor(@IX private readonly foo: IX)`.
   const ctor = cls.getConstructors()[0];
   if (ctor) {
     for (const p of ctor.getParameters()) {
@@ -665,7 +517,6 @@ function thisFieldTypeText(cls: ClassDeclaration, fieldName: string): string | u
       if (t) return t;
     }
   }
-  // Class property with an explicit type annotation.
   return cls.getProperty(fieldName)?.getTypeNode()?.getText();
 }
 
@@ -700,12 +551,6 @@ function resolveIdentifierTypeText(
   return undefined;
 }
 
-/**
- * For a `<obj>.accessor.get(IX)` call, return the scope of the handle `<obj>`
- * when it can be inferred from a scope-typed handle alias. Returns `undefined`
- * for the scope-agnostic cases (base `IScopeHandle`, unions, injected
- * accessors) so the caller keeps the default source-scope resolution.
- */
 function inferAccessorScope(
   getCall: CallExpression,
   cls: ClassDeclaration,
@@ -721,13 +566,6 @@ function inferAccessorScope(
   return handleScopeFromTypeText(inferExprTypeText(obj, cls, ifaceMethods, fn));
 }
 
-/**
- * Pass 2 — for a given impl class, walk method bodies and detect:
- *   - `<expr>.get(IToken)[.method(...)]` → accessor edge (with optional `toMethod`)
- *   - `this.<injectedField>.<method>(...)` → attach method info to the ctor
- *     edge for that field, or emit an event-bus edge when the field's token
- *     is an event bus (`publish` / `subscribe` / `emit` / `on`).
- */
 function collectRuntimeEdges(
   cls: ClassDeclaration,
   source: ServiceNode,
@@ -747,7 +585,6 @@ function collectRuntimeEdges(
     const baseRef: EdgeRef = { file: filePath, line };
     if (fromMethod !== undefined) baseRef.fromMethod = fromMethod;
 
-    // Case 1: <accessor>.get(IX)[.method(...)]
     if (methodName === 'get') {
       const args = call.getArguments();
       if (args.length === 0) continue;
@@ -755,22 +592,15 @@ function collectRuntimeEdges(
       if (first.getKind() !== SyntaxKind.Identifier) continue;
       const tokenName = first.getText();
       if (!tokenName.startsWith('I')) continue;
-      // Ignore self-references — a service asking the accessor for itself.
       if (tokenName === source.token) continue;
       const toMethod = chainedMethodName(call);
       const ref: EdgeRef = { ...baseRef };
       if (toMethod !== undefined) ref.toMethod = toMethod;
-      // If this is `<handle>.accessor.get(IX)` and the handle's scope is
-      // statically known (e.g. `agent: IAgentScopeHandle`), resolve IX against
-      // that scope instead of the source service's scope.
       const accessorScope = inferAccessorScope(call, cls, ifaceMethods);
       pushEdge(acc, source.id, source, tokenName, 'accessor', ref, accessorScope);
       continue;
     }
 
-    // Case 2: <receiver>.<method>(...) where receiver is a DI-injected field.
-    // Detect `this.<field>` (the common form) and a bare `<field>` identifier
-    // (rare — event-bus code historically supported it; kept for parity).
     const receiver = pae.getExpression();
     let fieldName: string | undefined;
     if (receiver.getKind() === SyntaxKind.PropertyAccessExpression) {
@@ -787,9 +617,6 @@ function collectRuntimeEdges(
     if (fieldToken === undefined) continue;
     if (fieldToken === source.token) continue;
 
-    // Event-bus fields: keep the specialised publish/subscribe/emit/on edge
-    // kind; the method name is already carried by the kind so we don't
-    // duplicate it in `toMethod`.
     if (EVENT_BUS_TOKENS.has(fieldToken)) {
       const eventKind = EVENT_METHOD_KIND[methodName];
       if (eventKind === undefined) continue;
@@ -797,18 +624,11 @@ function collectRuntimeEdges(
       continue;
     }
 
-    // Regular DI field — attach method-call info to the ctor edge. The ctor
-    // param declaration ref (pushed in the outer loop below) has no
-    // `toMethod`; this ref does, so both survive the dedup.
     const ref: EdgeRef = { ...baseRef, toMethod: methodName };
     pushEdge(acc, source.id, source, fieldToken, 'ctor', ref);
   }
 }
 
-/**
- * Run the static analysis. `srcRoot` overrides the default `src/` (used by
- * tests). Returns a `Graph` snapshot.
- */
 export function analyze(options: { srcRoot?: string; generatedAt?: string } = {}): Graph {
   const srcRoot = options.srcRoot ?? SRC_ROOT;
   const project = new Project({
@@ -832,10 +652,6 @@ export function analyze(options: { srcRoot?: string; generatedAt?: string } = {}
   const interfacesByName = collectInterfaces(sourceFiles);
   const ifaceMethods = collectInterfaceMethodReturns(interfacesByName);
 
-  // Seed the framework tokens as synthetic nodes so edges to them resolve
-  // like any other registered service. They are marked domain=`framework`
-  // and file/line refer to the `bootstrap` composition root convention;
-  // the UI can filter them by domain.
   const frameworkNodes: ServiceNode[] = FRAMEWORK_BINDINGS.map((b) => ({
     id: nodeId(b.scope, b.token),
     token: b.token,
@@ -855,11 +671,6 @@ export function analyze(options: { srcRoot?: string; generatedAt?: string } = {}
     if (!scopeMap.has(node.scope)) scopeMap.set(node.scope, node);
   }
 
-  // Apply production composition-root bindings: bootstrap() seeds these tokens
-  // via `extra`, which the container applies after the static registry. They
-  // override any static default (skill catalog) or supply the binding outright
-  // (storage layer, which ships no in-package default). Mirror that here so
-  // edges resolve to the backend that actually runs in production.
   for (const override of PRODUCTION_OVERRIDES) {
     const id = nodeId(override.scope, override.token);
     const cls = implClasses.get(override.impl);
@@ -896,11 +707,6 @@ export function analyze(options: { srcRoot?: string; generatedAt?: string } = {}
     unknownRefs: new Set(),
   };
 
-  // Attach each service's public callable surface. Runs after registration,
-  // framework seeding, and PRODUCTION_OVERRIDES so every node in the graph
-  // gets the same treatment. Nodes whose token has no interface declaration
-  // in `src/` (framework tokens, synthetic overrides) simply get no
-  // `publicMembers` field — the view falls back to the edge-derived ports.
   for (const svc of services) {
     const iface = interfacesByName.get(svc.token);
     if (!iface) continue;
@@ -914,21 +720,12 @@ export function analyze(options: { srcRoot?: string; generatedAt?: string } = {}
     const { ctorDeps, injectedFields } = readCtor(cls);
     const filePath = relFromRepo(cls.getSourceFile().getFilePath());
     for (const dep of ctorDeps) {
-      // Self-refs happen when a service also declares a param typed as
-      // its own interface (rare, never legit) — skip.
       if (dep.token === svc.token) continue;
       pushEdge(acc, svc.id, svc, dep.token, 'ctor', { file: filePath, line: dep.line });
     }
     collectRuntimeEdges(cls, svc, injectedFields, acc, ifaceMethods);
   }
 
-  // Synthesise interface-only nodes for tokens referenced by edges but with no
-  // registered impl at any scope. Each unresolved edge already targets
-  // `unresolved::${token}`; creating a matching node lets the viewer render it
-  // (with a distinct border) instead of dropping the edge as dangling. The node
-  // is placed at the outer-most scope that references it — a hint at where the
-  // missing binding is first needed — and inherits the interface's declared
-  // public surface so its ports read like a real service.
   const nodeById = new Map(services.map((s) => [s.id, s]));
   const unresolvedReferrers = new Map<string, Set<ServiceScope>>();
   for (const edge of acc.edges.values()) {
@@ -969,10 +766,6 @@ export function analyze(options: { srcRoot?: string; generatedAt?: string } = {}
     services.push(node);
   }
 
-  // Synthesise scope-mismatch nodes: tokens that ARE registered but referenced
-  // from a scope that can't see them. Placed at the token's real registered
-  // scope (from `actualScope`) and flagged so the viewer styles them apart
-  // from genuinely missing implementations.
   const mismatchTokens = new Map<string, ServiceScope>();
   for (const edge of acc.edges.values()) {
     if (!edge.scopeMismatch || edge.actualScope === undefined) continue;
@@ -1014,7 +807,6 @@ export function analyze(options: { srcRoot?: string; generatedAt?: string } = {}
   };
 }
 
-/** Convenience: read the current git HEAD as a stable "generated at" tag. */
 export function readHeadSha(): string | undefined {
   try {
     const head = readFileSync(join(REPO_ROOT, '.git', 'HEAD'), 'utf8').trim();
@@ -1028,13 +820,11 @@ export function readHeadSha(): string | undefined {
   }
 }
 
-/** Persist a graph snapshot to disk (creates parent dir as needed). */
 export function writeSnapshot(graph: Graph, path: string = SNAPSHOT_PATH): void {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(graph, null, 2)}\n`);
 }
 
-/** One-line, sortable summary of a graph — used by both the CLI and the dev-server watcher. */
 export function summarize(graph: Graph): string {
   const byKind = new Map<string, number>();
   for (const e of graph.edges) byKind.set(e.kind, (byKind.get(e.kind) ?? 0) + 1);
