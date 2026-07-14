@@ -84,6 +84,7 @@ describe('Session legacy status (best-effort runtime state)', () => {
     };
     const agents = {
       whenReady: () => Promise.resolve(agent),
+      create: () => Promise.resolve(agent),
     } as unknown as IAgentLifecycleService;
     const session: ISessionScopeHandle = {
       id: 'session-test',
