@@ -53,6 +53,12 @@ describe('SubagentRosterTracker', () => {
     expect(t.get(SID)[0]?.parent_tool_call_id).toBeUndefined();
   });
 
+  it('skips background subagents — REST /tasks already serves them after a refresh', () => {
+    const t = new SubagentRosterTracker();
+    t.apply(SID, spawn('agent-1', { runInBackground: true }));
+    expect(t.get(SID)).toEqual([]);
+  });
+
   it('follows the subagent phase transitions', () => {
     const t = new SubagentRosterTracker();
     t.apply(SID, spawn('agent-1'));

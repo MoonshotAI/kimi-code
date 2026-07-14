@@ -27,8 +27,9 @@
  * Lifetime: the roster is dropped when the main agent starts its NEXT turn —
  * by then the previous turn's `<agent_swarm_result>` tool output is durable in
  * the wire transcript and takes over as the restore source. Background
- * subagents that outlive a turn stay listed until that boundary (a known,
- * pre-existing bound — same trade-off as `InFlightTurnTracker`).
+ * subagents (`run_in_background`) are excluded by design: they persist in the
+ * background-task store and are served by REST `/tasks`, so listing them here
+ * would duplicate the row after a refresh.
  */
 
 import type { Event, SnapshotSubagent } from '@moonshot-ai/protocol';
@@ -41,6 +42,12 @@ export class SubagentRosterTracker {
   apply(sessionId: string, event: Event): void {
     switch (event.type) {
       case 'subagent.spawned': {
+        // Background subagents persist in the main agent's background-task
+        // store and come back through REST `/tasks` after a refresh (keyed by
+        // task id) — tracking them here too would duplicate the row (keyed by
+        // agent id) and mis-target cancel/detail actions. The roster exists
+        // for the foreground/live-only subagents REST cannot serve.
+        if (event.runInBackground === true) return;
         let roster = this.bySession.get(sessionId);
         if (!roster) {
           roster = new Map();
