@@ -848,8 +848,12 @@ describe('FullCompaction', () => {
     vi.useFakeTimers();
     const records: TelemetryRecord[] = [];
     const inputs: string[][] = [];
-    const generate = realKosongGenerate((_attempt, history) => {
+    const firstResponse = deferred<void>();
+    const generate = realKosongGenerate((attempt, history) => {
       inputs.push(inputHistorySnapshot(history));
+      if (attempt === 1) {
+        firstResponse.resolve();
+      }
       return mockStreamedMessage([
         { type: 'think', think: 'Still only thinking, no summary produced.' },
       ]);
@@ -864,6 +868,7 @@ describe('FullCompaction', () => {
     const failed = ctx.once('error');
 
     await ctx.rpc.beginCompaction({});
+    await firstResponse.promise;
     await vi.advanceTimersByTimeAsync(60_000);
     await failed;
 
@@ -1092,9 +1097,13 @@ describe('FullCompaction', () => {
   it('reports compaction retry_count when retryable generation failures are exhausted', async () => {
     vi.useFakeTimers();
     const records: TelemetryRecord[] = [];
+    const firstAttemptFailed = deferred<void>();
     let attempts = 0;
     const generate: GenerateFn = async () => {
       attempts += 1;
+      if (attempts === 1) {
+        firstAttemptFailed.resolve();
+      }
       throw new APIConnectionError('socket hang up');
     };
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
@@ -1107,6 +1116,7 @@ describe('FullCompaction', () => {
     const failed = ctx.once('error');
 
     await ctx.rpc.beginCompaction({});
+    await firstAttemptFailed.promise;
     await vi.advanceTimersByTimeAsync(60_000);
     await failed;
 
