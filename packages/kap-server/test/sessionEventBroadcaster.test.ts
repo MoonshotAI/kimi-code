@@ -503,6 +503,44 @@ describe('SessionEventBroadcaster', () => {
     ]);
   });
 
+  it('does not synthesize session status from sub-agent turn boundaries', async () => {
+    // Regression: a sub-agent's turn.started/turn.ended stream over the same
+    // session channel with their own agentId. Synthesizing status transitions
+    // from them emitted a bogus `status_changed(idle)` the moment a foreground
+    // sub-agent finished — mid main turn — which kimi-web reads as "the turn
+    // finished" (browser notification, completion sound, unread dot, queued
+    // message drain), while the real main-agent turn end was then swallowed by
+    // dedup and never notified.
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    const sub = lc.addAgent('agent-0');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    // A foreground sub-agent runs and completes while the main turn is in flight.
+    sub.bus.emit(agentEvent('turn.started', { turnId: 10 }));
+    sub.bus.emit(agentEvent('turn.ended', { turnId: 10, reason: 'completed' }));
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+    await bc.getCursor('s1');
+
+    // The sub-agent's turn events are still fanned out (clients render them in
+    // the task view), but they produce no status transitions.
+    expect(
+      envelopes
+        .filter((e) => e.type === 'turn.started' || e.type === 'turn.ended')
+        .map((e) => (e.payload as { agentId: string }).agentId),
+    ).toEqual(['main', 'agent-0', 'agent-0', 'main']);
+    const statusEnvs = envelopes.filter((e) => e.type === 'event.session.status_changed');
+    expect(statusEnvs.map((e) => e.payload)).toMatchObject([
+      { status: 'running', previous_status: 'idle' },
+      { status: 'idle', previous_status: 'running' },
+    ]);
+    // The idle transition fires exactly once, after the main agent's turn end.
+    expect(envelopes.at(-1)!.type).toBe('event.session.status_changed');
+  });
+
   it('broadcasts question requested / answered as durable v1 events', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
@@ -795,7 +833,10 @@ describe('SessionEventBroadcaster', () => {
       agentEnvs.every((e) => (e.payload as { agentId: string }).agentId === 'main'),
     ).toBe(true);
     // `event.session.status_changed` is global (`event.session.*`) and bypasses
-    // the agent filter. The redundant idle transition from the sub-agent is deduped.
+    // the agent filter. The sub-agent's turn.ended synthesizes no status change
+    // at all (main-only rule — see the "does not synthesize session status from
+    // sub-agent turn boundaries" test), so only the main agent's two transitions
+    // are delivered.
     const statusEnvs = envelopes.filter((e) => e.type === 'event.session.status_changed');
     expect(statusEnvs).toHaveLength(2);
   });
@@ -870,9 +911,10 @@ describe('SessionEventBroadcaster', () => {
 
       const result = await bc2.getBufferedSince('s1', { seq: 0 }, new Set(['main']));
       expect(result.resyncRequired).toBe(false);
-      // The sub-agent's turn events are cropped, while global status transitions
-      // retain their original positions in the session sequence.
-      expect(result.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 8, 9, 10, 11, 12]);
+      // The sub-agent's turn events are cropped (seq 5/6 — they synthesize no
+      // status change), while the main agent's turns and the global status
+      // transitions retain their original positions in the session sequence.
+      expect(result.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 7, 8, 9, 10]);
       expect(
         result.events.every((e) => (e.envelope.payload as { agentId: string }).agentId === 'main'),
       ).toBe(true);

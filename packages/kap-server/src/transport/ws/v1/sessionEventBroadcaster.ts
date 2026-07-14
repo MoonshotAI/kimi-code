@@ -539,7 +539,14 @@ export class SessionEventBroadcaster {
     // `DomainEventMap` payload types are deliberately wider than the protocol
     // contract, hence the assertion via `unknown`.
     const wireEvent = { ...event, agentId, sessionId } as unknown as Event;
-    if (event.type === 'turn.started') {
+    // Session status transitions are synthesized only from the MAIN agent's turn
+    // boundaries. Subagents share the session channel (their frames carry their
+    // own agentId and clients route them to the task view), so a subagent's
+    // turn.ended would otherwise emit a bogus `status_changed(idle)` mid-turn:
+    // the client reads that as "the turn finished" (driving notifications,
+    // sounds, unread dots and the queued-message drain), and the real turn end
+    // is then swallowed by dedup. Same main-only rule as InFlightTurnTracker.
+    if (agentId === MAIN_AGENT_ID && event.type === 'turn.started') {
       // Status is authoritative protocol state: emit it before the turn event so
       // clients enter running first. A pending interaction remains higher
       // priority than running.
@@ -549,7 +556,7 @@ export class SessionEventBroadcaster {
     state.queue = state.queue
       .then(() => this.dispatch(state, wireEvent, volatile))
       .catch(() => {});
-    if (event.type === 'turn.ended') {
+    if (agentId === MAIN_AGENT_ID && event.type === 'turn.ended') {
       // Emit completion after the turn event. Pending interactions remain higher
       // priority; otherwise failed/cancelled/blocked turns abort and all others
       // become idle.
