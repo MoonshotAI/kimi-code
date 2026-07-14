@@ -1,5 +1,6 @@
 ---
+"@moonshot-ai/agent-core-v2": patch
 "@moonshot-ai/kimi-code": patch
 ---
 
-Fix OAuth login hanging after successful browser authorization when the provider configuration changed during sign-in, and strip trailing slashes from the KIMI_CODE_BASE_URL override.
+Fix OAuth login hanging after browser authorization when the provider configuration changes during sign-in.
