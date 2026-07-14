@@ -23,11 +23,12 @@ export interface ResolveMcpJsonPathsInput {
 
 export async function resolveMcpJsonPaths(input: ResolveMcpJsonPathsInput): Promise<McpJsonPaths> {
   const projectRoot = await findProjectRoot(input.cwd);
+  const kimiHome = resolveKimiHome(input.homeDir);
 
   return {
-    user: join(resolveKimiHome(input.homeDir), 'mcp.json'),
+    user: join(kimiHome, 'mcp.json'),
     projectRoot: join(projectRoot, '.mcp.json'),
-    project: join(input.cwd, '.kimi-code', 'mcp.json'),
+    project: join(kimiHome, 'mcp-project.json'),
   };
 }
 
