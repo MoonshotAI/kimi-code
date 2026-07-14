@@ -26,7 +26,10 @@
  *
  * Lifetime: the roster is dropped when the main agent starts its NEXT turn —
  * by then the previous turn's `<agent_swarm_result>` tool output is durable in
- * the wire transcript and takes over as the restore source. Background
+ * the wire transcript and takes over as the restore source. If the main turn
+ * aborts (cancelled / failed / blocked), still-live entries are finalized as
+ * failed at `turn.ended` instead: the swarm dies with the turn and the abort
+ * path suppresses the members' own `subagent.failed` events. Background
  * subagents (`run_in_background`) are excluded by design: they persist in the
  * background-task store and are served by REST `/tasks`, so listing them here
  * would duplicate the row after a refresh.
@@ -101,6 +104,25 @@ export class SubagentRosterTracker {
         entry.status = 'failed';
         entry.completed_at = new Date().toISOString();
         entry.output_preview = event.error;
+        return;
+      }
+      case 'turn.ended': {
+        if (event.agentId !== MAIN_AGENT_ID) return;
+        const roster = this.bySession.get(sessionId);
+        if (roster === undefined || event.reason === 'completed') return;
+        // Aborted main turn (cancelled / failed / blocked): the swarm dies
+        // with it, and the abort path suppresses the members' own
+        // `subagent.failed` events — finalize any still-live entries here so a
+        // refresh doesn't seed phantom `running` subagents that no later
+        // lifecycle event would correct. The roster itself stays until the
+        // next main `turn.started`, same as the completed path.
+        for (const entry of roster.values()) {
+          if (entry.status !== 'running') continue;
+          entry.status = 'failed';
+          entry.subagent_phase = 'failed';
+          entry.completed_at = new Date().toISOString();
+          entry.output_preview ??= `Main turn ${event.reason}`;
+        }
         return;
       }
       case 'turn.started': {

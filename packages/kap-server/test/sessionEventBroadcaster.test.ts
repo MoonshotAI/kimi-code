@@ -431,7 +431,7 @@ describe('SessionEventBroadcaster', () => {
 
     // The main turn.ended keeps the roster too: the swarm result may not be
     // durable in the wire transcript yet (async append).
-    main.bus.emit(agentEvent('turn.ended', { turnId: 1 }));
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
     const ended = await bc.getSnapshotState('s1');
     expect(ended.subagents).toHaveLength(1);
 
