@@ -48,7 +48,12 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
   ) {
     super();
 
-    this._register(this.wire.onRestored(() => this.restoreTelemetryMode()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('plan', async (_ctx, next) => {
+        this.restoreTelemetryMode();
+        await next();
+      }),
+    );
 
     this._register(new PlanModeInjection(dynamicInjector, this, this.context));
   }

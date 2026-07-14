@@ -110,7 +110,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   private bindMainAgent(handle: IAgentScopeHandle): void {
     const wire = handle.accessor.get(IWireService);
     this._register(
-      wire.onRestored(async () => {
+      wire.hooks.onDidRestore.register('cron', async (_ctx, next) => {
         await this.config.ready;
         this.resolveClocks();
         this.tasks.clear();
@@ -119,6 +119,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
         }
         await this.loadFromStore({ replace: false });
         await this.start();
+        await next();
       }),
     );
 

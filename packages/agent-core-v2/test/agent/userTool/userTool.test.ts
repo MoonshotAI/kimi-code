@@ -177,7 +177,7 @@ describe('AgentUserToolService (wire-backed)', () => {
     expect(modelOf(wire)).toBe(before);
   });
 
-  it('replay rebuilds the model silently and onRestored re-registers tools after replay', async () => {
+  it('replay rebuilds the model silently and onDidRestore re-registers tools after replay', async () => {
     svc.register(toolA);
     svc.register(toolB);
     const records = await readRecords();

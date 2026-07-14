@@ -4,9 +4,9 @@
  * Holds the agent's permission mode (`manual` / `auto`) in the `wire`
  * `PermissionModeModel`, mutating it only through the `permission.set_mode` Op
  * (`wire.dispatch(setMode({ mode }))`) and reading it through `wire.getModel`.
- * The `onDidChangeMode` event is driven by a `wire.subscribe` on that model
- * (firing only on actual changes), and mode-aware reminders are registered
- * through the permission-mode injection helper. Bound at Agent scope.
+ * `setMode` emits `onDidChangeMode` after an actual change, and mode-aware
+ * reminders are registered through the permission-mode injection helper. Bound
+ * at Agent scope.
  */
 
 import type { PermissionMode } from '#/agent/permissionPolicy/types';
@@ -31,12 +31,6 @@ export class AgentPermissionModeService extends Disposable implements IAgentPerm
     @IInstantiationService instantiation: IInstantiationService,
   ) {
     super();
-    this._register(
-      wire.subscribe(PermissionModeModel, (mode, previousMode) => {
-        if (mode === previousMode) return;
-        this._onDidChangeMode.fire({ mode, previousMode });
-      }),
-    );
     this._register(instantiation.createInstance(PermissionModeInjection, this));
   }
 
@@ -45,7 +39,10 @@ export class AgentPermissionModeService extends Disposable implements IAgentPerm
   }
 
   setMode(mode: PermissionMode): void {
+    const previousMode = this.mode;
+    if (mode === previousMode) return;
     this.wire.dispatch(setMode({ mode }));
+    this._onDidChangeMode.fire({ mode, previousMode });
   }
 }
 

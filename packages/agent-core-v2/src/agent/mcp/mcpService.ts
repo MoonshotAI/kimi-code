@@ -71,7 +71,12 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
         },
       ),
     );
-    this._register(this.wire.onRestored(() => this.flushPendingDiscoveries()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('mcp', async (_ctx, next) => {
+        this.flushPendingDiscoveries();
+        await next();
+      }),
+    );
   }
 
   get oauthService() {

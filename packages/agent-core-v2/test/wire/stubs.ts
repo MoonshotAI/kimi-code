@@ -4,10 +4,12 @@ import type { ServiceRegistration, TestInstantiationService } from '#/_base/di/t
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext, type IAgentScopeContext as AgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IEventBus } from '#/app/event/eventBus';
+import { createHooks } from '#/hooks';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import {
   IWireService,
   type IWireService as AgentWire,
+  type WireHooks,
 } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
 import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
@@ -93,12 +95,12 @@ export function stubAgentWire(
 ): AgentWire {
   return {
     _serviceBrand: undefined,
+    hooks: createHooks<WireHooks, keyof WireHooks>(['onDidRestore']),
     dispatch: () => {},
     restore: async () => {},
     flush,
     getModel: (model) => model.initial() as never,
     subscribe: () => toDisposable(() => {}),
-    onRestored: () => toDisposable(() => {}),
   };
 }
 

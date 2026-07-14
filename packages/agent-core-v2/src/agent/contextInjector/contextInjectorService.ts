@@ -51,12 +51,17 @@ export class AgentContextInjectorService extends Disposable implements IAgentCon
         this.isNewTurn = true;
       }),
     );
-    this._register(this.eventBus.subscribe('context.spliced', (e) => {
-      this.handleSplice(e);
-    }));
-    this._register(wire.onRestored(() => {
-      this.resyncPositions();
-    }));
+    this._register(
+      this.eventBus.subscribe('context.spliced', (e) => {
+        this.handleSplice(e);
+      }),
+    );
+    this._register(
+      wire.hooks.onDidRestore.register('context-injector', async (_ctx, next) => {
+        this.resyncPositions();
+        await next();
+      }),
+    );
   }
 
   register(

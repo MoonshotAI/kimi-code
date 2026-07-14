@@ -227,7 +227,7 @@ describe('AgentGoalService (wire-backed)', () => {
     expect(replayModelChanges).toBe(0);
   });
 
-  it('onRestored forces a replayed active goal to paused after replay', async () => {
+  it('onDidRestore forces a replayed active goal to paused after replay', async () => {
     const created = await svc.createGoal({ objective: 'resume me' });
     const records = await readRecords();
 

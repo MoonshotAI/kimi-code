@@ -153,7 +153,7 @@ describe('WireService', () => {
     expect(afterReattach).toEqual([3]);
   });
 
-  it('replays silently: apply runs, no persist, no onChange, onRestored once', async () => {
+  it('replays silently: apply runs, no persist, no onChange, onDidRestore once', async () => {
     wire.dispatch(counterAdd({ by: 5 }));
     const records = await readRecords();
 
@@ -169,8 +169,9 @@ describe('WireService', () => {
     let restored = 0;
     disposables.add(replayed.subscribe(CounterModel, () => (changes += 1)));
     disposables.add(
-      replayed.onRestored(() => {
+      replayed.hooks.onDidRestore.register('test', async (_ctx, next) => {
         restored += 1;
+        await next();
       }),
     );
 
@@ -185,6 +186,17 @@ describe('WireService', () => {
     expect(changes).toBe(0);
     expect(restored).toBe(1);
     expect((await readRecords(log2, SCOPE, 'replay')).slice(1)).toEqual(records);
+  });
+
+  it('fails restore when an onDidRestore hook fails', async () => {
+    const expected = new Error('restore participant failed');
+    disposables.add(
+      wire.hooks.onDidRestore.register('failing-participant', async () => {
+        throw expected;
+      }),
+    );
+
+    await expect(wire.restore()).rejects.toBe(expected);
   });
 
   it('applies each current-version record before requesting the next record during restore', async () => {

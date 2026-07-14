@@ -4,8 +4,9 @@
  * `WireService` is the sole runtime owner of an Agent wire aggregate. It
  * combines the model reducer engine with the `wire.jsonl` journal protocol,
  * including metadata, migrations, atomic healing rewrites, blob dehydration
- * and rehydration, ref-counted derived projections, and restore completion. It
- * is bound at Agent scope because the aggregate identity is the Agent identity.
+ * and rehydration, ref-counted derived projections, and an ordered post-restore
+ * hook. It is bound at Agent scope because the aggregate identity is the Agent
+ * identity.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -25,6 +26,7 @@ import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import type { ContentPart } from '#/app/llmProtocol/message';
+import { OrderedHookSlot } from '#/hooks';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { StorageError, StorageErrors } from '#/persistence/interface/storage';
 
@@ -93,10 +95,13 @@ type RestorePhase = 'new' | 'restoring' | 'ready' | 'failed';
 export class WireService extends Disposable implements IWireService {
   declare readonly _serviceBrand: undefined;
 
+  readonly hooks: IWireService['hooks'] = {
+    onDidRestore: new OrderedHookSlot(),
+  };
+
   private readonly models = new Map<ModelDef<any>, ModelInstance>();
   private readonly derivedModels = new Map<DerivedModelDef<any>, DerivedModelInstance>();
   private readonly reducerIndex = new Map<string, ReducerEntry[]>();
-  private readonly restoredHandlers = new Set<() => void | Promise<void>>();
   private readonly wireScope: string;
 
   private restorePhase: RestorePhase = 'new';
@@ -138,11 +143,6 @@ export class WireService extends Disposable implements IWireService {
       handler(change.state as DeepReadonly<S>, change.prev as DeepReadonly<S>),
     );
     return subscription;
-  }
-
-  onRestored(handler: () => void | Promise<void>): IDisposable {
-    this.restoredHandlers.add(handler);
-    return toDisposable(() => this.restoredHandlers.delete(handler));
   }
 
   private acquireDerivedModel<S>(model: DerivedModelDef<S>): {
@@ -280,7 +280,7 @@ export class WireService extends Disposable implements IWireService {
 
       await this.rehydrateModels();
       this.restorePhase = 'ready';
-      await this.fireRestored();
+      await this.hooks.onDidRestore.run({});
     } catch (error) {
       this.restorePhase = 'failed';
       throw error;
@@ -378,16 +378,6 @@ export class WireService extends Disposable implements IWireService {
       this.models.set(def, inst);
     }
     return inst;
-  }
-
-  private async fireRestored(): Promise<void> {
-    for (const handler of Array.from(this.restoredHandlers)) {
-      try {
-        await handler();
-      } catch (error) {
-        onUnexpectedError(error);
-      }
-    }
   }
 
   private appendToJournal(record: WireRecord, model: ModelDef<any>): void {

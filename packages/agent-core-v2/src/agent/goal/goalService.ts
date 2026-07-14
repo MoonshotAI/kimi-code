@@ -5,10 +5,11 @@
  * `GoalModel` (`GoalState | null`) through the `goal.create` / `goal.update` /
  * `goal.clear` Ops (`wire.dispatch`), reads it through `wire.getModel`,
  * publishes `goal.updated` live to `IEventBus`, and forces a replayed `active`
- * goal back to `paused` via `wire.onRestored`. The accumulated `wallClockMs`
- * lives in the Model (set from each Op payload, never by `Date.now()` inside
- * `apply`); the `wallClockResumedAt` cursor is a live-only field, reset on
- * replay and (re)started on the live path. A `forked` wire Op clears the Model
+ * goal back to `paused` via `wire.hooks.onDidRestore`. The accumulated
+ * `wallClockMs` lives in the Model (set from each Op payload, never by
+ * `Date.now()` inside `apply`); the `wallClockResumedAt` cursor is a live-only
+ * field, reset on replay and (re)started on the live path. A `forked` wire Op
+ * clears the Model
  * at a fork boundary; the `goal.*` payload shapes are registered in
  * `PersistedOpMap` (`#/wire/types`) inside `goalOps` because they still ride
  * the Agent wire journal restored into the Model.
@@ -215,7 +216,12 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
         dynamicInjector,
       ),
     );
-    this._register(this.wire.onRestored(() => this.normalizeAfterReplay()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('goal', async (_ctx, next) => {
+        this.normalizeAfterReplay();
+        await next();
+      }),
+    );
     this._register(
       this.eventBus.subscribe('turn.started', (e) => this.handleTurnLaunched(e.turnId)),
     );

@@ -9,12 +9,13 @@ import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInj
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
+import { createHooks } from '#/hooks';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionTodoService } from '#/session/todo/sessionTodo';
 import { SessionTodoService } from '#/session/todo/sessionTodoService';
 import { readTodoItems, type TodoItem } from '#/session/todo/todoItem';
 import { TODO_LIST_REMINDER_VARIANT } from '#/session/todo/todoListReminder';
-import { IWireService } from '#/wire/wire';
+import { IWireService, type WireHooks } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 
 interface RecordedTodoSet {
@@ -26,7 +27,6 @@ interface FakeAgent {
   readonly registeredTools: string[];
   readonly registeredVariants: string[];
   readonly appended: RecordedTodoSet[];
-  readonly subscribed: () => number;
   readonly restore: (records: readonly WireRecord[]) => Promise<void>;
 }
 
@@ -36,10 +36,6 @@ function makeFakeAgent(agentId: string): FakeAgent {
   const appended: RecordedTodoSet[] = [];
 
   let todoState: readonly TodoItem[] = [];
-  type Subscriber = (state: readonly TodoItem[], prev: readonly TodoItem[]) => void;
-  const subscribers: Subscriber[] = [];
-  const restoredHandlers: Array<() => void> = [];
-  let subscribedCount = 0;
 
   const registryStub = {
     _serviceBrand: undefined,
@@ -80,11 +76,11 @@ function makeFakeAgent(agentId: string): FakeAgent {
         todoState = readTodoItems(record['value']);
       }
     }
-    for (const handler of restoredHandlers) handler();
   };
 
   const wireStub: IWireService = {
     _serviceBrand: undefined,
+    hooks: createHooks<WireHooks, keyof WireHooks>(['onDidRestore']),
     dispatch: (...ops: unknown[]) => {
       for (const raw of ops) {
         const op = raw as { type: string; payload: unknown };
@@ -95,29 +91,14 @@ function makeFakeAgent(agentId: string): FakeAgent {
             : { payload };
         appended.push({ type: op.type, ...record } as unknown as RecordedTodoSet);
         if (op.type === 'tools.update_store' && record['key'] === 'todo') {
-          const prev = todoState;
           todoState = readTodoItems(record['value']);
-          if (prev !== todoState) {
-            for (const h of [...subscribers]) h(todoState, prev);
-          }
         }
       }
     },
     restore: async () => {},
     flush: async () => {},
     getModel: () => todoState,
-    subscribe: (_model: unknown, handler: unknown) => {
-      subscribedCount += 1;
-      subscribers.push(handler as Subscriber);
-      return toDisposable(() => {
-        const i = subscribers.indexOf(handler as Subscriber);
-        if (i >= 0) subscribers.splice(i, 1);
-      });
-    },
-    onRestored: (handler: () => void) => {
-      restoredHandlers.push(handler);
-      return toDisposable(() => {});
-    },
+    subscribe: () => toDisposable(() => {}),
   } as unknown as IWireService;
 
   const accessor: ServicesAccessor = {
@@ -144,7 +125,6 @@ function makeFakeAgent(agentId: string): FakeAgent {
     registeredTools,
     registeredVariants,
     appended,
-    subscribed: () => subscribedCount,
     restore,
   };
 }
@@ -259,17 +239,6 @@ describe('SessionTodoService', () => {
 
     expect(main.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
     expect(sub.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
-  });
-
-  it('subscribes to TodoModel only on the main agent', () => {
-    const main = makeFakeAgent('main');
-    const sub = makeFakeAgent('agent-1');
-    const lifecycle = makeLifecycleStub([main.handle, sub.handle]);
-    const service = new SessionTodoService(lifecycle.service);
-    void service;
-
-    expect(main.subscribed()).toBe(1);
-    expect(sub.subscribed()).toBe(0);
   });
 
   it('rebuilds the list when a todo tools.update_store record is replayed', async () => {

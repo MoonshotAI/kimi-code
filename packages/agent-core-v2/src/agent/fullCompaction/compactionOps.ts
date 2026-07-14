@@ -24,7 +24,7 @@
  * the in-flight worker promise — stays OUT of the Model (live-only service
  * members): none of it can be resumed, and a session never restores mid-flight.
  * A `running` phase stranded by a crash is reset to `idle` by the service's
- * `wire.onRestored` handler (mirroring `goal`'s post-replay normalization).
+ * `wire.hooks.onDidRestore` hook (mirroring `goal`'s post-replay normalization).
  *
  * The `compaction.*` events publish to `IEventBus` (`compaction.started` via the
  * `begin` Op's `toEvent`; the rest directly from the service); they are

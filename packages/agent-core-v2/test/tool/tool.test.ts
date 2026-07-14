@@ -8,6 +8,7 @@ import { Event, type Event as KimiEvent } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { userCancellationReason } from '#/_base/utils/abort';
+import { createHooks } from '#/hooks';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -230,13 +231,13 @@ function createAgentLifecycleStub(options: AgentLifecycleStubOptions = {}): Agen
         if (serviceId === IWireService) {
           return {
             _serviceBrand: undefined,
+            hooks: createHooks(['onDidRestore']),
             dispatch: () => {},
             replay: async () => {},
             flush: async () => {},
             getModel: () => [],
             subscribe: () => noopDisposable(),
             onEmission: () => noopDisposable(),
-            onRestored: () => noopDisposable(),
           } as never;
         }
         return undefined as never;

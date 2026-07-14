@@ -130,7 +130,12 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   ) {
     super();
     this.strategy = new RuntimeCompactionStrategy(() => this.resolveModelContextWithEffectiveMax());
-    this._register(this.wire.onRestored(() => this.normalizeAfterReplay()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('full-compaction', async (_ctx, next) => {
+        this.normalizeAfterReplay();
+        await next();
+      }),
+    );
     this._register(
       this.eventBus.subscribe('turn.started', () => this.resetForTurn()),
     );

@@ -9,10 +9,10 @@
  * session-level task root without writing back to it, reads
  * limits through `config`, records lifecycle and broadcasts through `wire`
  * (`task.started` / `task.terminated` Ops into `TaskModel`, plus the matching
- * signals), restores ghosts through a single `wire.onRestored` handler (wire
- * replay -> disk load -> reconcile, in that order), delivers live terminal
- * notifications by enqueueing `TaskNotificationStepRequest`s onto `loop` with
- * `activeOrNewTurn` admission (mid-turn ones fold into the active turn's
+ * signals), restores ghosts through a single `wire.hooks.onDidRestore` hook
+ * (wire replay -> disk load -> reconcile, in that order), delivers live
+ * terminal notifications by enqueueing `TaskNotificationStepRequest`s onto
+ * `loop` with `activeOrNewTurn` admission (mid-turn ones fold into the active turn's
  * following step; idle ones launch a fresh turn themselves, matching v1's
  * `turn.steer`, so the model consumes the notification without waiting for
  * the user), silently appends restored notifications through `contextMemory`,
@@ -244,11 +244,12 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       fallbackRoot,
     );
     this._register(
-      this.wire.onRestored(async () => {
+      this.wire.hooks.onDidRestore.register('task', async (_ctx, next) => {
         for (const key of this.wire.getModel(TaskNotificationDeliveryModel)) {
           this.deliveredNotificationKeys.add(key);
         }
         await this.restoreAfterReplay();
+        await next();
       }),
     );
     this._register(

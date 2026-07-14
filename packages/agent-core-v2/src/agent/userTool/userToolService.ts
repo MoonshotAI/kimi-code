@@ -7,8 +7,9 @@
  * (`wire.dispatch(...)`). The live side effects — `registry.register` +
  * `profile.addActiveTool` (and the matching dispose / `removeActiveTool`) — run
  * after the dispatch, and are re-derived from the rebuilt Model by
- * `wire.onRestored` after `wire.replay`, so a resumed agent re-registers exactly
- * the tools the persisted ops describe without re-firing any live notification.
+ * `wire.hooks.onDidRestore` after `wire.restore`, so a resumed agent re-registers
+ * exactly the tools the persisted ops describe without re-firing any live
+ * notification.
  * The restore re-registers into the tool registry only: the active-tool set is
  * owned by the persisted `ActiveToolsModel`, so the ephemeral `addActiveTool`
  * overlay is not rebuilt (it is live-only by design). The per-tool
@@ -52,7 +53,12 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
     @IWireService private readonly wire: IWireService,
   ) {
     super();
-    this._register(this.wire.onRestored(() => this.restoreRegisteredTools()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('user-tool', async (_ctx, next) => {
+        this.restoreRegisteredTools();
+        await next();
+      }),
+    );
   }
 
   list(): readonly UserToolRegistration[] {
