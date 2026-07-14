@@ -605,8 +605,10 @@ describe('AgentGoalService core workflow hooks', () => {
     await ctx?.dispose();
   });
 
-  async function startLiveContinuation(): Promise<ReturnType<typeof vi.fn<() => boolean>>> {
-    const abort = vi.fn<() => boolean>(() => true);
+  async function startLiveContinuation(
+    abortResult = true,
+  ): Promise<ReturnType<typeof vi.fn<() => boolean>>> {
+    const abort = vi.fn<() => boolean>(() => abortResult);
     const turn: Turn = { ...makeTurn(41), result: new Promise<never>(() => {}) };
     const step: Step = {
       id: 'goal-continuation',
@@ -914,6 +916,16 @@ describe('AgentGoalService core workflow hooks', () => {
       tokensUsed: 0,
     });
     expect(loopService.launches).toHaveLength(1);
+  });
+
+  it('cancels a preserved continuation turn after its original receipt settles', async () => {
+    const abort = await startLiveContinuation(false);
+    const cancel = vi.spyOn(loopService, 'cancel').mockReturnValue(true);
+    await goals.markBlocked({ reason: 'still need credentials' }, 'model');
+    await goals.cancelGoal();
+
+    expect(abort).toHaveBeenCalledOnce();
+    expect(cancel).toHaveBeenCalledWith(41);
   });
 
   it.each(['turn', 'token', 'wall-clock'] as const)(

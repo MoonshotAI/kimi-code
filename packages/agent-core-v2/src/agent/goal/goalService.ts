@@ -737,7 +737,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const pending = this.pendingContinuation;
     if (preserveLiveContinuation && pending?.turnId === this.liveTurnId) return;
     this.pendingContinuation = undefined;
-    pending?.receipt.abort();
+    if (pending !== undefined && !pending.receipt.abort() && pending.turnId !== undefined) {
+      this.loopService.cancel(pending.turnId);
+    }
   }
 
   private normalizeAfterReplay(): void {
