@@ -304,6 +304,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return this.toSnapshot(state);
   }
 
+  isGoalToolTarget(turnId: number, goalId: string): boolean {
+    return this.goalTurnTargets.get(turnId) === goalId;
+  }
+
   async createGoal(input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
     const objective = this.validateObjective(input.objective);
     this.prepareForGoalCreation(input.replace === true);
@@ -526,12 +530,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const state = this.goalState;
     if (state === null || state.status !== 'active') return;
     const goalId = this.goalDrivenTurns.get(turnId);
-    if (goalId !== undefined) {
-      if (actor === 'model' && goalId !== state.goalId) {
-        this.goalTurnTargets.set(turnId, state.goalId);
-      }
-      return;
-    }
+    if (actor === 'model') this.goalTurnTargets.set(turnId, state.goalId);
+    if (goalId !== undefined) return;
     this.goalDrivenTurns.set(turnId, state.goalId);
     this.countedGoalTurns.add(turnId);
     this.goalStarterTurns.add(turnId);
@@ -724,7 +724,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (!isGoalMutationTool(toolName)) return false;
     const goalId = this.goalTurnTarget(ctx.turnId);
     if (goalId === undefined) return false;
-    if (isTerminalUpdateAfterEarlierReplacement(ctx)) return true;
     return this.goalState?.goalId !== goalId;
   }
 
@@ -901,25 +900,6 @@ function matchesGoal(state: GoalState, goalId: string | undefined): boolean {
 
 function isGoalMutationTool(toolName: string): boolean {
   return toolName === 'CreateGoal' || toolName === 'UpdateGoal' || toolName === 'SetGoalBudget';
-}
-
-function isTerminalUpdateAfterEarlierReplacement(ctx: ToolBeforeExecuteContext): boolean {
-  if (ctx.toolCall.name !== 'UpdateGoal' || !isPlainRecord(ctx.args)) return false;
-  const status = ctx.args['status'];
-  if (status !== 'complete' && status !== 'blocked') return false;
-  const currentIndex = ctx.toolCalls.findIndex((call) => call.id === ctx.toolCall.id);
-  if (currentIndex <= 0) return false;
-  return ctx.toolCalls.slice(0, currentIndex).some(isGoalReplacementCall);
-}
-
-function isGoalReplacementCall(call: ToolBeforeExecuteContext['toolCall']): boolean {
-  if (call.name !== 'CreateGoal' || call.arguments === null) return false;
-  try {
-    const args = JSON.parse(call.arguments) as unknown;
-    return isPlainRecord(args) && args['replace'] === true;
-  } catch {
-    return false;
-  }
 }
 
 function goalBudgetBlockReason(budget: GoalBudgetReport): string | undefined {

@@ -25,6 +25,7 @@ export interface IAgentGoalService {
   readonly _serviceBrand: undefined;
 
   getGoal(): GoalToolResult;
+  isGoalToolTarget(turnId: number, goalId: string): boolean;
   createGoal(input: CreateGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;
   pauseGoal(input?: GoalReasonInput, actor?: GoalActor): Promise<GoalSnapshot>;
   resumeGoal(input?: ResumeGoalInput, actor?: GoalActor): Promise<GoalSnapshot>;

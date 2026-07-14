@@ -58,12 +58,15 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
       description: `Setting goal status: ${status}`,
       stopBatchAfterThis: status !== 'active' && goalIsActive,
       approvalRule: this.name,
-      execute: async () => {
+      execute: async ({ turnId }) => {
         const goalAtExecution = this.goal.getGoal().goal;
         if (goalAtExecution === null || (currentGoal === null && status === 'active')) {
           return { output: missingGoalOutput(status) };
         }
-        if (currentGoal !== null && goalAtExecution.goalId !== currentGoal.goalId) {
+        if (
+          goalAtExecution.goalId !== currentGoal?.goalId &&
+          !this.goal.isGoalToolTarget(turnId, goalAtExecution.goalId)
+        ) {
           return { output: changedGoalOutput(status) };
         }
         if (status === 'active') {
