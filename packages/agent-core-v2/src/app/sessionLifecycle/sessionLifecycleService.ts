@@ -7,7 +7,10 @@
  * close/archive — archiving flags the session's `sessionMetadata`, removes
  * its `agentLifecycle` agents, restoring clears the archived flag, and
  * broadcasts through `event`; session start and resume failures are reported
- * through `telemetry`. Materializes the session's initial metadata on
+ * through `telemetry`. Because hosts install their telemetry appender/context
+ * only after create()/resume() returns, the created-session announcement binds
+ * the session id into telemetry context before emitting `session_started`.
+ * Materializes the session's initial metadata on
  * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
  * sessions are discovered through the `sessionIndex` read model, and workspace
  * roots are remembered through `workspaceRegistry`. On create / fork the
@@ -203,6 +206,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
     await this.hooks.onDidCreateSession.run(event);
     this._onDidCreateSession.fire(event);
+    this.telemetry.setContext({ sessionId: event.sessionId });
     this.telemetry.track2('session_started', { resumed: event.source === 'resume' });
     event.handle.accessor.get(ISessionActivityKernel).markActive();
   }
