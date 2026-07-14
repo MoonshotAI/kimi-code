@@ -240,4 +240,4 @@ export class AgentPromptService implements IAgentPromptService {
 function snapshot(item: Record): PromptSnapshot { return { id: item.id, userMessageId: item.userMessageId, createdAt: item.createdAt, state: item.state, message: item.message }; }
 function deferred<T>(): Deferred<T> { let resolve!: (value: T) => void; let reject!: (reason: unknown) => void; const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej; }); return { promise, resolve, reject }; }
 
-registerScopedService(LifecycleScope.Agent, IAgentPromptService, AgentPromptService, InstantiationType.Delayed, 'prompt');
+registerScopedService(LifecycleScope.Agent, IAgentPromptService, AgentPromptService, InstantiationType.Eager, 'prompt');

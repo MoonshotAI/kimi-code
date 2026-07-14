@@ -261,6 +261,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionTerminalService,
   SessionTerminalService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'terminal',
 );

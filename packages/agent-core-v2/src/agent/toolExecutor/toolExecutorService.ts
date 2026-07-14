@@ -911,6 +911,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolExecutorService,
   AgentToolExecutorService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'toolExecutor',
 );

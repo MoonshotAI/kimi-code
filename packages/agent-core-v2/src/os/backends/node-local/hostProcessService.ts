@@ -203,6 +203,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostProcessService,
   HostProcessService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'hostProcess',
 );

@@ -245,4 +245,4 @@ async function collect(stream: AsyncIterable<Uint8Array | string>): Promise<stri
   return out;
 }
 
-registerScopedService(LifecycleScope.App, IGitService, GitService, InstantiationType.Delayed, 'git');
+registerScopedService(LifecycleScope.App, IGitService, GitService, InstantiationType.Eager, 'git');

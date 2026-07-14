@@ -231,6 +231,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionFsWatchService,
   SessionFsWatchService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionFsWatch',
 );

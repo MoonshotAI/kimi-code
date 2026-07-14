@@ -596,13 +596,13 @@ registerScopedService(
   LifecycleScope.App,
   IConfigRegistry,
   ConfigRegistry,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'config',
 );
 registerScopedService(
   LifecycleScope.App,
   IConfigService,
   ConfigService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'config',
 );

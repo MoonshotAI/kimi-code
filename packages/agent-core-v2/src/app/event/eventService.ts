@@ -31,6 +31,6 @@ registerScopedService(
   LifecycleScope.App,
   IEventService,
   EventService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'event',
 );

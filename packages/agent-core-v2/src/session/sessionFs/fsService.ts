@@ -1039,6 +1039,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionFsService,
   SessionFsService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionFs',
 );

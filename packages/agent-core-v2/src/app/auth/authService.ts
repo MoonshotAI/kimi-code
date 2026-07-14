@@ -815,6 +815,6 @@ class OAuthToolkitService extends KimiOAuthToolkit implements IOAuthToolkit {
   }
 }
 
-registerScopedService(LifecycleScope.App, IOAuthService, OAuthService, InstantiationType.Delayed, 'auth');
-registerScopedService(LifecycleScope.App, IOAuthToolkit, OAuthToolkitService, InstantiationType.Delayed, 'auth');
-registerScopedService(LifecycleScope.App, IAuthSummaryService, AuthSummaryService, InstantiationType.Delayed, 'auth');
+registerScopedService(LifecycleScope.App, IOAuthService, OAuthService, InstantiationType.Eager, 'auth');
+registerScopedService(LifecycleScope.App, IOAuthToolkit, OAuthToolkitService, InstantiationType.Eager, 'auth');
+registerScopedService(LifecycleScope.App, IAuthSummaryService, AuthSummaryService, InstantiationType.Eager, 'auth');

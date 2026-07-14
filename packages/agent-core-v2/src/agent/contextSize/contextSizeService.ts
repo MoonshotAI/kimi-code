@@ -102,6 +102,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextSizeService,
   AgentContextSizeService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'contextSize',
 );

@@ -307,6 +307,6 @@ registerScopedService(
   LifecycleScope.App,
   IModelCatalogService,
   ModelCatalogService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'modelCatalog',
 );

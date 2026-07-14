@@ -341,6 +341,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentRuntimeService,
   AgentRuntimeService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'runtime',
 );

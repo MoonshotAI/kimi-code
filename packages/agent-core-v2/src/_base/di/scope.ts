@@ -29,7 +29,7 @@ export function registerScopedService<T>(
   id: ServiceIdentifier<T>,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ctor: new (...args: any[]) => T,
-  type: InstantiationType = InstantiationType.Delayed,
+  type: InstantiationType = InstantiationType.Eager,
   domain: string = 'unknown',
 ): void {
   const descriptor = new SyncDescriptor<T>(

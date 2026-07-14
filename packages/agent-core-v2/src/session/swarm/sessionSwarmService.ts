@@ -272,6 +272,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionSwarmService,
   SessionSwarmService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionSwarm',
 );

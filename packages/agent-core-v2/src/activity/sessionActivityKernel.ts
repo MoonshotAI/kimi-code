@@ -146,6 +146,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionActivityKernel,
   SessionActivityKernel,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'activity',
 );

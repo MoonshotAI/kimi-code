@@ -569,6 +569,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentProfileService,
   AgentProfileService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'profile',
 );

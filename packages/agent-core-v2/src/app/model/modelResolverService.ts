@@ -455,6 +455,6 @@ registerScopedService(
   LifecycleScope.App,
   IModelResolver,
   ModelResolverService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'modelResolver',
 );

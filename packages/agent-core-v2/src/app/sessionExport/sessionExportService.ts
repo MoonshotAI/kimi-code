@@ -219,6 +219,6 @@ registerScopedService(
   LifecycleScope.App,
   ISessionExportService,
   SessionExportService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionExport',
 );

@@ -502,4 +502,4 @@ function freshMetadataRecord(): PersistedWireRecord {
   };
 }
 
-registerScopedService(LifecycleScope.Session, IAgentLifecycleService, AgentLifecycleService, InstantiationType.Delayed, 'agentLifecycle');
+registerScopedService(LifecycleScope.Session, IAgentLifecycleService, AgentLifecycleService, InstantiationType.Eager, 'agentLifecycle');

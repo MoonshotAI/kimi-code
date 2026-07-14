@@ -313,6 +313,6 @@ registerScopedService(
   LifecycleScope.App,
   IWorkspaceLocalConfigService,
   FileWorkspaceLocalConfigService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'workspaceLocalConfig',
 );

@@ -52,6 +52,6 @@ registerScopedService(
   LifecycleScope.App,
   IAgentProfileCatalogService,
   AgentProfileCatalogService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'agentProfileCatalog',
 );

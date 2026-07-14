@@ -158,6 +158,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentPlanService,
   AgentPlanService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'plan',
 );

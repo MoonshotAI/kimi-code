@@ -173,6 +173,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentBlobService,
   AgentBlobServiceImpl,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'agentBlob',
 );

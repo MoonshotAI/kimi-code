@@ -250,6 +250,6 @@ registerScopedService(
   LifecycleScope.App,
   IQueryStore,
   MiniDbQueryStore,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'storage',
 );

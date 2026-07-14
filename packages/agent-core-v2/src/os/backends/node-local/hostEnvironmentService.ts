@@ -85,6 +85,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostEnvironment,
   HostEnvironmentService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'hostEnvironment',
 );

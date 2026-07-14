@@ -103,6 +103,6 @@ registerScopedService(
   LifecycleScope.App,
   IPlatformService,
   PlatformService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'platform',
 );

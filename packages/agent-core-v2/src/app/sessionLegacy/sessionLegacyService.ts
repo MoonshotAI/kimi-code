@@ -231,6 +231,6 @@ registerScopedService(
   LifecycleScope.App,
   ISessionLegacyService,
   SessionLegacyService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionLegacy',
 );

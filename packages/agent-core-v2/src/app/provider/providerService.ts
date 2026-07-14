@@ -113,4 +113,4 @@ function deepEqual(a: unknown, b: unknown): boolean {
   return true;
 }
 
-registerScopedService(LifecycleScope.App, IProviderService, ProviderService, InstantiationType.Delayed, 'provider');
+registerScopedService(LifecycleScope.App, IProviderService, ProviderService, InstantiationType.Eager, 'provider');

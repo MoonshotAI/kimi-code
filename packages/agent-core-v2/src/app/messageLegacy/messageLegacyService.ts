@@ -159,6 +159,6 @@ registerScopedService(
   LifecycleScope.App,
   IMessageLegacyService,
   MessageLegacyService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'messageLegacy',
 );

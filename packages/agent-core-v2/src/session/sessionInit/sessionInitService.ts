@@ -122,6 +122,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionInitService,
   SessionInitService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'session-init',
 );
