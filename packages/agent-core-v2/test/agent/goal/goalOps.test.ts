@@ -1,3 +1,9 @@
+/**
+ * Scenario: wire-backed goal lifecycle persistence and replay.
+ * Responsibilities: verify goal Ops, live events, and replay normalization through the service contract.
+ * Wiring: real goal/wire/event/deadline services with non-persistence collaborators stubbed.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/goal/goalOps.test.ts`.
+ */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -10,6 +16,8 @@ import { IConfigService } from '#/app/config/config';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentGoalService } from '#/agent/goal/goal';
+import { IGoalDeadlineScheduler } from '#/agent/goal/goalDeadlineScheduler';
+import { GoalDeadlineSchedulerService } from '#/agent/goal/goalDeadlineSchedulerService';
 import { AgentGoalService } from '#/agent/goal/goalService';
 import { GoalModel } from '#/agent/goal/goalOps';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -114,6 +122,7 @@ function buildHost(key: string): {
   ix.stub(ITelemetryService, createTelemetryStub());
   ix.stub(IAgentToolExecutorService, createToolExecutorStub());
   ix.stub(IConfigService, createConfigStub());
+  ix.set(IGoalDeadlineScheduler, new SyncDescriptor(GoalDeadlineSchedulerService));
   ix.set(IAgentGoalService, new SyncDescriptor(AgentGoalService));
   const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
     log: ix.get(IAppendLogStore),

@@ -182,6 +182,8 @@ import '#/agent/goal/tools/create-goal';
 import '#/agent/goal/tools/get-goal';
 import '#/agent/goal/tools/set-goal-budget';
 import '#/agent/goal/tools/update-goal';
+export * from '#/agent/goal/goalDeadlineScheduler';
+import '#/agent/goal/goalDeadlineSchedulerService';
 export * from '#/agent/goal/goal';
 export * from '#/agent/goal/goalService';
 export * from '#/agent/goal/types';
