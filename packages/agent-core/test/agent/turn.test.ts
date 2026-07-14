@@ -546,6 +546,7 @@ describe('Agent turn flow', () => {
     expect(ended).toEqual({
       event: 'turn_ended',
       properties: expect.objectContaining({
+        turn_id: 0,
         mode: 'agent',
         reason: 'completed',
         provider_type: 'kimi',
@@ -625,6 +626,7 @@ describe('Agent turn flow', () => {
     expect(records).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
+        turn_id: 0,
         tool_name: 'Bash',
         outcome: 'success',
         dup_type: 'cross_step',
@@ -702,6 +704,7 @@ describe('Agent turn flow', () => {
     expect(records).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
+        turn_id: 0,
         tool_name: 'MissingTool',
         outcome: 'error',
         dup_type: 'normal',
@@ -2096,6 +2099,7 @@ describe('Agent turn flow', () => {
     expect(records).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({
+        turn_id: 0,
         tool_name: 'Bash',
         outcome: 'cancelled',
         dup_type: 'normal',

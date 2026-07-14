@@ -1046,6 +1046,7 @@ export class TurnFlow {
       this.toolCallDupType.delete(event.toolCallId);
       const outcome = telemetryToolOutcome(event.result);
       const properties: Record<string, TelemetryPropertyValue> = {
+        turn_id: turnId,
         tool_name: started.name,
         outcome,
         duration_ms: Date.now() - started.startedAt,
