@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   WIRE_PROTOCOL_VERSION,
+  IAgentGoalService,
   type WireRecord,
   type PromptOrigin,
 } from '#/index';
@@ -563,6 +564,57 @@ describe('Agent resume', () => {
     await ctx.restorePersisted();
 
     expect(ctx.context.get()).toHaveLength(0);
+  });
+
+  it('restores an active interval into a budget-reached paused goal', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(6_000);
+    const persistence = new RecordingAgentPersistence([
+      {
+        type: 'goal.create',
+        goalId: 'goal-1',
+        objective: 'ship work',
+      },
+      {
+        type: 'goal.update',
+        status: 'paused',
+        wallClockMs: 2_000,
+        actor: 'user',
+      },
+      {
+        type: 'goal.update',
+        status: 'active',
+        wallClockResumedAt: 1_000,
+        budgetLimits: { wallClockBudgetMs: 6_000 },
+        actor: 'user',
+      },
+    ] as unknown as WireRecord[]);
+    const ctx = testAgent({ persistence, autoConfigure: false });
+
+    try {
+      await ctx.restorePersisted();
+
+      const goal = ctx.get(IAgentGoalService).getGoal().goal;
+      expect(goal).toMatchObject({
+        status: 'paused',
+        wallClockMs: 7_000,
+        budget: {
+          wallClockBudgetReached: true,
+          remainingWallClockMs: 0,
+          overBudget: true,
+        },
+      });
+      expect(persistence.appended).toEqual([
+        expect.objectContaining({
+          type: 'goal.update',
+          status: 'paused',
+          reason: 'Paused after agent resume',
+          wallClockMs: 7_000,
+        }),
+      ]);
+    } finally {
+      now.mockRestore();
+      await ctx.dispose();
+    }
   });
 
   it('restores context after undo and removes undone messages from replay', async () => {

@@ -498,6 +498,7 @@ describe('AgentGoalService', () => {
           goalId: expect.any(String),
           objective: 'work',
           completionCriterion: 'tests pass',
+          wallClockResumedAt: expect.any(Number),
         }),
         expect.objectContaining({ type: 'goal.update', tokensUsed: 5 }),
         expect.objectContaining({ type: 'goal.update', turnsUsed: 1 }),
@@ -514,6 +515,7 @@ describe('AgentGoalService', () => {
         expect.objectContaining({
           type: 'goal.update',
           status: 'active',
+          wallClockResumedAt: expect.any(Number),
           actor: 'user',
         }),
         expect.objectContaining({ type: 'goal.clear' }),

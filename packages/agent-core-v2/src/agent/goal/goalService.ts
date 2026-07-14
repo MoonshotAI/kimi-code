@@ -5,11 +5,11 @@
  * `GoalModel` (`GoalState | null`) through the `goal.create` / `goal.update` /
  * `goal.clear` Ops (`wire.dispatch`), reads it through `wire.getModel`,
  * publishes `goal.updated` live to `IEventBus`, and forces a replayed `active`
- * goal back to `paused` via `wire.hooks.onDidRestore`. The accumulated
- * `wallClockMs` lives in the Model (set from each Op payload, never by
- * `Date.now()` inside `apply`); the `wallClockResumedAt` cursor is a live-only
- * field, reset on replay and (re)started on the live path. A `forked` wire Op
- * clears the Model
+ * goal back to `paused` via `wire.hooks.onDidRestore`. The accumulated `wallClockMs`
+ * lives in the Model (set from each Op payload, never by `Date.now()` inside
+ * `apply`); the active interval's epoch-ms `wallClockResumedAt` anchor is
+ * persisted at create/resume boundaries so recovery can settle crash-spanning
+ * elapsed time without periodic writes. A `forked` wire Op clears the Model
  * at a fork boundary; the `goal.*` payload shapes are registered in
  * `PersistedOpMap` (`#/wire/types`) inside `goalOps` because they still ride
  * the Agent wire journal restored into the Model.
@@ -194,7 +194,6 @@ function isGoalContinuationOrigin(origin: TurnStartedEvent['origin']): boolean {
 export class AgentGoalService extends Disposable implements IAgentGoalService {
   declare readonly _serviceBrand: undefined;
 
-  private wallClockResumedAt?: number;
   private liveTurnId?: number;
   private readonly goalDrivenTurns = new Map<number, string>();
   private readonly countedGoalTurns = new Set<number>();
@@ -312,14 +311,15 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   async createGoal(input: CreateGoalInput, actor: GoalActor = 'user'): Promise<GoalSnapshot> {
     const objective = this.validateObjective(input.objective);
     this.prepareForGoalCreation(input.replace === true);
+    const wallClockResumedAt = Date.now();
     this.wire.dispatch(
       createGoal({
         goalId: randomUUID(),
         objective,
         completionCriterion: normalizeCompletionCriterion(input.completionCriterion),
+        wallClockResumedAt,
       }),
     );
-    this.wallClockResumedAt = Date.now();
     this.adoptStarterTurn(actor);
     const state = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(state));
@@ -457,7 +457,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private dispatchCompletion(state: GoalState, reason: string | undefined, actor: GoalActor): void {
     const wallClockMs = this.settleWallClock(state);
-    this.wallClockResumedAt = undefined;
     this.wire.dispatch(updateGoal({ status: 'complete', reason, wallClockMs, actor }));
   }
 
@@ -763,7 +762,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.appendForkClearedReminder();
     const state = this.goalState;
     if (state === null) return;
-    this.wallClockResumedAt = undefined;
     if (state.status === 'complete') {
       this.clearInternal('runtime', { emit: false, track: false });
       return;
@@ -796,7 +794,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   ): void {
     if (this.goalState === null) return;
     this.cancelPendingContinuation(opts.preserveLiveContinuation === true);
-    this.wallClockResumedAt = undefined;
     this.wire.dispatch(clearGoal({}));
     if (opts.emit !== false) this.emitGoalUpdated(null);
     if (opts.track !== false) this.telemetry.track2('goal_cleared', { actor });
@@ -810,13 +807,13 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     opts: { readonly preserveLiveContinuation?: boolean } = {},
   ): GoalSnapshot {
     const wallClockMs = this.settleWallClock(state);
-    if (status === 'active') {
-      this.wallClockResumedAt = Date.now();
-    } else if (state.status === 'active') {
+    const wallClockResumedAt = status === 'active' ? Date.now() : undefined;
+    if (status !== 'active' && state.status === 'active') {
       this.cancelPendingContinuation(opts.preserveLiveContinuation === true);
-      this.wallClockResumedAt = undefined;
     }
-    this.wire.dispatch(updateGoal({ status, reason, wallClockMs, actor }));
+    this.wire.dispatch(
+      updateGoal({ status, reason, wallClockMs, wallClockResumedAt, actor }),
+    );
     const next = this.requireState();
     if (status === 'active') this.adoptStarterTurn(actor);
     this.emitGoalUpdated(this.toSnapshot(next), { kind: 'lifecycle', status, reason, actor });
@@ -848,15 +845,15 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private settleWallClock(state: GoalState): number {
-    if (state.status === 'active' && this.wallClockResumedAt !== undefined) {
-      return state.wallClockMs + Math.max(0, Date.now() - this.wallClockResumedAt);
+    if (state.status === 'active' && state.wallClockResumedAt !== undefined) {
+      return state.wallClockMs + Math.max(0, Date.now() - state.wallClockResumedAt);
     }
     return state.wallClockMs;
   }
 
   private liveWallClockMs(state: GoalState): number {
-    if (state.status === 'active' && this.wallClockResumedAt !== undefined) {
-      return state.wallClockMs + Math.max(0, Date.now() - this.wallClockResumedAt);
+    if (state.status === 'active' && state.wallClockResumedAt !== undefined) {
+      return state.wallClockMs + Math.max(0, Date.now() - state.wallClockResumedAt);
     }
     return state.wallClockMs;
   }
