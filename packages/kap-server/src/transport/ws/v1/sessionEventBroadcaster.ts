@@ -25,8 +25,10 @@
  *      an atomic `getSnapshotState` for the snapshot route.
  *
  * A session is activated (journaling starts) on first `subscribe` /
- * `getSnapshotState` / `getCursor` and stays active for the process lifetime so
- * the journal is continuous from first activation onward.
+ * `getSnapshotState` / `getCursor`. Concurrent activations share one owner;
+ * closing or archiving the session releases its listeners and journal handle.
+ * A later resume reopens the same journal so its `{seq, epoch}` stays
+ * continuous across live-owner lifetimes.
  */
 
 import type {
@@ -133,14 +135,20 @@ const GLOBAL_SESSION_ID = '__global__';
 async function disposeSessionState(state: SessionState): Promise<void> {
   for (const d of state.lifecycleDisposables) d.dispose();
   for (const d of state.agentDisposables.values()) d.dispose();
+  await state.queue;
+  state.targets.clear();
   await state.journal.close();
 }
 
 export class SessionEventBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
+  private readonly initializations = new Map<string, Promise<SessionState | undefined>>();
+  private readonly retirements = new Map<string, Promise<void>>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
+  private readonly sessionLifecycleSubscriptions: readonly IDisposable[];
   private closed = false;
+  private closePromise: Promise<void> | undefined;
 
   constructor(
     private readonly opts: {
@@ -154,6 +162,15 @@ export class SessionEventBroadcaster {
     this.coreEventSubscription = opts.core.accessor
       .get(IEventService)
       .subscribe((event) => this.onCoreEvent(event));
+    const lifecycle = opts.core.accessor.get(ISessionLifecycleService);
+    this.sessionLifecycleSubscriptions = [
+      lifecycle.onDidCloseSession(({ sessionId }) => {
+        this.releaseSessionState(sessionId);
+      }),
+      lifecycle.onDidArchiveSession(({ sessionId }) => {
+        this.releaseSessionState(sessionId);
+      }),
+    ];
   }
 
   /** Subscribe a connection to a session's stream (activates the session). */
@@ -270,10 +287,16 @@ export class SessionEventBroadcaster {
     return watermark;
   }
 
-  async close(): Promise<void> {
-    if (this.closed) return;
+  close(): Promise<void> {
+    this.closePromise ??= this.closeOnce();
+    return this.closePromise;
+  }
+
+  private async closeOnce(): Promise<void> {
     this.closed = true;
     this.coreEventSubscription.dispose();
+    for (const subscription of this.sessionLifecycleSubscriptions) subscription.dispose();
+    await Promise.allSettled([...this.initializations.values(), ...this.retirements.values()]);
     for (const state of this.sessions.values()) {
       await disposeSessionState(state);
     }
@@ -281,58 +304,152 @@ export class SessionEventBroadcaster {
   }
 
   private async ensureState(sessionId: string): Promise<SessionState | undefined> {
-    if (this.closed) return undefined;
-    let state = this.sessions.get(sessionId);
-    if (state !== undefined) return state;
+    while (!this.closed) {
+      const retirement = this.retirements.get(sessionId);
+      if (retirement !== undefined) {
+        await retirement;
+        continue;
+      }
+      const state = this.sessions.get(sessionId);
+      if (state !== undefined) return state;
+      let initialization = this.initializations.get(sessionId);
+      if (initialization === undefined) {
+        initialization = this.initializeSessionState(sessionId);
+        this.initializations.set(sessionId, initialization);
+      }
+      let initialized: SessionState | undefined;
+      try {
+        initialized = await initialization;
+      } finally {
+        if (this.initializations.get(sessionId) === initialization) {
+          this.initializations.delete(sessionId);
+        }
+      }
+      const release = this.retirements.get(sessionId);
+      if (release === undefined) return initialized;
+      await release;
+      if (this.closed) return undefined;
+      if (this.opts.core.accessor.get(ISessionLifecycleService).get(sessionId) === undefined) {
+        return undefined;
+      }
+    }
+    return undefined;
+  }
 
-    const session = this.opts.core.accessor.get(ISessionLifecycleService).get(sessionId);
+  private async initializeSessionState(sessionId: string): Promise<SessionState | undefined> {
+    const lifecycle = this.opts.core.accessor.get(ISessionLifecycleService);
+    const session = lifecycle.get(sessionId);
     if (session === undefined) return undefined;
 
     const journal = await SessionEventJournal.open(
       sessionJournalPath(this.opts.eventsDir, sessionId),
       this.opts.logger,
     );
-    if (this.closed) {
+    if (
+      this.closed ||
+      this.retirements.has(sessionId) ||
+      lifecycle.get(sessionId) !== session
+    ) {
       await journal.close();
       return undefined;
     }
-    const activity = session.accessor.get(ISessionActivityService);
-    state = {
-      sessionId,
-      journal,
-      tracker: new InFlightTurnTracker(),
-      roster: new SubagentRosterTracker(),
-      activity,
-      lastStatus: activity.status(),
-      tail: [],
-      targets: new Map(),
-      queue: Promise.resolve(),
-      agentDisposables: new Map(),
-      lifecycleDisposables: [],
-      knownInteractions: new Map(),
-    };
-    this.sessions.set(sessionId, state);
+    let state: SessionState | undefined;
     try {
+      const activity = session.accessor.get(ISessionActivityService);
+      state = {
+        sessionId,
+        journal,
+        tracker: new InFlightTurnTracker(),
+        roster: new SubagentRosterTracker(),
+        activity,
+        lastStatus: activity.status(),
+        tail: [],
+        targets: new Map(),
+        queue: Promise.resolve(),
+        agentDisposables: new Map(),
+        lifecycleDisposables: [],
+        knownInteractions: new Map(),
+      };
       this.attachAgents(sessionId, session, state);
       this.attachInteractions(sessionId, session, state);
     } catch (error) {
-      this.sessions.delete(sessionId);
-      await disposeSessionState(state);
+      if (state === undefined) await journal.close();
+      else await disposeSessionState(state);
       if (error instanceof Error && error.message === 'InstantiationService has been disposed') return undefined;
       throw error;
     }
+    if (state === undefined) return undefined;
+    if (
+      this.closed ||
+      this.retirements.has(sessionId) ||
+      lifecycle.get(sessionId) !== session
+    ) {
+      await disposeSessionState(state);
+      return undefined;
+    }
+    this.sessions.set(sessionId, state);
     return state;
   }
 
-  private async ensureGlobalState(): Promise<SessionState> {
-    let state = this.sessions.get(GLOBAL_SESSION_ID);
-    if (state !== undefined) return state;
+  private releaseSessionState(sessionId: string): void {
+    const previousRetirement = this.retirements.get(sessionId);
+    const initialization = this.initializations.get(sessionId);
+    const activeState = this.sessions.get(sessionId);
+    const retirement = (async () => {
+      if (previousRetirement !== undefined) {
+        await previousRetirement;
+        return;
+      }
+      let state = activeState;
+      if (state === undefined && initialization !== undefined) {
+        try {
+          state = await initialization;
+        } catch {
+          return;
+        }
+      }
+      if (state === undefined) return;
+      if (activeState !== undefined && this.sessions.get(sessionId) !== state) return;
+      await disposeSessionState(state);
+      if (this.sessions.get(sessionId) === state) this.sessions.delete(sessionId);
+    })();
+    this.retirements.set(sessionId, retirement);
+    const finishRetirement = (): void => {
+      if (this.retirements.get(sessionId) === retirement) {
+        this.retirements.delete(sessionId);
+      }
+    };
+    void retirement.then(finishRetirement, finishRetirement);
+  }
 
+  private async ensureGlobalState(): Promise<SessionState | undefined> {
+    if (this.closed) return undefined;
+    const state = this.sessions.get(GLOBAL_SESSION_ID);
+    if (state !== undefined) return state;
+    let initialization = this.initializations.get(GLOBAL_SESSION_ID);
+    if (initialization === undefined) {
+      initialization = this.initializeGlobalState();
+      this.initializations.set(GLOBAL_SESSION_ID, initialization);
+    }
+    try {
+      return await initialization;
+    } finally {
+      if (this.initializations.get(GLOBAL_SESSION_ID) === initialization) {
+        this.initializations.delete(GLOBAL_SESSION_ID);
+      }
+    }
+  }
+
+  private async initializeGlobalState(): Promise<SessionState | undefined> {
     const journal = await SessionEventJournal.open(
       sessionJournalPath(this.opts.eventsDir, GLOBAL_SESSION_ID),
       this.opts.logger,
     );
-    state = {
+    if (this.closed) {
+      await journal.close();
+      return undefined;
+    }
+    const state: SessionState = {
       sessionId: GLOBAL_SESSION_ID,
       journal,
       tracker: new InFlightTurnTracker(),
@@ -410,6 +527,13 @@ export class SessionEventBroadcaster {
 
   private async dispatchGlobal(event: Event): Promise<void> {
     const state = await this.ensureGlobalState();
+    if (
+      state === undefined ||
+      this.closed ||
+      this.sessions.get(GLOBAL_SESSION_ID) !== state
+    ) {
+      return;
+    }
     state.queue = state.queue
       .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
       .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
@@ -435,6 +559,13 @@ export class SessionEventBroadcaster {
       throw error;
     }
     if (state === undefined) return;
+    if (
+      this.closed ||
+      this.retirements.has(sessionId) ||
+      this.sessions.get(sessionId) !== state
+    ) {
+      return;
+    }
     state.queue = state.queue
       .then(() => this.dispatch(state, event, isVolatileEventType(event.type)))
       .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
@@ -447,8 +578,8 @@ export class SessionEventBroadcaster {
       state.agentDisposables.set(handle.id, this.attachAgent(sessionId, handle));
     };
     for (const handle of agents.list()) subscribeAgent(handle);
+    state.lifecycleDisposables.push(agents.onDidCreate((handle) => subscribeAgent(handle)));
     state.lifecycleDisposables.push(
-      agents.onDidCreate((handle) => subscribeAgent(handle)),
       agents.onDidDispose((agentId) => {
         const d = state.agentDisposables.get(agentId);
         if (d !== undefined) {
@@ -602,6 +733,8 @@ export class SessionEventBroadcaster {
           }
         }
       }),
+    );
+    state.lifecycleDisposables.push(
       interactions.onDidResolve(({ id, response }) => {
         const kind = state.knownInteractions.get(id);
         if (kind === undefined) return;
