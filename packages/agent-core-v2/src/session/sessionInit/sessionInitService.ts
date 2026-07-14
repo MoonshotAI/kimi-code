@@ -16,10 +16,14 @@
  * Port of v1 `Session.generateAgentsMd()`. The main-agent lookup is a hard
  * precondition (`AGENT_NOT_FOUND`, like v1's `requireMainAgent`); only the
  * spawn / reload / reminder path is wrapped into `SESSION_INIT_FAILED`.
+ * `cancelInit` aborts the in-flight run through the same `AbortSignal` the
+ * run was launched with; user cancellations propagate unwrapped (never as
+ * `SESSION_INIT_FAILED`) so callers can tell "aborted" from "failed".
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
@@ -43,6 +47,9 @@ const INIT_DESCRIPTION = 'Initialize AGENTS.md';
 export class SessionInitService implements ISessionInitService {
   declare readonly _serviceBrand: undefined;
 
+  /** Abort handle of the in-flight `/init` run; `undefined` while idle. */
+  private initRun: AbortController | undefined;
+
   constructor(
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
     @IHostFileSystem private readonly fs: IHostFileSystem,
@@ -50,19 +57,24 @@ export class SessionInitService implements ISessionInitService {
     @IBootstrapService private readonly bootstrap: IBootstrapService,
   ) {}
 
+  cancelInit(): void {
+    this.initRun?.abort(userCancellationReason());
+  }
+
   async generateAgentsMd(): Promise<void> {
     const main = this.lifecycle.getHandle(MAIN_AGENT_ID);
     if (main === undefined) {
       throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
     }
 
+    const controller = new AbortController();
+    this.initRun = controller;
     try {
       const own = main.accessor.get(IAgentProfileService).data();
       if (own.modelAlias === undefined) {
         throw new Error2(ErrorCodes.SESSION_INIT_FAILED, 'Main agent has no model bound');
       }
       const permissionMode = main.accessor.get(IAgentPermissionModeService).mode;
-      const controller = new AbortController();
 
       const child = await this.lifecycle.create({
         binding: {
@@ -106,6 +118,11 @@ export class SessionInitService implements ISessionInitService {
         });
       await main.accessor.get(IAgentWireRecordService).flush();
     } catch (error) {
+      // User cancellations (Ctrl+C → cancelInit) must surface as aborts, not
+      // as init failures — the TUI resets quietly on `isAbortError`.
+      if (isUserCancellation(error) || isAbortError(error)) {
+        throw error;
+      }
       if (error instanceof Error2 && error.code === ErrorCodes.SESSION_INIT_FAILED) {
         throw error;
       }
@@ -114,6 +131,10 @@ export class SessionInitService implements ISessionInitService {
         error instanceof Error ? error.message : 'Init failed',
         { cause: error },
       );
+    } finally {
+      if (this.initRun === controller) {
+        this.initRun = undefined;
+      }
     }
   }
 }
