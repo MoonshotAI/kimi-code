@@ -564,6 +564,19 @@ export class SessionEventBroadcaster {
       const terminalStatus =
         reason === 'cancelled' || reason === 'failed' || reason === 'blocked' ? 'aborted' : 'idle';
       this.enqueueStatusChanged(state, pendingStatus(state.activity?.status()) ?? terminalStatus);
+    } else if (event.type === 'turn.ended' && state.activity?.status() === 'idle') {
+      // Defensive: a sub-agent's own lease and loop state are already released
+      // when its turn.ended is published (see loopService), so this activity
+      // read reflects only the OTHER agents. Session-wide idle here therefore
+      // cannot be a mid-main-turn foreground sub-agent (the main lease would
+      // report running) — it means the last active agent finished. Emit idle
+      // to clear a stale `running` seed: ensureState seeds lastStatus from
+      // ISessionActivity, which counts any agent's turn, so a session first
+      // activated while only a sub-agent was active (e.g. driven by a REST-only
+      // client that never triggered activation during the main turn) would
+      // otherwise stay `running` for its subscribers until the next main turn.
+      // Dedup makes this a no-op in every normally-tracked case.
+      this.enqueueStatusChanged(state, 'idle');
     }
     // v1 wire compat: fan the legacy `background.task.*` spelling out next to
     // the native `task.*` event (see `legacyTaskEvent`) so unchanged v1 clients
