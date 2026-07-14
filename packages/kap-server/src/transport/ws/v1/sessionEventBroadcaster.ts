@@ -30,7 +30,7 @@
  */
 
 import type {
-  AgentActivitySnapshot,
+  AgentActivityState,
   ApprovalResponse,
   DomainEvent,
   GlobalEvent,
@@ -44,7 +44,6 @@ import type {
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
-  IWireService,
   IEventBus,
   IEventService,
   ISessionActivity as ISessionActivityService,
@@ -66,11 +65,7 @@ import { isVolatileEventType } from '@moonshot-ai/protocol';
 
 import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';
-import {
-  LegacyStatusModel,
-  readLegacyStatus,
-  toLegacyPhase,
-} from '../../../services/legacyStatus/legacyStatus';
+import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
 import {
   type EventEnvelope,
@@ -438,19 +433,7 @@ export class SessionEventBroadcaster {
     const agents = session.accessor.get(IAgentLifecycleService);
     const subscribeAgent = (handle: IAgentScopeHandle): void => {
       if (state.agentDisposables.has(handle.id)) return;
-      // Every domain emits live events via the per-agent `IEventBus`; the bus is
-      // Agent-scoped, so this sees only this agent's events.
-      const eventBus = handle.accessor.get(IEventBus);
-      const busD = eventBus.subscribe((event) =>
-        this.onAgentEvent(sessionId, handle.id, event),
-      );
-      const disposables: IDisposable[] = [busD];
-      if (handle.id === MAIN_AGENT_ID) {
-        disposables.push(this.attachLegacyStatus(sessionId, handle));
-      }
-      state.agentDisposables.set(handle.id, {
-        dispose: () => disposables.forEach((d) => d.dispose()),
-      });
+      state.agentDisposables.set(handle.id, this.attachAgent(sessionId, handle));
     };
     for (const handle of agents.list()) subscribeAgent(handle);
     state.lifecycleDisposables.push(
@@ -465,49 +448,56 @@ export class SessionEventBroadcaster {
     );
   }
 
-  /**
-   * Bridge the v2 split status slices into a single v1-style combined
-   * `agent.status.updated` event. The native v2 domains emit the usage /
-   * context-window / model slices independently, so a usage-only event can
-   * reach clients without the live contextTokens and overwrite it with a stale
-   * zero. Subscribing to the {@link LegacyStatusModel} on the main agent's wire
-   * and re-emitting a combined snapshot on every status-affecting Op keeps the
-   * context window consistent on the wire.
-   */
-  private attachLegacyStatus(sessionId: string, handle: IAgentScopeHandle): IDisposable {
-    const wire = handle.accessor.get(IWireService);
-    // The wire service is only present on a fully-materialized agent; stub /
-    // test agents and not-yet-restored agents may not expose it, in which case
-    // the native partial events are simply forwarded unchanged.
-    if (wire === undefined) return { dispose: () => {} };
-    let lastEmitted: string | undefined;
-    const subD = wire.subscribe(LegacyStatusModel, () => {
+  private attachAgent(sessionId: string, handle: IAgentScopeHandle): IDisposable {
+    const eventBus = handle.accessor.get(IEventBus);
+    let lastLegacyStatus: string | undefined;
+    const emitLegacyStatus = (): void => {
       const snapshot = readLegacyStatus(handle);
-      // Dedupe: the derived model bumps on every watched Op, but only fan out
-      // when the projected status actually changed.
+      if (snapshot === undefined) return;
       const key = JSON.stringify(snapshot);
-      if (key === lastEmitted) return;
-      lastEmitted = key;
+      if (key === lastLegacyStatus) return;
+      lastLegacyStatus = key;
       this.onAgentEvent(sessionId, MAIN_AGENT_ID, {
         type: 'agent.status.updated',
         ...snapshot,
       });
-    });
-    return subD;
+    };
+    const disposables: IDisposable[] = [
+      eventBus.subscribe((event) => {
+        let projected = event;
+        if (
+          handle.id === MAIN_AGENT_ID &&
+          event.type === 'agent.status.updated' &&
+          event.phase === undefined
+        ) {
+          const snapshot = readLegacyStatus(handle);
+          if (snapshot !== undefined) {
+            lastLegacyStatus = JSON.stringify(snapshot);
+            projected = { ...event, ...snapshot };
+          }
+        }
+        if (handle.id === MAIN_AGENT_ID && event.type === 'context.spliced') {
+          emitLegacyStatus();
+        }
+        this.onAgentEvent(sessionId, handle.id, projected);
+      }),
+    ];
+
+    return { dispose: () => disposables.forEach((disposable) => disposable.dispose()) };
   }
 
   private onAgentEvent(sessionId: string, agentId: string, event: DomainEvent): void {
     const state = this.sessions.get(sessionId);
     if (state === undefined) return;
 
-    // Map the native v2 activity snapshot to the legacy v1 `agent.status.updated`
+    // Map the native v2 activity state to the legacy v1 `agent.status.updated`
     // phase slice at the edge, so the v1 channel picks up the corrected
     // semantics (approval-set, idle-after-ended) without the core engine
     // carrying v1 compatibility. The core's own `agent.status.updated` phase
     // slice is dropped here to avoid duplicate phase events; other slices
     // (usage / context / plan / swarm) flow through unchanged.
     if (event.type === 'agent.activity.updated') {
-      const phase = toLegacyPhase(event as unknown as AgentActivitySnapshot);
+      const phase = toLegacyPhase(event as unknown as AgentActivityState);
       if (phase !== undefined) {
         const wireEvent = {
           type: 'agent.status.updated',

@@ -127,9 +127,6 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
       log: log2,
     });
 
-    let changes = 0;
-    disposables.add(fresh.subscribe(PermissionRulesModel, () => (changes += 1)));
-
     await restoreTestAgentWire(
       fresh,
       log2,
@@ -141,7 +138,6 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
       rules: [],
       sessionApprovalRulePatterns: ['Bash(rm *)'],
     });
-    expect(changes).toBe(0);
     const written: WireRecord[] = [];
     for await (const record of log2.read<WireRecord>(testWireScope(SCOPE, 'permission-rules-replay'), AGENT_WIRE_RECORD_KEY)) {
       written.push(record);

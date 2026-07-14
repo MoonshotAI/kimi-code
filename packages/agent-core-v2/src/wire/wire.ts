@@ -9,10 +9,9 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { IDisposable } from '#/_base/di/lifecycle';
 import type { Hooks } from '#/hooks';
 
-import type { DeepReadonly, DerivedModelDef, ModelDef } from './model';
+import type { DeepReadonly, ModelDef } from './model';
 import type { Op } from './op';
 
 export type WireHooks = {
@@ -29,10 +28,6 @@ export interface IWireService {
   flush(): Promise<void>;
 
   getModel<S>(model: ModelDef<S>): DeepReadonly<S>;
-  subscribe<S>(
-    model: ModelDef<S> | DerivedModelDef<S>,
-    handler: (state: DeepReadonly<S>, prev: DeepReadonly<S>) => void,
-  ): IDisposable;
 }
 
 export const IWireService: ServiceIdentifier<IWireService> =

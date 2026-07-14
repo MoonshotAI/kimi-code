@@ -4,9 +4,8 @@
  * `WireService` is the sole runtime owner of an Agent wire aggregate. It
  * combines the model reducer engine with the `wire.jsonl` journal protocol,
  * including metadata, migrations, atomic healing rewrites, blob dehydration
- * and rehydration, ref-counted derived projections, and an ordered post-restore
- * hook. It is bound at Agent scope because the aggregate identity is the Agent
- * identity.
+ * and rehydration plus an ordered post-restore hook. It is bound at Agent scope
+ * because the aggregate identity is the Agent identity.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -14,13 +13,7 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { BugIndicatingError } from '#/_base/errors/errors';
 import { onUnexpectedError } from '#/_base/errors/unexpectedError';
-import { Emitter } from '#/_base/event';
-import {
-  combinedDisposable,
-  Disposable,
-  toDisposable,
-  type IDisposable,
-} from '#/_base/di/lifecycle';
+import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -39,7 +32,7 @@ import {
   resolveWireMigrations,
   type WireMigration,
 } from './migration/migration';
-import type { DeepReadonly, DerivedModelDef, ModelDef, PartsTransformer } from './model';
+import type { DeepReadonly, ModelDef, PartsTransformer } from './model';
 import { MODEL_CROSS_REDUCERS } from './model';
 import type { Op } from './op';
 import { OP_REGISTRY } from './op';
@@ -65,24 +58,8 @@ export class CycleError extends WireError {
   }
 }
 
-interface ModelChange<S> {
-  readonly state: S;
-  readonly prev: S;
-}
-
 interface ModelInstance {
   state: any;
-  emitter: Emitter<ModelChange<any>>;
-}
-
-interface DerivedModelInstance {
-  readonly inst: ModelInstance;
-  references: number;
-}
-
-interface ReducerEntry {
-  readonly inst: ModelInstance;
-  readonly reducer: (state: any, payload: any) => any;
 }
 
 interface OpGroup {
@@ -100,8 +77,6 @@ export class WireService extends Disposable implements IWireService {
   };
 
   private readonly models = new Map<ModelDef<any>, ModelInstance>();
-  private readonly derivedModels = new Map<DerivedModelDef<any>, DerivedModelInstance>();
-  private readonly reducerIndex = new Map<string, ReducerEntry[]>();
   private readonly wireScope: string;
 
   private restorePhase: RestorePhase = 'new';
@@ -123,80 +98,6 @@ export class WireService extends Disposable implements IWireService {
 
   getModel<S>(model: ModelDef<S>): DeepReadonly<S> {
     return this.ensureModel(model).state as DeepReadonly<S>;
-  }
-
-  subscribe<S>(
-    model: ModelDef<S> | DerivedModelDef<S>,
-    handler: (state: DeepReadonly<S>, prev: DeepReadonly<S>) => void,
-  ): IDisposable {
-    if ('reducers' in model) {
-      const derived = this.acquireDerivedModel(model);
-      return combinedDisposable(
-        derived.inst.emitter.event((change) =>
-          handler(change.state as DeepReadonly<S>, change.prev as DeepReadonly<S>),
-        ),
-        derived.release,
-      );
-    }
-    const inst = this.ensureModel(model);
-    const subscription = inst.emitter.event((change) =>
-      handler(change.state as DeepReadonly<S>, change.prev as DeepReadonly<S>),
-    );
-    return subscription;
-  }
-
-  private acquireDerivedModel<S>(model: DerivedModelDef<S>): {
-    readonly inst: ModelInstance;
-    readonly release: IDisposable;
-  } {
-    const existing = this.derivedModels.get(model);
-    if (existing !== undefined) {
-      existing.references++;
-      return {
-        inst: existing.inst,
-        release: toDisposable(() => this.releaseDerivedModel(model, existing)),
-      };
-    }
-    const inst: ModelInstance = {
-      state: Object.freeze(model.initial()),
-      emitter: new Emitter<ModelChange<unknown>>(),
-    };
-    this._register(inst.emitter);
-    const entry: DerivedModelInstance = { inst, references: 1 };
-    this.derivedModels.set(model, entry);
-
-    for (const [opType, reducer] of Object.entries(model.reducers)) {
-      if (reducer === undefined) continue;
-      let list = this.reducerIndex.get(opType);
-      if (list === undefined) {
-        list = [];
-        this.reducerIndex.set(opType, list);
-      }
-      list.push({ inst, reducer });
-    }
-
-    return {
-      inst,
-      release: toDisposable(() => this.releaseDerivedModel(model, entry)),
-    };
-  }
-
-  private releaseDerivedModel<S>(
-    model: DerivedModelDef<S>,
-    entry: DerivedModelInstance,
-  ): void {
-    entry.references--;
-    if (entry.references > 0 || this.derivedModels.get(model) !== entry) return;
-    this.derivedModels.delete(model);
-    this._store.delete(entry.inst.emitter);
-    for (const [opType, list] of this.reducerIndex) {
-      const filtered = list.filter((candidate) => candidate.inst !== entry.inst);
-      if (filtered.length === 0) {
-        this.reducerIndex.delete(opType);
-      } else if (filtered.length !== list.length) {
-        this.reducerIndex.set(opType, filtered);
-      }
-    }
   }
 
   dispatch(...ops: Op[]): void {
@@ -311,8 +212,6 @@ export class WireService extends Disposable implements IWireService {
   }
 
   private execute(group: OpGroup): void {
-    const changes: { inst: ModelInstance; change: ModelChange<unknown> }[] = [];
-
     for (const op of group.ops) {
       const inst = this.ensureModel(op.descriptor.model);
       const prev = inst.state;
@@ -327,54 +226,21 @@ export class WireService extends Disposable implements IWireService {
           this.eventBus.publish(event as DomainEvent);
         }
       }
-      if (inst.state !== prev) {
-        changes.push({ inst, change: { state: inst.state, prev } });
-      }
-
-      const entries = this.reducerIndex.get(op.type);
-      if (entries !== undefined) {
-        for (const entry of entries) {
-          const derivedPrev = entry.inst.state;
-          entry.inst.state = Object.freeze(entry.reducer(derivedPrev, op.payload));
-          if (entry.inst.state !== derivedPrev) {
-            changes.push({
-              inst: entry.inst,
-              change: { state: entry.inst.state, prev: derivedPrev },
-            });
-          }
-        }
-      }
-
       const crossReducers = MODEL_CROSS_REDUCERS.get(op.type);
       if (crossReducers !== undefined) {
         for (const entry of crossReducers) {
           if (entry.model === op.descriptor.model) continue;
           const crossInst = this.ensureModel(entry.model);
-          const crossPrev = crossInst.state;
-          crossInst.state = Object.freeze(entry.reducer(crossPrev, op.payload));
-          if (crossInst.state !== crossPrev) {
-            changes.push({
-              inst: crossInst,
-              change: { state: crossInst.state, prev: crossPrev },
-            });
-          }
+          crossInst.state = Object.freeze(entry.reducer(crossInst.state, op.payload));
         }
       }
-    }
-
-    if (!group.silent) {
-      for (const { inst, change } of changes) inst.emitter.fire(change);
     }
   }
 
   private ensureModel<S>(def: ModelDef<S>): ModelInstance {
     let inst = this.models.get(def);
     if (inst === undefined) {
-      inst = {
-        state: Object.freeze(def.initial()),
-        emitter: new Emitter<ModelChange<unknown>>(),
-      };
-      this._register(inst.emitter);
+      inst = { state: Object.freeze(def.initial()) };
       this.models.set(def, inst);
     }
     return inst;
@@ -425,11 +291,6 @@ export class WireService extends Disposable implements IWireService {
       if (def.blobs?.rehydrate === undefined) continue;
       const result = def.blobs.rehydrate(inst.state, transform);
       inst.state = Object.freeze(await result);
-    }
-    for (const [def, entry] of this.derivedModels) {
-      if (def.blobs?.rehydrate === undefined) continue;
-      const result = def.blobs.rehydrate(entry.inst.state, transform);
-      entry.inst.state = Object.freeze(await result);
     }
   }
 }

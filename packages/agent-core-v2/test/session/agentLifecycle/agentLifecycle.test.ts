@@ -35,6 +35,7 @@ import '#/agent/toolDedupe/toolDedupeService';
 import { IAgentActivityService, ISessionActivityKernel } from '#/activity/activity';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import '#/app/event/eventBusService';
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ILogService } from '#/_base/log/log';
@@ -480,14 +481,14 @@ describe('AgentLifecycleService', () => {
 
     const early = svc.get('main');
     expect(early).toBeDefined();
-    expect(early!.accessor.get(IAgentActivityService).lane()).toBe('initializing');
+    expect(early!.accessor.get(IAgentActivityService).isIdle()).toBe(false);
 
     const joined = svc.create({ agentId: 'main' });
     releaseRegister();
     const handle = await joined;
     await create;
     expect(handle).toBe(early);
-    expect(handle!.accessor.get(IAgentActivityService).lane()).toBe('idle');
+    expect(handle!.accessor.get(IAgentActivityService).isIdle()).toBe(true);
   });
 
   it('ensureMainAgent returns one handle when calls start concurrently', async () => {

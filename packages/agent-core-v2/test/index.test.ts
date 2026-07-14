@@ -17,7 +17,7 @@ import {
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
-import { RuntimeModel, setRuntimePhase } from '#/agent/runtime/runtimeOps';
+import { SessionLaneModel, setSessionLane } from '#/activity/activityOps';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -119,14 +119,10 @@ describe('v1 wire vocabulary', () => {
   });
 
   it('applies persist:false ops without writing records', async () => {
-    wire.dispatch(
-      setRuntimePhase({
-        phase: { kind: 'running', turnId: 0, step: 1, stepId: 's-1', since: Date.now() },
-      }),
-    );
+    wire.dispatch(setSessionLane({ next: { lane: 'active', activeLeases: 0 } }));
 
     expect(await readRecords()).toEqual([]);
-    expect(wire.getModel(RuntimeModel).phase.kind).toBe('running');
+    expect(wire.getModel(SessionLaneModel).lane).toBe('active');
   });
 
   it('round-trips the todo list through the persisted tools.update_store record', async () => {

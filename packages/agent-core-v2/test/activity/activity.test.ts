@@ -1,6 +1,6 @@
 /**
  * `activity` kernel unit tests — drives the real `AgentActivityService` with a
- * stub Session kernel and an in-memory wire service.
+ * stub Session kernel, event bus and in-memory wire service.
  *
  * Asserts the PR1 turn-lane contract: `begin` admits a turn and rejects a
  * concurrent one with `activity.agent_busy`, `cancel` moves the lane to
@@ -18,7 +18,10 @@ import { IAgentActivityService, ISessionActivityKernel } from '#/activity/activi
 import type { ActivityLease } from '#/activity/activity';
 import { AgentActivityService } from '#/activity/agentActivityService';
 import { SessionActivityKernel } from '#/activity/sessionActivityKernel';
+import type { PermissionApprovalRequestContext } from '#/agent/permissionGate/permissionGateService';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
+import { EventBusService } from '#/app/event/eventBusService';
 import { ErrorCodes } from '#/errors';
 
 import { stubSessionActivityKernel } from './stubs';
@@ -28,6 +31,7 @@ describe('AgentActivityService (turn lane)', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let activity: IAgentActivityService;
+  let eventBus: IEventBus;
 
   beforeEach(() => {
     disposables = new DisposableStore();
@@ -39,29 +43,47 @@ describe('AgentActivityService (turn lane)', () => {
           IAgentScopeContext,
           makeAgentScopeContext({ agentId: 'agent', agentScope: 'agent' }),
         );
+        reg.define(IEventBus, EventBusService);
         reg.define(IAgentActivityService, AgentActivityService);
       },
     });
     activity = ix.get(IAgentActivityService);
+    eventBus = ix.get(IEventBus);
   });
 
   afterEach(() => {
     disposables.dispose();
   });
 
+  function collectActivity(): DomainEvent<'agent.activity.updated'>[] {
+    const snapshots: DomainEvent<'agent.activity.updated'>[] = [];
+    disposables.add(
+      eventBus.subscribe('agent.activity.updated', (snapshot) => snapshots.push(snapshot)),
+    );
+    return snapshots;
+  }
+
+  function startTurn(): ActivityLease {
+    activity.markReady();
+    const lease = activity.begin('turn', { turnId: 1 });
+    eventBus.publish({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+    eventBus.publish({ type: 'turn.step.started', turnId: 1, step: 1, stepId: 's1' });
+    return lease;
+  }
+
   it('starts initializing and admits a turn only after markReady', () => {
-    expect(activity.lane()).toBe('initializing');
+    expect(activity.isIdle()).toBe(false);
     expect(() => activity.begin('turn')).toThrowError(
       expect.objectContaining({ code: ErrorCodes.ACTIVITY_INITIALIZING }),
     );
     activity.markReady();
-    expect(activity.lane()).toBe('idle');
+    expect(activity.isIdle()).toBe(true);
     const lease: ActivityLease = activity.begin('turn');
     expect(lease.kind).toBe('turn');
     expect(lease.signal.aborted).toBe(false);
-    expect(activity.lane()).toBe('turn');
+    expect(activity.isIdle()).toBe(false);
     lease.end('completed');
-    expect(activity.lane()).toBe('idle');
+    expect(activity.isIdle()).toBe(true);
   });
 
   it('rejects a concurrent begin with activity.agent_busy', () => {
@@ -80,15 +102,130 @@ describe('AgentActivityService (turn lane)', () => {
     lease.end('completed');
   });
 
-  it('cancel aborts the lease signal and keeps the lane until end', () => {
+  it('cancel aborts the lease signal and keeps the turn active until end', () => {
     activity.markReady();
     const lease = activity.begin('turn');
     expect(activity.cancel('stop')).toBe(true);
     expect(lease.signal.aborted).toBe(true);
     expect(lease.ending).toBe(true);
-    expect(activity.lane()).toBe('turn');
+    expect(activity.isIdle()).toBe(false);
     lease.end('cancelled');
-    expect(activity.lane()).toBe('idle');
+    expect(activity.isIdle()).toBe(true);
+  });
+
+  it('publishes lifecycle independently from turn activity', () => {
+    const states: Array<{ lifecycle: string; hasTurn: boolean; ending?: boolean }> = [];
+    disposables.add(
+      eventBus.subscribe('agent.activity.updated', (state) => {
+        states.push({
+          lifecycle: state.lifecycle,
+          hasTurn: state.turn !== undefined,
+          ending: state.turn?.ending,
+        });
+      }),
+    );
+
+    activity.markReady();
+    const lease = activity.begin('turn');
+    activity.cancel();
+    lease.end('cancelled');
+
+    expect(states).toEqual([
+      { lifecycle: 'ready', hasTurn: false, ending: undefined },
+      { lifecycle: 'ready', hasTurn: true, ending: false },
+      { lifecycle: 'ready', hasTurn: true, ending: true },
+      { lifecycle: 'ready', hasTurn: false, ending: undefined },
+    ]);
+  });
+
+  it('publishes the first streaming delta and suppresses equivalent deltas', () => {
+    const snapshots = collectActivity();
+    const lease = startTurn();
+    const baseline = snapshots.length;
+
+    eventBus.publish({ type: 'assistant.delta', turnId: 1, delta: 'he' });
+    eventBus.publish({ type: 'assistant.delta', turnId: 1, delta: 'llo' });
+
+    expect(snapshots).toHaveLength(baseline + 1);
+    expect(snapshots.at(-1)?.turn).toMatchObject({ phase: 'streaming', stream: 'assistant' });
+    lease.end('completed');
+  });
+
+  it('projects active tool calls until their results arrive', () => {
+    const snapshots = collectActivity();
+    const lease = startTurn();
+
+    eventBus.publish({ type: 'tool.call.started', turnId: 1, toolCallId: 'c1', name: 'Read', args: {} });
+    eventBus.publish({ type: 'tool.call.started', turnId: 1, toolCallId: 'c2', name: 'Write', args: {} });
+    expect(snapshots.at(-1)?.turn?.activeToolCalls.map((tool) => tool.toolCallId)).toEqual([
+      'c1',
+      'c2',
+    ]);
+
+    eventBus.publish({ type: 'tool.result', turnId: 1, toolCallId: 'c1', output: 'ok', isError: false });
+    expect(snapshots.at(-1)?.turn?.activeToolCalls.map((tool) => tool.toolCallId)).toEqual(['c2']);
+    lease.end('completed');
+  });
+
+  it('projects all pending approvals until each is resolved', () => {
+    const snapshots = collectActivity();
+    const lease = startTurn();
+    const approval = (toolCallId: string): PermissionApprovalRequestContext =>
+      ({
+        toolCallId,
+        toolName: 'Read',
+        action: 'read',
+        display: {},
+        turnId: 1,
+        toolInput: { path: '/tmp/example' },
+      }) as unknown as PermissionApprovalRequestContext;
+
+    eventBus.publish({ type: 'permission.approval.requested', ...approval('c1') });
+    eventBus.publish({ type: 'permission.approval.requested', ...approval('c2') });
+    expect(snapshots.at(-1)?.turn?.pendingApprovals.map((item) => item.toolCallId)).toEqual([
+      'c1',
+      'c2',
+    ]);
+
+    eventBus.publish({
+      type: 'permission.approval.resolved',
+      ...approval('c1'),
+      decision: 'approved',
+    });
+    expect(snapshots.at(-1)?.turn?.pendingApprovals.map((item) => item.toolCallId)).toEqual(['c2']);
+    lease.end('completed');
+  });
+
+  it('projects retry state for the active turn', () => {
+    const snapshots = collectActivity();
+    const lease = startTurn();
+
+    eventBus.publish({
+      type: 'turn.step.retrying',
+      turnId: 1,
+      step: 1,
+      stepId: 's1',
+      failedAttempt: 1,
+      nextAttempt: 2,
+      maxAttempts: 3,
+      delayMs: 500,
+      errorName: 'RateLimitError',
+      errorMessage: 'slow down',
+      statusCode: 429,
+    });
+
+    expect(snapshots.at(-1)?.turn).toMatchObject({
+      phase: 'retrying',
+      retry: {
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 3,
+        delayMs: 500,
+        errorName: 'RateLimitError',
+        statusCode: 429,
+      },
+    });
+    lease.end('completed');
   });
 
   it('cancel is a no-op when idle', () => {
@@ -101,19 +238,22 @@ describe('AgentActivityService (turn lane)', () => {
     const lease = activity.begin('turn');
     lease.end('completed');
     expect(() => lease.end('completed')).not.toThrow();
-    expect(activity.lane()).toBe('idle');
+    expect(activity.isIdle()).toBe(true);
   });
 
   it('beginDisposal aborts the in-flight lease and settles after end', async () => {
+    const states = collectActivity();
     activity.markReady();
     const lease = activity.begin('turn');
     activity.beginDisposal();
     expect(lease.signal.aborted).toBe(true);
-    expect(activity.lane()).toBe('disposing');
+    expect(activity.isIdle()).toBe(false);
+    expect(states.at(-1)).toMatchObject({ lifecycle: 'disposing', turn: { turnId: lease.turnId } });
     const settled = activity.settled();
     lease.end('cancelled');
     await settled;
-    expect(activity.lane()).toBe('disposed');
+    expect(activity.isIdle()).toBe(false);
+    expect(states.at(-1)).toMatchObject({ lifecycle: 'disposed', turn: undefined });
   });
 });
 

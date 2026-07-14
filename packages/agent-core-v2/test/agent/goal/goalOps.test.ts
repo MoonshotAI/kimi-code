@@ -184,24 +184,17 @@ describe('AgentGoalService (wire-backed)', () => {
     expect(records.map((record) => record.type)).toEqual(['goal.create', 'goal.clear']);
   });
 
-  it('goal.updated signal and model subscription are live-only and silent on replay', async () => {
+  it('goal.updated is live-only and silent on replay', async () => {
     const signals: string[] = [];
     const sub = eventBus.subscribe((e) => {
       if (e.type === 'goal.updated') {
         signals.push(e.type);
       }
     });
-    let modelChanges = 0;
-    const modelSub = wire.subscribe(GoalModel, () => {
-      modelChanges += 1;
-    });
-
     await svc.createGoal({ objective: 'work' });
     await svc.pauseGoal();
     expect(signals.length).toBeGreaterThanOrEqual(2);
-    expect(modelChanges).toBeGreaterThanOrEqual(2);
     sub.dispose();
-    modelSub.dispose();
 
     const records = await readRecords();
     const host = buildHost('goal-replay');
@@ -211,11 +204,6 @@ describe('AgentGoalService (wire-backed)', () => {
         replaySignals.push(e.type);
       }
     });
-    let replayModelChanges = 0;
-    host.wire.subscribe(GoalModel, () => {
-      replayModelChanges += 1;
-    });
-
     await restoreTestAgentWire(
       host.wire,
       host.log,
@@ -224,7 +212,6 @@ describe('AgentGoalService (wire-backed)', () => {
     );
     expect(modelOf(host.wire)?.status).toBe('paused');
     expect(replaySignals).toEqual([]);
-    expect(replayModelChanges).toBe(0);
   });
 
   it('onDidRestore forces a replayed active goal to paused after replay', async () => {

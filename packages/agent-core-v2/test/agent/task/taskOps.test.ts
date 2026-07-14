@@ -89,7 +89,7 @@ describe('task ops (wire-backed)', () => {
     expect(after.get('t1')?.status).toBe('running');
   });
 
-  it('replay rebuilds the task map from legacy task.* records silently (no emissions, no subscriber notifications)', async () => {
+  it('replay rebuilds the task map from legacy task.* records silently', async () => {
     const records: WireRecord[] = [
       { type: 'task.started', info: info('t1', 'running') },
       { type: 'task.terminated', info: info('t1', 'completed') },
@@ -101,11 +101,6 @@ describe('task ops (wire-backed)', () => {
     host.eventBus.subscribe((e) => {
       emissions.push(e.type);
     });
-    let modelChanges = 0;
-    host.wire.subscribe(TaskModel, () => {
-      modelChanges += 1;
-    });
-
     await restoreTestAgentWire(
       host.wire,
       host.log,
@@ -117,6 +112,5 @@ describe('task ops (wire-backed)', () => {
     expect(model.get('t1')?.status).toBe('completed');
     expect(model.get('t2')?.status).toBe('running');
     expect(emissions).toEqual([]);
-    expect(modelChanges).toBe(0);
   });
 });

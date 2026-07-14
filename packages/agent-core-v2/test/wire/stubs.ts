@@ -100,7 +100,6 @@ export function stubAgentWire(
     restore: async () => {},
     flush,
     getModel: (model) => model.initial() as never,
-    subscribe: () => toDisposable(() => {}),
   };
 }
 

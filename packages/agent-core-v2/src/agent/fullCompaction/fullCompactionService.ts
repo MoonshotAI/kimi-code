@@ -270,7 +270,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     if (history.length === 0) {
       throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
     }
-    if (source === 'manual' && this.activity.lane() !== 'idle') {
+    if (source === 'manual' && !this.activity.isIdle()) {
       throw new Error2(
         ErrorCodes.COMPACTION_UNABLE,
         'Cannot compact while a turn is active. Wait for it to finish, then retry.',

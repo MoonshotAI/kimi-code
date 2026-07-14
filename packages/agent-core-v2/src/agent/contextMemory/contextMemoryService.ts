@@ -10,11 +10,11 @@
  * changes the measured prefix — `clear` resets it, `applyCompaction` adopts
  * `tokensAfter`, and `undo` rebases it (to an estimate when the measured
  * aggregate is truncated); `append` leaves the measured prefix untouched since
- * new messages are the unmeasured tail (see `contextSizeService`). Every
- * mutation still fires `onSpliced` from the live path only (replay rebuilds
- * the Model silently and never invokes these methods), so existing subscribers
- * (context-injector, task-notification) observe the same
- * splice-shaped change events regardless of which Op was persisted. Messages
+ * new messages are the unmeasured tail (see `contextSizeService`).
+ * Splice-shaped mutations publish `context.spliced` from the live path only
+ * (replay rebuilds the Model silently and never invokes these methods), so
+ * existing subscribers observe the same change regardless of which Op was
+ * persisted. Messages
  * are persisted without local ids — the on-disk record matches v1's field set
  * and public message ids are derived from the transcript index. Blob
  * dehydrate/rehydrate is declared on `ContextModel.blobs`. Bound at
@@ -85,6 +85,7 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.wire.dispatch(contextAppendLoopEvent({ event }));
   }
+
   clear(): void {
     const deleteCount = this.get().length;
     if (deleteCount === 0) return;

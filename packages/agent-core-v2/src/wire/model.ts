@@ -31,13 +31,8 @@
  * A primary Model may register cross-model reducers keyed by foreign op types:
  * `WireService` runs them on both dispatch and restore, so v1-derived
  * restore effects can stay replayable without persisting extra records.
- * A Derived Model is instead an on-demand live projection: subscribing owns
- * its reducer registration, and disposing the last subscription releases it.
- * It starts from `initial()` when first subscribed and does not imply replay of
- * records that were restored before that subscription.
- *
  * `DeepReadonly<T>` recursively maps a state type to its deeply-readonly view
- * for the references returned by `getModel` / `subscribe`: functions pass
+ * for the references returned by `getModel`: functions pass
  * through, `Map` / `Set` widen to `ReadonlyMap` / `ReadonlySet`, arrays and
  * tuples widen to `ReadonlyArray`, plain objects become a readonly mapped type,
  * and primitives are unchanged. It pairs with the runtime `Object.freeze`
@@ -97,22 +92,6 @@ export function defineModel<S>(
     }
   }
   return def;
-}
-
-export interface DerivedModelDef<S> {
-  readonly name: string;
-  readonly initial: () => S;
-  readonly reducers: Readonly<ModelReducers<S>>;
-  readonly blobs?: ModelBlobCodec<S>;
-}
-
-export function defineDerivedModel<S>(
-  name: string,
-  initial: () => S,
-  reducers: ModelReducers<S>,
-  opts?: { blobs?: ModelBlobCodec<S> },
-): DerivedModelDef<S> {
-  return { name, initial, reducers, blobs: opts?.blobs };
 }
 
 export type DeepReadonly<T> = T extends (...args: infer A) => infer R

@@ -8,12 +8,17 @@ import { join } from 'node:path';
 
 import type { IScopeHandle, Scope } from '@moonshot-ai/agent-core-v2';
 import {
+  ContextSizeModel,
+  IAgentContextSizeService,
   IAgentLifecycleService,
+  IAgentProfileService,
+  IAgentUsageService,
   IEventBus,
   IEventService,
   ISessionActivity,
   ISessionInteractionService,
   ISessionLifecycleService,
+  IWireService,
   SessionInteractionService,
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentEvent } from '@moonshot-ai/protocol';
@@ -65,10 +70,15 @@ class FakeAgentHandle {
   readonly kind = 2;
   readonly bus = new FakeAgentBus();
   readonly accessor;
+  private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
+    this.services.set(IEventBus, this.bus);
     this.accessor = {
-      get: (t: unknown) => (t === IEventBus ? this.bus : undefined),
+      get: (token: unknown) => this.services.get(token),
     };
+  }
+  set(token: unknown, service: unknown): void {
+    this.services.set(token, service);
   }
   dispose(): void {}
 }
@@ -217,6 +227,94 @@ describe('SessionEventBroadcaster', () => {
     expect(vol.every((e) => e.seq === 2)).toBe(true); // rides the durable watermark
     expect(vol.map((e) => e.offset)).toEqual([0, 2]);
     expect((await bc.getCursor('s1')).seq).toBe(2); // seq did not advance
+  });
+
+  it('projects main-agent status and context changes into complete v1 status events', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    let contextSize = 10;
+    const usage = {
+      total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
+    };
+    main.set(IAgentContextSizeService, { get: () => ({ size: contextSize }) });
+    main.set(IAgentProfileService, {
+      getModel: () => 'example-model',
+      getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+    });
+    main.set(IAgentUsageService, { status: () => usage });
+    main.set(IWireService, {
+      getModel: (model: unknown) => {
+        expect(model).toBe(ContextSizeModel);
+        return { length: 0, tokens: 8 };
+      },
+    });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('agent.status.updated', { usage }));
+    contextSize = 20;
+    main.bus.emit(agentEvent('context.spliced', { start: 0, deleteCount: 0, messages: [] }));
+    main.bus.emit(agentEvent('context.spliced', { start: 0, deleteCount: 0, messages: [] }));
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(2);
+    expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
+      {
+        type: 'agent.status.updated',
+        usage,
+        contextTokens: 10,
+        maxContextTokens: 128_000,
+        model: 'example-model',
+      },
+      {
+        type: 'agent.status.updated',
+        usage,
+        contextTokens: 20,
+        maxContextTokens: 128_000,
+        model: 'example-model',
+      },
+    ]);
+  });
+
+  it('projects agent activity state into legacy running and ended phases', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('agent.activity.updated', {
+        lifecycle: 'ready',
+        turn: {
+          turnId: 1,
+          origin: { kind: 'user' },
+          phase: 'running',
+          step: 1,
+          ending: false,
+          pendingApprovals: [],
+          activeToolCalls: [],
+          since: 100,
+        },
+        background: [],
+      }),
+    );
+    main.bus.emit(
+      agentEvent('agent.activity.updated', {
+        lifecycle: 'ready',
+        lastTurn: { turnId: 1, reason: 'completed', at: 200 },
+        background: [],
+      }),
+    );
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
+      { phase: { kind: 'running', turnId: 1, step: 1 } },
+      { phase: { kind: 'ended', turnId: 1, reason: 'completed' } },
+    ]);
   });
 
   it('replays durable events since a cursor from the journal', async () => {

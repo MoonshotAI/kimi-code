@@ -102,7 +102,7 @@ describe('fullCompaction ops (wire-backed)', () => {
     expect(wire.getModel(CompactionModel)).toBe(running);
   });
 
-  it('replay rebuilds the phase silently (no emissions, no subscriber notifications)', async () => {
+  it('replay rebuilds the phase silently', async () => {
     wire.dispatch(fullCompactionBegin({ source: 'manual' }));
     wire.dispatch(fullCompactionComplete({}));
     const records = await readRecords();
@@ -112,11 +112,6 @@ describe('fullCompaction ops (wire-backed)', () => {
     host.eventBus.subscribe((e) => {
       emissions.push(e.type);
     });
-    let modelChanges = 0;
-    host.wire.subscribe(CompactionModel, () => {
-      modelChanges += 1;
-    });
-
     await restoreTestAgentWire(
       host.wire,
       host.log,
@@ -125,7 +120,6 @@ describe('fullCompaction ops (wire-backed)', () => {
     );
     expect(host.wire.getModel(CompactionModel).phase).toBe('idle');
     expect(emissions).toEqual([]);
-    expect(modelChanges).toBe(0);
 
     const stranded = buildHost('full-compaction-stranded');
     await restoreTestAgentWire(
