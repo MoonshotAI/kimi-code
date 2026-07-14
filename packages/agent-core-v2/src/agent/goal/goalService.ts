@@ -202,6 +202,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private readonly goalOutcomeContinuationTurns = new Set<number>();
   private readonly budgetGraceTurns = new Set<number>();
   private readonly pendingContinuationGoals = new Map<number, string>();
+  private readonly goalTurnTargets = new Map<number, string>();
   private pendingContinuation?: PendingContinuation;
 
   constructor(
@@ -267,7 +268,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     );
     this._register(
       toolExecutor.hooks.onDidExecuteTool.register('goal-outcome-tool-result', async (ctx, next) => {
-        const goalId = this.goalDrivenTurns.get(ctx.turnId);
+        const goalId = this.goalTurnTarget(ctx.turnId);
         if (
           goalId !== undefined &&
           isTerminalUpdateGoalResult(ctx.toolCall.name, ctx.args, ctx.result)
@@ -279,7 +280,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     );
     this._register(
       this.eventBus.subscribe('turn.ended', (e) => {
-        const goalId = this.goalDrivenTurns.get(e.turnId);
+        const goalId = this.goalTurnTarget(e.turnId);
         void this.handleTurnEnded(e.turnId, { reason: e.reason, error: e.error }).catch((error) =>
           this.settleGoalAfterContinuationFailure(error, goalId),
         );
@@ -313,7 +314,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       }),
     );
     this.wallClockResumedAt = Date.now();
-    this.adoptStarterTurn();
+    this.adoptStarterTurn(actor);
     const state = this.requireState();
     this.emitGoalUpdated(this.toSnapshot(state));
     this.telemetry.track2('goal_created', { actor, replace: input.replace === true });
@@ -501,6 +502,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private handleTurnLaunched(turnId: number, origin: TurnStartedEvent['origin']): void {
     this.liveTurnId = turnId;
+    this.goalTurnTargets.delete(turnId);
     if (!this.goalDrivenTurns.has(turnId)) {
       const state = this.goalState;
       const continuationGoalId = isGoalContinuationOrigin(origin)
@@ -517,11 +519,18 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.goalOutcomeContinuationTurns.delete(turnId);
   }
 
-  private adoptStarterTurn(): void {
+  private adoptStarterTurn(actor: GoalActor): void {
     const turnId = this.liveTurnId;
-    if (turnId === undefined || this.goalDrivenTurns.has(turnId)) return;
+    if (turnId === undefined) return;
     const state = this.goalState;
     if (state === null || state.status !== 'active') return;
+    const goalId = this.goalDrivenTurns.get(turnId);
+    if (goalId !== undefined) {
+      if (actor === 'model' && goalId !== state.goalId) {
+        this.goalTurnTargets.set(turnId, state.goalId);
+      }
+      return;
+    }
     this.goalDrivenTurns.set(turnId, state.goalId);
     this.countedGoalTurns.add(turnId);
     this.goalStarterTurns.add(turnId);
@@ -549,7 +558,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   }
 
   private stopAfterBudgetReached(ctx: AfterStepContext): boolean {
-    const goalId = this.goalDrivenTurns.get(ctx.turnId);
+    const goalId = this.goalTurnTarget(ctx.turnId);
     const state = this.goalState;
     if (
       goalId === undefined ||
@@ -578,7 +587,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private enqueueGoalOutcomeContinuation(ctx: AfterStepContext): void {
     if (this.goalOutcomeContinuationTurns.has(ctx.turnId)) return;
-    const goalId = this.goalDrivenTurns.get(ctx.turnId);
+    const goalId = this.goalTurnTarget(ctx.turnId);
     const outcomeGoalId = this.goalOutcomeToolResultTurns.get(ctx.turnId);
     this.goalOutcomeToolResultTurns.delete(ctx.turnId);
     if (goalId === undefined || outcomeGoalId !== goalId) return;
@@ -594,30 +603,35 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     turnId: number,
     result: Pick<TurnEndedEvent, 'reason' | 'error'>,
   ): Promise<void> {
-    const { goalId, starterTurn } = this.clearTurnTracking(turnId);
-    if (goalId === undefined) return;
+    const { goalId, lifecycleGoalId, starterTurn } = this.clearTurnTracking(turnId);
+    if (goalId === undefined || lifecycleGoalId === undefined) return;
     if (
       result.reason === 'blocked' ||
       result.reason === 'cancelled' ||
       result.reason === 'failed'
     ) {
-      await this.settleAbnormalTurn(result, goalId);
+      await this.settleAbnormalTurn(result, lifecycleGoalId);
       return;
     }
     if (starterTurn) this.incrementGoalTurn(goalId);
 
     const state = this.goalState;
-    if (state === null || state.status !== 'active' || state.goalId !== goalId) return;
+    if (state === null || state.status !== 'active' || state.goalId !== lifecycleGoalId) return;
     if (this.blockIfBudgetReached(state) !== null) return;
-    this.launchContinuationTurn(goalId);
+    this.launchContinuationTurn(lifecycleGoalId);
   }
 
   private clearTurnTracking(
     turnId: number,
-  ): { readonly goalId?: string; readonly starterTurn: boolean } {
+  ): {
+    readonly goalId?: string;
+    readonly lifecycleGoalId?: string;
+    readonly starterTurn: boolean;
+  } {
     if (this.pendingContinuation?.turnId === turnId) this.pendingContinuation = undefined;
     if (this.liveTurnId === turnId) this.liveTurnId = undefined;
     const goalId = this.goalDrivenTurns.get(turnId);
+    const lifecycleGoalId = this.goalTurnTarget(turnId);
     const starterTurn = this.goalStarterTurns.delete(turnId);
     this.goalDrivenTurns.delete(turnId);
     this.countedGoalTurns.delete(turnId);
@@ -625,7 +639,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.goalOutcomeContinuationTurns.delete(turnId);
     this.budgetGraceTurns.delete(turnId);
     this.pendingContinuationGoals.delete(turnId);
-    return { goalId, starterTurn };
+    this.goalTurnTargets.delete(turnId);
+    return { goalId, lifecycleGoalId, starterTurn };
   }
 
   private async settleAbnormalTurn(
@@ -705,9 +720,13 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
 
   private isStaleGoalToolCall(turnId: number, toolName: string): boolean {
     if (!isGoalMutationTool(toolName)) return false;
-    const goalId = this.goalDrivenTurns.get(turnId);
+    const goalId = this.goalTurnTarget(turnId);
     if (goalId === undefined) return false;
     return this.goalState?.goalId !== goalId;
+  }
+
+  private goalTurnTarget(turnId: number): string | undefined {
+    return this.goalTurnTargets.get(turnId) ?? this.goalDrivenTurns.get(turnId);
   }
 
   private cancelPendingContinuation(preserveLiveContinuation = false): void {
@@ -769,7 +788,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const wallClockMs = this.settleWallClock(state);
     if (status === 'active') {
       this.wallClockResumedAt = Date.now();
-      this.adoptStarterTurn();
+      this.adoptStarterTurn(actor);
     } else if (state.status === 'active') {
       this.cancelPendingContinuation();
       this.wallClockResumedAt = undefined;

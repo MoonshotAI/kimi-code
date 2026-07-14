@@ -15,7 +15,10 @@ import { type AgentGoalService } from '#/agent/goal/goalService';
 import { UpdateGoalTool, UpdateGoalToolInputSchema } from '#/agent/goal/tools/update-goal';
 import { IAgentLoopService, type AfterStepContext, type EnqueueReceipt, type Step, type Turn } from '#/agent/loop/loop';
 import { MessageStepRequest } from '#/agent/loop/stepRequest';
-import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import {
+  IAgentToolExecutorService,
+  type ToolExecutionResult,
+} from '#/agent/toolExecutor/toolExecutor';
 import type { ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import type { WireRecord } from '#/wire/record';
@@ -29,6 +32,7 @@ import {
   InMemoryWireRecordPersistence,
   agentService,
   createTestAgent,
+  permissionModeServices,
   telemetryServices,
   testAgent,
   wireRecordPersistenceServices,
@@ -126,6 +130,21 @@ async function runTerminalUpdateGoalResult(
     args: { status },
     result: { output, stopTurn: true },
   });
+}
+
+async function executeToolCall(
+  toolExecutor: IAgentToolExecutorService,
+  turn: Turn,
+  toolCall: ToolCall,
+): Promise<ToolExecutionResult[]> {
+  const results: ToolExecutionResult[] = [];
+  for await (const result of toolExecutor.execute([toolCall], {
+    turnId: turn.id,
+    signal: turn.signal,
+  })) {
+    results.push(result);
+  }
+  return results;
 }
 
 function endTurn(
@@ -573,6 +592,7 @@ describe('AgentGoalService core workflow hooks', () => {
     loopService = stubLoopWithHooks();
     ctx = createTestAgent(
       agentService(IAgentLoopService, loopService),
+      permissionModeServices('auto'),
     );
     context = ctx.get(IAgentContextMemoryService);
     goals = ctx.get(IAgentGoalService);
@@ -644,6 +664,62 @@ describe('AgentGoalService core workflow hooks', () => {
     await goals.createGoal({ objective: 'new task', replace: true });
 
     expect(abort).toHaveBeenCalledOnce();
+  });
+
+  it('queues a continuation for a replacement goal created by its current goal turn', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const turn = makeTurn(47);
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    await loopService.hooks.onWillBeginStep.run({
+      turnId: turn.id,
+      step: 1,
+      signal: turn.signal,
+    });
+    const toolCall: ToolCall = {
+      type: 'function',
+      id: 'call_replace_goal',
+      name: 'CreateGoal',
+      arguments: JSON.stringify({ objective: 'new task', replace: true }),
+    };
+    const results = await executeToolCall(toolExecutor, turn, toolCall);
+    expect(results[0]?.result.isError).not.toBe(true);
+
+    endTurn(eventBus, turn);
+
+    await vi.waitFor(() => {
+      expect(loopService.launches).toHaveLength(1);
+    });
+    expect(goals.getGoal().goal).toMatchObject({ objective: 'new task', status: 'active' });
+    expect(loopService.drainNextBatch(context)).toBeDefined();
+    expect(context.get().at(-1)?.origin).toEqual({
+      kind: 'system_trigger',
+      name: 'goal_continuation',
+    });
+  });
+
+  it('does not charge a same-turn replacement goal for usage owned by the prior goal', async () => {
+    await goals.createGoal({ objective: 'old task' });
+    const turn = makeTurn(48);
+    eventBus.publish({ type: 'turn.started', turnId: turn.id, origin: USER_PROMPT_ORIGIN });
+    await loopService.hooks.onWillBeginStep.run({
+      turnId: turn.id,
+      step: 1,
+      signal: turn.signal,
+    });
+    const toolCall: ToolCall = {
+      type: 'function',
+      id: 'call_replace_goal',
+      name: 'CreateGoal',
+      arguments: JSON.stringify({ objective: 'new task', replace: true }),
+    };
+    await executeToolCall(toolExecutor, turn, toolCall);
+
+    recordStepUsage(usageService, goals, turn, { ...zeroUsage, output: 5 });
+
+    expect(goals.getGoal().goal).toMatchObject({
+      objective: 'new task',
+      tokensUsed: 0,
+    });
   });
 
   it('keeps a replacement goal isolated from late user-turn accounting', async () => {
