@@ -1,5 +1,21 @@
 # @moonshot-ai/kimi-code
 
+## 0.24.1
+
+### Patch Changes
+
+- [#1678](https://github.com/MoonshotAI/kimi-code/pull/1678) [`ec1c974`](https://github.com/MoonshotAI/kimi-code/commit/ec1c9748c816d152bf06af2456e82ac35786bba9) Thanks [@chengluyu](https://github.com/chengluyu)! - Preserve goal completion summaries and show untyped LLM errors without an internal error-code prefix in step interruption events.
+
+- [#1688](https://github.com/MoonshotAI/kimi-code/pull/1688) [`94c0ef8`](https://github.com/MoonshotAI/kimi-code/commit/94c0ef89d29ea8532be02828201328fa1281273c) Thanks [@sailist](https://github.com/sailist)! - Fix built-in tools being unavailable when the model provider becomes ready after the session starts.
+
+- [#1684](https://github.com/MoonshotAI/kimi-code/pull/1684) [`e417ee7`](https://github.com/MoonshotAI/kimi-code/commit/e417ee7c2c282f00113dc0e4f4514ca5018b76c9) Thanks [@RealKai42](https://github.com/RealKai42)! - Fix Kimi sessions getting stuck when preserved-thinking history contains an empty reasoning step.
+
+- [#1673](https://github.com/MoonshotAI/kimi-code/pull/1673) [`0f64b4d`](https://github.com/MoonshotAI/kimi-code/commit/0f64b4dcc4f2d295d0039b176d96d8003cb49991) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Align thinking-level handling with the CLI: submit the selected level verbatim instead of silently downgrading it, pin the model's catalog default when nothing was chosen, pre-select the target model's default on model switches, and persist explicit picks as the daemon-wide default so new sessions inherit them.
+
+- [#1689](https://github.com/MoonshotAI/kimi-code/pull/1689) [`ab22a2a`](https://github.com/MoonshotAI/kimi-code/commit/ab22a2adf0ca17cbb94f1abdab334ebc58814e8d) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Show just the level name (e.g. Max) in the model pill instead of "thinking: max".
+
+- [#1625](https://github.com/MoonshotAI/kimi-code/pull/1625) [`d158e0a`](https://github.com/MoonshotAI/kimi-code/commit/d158e0a7ac4e432046d56787263dd2dbac40285e) Thanks [@RealKai42](https://github.com/RealKai42)! - Fix Thinking effort routing so non-Kimi providers preserve configured values for upstream validation, while Kimi models validate runtime selections, fall back safely during model resolution, and synchronize the effective effort back to clients.
+
 ## 0.24.0
 
 ### Minor Changes
