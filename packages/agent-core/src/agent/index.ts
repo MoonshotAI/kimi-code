@@ -407,7 +407,7 @@ export class Agent {
       },
       setThinking: (payload) => {
         const previousEffort = this.config.thinkingEffort;
-        this.config.update({ thinkingEffort: payload.effort });
+        this.config.setThinkingEffort(payload.effort);
         const effort = this.config.thinkingEffort;
         if (effort !== previousEffort) {
           this.telemetry.track('thinking_toggle', {
@@ -549,7 +549,7 @@ export class Agent {
     void this.rpc?.emitEvent?.(event);
   }
 
-  emitStatusUpdated(): void {
+  emitStatusUpdated(includeThinkingEffort = false): void {
     if (this.records.restoring) return;
     if (!this.config.hasModel) return;
 
@@ -565,6 +565,7 @@ export class Agent {
     this.emitEvent({
       type: 'agent.status.updated',
       model,
+      thinkingEffort: includeThinkingEffort ? this.config.thinkingEffort : undefined,
       contextTokens,
       maxContextTokens,
       contextUsage,

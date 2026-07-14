@@ -165,6 +165,7 @@ export interface IAgentProfileService {
    */
   getAgentsMdWarning(): string | undefined;
   data(): ProfileData;
+  getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
   /**
    * Return the runnable god-object `Model` for the currently-active model.

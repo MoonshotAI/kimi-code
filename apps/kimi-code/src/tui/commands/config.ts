@@ -7,7 +7,6 @@ import {
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { t, setLocale, getLocale, type Locale } from '#/i18n';
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
 import {
@@ -19,12 +18,11 @@ import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
 import { SettingsSelectorComponent, type SettingsSelection } from '../components/dialogs/settings-selector';
 import { ThemeSelectorComponent } from '../components/dialogs/theme-selector';
-import { LocaleSelectorComponent } from '../components/dialogs/locale-selector';
 import { UpdatePreferenceSelectorComponent } from '../components/dialogs/update-preference-selector';
 import { DEFAULT_TUI_CONFIG, saveTuiConfig, type TuiConfig } from '../config';
 import type { ThemeName } from '#/tui/theme';
 import { currentTheme, isBuiltInTheme, lightColors, loadCustomThemeMerged } from '#/tui/theme';
-import { getNoActiveSessionMessage } from '../constant/kimi-tui';
+import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
 import { formatErrorMessage } from '../utils/event-payload';
 import { thinkingEffortToConfig } from '../utils/thinking-config';
 import { showUsage } from './info';
@@ -40,7 +38,6 @@ const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
 function currentTuiConfig(host: SlashCommandHost): TuiConfig {
   return {
     theme: host.state.appState.theme,
-    locale: host.state.appState.locale as Locale,
     editorCommand: host.state.appState.editorCommand,
     disablePasteBurst: host.state.appState.disablePasteBurst ?? DEFAULT_TUI_CONFIG.disablePasteBurst,
     notifications: host.state.appState.notifications,
@@ -51,14 +48,14 @@ function currentTuiConfig(host: SlashCommandHost): TuiConfig {
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(getNoActiveSessionMessage());
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
 
   const subcmd = args.trim().toLowerCase();
   if (subcmd === 'clear') {
     await session.clearPlan();
-    host.showNotice(t('tui.statusMessages.planCleared'));
+    host.showNotice('Plan cleared');
     return;
   }
 
@@ -67,7 +64,7 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
   else if (subcmd === 'on') enabled = true;
   else if (subcmd === 'off') enabled = false;
   else {
-    host.showError(t('tui.statusMessages.unknownPlanSubcommand', { subcmd }));
+    host.showError(`Unknown plan subcommand: ${subcmd}`);
     return;
   }
 
@@ -81,22 +78,22 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
     if (enabled) {
       const plan = await session.getPlan().catch(() => null);
       host.showNotice(
-        t('tui.statusMessages.planModeOn'),
-        plan?.path !== undefined ? t('tui.statusMessages.planWillBeCreatedHere', { path: plan.path }) : undefined,
+        'Plan mode: ON',
+        plan?.path !== undefined ? `Plan will be created here: ${plan.path}` : undefined,
       );
       return;
     }
-    host.showNotice(t('tui.statusMessages.planModeOff'));
+    host.showNotice('Plan mode: OFF');
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(t('tui.statusMessages.failedToSetPlanMode', { msg }));
+    host.showError(`Failed to set plan mode: ${msg}`);
   }
 }
 
 export async function handleYoloCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(getNoActiveSessionMessage());
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
 
@@ -105,23 +102,23 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
 
   if (subcmd === 'on') {
     if (currentMode === 'yolo') {
-      host.showNotice(t('tui.statusMessages.yoloModeAlreadyOn'));
+      host.showNotice('YOLO mode is already on');
       return;
     }
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice(t('tui.statusMessages.yoloModeOn'), t('tui.statusMessages.yoloModeOnSub'));
+    host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
     return;
   }
 
   if (subcmd === 'off') {
     if (currentMode !== 'yolo') {
-      host.showNotice(t('tui.statusMessages.yoloModeAlreadyOff'));
+      host.showNotice('YOLO mode is already off');
       return;
     }
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice(t('tui.statusMessages.yoloModeOff'));
+    host.showNotice('YOLO mode: OFF');
     return;
   }
 
@@ -129,18 +126,18 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
   if (currentMode === 'yolo') {
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice(t('tui.statusMessages.yoloModeOff'));
+    host.showNotice('YOLO mode: OFF');
   } else {
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice(t('tui.statusMessages.yoloModeOn'), t('tui.statusMessages.yoloModeOnSub'));
+    host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
   }
 }
 
 export async function handleAutoCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(getNoActiveSessionMessage());
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
 
@@ -149,23 +146,23 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
 
   if (subcmd === 'on') {
     if (currentMode === 'auto') {
-      host.showNotice(t('tui.statusMessages.autoModeAlreadyOn'));
+      host.showNotice('Auto mode is already on');
       return;
     }
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice(t('tui.statusMessages.autoModeOn'), t('tui.statusMessages.autoModeOnSub'));
+    host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
     return;
   }
 
   if (subcmd === 'off') {
     if (currentMode !== 'auto') {
-      host.showNotice(t('tui.statusMessages.autoModeAlreadyOff'));
+      host.showNotice('Auto mode is already off');
       return;
     }
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice(t('tui.statusMessages.autoModeOff'));
+    host.showNotice('Auto mode: OFF');
     return;
   }
 
@@ -173,18 +170,18 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
   if (currentMode === 'auto') {
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice(t('tui.statusMessages.autoModeOff'));
+    host.showNotice('Auto mode: OFF');
   } else {
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice(t('tui.statusMessages.autoModeOn'), t('tui.statusMessages.autoModeOnSub'));
+    host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
   }
 }
 
 export async function handleCompactCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
-    host.showError(getNoActiveSessionMessage());
+    host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
   const customInstruction = args.trim() || undefined;
@@ -209,7 +206,7 @@ export async function handleThemeCommand(host: SlashCommandHost, args: string): 
   if (!isBuiltInTheme(theme)) {
     const custom = await loadCustomThemeMerged(theme);
     if (custom === null) {
-      host.showError(t('tui.statusMessages.unknownTheme', { theme }));
+      host.showError(`Unknown theme: ${theme}`);
       return;
     }
   }
@@ -224,7 +221,7 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
     return;
   }
   if (host.state.appState.availableModels[alias] === undefined) {
-    host.showError(t('tui.statusMessages.unknownModelAlias', { alias }));
+    host.showError(`Unknown model alias: ${alias}`);
     return;
   }
   showModelPicker(host, alias);
@@ -234,7 +231,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
   const alias = host.state.appState.model;
   const model = host.state.appState.availableModels[alias];
   if (model === undefined) {
-    host.showError(t('tui.statusMessages.noModelSelected'));
+    host.showError('No model selected. Run /model to select one first.');
     return;
   }
   const effective = effectiveModelAlias(model);
@@ -246,7 +243,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
   }
   if (!segments.includes(arg)) {
     host.showError(
-      t('tui.statusMessages.unsupportedEffort', { arg, alias, segments: segments.join(', ') }),
+      `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
     );
     return;
   }
@@ -308,10 +305,10 @@ async function refreshModelsForPicker(host: SlashCommandHost): Promise<void> {
     );
     if (result === undefined) return;
     for (const f of result.failed) {
-      host.showStatus(t('tui.messages.configSkippedRefreshing', { provider: f.provider, reason: f.reason }), 'warning');
+      host.showStatus(`Skipped refreshing ${f.provider}: ${f.reason}`, 'warning');
     }
   } catch (error) {
-    host.showStatus(t('tui.messages.configSkippedRefreshingModels', { error: formatErrorMessage(error) }), 'warning');
+    host.showStatus(`Skipped refreshing models: ${formatErrorMessage(error)}`, 'warning');
   }
 }
 
@@ -334,7 +331,7 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
 async function applyEditorChoice(host: SlashCommandHost, value: string): Promise<void> {
   const previous = host.state.appState.editorCommand ?? '';
   if (value === previous && value.length > 0) {
-    host.showStatus(t('tui.messages.configEditorUnchanged', { value: value.length > 0 ? value : t('tui.messages.configEditorAutoDetect') }));
+    host.showStatus(`Editor unchanged: ${value.length > 0 ? value : 'auto-detect'}`);
     return;
   }
 
@@ -346,7 +343,7 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
     });
   } catch (error) {
     host.showStatus(
-      t('tui.messages.configEditorSaveFailed', { error: formatErrorMessage(error) }),
+      `Failed to save editor: ${formatErrorMessage(error)}`,
       'error',
     );
     return;
@@ -355,8 +352,8 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
   host.setAppState({ editorCommand });
   host.showStatus(
     value.length > 0
-      ? t('tui.messages.configEditorSet', { value })
-      : t('tui.messages.configEditorAutoSet'),
+      ? `Editor set to "${value}".`
+      : 'Editor set to auto-detect ($VISUAL / $EDITOR).',
   );
 }
 
@@ -364,8 +361,8 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
   const entries = Object.entries(host.state.appState.availableModels);
   if (entries.length === 0) {
     host.showNotice(
-      t('tui.statusMessages.noModelsConfigured'),
-      t('tui.statusMessages.noModelsConfiguredSub'),
+      'No models configured',
+      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
     );
     return;
   }
@@ -397,7 +394,7 @@ async function performModelSwitch(
   persist: boolean,
 ): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
-    host.showError(t('tui.statusMessages.cannotSwitchWhileStreaming'));
+    host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
     return;
   }
 
@@ -406,7 +403,8 @@ async function performModelSwitch(
   const modelChanged = alias !== prevModel;
   const effortChanged = effort !== prevEffort;
   const runtimeChanged = modelChanged || effortChanged;
-  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  let effectiveAlias = alias;
+  let effectiveEffort = effort;
 
   const session = host.session;
   try {
@@ -419,22 +417,35 @@ async function performModelSwitch(
       if (effort !== prevEffort) {
         await session.setThinking(effort);
       }
+      const status = await session.getStatus();
+      effectiveAlias = status.model ?? alias;
+      effectiveEffort = status.thinkingEffort;
     }
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(t('tui.statusMessages.switchModelFailed', { msg }));
+    host.showError(`Failed to switch model: ${msg}`);
     return;
   }
 
-  host.setAppState({ model: alias, thinkingEffort: effort });
+  if (session === undefined) {
+    effectiveAlias = host.state.appState.model;
+    effectiveEffort = host.state.appState.thinkingEffort;
+  }
+  const effectiveModelChanged = effectiveAlias !== prevModel;
+  const effectiveEffortChanged = effectiveEffort !== prevEffort;
+  const displayName = modelDisplayName(
+    effectiveAlias,
+    host.state.appState.availableModels[effectiveAlias],
+  );
+  host.setAppState({ model: effectiveAlias, thinkingEffort: effectiveEffort });
   if (session === undefined && runtimeChanged) {
-    if (alias !== prevModel) {
-      host.track('model_switch', { model: alias });
+    if (effectiveModelChanged) {
+      host.track('model_switch', { model: effectiveAlias });
     }
-    if (effort !== prevEffort) {
+    if (effectiveEffortChanged) {
       host.track('thinking_toggle', {
-        enabled: effort !== 'off',
-        effort,
+        enabled: effectiveEffort !== 'off',
+        effort: effectiveEffort,
         from: prevEffort,
       });
     }
@@ -443,27 +454,27 @@ async function performModelSwitch(
   let persisted = false;
   if (persist) {
     try {
-      persisted = await persistModelSelection(host, alias, effort);
+      persisted = await persistModelSelection(host, effectiveAlias, effectiveEffort);
     } catch (error) {
       const msg = formatErrorMessage(error);
-      host.showError(t('tui.statusMessages.switchSavedButDefaultFailed', { name: displayName, msg }));
+      host.showError(`Switched to ${displayName}, but failed to save default: ${msg}`);
       return;
     }
   }
 
   let status: string;
-  if (modelChanged) {
+  if (effectiveModelChanged) {
     status = persist
-      ? t('tui.messages.configModelSwitched', { name: displayName, effort })
-      : t('tui.messages.configModelSwitchedSession', { name: displayName, effort });
-  } else if (effortChanged) {
+      ? `Switched to ${displayName} with thinking ${effectiveEffort}.`
+      : `Switched to ${displayName} with thinking ${effectiveEffort} for this session only.`;
+  } else if (effectiveEffortChanged) {
     status = persist
-      ? t('tui.messages.configThinkingSet', { effort })
-      : t('tui.messages.configThinkingSetSession', { effort });
+      ? `Thinking set to ${effectiveEffort}.`
+      : `Thinking set to ${effectiveEffort} for this session only.`;
   } else if (persist && persisted) {
-    status = t('tui.messages.configModelSavedDefault', { name: displayName, effort });
+    status = `Saved ${displayName} with thinking ${effectiveEffort} as default.`;
   } else {
-    status = t('tui.messages.configModelAlreadyUsing', { name: displayName, effort });
+    status = `Already using ${displayName} with thinking ${effectiveEffort}.`;
   }
   host.showStatus(status, 'success');
 }
@@ -507,7 +518,7 @@ function showThemePicker(host: SlashCommandHost): void {
 async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promise<void> {
   if (theme === host.state.appState.theme) {
     if (theme === 'auto') host.refreshTerminalThemeTracking();
-    host.showStatus(t('tui.messages.configThemeUnchanged', { theme }));
+    host.showStatus(`Theme unchanged: "${theme}".`);
     return;
   }
 
@@ -517,7 +528,7 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   if (!isBuiltInTheme(theme)) {
     const palette = await loadCustomThemeMerged(theme);
     if (palette === null) {
-      host.showStatus(t('tui.messages.configThemeLoadFailed', { theme }), 'error');
+      host.showStatus(`Theme "${theme}" could not be loaded.`, 'error');
       return;
     }
   }
@@ -529,7 +540,7 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
     });
   } catch (error) {
     host.showStatus(
-      t('tui.messages.configThemeSaveFailed', { error: formatErrorMessage(error) }),
+      `Failed to save theme: ${formatErrorMessage(error)}`,
       'error',
     );
     return;
@@ -542,7 +553,7 @@ async function applyThemeChoice(host: SlashCommandHost, theme: ThemeName): Promi
   host.refreshTerminalThemeTracking();
   host.track('theme_switch', { theme });
   const detail = theme === 'auto' ? ` (tracking terminal; current: ${resolved})` : '';
-  host.showStatus(t('tui.messages.configThemeSet', { theme, detail }));
+  host.showStatus(`Theme set to "${theme}"${detail}.`);
 }
 
 export function showPermissionPicker(host: SlashCommandHost): void {
@@ -580,7 +591,7 @@ export async function showExperimentsPanel(host: SlashCommandHost): Promise<void
   try {
     features = await host.harness.getExperimentalFeatures();
   } catch (error) {
-    host.showError(t('tui.statusMessages.loadExperimentsFailed', { error: formatErrorMessage(error) }));
+    host.showError(`Failed to load experimental features: ${formatErrorMessage(error)}`);
     return;
   }
   mountExperimentsPanel(host, features);
@@ -613,14 +624,14 @@ export async function applyExperimentalFeatureChanges(
       await host.session.reloadSession();
       await host.reloadCurrentSessionView(
         host.session,
-        t('tui.statusMessages.experimentalUpdatedSessionReloaded'),
+        'Experimental features updated. Session reloaded.',
       );
     } else {
-      host.showStatus(t('tui.statusMessages.experimentalUpdated'), 'success');
+      host.showStatus('Experimental features updated.', 'success');
     }
     host.track('experimental_features_apply', { changed: changes.length });
   } catch (error) {
-    host.showError(t('tui.statusMessages.updateExperimentsFailed', { error: formatErrorMessage(error) }));
+    host.showError(`Failed to update experimental features: ${formatErrorMessage(error)}`);
   }
 }
 
@@ -658,7 +669,7 @@ export async function applyUpdatePreferenceChoice(
   autoInstall: boolean,
 ): Promise<void> {
   if (autoInstall === host.state.appState.upgrade.autoInstall) {
-    host.showStatus(t('tui.messages.configAutoUpdateAlready', { state: autoInstall ? t('tui.messages.configAutoUpdateEnabled') : t('tui.messages.configAutoUpdateDisabled') }));
+    host.showStatus(`Automatic updates already ${autoInstall ? 'enabled' : 'disabled'}.`);
     return;
   }
 
@@ -670,7 +681,7 @@ export async function applyUpdatePreferenceChoice(
     });
   } catch (error) {
     host.showStatus(
-      t('tui.messages.configAutoUpdateSaveFailed', { error: formatErrorMessage(error) }),
+      `Failed to save automatic update setting: ${formatErrorMessage(error)}`,
       'error',
     );
     return;
@@ -678,12 +689,12 @@ export async function applyUpdatePreferenceChoice(
 
   host.setAppState({ upgrade });
   host.track('upgrade_preference_changed', { auto_install: autoInstall });
-  host.showStatus(t('tui.messages.configAutoUpdateSet', { state: autoInstall ? t('tui.messages.configAutoUpdateEnabled') : t('tui.messages.configAutoUpdateDisabled') }));
+  host.showStatus(`Automatic updates ${autoInstall ? 'enabled' : 'disabled'}.`);
 }
 
 async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMode): Promise<void> {
   if (mode === host.state.appState.permissionMode) {
-    host.showStatus(t('tui.messages.configPermissionUnchanged', { mode }));
+    host.showStatus(`Permission mode unchanged: ${mode}.`);
     return;
   }
 
@@ -691,12 +702,12 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
     await host.requireSession().setPermission(mode);
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(t('tui.statusMessages.setPermissionFailed', { msg }));
+    host.showError(`Failed to set permission mode: ${msg}`);
     return;
   }
 
   host.setAppState({ permissionMode: mode });
-  host.showNotice(t('tui.messages.configPermissionMode', { mode }));
+  host.showNotice(`Permission mode: ${mode}`);
 }
 
 export function showSettingsSelector(host: SlashCommandHost): void {
@@ -718,51 +729,9 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'model': showModelPicker(host); return;
     case 'permission': showPermissionPicker(host); return;
     case 'theme': showThemePicker(host); return;
-    case 'language': showLocalePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;
     case 'usage': void showUsage(host); return;
   }
-}
-
-function showLocalePicker(host: SlashCommandHost): void {
-  host.mountEditorReplacement(
-    new LocaleSelectorComponent({
-      currentValue: host.state.appState.locale as Locale,
-      onSelect: (locale) => {
-        host.restoreEditor();
-        void applyLocaleChoice(host, locale);
-      },
-      onCancel: () => {
-        host.restoreEditor();
-      },
-    }),
-  );
-}
-
-async function applyLocaleChoice(host: SlashCommandHost, locale: Locale): Promise<void> {
-  if (locale === host.state.appState.locale) {
-    host.showStatus(t('tui.messages.configLanguageUnchanged', { locale }));
-    return;
-  }
-
-  try {
-    await saveTuiConfig({
-      ...currentTuiConfig(host),
-      locale,
-    });
-  } catch (error) {
-    host.showStatus(
-      t('tui.messages.configLanguageSaveFailed', { error: formatErrorMessage(error) }),
-      'error',
-    );
-    return;
-  }
-
-  host.setAppState({ locale });
-  setLocale(locale);
-  host.showNotice(
-    t('tui.messages.configLanguageSet', { locale }),
-  );
 }

@@ -57,7 +57,7 @@ describe('Agent config', () => {
     await expect(ctx.rpc.getConfig({})).resolves.toMatchObject({
       provider: nextProvider,
       systemPrompt: 'Changed profile prompt.',
-      thinkingEffort: 'high',
+      thinkingEffort: 'on',
       modelCapabilities: nextCapability,
     });
     await ctx.expectResumeMatches();
@@ -164,8 +164,8 @@ describe('Agent config', () => {
     ctx.mockNextResponse({ type: 'text', text: 'Still using the original turn config.' });
     expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
       [wire] permission.record_approval_result   { "turnId": 0, "toolCallId": "call_bash", "toolName": "Bash", "action": "Running: printf original-result", "result": { "decision": "approved", "selectedLabel": "approve" }, "time": "<time>" }
-      [wire] config.update                       { "modelAlias": "changed-model", "time": "<time>" }
-      [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual" }
+      [wire] config.update                       { "modelAlias": "changed-model", "thinkingEffort": "off", "time": "<time>" }
+      [emit] agent.status.updated                { "model": "changed-model", "thinkingEffort": "off", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual" }
       [wire] config.update                       { "systemPrompt": "Changed system prompt.", "time": "<time>" }
       [emit] agent.status.updated                { "model": "changed-model", "contextTokens": 0, "maxContextTokens": 1000000, "contextUsage": 0, "planMode": false, "swarmMode": false, "permission": "manual" }
       [wire] tools.set_active_tools              { "names": [], "time": "<time>" }

@@ -1060,9 +1060,7 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(body['reasoning']).toEqual({ effort: 'xhigh', summary: 'auto' });
     });
 
-    it('with_thinking("max") on gpt-5.1-codex-max clamps up to xhigh on the wire', async () => {
-      // Regression guard: "max" used to fall back to "high"; for OpenAI it
-      // must clamp up to their highest supported effort, xhigh.
+    it('with_thinking("max") passes max through to the wire', async () => {
       const provider = new OpenAIResponsesChatProvider({
         model: 'gpt-5.1-codex-max',
         apiKey: 'test-key',
@@ -1072,7 +1070,36 @@ describe('OpenAIResponsesChatProvider', () => {
       ];
       const body = await captureRequestBody(provider, '', [], history);
 
-      expect((body['reasoning'] as Record<string, unknown>)['effort']).toBe('xhigh');
+      expect((body['reasoning'] as Record<string, unknown>)['effort']).toBe('max');
+    });
+
+    it('passes concrete effort strings through verbatim', async () => {
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'kimi-for-coding',
+        apiKey: 'test-key',
+      }).withThinking('extreme');
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const body = await captureRequestBody(provider, '', [], history);
+
+      expect((body['reasoning'] as Record<string, unknown>)['effort']).toBe('extreme');
+      expect(provider.thinkingEffort).toBe('extreme');
+    });
+
+    it('does not filter concrete efforts through a client-side allow-list', async () => {
+      const provider = new OpenAIResponsesChatProvider({
+        model: 'kimi-for-coding',
+        apiKey: 'test-key',
+      });
+      const history: Message[] = [
+        { role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] },
+      ];
+      const maxBody = await captureRequestBody(provider.withThinking('max'), '', [], history);
+      const xhighBody = await captureRequestBody(provider.withThinking('xhigh'), '', [], history);
+
+      expect((maxBody['reasoning'] as Record<string, unknown>)['effort']).toBe('max');
+      expect((xhighBody['reasoning'] as Record<string, unknown>)['effort']).toBe('xhigh');
     });
   });
 

@@ -297,6 +297,29 @@ const REQUEST_TOO_LARGE_MESSAGE_PATTERNS = [
   /request (?:body )?too large/,
 ] as const;
 
+const THINKING_EFFORT_CONFIG_DOCS_URL =
+  'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking';
+
+const THINKING_EFFORT_STATUS_MESSAGE_PATTERNS = [
+  /reasoning[_ .-]?effort/,
+  /thinking[_ .-]?effort/,
+  /output_config[\s\S]*effort/,
+  /unsupported[\s\S]*effort/,
+  /invalid[\s\S]*effort/,
+] as const;
+
+function appendThinkingEffortConfigHint(statusCode: number, message: string): string {
+  if (statusCode !== 400 && statusCode !== 422) return message;
+  const lowerMessage = message.toLowerCase();
+  if (!THINKING_EFFORT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage))) {
+    return message;
+  }
+  if (message.includes(THINKING_EFFORT_CONFIG_DOCS_URL)) return message;
+  return `${message}
+
+The provider rejected the configured thinking effort. Non-Kimi providers receive effort strings without client-side mapping; choose an effort supported by the selected model. For Kimi models, check support_efforts and default_effort. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`;
+}
+
 export function isContextOverflowErrorCode(code: string | null | undefined): boolean {
   return code === 'context_length_exceeded';
 }
@@ -318,7 +341,12 @@ export function normalizeAPIStatusError(
   if (isRequestTooLargeStatusError(statusCode, message)) {
     return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs);
   }
-  return new APIStatusError(statusCode, message, requestId, retryAfterMs);
+  return new APIStatusError(
+    statusCode,
+    appendThinkingEffortConfigHint(statusCode, message),
+    requestId,
+    retryAfterMs,
+  );
 }
 
 /**

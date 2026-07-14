@@ -47,10 +47,6 @@ export interface KimiOptions {
   stream?: boolean | undefined;
   defaultHeaders?: Record<string, string> | undefined;
   generationKwargs?: GenerationKwargs | undefined;
-  /** Efforts the model advertises (e.g. ["low", "high", "max"]). When
-   * present and non-empty, withThinking sends the chosen effort on the wire;
-   * when absent/empty, only thinking.type is sent. */
-  supportEfforts?: readonly string[] | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => OpenAI;
 }
 
@@ -407,7 +403,6 @@ export class KimiChatProvider implements ChatProvider {
   private _baseUrl: string;
   private _defaultHeaders: Record<string, string> | undefined;
   private _generationKwargs: GenerationKwargs;
-  private readonly _supportEfforts: readonly string[];
   private _client: OpenAI | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
   private _files: KimiFiles | undefined;
@@ -421,7 +416,6 @@ export class KimiChatProvider implements ChatProvider {
     this._model = options.model;
     this._stream = options.stream ?? true;
     this._generationKwargs = { ...options.generationKwargs };
-    this._supportEfforts = options.supportEfforts ?? [];
     this._client =
       this._apiKey === undefined
         ? undefined
@@ -556,12 +550,7 @@ export class KimiChatProvider implements ChatProvider {
     if (effort === 'off') {
       thinking = { type: 'disabled' };
     } else {
-      // Only efforts the model explicitly declares via `support_efforts` are
-      // sent on the wire. When `support_efforts` is absent/empty, or the
-      // requested effort is not declared, only thinking.type is sent.
-      thinking = this._supportEfforts.includes(effort)
-        ? { type: 'enabled', effort }
-        : { type: 'enabled' };
+      thinking = effort === 'on' ? { type: 'enabled' } : { type: 'enabled', effort };
     }
     // Replace extra_body.thinking wholesale so a stale `effort` from a previous
     // withThinking call can never linger on a disabled or non-effort thinking

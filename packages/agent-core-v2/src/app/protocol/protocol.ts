@@ -34,9 +34,9 @@ export interface ProtocolProviderOptions {
   readonly reasoningKey?: string;
   readonly defaultMaxTokens?: number;
   readonly adaptiveThinking?: boolean;
+  readonly kimiThinking?: boolean;
   readonly betaApi?: boolean;
   readonly metadata?: Readonly<Record<string, string>>;
-  readonly supportEfforts?: readonly string[];
   readonly vertexai?: boolean;
   readonly project?: string;
   readonly location?: string;

@@ -112,6 +112,7 @@ export interface AnthropicOptions {
    * encode a parseable Claude version. Leave undefined to infer from the name.
    */
   adaptiveThinking?: boolean | undefined;
+  kimiThinking?: boolean | undefined;
   /**
    * Use the Anthropic **beta** Messages API (`client.beta.messages.create`,
    * `POST /v1/messages?beta=true`) instead of the standard Messages API.
@@ -145,16 +146,12 @@ interface AnthropicContextManagement {
   edits: Array<{ type: string; keep?: unknown }>;
 }
 
-// Anthropic's native effort values. `ThinkingEffort` is an open string, so after
-// clamping (and ruling out 'off') we narrow to this concrete set before writing
-// `output_config.effort` / computing a token budget.
-type AnthropicEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
 const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
 const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
-const OPUS_VERSION_RE = /opus[.-](\d+)[.-](\d{1,2})(?!\d)/;
 const ADAPTIVE_MIN_VERSION = { major: 4, minor: 6 } as const;
+const THINKING_EFFORT_CONFIG_DOCS_URL =
+  'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking';
 const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
@@ -346,15 +343,6 @@ export function resolveDefaultMaxTokens(model: string, override?: number): numbe
   return override === undefined ? ceiling : Math.min(override, ceiling);
 }
 
-function parseVersion(match: RegExpExecArray): { major: number; minor: number } {
-  const majorRaw = match[1];
-  const minorRaw = match[2];
-  if (majorRaw === undefined || minorRaw === undefined) {
-    throw new Error('Model version regex did not capture major and minor versions.');
-  }
-  return { major: Number.parseInt(majorRaw, 10), minor: Number.parseInt(minorRaw, 10) };
-}
-
 function versionAtLeast(
   version: { major: number; minor: number },
   minimum: { major: number; minor: number },
@@ -378,15 +366,6 @@ function supportsAdaptiveThinking(model: string): boolean {
   );
 }
 
-function isOpus47(model: string): boolean {
-  const match = OPUS_VERSION_RE.exec(model.toLowerCase());
-  if (match === null) {
-    return false;
-  }
-  const version = parseVersion(match);
-  return version.major === 4 && version.minor === 7;
-}
-
 function isFableModel(model: string): boolean {
   return parseClaudeAliasVersion(model)?.family === 'fable';
 }
@@ -399,46 +378,22 @@ function supportsEffortParam(model: string, adaptive: boolean): boolean {
   return normalized.includes('opus-4-5') || normalized.includes('opus-4.5');
 }
 
-function clampEffort(effort: ThinkingEffort, model: string, adaptive: boolean): ThinkingEffort {
-  if (effort === 'off') {
-    return effort;
-  }
-  if (effort === 'xhigh' && !isOpus47(model) && !isFableModel(model)) {
-    return 'high';
-  }
-  if (effort === 'max' && !adaptive) {
-    return 'high';
-  }
-  // 'on' (boolean models) or any effort Anthropic does not recognize: fall
-  // back to 'high' so budgetTokensForEffort / output_config.effort never see
-  // an unsupported value.
-  if (
-    effort !== 'low' &&
-    effort !== 'medium' &&
-    effort !== 'high' &&
-    effort !== 'xhigh' &&
-    effort !== 'max'
-  ) {
-    return 'high';
-  }
-  return effort;
-}
-
 function budgetTokensForEffort(effort: ThinkingEffort): number {
   switch (effort) {
     case 'low':
       return 1024;
     case 'medium':
       return 4096;
+    case 'on':
     case 'high':
       return 32_000;
-    case 'off':
-    case 'xhigh':
-    case 'max':
-      throw new Error(`Unsupported budget-based thinking effort: ${effort}`);
+    default:
+      throw new Error(
+        `Anthropic budget-based thinking cannot express effort "${effort}". Use low, medium, or high, or configure an adaptive / effort-param-capable model. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`,
+      );
   }
-  throw new Error(`Unknown thinking effort: ${String(effort)}`);
 }
+
 const CACHE_CONTROL = { type: 'ephemeral' as const };
 
 type CacheableBlock = ContentBlockParam & { cache_control?: { type: 'ephemeral' } };
@@ -1008,6 +963,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private _defaultHeaders: Record<string, string | null> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => Anthropic) | undefined;
   private _adaptiveThinking: boolean | undefined;
+  private readonly _kimiThinking: boolean;
   private _betaApi: boolean;
   private _explicitMaxTokens: boolean;
   private _customHeaderNames: string[];
@@ -1017,6 +973,7 @@ export class AnthropicChatProvider implements ChatProvider {
     this._stream = options.stream ?? true;
     this._metadata = options.metadata;
     this._adaptiveThinking = options.adaptiveThinking;
+    this._kimiThinking = options.kimiThinking ?? false;
     this._betaApi = options.betaApi ?? false;
     this._apiKey =
       options.apiKey === undefined || options.apiKey.length === 0 ? undefined : options.apiKey;
@@ -1037,35 +994,18 @@ export class AnthropicChatProvider implements ChatProvider {
   }
 
   get thinkingEffort(): ThinkingEffort | null {
-    const thinkingConfig = this._generationKwargs.thinking;
-    if (thinkingConfig === undefined || thinkingConfig === null) {
-      return null;
-    }
-    if (thinkingConfig.type === 'disabled') {
-      return 'off';
-    }
-    if (thinkingConfig.type === 'adaptive') {
-      const effort = this._generationKwargs.output_config?.effort;
-      if (effort === undefined || effort === null) {
-        return 'high';
-      }
-      switch (effort) {
-        case 'low':
-        case 'medium':
-        case 'high':
-        case 'xhigh':
-        case 'max':
-          return effort;
-      }
-    }
-    // budget-based
-    const budget = (thinkingConfig as { budget_tokens?: number }).budget_tokens ?? 0;
-    if (budget <= 1024) {
-      return 'low';
-    }
-    if (budget <= 4096) {
-      return 'medium';
-    }
+    const thinking = this._generationKwargs.thinking;
+    if (thinking === undefined || thinking === null) return null;
+    if (thinking.type === 'disabled') return 'off';
+
+    const effort = this._generationKwargs.output_config?.effort;
+    if (typeof effort === 'string' && effort.length > 0) return effort;
+    if (thinking.type === 'adaptive') return 'on';
+
+    const budget = (thinking as { budget_tokens?: number }).budget_tokens;
+    if (budget === undefined) return 'on';
+    if (budget <= 1024) return 'low';
+    if (budget <= 4096) return 'medium';
     return 'high';
   }
 
@@ -1313,48 +1253,40 @@ export class AnthropicChatProvider implements ChatProvider {
     // Resolve once: an explicit `adaptiveThinking` option overrides the
     // model-name version inference, so custom-named endpoints can opt in/out.
     const adaptive = this._adaptiveThinking ?? supportsAdaptiveThinking(this._model);
+    let thinking: MessageCreateParams['thinking'];
+    let outputConfig: MessageCreateParams['output_config'] | undefined;
 
     if (effort === 'off') {
-      let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
-      if (adaptive) {
-        newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
-      }
-      const clone = this._withGenerationKwargs({
-        thinking: { type: 'disabled' },
-        betaFeatures: newBetas,
-      });
-      delete clone._generationKwargs.output_config;
-      return clone;
+      thinking = { type: 'disabled' };
+    } else if (this._kimiThinking) {
+      thinking = { type: 'enabled' } as MessageCreateParams['thinking'];
+      outputConfig =
+        effort === 'on' ? undefined : ({ effort } as MessageCreateParams['output_config']);
+    } else if (adaptive) {
+      thinking = { type: 'adaptive', display: 'summarized' };
+      outputConfig =
+        effort === 'on'
+          ? undefined
+          : ({ effort } as MessageCreateParams['output_config']);
+    } else {
+      thinking = { type: 'enabled', budget_tokens: budgetTokensForEffort(effort) };
+      outputConfig =
+        supportsEffortParam(this._model, adaptive) && effort !== 'on'
+          ? ({ effort } as MessageCreateParams['output_config'])
+          : undefined;
     }
-
-    const clamped = clampEffort(effort, this._model, adaptive);
-    if (clamped === 'off') {
-      throw new Error('Non-off thinking effort unexpectedly clamped to off.');
-    }
-    const effectiveEffort = clamped as AnthropicEffort;
 
     let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
-
     if (adaptive) {
       newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
-      return this._withGenerationKwargs({
-        thinking: { type: 'adaptive', display: 'summarized' },
-        output_config: { effort: effectiveEffort },
-        betaFeatures: newBetas,
-      });
     }
-
-    const kwargs: Partial<AnthropicGenerationKwargs> = {
-      thinking: { type: 'enabled', budget_tokens: budgetTokensForEffort(effectiveEffort) },
+    const clone = this._withGenerationKwargs({
+      thinking,
       betaFeatures: newBetas,
-    };
-    if (supportsEffortParam(this._model, adaptive)) {
-      kwargs.output_config = { effort: effectiveEffort };
+    });
+    if (outputConfig !== undefined) {
+      clone._generationKwargs.output_config = outputConfig;
     } else {
-      kwargs.output_config = undefined;
-    }
-    const clone = this._withGenerationKwargs(kwargs);
-    if (!supportsEffortParam(this._model, adaptive)) {
       delete clone._generationKwargs.output_config;
     }
     return clone;

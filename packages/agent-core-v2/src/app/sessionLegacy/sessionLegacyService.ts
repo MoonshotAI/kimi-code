@@ -180,7 +180,6 @@ export class SessionLegacyService implements ISessionLegacyService {
     const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
 
-    const profileData = profile.data();
     const model = profile.getModel();
     const caps = profile.getModelCapabilities() as { max_context_tokens?: number };
     // v1 binds the default model to the main agent at session creation, so its
@@ -200,7 +199,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     return {
       status: session?.accessor.get(ISessionActivity).status() ?? 'idle',
       model: model === '' ? undefined : model,
-      thinking_level: profileData.thinkingLevel,
+      thinking_level: profile.getEffectiveThinkingLevel(),
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,

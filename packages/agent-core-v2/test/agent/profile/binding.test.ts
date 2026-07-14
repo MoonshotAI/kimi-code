@@ -69,6 +69,16 @@ describe('AgentProfileService.bind', () => {
       },
       hostEnvironmentServices(homeDir),
     );
+    ctx.configure({
+      modelCapabilities: {
+        image_in: false,
+        video_in: false,
+        audio_in: false,
+        thinking: true,
+        tool_use: true,
+        max_context_tokens: 1_000_000,
+      },
+    });
     const svc = ctx.get(IAgentProfileService);
     await ctx.get(IAgentWireService).flush();
     const start = persistence.records.length;
@@ -103,7 +113,7 @@ describe('AgentProfileService.bind', () => {
     expect(records[2]).toMatchObject({
       type: 'config.update',
       modelAlias: MOCK_MODEL,
-      thinkingEffort: 'low',
+      thinkingEffort: 'on',
     });
     expect(records[2]).not.toHaveProperty('thinkingLevel');
   });
