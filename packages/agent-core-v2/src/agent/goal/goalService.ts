@@ -722,9 +722,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private isStaleGoalToolCall(ctx: ToolBeforeExecuteContext): boolean {
     const toolName = ctx.toolCall.name;
     if (!isGoalMutationTool(toolName)) return false;
-    if (isTerminalUpdateAfterEarlierReplacement(ctx)) return true;
     const goalId = this.goalTurnTarget(ctx.turnId);
     if (goalId === undefined) return false;
+    if (isTerminalUpdateAfterEarlierReplacement(ctx)) return true;
     return this.goalState?.goalId !== goalId;
   }
 

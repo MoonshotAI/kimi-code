@@ -284,7 +284,7 @@ describe('goal tools', () => {
 
       const results = await executeGoalCalls(
         [
-          goalToolCall('call_create', 'CreateGoal', { objective: 'new task' }),
+          goalToolCall('call_create', 'CreateGoal', { objective: 'new task', replace: true }),
           goalToolCall('call_outcome', 'UpdateGoal', { status: updateStatus }),
         ],
         5,
