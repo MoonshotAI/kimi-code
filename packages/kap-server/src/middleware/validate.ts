@@ -35,6 +35,7 @@ interface ValidationRequest {
 
 interface ValidationReply {
   send(payload: unknown): unknown;
+  code?: (statusCode: number) => unknown;
 }
 
 type PreHandlerHook = (
@@ -82,12 +83,17 @@ function buildValidationEnvelope(
 
 /**
  * Build a Fastify `preHandler` that parses `req.body` against `schema`.
- * On success, replaces `req.body` with the parsed value.
+ * On success, replaces `req.body` with the parsed value. Existing routes keep
+ * the historical 200/envelope behavior when `errorStatusCode` is omitted.
  */
-export function validateBody<T>(schema: z.ZodType<T>): PreHandlerHook {
+export function validateBody<T>(
+  schema: z.ZodType<T>,
+  errorStatusCode?: number,
+): PreHandlerHook {
   return (req, reply, done) => {
     const result = schema.safeParse(req.body);
     if (!result.success) {
+      if (errorStatusCode !== undefined) reply.code?.(errorStatusCode);
       reply.send(buildValidationEnvelope(zodIssuesToDetails(result.error), req.id));
       return;
     }
@@ -104,10 +110,14 @@ export function validateBody<T>(schema: z.ZodType<T>): PreHandlerHook {
  * fields arrive as strings. The schema is responsible for coercing
  * (`z.coerce.number()` etc.) when needed; we don't pre-coerce here.
  */
-export function validateQuery<T>(schema: z.ZodType<T>): PreHandlerHook {
+export function validateQuery<T>(
+  schema: z.ZodType<T>,
+  errorStatusCode?: number,
+): PreHandlerHook {
   return (req, reply, done) => {
     const result = schema.safeParse(req.query);
     if (!result.success) {
+      if (errorStatusCode !== undefined) reply.code?.(errorStatusCode);
       reply.send(buildValidationEnvelope(zodIssuesToDetails(result.error), req.id));
       return;
     }
@@ -119,10 +129,14 @@ export function validateQuery<T>(schema: z.ZodType<T>): PreHandlerHook {
 /**
  * Build a Fastify `preHandler` that parses `req.params` against `schema`.
  */
-export function validateParams<T>(schema: z.ZodType<T>): PreHandlerHook {
+export function validateParams<T>(
+  schema: z.ZodType<T>,
+  errorStatusCode?: number,
+): PreHandlerHook {
   return (req, reply, done) => {
     const result = schema.safeParse(req.params);
     if (!result.success) {
+      if (errorStatusCode !== undefined) reply.code?.(errorStatusCode);
       reply.send(buildValidationEnvelope(zodIssuesToDetails(result.error), req.id));
       return;
     }

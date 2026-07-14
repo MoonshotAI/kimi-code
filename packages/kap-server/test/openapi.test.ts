@@ -93,27 +93,32 @@ describe('server-v2 OpenAPI', () => {
     expect(content['multipart/form-data']).toBeDefined();
   });
 
-  it('describes session export as a ZIP or JSON error envelope', async () => {
+  it('describes session export as a ZIP with explicit JSON error responses', async () => {
     const doc = await fetchOpenApi();
     const exportOp = operation(doc, '/api/v1/sessions/{session_id}/export', 'post');
     const responses = asRecord(exportOp['responses']);
     const response = asRecord(responses['200']);
     const content = asRecord(response['content']);
-    const headers = asRecord(response['headers']);
     const zipSchema = asRecord(asRecord(content['application/zip'])['schema']);
-    const errorSchema = asRecord(asRecord(content['application/json'])['schema']);
-    const errorProperties = asRecord(errorSchema['properties']);
 
     expect(zipSchema).toMatchObject({ type: 'string', format: 'binary' });
-    expect(errorProperties).toMatchObject({
-      code: expect.any(Object),
-      msg: expect.any(Object),
-      data: expect.any(Object),
-      request_id: expect.any(Object),
-    });
-    expect(headers['content-disposition']).toBeDefined();
-    expect(headers['content-length']).toBeDefined();
-    expect(headers['cache-control']).toBeDefined();
+    expect(content['application/json']).toBeUndefined();
+    expect(asRecord(response['headers'])['content-disposition']).toBeDefined();
+    expect(asRecord(response['headers'])['content-length']).toBeDefined();
+    expect(asRecord(response['headers'])['cache-control']).toBeDefined();
+
+    for (const status of ['400', '404', '413', '500']) {
+      const errorResponse = asRecord(responses[status]);
+      const errorContent = asRecord(errorResponse['content']);
+      const errorSchema = asRecord(asRecord(errorContent['application/json'])['schema']);
+      const errorProperties = asRecord(errorSchema['properties']);
+      expect(errorProperties).toMatchObject({
+        code: expect.any(Object),
+        msg: expect.any(Object),
+        data: expect.any(Object),
+        request_id: expect.any(Object),
+      });
+    }
   });
 
   it('represents the fs-action dispatcher as a oneOf union', async () => {

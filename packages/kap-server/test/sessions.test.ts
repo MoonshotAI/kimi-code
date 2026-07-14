@@ -147,7 +147,12 @@ describe('server-v2 /api/v1/sessions', () => {
     const id = 'sess_missing_export';
     const { status, body } = await postJson<null>(`/api/v1/sessions/${id}/export`, {});
 
-    expect(status).toBe(200);
+    expect(status).toBe(404);
+    expect(body).toMatchObject({
+      code: 40401,
+      data: null,
+      request_id: expect.any(String),
+    });
     expect(body.code).toBe(40401);
     await expect.poll(() => listExportTempDirs(id)).toEqual([]);
   });
@@ -185,7 +190,12 @@ describe('server-v2 /api/v1/sessions', () => {
       { web_log: '你'.repeat(87_382) },
     );
 
-    expect(status).toBe(200);
+    expect(status).toBe(400);
+    expect(body).toMatchObject({
+      code: 40001,
+      data: null,
+      request_id: expect.any(String),
+    });
     expect(body.code).toBe(40001);
     expect(body.details?.[0]?.path).toBe('web_log');
   });

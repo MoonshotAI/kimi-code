@@ -24,8 +24,10 @@ import {
   exportSessionParamsSchema,
   exportSessionRequestSchema,
 } from '@moonshot-ai/protocol';
+import { z } from 'zod';
 
 import { defineRoute } from '../middleware/defineRoute';
+import { envelopeJsonSchema } from '../middleware/schema';
 
 const MAX_WEB_SESSION_EXPORT_BYTES = 64 * 1024 * 1024;
 
@@ -41,8 +43,11 @@ interface SessionExportReply {
   readonly raw: ServerResponse;
   type(mime: string): SessionExportReply;
   header(name: string, value: string | number): SessionExportReply;
+  code(statusCode: number): SessionExportReply;
   send(payload: unknown): unknown;
 }
+
+const sessionExportErrorResponseSchema = envelopeJsonSchema(z.null());
 
 export function registerSessionExportRoute(
   app: SessionExportRouteHost,
@@ -56,14 +61,13 @@ export function registerSessionExportRoute(
       path: '/sessions/{session_id}/export',
       params: exportSessionParamsSchema,
       body: exportSessionRequestSchema,
+      validationErrorStatus: 400,
       rawResponse: {
         200: { type: 'string', format: 'binary' },
-      },
-      errors: {
-        [ErrorCode.VALIDATION_FAILED]: {},
-        [ErrorCode.SESSION_NOT_FOUND]: {},
-        [ErrorCode.FILE_TOO_LARGE]: {},
-        [ErrorCode.INTERNAL_ERROR]: {},
+        400: sessionExportErrorResponseSchema,
+        404: sessionExportErrorResponseSchema,
+        413: sessionExportErrorResponseSchema,
+        500: sessionExportErrorResponseSchema,
       },
       description: 'Export a session and diagnostic logs as a zip archive',
       tags: ['sessions'],
@@ -187,11 +191,14 @@ function sanitizeSessionId(sessionId: string): string {
 function sendMappedError(reply: SessionExportReply, requestId: string, error: unknown): void {
   if (isError2(error)) {
     if (error.code === ErrorCodes.SESSION_NOT_FOUND) {
-      reply.send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, error.message, requestId));
+      reply
+        .code(404)
+        .type('application/json')
+        .send(errEnvelope(ErrorCode.SESSION_NOT_FOUND, error.message, requestId));
       return;
     }
     if (error.code === ErrorCodes.SESSION_EXPORT_TOO_LARGE) {
-      reply.send(
+      reply.code(413).type('application/json').send(
         errEnvelope(
           ErrorCode.FILE_TOO_LARGE,
           'session export exceeds the 64 MiB web limit',
@@ -201,7 +208,7 @@ function sendMappedError(reply: SessionExportReply, requestId: string, error: un
       return;
     }
   }
-  reply.send(
+  reply.code(500).type('application/json').send(
     errEnvelope(
       ErrorCode.INTERNAL_ERROR,
       error instanceof Error ? error.message : 'internal error',

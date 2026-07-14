@@ -102,7 +102,7 @@ describe('DaemonKimiWebApi.exportSession', () => {
     vi.mocked(fetch).mockResolvedValue(
       new Response(
         JSON.stringify({ code: 41301, msg: 'export too large', request_id: 'req_server' }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
+        { status: 413, headers: { 'content-type': 'application/json' } },
       ),
     );
 

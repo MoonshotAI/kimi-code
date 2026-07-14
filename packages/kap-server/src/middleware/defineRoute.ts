@@ -161,6 +161,11 @@ export interface DefineRouteOptions<
   path: string;
   /** Request-body Zod schema. */
   body?: TBody;
+  /**
+   * Optional HTTP status for route-level validation failures. Omitted routes
+   * retain the legacy 200 response with a business error envelope.
+   */
+  validationErrorStatus?: number;
   /** Route-params Zod schema. */
   params?: TParams;
   /** Query-string Zod schema. */
@@ -243,13 +248,13 @@ export function defineRoute<
   const preHandler: unknown[] = [];
 
   if (options.params) {
-    preHandler.push(validateParams(options.params));
+    preHandler.push(validateParams(options.params, options.validationErrorStatus));
   }
   if (options.body) {
-    preHandler.push(validateBody(options.body));
+    preHandler.push(validateBody(options.body, options.validationErrorStatus));
   }
   if (options.querystring) {
-    preHandler.push(validateQuery(options.querystring));
+    preHandler.push(validateQuery(options.querystring, options.validationErrorStatus));
   }
 
   // -- swagger schema --------------------------------------------------------

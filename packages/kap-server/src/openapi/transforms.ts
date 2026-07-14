@@ -131,7 +131,7 @@ function patchSessionExport(paths: Record<string, unknown>): void {
   if (operation === undefined) return;
 
   setResponse(operation, '200', {
-    description: 'Session export archive or JSON error envelope',
+    description: 'Session export archive',
     headers: {
       'content-disposition': headerString(),
       'content-length': headerInteger(),
@@ -141,9 +141,19 @@ function patchSessionExport(paths: Record<string, unknown>): void {
       'application/zip': {
         schema: binarySchema,
       },
-      ...jsonContent(errorEnvelopeSchema),
     },
   });
+  for (const [status, description] of [
+    ['400', 'Invalid session export request'],
+    ['404', 'Session not found'],
+    ['413', 'Session export is too large'],
+    ['500', 'Session export failed'],
+  ] as const) {
+    setResponse(operation, status, {
+      description,
+      content: jsonContent(errorEnvelopeSchema),
+    });
+  }
 }
 
 function patchFileUpload(paths: Record<string, unknown>): void {
