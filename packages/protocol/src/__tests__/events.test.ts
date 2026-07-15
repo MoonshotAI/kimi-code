@@ -154,7 +154,7 @@ describe('events / display re-exports', () => {
         title: 'Created session',
         created_at: '2026-06-11T00:00:00.000Z',
         updated_at: '2026-06-11T00:00:00.000Z',
-        status: 'idle',
+        busy: false,
         metadata: { cwd: '/tmp/project' },
         agent_config: { model: 'kimi-k2' },
         usage: {

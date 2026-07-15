@@ -39,7 +39,11 @@ const props = defineProps<{
   pendingQuestionActions?: Record<string, 'answer' | 'dismiss'>;
   /** Approval ids with an in-flight respond (drives the card loading state). */
   pendingApprovalActions?: Record<string, true>;
+  /** Session busy (any agent, incl. background work) — Stop/Escape affordances. */
   running?: boolean;
+  /** MAIN agent turn in flight — the conversation's streaming state (streaming
+   *  reveal, turn-end scroll settle). Background-only work does NOT set this. */
+  turnActive?: boolean;
   queued?: QueuedPromptView[];
   searchFiles?: (q: string) => Promise<FileItem[]>;
   uploadImage?: (file: Blob, name?: string) => Promise<{ fileId: string; name: string; mediaType: string } | null>;
@@ -47,7 +51,9 @@ const props = defineProps<{
   changes?: { path: string; status: string }[];
   /** Cache-buster that remounts the chat pane when the active session changes. */
   fileReloadKey?: string | number;
-  sending?: boolean;
+  /** The main conversation has an unfinished prompt (submitted or a main turn
+   *  in flight) — the working moon. */
+  working?: boolean;
   /** True while the empty-composer first prompt is being created + submitted.
    *  Drives the empty-session "starting conversation…" loading state. */
   starting?: boolean;
@@ -894,7 +900,9 @@ watch(
 );
 
 watch(
-  () => props.running,
+  // Settle the scroll-follow when the conversation's turn finishes (not when
+  // background-only work ends — the transcript didn't move then).
+  () => props.turnActive,
   async (now, was) => {
     if (now || !was) return;
     if (!following.value && !hasUserActionFollowLock()) return;
@@ -1166,7 +1174,7 @@ function handleInterrupt(): void {
 }
 
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && (props.running || props.sending)) {
+  if (event.key === 'Escape' && (props.running || props.working)) {
     event.preventDefault();
     handleInterrupt();
   }
@@ -1394,8 +1402,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :key="fileReloadKey ?? 'no-session'"
               :turns="turns"
               :approvals="approvals"
-              :running="running"
-              :sending="sending"
+              :turn-active="turnActive"
+              :working="working"
               :fast-moon="fastMoon"
               :session-loading="sessionLoading"
               :compaction="compaction"

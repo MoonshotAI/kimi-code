@@ -50,17 +50,18 @@ const props = withDefaults(
     turns: ChatTurn[];
     approvals?: { approvalId: string; block: ApprovalBlock; agentName?: string }[];
     /**
-     * True while the active session is busy (activity !== idle). Used to mark the
-     * last assistant turn as actively streaming so its Markdown animates the
-     * smooth typewriter/fade reveal; all other turns render statically.
+     * True while the MAIN agent has a turn in flight (not merely "session
+     * busy" — background subagents and BTW side chats don't set this). Marks
+     * the last assistant turn as actively streaming so its Markdown animates
+     * the smooth typewriter/fade reveal; all other turns render statically.
      */
-    running?: boolean;
+    turnActive?: boolean;
     /**
-     * True immediately after the user hits send and before the assistant reply
-     * starts streaming. Renders a moon-spinner placeholder at the end of the
-     * transcript so the user knows the request is in flight.
+     * The main conversation has an unfinished prompt (submitted, or a main
+     * turn in flight). Renders the moon-spinner placeholder at the end of the
+     * transcript and gates "edit & resend" on the last user message.
      */
-    sending?: boolean;
+    working?: boolean;
     /** Switches the CSS-only working moon to the faster visual cadence. */
     fastMoon?: boolean;
     /**
@@ -110,8 +111,8 @@ const props = withDefaults(
   }>(),
   {
     approvals: () => [],
-    running: false,
-    sending: false,
+    turnActive: false,
+    working: false,
     fastMoon: false,
     compaction: null,
     hasMoreMessages: false,
@@ -170,21 +171,20 @@ watch(
 );
 
 // The id of the turn that is actively streaming: the last assistant turn while
-// the session is running. Its Markdown renders with `streaming` (final=false);
-// every other turn renders statically.
+// the main turn is in flight. Its Markdown renders with `streaming`
+// (final=false); every other turn renders statically.
 const streamingTurnId = computed<string | null>(() => {
-  if (!props.running || props.turns.length === 0) return null;
+  if (!props.turnActive || props.turns.length === 0) return null;
   const last = props.turns.at(-1)!;
   return last.role === 'assistant' ? last.id : null;
 });
 
-// Trailing "working" moon. `sending` is an optimistic flag set on submit and
-// kept until the session goes idle, so during a normal turn the moon shows the
-// whole time. After a page refresh that in-memory flag is gone, so fall back to
-// `running` (restored from the session's live status) — otherwise a refresh mid
-// stream froze the transcript with no "still working" indicator. Either flag
-// shows the same moon footer.
-const showWorking = computed(() => props.sending || props.running);
+// Trailing "working" moon: shown while the main conversation has an unfinished
+// prompt. `working` is the union of the optimistic submit window and the main
+// turn's liveness (restored from the snapshot's inFlightTurn after a refresh);
+// background agents and BTW side chats never show here — the moon belongs to
+// the main conversation only.
+const showWorking = computed(() => props.working);
 
 const emit = defineEmits<{
   openFile: [target: FilePreviewRequest];
@@ -277,13 +277,12 @@ const lastUserTurnId = computed<string | null>(() => {
 });
 
 /** Whether to offer "edit & resend" on this turn: the latest user message, only
-    while the session is idle (not mid-reply) and it isn't a slash activation. */
+    while the conversation has nothing unfinished and it isn't a slash activation. */
 function canEditTurn(turn: ChatTurn): boolean {
   return (
     turn.role === 'user' &&
     turn.id === lastUserTurnId.value &&
-    !props.running &&
-    !props.sending &&
+    !props.working &&
     !turn.skillActivation &&
     !turn.pluginCommand
   );
@@ -656,9 +655,9 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
     <!-- Compaction in progress — body-sized moon activity notice -->
     <ActivityNotice v-if="compaction" :label="t('conversation.compacting')" />
 
-    <!-- Working placeholder — moon spinner while the turn is in flight (covers
-         a page refresh mid-stream, where `sending` was lost but the session is
-         still running). -->
+    <!-- Working placeholder — moon spinner while the conversation has an
+         unfinished prompt (covers a page refresh mid-stream, where the
+         optimistic submit flag was lost but the main turn is still in flight). -->
     <div v-if="showWorking" class="sending-placeholder">
       <MoonSpinner :fast="fastMoon" />
     </div>

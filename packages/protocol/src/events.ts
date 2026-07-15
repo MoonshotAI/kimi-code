@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { ToolInputDisplaySchema, type ToolInputDisplay } from './display';
 import { messageContentSchema, type MessageContent } from './message';
-import { sessionSchema, sessionStatusSchema, type Session, type SessionStatus } from './session';
+import { sessionSchema, type Session } from './session';
 import { isoDateTimeSchema } from './time';
 import { configResponseSchema, type ConfigResponse } from './rest/config';
 import {
@@ -231,12 +231,6 @@ export type KimiErrorCode =
   | 'session.question_handler_error'
   | 'session.init_failed'
   | 'agent.not_found'
-  | 'activity.agent_busy'
-  | 'activity.cancelling'
-  | 'activity.disposing'
-  | 'activity.disposed'
-  | 'activity.initializing'
-  | 'activity.session_rejected'
   | 'turn.agent_busy'
   | 'goal.already_exists'
   | 'goal.not_found'
@@ -519,10 +513,23 @@ export interface WorkspaceDeletedEvent {
   readonly root: string;
 }
 
+export interface SessionWorkChangedEvent {
+  readonly type: 'event.session.work_changed';
+  readonly busy: boolean;
+  /** Outcome of the MAIN agent's most recent turn, when one has ended since
+   *  activation (see `Session.last_turn_reason`). */
+  readonly last_turn_reason?: 'completed' | 'cancelled' | 'failed';
+}
+
+/**
+ * @deprecated Replaced by {@link SessionWorkChangedEvent}: awaiting states
+ * ride the approval/question channels and outcomes ride turn.ended. Kept so
+ * pre-change journals still parse during replay.
+ */
 export interface SessionStatusChangedEvent {
   readonly type: 'event.session.status_changed';
-  readonly status: SessionStatus;
-  readonly previous_status: SessionStatus;
+  readonly status: 'idle' | 'running' | 'awaiting_approval' | 'awaiting_question' | 'aborted';
+  readonly previous_status: 'idle' | 'running' | 'awaiting_approval' | 'awaiting_question' | 'aborted';
   readonly current_prompt_id?: string;
 }
 
@@ -877,6 +884,7 @@ export type AgentEvent =
   | WorkspaceCreatedEvent
   | WorkspaceUpdatedEvent
   | WorkspaceDeletedEvent
+  | SessionWorkChangedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | ModelCatalogChangedEvent
@@ -1135,12 +1143,6 @@ export const kimiErrorCodeSchema = z.enum([
   'session.question_handler_error',
   'session.init_failed',
   'agent.not_found',
-  'activity.agent_busy',
-  'activity.cancelling',
-  'activity.disposing',
-  'activity.disposed',
-  'activity.initializing',
-  'activity.session_rejected',
   'turn.agent_busy',
   'goal.already_exists',
   'goal.not_found',
@@ -1389,10 +1391,17 @@ export const workspaceDeletedEventSchema = z.object({
   root: z.string().min(1),
 }) satisfies z.ZodType<WorkspaceDeletedEvent>;
 
+export const sessionWorkChangedEventSchema = z.object({
+  type: z.literal('event.session.work_changed'),
+  busy: z.boolean(),
+  last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
+}) satisfies z.ZodType<SessionWorkChangedEvent>;
+
+/** @deprecated See {@link SessionStatusChangedEvent}. */
 export const sessionStatusChangedEventSchema = z.object({
   type: z.literal('event.session.status_changed'),
-  status: sessionStatusSchema,
-  previous_status: sessionStatusSchema,
+  status: z.enum(['idle', 'running', 'awaiting_approval', 'awaiting_question', 'aborted']),
+  previous_status: z.enum(['idle', 'running', 'awaiting_approval', 'awaiting_question', 'aborted']),
   current_prompt_id: z.string().min(1).optional(),
 }) satisfies z.ZodType<SessionStatusChangedEvent>;
 
@@ -1719,6 +1728,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceCreatedEventSchema,
   workspaceUpdatedEventSchema,
   workspaceDeletedEventSchema,
+  sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
   modelCatalogChangedEventSchema,
   goalUpdatedEventSchema,

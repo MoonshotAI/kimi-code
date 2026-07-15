@@ -17,7 +17,6 @@ import type {
   AppSessionCursor,
   AppSessionRuntimeStatus,
   AppSessionSnapshot,
-  AppSessionStatus,
   AppTask,
   AppTaskStatus,
   AppTerminal,
@@ -52,7 +51,6 @@ import {
   toWireApprovalResponse,
   toWirePromptSubmission,
   toWireQuestionResponse,
-  toWireSessionStatus,
   toAppWorkspace,
   wireEventSeq,
   wireEventSessionId,
@@ -347,7 +345,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
 
   async listSessions(
     input?: PageRequest & {
-      status?: AppSessionStatus;
+      busy?: boolean;
       workspaceId?: string;
       includeArchive?: boolean;
       archivedOnly?: boolean;
@@ -358,7 +356,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       before_id: input?.beforeId,
       after_id: input?.afterId,
       page_size: input?.pageSize,
-      status: input?.status ? toWireSessionStatus(input.status) : undefined,
+      busy: input?.busy,
       include_archive: input?.includeArchive,
       archived_only: input?.archivedOnly,
       exclude_empty: input?.excludeEmpty,
@@ -565,7 +563,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       };
       traceKeyEvent('session:snapshot:accepted', {
         sessionId,
-        status: snapshot.session.status,
+        busy: snapshot.session.busy,
         seq: snapshot.asOfSeq,
         messageCount: snapshot.messages.length,
         durationMs: Date.now() - startedAt,

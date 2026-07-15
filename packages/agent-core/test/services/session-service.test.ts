@@ -414,7 +414,7 @@ describe('toProtocolSession adapter', () => {
       updatedAt: 0,
     };
     const proto = toProtocolSession(summary);
-    expect(proto.status).toBe('idle');
+    expect(proto.busy).toBe(false);
     expect(proto.usage).toEqual(emptySessionUsage());
     expect(proto.permission_rules).toEqual([]);
     expect(proto.message_count).toBe(0);
@@ -589,9 +589,9 @@ describe('SessionService.list', () => {
   });
 
   it('status filter applies post-hydration', async () => {
-    const empty = await svc.list({ status: 'running' });
+    const empty = await svc.list({ busy: true });
     expect(empty.items).toEqual([]);
-    const idle = await svc.list({ status: 'idle' });
+    const idle = await svc.list({ busy: false });
     expect(idle.items.length).toBe(3);
   });
 
@@ -947,7 +947,7 @@ describe('SessionService.undo', () => {
       { type: 'text', text: 'first prompt' },
     ]);
     expect(result.status).toMatchObject({
-      status: 'idle',
+      busy: false,
       model: 'kimi-k2',
       thinking_level: 'auto',
       permission: 'manual',
@@ -1033,89 +1033,68 @@ describe('SessionService per-domain event listeners (Phase C)', () => {
   });
 });
 
-describe('SessionService status lifecycle', () => {
-  it('getStatus returns live status', async () => {
+describe('SessionService busy lifecycle', () => {
+  it('getStatus reports no live work for a fresh session', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/status' } });
     const status = await svc.getStatus(session.id);
-    expect(status.status).toBe('idle');
+    expect(status.busy).toBe(false);
   });
 
-  it('patches created session status to idle', async () => {
+  it('patches created session to not busy', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/status2' } });
-    expect(session.status).toBe('idle');
+    expect(session.busy).toBe(false);
   });
 
-  it('turn.started moves status to running and emits status_changed', async () => {
+  it('turn.started marks the session busy and emits work_changed', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/running' } });
     eventBus.eventService.publish({
       type: 'turn.started',
       sessionId: session.id,
     } as unknown as Event);
-    expect((await svc.get(session.id)).status).toBe('running');
+    expect((await svc.get(session.id)).busy).toBe(true);
     expect(eventBus.events).toContainEqual(expect.objectContaining({
-      type: 'event.session.status_changed',
+      type: 'event.session.work_changed',
       sessionId: session.id,
-      previous_status: 'idle',
-      status: 'running',
+      busy: true,
     }));
   });
 
-  it('turn.ended with success moves status back to idle', async () => {
-    const session = await svc.create({ metadata: { cwd: '/tmp/ended' } });
-    eventBus.eventService.publish({ type: 'turn.started', sessionId: session.id } as unknown as Event);
-    eventBus.eventService.publish({ type: 'turn.ended', sessionId: session.id, reason: 'success' } as unknown as Event);
-    expect((await svc.get(session.id)).status).toBe('idle');
+  it('turn.ended marks the session not busy, whatever the reason', async () => {
+    for (const reason of ['success', 'failed', 'blocked']) {
+      const session = await svc.create({ metadata: { cwd: `/tmp/ended-${reason}` } });
+      eventBus.eventService.publish({ type: 'turn.started', sessionId: session.id } as unknown as Event);
+      eventBus.eventService.publish({ type: 'turn.ended', sessionId: session.id, reason } as unknown as Event);
+      expect((await svc.get(session.id)).busy).toBe(false);
+    }
   });
 
-  it('turn.ended with failed moves status to aborted', async () => {
-    const session = await svc.create({ metadata: { cwd: '/tmp/aborted' } });
-    eventBus.eventService.publish({ type: 'turn.started', sessionId: session.id } as unknown as Event);
-    eventBus.eventService.publish({ type: 'turn.ended', sessionId: session.id, reason: 'failed' } as unknown as Event);
-    expect((await svc.get(session.id)).status).toBe('aborted');
-  });
-
-  it('turn.ended with blocked moves status to aborted', async () => {
-    const session = await svc.create({ metadata: { cwd: '/tmp/blocked' } });
-    eventBus.eventService.publish({ type: 'turn.started', sessionId: session.id } as unknown as Event);
-    eventBus.eventService.publish({ type: 'turn.ended', sessionId: session.id, reason: 'blocked' } as unknown as Event);
-    expect((await svc.get(session.id)).status).toBe('aborted');
-  });
-
-  it('prompt.submitted moves status to running when a current prompt exists', async () => {
+  it('prompt.submitted marks the session busy when a current prompt exists', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/prompt' } });
     promptStub.activePromptIds.set(session.id, 'p1');
     eventBus.eventService.publish({ type: 'prompt.submitted', sessionId: session.id } as unknown as Event);
-    expect((await svc.get(session.id)).status).toBe('running');
+    expect((await svc.get(session.id)).busy).toBe(true);
   });
 
-  it('pending approval yields awaiting_approval', async () => {
+  it('a pending approval keeps the session busy', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/approval' } });
     approvalStub.pending.set(session.id, [{ id: 'a1' }]);
     eventBus.eventService.publish({ type: 'event.approval.requested', sessionId: session.id } as unknown as Event);
-    expect((await svc.get(session.id)).status).toBe('awaiting_approval');
+    expect((await svc.get(session.id)).busy).toBe(true);
   });
 
-  it('pending question yields awaiting_question', async () => {
+  it('a pending question keeps the session busy', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/question' } });
     questionStub.pending.set(session.id, [{ id: 'q1' }]);
     eventBus.eventService.publish({ type: 'event.question.requested', sessionId: session.id } as unknown as Event);
-    expect((await svc.get(session.id)).status).toBe('awaiting_question');
+    expect((await svc.get(session.id)).busy).toBe(true);
   });
 
-  it('approval takes precedence over active prompt', async () => {
-    const session = await svc.create({ metadata: { cwd: '/tmp/priority' } });
-    promptStub.activePromptIds.set(session.id, 'p1');
-    approvalStub.pending.set(session.id, [{ id: 'a1' }]);
-    eventBus.eventService.publish({ type: 'prompt.submitted', sessionId: session.id } as unknown as Event);
-    expect((await svc.get(session.id)).status).toBe('awaiting_approval');
-  });
-
-  it('does not emit status_changed when status is unchanged', async () => {
+  it('does not emit work_changed when busy is unchanged', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/nochange' } });
-    const statusChangedCount = (e: unknown) =>
-      (e as { type?: string }).type === 'event.session.status_changed';
-    const before = eventBus.events.filter(statusChangedCount).length;
+    const workChangedCount = (e: unknown) =>
+      (e as { type?: string }).type === 'event.session.work_changed';
+    const before = eventBus.events.filter(workChangedCount).length;
     eventBus.eventService.publish({ type: 'prompt.completed', sessionId: session.id } as unknown as Event);
-    expect(eventBus.events.filter(statusChangedCount).length).toBe(before);
+    expect(eventBus.events.filter(workChangedCount).length).toBe(before);
   });
 });

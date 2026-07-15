@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  IAgentActivityView,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentRPCService,
   IEventService,
   IPluginService,
-  ISessionActivity,
   ISessionIndex,
   ISessionLifecycleService,
   ISessionMetadata,
@@ -274,11 +274,15 @@ describe('server-v2 /api/v2 RPC', () => {
     expect(read2.body.data.title).toBe('renamed');
   });
 
-  it('returns session status', async () => {
+  it('reads agent activity state', async () => {
     const id = await createSession(home as string);
-    const { body } = await call<string>('POST', rpc('session', ISessionActivity, 'status', { sid: id }));
+    await createMainAgent(id);
+    const { body } = await call<{ lifecycle: string }>(
+      'POST',
+      rpc('agent', IAgentActivityView, 'state', { sid: id, aid: 'main' }),
+    );
     expect(body.code).toBe(0);
-    expect(['idle', 'running', 'awaiting_approval', 'awaiting_question']).toContain(body.data);
+    expect(body.data.lifecycle).toBe('ready');
   });
 
   it('archives a session', async () => {

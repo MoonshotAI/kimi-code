@@ -67,7 +67,7 @@ async function makeFixtureAsync(opts?: { cacheLimit?: number }): Promise<Fixture
       [ISessionIndex, { get: async (sid: string) => index.get(sid) }],
       [IWorkspaceRegistry, { get: async (ws: string) => workspaces.get(ws) }],
       // Cold by default — no live handle.
-      [ISessionLifecycleService, { get: () => undefined }],
+      [ISessionLifecycleService, { get: () => undefined, hasBusyAgents: () => false }],
     ]),
   };
   const broadcaster = { seq: 0, epoch: 'ep_unit', inFlightTurn: null };
@@ -160,7 +160,7 @@ describe('SnapshotReader.read', () => {
     await seedSession(f, 'sess_empty');
     const snap = await f.reader.read('sess_empty');
     expect(snap.session.id).toBe('sess_empty');
-    expect(snap.session.status).toBe('idle');
+    expect(snap.session.busy).toBe(false);
     expect(snap.messages.items).toEqual([]);
     expect(snap.messages.has_more).toBe(false);
     expect(snap.in_flight_turn).toBeNull();

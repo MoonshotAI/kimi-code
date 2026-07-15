@@ -237,7 +237,6 @@ describe('useModelProviderState thinking on model selection', () => {
       refreshSessionStatus: vi.fn().mockResolvedValue(undefined),
       persistSessionProfile: vi.fn().mockResolvedValue(undefined),
       activity: computed(() => 'idle'),
-      inFlightPromptSessions: new Set(),
       saveThinkingToStorage: vi.fn(),
       updateSession: (id, update) => {
         state.sessions = state.sessions.map((session) =>

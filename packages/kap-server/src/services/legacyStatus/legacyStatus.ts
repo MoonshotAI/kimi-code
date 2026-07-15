@@ -86,7 +86,7 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
 export function toLegacyPhase(state: AgentActivityState): AgentPhase | undefined {
   const { lifecycle, turn, lastTurn } = state;
 
-  if (turn === undefined && (lifecycle === 'ready' || lifecycle === 'initializing')) {
+  if (turn === undefined && lifecycle === 'ready') {
     if (lastTurn !== undefined && lifecycle === 'ready') {
       return {
         kind: 'ended',

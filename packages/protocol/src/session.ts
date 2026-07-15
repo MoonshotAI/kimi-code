@@ -7,16 +7,6 @@ import {
 import { isoDateTimeSchema } from './time';
 import { workspaceIdSchema } from './workspace';
 
-export const sessionStatusSchema = z.enum([
-  'idle',
-  'running',
-  'awaiting_approval',
-  'awaiting_question',
-  'aborted',
-]);
-
-export type SessionStatus = z.infer<typeof sessionStatusSchema>;
-
 export const sessionUsageSchema = z.object({
   input_tokens: z.number().int().nonnegative(),
   output_tokens: z.number().int().nonnegative(),
@@ -91,7 +81,16 @@ export const sessionSchema = z.object({
   title: z.string(),
   created_at: isoDateTimeSchema,
   updated_at: isoDateTimeSchema,
-  status: sessionStatusSchema,
+  /** Any agent in the session holds an active turn (the activity kernel's
+   *  lease books). Replaces the derived five-value `status` enum: awaiting
+   *  states ride the approval/question channels, and turn outcomes ride
+   *  turn.ended — clients compose their own presentation from the facts. */
+  busy: z.boolean(),
+  /** Outcome of the MAIN agent's most recent turn, when the session is live
+   *  and a turn has ended since activation. A fact, not a state: clients
+   *  decide how to present it (e.g. an "aborted" tag when `!busy` and the
+   *  reason is cancelled/failed). */
+  last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
   archived: z.boolean().optional(),
   current_prompt_id: z.string().min(1).optional(),
   /** Text of the most recent user prompt, for search/preview. Absent for empty sessions. */

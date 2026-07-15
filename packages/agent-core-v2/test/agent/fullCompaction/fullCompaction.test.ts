@@ -1037,7 +1037,9 @@ describe('FullCompaction', () => {
         },
       }),
     );
-    const errorEvents = ctx.newEvents();
+    const errorEvents = (ctx.newEvents() as readonly { event?: string }[]).filter(
+      (entry) => entry.event === 'error',
+    );
     expect(errorEvents).toHaveLength(1);
     expect(errorEvents[0]).toMatchObject({
       event: 'error',
@@ -1047,6 +1049,31 @@ describe('FullCompaction', () => {
       }),
     });
     await ctx.expectResumeMatches();
+  });
+
+  it('aborts an in-flight compaction when the agent is disposed', async () => {
+    const started = deferred<void>();
+    let signal: AbortSignal | undefined;
+    const generate: GenerateFn = async (_chat, _systemPrompt, _tools, _history, _callbacks, options) => {
+      signal = options?.signal;
+      started.resolve();
+      // Never settles — the compaction stays in flight until disposed.
+      return new Promise(() => {});
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+
+    const pending = ctx.rpc.beginCompaction({}).catch(() => {});
+    await started.promise;
+    await ctx.dispose();
+
+    expect(signal?.aborted).toBe(true);
+    await pending;
   });
 
   it('names truncated compaction responses when retries are exhausted', async () => {

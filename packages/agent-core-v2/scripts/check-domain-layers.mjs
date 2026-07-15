@@ -132,7 +132,11 @@ const DOMAIN_LAYER = new Map([
   ['modelCatalog', 3],
   ['agentProfileCatalog', 3],
   // L4 — agent behaviour
-  ['activity', 4],
+  // `activityView` is the Agent-scope read model folding the agent's own event
+  // bus into the activity projection (`agent.activity.updated`); it owns no
+  // authoritative state (turn mechanics live in `loop`, admission/drain in
+  // `sessionLifecycle`, background bookkeeping in `agentLifecycle`).
+  ['activityView', 4],
   ['context', 4],
   ['message', 4],
   ['injection', 4],
@@ -308,6 +312,9 @@ const ALLOWED_EXCEPTIONS = new Set([
   'permissionPolicy>plan',
   'permissionPolicy>swarm',
   'skill>loop',
+  // `activityView` seeds its background-task slice once from the agent's task
+  // registry (a read, never a write) — everything else it folds from events.
+  'activityView>agentTask',
   'swarm>agentLifecycle',
   // `swarm` (L4) drives sub-agent runs through the `subagent` domain (L6) —
   // same shape as the `swarm>agentLifecycle` spawn exception above.

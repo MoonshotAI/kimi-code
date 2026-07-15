@@ -42,8 +42,10 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { IAgentScopeContext, makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
-import { IAgentActivityService, ISessionActivityKernel } from '#/activity/activity';
+import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { abortError } from '#/_base/utils/abort';
 import { IAgentLoopContinuationService } from '#/agent/loop/loopContinuation';
 import { IAgentStepRetryService } from '#/agent/stepRetry/stepRetry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -97,7 +99,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @IConfigService private readonly config: IConfigService,
     @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
-    @ISessionActivityKernel private readonly activityKernel: ISessionActivityKernel,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
   ) {
     super();
@@ -137,7 +138,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       const existing = this.handles.get(opts.agentId);
       if (existing !== undefined) return existing;
     }
-    this.assertCanCreate();
     const agentId = opts.agentId ?? `agent-${nextAgentId++}`;
     const promise = this.doCreate(agentId, opts);
     this.creating.set(agentId, promise);
@@ -186,11 +186,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       await mcpReady;
       await wire.restore();
       await this.bindBootstrap(handle, opts);
-      // Bootstrap (profile binding and the force-instantiated observer
-      // services) is complete: drive the activity kernel `initializing → idle`
-      // so the agent can admit turns. Until this point `begin` rejects with
-      // `activity.initializing`.
-      handle.accessor.get(IAgentActivityService).markReady();
       return handle;
     } catch (error) {
       // Startup failed: drop the half-built agent so the next `create` starts
@@ -201,16 +196,6 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       } catch { }
       this.onDidDisposeEmitter.fire(agentId);
       throw error;
-    }
-  }
-
-  private assertCanCreate(): void {
-    if (!this.activityKernel.canAccept('agent.create')) {
-      throw new Error2(
-        ErrorCodes.ACTIVITY_SESSION_REJECTED,
-        `Session is ${this.activityKernel.lane()}; agent creation rejected`,
-        { details: { lane: this.activityKernel.lane() } },
-      );
     }
   }
 
@@ -244,6 +229,10 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     handle.accessor.get(IAgentTaskService);
     handle.accessor.get(IAgentUserToolService);
     handle.accessor.get(IAgentFullCompactionService);
+    // The activity view publishes `agent.activity.updated` from its constructor
+    // subscriptions; without an explicit resolve nothing injects it and the
+    // wire would never see the projection.
+    handle.accessor.get(IAgentActivityView);
   }
 
   private async bindBootstrap(
@@ -316,9 +305,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (handle === undefined) return;
     this.handles.delete(agentId);
     await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
-    const activity = handle.accessor.get(IAgentActivityService);
-    activity.beginDisposal();
-    await activity.settled();
+    // Drain: cancel the active turn and wait for the loop to settle before
+    // releasing the scope; scope disposal then tears down the agent's
+    // services (e.g. an in-flight compaction aborts itself).
+    const loop = handle.accessor.get(IAgentLoopService);
+    loop.cancel(undefined, abortError('Agent removed'));
+    await loop.settled();
     handle.dispose();
     this.onDidDisposeEmitter.fire(agentId);
   }

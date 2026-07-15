@@ -14,7 +14,6 @@ import {
   IAgentLifecycleService,
   IAgentPromptService,
   ILogService,
-  ISessionActivity,
   ISessionInteractionService,
   ISessionContext,
   ISessionLifecycleService,
@@ -73,12 +72,14 @@ describe('server-v2 snapshot route enrichment', () => {
         ],
         [IAgentLifecycleService, { get: () => main }],
         [ISessionInteractionService, { listPending: () => [] }],
-        [ISessionActivity, { status: () => 'idle' }],
       ]),
     };
     const core = {
       accessor: fakeAccessor([
-        [ISessionLifecycleService, { resume: async () => session }],
+        [
+          ISessionLifecycleService,
+          { resume: async () => session, get: () => undefined, hasBusyAgents: () => false },
+        ],
         [IWorkspaceRegistry, { get: async () => ({ root: '/workspace' }) }],
       ]),
     };

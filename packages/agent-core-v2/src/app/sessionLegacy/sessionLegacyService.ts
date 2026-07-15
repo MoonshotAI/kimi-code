@@ -33,7 +33,8 @@ import { IModelResolver } from '#/app/model/modelResolver';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import { ISessionActivity } from '#/session/sessionActivity/sessionActivity';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
@@ -154,7 +155,6 @@ export class SessionLegacyService implements ISessionLegacyService {
     sessionId: string,
     agent: IAgentScopeHandle,
   ): Promise<SessionStatusResponse> {
-    const session = this.lifecycle.get(sessionId);
     const profile = agent.accessor.get(IAgentProfileService);
     const contextSize = agent.accessor.get(IAgentContextSizeService);
     const permission = agent.accessor.get(IAgentPermissionModeService);
@@ -169,7 +169,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     const planData = await plan.status();
 
     return {
-      status: session?.accessor.get(ISessionActivity).status() ?? 'idle',
+      busy: this.readBusy(sessionId),
       model: model === '' ? undefined : model,
       thinking_level: profile.getEffectiveThinkingLevel(),
       permission: permission.mode,
@@ -179,6 +179,21 @@ export class SessionLegacyService implements ISessionLegacyService {
       max_context_tokens: maxTokens,
       context_usage: maxTokens > 0 ? tokens / maxTokens : 0,
     };
+  }
+
+  /**
+   * The session's busy fact, derived on demand from the agents' activity
+   * views (any active turn or background task). Nothing is booked at session
+   * level — a cold session is simply not busy.
+   */
+  private readBusy(sessionId: string): boolean {
+    const handle = this.lifecycle.get(sessionId);
+    if (handle === undefined) return false;
+    for (const agent of handle.accessor.get(IAgentLifecycleService).list()) {
+      const state = agent.accessor.get(IAgentActivityView).state();
+      if (state.turn !== undefined || state.background.length > 0) return true;
+    }
+    return false;
   }
 
   async goal(sessionId: string): Promise<GoalSnapshot | null> {

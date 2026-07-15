@@ -8,7 +8,7 @@ function makeSession(id: string, updatedAt: string): AppSession {
     title: id,
     createdAt: updatedAt,
     updatedAt,
-    status: 'idle',
+    busy: false,
     archived: false,
     cwd: '/workspace',
     model: 'kimi-code',
@@ -43,10 +43,38 @@ function makeSubagentTask(id: string, sessionId: string): AppTask {
     sessionId,
     kind: 'subagent',
     description: 'subagent task',
-    status: 'running',
+    busy: true,
     createdAt: '2026-01-01T00:00:00.000Z',
   };
 }
+
+describe('reduceAppEvent turnActiveChanged', () => {
+  it('sets and clears the per-session main-turn liveness flag', () => {
+    const state = createInitialState();
+    const started = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: 's1', active: true },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(started.turnActiveBySession['s1']).toBe(true);
+    const ended = reduceAppEvent(
+      started,
+      { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'completed' },
+      { sessionId: 's1', seq: 2 },
+    );
+    expect(ended.turnActiveBySession['s1']).toBeUndefined();
+  });
+
+  it('drops the flag with the rest of a deleted session', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      turnActiveBySession: { s1: true },
+    };
+    const next = reduceAppEvent(state, { type: 'sessionDeleted', sessionId: 's1' }, { sessionId: 's1', seq: 1 });
+    expect(next.turnActiveBySession['s1']).toBeUndefined();
+  });
+});
 
 describe('reduceAppEvent messageCreated', () => {
   it('bumps the session updatedAt so it floats to the top of the sidebar', () => {

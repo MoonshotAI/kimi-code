@@ -41,13 +41,6 @@ export type AppWarning = string | AppNotice;
 // Session
 // ---------------------------------------------------------------------------
 
-export type AppSessionStatus =
-  | 'idle'
-  | 'running'
-  | 'awaitingApproval'
-  | 'awaitingQuestion'
-  | 'aborted';
-
 export interface AppSessionUsage {
   inputTokens: number;
   outputTokens: number;
@@ -64,7 +57,13 @@ export interface AppSession {
   title: string;
   createdAt: string;
   updatedAt: string;
-  status: AppSessionStatus;
+  /** Any agent in the session holds an active turn. Awaiting states ride the
+   *  approval/question channels; turn outcomes ride turn.ended. */
+  busy: boolean;
+  /** Outcome of the main agent's most recent turn (when the server reports
+   *  one). Presentation rule for the "aborted" tag:
+   *  `!busy && (cancelled | failed)`. */
+  lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   archived: boolean;
   currentPromptId?: string;
   /** Text of the most recent user prompt, for search/preview. */
@@ -412,7 +411,7 @@ export type AppEvent =
   | { type: 'workspaceDeleted'; workspaceId: string; root: string }
   | { type: 'sessionUpdated'; session: AppSession; changedFields: string[] }
   | { type: 'sessionDeleted'; sessionId: string }
-  | { type: 'sessionStatusChanged'; sessionId: string; status: AppSessionStatus; previousStatus: AppSessionStatus; currentPromptId?: string }
+  | { type: 'sessionWorkChanged'; sessionId: string; busy: boolean; lastTurnReason?: 'completed' | 'cancelled' | 'failed' }
   | { type: 'sessionMetaUpdated'; sessionId: string; title?: string; lastPrompt?: string }
   | { type: 'sessionUsageUpdated'; sessionId: string; usage: AppSessionUsage; model?: string; swarmMode?: boolean; planMode?: boolean }
   | { type: 'historyCompacted'; sessionId: string; beforeSeq: number; reason: string; summaryMessageId?: string }
@@ -449,6 +448,20 @@ export type AppEvent =
       kind?: 'line' | 'text';
     }
   | { type: 'taskCompleted'; sessionId: string; taskId: string; status: AppTaskStatus; outputPreview?: string; outputBytes?: number }
+  // Prompt-level lifecycle (distinct from turn-level): a prompt that never
+  // produced a turn — blocked by a pre-submit hook, or aborted while queued —
+  // gets no turn.ended and no session status flip, so these are the web layer's
+  // only signal to clear the per-session in-flight state. A normal turn's
+  // prompt.completed is a no-op for state (the status_changed ahead of it
+  // already finished the prompt).
+  | { type: 'promptCompleted'; sessionId: string; promptId: string; reason: string }
+  | { type: 'promptAborted'; sessionId: string; promptId: string }
+  // The MAIN agent's turn boundary — the single source of truth for "the main
+  // conversation has a turn in flight" (half of the working moon, and the
+  // streaming reveal). Deliberately NOT derived from session status: a
+  // background subagent or BTW side chat keeps the session busy but must not
+  // light up the main conversation's moon. `reason` rides on deactivation.
+  | { type: 'turnActiveChanged'; sessionId: string; active: boolean; reason?: string }
   | { type: 'goalUpdated'; sessionId: string; goal: AppGoal | null }
   | { type: 'configChanged'; changedFields: string[]; config: AppConfig }
   | {
@@ -662,7 +675,7 @@ export interface AppSessionWarning {
 export interface KimiWebApi {
   getHealth(): Promise<{ status: 'ok'; uptimeSec: number }>;
   getMeta(): Promise<{ serverVersion: string; serverId: string; startedAt: string; capabilities: Record<string, boolean>; openInApps: string[]; dangerousBypassAuth: boolean; backend: 'v1' | 'v2' }>;
-  listSessions(input?: PageRequest & { status?: AppSessionStatus; workspaceId?: string; includeArchive?: boolean; archivedOnly?: boolean; excludeEmpty?: boolean }): Promise<Page<AppSession>>;
+  listSessions(input?: PageRequest & { busy?: boolean; workspaceId?: string; includeArchive?: boolean; archivedOnly?: boolean; excludeEmpty?: boolean }): Promise<Page<AppSession>>;
   createSession(input: { title?: string; cwd?: string; model?: string; workspaceId?: string }): Promise<AppSession>;
   /** Fetch one session by id (deep links beyond the first listSessions page). */
   getSession(sessionId: string): Promise<AppSession>;

@@ -22,7 +22,7 @@ function createState(): ExtendedState {
         title: 'Session',
         createdAt: '2026-01-01T00:00:00.000Z',
         updatedAt: '2026-01-01T00:00:00.000Z',
-        status: 'idle' as const,
+        busy: false as const,
         archived: false,
         currentPromptId: null,
         cwd: '/workspace',

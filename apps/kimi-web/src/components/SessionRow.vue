@@ -214,12 +214,10 @@ defineExpose({ closeMenu });
 
       <!-- Pending tags — coloured per kind, shown even when the row isn't
            active. "Answer" = an askUserQuestion is waiting; "Approve" = a
-           permission request is waiting. The session's lifecycle status drives
-           the same tags as a fallback for background sessions whose pending
-           lists aren't loaded yet (status known, counts not). -->
+           permission request is waiting. -->
       <Tooltip :text="t('workspace.awaitingAnswerTitle')">
         <Badge
-          v-if="!renaming && (questionCount > 0 || session.status === 'awaitingQuestion')"
+          v-if="!renaming && questionCount > 0"
           variant="info"
           size="sm"
         >
@@ -228,17 +226,18 @@ defineExpose({ closeMenu });
       </Tooltip>
       <Tooltip :text="t('workspace.awaitingPermissionTitle')">
         <Badge
-          v-if="!renaming && (approvalCount > 0 || session.status === 'awaitingApproval')"
+          v-if="!renaming && approvalCount > 0"
           variant="warning"
           size="sm"
         >
           {{ t('workspace.awaitingPermission') }}
         </Badge>
       </Tooltip>
-      <!-- Aborted: a distinct, low-key error tag (not collapsed into idle). -->
+      <!-- Aborted: a distinct, low-key error tag — the session is quiet and
+           its last main turn was cancelled or failed. -->
       <Tooltip :text="t('workspace.abortedTitle')">
         <Badge
-          v-if="!renaming && session.status === 'aborted'"
+          v-if="!renaming && !session.busy && (session.lastTurnReason === 'cancelled' || session.lastTurnReason === 'failed')"
           variant="danger"
           size="sm"
         >

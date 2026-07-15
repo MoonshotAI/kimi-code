@@ -1,9 +1,4 @@
 // apps/kimi-web/src/types.ts
-import type { AppSessionStatus } from './api/types';
-
-/** Real session lifecycle status (5 states), surfaced verbatim to the UI so the
-    list can distinguish awaiting / aborted instead of collapsing to running|idle. */
-export type SessionStatus = AppSessionStatus;
 
 /** File content loaded for preview (text or base64-encoded binary). */
 export interface FileData {
@@ -28,12 +23,12 @@ export interface Session {
   id: string;
   title: string;
   time: string;
-  status: SessionStatus;
-  /** True only when the session should show a "working" spinner: it is
-      `running` AND has a real task in flight. Awaiting-input and aborted are
-      NOT busy, so the spinner no longer spins while the session waits on the
-      user. (Distinct from `status`, which is the lifecycle label.) */
+  /** True only when the session should show a "working" spinner: it has live
+      work AND a real task in flight. A BTW-only session is not busy. */
   busy: boolean;
+  /** Main agent's latest turn outcome — drives the "aborted" tag when the
+      session is quiet and the last turn was cancelled/failed. */
+  lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   /** ISO timestamp for recency-based filtering (e.g. default visible sessions). */
   updatedAt?: string;
   /** Text of the most recent user prompt, used by sidebar search. */

@@ -141,7 +141,7 @@ describe('isRenderEvent', () => {
     },
   );
 
-  it.each(['messageCreated', 'messageUpdated', 'sessionStatusChanged', 'approvalRequested', 'configChanged'])(
+  it.each(['messageCreated', 'messageUpdated', 'sessionWorkChanged', 'approvalRequested', 'configChanged'])(
     'treats %s as immediate',
     (type) => {
       expect(isRenderEvent({ type } as AppEvent)).toBe(false);

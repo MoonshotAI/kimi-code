@@ -175,18 +175,18 @@ describe('classifyFrame cron.fired', () => {
   });
 });
 
-// Session status has a single source: the daemon's event.session.status_changed
+// Session busy has a single source: the daemon's event.session.work_changed
 // (mapped by toAppEvent). The raw turn stream must NOT project a second
-// sessionStatusChanged per transition — when it did, every turn end fired
+// sessionWorkChanged per transition — when it did, every turn end fired
 // turn-end consumers (completion notification, sound) twice.
 describe('session status single-sourcing', () => {
-  it('turn.started projects no sessionStatusChanged', () => {
+  it('turn.started projects no sessionWorkChanged', () => {
     const projector = createAgentProjector();
     const events = projector.project('turn.started', { turnId: 1 }, 's1');
-    expect(events.some((e) => e.type === 'sessionStatusChanged')).toBe(false);
+    expect(events.some((e) => e.type === 'sessionWorkChanged')).toBe(false);
   });
 
-  it('turn.ended finalizes the message and usage but projects no sessionStatusChanged', () => {
+  it('turn.ended finalizes the message and usage but projects no sessionWorkChanged', () => {
     const projector = createAgentProjector();
     projector.project('turn.started', { turnId: 1 }, 's1');
     projector.project('turn.step.started', { turnId: 1, step: 1 }, 's1');
@@ -195,7 +195,7 @@ describe('session status single-sourcing', () => {
       { turnId: 1, reason: 'completed', durationMs: 123 },
       's1',
     );
-    expect(events.some((e) => e.type === 'sessionStatusChanged')).toBe(false);
+    expect(events.some((e) => e.type === 'sessionWorkChanged')).toBe(false);
     expect(events).toContainEqual(
       expect.objectContaining({ type: 'messageUpdated', status: 'completed', durationMs: 123 }),
     );
@@ -210,13 +210,80 @@ describe('session status single-sourcing', () => {
       thinkingText: '',
       runningTools: [],
     });
-    expect(events.some((e) => e.type === 'sessionStatusChanged')).toBe(false);
+    expect(events.some((e) => e.type === 'sessionWorkChanged')).toBe(false);
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'messageCreated',
         message: expect.objectContaining({ role: 'assistant' }),
       }),
     );
+  });
+});
+
+describe('main-turn liveness projection', () => {
+  it('turn.started marks the main conversation active', () => {
+    const projector = createAgentProjector();
+    const events = projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
+    expect(events).toContainEqual({ type: 'turnActiveChanged', sessionId: 's1', active: true });
+  });
+
+  it('turn.ended clears it and carries the reason', () => {
+    const projector = createAgentProjector();
+    projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
+    const events = projector.project('turn.ended', { agentId: 'main', turnId: 1, reason: 'cancelled' }, 's1');
+    expect(events).toContainEqual({
+      type: 'turnActiveChanged',
+      sessionId: 's1',
+      active: false,
+      reason: 'cancelled',
+    });
+  });
+
+  it('subagent turn boundaries never touch main-conversation liveness', () => {
+    const projector = createAgentProjector();
+    const started = projector.project('turn.started', { agentId: 'agent-2', turnId: 1 }, 's1');
+    const ended = projector.project('turn.ended', { agentId: 'agent-2', turnId: 1, reason: 'completed' }, 's1');
+    expect([...started, ...ended].some((e) => e.type === 'turnActiveChanged')).toBe(false);
+  });
+});
+
+describe('prompt-level lifecycle projection', () => {
+  it('prompt.completed carries promptId and reason for the sending-flag cleanup', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'prompt.completed',
+      { agentId: 'main', promptId: 'msg_1', reason: 'blocked', finishedAt: '2026-01-01T00:00:00Z' },
+      's1',
+    );
+    expect(events).toContainEqual({
+      type: 'promptCompleted',
+      sessionId: 's1',
+      promptId: 'msg_1',
+      reason: 'blocked',
+    });
+  });
+
+  it('prompt.aborted projects a promptAborted keyed by promptId', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'prompt.aborted',
+      { agentId: 'main', promptId: 'msg_2', abortedAt: '2026-01-01T00:00:00Z' },
+      's1',
+    );
+    expect(events).toContainEqual({ type: 'promptAborted', sessionId: 's1', promptId: 'msg_2' });
+  });
+
+  it('subagent-scoped prompt.aborted stays out of the main prompt channel', () => {
+    const projector = createAgentProjector();
+    const events = projector.project('prompt.aborted', { agentId: 'agent-2', promptId: 'msg_3' }, 's1');
+    expect(events.some((e) => e.type === 'promptAborted')).toBe(false);
+  });
+
+  it('classifyFrame routes prompt.aborted to the agent projector', () => {
+    expect(classifyFrame('prompt.aborted', { promptId: 'msg_1' })).toEqual({
+      route: 'agent',
+      agentType: 'prompt.aborted',
+    });
   });
 });
 

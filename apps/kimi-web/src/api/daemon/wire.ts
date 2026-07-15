@@ -66,7 +66,8 @@ export interface WireSession {
   title: string;
   created_at: string;
   updated_at: string;
-  status: WireSessionStatus;
+  busy: boolean;
+  last_turn_reason?: 'completed' | 'cancelled' | 'failed';
   archived: boolean;
   current_prompt_id?: string;
   /** Text of the most recent user prompt, for search/preview. */
@@ -677,6 +678,11 @@ interface WireEventBase<T extends string, P> {
 type WireEventSessionCreated = WireEventBase<'event.session.created', { session: WireSession }>;
 type WireEventSessionUpdated = WireEventBase<'event.session.updated', { session: WireSession; changed_fields: string[] }>;
 type WireEventSessionDeleted = WireEventBase<'event.session.deleted', { session_id: string }>;
+type WireEventSessionWorkChanged = WireEventBase<'event.session.work_changed', {
+  busy: boolean;
+  last_turn_reason?: 'completed' | 'cancelled' | 'failed';
+}>;
+/** @deprecated Old journals may still carry this; mapped onto busy for replay. */
 type WireEventSessionStatusChanged = WireEventBase<'event.session.status_changed', {
   status: WireSessionStatus;
   previous_status: WireSessionStatus;
@@ -828,6 +834,7 @@ export type WireEvent =
   | WireEventSessionCreated
   | WireEventSessionUpdated
   | WireEventSessionDeleted
+  | WireEventSessionWorkChanged
   | WireEventSessionStatusChanged
   | WireEventSessionUsageUpdated
   | WireEventSessionHistoryCompacted

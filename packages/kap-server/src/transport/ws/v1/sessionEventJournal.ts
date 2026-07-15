@@ -187,6 +187,10 @@ export class SessionEventJournal {
     if (this.flushPromise !== undefined) return;
     this.flushPromise = this.flushOnce().finally(() => {
       this.flushPromise = undefined;
+      // Appends that arrived while this flush was in flight are still pending:
+      // chain the next round instead of parking them until a later append (or
+      // `close()`) happens to trigger one.
+      if (this.pendingLines.length > 0) this.scheduleFlush();
     });
   }
 

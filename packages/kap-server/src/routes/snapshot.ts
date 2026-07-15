@@ -23,7 +23,6 @@ import {
   IAgentLifecycleService,
   IAgentPromptService,
   ILogService,
-  ISessionActivity,
   ISessionInteractionService,
   ISessionContext,
   ISessionLifecycleService,
@@ -53,7 +52,7 @@ import type { ISnapshotReader } from '../services/snapshot';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import { toWireApproval } from './approvals';
 import { toWireQuestion } from './questions';
-import { toWireSession } from './sessions';
+import { resolveSessionFacts, toWireSession } from './sessions';
 
 /** Most-recent messages included in the snapshot page. */
 const SNAPSHOT_MESSAGE_PAGE_SIZE = 100;
@@ -168,7 +167,7 @@ async function readViaLegacyAssembly(
   const session = toWireSession(
     { ...meta, workspaceId },
     cwd,
-    handle.accessor.get(ISessionActivity).status(),
+    resolveSessionFacts(core, sessionId),
   );
 
   // Messages — most recent page of the main agent's live history.

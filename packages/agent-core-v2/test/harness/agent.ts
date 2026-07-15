@@ -59,6 +59,7 @@ import {
   FileStorageService,
   InMemoryStorageService,
   AgentFullCompactionService,
+  IAgentActivityView,
   IAgentRPCService,
   IAppendLogStore,
   IFileSystemStorageService,
@@ -113,7 +114,6 @@ import {
   type ScopeSeed,
   type ServiceIdentifier,
 } from '#/index';
-import { IAgentActivityService, ISessionActivityKernel } from '#/activity/activity';
 import { IEventBus } from '#/app/event/eventBus';
 import { IWireService } from '#/wire/wire';
 import { WireService } from '#/wire/wireService';
@@ -1008,7 +1008,6 @@ export class AgentTestContext {
         'session',
       ),
     });
-    this.session.accessor.get(ISessionActivityKernel).markActive();
     const workspace = this.session.accessor.get(ISessionWorkspaceContext);
 
     this.agent = this.session.createChild(LifecycleScope.Agent, agentId, {
@@ -1071,7 +1070,9 @@ export class AgentTestContext {
     });
 
     this.initializeRestorableServices();
-    this.get(IAgentActivityService).markReady();
+    // Resolve the activity view so its constructor subscriptions publish
+    // `agent.activity.updated` — production ignites it in agentLifecycle.
+    this.get(IAgentActivityView);
 
     const eventBus = this.get(IEventBus);
     this.disposables.push(

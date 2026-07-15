@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import { type ISessionScopeHandle, LifecycleScope } from '#/_base/di/scope';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Event } from '#/_base/event';
@@ -26,13 +26,12 @@ import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import { SessionMcpService } from '#/session/mcp/sessionMcpService';
 import { ISessionSubagentService } from '#/session/subagent/subagent';
 import { SessionSubagentService } from '#/session/subagent/subagentService';
-import '#/activity/agentActivityService';
 import '#/agent/mcp/mcpService';
 import '#/wire/wireService';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import '#/agent/toolDedupe/toolDedupeService';
-import { IAgentActivityService, ISessionActivityKernel } from '#/activity/activity';
+import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import '#/app/event/eventBusService';
@@ -53,8 +52,6 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentMediaToolsRegistrar } from '#/agent/media/mediaTools';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
-
-import { stubSessionActivityKernel } from '../../activity/stubs';
 
 const noopLog = {
   _serviceBrand: undefined,
@@ -152,7 +149,12 @@ describe('AgentLifecycleService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IAppendLogStore, recordingAppendLog().store);
-    ix.stub(ISessionActivityKernel, stubSessionActivityKernel());
+    // Session admission gate: admit everything (the old `active` lane).
+    ix.stub(ISessionLifecycleService, {
+      canAccept: () => true,
+      admitWork: () => Disposable.None,
+      hasBusyAgents: () => false,
+    } as unknown as ISessionLifecycleService);
     stubBlobPassThrough(ix);
     registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
     atomicDocs = new Map();
@@ -249,6 +251,8 @@ describe('AgentLifecycleService', () => {
         onDidFinishStep: { register: () => ({ dispose: () => {} }) },
       },
       registerLoopErrorHandler: () => ({ dispose: () => {} }),
+      cancel: () => true,
+      settled: () => Promise.resolve(),
     } as unknown as IAgentLoopService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -499,7 +503,7 @@ describe('AgentLifecycleService', () => {
     expect(connectAll).toHaveBeenCalledTimes(1);
   });
 
-  it('exposes the in-flight handle and yields it idle after bootstrap', async () => {
+  it('exposes the in-flight handle and joins it after bootstrap', async () => {
     let releaseRegister!: () => void;
     let registerStarted!: () => void;
     const registerCalled = new Promise<void>((resolve) => {
@@ -516,7 +520,6 @@ describe('AgentLifecycleService', () => {
 
     const early = svc.get('main');
     expect(early).toBeDefined();
-    expect(early!.accessor.get(IAgentActivityService).isIdle()).toBe(false);
 
     const joined = svc.create({ agentId: 'main' });
     // doCreate awaits the wire-log seal before registerAgent, so the mock is
@@ -526,7 +529,6 @@ describe('AgentLifecycleService', () => {
     const handle = await joined;
     await create;
     expect(handle).toBe(early);
-    expect(handle!.accessor.get(IAgentActivityService).isIdle()).toBe(true);
   });
 
   it('ensureMainAgent returns one handle when calls start concurrently', async () => {

@@ -41,7 +41,7 @@ function createSession(): AppSession {
     title: 'Session',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
-    status: 'running',
+    busy: true,
     archived: false,
     currentPromptId: 'prompt_live',
     cwd: '/workspace',
@@ -82,7 +82,7 @@ function createState(): ExtendedState {
     queuedBySession: {},
     gitStatusBySession: {},
     promptIdBySession: { sess_1: 'prompt_stale' },
-    sendingBySession: {},
+    inFlightBySession: {},
     unreadBySession: {},
     authReady: true,
     defaultModel: null,
@@ -110,7 +110,6 @@ function createDeps(): UseWorkspaceStateDeps {
     modelProvider: {},
     pushOperationFailure: vi.fn(),
     activity: computed(() => 'running'),
-    inFlightPromptSessions: new Set(),
     sessionsKnownEmpty: new Set(),
     setSessions: vi.fn(),
     updateSession: vi.fn(),
@@ -1266,17 +1265,15 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
   it('clears a finished prompt from a terminal snapshot so the next send is immediate', async () => {
     const state = createState();
-    const inFlight = new Set(['sess_1']);
-    state.sendingBySession = { sess_1: true };
+    state.inFlightBySession = { sess_1: true };
     const ws = useWorkspaceState(
       state,
-      promptDeps({ inFlightPromptSessions: inFlight, activity: computed(() => 'idle') }),
+      promptDeps({ activity: computed(() => 'idle') }),
     );
 
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, status: 'idle' });
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
 
-    expect(inFlight.has('sess_1')).toBe(false);
-    expect(state.sendingBySession.sess_1).toBe(false);
+    expect(state.inFlightBySession.sess_1).toBe(false);
     expect(state.promptIdBySession.sess_1).toBeUndefined();
 
     await ws.sendPrompt('next');
@@ -1286,33 +1283,29 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
   it('keeps a genuinely running prompt in flight and queues the next send', async () => {
     const state = createState();
-    const inFlight = new Set(['sess_1']);
-    state.sendingBySession = { sess_1: true };
-    const ws = useWorkspaceState(state, promptDeps({ inFlightPromptSessions: inFlight }));
+    state.inFlightBySession = { sess_1: true };
+    const ws = useWorkspaceState(state, promptDeps());
 
     ws.handleSessionSnapshot('sess_1', {
       inFlightTurn: { turnId: 1, assistantText: '', thinkingText: '', runningTools: [] },
-      status: 'running',
+      busy: true,
     });
     await ws.sendPrompt('next');
 
-    expect(inFlight.has('sess_1')).toBe(true);
-    expect(state.sendingBySession.sess_1).toBe(true);
+    expect(state.inFlightBySession.sess_1).toBe(true);
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
     expect(state.queuedBySession.sess_1).toEqual([{ text: 'next', attachments: undefined }]);
   });
 
   it('rejects a snapshot when a new local prompt started during the request', async () => {
     const state = createState();
-    const inFlight = new Set<string>();
-    const ws = useWorkspaceState(state, promptDeps({ inFlightPromptSessions: inFlight }));
+    const ws = useWorkspaceState(state, promptDeps());
     const atRequest = ws.localTurnStartState('sess_1');
 
     await ws.submitPromptInternal('sess_1', 'fresh prompt');
 
     expect(ws.isLocalTurnSnapshotCurrent('sess_1', atRequest)).toBe(false);
-    expect(inFlight.has('sess_1')).toBe(true);
-    expect(state.sendingBySession.sess_1).toBe(true);
+    expect(state.inFlightBySession.sess_1).toBe(true);
   });
 
   it('rejects a snapshot requested while the local submit is still pending', async () => {

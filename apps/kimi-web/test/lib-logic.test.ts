@@ -704,7 +704,7 @@ describe('mergeSnapshotSubagents', () => {
       sessionId: 's1',
       kind: 'subagent',
       description: `task ${id}`,
-      status: 'running',
+      busy: true,
       createdAt: '2026-01-01T00:00:00.000Z',
       ...overrides,
     };
@@ -739,7 +739,7 @@ describe('mergeSnapshotSubagents', () => {
       sessionId: 's1',
       kind: 'bash',
       description: 'npm test',
-      status: 'running',
+      busy: true,
       createdAt: '2026-01-01T00:00:00.000Z',
     };
     const roster = [subagent('a1')];

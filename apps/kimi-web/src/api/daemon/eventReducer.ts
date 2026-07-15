@@ -66,6 +66,11 @@ export interface KimiClientState {
    *  live event won the race even when the goal entry stayed absent. */
   goalVersionBySession: Record<string, number>;
   lastSeqBySession: Record<string, number>;
+  /** MAIN-agent turn in flight, per session — set from the main agent's
+   *  turn.started/turn.ended boundary events and seeded from the snapshot's
+   *  (main-only) inFlightTurn. Half of the working moon; subagent turns never
+   *  reach the events that set this. */
+  turnActiveBySession: Record<string, boolean>;
   compactionBySession: Record<string, CompactionStatus>;
   config?: AppConfig | null;
   warnings: AppWarning[];
@@ -83,6 +88,7 @@ export function createInitialState(): KimiClientState {
     goalBySession: {},
     goalVersionBySession: {},
     lastSeqBySession: {},
+    turnActiveBySession: {},
     compactionBySession: {},
     warnings: [],
   };
@@ -110,6 +116,7 @@ function cloneState(s: KimiClientState): KimiClientState {
     goalBySession: { ...s.goalBySession },
     goalVersionBySession: { ...s.goalVersionBySession },
     lastSeqBySession: { ...s.lastSeqBySession },
+    turnActiveBySession: { ...s.turnActiveBySession },
     compactionBySession: { ...s.compactionBySession },
     warnings: [...s.warnings],
   };
@@ -282,6 +289,7 @@ export function reduceAppEvent(
       delete next.approvalsBySession[id];
       delete next.questionsBySession[id];
       delete next.lastSeqBySession[id];
+      delete next.turnActiveBySession[id];
       if (next.activeSessionId === id) {
         next.activeSessionId = undefined;
       }
@@ -289,14 +297,10 @@ export function reduceAppEvent(
     }
 
     // -------------------------------------------------------------------------
-    case 'sessionStatusChanged': {
+    case 'sessionWorkChanged': {
       next.sessions = next.sessions.map((s) => {
         if (s.id !== event.sessionId) return s;
-        return {
-          ...s,
-          status: event.status,
-          currentPromptId: event.currentPromptId,
-        };
+        return { ...s, busy: event.busy, lastTurnReason: event.lastTurnReason ?? s.lastTurnReason };
       });
       break;
     }
@@ -663,6 +667,24 @@ export function reduceAppEvent(
     case 'agentDelta':
     case 'agentTurnEnded':
       break;
+
+    // -------------------------------------------------------------------------
+    // Prompt-level lifecycle events drive the web layer's in-flight cleanup
+    // (see useKimiWebClient.processEvent), not reducer state. Advance seq
+    // silently.
+    case 'promptCompleted':
+    case 'promptAborted':
+      break;
+
+    // -------------------------------------------------------------------------
+    case 'turnActiveChanged': {
+      if (event.active) {
+        next.turnActiveBySession[event.sessionId] = true;
+      } else {
+        delete next.turnActiveBySession[event.sessionId];
+      }
+      break;
+    }
 
     case 'unknown': {
       // Distinguish no-op known events (sentinel _noop) from agent errors/warnings
