@@ -6,7 +6,7 @@
  * image dimensions are sniffed via the Rust native module when available.
  */
 
-import { tryNativeSniffImageDimensions } from '../../_base/native-tools';
+import { tryNativeSniffImageDimensions, tryNativeDetectFileType } from '../../_base/native-tools';
 
 export const MEDIA_SNIFF_BYTES = 512;
 
@@ -366,6 +366,12 @@ export function detectFileType(
   header?: Buffer | Uint8Array,
   type: DetectFileTypeMode = 'text',
 ): FileType {
+  if (header) {
+    const native = tryNativeDetectFileType(path, new Uint8Array(toBuffer(header)));
+    if (native) {
+      return { kind: native.kind, mimeType: native.mimeType };
+    }
+  }
   const suffix = getSuffix(path);
   let mediaHint: FileType | null = null;
   if (suffix in TEXT_MIME_BY_SUFFIX) {

@@ -306,3 +306,21 @@ export function tryNativeSniffImageDimensions(data: Uint8Array): NativeImageDime
   }
   return undefined;
 }
+
+export interface NativeFileTypeResult {
+  readonly kind: 'text' | 'image' | 'video' | 'unknown';
+  readonly mimeType: string;
+}
+
+export function tryNativeDetectFileType(path: string, header: Uint8Array): NativeFileTypeResult | undefined {
+  const m = getNativeModule();
+  if (m && (m as any).nativeDetectFileType) {
+    try {
+      const r = (m as any).nativeDetectFileType(path, new Uint8Array(header));
+      return r ? { kind: r.kind, mimeType: r.mimeType ?? r.mime_type } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}

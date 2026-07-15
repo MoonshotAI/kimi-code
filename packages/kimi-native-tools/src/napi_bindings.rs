@@ -400,6 +400,31 @@ pub fn native_is_sensitive_file_bytes(path: Uint8Array) -> bool {
     file_type::is_sensitive_file_bytes(&path)
 }
 
+/// Result of `native_detect_file_type`.
+#[napi(object)]
+pub struct FileTypeResult {
+    pub kind: String,
+    pub mime_type: String,
+}
+
+/// Detect file type from path and header bytes.
+///
+/// Uses file extension first, then falls back to magic-byte sniffing.
+/// @param path - File path (used for extension-based detection).
+/// @param header - First bytes of the file content (up to 512 bytes).
+#[napi]
+pub fn native_detect_file_type(path: String, header: Vec<u8>) -> FileTypeResult {
+    let kind = file_type::detect_file_type(std::path::Path::new(&path), &header);
+    let kind_str = match kind {
+        file_type::FileKind::Text => "text",
+        file_type::FileKind::Image => "image",
+        file_type::FileKind::Video => "video",
+        file_type::FileKind::Unknown => "unknown",
+    };
+    let mime = file_type::resolve_mime(std::path::Path::new(&path), &header);
+    FileTypeResult { kind: kind_str.to_string(), mime_type: mime }
+}
+
 // ============================================================================
 // Token estimation
 // ============================================================================
