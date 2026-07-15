@@ -34,7 +34,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { stubApprovalService } from '../../session/approval/stubs';
 import { stubPermissionModeService } from '../permissionMode/stubs';

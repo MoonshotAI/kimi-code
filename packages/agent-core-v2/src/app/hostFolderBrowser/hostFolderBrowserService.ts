@@ -12,7 +12,7 @@ import { lstat, readFile, readdir, realpath } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 
-import type { FsBrowseEntry, FsBrowseResponse, FsHomeResponse } from '@moonshot-ai/protocol';
+import type { FsBrowseEntry, FsBrowseResponse, FsHomeResponse } from './hostFolderBrowser';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';

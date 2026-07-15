@@ -680,16 +680,16 @@ describe('SessionLifecycleService', () => {
     expect(captured).toMatchObject({ sessionId: 's1', handle: h, source: 'startup' });
   });
 
-  it('emits session_started with resumed: false on create', async () => {
+  it('emits session_started with resumed: false and the bound session id on create', async () => {
     const svc = build();
     await svc.create({ sessionId: 's1', workDir: '/tmp/proj' });
     expect(telemetryRecords).toContainEqual({
       event: 'session_started',
-      properties: { resumed: false },
+      properties: { sessionId: 's1', resumed: false },
     });
   });
 
-  it('emits session_started with resumed: true on resume', async () => {
+  it('emits session_started with resumed: true and the bound session id on resume', async () => {
     const workDir = '/tmp/proj';
     const svc = build([
       stubPair(IWorkspaceRegistry, persistentWorkspaceRegistryStub()),
@@ -701,11 +701,11 @@ describe('SessionLifecycleService', () => {
 
     expect(telemetryRecords).toContainEqual({
       event: 'session_started',
-      properties: { resumed: true },
+      properties: { sessionId: 's1', resumed: true },
     });
   });
 
-  it('emits session_load_failed with the error code when resume fails, then rethrows', async () => {
+  it('emits session_load_failed with the bound session id and the error code when resume fails, then rethrows', async () => {
     const svc = build([
       stubPair(ISessionIndex, {
         ...sessionIndexStub(),
@@ -716,11 +716,11 @@ describe('SessionLifecycleService', () => {
     await expect(svc.resume('s1')).rejects.toMatchObject({ code: ErrorCodes.SESSION_NOT_FOUND });
     expect(telemetryRecords).toContainEqual({
       event: 'session_load_failed',
-      properties: { reason: ErrorCodes.SESSION_NOT_FOUND },
+      properties: { sessionId: 's1', reason: ErrorCodes.SESSION_NOT_FOUND },
     });
   });
 
-  it('emits session_load_failed with the error name for plain errors', async () => {
+  it('emits session_load_failed with the bound session id and the error name for plain errors', async () => {
     const svc = build([
       stubPair(ISessionIndex, {
         ...sessionIndexStub(),
@@ -731,7 +731,7 @@ describe('SessionLifecycleService', () => {
     await expect(svc.resume('s1')).rejects.toBeInstanceOf(TypeError);
     expect(telemetryRecords).toContainEqual({
       event: 'session_load_failed',
-      properties: { reason: 'TypeError' },
+      properties: { sessionId: 's1', reason: 'TypeError' },
     });
   });
 

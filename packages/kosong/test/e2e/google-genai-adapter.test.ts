@@ -210,7 +210,7 @@ describe('e2e: Google GenAI adapter bridge', () => {
         { type: 'text', text: 'Done.' },
         {
           type: 'function',
-          id: 'notify_call-1',
+          id: expect.stringMatching(/^notify_call-1_[0-9a-f]{8}$/),
           name: 'notify', arguments: '{"ok":true}',
           extras: { thought_signature_b64: 'sig-1' },
         } satisfies ToolCall,

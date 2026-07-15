@@ -17,7 +17,7 @@
 import { ulid } from 'ulid';
 
 import type { ContentPart } from '#/app/llmProtocol/message';
-import type { CronJobOrigin, CronMissedOrigin } from '@moonshot-ai/protocol';
+import type { CronJobOrigin, CronMissedOrigin } from '#/agent/contextMemory/types';
 
 import { Disposable, toDisposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';

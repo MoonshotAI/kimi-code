@@ -18,7 +18,8 @@
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { IDisposable } from '#/_base/di/lifecycle';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
-import type { TurnEndReason } from '@moonshot-ai/protocol';
+
+export type TurnEndReason = 'completed' | 'cancelled' | 'failed' | 'blocked';
 
 export type AgentLifecycleState = 'initializing' | 'ready' | 'disposing' | 'disposed';
 

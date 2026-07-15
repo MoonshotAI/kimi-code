@@ -7,7 +7,11 @@
  * close/archive — archiving flags the session's `sessionMetadata`, removes
  * its `agentLifecycle` agents, restoring clears the archived flag, and
  * broadcasts through `event`; session start and resume failures are reported
- * through `telemetry`. Materializes the session's initial metadata on
+ * through `telemetry`. Because hosts bind their telemetry context only after
+ * create()/resume() returns, the created-session announcement binds the
+ * session id into telemetry context before emitting `session_started`, and the
+ * resume-failure path does the same before `session_load_failed`.
+ * Materializes the session's initial metadata on
  * creation by resolving `sessionMetadata`. Bound at App scope. Persisted
  * sessions are discovered through the `sessionIndex` read model, and workspace
  * roots are remembered through `workspaceRegistry`. On create / fork the
@@ -200,6 +204,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   private async announceCreated(event: SessionCreatedEvent): Promise<void> {
     await this.hooks.onDidCreateSession.run(event);
     this._onDidCreateSession.fire(event);
+    this.telemetry.setContext({ sessionId: event.sessionId });
     this.telemetry.track2('session_started', { resumed: event.source === 'resume' });
     event.handle.accessor.get(ISessionActivityKernel).markActive();
   }
@@ -216,6 +221,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (live !== undefined) return Promise.resolve(live);
     const promise = this.doResume(sessionId)
       .catch((error: unknown) => {
+        this.telemetry.setContext({ sessionId });
         this.telemetry.track2('session_load_failed', {
           reason: isError2(error) ? error.code : error instanceof Error ? error.name : 'unknown',
         });
@@ -327,7 +333,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     try {
       const workspace = await this.workspaceRegistry.get(workspaceId);
       if (workspace === undefined) {
-        throw new Error2('workspace.not_found', `workspace ${workspaceId} does not exist`);
+        throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${workspaceId} does not exist`);
       }
 
       const sourceMeta =

@@ -13,8 +13,6 @@
  * before the first turn runs (same rationale as `fullCompaction`).
  */
 
-import type { TurnStepRetryingEvent } from '@moonshot-ai/protocol';
-
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -36,6 +34,20 @@ import {
 import { LOOP_CONTROL_SECTION, type LoopControl } from '#/agent/loop/configSection';
 
 import { IAgentStepRetryService } from './stepRetry';
+
+export interface TurnStepRetryingEvent {
+  readonly type: 'turn.step.retrying';
+  readonly turnId: number;
+  readonly step: number;
+  readonly stepId?: string;
+  readonly failedAttempt: number;
+  readonly nextAttempt: number;
+  readonly maxAttempts: number;
+  readonly delayMs: number;
+  readonly errorName: string;
+  readonly errorMessage: string;
+  readonly statusCode?: number;
+}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {

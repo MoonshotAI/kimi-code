@@ -9,7 +9,6 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
 import { copyTextToClipboard } from '../../lib/clipboard';
-import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
@@ -18,7 +17,6 @@ import MenuItem from '../ui/MenuItem.vue';
 import Tooltip from '../ui/Tooltip.vue';
 
 const { t } = useI18n();
-const { confirm } = useConfirmDialog();
 
 const props = withDefaults(
   defineProps<{
@@ -45,7 +43,7 @@ const emit = defineEmits<{
   addWorkspace: [];
   rename: [id: string, title: string];
   archive: [id: string];
-  /** NOTE: needs `@delete-workspace="client.deleteWorkspace($event)"` wiring in App.vue. */
+  /** NOTE: App.vue wires this to confirmDeleteWorkspace (modal confirm + async delete). */
   deleteWorkspace: [workspaceId: string];
   loadMore: [workspaceId: string];
 }>();
@@ -152,23 +150,16 @@ function onRename(s: Session): void {
   const title = next?.trim();
   if (title) emit('rename', s.id, title);
 }
-async function onArchive(id: string): Promise<void> {
+function onArchive(id: string): void {
   menuFor.value = null;
-  if (
-    await confirm({
-      title: t('sidebar.archive'),
-      message: t('sidebar.archiveConfirm'),
-      variant: 'danger',
-    })
-  ) {
-    emit('archive', id);
-  }
+  // The modal confirm + async archive live in App.vue (confirmArchiveSession).
+  emit('archive', id);
 }
 
 // ---------------------------------------------------------------------------
 // Per-workspace "…" menu: copy path + delete workspace. Copy path is handled
-// locally, like the desktop sidebar; delete is confirmed via modal then
-// emitted to the parent.
+// locally, like the desktop sidebar; delete is emitted to the parent (App.vue
+// owns the modal confirm + async delete).
 // ---------------------------------------------------------------------------
 const wsMenuFor = ref<string | null>(null);
 
@@ -180,17 +171,9 @@ function onCopyWsPath(ws: WorkspaceView): void {
   void copyTextToClipboard(ws.root);
   wsMenuFor.value = null;
 }
-async function onDeleteWorkspace(ws: WorkspaceView): Promise<void> {
+function onDeleteWorkspace(ws: WorkspaceView): void {
   wsMenuFor.value = null;
-  if (
-    await confirm({
-      title: t('sidebar.removeWorkspace'),
-      message: t('workspace.removeWorkspaceConfirm', { name: ws.name }),
-      variant: 'danger',
-    })
-  ) {
-    emit('deleteWorkspace', ws.id);
-  }
+  emit('deleteWorkspace', ws.id);
 }
 </script>
 

@@ -1745,7 +1745,6 @@ describe('GrepTool', () => {
     expect(dataLines).toHaveLength(3);
     expect(output).toContain('Found 30 total occurrences across 10 files.');
     expect(output).toContain('Results truncated to 3 lines (total: 10). Use offset=3 to see more.');
-    expect((result as { message?: string }).message ?? '').not.toContain('Found');
   });
 
   it('truncates extremely long rg output with a byte-level safety cap message', async () => {
@@ -1758,9 +1757,7 @@ describe('GrepTool', () => {
       context({ pattern: 'match', output_mode: 'content', head_limit: 0 }),
     );
 
-    const message = (result as { message?: unknown }).message;
-    expect(typeof message).toBe('string');
-    expect(message).toContain('Output is truncated');
+    expect(result.output).toContain('Output is truncated');
   });
 
   it('matches a pattern spanning a newline when multiline is set', async () => {

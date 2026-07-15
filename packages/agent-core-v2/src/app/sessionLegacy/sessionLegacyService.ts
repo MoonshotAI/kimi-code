@@ -13,11 +13,9 @@
  * the real work stays in the native services.
  */
 
-import type {
-  GoalSnapshot,
-  SessionStatusResponse,
-  UpdateSessionProfileRequest,
-} from '@moonshot-ai/protocol';
+import type { GoalSnapshot } from '#/agent/goal/types';
+
+import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessionWire';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';

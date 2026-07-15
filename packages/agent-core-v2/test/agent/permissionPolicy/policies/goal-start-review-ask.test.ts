@@ -1,5 +1,5 @@
 import type { ToolCall } from '#/app/llmProtocol/message';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { describe, expect, it } from 'vitest';
 
 import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';

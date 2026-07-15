@@ -585,11 +585,11 @@ watch(
     align-items: flex-start;
     gap: 10px;
     min-width: 0;
-    padding: 14px max(14px, env(safe-area-inset-right)) 14px max(14px, env(safe-area-inset-left));
+    padding: 14px max(14px, var(--safe-right)) 14px max(14px, var(--safe-left));
   }
   .group-title {
-    padding-left: max(14px, env(safe-area-inset-left));
-    padding-right: max(14px, env(safe-area-inset-right));
+    padding-left: max(14px, var(--safe-left));
+    padding-right: max(14px, var(--safe-right));
   }
   .srow-main {
     flex: 1 1 auto;

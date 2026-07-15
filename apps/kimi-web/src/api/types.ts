@@ -507,12 +507,24 @@ export interface AppSessionSnapshot {
 }
 
 export interface KimiEventHandlers {
-  onEvent(event: AppEvent, meta: { sessionId: string; seq: number }): void;
+  onEvent(event: AppEvent, meta: KimiEventMeta): void;
   onResync(sessionId: string, currentSeq: number, epoch?: string): void;
   onError(code: number, msg: string, fatal: boolean): void;
   onConnectionChange(connected: boolean): void;
   onTerminalOutput?(sessionId: string, terminalId: string, data: string, seq: number): void;
   onTerminalExit?(sessionId: string, terminalId: string, exitCode: number | null): void;
+}
+
+/** Raw stream coordinates are present only for kap-server assistant/thinking
+    deltas. They let the render queue merge chunks without guessing continuity. */
+export interface KimiEventMeta {
+  sessionId: string;
+  seq: number;
+  stream?: {
+    turnId: number;
+    offset: number;
+    kind: 'text' | 'thinking';
+  };
 }
 
 export interface KimiEventConnection {
