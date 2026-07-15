@@ -217,6 +217,21 @@ describe('server-v2 /api/v1 skills', () => {
       });
     });
 
+    it('derives the session title from the first skill activation', async () => {
+      const id = await createSession();
+      await createMainAgent(id);
+
+      const activated = await postJson<{ activated: boolean; skill_name: string }>(
+        `/api/v1/sessions/${id}/skills/update-config:activate`,
+        { args: '--help' },
+      );
+      expect(activated.body.code).toBe(0);
+
+      const got = await getJson<{ title: string }>(`/api/v1/sessions/${id}`);
+      expect(got.body.code).toBe(0);
+      expect(got.body.data.title).toBe('/update-config --help');
+    });
+
     it('returns 40415 for an unknown skill', async () => {
       const id = await createSession();
       await createMainAgent(id);
