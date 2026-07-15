@@ -24,6 +24,7 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 - **web 改动同步到 kimi-code**：先 `pnpm --filter @moonshot-ai/kimi-web run build`，再 `KIMI_CODE_REPO=<kimi-code checkout 路径> pnpm sync:web`。
 - **升级 submodule**：在 `kimi-code/` 内 checkout 目标 commit，然后在根目录提交 submodule 指针；新克隆或拉取后跑 `pnpm run sync` 对齐。
 - **常用检查**：`pnpm test`、`pnpm lint`、`pnpm typecheck`、`pnpm build`。
+- **本地打包并签名 macOS 包**：`pnpm package:macos`（CI 不可用时的替代，arm64；凭证与流程见 `apps/desktop/README.md` 的"打包"一节）。
 
 ## 目录
 

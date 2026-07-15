@@ -10,6 +10,7 @@
     "dev:desktop": "pnpm --filter @moonshot-ai/kimi-desktop run dev",
     "dev:web": "pnpm --filter @moonshot-ai/kimi-web run dev",
     "sync:web": "node scripts/sync-web-to-kimi-code.mjs",
+    "package:macos": "bash apps/desktop/scripts/package-local-macos.sh",
     "typecheck": "pnpm --filter @moonshot-ai/kimi-desktop run typecheck && pnpm --filter @moonshot-ai/kimi-web run typecheck",
     "lint": "oxlint --type-aware",
     "test": "vitest run"
