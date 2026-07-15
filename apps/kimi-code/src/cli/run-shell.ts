@@ -4,6 +4,7 @@ import { join } from 'node:path';
 
 import {
   createKimiHarness,
+  flushDiagnosticLogsSync,
   log,
   type KimiHarness,
   type TelemetryClient,
@@ -160,6 +161,14 @@ export async function runShell(
   // raw mode with a hidden cursor and XON/XOFF flow control disabled. Restore
   // both before exiting so the user's shell is usable afterwards.
   const emergencyExit = (exitCode: number): void => {
+    // The crash log above is only enqueued into the async sink; flush it
+    // synchronously or the `process.exit()` below would drop the one line that
+    // explains why we crashed. Best-effort: an exit path must never throw.
+    try {
+      flushDiagnosticLogsSync();
+    } catch {
+      /* ignore */
+    }
     restoreTerminalModes();
     restoreStty();
     process.exit(exitCode);
