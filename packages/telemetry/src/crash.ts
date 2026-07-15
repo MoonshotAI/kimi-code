@@ -25,7 +25,8 @@ export function installCrashHandlersForClient(client: TelemetryClient): () => vo
   }
   // Rejections recorded by the rejection handler below and then rethrown to
   // preserve Node's default crash; the monitor must not report them twice.
-  const recordedRejections = new WeakSet<object>();
+  // A Set (not WeakSet) so primitive reasons dedupe by value too.
+  const recordedRejections = new Set<unknown>();
   const trackCrash = (errorType: string, source: string) => {
     try {
       client.track('crash', {
@@ -41,7 +42,9 @@ export function installCrashHandlersForClient(client: TelemetryClient): () => vo
   installedUncaughtHandler = (error, origin) => {
     if (isAbortError(error)) return;
     if (recordedRejections.has(error)) return;
-    trackCrash(error.name || error.constructor.name, origin);
+    // `error` is typed Error but can be anything a rejection rethrow sent
+    // through (primitives, null) — classify it null-safely.
+    trackCrash(crashErrorType(error), origin);
   };
   process.on('uncaughtExceptionMonitor', installedUncaughtHandler);
   // `uncaughtExceptionMonitor` never fires for a rejection that has a
@@ -54,8 +57,8 @@ export function installCrashHandlersForClient(client: TelemetryClient): () => vo
   installedRejectionHandler = (reason: unknown) => {
     const soleListener = process.listenerCount('unhandledRejection') === 1;
     if (!isAbortError(reason)) {
-      trackCrash(rejectionErrorType(reason), 'unhandledRejection');
-      if (reason instanceof Error) recordedRejections.add(reason);
+      trackCrash(crashErrorType(reason), 'unhandledRejection');
+      recordedRejections.add(reason);
     }
     if (soleListener) {
       throw reason;
@@ -81,7 +84,7 @@ export function uninstallCrashHandlers(): void {
   installed = false;
 }
 
-function rejectionErrorType(reason: unknown): string {
+function crashErrorType(reason: unknown): string {
   if (reason instanceof Error) return reason.name || reason.constructor.name;
   return typeof reason;
 }

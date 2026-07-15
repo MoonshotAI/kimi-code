@@ -1106,6 +1106,95 @@ describe('crash handler', () => {
     }
   });
 
+  it('dedupes rethrown non-Error rejection reasons at the uncaught monitor', () => {
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    setCrashPhase('runtime');
+    const others = process.listeners('unhandledRejection');
+    process.removeAllListeners('unhandledRejection');
+    installCrashHandlersForClient(client);
+    const reason = { code: 'E' };
+    try {
+      let caught: unknown;
+      try {
+        (process.emit as (event: string, ...args: unknown[]) => boolean)(
+          'unhandledRejection',
+          reason,
+          Promise.resolve(),
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(reason);
+
+      // The plain-object reason is rethrown through the monitor; it must be
+      // deduped there, not reported as a second crash.
+      (process.emit as (event: string, ...args: unknown[]) => boolean)(
+        'uncaughtExceptionMonitor',
+        reason,
+        'uncaughtException',
+      );
+      expect(transport.saved).toHaveLength(1);
+      expect(transport.saved[0]?.[0]).toMatchObject({
+        event: 'crash',
+        properties: {
+          error_type: 'object',
+          where: 'runtime',
+          source: 'unhandledRejection',
+        },
+      });
+    } finally {
+      uninstallCrashHandlers();
+      for (const listener of others) {
+        process.on('unhandledRejection', listener as (...args: unknown[]) => void);
+      }
+    }
+  });
+
+  it('dedupes null rejection reasons and classifies monitor crashes null-safely', () => {
+    const client = new TelemetryClient();
+    const transport = new RecordingTransport();
+    client.attachSink(makeSink(transport));
+    setCrashPhase('runtime');
+    const others = process.listeners('unhandledRejection');
+    process.removeAllListeners('unhandledRejection');
+    installCrashHandlersForClient(client);
+    try {
+      let caught: unknown = 'not-thrown';
+      try {
+        (process.emit as (event: string, ...args: unknown[]) => boolean)(
+          'unhandledRejection',
+          null,
+          Promise.resolve(),
+        );
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(null);
+
+      // The rethrown null reaches the monitor: deduped, and the error-type
+      // classification must not itself throw on null/undefined.
+      expect(() => {
+        emitCrash(null as unknown as Error);
+      }).not.toThrow();
+      expect(transport.saved).toHaveLength(1);
+      expect(transport.saved[0]?.[0]).toMatchObject({
+        event: 'crash',
+        properties: {
+          error_type: 'object',
+          where: 'runtime',
+          source: 'unhandledRejection',
+        },
+      });
+    } finally {
+      uninstallCrashHandlers();
+      for (const listener of others) {
+        process.on('unhandledRejection', listener as (...args: unknown[]) => void);
+      }
+    }
+  });
+
   it('ignores aborted-operation errors', () => {
     const client = new TelemetryClient();
     const transport = new RecordingTransport();
