@@ -338,7 +338,7 @@ describe('background subagent task registration', () => {
     ]);
   });
 
-  it('keys the row by the background task id when the spawn event was missed', () => {
+  it('keys a late registration by agent id so later progress frames stay on one row', () => {
     const projector = createAgentProjector();
     const events = projector.project(
       'task.started',
@@ -348,6 +348,52 @@ describe('background subagent task registration', () => {
           kind: 'agent',
           detached: true,
           agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          kind: 'subagent',
+          description: 'Explore repo',
+          runInBackground: true,
+          backgroundTaskId: 'task-9',
+        }),
+      },
+    ]);
+
+    // A later agent-scoped progress frame must not synthesize a second row.
+    const progress = projector.project(
+      'assistant.delta',
+      { agentId: 'agent-1', delta: 'Hi' },
+      's1',
+    );
+    expect(progress).toContainEqual(
+      expect.objectContaining({ type: 'taskProgress', taskId: 'agent-1' }),
+    );
+    const created = progress.filter((e) => e.type === 'taskCreated');
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      task: { id: 'agent-1', backgroundTaskId: 'task-9' },
+    });
+  });
+
+  it('falls back to the task id when the registration carries no agent id', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
           description: 'Explore repo',
           startedAt: 1767225600000,
         },

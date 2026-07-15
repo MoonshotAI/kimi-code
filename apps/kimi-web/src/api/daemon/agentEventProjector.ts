@@ -1126,20 +1126,24 @@ export function createAgentProjector(): AgentProjector {
         // second row — REST `/tasks` returns the same agent keyed by task id,
         // and keepLiveSubagents folds that copy into this row.
         if (info.kind === 'agent') {
-          const agentId = typeof info.agentId === 'string' ? info.agentId : undefined;
-          const existing =
-            agentId !== undefined && agentId.length > 0
-              ? s.subagentMeta.get(agentId)
+          const agentId =
+            typeof info.agentId === 'string' && info.agentId.length > 0
+              ? info.agentId
               : undefined;
-          if (agentId !== undefined && existing !== undefined) {
+          if (agentId !== undefined) {
+            // Key by agent id even when the spawn event never reached this
+            // client (subscribed late): later agent-scoped progress frames are
+            // routed by agent id, and seeding subagentMeta here keeps them on
+            // this one row instead of synthesizing a second one.
             const task = patchSubagent(s, sessionId, agentId, {
+              description,
               backgroundTaskId: taskId,
               runInBackground: true,
             });
             if (task) out.push({ type: 'taskCreated', sessionId, task });
           } else {
-            // The spawn event never reached this client (subscribed late) — key
-            // the row by the background task id so the REST poll dedupes it.
+            // No agent id — nothing to link; key the row by the background
+            // task id so the REST poll dedupes it.
             out.push({
               type: 'taskCreated',
               sessionId,

@@ -822,4 +822,26 @@ describe('keepLiveSubagents', () => {
     const [merged] = keepLiveSubagents(rest, [live]);
     expect(merged?.status).toBe('completed');
   });
+
+  it('keeps newer REST output flowing into an already-folded row', () => {
+    // The live row carries a preview folded in by an earlier poll; the fresh
+    // REST row has the final persisted output and must win.
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      outputPreview: 'stale tail',
+      outputBytes: 100,
+    });
+    const rest = [
+      subagent('task-9', {
+        runInBackground: true,
+        status: 'completed',
+        outputPreview: 'final result',
+        outputBytes: 200,
+      }),
+    ];
+    const [merged] = keepLiveSubagents(rest, [live]);
+    expect(merged?.outputPreview).toBe('final result');
+    expect(merged?.outputBytes).toBe(200);
+  });
 });

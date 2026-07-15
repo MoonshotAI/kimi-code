@@ -39,8 +39,11 @@ export function keepLiveSubagents(restBased: AppTask[], existing: AppTask[]): Ap
       // to running, but let REST complete a row whose finish event was missed.
       status: live.status === 'running' ? rest.status : live.status,
       completedAt: live.completedAt ?? rest.completedAt,
-      outputPreview: live.outputPreview ?? rest.outputPreview,
-      outputBytes: live.outputBytes ?? rest.outputBytes,
+      // REST output is authoritative once present: agent tasks persist their
+      // result at completion, and a previously folded preview would otherwise
+      // freeze the detail panel's Result.
+      outputPreview: rest.outputPreview ?? live.outputPreview,
+      outputBytes: rest.outputBytes ?? live.outputBytes,
     };
   });
   const rest = restBased.filter((t) => !foldedRestIds.has(t.id));
