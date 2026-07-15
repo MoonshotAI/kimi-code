@@ -75,6 +75,32 @@ function fileIdFromCachePath(p: string): string | undefined {
   return FILE_STORE_ID_RE.test(id) ? id : undefined;
 }
 
+/** A generic file attachment comes back from the server as a text notice (see
+ *  resolvePromptMediaFiles in the kap-server prompts route):
+ *    Attached file "<name>" (<mime>, <n> bytes): <dir>/<fileId>-<name> — open it with the Read tool
+ *  Recover the chip from the notice instead of dumping it — absolute server
+ *  path and all — into the bubble. The fileId is the basename prefix before
+ *  the first `-`, validated against the file-store id shape. Inline-base64
+ *  attachments are content-hash named (no fileId): they still become a chip so
+ *  the notice stays hidden, just without bytes to open. */
+const ATTACHED_FILE_NOTICE_RE =
+  /^Attached file "(.+)" \(([^,]+), (\d+) bytes\): (.+) — open it with the Read tool$/;
+
+function attachedFileNotice(
+  text: string,
+): { name: string; mediaType: string; size: number; fileId?: string } | null {
+  const m = ATTACHED_FILE_NOTICE_RE.exec(text.trim());
+  if (!m) return null;
+  const base = (m[4] ?? '').split(/[\\/]/).at(-1) ?? '';
+  const id = base.slice(0, base.indexOf('-'));
+  return {
+    name: m[1]!,
+    mediaType: m[2]!,
+    size: Number(m[3]),
+    fileId: FILE_STORE_ID_RE.test(id) ? id : undefined,
+  };
+}
+
 function bytesFromBase64(b64: string): number {
   if (b64.length === 0) return 0;
   const padding = b64.endsWith('==') ? 2 : b64.endsWith('=') ? 1 : 0;
@@ -789,6 +815,22 @@ export function messagesToTurns(
                 attachments.push({ url: getFileUrl(fileId), kind: tag.kind, fileId });
                 continue;
               }
+            }
+            // A generic file upload comes back as an "Attached file …" notice;
+            // recover the chip the same way (see attachedFileNotice).
+            const attached = attachedFileNotice(c.text);
+            if (attached) {
+              attachments.push({
+                kind: 'file',
+                // No recoverable fileId (inline-base64 upload) → no URL: the
+                // chip renders name/size but stays non-clickable.
+                url: attached.fileId && getFileUrl ? getFileUrl(attached.fileId) : '',
+                fileId: attached.fileId,
+                name: attached.name,
+                mediaType: attached.mediaType,
+                size: attached.size,
+              });
+              continue;
             }
             const stripped = stripImageCompressionCaptions(c.text);
             if (stripped !== c.text && stripped.trim().length === 0) continue;
