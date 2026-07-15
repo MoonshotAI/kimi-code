@@ -143,6 +143,24 @@ function openOnboarding(): void {
   showOnboarding.value = true;
 }
 
+// iOS Safari does not shrink `dvh` for the on-screen keyboard, so a 100dvh
+// shell keeps the dock behind it and iOS pans the document instead, leaving a
+// blank band between the composer and the keyboard. `visualViewport.height`
+// DOES shrink — mirror it into --app-height so the shell tracks the visible
+// area. (`interactive-widget=resizes-content` covers Chromium; this covers iOS.)
+let appHeightRaf = 0;
+function setAppHeight(): void {
+  const height = window.visualViewport?.height ?? window.innerHeight;
+  document.documentElement.style.setProperty('--app-height', `${height}px`);
+}
+function syncAppHeight(): void {
+  if (appHeightRaf) return;
+  appHeightRaf = requestAnimationFrame(() => {
+    appHeightRaf = 0;
+    setAppHeight();
+  });
+}
+
 onMounted(() => {
   // Register the 401 listener before the first requests go out, so a token
   // rejection during the initial load() can never be missed.
@@ -154,6 +172,9 @@ onMounted(() => {
   });
   void client.load();
   loadSidebarCollapsed();
+  setAppHeight();
+  window.visualViewport?.addEventListener('resize', syncAppHeight);
+  window.addEventListener('resize', syncAppHeight);
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
   document.addEventListener('keydown', onGlobalKeydown, true);
@@ -161,6 +182,13 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
+  window.visualViewport?.removeEventListener('resize', syncAppHeight);
+  window.removeEventListener('resize', syncAppHeight);
+  if (appHeightRaf) {
+    cancelAnimationFrame(appHeightRaf);
+    appHeightRaf = 0;
+  }
+  document.documentElement.style.removeProperty('--app-height');
   if (offAuthRequired !== null) {
     offAuthRequired();
     offAuthRequired = null;
@@ -1072,6 +1100,9 @@ function openPr(url: string): void {
 .app-shell {
   height: 100vh;
   height: 100dvh;
+  /* Mirrors visualViewport.height once App mounts (see setAppHeight): shrinks
+     with the iOS on-screen keyboard so the dock stays pinned above it. */
+  height: var(--app-height, 100dvh);
   display: flex;
   flex-direction: column;
   overflow: hidden;
