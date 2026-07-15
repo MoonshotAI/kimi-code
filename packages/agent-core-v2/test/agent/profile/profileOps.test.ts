@@ -6,7 +6,8 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AgentProfileService } from '#/agent/profile/profileService';
 import { ProfileModel } from '#/agent/profile/profileOps';
-import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
 import type { GenerationKwargs } from '#/app/llmProtocol/kimiOptions';
@@ -102,7 +103,7 @@ function buildHost(key: string): {
   host.stub(IBootstrapService, stubUnused());
   host.stub(ISessionContext, createSessionContextStub());
   host.stub(ISessionWorkspaceContext, stubUnused());
-  host.stub(IAgentProfileCatalogService, stubUnused());
+  host.stub(ISessionAgentProfileCatalog, stubUnused());
   host.stub(ISessionSkillCatalog, stubUnused());
   host.set(IAgentProfileService, new SyncDescriptor(AgentProfileService));
   const wire = registerTestAgentWire(host, testWireScope(SCOPE, key), {

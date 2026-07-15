@@ -3,6 +3,7 @@
  *     Body:  PromptSubmission {
  *              content: MessageContent[],
  *              metadata?: ...,
+ *              profile?: string,
  *              model?: string,
  *              thinking?: 'off'|'low'|'medium'|'high'|'xhigh'|'max',
  *              permission_mode?: 'manual'|'yolo'|'auto',
@@ -45,6 +46,9 @@ export const promptSubmissionSchema = z.object({
   content: z.array(messageContentSchema).min(1),
   metadata: z.record(z.string(), z.unknown()).optional(),
   agent_id: z.string().min(1).optional(),
+  // Agent profile to bind at the target agent's first bind. Once bound,
+  // subsequent prompts must repeat the same value or omit the field.
+  profile: z.string().min(1).optional(),
   model: z.string().min(1).optional(),
   thinking: promptThinkingSchema.optional(),
   permission_mode: promptPermissionModeSchema.optional(),

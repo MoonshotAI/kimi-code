@@ -1,0 +1,173 @@
+/**
+ * `sessionAgentProfileCatalog` domain (L3) — `ISessionAgentProfileCatalog`
+ * implementation.
+ *
+ * Merges the builtin (code-contribution) App catalog with the file-backed
+ * sources (user / extra / project / explicit) by priority, serializing
+ * refreshes per source the same way `sessionSkillCatalog` does. The merged
+ * view always contains the builtin profiles (seeded at construction); file
+ * profiles appear once `ready` resolves. A rejecting `fatal` source (an
+ * invalid `--agent-file`) propagates into `ready` so `bind()` / `load()`
+ * awaiters see the error; a rejecting non-fatal source (a transient fs error
+ * inside a directory source) degrades to a warning and keeps any previously
+ * loaded contribution, so directory problems never poison the session. The
+ * swallowed handler on `ready` keeps an un-awaited rejection from crashing
+ * the process, and event-driven reloads get the same warning treatment.
+ * Bound at Session scope.
+ */
+
+import { Disposable } from '#/_base/di/lifecycle';
+import { InstantiationType } from '#/_base/di/extensions';
+import { Emitter, type Event } from '#/_base/event';
+import { ILogService } from '#/_base/log/log';
+import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import {
+  DEFAULT_AGENT_PROFILE_NAME,
+  IAgentProfileCatalogService,
+  type AgentProfile,
+} from '#/app/agentProfileCatalog/agentProfileCatalog';
+import type {
+  AgentProfileContribution,
+  IAgentProfileSource,
+} from '#/app/agentFileCatalog/agentProfileSource';
+import { IUserFileAgentSource } from '#/app/agentFileCatalog/userFileAgentSource';
+
+import { IExplicitFileAgentSource } from './explicitFileAgentSource';
+import { IExtraFileAgentSource } from './extraFileAgentSource';
+import { IProjectFileAgentSource } from './projectFileAgentSource';
+import { ISessionAgentProfileCatalog } from './sessionAgentProfileCatalog';
+
+export class SessionAgentProfileCatalogService
+  extends Disposable
+  implements ISessionAgentProfileCatalog
+{
+  declare readonly _serviceBrand: undefined;
+
+  private readonly sources: readonly IAgentProfileSource[];
+  private readonly contributions = new Map<
+    string,
+    { readonly c: AgentProfileContribution; readonly priority: number }
+  >();
+  private readonly sourceLoadTails = new Map<IAgentProfileSource, Promise<void>>();
+  private merged = new Map<string, AgentProfile>();
+  readonly ready: Promise<void>;
+  private readonly onDidChangeEmitter = this._register(new Emitter<string>());
+  readonly onDidChange: Event<string> = this.onDidChangeEmitter.event;
+
+  constructor(
+    @IAgentProfileCatalogService private readonly builtin: IAgentProfileCatalogService,
+    @IUserFileAgentSource user: IUserFileAgentSource,
+    @IExtraFileAgentSource extra: IExtraFileAgentSource,
+    @IProjectFileAgentSource project: IProjectFileAgentSource,
+    @IExplicitFileAgentSource explicit: IExplicitFileAgentSource,
+    @ILogService private readonly log: ILogService,
+  ) {
+    super();
+    this.sources = [user, extra, project, explicit].toSorted(
+      (a, b) => a.priority - b.priority,
+    );
+    for (const s of this.sources) {
+      if (s.onDidChange) {
+        this._register(
+          s.onDidChange(() => {
+            void this.reloadSource(s.id).catch((error) => {
+              this.log.warn(`agent profile source "${s.id}" reload failed: ${error}`);
+            });
+          }),
+        );
+      }
+    }
+    this.remerge();
+    this.ready = this.loadAll();
+    void this.ready.catch(() => undefined);
+  }
+
+  get(name: string): AgentProfile | undefined {
+    return this.merged.get(name);
+  }
+
+  getDefault(): AgentProfile {
+    const profile = this.get(DEFAULT_AGENT_PROFILE_NAME);
+    if (profile === undefined) {
+      throw new Error(
+        `Default agent profile "${DEFAULT_AGENT_PROFILE_NAME}" is not registered`,
+      );
+    }
+    return profile;
+  }
+
+  list(): readonly AgentProfile[] {
+    return [...this.merged.values()];
+  }
+
+  async load(): Promise<void> {
+    await this.ready;
+  }
+
+  async reload(): Promise<void> {
+    await this.loadAll();
+    this.onDidChangeEmitter.fire('catalog');
+  }
+
+  private async loadAll(): Promise<void> {
+    for (const s of this.sources) {
+      await this.loadSource(s);
+    }
+    this.remerge();
+  }
+
+  private async reloadSource(id: string): Promise<void> {
+    const s = this.sources.find((x) => x.id === id);
+    if (!s) return;
+    await this.loadSource(s, true);
+  }
+
+  private loadSource(source: IAgentProfileSource, fireChange = false): Promise<void> {
+    const previous = this.sourceLoadTails.get(source) ?? Promise.resolve();
+    const current = previous
+      .catch(() => undefined)
+      .then(async () => {
+        let contribution: AgentProfileContribution;
+        try {
+          contribution = await source.load();
+        } catch (error) {
+          if (source.fatal) throw error;
+          this.log.warn(`agent profile source "${source.id}" load failed: ${error}`);
+          return;
+        }
+        this.contributions.set(source.id, { c: contribution, priority: source.priority });
+        if (fireChange) {
+          this.remerge();
+          this.onDidChangeEmitter.fire(source.id);
+        }
+      });
+    this.sourceLoadTails.set(source, current);
+    const clear = () => {
+      if (this.sourceLoadTails.get(source) === current) {
+        this.sourceLoadTails.delete(source);
+      }
+    };
+    void current.then(clear, clear);
+    return current;
+  }
+
+  private remerge(): void {
+    const m = new Map<string, AgentProfile>();
+    for (const profile of this.builtin.list()) m.set(profile.name, profile);
+    const ordered = [...this.contributions.values()].toSorted(
+      (a, b) => a.priority - b.priority,
+    );
+    for (const { c } of ordered) {
+      for (const profile of c.profiles) m.set(profile.name, profile);
+    }
+    this.merged = m;
+  }
+}
+
+registerScopedService(
+  LifecycleScope.Session,
+  ISessionAgentProfileCatalog,
+  SessionAgentProfileCatalogService,
+  InstantiationType.Eager,
+  'sessionAgentProfileCatalog',
+);

@@ -17,6 +17,7 @@ import {
   IAgentProfileService,
   IAgentPromptService,
   IAuthSummaryService,
+  IConfigService,
   IEventService,
   IFileService,
   ISessionMetadata,
@@ -24,6 +25,7 @@ import {
   type ContentPart,
   type PromptHandle,
   type PromptQueueSnapshot,
+  ISessionAgentProfileCatalog,
   ISessionContext,
   ISessionLifecycleService,
   ITelemetryService,
@@ -35,6 +37,7 @@ import {
   decodeBase64Prefix,
   isError2,
   Error2,
+  ErrorCodes,
   isModelAcceptedImageMime,
   normalizeImageMime,
   persistOriginalImage,
@@ -135,6 +138,52 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
   };
 }
 
+/**
+ * Bind the resolved agent to the profile named by a prompt submission's
+ * `profile` field. First-bind only: once a profile is bound, repeating the
+ * same name is a no-op and a different name is rejected — mid-session profile
+ * switches are not supported. The name is checked against the session catalog
+ * first so an unknown profile surfaces as 40001 with the available list.
+ */
+async function applyProfileSelection(
+  session: ISessionScopeHandle,
+  profile: IAgentProfileService,
+  profileName: string,
+  model: string | undefined,
+): Promise<void> {
+  const current = profile.data().profileName;
+  if (current !== undefined) {
+    if (current !== profileName) {
+      throw new Error2(
+        ErrorCodes.REQUEST_INVALID,
+        `agent is already bound to profile "${current}"; cannot switch to "${profileName}" in this session`,
+      );
+    }
+    return;
+  }
+  const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+  await catalog.ready;
+  if (catalog.get(profileName) === undefined) {
+    const available = catalog
+      .list()
+      .map((p) => p.name)
+      .join(', ');
+    throw new Error2(
+      ErrorCodes.REQUEST_INVALID,
+      `unknown agent profile: "${profileName}". Available profiles: ${available}`,
+    );
+  }
+  const resolvedModel =
+    model ?? session.accessor.get(IConfigService).get<string>('defaultModel');
+  if (resolvedModel === undefined || resolvedModel === '') {
+    throw new Error2(
+      ErrorCodes.REQUEST_INVALID,
+      `model is required to bind profile "${profileName}" (no default model configured)`,
+    );
+  }
+  await profile.bind({ profile: profileName, model: resolvedModel });
+}
+
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
   const listRoute = defineRoute(
     {
@@ -198,11 +247,19 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         );
         const resolved = await resolvePrompt(core, session_id, resolvedBody.agent_id);
         await resolved.auth.ensureReady();
+        const session = await resolveSession(core, session_id);
+        if (resolvedBody.profile !== undefined) {
+          await applyProfileSelection(
+            session,
+            resolved.profile,
+            resolvedBody.profile,
+            resolvedBody.model,
+          );
+        }
         if (resolvedBody.model !== undefined) await resolved.profile.setModel(resolvedBody.model);
         if (resolvedBody.thinking !== undefined) resolved.profile.setThinking(resolvedBody.thinking);
         if (resolvedBody.permission_mode !== undefined) resolved.permissionMode.setMode(resolvedBody.permission_mode);
         const parts = contentToCoreParts(resolvedBody.content);
-        const session = await resolveSession(core, session_id);
         await applyPromptMetadataUpdate({
           metadata: session.accessor.get(ISessionMetadata),
           eventService: core.accessor.get(IEventService),

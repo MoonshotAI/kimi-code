@@ -3,7 +3,8 @@
  * Op (`configUpdate`) for the agent's persistent configuration slice.
  *
  * Declares the persistent profile config — `cwd`, `modelAlias`, `profileName`,
- * the resolved base thinking effort, and `systemPrompt` — as a wire Model
+ * the resolved base thinking effort, `systemPrompt`, and the profile
+ * `disallowedTools` denylist — as a wire Model
  * (initial `defaultProfileModel()`), plus the single Op whose `apply` is a pure
  * merge of an already-resolved payload. Live records carry `thinkingEffort` (matching
  * the v1 wire field); legacy replay still accepts `thinkingLevel`. The value is
@@ -24,7 +25,9 @@
  * Also declares `ActiveToolsModel` (`readonly string[] | undefined`, initial
  * `undefined` = every tool active) and the `tools.set_active_tools` Op
  * (`setActiveTools`), a pure whole-set replace whose type matches the legacy
- * record so `wire.replay` restores the base set. The ephemeral per-tool
+ * record so `wire.replay` restores the base set; an omitted `names` resets to
+ * `undefined`, letting a profile with no allowlist restore the default. The
+ * ephemeral per-tool
  * `addActiveTool` / `removeActiveTool` deltas (used by `userTool`) are NOT Ops —
  * they are intentionally not persisted and are re-derived on resume.
  * Consumed by the Agent-scope `profileService`.
@@ -44,6 +47,7 @@ export interface ProfileModelState {
   readonly profileName?: string;
   readonly thinkingLevel: string;
   readonly systemPrompt: string;
+  readonly disallowedTools?: readonly string[];
 }
 
 export const ProfileModel = defineModel<ProfileModelState>('profile', () => ({
@@ -59,6 +63,7 @@ export const configUpdate = ProfileModel.defineOp('config.update', {
     thinkingEffort: z.custom<ThinkingEffort>().optional(),
     thinkingLevel: z.custom<ThinkingEffort>().optional(),
     systemPrompt: z.string().optional(),
+    disallowedTools: z.array(z.string()).readonly().optional(),
   }),
   apply: (s, p) => {
     let next: ProfileModelState | undefined;
@@ -78,9 +83,24 @@ export const configUpdate = ProfileModel.defineOp('config.update', {
     if (p.systemPrompt !== undefined && p.systemPrompt !== s.systemPrompt) {
       next = { ...(next ?? s), systemPrompt: p.systemPrompt };
     }
+    if (
+      p.disallowedTools !== undefined &&
+      !stringArrayEqual(p.disallowedTools, s.disallowedTools)
+    ) {
+      next = { ...(next ?? s), disallowedTools: p.disallowedTools };
+    }
     return next ?? s;
   },
 });
+
+function stringArrayEqual(
+  a: readonly string[] | undefined,
+  b: readonly string[] | undefined,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined) return false;
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
 
 function configUpdateThinkingLevel(
   p: PayloadOf<typeof configUpdate>,
@@ -118,6 +138,6 @@ declare module '#/wire/types' {
 }
 
 export const setActiveTools = ActiveToolsModel.defineOp('tools.set_active_tools', {
-  schema: z.object({ names: z.array(z.string()).readonly() }),
+  schema: z.object({ names: z.array(z.string()).readonly().optional() }),
   apply: (s, p) => (p.names === s ? s : p.names),
 });

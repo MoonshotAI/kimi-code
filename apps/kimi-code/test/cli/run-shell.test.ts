@@ -181,6 +181,8 @@ describe('runShell', () => {
       outputFormat: undefined,
       prompt: undefined,
       skillsDirs: [],
+      agent: undefined,
+      agentFiles: [],
       addDirs: ['../shared', '/tmp/extra'],
     };
 
@@ -260,6 +262,8 @@ describe('runShell', () => {
         outputFormat: undefined,
         prompt: undefined,
         skillsDirs: ['/skills'],
+        agent: undefined,
+        agentFiles: [],
       },
       '1.2.3-test',
     );
@@ -293,6 +297,8 @@ describe('runShell', () => {
         outputFormat: undefined,
         prompt: undefined,
         skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
       },
       '1.2.3-test',
     );
@@ -333,6 +339,8 @@ describe('runShell', () => {
         outputFormat: undefined,
         prompt: undefined,
         skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
       },
       '1.2.3-test',
     );
@@ -376,6 +384,8 @@ describe('runShell', () => {
         outputFormat: undefined,
         prompt: undefined,
         skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
       },
       '1.2.3-test',
     );
@@ -409,6 +419,8 @@ describe('runShell', () => {
         outputFormat: undefined,
         prompt: undefined,
         skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
       },
       '1.2.3-test',
     );
@@ -460,6 +472,8 @@ describe('runShell', () => {
         outputFormat: undefined,
         prompt: undefined,
         skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
       },
       '1.2.3-test',
     );
@@ -498,6 +512,8 @@ describe('runShell', () => {
         outputFormat: undefined,
         prompt: undefined,
         skillsDirs: [],
+        agent: undefined,
+        agentFiles: [],
       },
       '1.2.3-test',
     );
@@ -528,6 +544,8 @@ describe('runShell', () => {
           outputFormat: undefined,
           prompt: undefined,
           skillsDirs: [],
+          agent: undefined,
+          agentFiles: [],
         },
         '1.2.3-test',
       ),
@@ -565,6 +583,8 @@ describe('runShell', () => {
           outputFormat: undefined,
           prompt: undefined,
           skillsDirs: [],
+          agent: undefined,
+          agentFiles: [],
         },
         '1.2.3-test',
       );
@@ -619,6 +639,8 @@ describe('runShell', () => {
           outputFormat: undefined,
           prompt: undefined,
           skillsDirs: [],
+          agent: undefined,
+          agentFiles: [],
         },
         '1.2.3-test',
       );
@@ -665,6 +687,8 @@ describe('runShell', () => {
           outputFormat: undefined,
           prompt: undefined,
           skillsDirs: [],
+          agent: undefined,
+          agentFiles: [],
         },
         '1.2.3-test',
         { migrateOnly: true },

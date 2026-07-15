@@ -37,6 +37,86 @@ Kimi Code CLI 内置三种子 Agent，开箱即用，分别面向不同任务形
 
 如果需要某类工具在子 Agent 中始终不可用，应收紧主 Agent 的权限规则。
 
+## 自定义 Agent
+
+除了三个内置子 Agent，你还可以用 Markdown 文件定义自己的 Agent。每个文件描述一个 Agent：文件顶部的 Frontmatter（YAML 元数据）声明名称、描述和工具权限，文件正文是它的系统提示词。自定义 Agent 可以作为子 Agent 被委派 —— 主 Agent 会自动发现它们，与内置子 Agent 并列 —— 也可以在启动时选为主 Agent。
+
+::: warning 注意
+自定义 Agent 目前需要 v2 引擎：以 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 运行 print 模式，例如 `KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p "…"`。交互式 TUI 暂时不会加载 Agent 文件。
+:::
+
+### Agent 目录
+
+Kimi Code CLI 按作用域发现 Agent 文件，作用域越具体，优先级越高：**项目 > 额外 > 用户 > 内置**。两个文件定义了相同的 `name` 时，高优先级作用域胜出。每个目录都会递归扫描 `.md` 文件。
+
+**用户级**（对所有项目生效）：
+- `$KIMI_CODE_HOME/agents/`（默认：`~/.kimi-code/agents/`）
+- `~/.agents/agents/`
+
+Kimi 专属的用户 Agent 目录随 `KIMI_CODE_HOME` 移动，通用的 `~/.agents/agents/` 目录留在真实用户目录下，便于跨工具共享。
+
+**项目级**（项目根目录 = 从工作目录向上查找、最近的包含 `.git` 的目录）：
+- `.kimi-code/agents/`
+- `.agents/agents/`
+
+**额外目录**：在 `config.toml` 顶层通过 `extra_agent_dirs` 声明：
+
+```toml
+extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
+```
+
+**内置 Agent** 随 CLI 分发，优先级最低。通过 `--agent-file` 加载的文件优先级高于所有目录作用域，且仅对本次启动生效。
+
+### Agent 文件格式
+
+Agent 文件是带 Frontmatter 的普通 Markdown：
+
+```markdown
+---
+name: reviewer
+description: 严格的代码审查 Agent，按严重度分级报告问题
+whenToUse: 代码评审与 PR 检查
+mode: replace
+tools:
+  - Read
+  - Grep
+  - Glob
+  - mcp__github__*
+disallowedTools:
+  - Bash
+---
+
+你是严格的代码审查者。阅读 diff 后，按严重度分级报告问题……
+```
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `name` | 是 | kebab-case 唯一标识。缺少合法 `name` 的文件会被跳过并告警 |
+| `description` | 是 | Agent 的用途。主 Agent 挑选子 Agent 时会看到，请围绕委派决策来写 |
+| `whenToUse` | 否 | 补充说明何时应使用该 Agent |
+| `mode` | 否 | `replace`（默认）：正文即 Agent 的完整系统提示词。`append`：正文追加到默认系统提示词之上，工作区指令和 Skill 注入保持生效 |
+| `tools` | 否 | 工具名允许列表，如 `Read`、`Bash`；MCP 工具用 glob 匹配，如 `mcp__github__*`。缺省表示允许全部工具 |
+| `disallowedTools` | 否 | 禁止列表，匹配规则相同，在 `tools` 之后应用 |
+
+未知字段会被忽略，新版本写的文件在旧版本上仍可读取。
+
+目录中发现的非法文件会被跳过并告警，不影响其他文件。通过 `--agent-file` 显式传入的文件必须合法 —— 否则 CLI 会报错并退出。
+
+### 选择主 Agent
+
+两个 CLI flag 用于选择驱动会话的 Agent：
+
+- **`--agent <name>`**：以指定 Agent 作为主 Agent 启动会话。名称可以指向内置 Agent 或任何已发现的文件；名称不存在时会报错，并列出可用的 Agent。
+- **`--agent-file <path>`**：以最高优先级加载一个 Agent 文件（仅本次启动）并以其启动。重复传入可注册多个文件，配合 `--agent <name>` 按名称选择。
+
+两个 flag 目前只在 v2 print 模式下可用：
+
+```sh
+KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "审查这个分支上的改动"
+```
+
+传入交互式 TUI 会报错并说明原因。
+
 ## 指令文件
 
 全局 Kimi 专属指令可放在 `$KIMI_CODE_HOME/AGENTS.md`（默认：`~/.kimi-code/AGENTS.md`）。当你用 `KIMI_CODE_HOME` 移动数据根时，这份全局指令文件也会一起移动。跨工具通用指令仍可放在真实 OS home 下的 `~/.agents/AGENTS.md`，项目级指令仍放在项目目录中，例如 `.kimi-code/AGENTS.md` 或 `AGENTS.md`。

@@ -54,6 +54,7 @@ export type ProfileUpdateData = Partial<{
   profileName: string;
   thinkingLevel: string;
   systemPrompt: string;
+  disallowedTools: readonly string[];
   activeToolNames: readonly string[];
 }>;
 

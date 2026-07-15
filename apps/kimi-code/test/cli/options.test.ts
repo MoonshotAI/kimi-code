@@ -41,6 +41,8 @@ describe('CLI options parsing', () => {
       expect(opts.outputFormat).toBeUndefined();
       expect(opts.prompt).toBeUndefined();
       expect(opts.skillsDirs).toEqual([]);
+      expect(opts.agent).toBeUndefined();
+      expect(opts.agentFiles).toEqual([]);
       expect(opts.addDirs).toEqual([]);
     });
   });
@@ -390,6 +392,49 @@ describe('CLI options parsing', () => {
     });
   });
 
+  describe('--agent / --agent-file', () => {
+    it('parses --agent and repeated --agent-file', () => {
+      const opts = parse([
+        '-p',
+        'hi',
+        '--agent',
+        'reviewer',
+        '--agent-file',
+        'a.md',
+        '--agent-file=b.md',
+      ]);
+      expect(opts.agent).toBe('reviewer');
+      expect(opts.agentFiles).toEqual(['a.md', 'b.md']);
+    });
+
+    it('rejects empty agent values', () => {
+      const opts = parse(['-p', 'hi', '--agent', '   ']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Agent cannot be empty.');
+    });
+
+    it('rejects the flags in shell mode', () => {
+      const opts = parse(['--agent', 'reviewer']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow(
+        '--agent/--agent-file are only available with the v2 engine',
+      );
+    });
+
+    it('rejects the flags in prompt mode without the v2 engine flag', () => {
+      const opts = parse(['-p', 'hi', '--agent-file', 'a.md']);
+      expect(() => validateOptions(opts, {})).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts, {})).toThrow(
+        '--agent/--agent-file are only available with the v2 engine',
+      );
+    });
+
+    it('accepts the flags in prompt mode with the v2 engine flag', () => {
+      const opts = parse(['-p', 'hi', '--agent', 'reviewer']);
+      expect(validateOptions(opts, { KIMI_CODE_EXPERIMENTAL_FLAG: '1' }).uiMode).toBe('print');
+    });
+  });
+
   describe('--add-dir', () => {
     it('parses one additional workspace directory', () => {
       expect(parse(['--add-dir', '/shared']).addDirs).toEqual(['/shared']);
@@ -483,13 +528,11 @@ describe('CLI options parsing', () => {
         '--thinking',
         '--print',
         '--wire',
-        '--agent=default',
         '--raw-model',
         '--config-file=x',
         '--quiet',
         '--final-message-only',
         '--input-format=text',
-        '--agent-file=x',
         '--mcp-config={}',
         '--mcp-config-file=/',
       ]) {

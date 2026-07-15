@@ -1,6 +1,11 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  IAgentCatalogRuntimeOptions,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
@@ -109,6 +114,8 @@ function opts(overrides: Record<string, unknown> = {}) {
     outputFormat: undefined,
     prompt: 'say hello',
     skillsDirs: [],
+    agent: undefined,
+    agentFiles: [],
     addDirs: [],
     ...overrides,
   } as const;
@@ -120,7 +127,14 @@ function makeFakeHarness() {
   const eventListeners = new Set<(event: DomainEvent) => void>();
 
   const agentServices = new Map<unknown, unknown>([
-    [IAgentProfileService, { setModel: vi.fn(async () => ({ model: 'k2' })), getModel: () => 'k2' }],
+    [
+      IAgentProfileService,
+      {
+        bind: vi.fn(async () => {}),
+        setModel: vi.fn(async () => ({ model: 'k2' })),
+        getModel: () => 'k2',
+      },
+    ],
     [IAgentPermissionModeService, { mode: 'auto', setMode: vi.fn() }],
     [IAuthSummaryService, { ensureReady: vi.fn(async () => {}) }],
     [
@@ -273,5 +287,74 @@ describe('runV2Print', () => {
 
     const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
     expect(seeds.some(([id]) => id === ISkillCatalogRuntimeOptions)).toBe(false);
+  });
+
+  it('seeds explicit agent files from --agentFile and binds the --agent profile', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent, agentServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await runV2Print(
+      opts({ agent: 'reviewer', agentFiles: ['/agents/reviewer.md'] }) as never,
+      '1.2.3-test',
+      { stdout, stderr },
+    );
+
+    const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
+    const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
+    expect(seeded?.[1]).toMatchObject({ explicitFiles: ['/agents/reviewer.md'] });
+
+    const profile = agentServices.get(IAgentProfileService) as {
+      bind: ReturnType<typeof vi.fn>;
+      setModel: ReturnType<typeof vi.fn>;
+    };
+    expect(profile.bind).toHaveBeenCalledWith({ profile: 'reviewer', model: 'k2' });
+    expect(profile.setModel).not.toHaveBeenCalled();
+  });
+
+  it('binds the profile named by --agent-file when --agent is absent', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-agent-file-'));
+    const agentFile = join(dir, 'reviewer.md');
+    await writeFile(
+      agentFile,
+      '---\nname: file-reviewer\ndescription: Reviews code.\n---\n\nYou review code.\n',
+    );
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent, agentServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await runV2Print(opts({ agentFiles: [agentFile] }) as never, '1.2.3-test', {
+      stdout,
+      stderr,
+    });
+
+    const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
+    const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
+    expect(seeded?.[1]).toMatchObject({ explicitFiles: [agentFile] });
+
+    const profile = agentServices.get(IAgentProfileService) as {
+      bind: ReturnType<typeof vi.fn>;
+    };
+    expect(profile.bind).toHaveBeenCalledWith({ profile: 'file-reviewer', model: 'k2' });
+  });
+
+  it('leaves the agent runtime options unseeded when --agentFile is empty', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await runV2Print(opts() as never, '1.2.3-test', { stdout, stderr });
+
+    const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
+    expect(seeds.some(([id]) => id === IAgentCatalogRuntimeOptions)).toBe(false);
   });
 });

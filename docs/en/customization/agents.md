@@ -37,6 +37,86 @@ Sub-agent permission rules are inherited from the main Agent: "always allow" rul
 
 If you need a particular type of tool to be permanently unavailable inside sub-agents, tighten the corresponding permission rule on the main Agent.
 
+## Custom Agents
+
+Beyond the three built-in sub-agents, you can define your own agents as Markdown files. Each file describes one agent: the frontmatter (YAML metadata at the top of the file) declares its name, description, and tool access, and the file body is its system prompt. Custom agents can be delegated to as sub-agents — the main Agent discovers them automatically alongside the built-in ones — or selected as the main Agent at startup.
+
+::: warning Note
+Custom agents currently require the v2 engine: run print mode with `KIMI_CODE_EXPERIMENTAL_FLAG=1`, for example `KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p "…"`. The interactive TUI does not load agent files yet.
+:::
+
+### Agent Locations
+
+Kimi Code CLI discovers agent files by scope; more specific scopes take higher priority: **Project > Extra > User > Built-in**. When two files define the same `name`, the higher-priority scope wins. Each directory is scanned recursively for `.md` files.
+
+**User level** (applies to all projects):
+- `$KIMI_CODE_HOME/agents/` (default: `~/.kimi-code/agents/`)
+- `~/.agents/agents/`
+
+The Kimi-specific user agent directory moves with `KIMI_CODE_HOME`, while the generic `~/.agents/agents/` directory stays under the real OS home so it can be shared across tools.
+
+**Project level** (project root = the nearest directory containing `.git`, searching upward from the working directory):
+- `.kimi-code/agents/`
+- `.agents/agents/`
+
+**Extra directories**: Declared via `extra_agent_dirs` at the top level of `config.toml`:
+
+```toml
+extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
+```
+
+**Built-in agents** are distributed with the CLI and have the lowest priority. A file loaded through `--agent-file` outranks every directory scope and applies to the current launch only.
+
+### Agent File Format
+
+An agent file is plain Markdown with a frontmatter block:
+
+```markdown
+---
+name: reviewer
+description: Strict code reviewer that reports severity-ranked findings
+whenToUse: Code reviews and PR checks
+mode: replace
+tools:
+  - Read
+  - Grep
+  - Glob
+  - mcp__github__*
+disallowedTools:
+  - Bash
+---
+
+You are a strict code reviewer. Read the diff, then report findings grouped by severity…
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `name` | yes | Unique identifier in kebab-case. Files without a valid `name` are skipped with a warning |
+| `description` | yes | What the agent does. Shown to the main Agent when it picks a sub-agent, so write it to guide delegation decisions |
+| `whenToUse` | no | Extra hint describing when the agent should be used |
+| `mode` | no | `replace` (default): the body is the agent's entire system prompt. `append`: the body is added to the default system prompt, keeping workspace instructions and Skill injections in effect |
+| `tools` | no | Allowlist of tool names such as `Read` or `Bash`; MCP tools are matched with globs such as `mcp__github__*`. Omit to allow all tools |
+| `disallowedTools` | no | Denylist with the same matching rules, applied after `tools` |
+
+Unknown fields are ignored, so newer files stay readable by older versions.
+
+A file with invalid content discovered in a directory is skipped with a warning and does not affect other files. A file passed explicitly via `--agent-file` must be valid — otherwise the CLI reports the error and exits.
+
+### Selecting the Main Agent
+
+Two CLI flags select which agent drives the session:
+
+- **`--agent <name>`**: Start the session with the named agent as the main Agent. The name can refer to a built-in agent or to any discovered file; an unknown name fails with an error listing the available agents.
+- **`--agent-file <path>`**: Load one agent file at the highest priority for this launch and start with it. Repeat the flag to register several files, and combine it with `--agent <name>` to choose among them by name.
+
+Both flags currently work only in v2 print mode:
+
+```sh
+KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "Review the changes on this branch"
+```
+
+Passing them to the interactive TUI fails with an explanatory error.
+
 ## Instruction Files
 
 Global Kimi-specific instructions can live at `$KIMI_CODE_HOME/AGENTS.md` (default: `~/.kimi-code/AGENTS.md`). When you relocate the data root with `KIMI_CODE_HOME`, this global instruction file moves with it. Generic cross-tool instructions can still live under `~/.agents/AGENTS.md` in the real OS home, and project-level instructions remain under the project tree, for example `.kimi-code/AGENTS.md` or `AGENTS.md`.

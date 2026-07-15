@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -6,6 +6,7 @@ import { deflateSync } from 'node:zlib';
 import {
   IAgentContextMemoryService,
   IAgentLifecycleService,
+  IAgentProfileService,
   ISessionLifecycleService,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -510,5 +511,77 @@ describe('server-v2 /api/v1 prompts', () => {
       agent_id: 'agent_does_not_exist',
     });
     expect(body.code).toBe(40401);
+  });
+
+  it('rejects an unknown agent profile with 40001', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      profile: 'agent_does_not_exist',
+      model: 'stub',
+    });
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain('agent_does_not_exist');
+  });
+
+  it('binds a discovered custom agent profile on the first prompt', async () => {
+    // A user-level agent file under $KIMI_CODE_HOME/agents is discovered into
+    // the session profile catalog and selectable by name.
+    await mkdir(join(home as string, 'agents'), { recursive: true });
+    await writeFile(
+      join(home as string, 'agents', 'route-reviewer.md'),
+      [
+        '---',
+        'name: route-reviewer',
+        'description: reviewer defined by a user-level agent file',
+        '---',
+        '',
+        'You are a route-test reviewer.',
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    // No `model` — the profile bind falls back to the configured default_model.
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      profile: 'route-reviewer',
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const main = session.accessor.get(IAgentLifecycleService).get('main');
+    expect(main?.accessor.get(IAgentProfileService).data().profileName).toBe('route-reviewer');
+
+    // Repeating the same profile on a later prompt is a no-op, not an error.
+    const again = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'again' }],
+      profile: 'route-reviewer',
+    });
+    expect(again.body.code).toBe(0);
+  });
+
+  it('rejects switching to a different profile once bound', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const first = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      model: 'stub',
+    });
+    expect(first.body.code).toBe(0);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'again' }],
+      profile: 'some-other-agent',
+      model: 'stub',
+    });
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain('already bound');
   });
 });

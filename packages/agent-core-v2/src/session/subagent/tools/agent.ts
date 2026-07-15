@@ -38,7 +38,8 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
-import { IAgentProfileCatalogService, type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
 import { ILogService } from '#/_base/log/log';
 import { IConfigService } from '#/app/config/config';
@@ -140,7 +141,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   constructor(
     @IAgentLifecycleService private readonly lifecycle: IAgentLifecycleService,
     @ISessionSubagentService private readonly subagents: ISessionSubagentService,
-    @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
+    @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
@@ -237,6 +238,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       const requestedProfileName = args.subagent_type?.length
         ? args.subagent_type
         : DEFAULT_PROFILE_NAME;
+      await this.catalog.ready;
       const profile = this.catalog.get(requestedProfileName);
       if (profile === undefined) {
         throw new Error(`Unknown agent type: "${requestedProfileName}"`);
@@ -452,6 +454,9 @@ function buildProfileDescriptions(
         (part): part is string => part !== undefined && part.length > 0,
       );
       const header = details.length === 0 ? `- ${profile.name}` : `- ${profile.name}: ${details.join(' ')}`;
+      if (profile.tools === undefined) {
+        return `${header}\n  Tools: all`;
+      }
       if (profile.tools.length === 0) {
         return header;
       }

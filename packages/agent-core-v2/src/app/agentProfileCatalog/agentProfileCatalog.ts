@@ -58,7 +58,10 @@ export interface AgentProfile {
   readonly name: string;
   readonly description?: string;
   readonly whenToUse?: string;
-  readonly tools: readonly string[];
+  // Allowlist of exact builtin names + mcp__ globs; undefined = every tool active.
+  readonly tools?: readonly string[];
+  // Denylist with the same matching semantics, applied on top of the allowlist result.
+  readonly disallowedTools?: readonly string[];
   systemPrompt(context: AgentProfileContext): string;
   readonly promptPrefix?: (ctx: AgentProfilePromptPrefixContext) => Promise<string>;
   readonly summaryPolicy?: AgentProfileSummaryPolicy;

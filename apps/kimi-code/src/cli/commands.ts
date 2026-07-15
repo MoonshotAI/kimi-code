@@ -76,6 +76,20 @@ export function createProgram(
     )
     .addOption(
       new Option(
+        '--agent <name>',
+        'Agent profile to use for this invocation (v2 engine only). Custom profiles are discovered from agent directories or loaded via --agent-file.',
+      ),
+    )
+    .addOption(
+      new Option(
+        '--agent-file <path>',
+        'Load an agent definition from a Markdown file and select it (v2 engine only). Can be repeated.',
+      )
+        .argParser((value: string, previous: string[] | undefined) => [...(previous ?? []), value])
+        .default([]),
+    )
+    .addOption(
+      new Option(
         '--add-dir <dir>',
         'Add an additional workspace directory for this session. Can be repeated.',
       )
@@ -133,6 +147,8 @@ export function createProgram(
       outputFormat: raw['outputFormat'] as CLIOptions['outputFormat'],
       prompt: raw['prompt'] as string | undefined,
       skillsDirs: raw['skillsDir'] as string[],
+      agent: raw['agent'] as string | undefined,
+      agentFiles: raw['agentFile'] as string[],
       addDirs: raw['addDir'] as string[],
     };
 

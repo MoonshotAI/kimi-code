@@ -5,13 +5,16 @@ import { join } from 'pathe';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IWireService } from '#/wire/wire';
 
 import {
   InMemoryWireRecordPersistence,
   createTestAgent,
   hostEnvironmentServices,
+  sessionService,
   type TestAgentContext,
 } from '../../harness';
 
@@ -131,5 +134,120 @@ describe('AgentProfileService.bind', () => {
     await svc.setModel(MOCK_MODEL);
 
     expect(svc.data().profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
+  });
+});
+
+describe('AgentProfileService tool denylist', () => {
+  registerAgentProfile({
+    name: 'deny-builtin',
+    disallowedTools: ['Bash'],
+    systemPrompt: () => 'deny test',
+  });
+  registerAgentProfile({
+    name: 'deny-over-allow',
+    tools: ['Read', 'Bash'],
+    disallowedTools: ['Bash'],
+    systemPrompt: () => 'deny test',
+  });
+  registerAgentProfile({
+    name: 'deny-mcp',
+    disallowedTools: ['mcp__github__*'],
+    systemPrompt: () => 'deny test',
+  });
+
+  let ctx: TestAgentContext;
+  let homeDir: string;
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-deny-home-'));
+  });
+
+  afterEach(async () => {
+    await ctx?.dispose();
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  async function bindProfile(name: string): Promise<IAgentProfileService> {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+    await svc.bind({ profile: name, model: MOCK_MODEL });
+    return svc;
+  }
+
+  it('blocks a denied builtin tool while others stay active', async () => {
+    const svc = await bindProfile('deny-builtin');
+    expect(svc.isToolActive('Bash')).toBe(false);
+    expect(svc.isToolActive('Read')).toBe(true);
+  });
+
+  it('denylist wins over the allowlist', async () => {
+    const svc = await bindProfile('deny-over-allow');
+    expect(svc.isToolActive('Bash')).toBe(false);
+    expect(svc.isToolActive('Read')).toBe(true);
+    expect(svc.isToolActive('Write')).toBe(false);
+  });
+
+  it('matches denied mcp tools by glob', async () => {
+    const svc = await bindProfile('deny-mcp');
+    expect(svc.isToolActive('mcp__github__create_pr', 'mcp')).toBe(false);
+    expect(svc.isToolActive('mcp__other__ping', 'mcp')).toBe(true);
+    expect(svc.isToolActive('Read')).toBe(true);
+  });
+
+  it('lists available profiles when binding an unknown profile', async () => {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+    await expect(svc.bind({ profile: 'does-not-exist', model: MOCK_MODEL })).rejects.toThrow(
+      /Available profiles: .*agent/,
+    );
+  });
+
+  it('persists the denylist in the bind records', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+
+    await svc.bind({ profile: 'deny-builtin', model: MOCK_MODEL });
+    await ctx.get(IWireService).flush();
+
+    const record = persistence.records.find((r) => r.type === 'config.update' && 'profileName' in r);
+    expect(record).toMatchObject({ profileName: 'deny-builtin', disallowedTools: ['Bash'] });
+  });
+
+  it('restores the denylist from persisted records on resume without catalog resolution', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+    await svc.bind({ profile: 'deny-builtin', model: MOCK_MODEL });
+    await ctx.get(IWireService).flush();
+    await ctx.dispose();
+
+    // Resume by replaying the same records, with a catalog that cannot resolve
+    // the bound profile (e.g. its agent file was deleted): the denylist must
+    // come from the persisted record, not from a catalog lookup.
+    const emptyCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      get: () => undefined,
+      getDefault: () => ({
+        name: DEFAULT_AGENT_PROFILE_NAME,
+        tools: undefined,
+        systemPrompt: () => '',
+      }),
+      list: () => [],
+      load: async () => {},
+      reload: async () => {},
+    } as unknown as ISessionAgentProfileCatalog;
+    ctx = createTestAgent(
+      { persistence },
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionAgentProfileCatalog, emptyCatalog),
+    );
+    await ctx.restorePersisted();
+    const resumed = ctx.get(IAgentProfileService);
+
+    expect(resumed.data().profileName).toBe('deny-builtin');
+    expect(resumed.isToolActive('Bash')).toBe(false);
+    expect(resumed.isToolActive('Read')).toBe(true);
   });
 });

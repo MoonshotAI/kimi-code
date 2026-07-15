@@ -5,7 +5,8 @@
  * active-tool set; resolves the runnable god-object Model through the App-
  * scope `IModelResolver`, persists the persistent config slice (`cwd` /
  * `modelAlias` / `profileName` / resolved base `thinkingLevel` /
- * `systemPrompt`) in the `wire` `ProfileModel` through the `config.update` Op
+ * `systemPrompt` / profile `disallowedTools`) in the `wire` `ProfileModel`
+ * through the `config.update` Op
  * and the persisted active-tool set in the `wire` `ActiveToolsModel` through the
  * `tools.set_active_tools` Op (`wire.dispatch`), and reads both through
  * `wire.getModel`. The effective active-tool set read by consumers is the
@@ -28,7 +29,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/app/llmProtocol/capability';
 import { type GenerationKwargs } from '#/app/llmProtocol/kimiOptions';
 import { type ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
-import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
+import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { type Model } from '#/app/model/modelInstance';
 import { type KimiModelOverrides } from '#/app/model/modelOverrides';
 import { IModelResolver } from '#/app/model/modelResolver';
@@ -49,6 +50,7 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { isMcpToolName, type ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
 
 import type { WarningEvent } from '@moonshot-ai/protocol';
@@ -115,7 +117,7 @@ export class AgentProfileService implements IAgentProfileService {
     @ISessionContext private readonly sessionContext: ISessionContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
-    @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
+    @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
   ) {
     this.configure({});
@@ -147,9 +149,16 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   async bind(input: BindAgentInput): Promise<void> {
+    await this.catalog.ready;
     const profile = this.catalog.get(input.profile);
     if (profile === undefined) {
-      throw new Error(`Unknown agent profile: "${input.profile}"`);
+      const available = this.catalog
+        .list()
+        .map((p) => p.name)
+        .join(', ');
+      throw new Error(
+        `Unknown agent profile: "${input.profile}". Available profiles: ${available}`,
+      );
     }
     const model = this.modelFactory.resolve(input.model);
 
@@ -168,6 +177,7 @@ export class AgentProfileService implements IAgentProfileService {
       cwd: input.cwd,
       profileName: profile.name,
       systemPrompt,
+      disallowedTools: profile.disallowedTools ?? [],
     });
     this.setActiveTools(profile.tools);
     this.wire.dispatch(configUpdate({ modelAlias: input.model, thinkingEffort: thinkingLevel }));
@@ -223,6 +233,7 @@ export class AgentProfileService implements IAgentProfileService {
     this.update({
       profileName: profile.name,
       systemPrompt: profile.systemPrompt(context),
+      disallowedTools: profile.disallowedTools ?? [],
     });
     this.setActiveTools(profile.tools);
   }
@@ -369,9 +380,19 @@ export class AgentProfileService implements IAgentProfileService {
 
   isToolActive(name: string, source: ToolSource = 'builtin'): boolean {
     const activeToolNames = this.activeToolNames;
-    if (activeToolNames === undefined) return true;
-    if (source !== 'mcp') return activeToolNames.includes(name);
-    return activeToolNames
+    if (activeToolNames !== undefined) {
+      const allowed =
+        source !== 'mcp'
+          ? activeToolNames.includes(name)
+          : activeToolNames
+              .filter((pattern) => isMcpToolName(pattern))
+              .some((pattern) => picomatch.isMatch(name, pattern));
+      if (!allowed) return false;
+    }
+    const disallowed = this.profileState.disallowedTools;
+    if (disallowed === undefined) return true;
+    if (source !== 'mcp') return !disallowed.includes(name);
+    return !disallowed
       .filter((pattern) => isMcpToolName(pattern))
       .some((pattern) => picomatch.isMatch(name, pattern));
   }
@@ -408,6 +429,9 @@ export class AgentProfileService implements IAgentProfileService {
       );
     }
     if (changed.systemPrompt !== undefined) payload.systemPrompt = changed.systemPrompt;
+    if (changed.disallowedTools !== undefined) {
+      payload.disallowedTools = [...changed.disallowedTools];
+    }
     return payload;
   }
 
@@ -424,9 +448,11 @@ export class AgentProfileService implements IAgentProfileService {
     );
   }
 
-  private setActiveTools(names: readonly string[]): void {
+  private setActiveTools(names: readonly string[] | undefined): void {
     this.activeToolNamesOverlay = undefined;
-    this.wire.dispatch(setActiveTools({ names: [...names] }));
+    this.wire.dispatch(
+      setActiveTools({ names: names === undefined ? undefined : [...names] }),
+    );
   }
 
   private emitStatusUpdated(includeThinkingEffort = false): void {

@@ -117,6 +117,7 @@ const DOMAIN_LAYER = new Map([
   ['skill', 3],
   ['skillCatalog', 3],
   ['sessionSkillCatalog', 3],
+  ['sessionAgentProfileCatalog', 3],
   ['permissionGate', 3],
   ['flag', 3],
   ['toolExecutor', 3],
@@ -131,6 +132,7 @@ const DOMAIN_LAYER = new Map([
   ['record', 3],
   ['modelCatalog', 3],
   ['agentProfileCatalog', 3],
+  ['agentFileCatalog', 3],
   // L4 — agent behaviour
   ['activity', 4],
   ['context', 4],

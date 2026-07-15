@@ -24,6 +24,8 @@ kimi <subcommand> [options]
 | `--auto` | | 以 auto 权限模式启动；工具审批自动处理，Agent 不会向用户提问 |
 | `--plan` | | 以 Plan 模式启动新会话，AI 会优先使用只读工具进行探索和规划 |
 | `--skills-dir <dir>` | | 从指定目录加载 Skills，替换自动发现的用户和项目目录。可重复传入 |
+| `--agent <name>` | | 以指定 Agent 作为主 Agent 启动会话。需要 v2 引擎 |
+| `--agent-file <path>` | | 从 Markdown 文件加载自定义 Agent（仅本次启动）并选中它。可重复传入。需要 v2 引擎 |
 | `--add-dir <dir>` | | 为本次会话添加额外的工作目录。相对路径按当前工作目录解析。可重复传入 |
 
 `-r` / `--resume` 是 `--session` 的隐藏别名；`--yes` 和 `--auto-approve` 是 `--yolo` 的隐藏别名，在帮助信息中不显示。
@@ -93,6 +95,16 @@ kimi --plan
   ```
 
 - **`extra_skill_dirs`**（`config.toml`）：**叠加**到自动发现的目录之上，长期生效，适合配置团队共享 Skills。详见 [Agent Skills](../customization/skills.md)。
+
+### 自定义 Agent
+
+`--agent` 和 `--agent-file` 用于选择驱动会话的 Agent。两者都需要 v2 引擎 —— 以 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 运行 print 模式；传入交互式 TUI 会报错并说明原因：
+
+```sh
+KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "审查这个分支上的改动"
+```
+
+`--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；重复传入可注册多个文件，再加 `--agent` 按名称选择。Agent 文件格式与发现目录详见 [Agent 与子 Agent](../customization/agents.md#自定义-agent)。
 
 ## 非交互执行
 
@@ -397,3 +409,4 @@ kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-
 - [斜杠命令](./slash-commands.md) — 交互式 TUI 内的控制命令速查
 - [配置文件](../configuration/config-files.md) — `default_model`、权限模式等启动参数的持久化配置
 - [Agent Skills](../customization/skills.md) — `--skills-dir` 加载的 Skill 文件格式
+- [Agent 与子 Agent](../customization/agents.md) — 内置子 Agent、自定义 Agent 文件与通过 `--agent` 选择主 Agent

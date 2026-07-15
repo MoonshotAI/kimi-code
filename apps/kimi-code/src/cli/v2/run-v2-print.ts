@@ -16,6 +16,8 @@
  * Selected by `runPrompt` when `KIMI_CODE_EXPERIMENTAL_FLAG` is set.
  */
 
+import { readFile } from 'node:fs/promises';
+
 import {
   IAgentGoalService,
   IAgentLifecycleService,
@@ -30,11 +32,13 @@ import {
   ISessionIndex,
   ISessionLifecycleService,
   ITelemetryService,
+  agentCatalogRuntimeOptionsSeed,
   bootstrap,
   createCloudAppender,
   ensureMainAgent,
   hostRequestHeadersSeed,
   logSeed,
+  parseAgentFileText,
   resolveAgentTaskConfig,
   resolveKimiHome,
   resolveLoggingConfig,
@@ -120,6 +124,9 @@ export async function runV2Print(
     // `--skillsDir` (v1 print parity): explicit skill dirs replace default
     // user / project discovery for this process.
     ...skillCatalogRuntimeOptionsSeed(opts.skillsDirs),
+    // `--agent-file`: explicit agent definition files, registered with the
+    // highest-precedence source for this process.
+    ...agentCatalogRuntimeOptionsSeed(opts.agentFiles.map((file) => resolve(file))),
   ]);
   const auth = app.accessor.get(IOAuthToolkit);
 
@@ -236,6 +243,52 @@ async function resolveNativeSession(
   const lifecycle = app.accessor.get(ISessionLifecycleService);
   const index = app.accessor.get(ISessionIndex);
 
+  // `--agent` selects a catalog profile by name; otherwise the last
+  // `--agent-file` implicitly selects the profile that file defines. The file
+  // is parsed here (fatal on error) so a bad file fails before any turn.
+  let agentProfileName = opts.agent;
+  const lastAgentFile = opts.agentFiles.at(-1);
+  if (agentProfileName === undefined && lastAgentFile !== undefined) {
+    const agentFilePath = resolve(lastAgentFile);
+    let agentFileText: string;
+    try {
+      agentFileText = await readFile(agentFilePath, 'utf8');
+    } catch (error) {
+      throw new Error(
+        `Failed to read agent file "${agentFilePath}": ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+    try {
+      agentProfileName = parseAgentFileText({
+        path: agentFilePath,
+        source: 'explicit',
+        text: agentFileText,
+      }).name;
+    } catch (error) {
+      throw new Error(
+        `Invalid agent file "${agentFilePath}": ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+    }
+  }
+
+  // `--agent` / `--agent-file` bind an explicit profile; without them the
+  // historical setModel path (default profile on first bind) is kept.
+  const applyProfileSelection = async (
+    profile: IAgentProfileService,
+    model: string | undefined,
+  ): Promise<void> => {
+    if (agentProfileName !== undefined) {
+      await profile.bind({
+        profile: agentProfileName,
+        model: requireConfiguredModel(model ?? profile.getModel(), defaultModel),
+      });
+    } else if (model !== undefined) {
+      await profile.setModel(model);
+    }
+  };
+
   const resumeById = async (id: string): Promise<ISessionScopeHandle> => {
     const session = await lifecycle.resume(id);
     if (session === undefined) {
@@ -273,9 +326,7 @@ async function resolveNativeSession(
     const session = await resumeById(opts.session);
     const agent = await ensureMainAgent(session);
     const profile = agent.accessor.get(IAgentProfileService);
-    if (opts.model !== undefined) {
-      await profile.setModel(opts.model);
-    }
+    await applyProfileSelection(profile, opts.model);
     const currentModel = profile.getModel();
     const { restorePermission } = forceAuto(agent);
     return {
@@ -294,9 +345,7 @@ async function resolveNativeSession(
       const session = await resumeById(previous.id);
       const agent = await ensureMainAgent(session);
       const profile = agent.accessor.get(IAgentProfileService);
-      if (opts.model !== undefined) {
-        await profile.setModel(opts.model);
-      }
+      await applyProfileSelection(profile, opts.model);
       const currentModel = profile.getModel();
       const { restorePermission } = forceAuto(agent);
       return {
@@ -316,7 +365,7 @@ async function resolveNativeSession(
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
   });
   const agent = await ensureMainAgent(session);
-  await agent.accessor.get(IAgentProfileService).setModel(model);
+  await applyProfileSelection(agent.accessor.get(IAgentProfileService), model);
   agent.accessor.get(IAgentPermissionModeService).setMode('auto');
   return {
     session,
