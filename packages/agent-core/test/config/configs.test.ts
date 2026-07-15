@@ -941,7 +941,7 @@ support_efforts = ["low", "high"]
 
 describe('applyPrintModeConfigDefaults', () => {
   it('fills unbounded print defaults when nothing is configured', () => {
-    const config = applyPrintModeConfigDefaults({});
+    const config = applyPrintModeConfigDefaults({ providers: {} });
     expect(config.loopControl?.maxStepsPerTurn).toBe(0);
     expect(config.background?.bashTaskTimeoutS).toBe(0);
     expect(config.subagent?.timeoutMs).toBe(0);
@@ -949,6 +949,7 @@ describe('applyPrintModeConfigDefaults', () => {
 
   it('lets explicit user config win over every print default', () => {
     const config = applyPrintModeConfigDefaults({
+      providers: {},
       loopControl: { maxStepsPerTurn: 7 },
       background: { bashTaskTimeoutS: 30, keepAliveOnExit: true },
       subagent: { timeoutMs: 5000 },
