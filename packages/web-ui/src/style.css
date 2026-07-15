@@ -227,6 +227,11 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --color-danger: #c0392b;
   --color-danger-soft: #fbeaea;
   --color-danger-bd: #f0cccc;
+  /* Diff add/del row bands — deliberately stronger than *-soft so the change
+     reads inside chat cards. Design tokens: color.others.diffAddedBg /
+     diffDeletedBg (light). */
+  --color-diff-add-bg: rgba(22, 196, 86, 0.25);
+  --color-diff-del-bg: rgba(255, 56, 73, 0.25);
   /* "Done" scale — purple used for GitHub merged PRs (matches GitHub Primer). */
   --color-done: #8250df;
   --color-done-soft: #f3e8ff;
@@ -358,6 +363,9 @@ html[data-color-scheme="dark"] {
   --color-danger: #f85149;
   --color-danger-soft: rgba(248, 81, 73, 0.14);
   --color-danger-bd: rgba(248, 81, 73, 0.28);
+  /* Diff bands: the 14% soft fills already read well on dark surfaces. */
+  --color-diff-add-bg: rgba(63, 185, 80, 0.14);
+  --color-diff-del-bg: rgba(248, 81, 73, 0.14);
   /* "Done" scale — purple used for GitHub merged PRs (matches GitHub Primer). */
   --color-done: #a371f7;
   --color-done-soft: rgba(163, 113, 247, 0.14);
@@ -402,6 +410,9 @@ html[data-color-scheme="dark"] {
     --color-danger: #f85149;
     --color-danger-soft: rgba(248, 81, 73, 0.14);
     --color-danger-bd: rgba(248, 81, 73, 0.28);
+    /* Diff bands: the 14% soft fills already read well on dark surfaces. */
+    --color-diff-add-bg: rgba(63, 185, 80, 0.14);
+    --color-diff-del-bg: rgba(248, 81, 73, 0.14);
     /* "Done" scale — purple used for GitHub merged PRs (matches GitHub Primer). */
     --color-done: #a371f7;
     --color-done-soft: rgba(163, 113, 247, 0.14);

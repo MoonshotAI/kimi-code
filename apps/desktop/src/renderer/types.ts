@@ -191,22 +191,6 @@ export interface FilePreviewRequest {
   line?: number;
 }
 
-/**
- * Payload for opening an Edit/Write tool-call diff in the right-side detail
- * panel. `lines` carries the synthesized diff for single edits / new writes;
- * it is null for operations a from-args diff can't represent (replace_all,
- * append, multi-edit, errors), in which case `output` (the tool result) is
- * shown instead.
- */
-export interface ToolDiffTarget {
-  /** Tool-call id; used so clicking the same card again toggles the panel closed. */
-  id: string;
-  title: string;
-  path?: string;
-  lines: DiffViewLine[] | null;
-  output?: string[];
-}
-
 /** Metadata carried by a cron fire — shared by a standalone cron turn and by a
  *  cron notice embedded inside an assistant turn's blocks. Mirrors the TUI's
  *  CronTranscriptData. `missedCount` present means a missed-fire catch-up. */
