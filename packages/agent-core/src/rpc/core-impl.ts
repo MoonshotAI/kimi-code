@@ -250,7 +250,15 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const id = options.id ?? createSessionId();
     const modelAlias = options.model ?? config.defaultModel;
     const model = modelAlias !== undefined ? config.models?.[modelAlias] : undefined;
-    const thinkingEffort = resolveThinkingEffort(options.thinking, config.thinking, model);
+    // Forward only an explicitly requested effort. With no explicit value the
+    // initial effort is left to ConfigState.update(), which resolves it from
+    // the resolved provider — that carries the provider-level protocol context
+    // a raw model alias lacks (e.g. provider type "anthropic" with a custom
+    // model name must default to the inferred profile effort, not "off").
+    const thinkingEffort =
+      options.thinking === undefined
+        ? undefined
+        : resolveThinkingEffort(options.thinking, config.thinking, model);
     const permissionMode = options.permission ?? config.defaultPermissionMode;
     const baseMcpConfig = await resolveSessionMcpConfig({
       cwd: workDir,

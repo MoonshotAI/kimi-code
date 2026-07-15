@@ -409,12 +409,10 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         knownEfforts,
       });
     } catch {
-      // Diagnostics must never block request dispatch.
     }
     try {
       this.eventBus.publish({ type: 'warning', code, message });
     } catch {
-      // Diagnostics must never block request dispatch.
     }
   }
 

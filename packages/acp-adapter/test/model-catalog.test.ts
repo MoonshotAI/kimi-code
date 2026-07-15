@@ -79,4 +79,36 @@ describe('listModelsFromHarness', () => {
       },
     ]);
   });
+
+  it('derives thinking support from the provider type when the alias omits protocol', async () => {
+    // Same shape the runtime sees for `[providers.compat] type = "anthropic"`
+    // + a custom-named model with no alias-level protocol: the provider
+    // context must make the catalog agree with ProviderManager, which infers
+    // the latest Anthropic profile (thinking-capable, default effort high).
+    const harness = {
+      getConfig: async () => ({
+        defaultProvider: 'compat',
+        providers: {
+          compat: { type: 'anthropic', apiKey: 'test-key', baseUrl: 'https://api.example.test' },
+        },
+        models: {
+          custom: {
+            provider: 'compat',
+            model: 'joint-model-0714-vibe',
+            maxContextSize: 200000,
+          },
+        },
+      }),
+    } as unknown as KimiHarness;
+
+    await expect(listModelsFromHarness(harness)).resolves.toEqual([
+      {
+        id: 'custom',
+        name: 'joint-model-0714-vibe',
+        thinkingSupported: true,
+        alwaysThinking: false,
+        defaultThinkingEffort: 'high',
+      },
+    ]);
+  });
 });

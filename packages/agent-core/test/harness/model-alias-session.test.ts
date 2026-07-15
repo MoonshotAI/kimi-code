@@ -116,6 +116,65 @@ default_effort = "${defaultEffort}"
     );
   });
 
+  it('resolves the initial effort with provider context for an Anthropic-typed provider', async () => {
+    // The model name is unknown to the Anthropic profile matrix and the alias
+    // declares no protocol/capabilities itself; the provider's
+    // `type = "anthropic"` must still route the default resolution through
+    // the inferred profile (default effort "high"), not fall back to "off".
+    await writeFile(
+      configPath,
+      `
+default_model = "compat/custom"
+
+[providers.compat]
+type = "anthropic"
+api_key = "test-key"
+base_url = "https://api.example.test"
+
+[models."compat/custom"]
+provider = "compat"
+model = "joint-model-0714-vibe"
+max_context_size = 200000
+`,
+    );
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir });
+
+    const config = await rpc.getConfig({ sessionId: created.id, agentId: 'main' });
+    expect(config.thinkingEffort).toBe('high');
+
+    // The recorded bootstrap effort must survive resume unchanged.
+    await rpc.closeSession({ sessionId: created.id });
+    const freshRpc = await createTestRpc();
+    await freshRpc.resumeSession({ sessionId: created.id });
+    const restored = await freshRpc.getConfig({ sessionId: created.id, agentId: 'main' });
+    expect(restored.thinkingEffort).toBe('high');
+  });
+
+  it('honors an explicit session effort for an Anthropic-typed provider', async () => {
+    await writeFile(
+      configPath,
+      `
+default_model = "compat/custom"
+
+[providers.compat]
+type = "anthropic"
+api_key = "test-key"
+base_url = "https://api.example.test"
+
+[models."compat/custom"]
+provider = "compat"
+model = "joint-model-0714-vibe"
+max_context_size = 200000
+`,
+    );
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir, thinking: 'low' });
+
+    const config = await rpc.getConfig({ sessionId: created.id, agentId: 'main' });
+    expect(config.thinkingEffort).toBe('low');
+  });
+
   it('restores the final effort after replaying an earlier unlisted Anthropic effort', async () => {
     const sessionId = await createEffortReplaySession();
 

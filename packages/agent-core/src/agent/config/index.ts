@@ -31,7 +31,10 @@ export class ConfigState {
   private _cwd: string;
   private _modelAlias: string | undefined;
   private _profileName: string | undefined;
-  private _unforcedThinkingEffort: ThinkingEffort = 'off';
+  // `undefined` until an effort has actually been resolved: a bare modelAlias
+  // update must then fall through to the model's own default instead of
+  // treating the never-chosen initial "off" as an explicit user choice.
+  private _unforcedThinkingEffort: ThinkingEffort | undefined;
   private _thinkingEffort: ThinkingEffort = 'off';
   private _systemPrompt: string = '';
 
@@ -58,8 +61,13 @@ export class ConfigState {
         kimiProtocol,
       );
     } else if (changed.modelAlias !== undefined) {
+      // A bare model switch carries the previously resolved effort over to the
+      // new model. Before any effort was resolved (fresh session bootstrap)
+      // `undefined` lets resolveThinkingEffort fall through to the model
+      // default — computed from the resolved provider, whose capabilities and
+      // efforts include the provider-level protocol inference.
       unforcedThinkingEffort = resolveThinkingEffort(
-        this._modelAlias === undefined ? undefined : this._unforcedThinkingEffort,
+        this._unforcedThinkingEffort,
         this.agent.kimiConfig?.thinking,
         targetModel,
         kimiProtocol,

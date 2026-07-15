@@ -460,7 +460,6 @@ export class AgentProfileService implements IAgentProfileService {
       this.emittedThinkingEffortWarnings.add(key);
       this.eventBus.publish({ type: 'warning', code, message });
     } catch {
-      // A capability warning must never make config replay or session resume fail.
     }
   }
 

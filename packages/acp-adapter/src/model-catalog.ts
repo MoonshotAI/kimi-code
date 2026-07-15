@@ -15,11 +15,20 @@
  * `for model_key, model in models.items()`.
  *
  * `thinkingSupported` is true if any of:
- *   1. the alias's declared `capabilities` array contains `'thinking'`, or
+ *   1. the alias's declared `capabilities` array contains `'thinking'`
+ *      (including the capability inferred from the Anthropic wire protocol —
+ *      see the `anthropicCompatible` context below), or
  *   2. the underlying model name matches `/thinking|reason/i`
  *      (always-thinking variants), or
  *   3. the underlying model name is on the {@link TOGGLEABLE_THINKING_MODELS}
  *      allow-list (mirrors `kimi-cli/src/kimi_cli/llm.py:derive_model_capabilities`).
+ *
+ * The runtime resolves a model's wire protocol from
+ * `alias.protocol ?? provider.type` (see
+ * `ProviderManager.resolveProviderConfig`). The derive helpers below take the
+ * provider-derived `anthropicCompatible` flag as an optional second argument
+ * so the catalog agrees with the runtime about Anthropic profiles even when
+ * the alias itself does not declare `protocol`.
  */
 
 import { effectiveModelAlias } from '@moonshot-ai/agent-core';
@@ -55,8 +64,8 @@ export interface AcpModelEntry {
  */
 const TOGGLEABLE_THINKING_MODELS = new Set(['kimi-for-coding', 'kimi-code']);
 
-export function deriveThinkingSupported(alias: ModelAlias): boolean {
-  const effective = effectiveModelAlias(alias);
+export function deriveThinkingSupported(alias: ModelAlias, anthropicCompatible = false): boolean {
+  const effective = effectiveModelAlias(alias, anthropicCompatible);
   const declared = effective.capabilities ?? [];
   if (declared.includes('thinking') || declared.includes('always_thinking')) return true;
   const lower = effective.model.toLowerCase();
@@ -72,8 +81,10 @@ export function deriveThinkingSupported(alias: ModelAlias): boolean {
  * `thinkingSupported`, but only an explicit (server-derived) declaration
  * may remove the off option from the client.
  */
-export function deriveAlwaysThinking(alias: ModelAlias): boolean {
-  return (effectiveModelAlias(alias).capabilities ?? []).includes('always_thinking');
+export function deriveAlwaysThinking(alias: ModelAlias, anthropicCompatible = false): boolean {
+  return (effectiveModelAlias(alias, anthropicCompatible).capabilities ?? []).includes(
+    'always_thinking',
+  );
 }
 
 /**
@@ -81,8 +92,11 @@ export function deriveAlwaysThinking(alias: ModelAlias): boolean {
  * `default_effort`, else the middle `support_efforts` entry, else `'on'` for
  * boolean models (no `support_efforts`).
  */
-export function deriveDefaultThinkingEffort(alias: ModelAlias): string {
-  const effective = effectiveModelAlias(alias);
+export function deriveDefaultThinkingEffort(
+  alias: ModelAlias,
+  anthropicCompatible = false,
+): string {
+  const effective = effectiveModelAlias(alias, anthropicCompatible);
   const efforts = effective.supportEfforts;
   if (efforts !== undefined && efforts.length > 0) {
     return effective.defaultEffort ?? efforts[Math.floor(efforts.length / 2)]!;
@@ -102,24 +116,45 @@ export async function listModelsFromHarness(
   harness: KimiHarness,
 ): Promise<readonly AcpModelEntry[]> {
   if (typeof harness.getConfig !== 'function') return [];
-  let models: Record<string, ModelAlias> | undefined;
+  let config: Awaited<ReturnType<KimiHarness['getConfig']>>;
   try {
-    const config = await harness.getConfig();
-    models = config.models;
+    config = await harness.getConfig();
   } catch {
     return [];
   }
+  const models = config.models;
   if (models === undefined) return [];
   const out: AcpModelEntry[] = [];
   for (const [id, alias] of Object.entries(models)) {
-    const effective = effectiveModelAlias(alias);
+    const anthropicCompatible = usesAnthropicProvider(alias, config);
+    const effective = effectiveModelAlias(alias, anthropicCompatible);
     out.push({
       id,
       name: effective.displayName ?? effective.model ?? id,
-      thinkingSupported: deriveThinkingSupported(alias),
-      alwaysThinking: deriveAlwaysThinking(alias),
-      defaultThinkingEffort: deriveDefaultThinkingEffort(alias),
+      thinkingSupported: deriveThinkingSupported(alias, anthropicCompatible),
+      alwaysThinking: deriveAlwaysThinking(alias, anthropicCompatible),
+      defaultThinkingEffort: deriveDefaultThinkingEffort(alias, anthropicCompatible),
     });
   }
   return out;
+}
+
+/**
+ * Provider-level Anthropic context for an alias, mirroring how
+ * `ProviderManager.resolveProviderConfig` resolves the wire protocol: the
+ * alias's provider (falling back to the configured default provider) decides
+ * when the alias itself does not declare `protocol`. Without this the catalog
+ * would mark a custom-named model on an `type = "anthropic"` provider as not
+ * thinking-capable while the runtime infers the latest Anthropic profile.
+ */
+function usesAnthropicProvider(
+  alias: ModelAlias,
+  config: {
+    providers?: Record<string, { type?: string } | undefined>;
+    defaultProvider?: string | undefined;
+  },
+): boolean {
+  const providerName = alias.provider ?? config.defaultProvider;
+  if (providerName === undefined) return false;
+  return config.providers?.[providerName]?.type === 'anthropic';
 }
