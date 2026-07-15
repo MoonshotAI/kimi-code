@@ -4,17 +4,12 @@ import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiati
 import { IInstantiationService } from '#/_base/di/instantiation';
 import { toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { type IAgentScopeHandle, LifecycleScope } from '#/_base/di/scope';
-import { Emitter, Event } from '#/_base/event';
+import { Emitter } from '#/_base/event';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { createHooks } from '#/hooks';
-import {
-  type AgentTaskHooks,
-  type AgentTaskStopHookContext,
-  IAgentLifecycleService,
-} from '#/session/agentLifecycle/agentLifecycle';
+import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionTodoService } from '#/session/todo/sessionTodo';
 import { SessionTodoService } from '#/session/todo/sessionTodoService';
 import { readTodoItems, type TodoItem } from '#/session/todo/todoItem';
@@ -105,7 +100,6 @@ function makeFakeAgent(agentId: string): FakeAgent {
           todoState = readTodoItems(record['value']);
         }
       }
-      // Replay is silent: subscribers are NOT notified. onRestored fires after.
       for (const h of restoredHandlers) h();
       return { unknownRecords: 0 };
     },
@@ -162,35 +156,24 @@ function makeFakeAgent(agentId: string): FakeAgent {
 interface LifecycleStub {
   readonly service: IAgentLifecycleService;
   readonly fireCreate: (handle: IAgentScopeHandle) => void;
-  readonly fireCreateMain: (handle: IAgentScopeHandle) => void;
   readonly fireDispose: (agentId: string) => void;
 }
 
 function makeLifecycleStub(handles: readonly IAgentScopeHandle[] = []): LifecycleStub {
   const onDidCreate = new Emitter<IAgentScopeHandle>();
-  const onDidCreateMain = new Emitter<IAgentScopeHandle>();
   const onDidDispose = new Emitter<string>();
   const byId = new Map(handles.map((h) => [h.id, h]));
 
   const service: IAgentLifecycleService = {
     _serviceBrand: undefined,
-    hooks: createHooks<AgentTaskHooks, keyof AgentTaskHooks>(['onWillStartAgentTask']),
-    onDidStopAgentTask: Event.None as Event<AgentTaskStopHookContext>,
     onDidCreate: onDidCreate.event,
-    onDidCreateMain: onDidCreateMain.event,
     onDidDispose: onDidDispose.event,
-    getHandle: (id: string) => byId.get(id),
+    get: (id: string) => byId.get(id),
     list: () => [...byId.values()],
     create: async () => {
       throw new Error('not implemented');
     },
-    ensureMcpReady: () => Promise.resolve(),
-    notifyMainCreated: () => {},
-    notifyAgentTaskStopped: () => {},
     fork: async () => {
-      throw new Error('not implemented');
-    },
-    run: () => {
       throw new Error('not implemented');
     },
     remove: async () => {},
@@ -201,10 +184,6 @@ function makeLifecycleStub(handles: readonly IAgentScopeHandle[] = []): Lifecycl
     fireCreate: (h) => {
       byId.set(h.id, h);
       onDidCreate.fire(h);
-    },
-    fireCreateMain: (h) => {
-      byId.set(h.id, h);
-      onDidCreateMain.fire(h);
     },
     fireDispose: (id) => {
       byId.delete(id);
@@ -268,8 +247,6 @@ describe('SessionTodoService', () => {
   it('does not append to the wire when the main agent is absent', () => {
     const lifecycle = makeLifecycleStub();
     const service = new SessionTodoService(lifecycle.service);
-    // Should not throw even without a main agent. With no main wire there is
-    // no source of truth to read from, so the list stays empty.
     expect(() => service.setTodos([{ title: 'x', status: 'pending' }])).not.toThrow();
     expect(service.getTodos()).toEqual([]);
   });
@@ -284,9 +261,6 @@ describe('SessionTodoService', () => {
     lifecycle.fireCreate(main.handle);
     lifecycle.fireCreate(sub.handle);
 
-    // The TodoList tool itself is contributed via `registerTool` and registered
-    // by the Agent-scope builtin-tools registrar — SessionTodoService only owns
-    // the per-agent reminder.
     expect(main.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
     expect(sub.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
   });
@@ -321,7 +295,6 @@ describe('SessionTodoService', () => {
     lifecycle.fireCreate(main.handle);
 
     expect(main.registeredVariants).toContain(TODO_LIST_REMINDER_VARIANT);
-    // Disposal should not throw and should leave the service usable.
     expect(() => lifecycle.fireDispose('main')).not.toThrow();
     expect(service.getTodos()).toEqual([]);
   });

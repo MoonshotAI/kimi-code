@@ -25,7 +25,6 @@ export const LoopControlSchema = z.object({
 
 export type LoopControl = z.infer<typeof LoopControlSchema>;
 
-/** Read transform: camelCase keys and fold legacy `max_steps_per_run` into `maxStepsPerTurn`. */
 export const loopControlFromToml = (rawSnake: unknown): unknown => {
   if (rawSnake === null || typeof rawSnake !== 'object' || Array.isArray(rawSnake)) return rawSnake;
   const out = transformPlainObject(rawSnake as Record<string, unknown>);
@@ -36,7 +35,6 @@ export const loopControlFromToml = (rawSnake: unknown): unknown => {
   return out;
 };
 
-/** Write transform: plain camelCase → snake_case key mapping. */
 export const loopControlToToml = (value: unknown, rawSnake: unknown): unknown => {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return value;
   return plainObjectToToml(value as Record<string, unknown>, rawSnake);

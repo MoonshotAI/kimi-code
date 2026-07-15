@@ -230,10 +230,6 @@ describe('ConfigState prompt cache hint', () => {
   it('uses session id as a provider prompt cache hint without storing it on Agent', () => {
     profile.update({ modelAlias: 'kimi-code' });
 
-    // The session id is now applied to the resolved `Model`'s generation kwargs
-    // (`prompt_cache_key`) by `AgentProfileService.resolveModel` for kimi
-    // models; the `Model` god-object no longer exposes the raw provider config,
-    // so we assert the resolved protocol and the "not stored on Agent" invariant.
     expect(profile.resolveModel()?.protocol).toBe('kimi');
     expect('sessionId' in ctx).toBe(false);
   });
@@ -279,15 +275,6 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
           supportEfforts: ['low', 'high', 'ultra'],
           defaultEffort: 'ultra',
         },
-        'kimi-code/compatible': {
-          provider: 'kimi',
-          protocol: 'anthropic',
-          model: 'compatible-model',
-          maxContextSize: 128_000,
-          capabilities: ['thinking', 'always_thinking'],
-          supportEfforts: ['max'],
-          defaultEffort: 'max',
-        } as TestProtocolModelConfig,
       },
     };
     capturedProvider = undefined;
@@ -325,9 +312,6 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
   it('builds the provider with thinking enabled even after thinking was set off', async () => {
     profile.update({ modelAlias: 'kimi-code/deep', thinkingLevel: 'off' });
 
-    // The Model god-object carries no raw kwargs; the thinking state is
-    // materialized into the kimi ChatProvider's `_generationKwargs` at request
-    // time, so inspect the provider the request actually ran with.
     await requester.request({}, undefined, new AbortController().signal);
 
     const gen = Reflect.get(capturedProvider as object, '_generationKwargs') as {
@@ -400,38 +384,6 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
 
     expect(profile.data().thinkingLevel).toBe('max');
   });
-
-  it('preserves unlisted and off efforts for Kimi-managed Anthropic models', () => {
-    profile.update({ modelAlias: 'kimi-code/compatible', thinkingLevel: 'max' });
-
-    expect(() => {
-      profile.setThinking('high');
-    }).not.toThrow();
-    expect(profile.data().thinkingLevel).toBe('high');
-    expect(ctx.allEvents).toContainEqual({
-      type: '[rpc]',
-      event: 'warning',
-      args: {
-        code: 'anthropic-thinking-effort-not-listed',
-        message:
-          'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
-      },
-    });
-
-    expect(() => {
-      profile.setThinking('off');
-    }).not.toThrow();
-    expect(profile.data().thinkingLevel).toBe('off');
-    expect(ctx.allEvents).toContainEqual({
-      type: '[rpc]',
-      event: 'warning',
-      args: {
-        code: 'anthropic-thinking-cannot-disable',
-        message:
-          'Model "compatible-model" declares always-on thinking. The configured effort "off" will be sent unchanged to the Anthropic-compatible backend.',
-      },
-    });
-  });
 });
 
 describe('ConfigState.provider applies global KIMI_MODEL_* request config', () => {
@@ -492,10 +444,6 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
     requester = ctx.get(IAgentLLMRequesterService);
   }
 
-  // The env-derived request overrides ride on the resolved Model as lazy
-  // transforms; they materialize into the kimi ChatProvider's
-  // `_generationKwargs` only when a request runs, so drive one and inspect the
-  // provider it ran with (the provider compaction requests use the same path).
   function generationKwargs(): Record<string, unknown> {
     return Reflect.get(capturedProvider as object, '_generationKwargs') as Record<string, unknown>;
   }

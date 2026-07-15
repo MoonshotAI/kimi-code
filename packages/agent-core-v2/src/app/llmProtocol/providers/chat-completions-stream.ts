@@ -17,15 +17,6 @@ export interface BufferedChatCompletionToolCall {
   emitted: boolean;
 }
 
-/**
- * Convert an OpenAI Chat Completions-style streamed tool-call delta into the
- * normalized kosong stream part protocol.
- *
- * OpenAI-compatible providers may emit argument chunks before the function name
- * for a stream index. Buffer those early argument chunks until the first named
- * header arrives, then emit subsequent chunks as indexed `tool_call_part`s so
- * the shared generate loop can route interleaved parallel calls.
- */
 export function convertChatCompletionStreamToolCall(
   toolCall: ChatCompletionStreamToolCallDelta,
   bufferedByIndex: Map<number | string, BufferedChatCompletionToolCall>,

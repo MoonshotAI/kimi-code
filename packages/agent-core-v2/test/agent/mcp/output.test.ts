@@ -10,8 +10,8 @@ import type { ITelemetryService, TelemetryProperties } from '#/app/telemetry/tel
 import { convertMCPContentBlock, mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
 import type { MCPClient, MCPContentBlock, MCPToolResult } from '#/agent/mcp/types';
-import type { ToolExecution } from '#/agent/tool/toolContract';
-import { sniffImageDimensions } from '#/_base/tools/support/file-type';
+import type { ToolExecution } from '#/tool/toolContract';
+import { sniffImageDimensions } from '#/agent/media/file-type';
 
 const MCP_OUTPUT_TRUNCATED_TEXT =
   '\n\n[Output truncated: exceeded 100000 character limit. ' +
@@ -179,10 +179,6 @@ describe('convertMCPContentBlock', () => {
   });
 
   test('replaces a resource_link whose declared image format is unsupported with a notice', () => {
-    // The declared MIME is the only format signal for a remote image: when
-    // the server honestly declares a format providers reject (e.g. an image
-    // search tool returning AVIF links), the image is dropped for a notice
-    // that keeps the URL so the model can fetch and convert it.
     const block = assertValidMcpBlock({
       type: 'resource_link',
       name: 'img.avif',

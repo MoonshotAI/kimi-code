@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   collectFilePathAliases,
   findFilePathLinks,
@@ -9,6 +9,7 @@ import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { mergeSnapshotMessages } from '../src/lib/snapshotMessages';
+import { mergeSnapshotSubagents } from '../src/lib/taskMerge';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 import { collapsePrompt, humanizeCron } from '../src/lib/cronHumanize';
 import {
@@ -18,19 +19,175 @@ import {
   parseWorkspacePathInput,
 } from '../src/lib/workspacePathInput';
 import {
-  coerceThinkingForModel,
   commitLevel,
   defaultThinkingLevelFor,
   effortLabel,
   modelThinkingAvailability,
   segmentsFor,
 } from '../src/lib/modelThinking';
-import type { AppMessage, AppModel } from '../src/api/types';
+import type { AppMessage, AppModel, AppTask } from '../src/api/types';
 import { resolveToolRenderer } from '../src/components/chat/tool-calls/toolRegistry';
 import AgentTool from '../src/components/chat/tool-calls/AgentTool.vue';
 import EditTool from '../src/components/chat/tool-calls/EditTool.vue';
 import GenericTool from '../src/components/chat/tool-calls/GenericTool.vue';
 import type { ToolCall } from '../src/types';
+import {
+  clearTrace,
+  installClientErrorCapture,
+  sanitizeForTrace,
+  sessionExportTraceToJsonl,
+  traceEntries,
+  traceKeyEvent,
+  tracePaused,
+  traceRestRequest,
+  traceToJsonl,
+  traceWsIn,
+} from '../src/debug/trace';
+
+// The trace tests exercise its exported recording/serialization contract:
+// session exports receive only bounded, explicitly selected metadata.
+
+describe('bounded Web trace', () => {
+  beforeEach(() => {
+    tracePaused.value = false;
+    clearTrace();
+  });
+
+  afterEach(() => {
+    clearTrace();
+    vi.unstubAllGlobals();
+  });
+
+  it('copies only allowlisted key-path metadata into the independent export ring', () => {
+    const secret = 'PROMPT_TEXT_MUST_NOT_BE_EXPORTED';
+    const metadata = {
+      sessionId: 'sess_1',
+      contentCount: 2,
+      mediaCount: 1,
+      text: secret,
+      apiKey: secret,
+    };
+    traceKeyEvent('prompt:start', metadata);
+
+    metadata.sessionId = 'changed_after_recording';
+
+    expect(traceEntries()).toHaveLength(1);
+    expect(JSON.parse(sessionExportTraceToJsonl())).toEqual({
+      ts: expect.any(Number),
+      event: 'prompt:start',
+      sessionId: 'sess_1',
+      contentCount: 2,
+      mediaCount: 1,
+    });
+    expect(sessionExportTraceToJsonl()).not.toContain(secret);
+  });
+
+  it('records export metadata even while the full debug panel is paused', () => {
+    tracePaused.value = true;
+
+    traceKeyEvent('ws:connection', { status: 'connected' });
+
+    expect(traceEntries()).toHaveLength(0);
+    expect(JSON.parse(sessionExportTraceToJsonl())).toMatchObject({
+      event: 'ws:connection',
+      status: 'connected',
+    });
+  });
+
+  it('caps object keys and reports how many were omitted', () => {
+    const input = Object.fromEntries(Array.from({ length: 60 }, (_, index) => [`key${index}`, index]));
+
+    const result = sanitizeForTrace(input) as Record<string, unknown>;
+
+    expect(result['_truncatedKeys']).toBe(10);
+    expect(Object.keys(result)).toHaveLength(51);
+  });
+
+  it('keeps at most 500 of the newest export entries', () => {
+    for (let index = 0; index < 501; index++) {
+      traceKeyEvent('ws:connection', { status: String(index) });
+    }
+
+    const exported = sessionExportTraceToJsonl().split('\n').map((line) => JSON.parse(line));
+    expect(exported).toHaveLength(500);
+    expect(exported[0]).toMatchObject({ status: '1' });
+    expect(exported.at(-1)).toMatchObject({ status: '500' });
+  });
+
+  it('keeps export JSONL within the 256 KiB UTF-8 budget including newlines', () => {
+    for (let index = 0; index < 500; index++) {
+      traceKeyEvent('export:failed', {
+        sessionId: `sess-${index}-${'😀'.repeat(200)}`,
+        status: '😀'.repeat(200),
+        promptId: '😀'.repeat(200),
+        errorName: '😀'.repeat(200),
+        requestId: '😀'.repeat(200),
+        phase: '😀'.repeat(200),
+      });
+    }
+
+    const jsonl = sessionExportTraceToJsonl();
+    expect(new TextEncoder().encode(jsonl).byteLength).toBeLessThanOrEqual(256 * 1024);
+    expect(JSON.parse(jsonl.split('\n').at(-1)!)).toMatchObject({
+      sessionId: expect.stringMatching(/^sess-499-/),
+    });
+  });
+
+  it('never copies prompt, WebSocket, or console content from the full debug trace', () => {
+    vi.stubGlobal('location', { search: '?debug=1' });
+    const promptSecret = 'PROMPT_SECRET_9fdb1a';
+    const wsSecret = 'WS_PAYLOAD_SECRET_b84c7e';
+    const consoleSecret = 'CONSOLE_SECRET_a2d693';
+
+    traceRestRequest({
+      method: 'POST',
+      path: '/sessions/sess_1/prompts',
+      url: 'http://daemon.test/api/v1/sessions/sess_1/prompts',
+      requestId: 'req_1',
+      body: { prompt: promptSecret },
+    });
+    traceWsIn({
+      type: 'event',
+      session_id: 'sess_1',
+      seq: 4,
+      payload: { text: wsSecret },
+    });
+
+    const originalLog = console.log;
+    console.log = vi.fn();
+    const dispose = installClientErrorCapture();
+    try {
+      console.log(consoleSecret, { value: consoleSecret });
+    } finally {
+      dispose();
+      console.log = originalLog;
+    }
+
+    traceKeyEvent('prompt:start', {
+      sessionId: 'sess_1',
+      contentCount: 1,
+      mediaCount: 0,
+      text: promptSecret,
+    });
+
+    const fullDebugTrace = traceToJsonl();
+    expect(fullDebugTrace).toContain(promptSecret);
+    expect(fullDebugTrace).toContain(wsSecret);
+    expect(fullDebugTrace).toContain(consoleSecret);
+
+    const sessionExportTrace = sessionExportTraceToJsonl();
+    expect(sessionExportTrace).not.toContain(promptSecret);
+    expect(sessionExportTrace).not.toContain(wsSecret);
+    expect(sessionExportTrace).not.toContain(consoleSecret);
+    expect(JSON.parse(sessionExportTrace)).toEqual({
+      ts: expect.any(Number),
+      event: 'prompt:start',
+      sessionId: 'sess_1',
+      contentCount: 1,
+      mediaCount: 0,
+    });
+  });
+});
 
 describe('workspace path input', () => {
   it('recognizes the supported absolute path forms', () => {
@@ -400,35 +557,6 @@ describe('modelThinking', () => {
     });
   });
 
-  describe('coerceThinkingForModel', () => {
-    it('undefined model preserves the requested level (catalog not loaded yet)', () => {
-      expect(coerceThinkingForModel(undefined, 'high')).toBe('high');
-      expect(coerceThinkingForModel(undefined, 'max')).toBe('max');
-      expect(coerceThinkingForModel(undefined, 'on')).toBe('on');
-      expect(coerceThinkingForModel(undefined, 'off')).toBe('off');
-    });
-    it('unsupported model → off', () => {
-      expect(coerceThinkingForModel(unsupportedModel(), 'high')).toBe('off');
-    });
-    it('always-on + off → default level', () => {
-      expect(
-        coerceThinkingForModel(effortModel({ capabilities: ['thinking', 'always_thinking'] }), 'off'),
-      ).toBe('high');
-    });
-    it('effort model + undeclared level → default', () => {
-      expect(coerceThinkingForModel(effortModel(), 'xhigh')).toBe('high');
-    });
-    it('effort model + declared level → kept', () => {
-      expect(coerceThinkingForModel(effortModel(), 'max')).toBe('max');
-    });
-    it('boolean model + non-off level → on', () => {
-      expect(coerceThinkingForModel(booleanModel(), 'high')).toBe('on');
-    });
-    it('toggle + off → off', () => {
-      expect(coerceThinkingForModel(booleanModel(), 'off')).toBe('off');
-    });
-  });
-
   describe('effortLabel', () => {
     it('capitalizes the first letter', () => {
       expect(effortLabel('max')).toBe('Max');
@@ -532,5 +660,95 @@ describe('mergeSnapshotMessages', () => {
     const snapshot = [msg('m0', '2026-01-03T00:00:00.000Z')];
     expect(mergeSnapshotMessages([], snapshot)).toBe(snapshot);
     expect(mergeSnapshotMessages(snapshot, [])).toEqual([]);
+  });
+
+  function optimisticUser(id: string, createdAt: string, text: string, promptId: string): AppMessage {
+    return {
+      id,
+      sessionId: 's1',
+      role: 'user',
+      content: [{ type: 'text', text }],
+      createdAt,
+      promptId,
+      metadata: { 'kimiWeb.optimisticUserMessage': true },
+    };
+  }
+
+  function realUser(id: string, createdAt: string, text: string): AppMessage {
+    return {
+      id,
+      sessionId: 's1',
+      role: 'user',
+      content: [{ type: 'text', text }],
+      createdAt,
+    };
+  }
+
+  it('drops an optimistic user message when its promptId is the snapshot message id', () => {
+    const loaded = [optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'msg_9')];
+    const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'hello')];
+    expect(mergeSnapshotMessages(loaded, snapshot).map((m) => m.id)).toEqual(['msg_9']);
+  });
+
+  it('keeps an optimistic user message when a different snapshot message repeats its content', () => {
+    const loaded = [optimisticUser('msg_opt_1', '2026-01-02T23:59:59.000Z', 'hello', 'msg_8')];
+    const snapshot = [realUser('msg_9', '2026-01-03T00:00:00.000Z', 'hello')];
+    expect(mergeSnapshotMessages(loaded, snapshot).map((m) => m.id)).toEqual(['msg_opt_1', 'msg_9']);
+  });
+});
+
+describe('mergeSnapshotSubagents', () => {
+  function subagent(id: string, overrides: Partial<AppTask> = {}): AppTask {
+    return {
+      id,
+      sessionId: 's1',
+      kind: 'subagent',
+      description: `task ${id}`,
+      status: 'running',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('seeds an empty store from the roster', () => {
+    const roster = [
+      subagent('a1', { subagentPhase: 'working', swarmIndex: 0, parentToolCallId: 'call-1' }),
+      subagent('a2', { subagentPhase: 'queued', swarmIndex: 1, parentToolCallId: 'call-1' }),
+    ];
+    expect(mergeSnapshotSubagents(roster, [])).toEqual(roster);
+  });
+
+  it('keeps reducer-owned accumulated output from an already-live task', () => {
+    const live = subagent('a1', {
+      subagentPhase: 'queued',
+      outputLines: ['line 1'],
+      text: 'partial answer',
+    });
+    const roster = [subagent('a1', { subagentPhase: 'working' })];
+    const [merged] = mergeSnapshotSubagents(roster, [live]);
+    // Roster is authoritative for identity/status/phase…
+    expect(merged?.subagentPhase).toBe('working');
+    // …but the accumulated output survives the seed.
+    expect(merged?.outputLines).toEqual(['line 1']);
+    expect(merged?.text).toBe('partial answer');
+  });
+
+  it('keeps tasks the roster does not know about', () => {
+    const background: AppTask = {
+      id: 'bash-1',
+      sessionId: 's1',
+      kind: 'bash',
+      description: 'npm test',
+      status: 'running',
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    const roster = [subagent('a1')];
+    const merged = mergeSnapshotSubagents(roster, [background, subagent('a1')]);
+    expect(merged.map((t) => t.id)).toEqual(['a1', 'bash-1']);
+  });
+
+  it('returns the existing list untouched when the roster is empty', () => {
+    const existing = [subagent('a1')];
+    expect(mergeSnapshotSubagents([], existing)).toBe(existing);
   });
 });

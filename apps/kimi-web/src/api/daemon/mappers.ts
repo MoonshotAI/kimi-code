@@ -70,6 +70,24 @@ export function toAppSessionUsage(wire: WireSessionUsage): AppSessionUsage {
   };
 }
 
+/**
+ * True when a session usage object is the daemon's all-zero placeholder.
+ * Both engines return placeholders for the heavy session fields on the
+ * list/snapshot read paths; the live values arrive via GET /status and the
+ * WS `agent.status.updated` stream. Callers replacing a cached session with
+ * a wire record must keep the live usage when the incoming one is this
+ * placeholder, or the context ring drops to 0 until the next refresh.
+ */
+export function isPlaceholderSessionUsage(usage: AppSessionUsage): boolean {
+  return (
+    usage.contextTokens === 0 &&
+    usage.contextLimit === 0 &&
+    usage.inputTokens === 0 &&
+    usage.outputTokens === 0 &&
+    usage.turnCount === 0
+  );
+}
+
 export function toAppSessionStatus(wire: WireSessionStatus): AppSessionStatus {
   switch (wire) {
     case 'idle': return 'idle';
@@ -382,9 +400,11 @@ export function toAppTask(wire: WireTask): AppTask {
     parentToolCallId: wire.parent_tool_call_id,
     suspendedReason: wire.suspended_reason,
     swarmIndex: wire.swarm_index,
-    // The background task store only holds detached tasks, so any subagent it
-    // returns is a background subagent (foreground ones never persist here).
-    runInBackground: wire.kind === 'subagent' ? true : undefined,
+    // The snapshot's subagent roster carries the explicit flag. REST `/tasks`
+    // does not, but its background-task store only holds detached tasks, so any
+    // subagent it returns is a background subagent (foreground ones never
+    // persist there) — hence the `?? true` fallback for that path.
+    runInBackground: wire.run_in_background ?? (wire.kind === 'subagent' ? true : undefined),
     // outputLines starts undefined; populated by eventReducer via task.progress events
   };
 }
@@ -429,7 +449,7 @@ function recordNullableNumber(source: Record<string, unknown>, key: string): num
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function toAppGoal(snapshot: unknown): AppGoal | null {
+export function toAppGoal(snapshot: unknown): AppGoal | null {
   if (!snapshot || typeof snapshot !== 'object') return null;
   const source = snapshot as Record<string, unknown>;
   const status = recordString(source, 'status');

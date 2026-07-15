@@ -39,14 +39,9 @@ export class MoonshotFetchURLProvider implements UrlFetcher {
   ): Promise<UrlFetchResult> {
     try {
       const content = await this.fetchViaMoonshot(url, options?.toolCallId, options?.signal);
-      // The service returns text it has already extracted from the page.
       return { content, kind: 'extracted' };
     } catch (error) {
-      // If the caller cancelled, do not fall back to the local fetcher —
-      // propagate the abort instead of issuing a second request.
       if (options?.signal?.aborted === true) throw error;
-      // Forward an explicit options object even when the caller passed
-      // none, so downstream consumers always see a defined second arg.
       return this.localFallback.fetch(url, options ?? {});
     }
   }
@@ -64,7 +59,6 @@ export class MoonshotFetchURLProvider implements UrlFetcher {
       try {
         detail = await response.text();
       } catch {
-        /* ignore */
       }
       throw new HttpFetchError(
         response.status,

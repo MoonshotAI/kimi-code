@@ -120,7 +120,6 @@ describe('FileServiceImpl', () => {
     await expect(store().save(readable(big), 'big.bin')).rejects.toMatchObject({
       code: FileErrors.codes.FILE_TOO_LARGE,
     });
-    // No blob or index entry should have been written.
     expect(await backend.list('files')).toHaveLength(0);
   });
 
@@ -131,7 +130,6 @@ describe('FileServiceImpl', () => {
     await expect(store().get(meta.id)).rejects.toMatchObject({
       code: FileErrors.codes.FILE_NOT_FOUND,
     });
-    // Index entry was pruned, so a second get is still a clean 404.
     await expect(store().get(meta.id)).rejects.toMatchObject({
       code: FileErrors.codes.FILE_NOT_FOUND,
     });
@@ -140,7 +138,6 @@ describe('FileServiceImpl', () => {
   it('persists the index across instances sharing the backend', async () => {
     const meta = await store().save(readable('durable'), 'durable.txt');
 
-    // A fresh store over the same backend reloads the persisted index.
     const ix2 = createServices(disposables, {
       additionalServices: (reg) => {
         reg.defineInstance(IFileSystemStorageService, backend);

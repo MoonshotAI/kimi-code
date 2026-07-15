@@ -32,7 +32,7 @@ export class RestGateway implements IRestGateway {
     const session = this.sessions.get(sessionId);
     if (session === undefined) throw new Error(`unknown session '${sessionId}'`);
     const agents = session.accessor.get(IAgentLifecycleService);
-    const agent = agents.getHandle(agentId);
+    const agent = agents.get(agentId);
     if (agent === undefined) throw new Error(`unknown agent '${agentId}'`);
     return agent;
   }
@@ -103,5 +103,5 @@ export class WSGateway implements IWSGateway {
   }
 }
 
-registerScopedService(LifecycleScope.App, IRestGateway, RestGateway, InstantiationType.Delayed, 'gateway');
-registerScopedService(LifecycleScope.App, IWSGateway, WSGateway, InstantiationType.Delayed, 'gateway');
+registerScopedService(LifecycleScope.App, IRestGateway, RestGateway, InstantiationType.Eager, 'gateway');
+registerScopedService(LifecycleScope.App, IWSGateway, WSGateway, InstantiationType.Eager, 'gateway');

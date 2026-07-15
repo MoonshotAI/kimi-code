@@ -8,12 +8,9 @@ to a local **server** over REST + WebSocket. Vue 3 + Vite + TypeScript.
 ## Quick start
 
 ```bash
-# 1) Against a REAL server (the server must be running and reachable)
+# Against a REAL server (the server must be running and reachable)
 WEB_PORT=5197 KIMI_SERVER_URL=http://192.168.97.91:58627 pnpm -C apps/kimi-web run dev
 #   …or from the repo root:  pnpm dev:web   (uses the defaults below)
-
-# 2) Offline / no server — a stub that fakes the server API + event stream
-pnpm -C apps/kimi-web run dev:stub      # then run dev in another shell
 
 # checks
 pnpm -C apps/kimi-web run typecheck     # vue-tsc --noEmit

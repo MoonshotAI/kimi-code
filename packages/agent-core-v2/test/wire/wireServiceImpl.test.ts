@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -9,7 +10,6 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 import { IAgentWireService } from '#/wire/tokens';
 import type { IWireService, PersistedRecord } from '#/wire/wireService';
 import { CycleError, WireService } from '#/wire/wireServiceImpl';
@@ -17,30 +17,31 @@ import { CycleError, WireService } from '#/wire/wireServiceImpl';
 const SCOPE = 'wire';
 const KEY = 'store-test';
 
-// Module-level trace: reset in beforeEach, written by op `apply` functions and by
-// onChange handlers so tests can assert apply-all-before-onChange-all ordering.
 const trace: string[] = [];
 
 const CounterModel = defineModel('store.counter', () => ({ value: 0 }));
 const OtherModel = defineModel('store.other', () => ({ value: 0 }));
 
-const counterAdd = defineOp(CounterModel, 'store.counter.add', {
-  apply: (s, p: { by: number }) => {
+const counterAdd = CounterModel.defineOp('store.counter.add', {
+  schema: z.object({ by: z.number() }),
+  apply: (s, p) => {
     trace.push('apply.counter');
     return { value: s.value + p.by };
   },
 });
-const otherSet = defineOp(OtherModel, 'store.other.set', {
-  apply: (_s, p: { value: number }) => {
+const otherSet = OtherModel.defineOp('store.other.set', {
+  schema: z.object({ value: z.number() }),
+  apply: (_s, p) => {
     trace.push('apply.other');
     return { value: p.value };
   },
 });
-const otherInc = defineOp(OtherModel, 'store.other.inc', {
+const otherInc = OtherModel.defineOp('store.other.inc', {
+  schema: z.object({}),
   apply: (s) => ({ value: s.value + 1 }),
 });
-// Test-only op that violates the new-reference convention by mutating its input.
-const mutateCounter = defineOp(CounterModel, 'store.counter.mutate', {
+const mutateCounter = CounterModel.defineOp('store.counter.mutate', {
+  schema: z.object({}),
   apply: (s) => {
     (s as { value: number }).value = 123;
     return s;
@@ -107,7 +108,6 @@ describe('WireService', () => {
 
     wire.dispatch(counterAdd({ by: 1 }), otherSet({ value: 42 }));
 
-    // Both applies ran before any onChange; counter's handler already saw other=42.
     expect(trace).toEqual([
       'apply.counter',
       'apply.other',
@@ -123,7 +123,6 @@ describe('WireService', () => {
     wire.dispatch(counterAdd({ by: 5 }));
     const records = await readRecords();
 
-    // Fresh service on the shared registry, isolated log key.
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
@@ -167,7 +166,6 @@ describe('WireService', () => {
   });
 
   it('throws CycleError when a dispatch cascade exceeds MAX_DRAIN', () => {
-    // Counter <-> Other cascade: each onChange dispatches the other, forever.
     disposables.add(wire.subscribe(CounterModel, () => wire.dispatch(otherInc({}))));
     disposables.add(wire.subscribe(OtherModel, () => wire.dispatch(counterAdd({ by: 1 }))));
 
@@ -193,7 +191,6 @@ describe('WireService', () => {
         { type: 'store.counter.add', by: 3 },
       );
 
-      // Known records apply; the unknown one is skipped but observable.
       expect(wire.getModel(CounterModel)).toEqual({ value: 5 });
       expect(result).toEqual({ unknownRecords: 1 });
       expect(unexpected).toHaveLength(1);
@@ -218,10 +215,9 @@ describe('WireService', () => {
   });
 
   it('throws when an apply mutates its already-frozen incoming state', () => {
-    wire.dispatch(counterAdd({ by: 1 })); // freezes { value: 1 }
+    wire.dispatch(counterAdd({ by: 1 }));
 
     expect(() => wire.dispatch(mutateCounter({}))).toThrow(TypeError);
-    // Apply threw before reassignment, so state is unchanged.
     expect(wire.getModel(CounterModel)).toEqual({ value: 1 });
   });
 });

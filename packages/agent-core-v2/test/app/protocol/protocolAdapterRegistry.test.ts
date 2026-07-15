@@ -41,7 +41,6 @@ describe('ProtocolAdapterRegistry', () => {
       providerOptions: {
         defaultMaxTokens: 12345,
         adaptiveThinking: false,
-        supportEfforts: ['low', 'high'],
         kimiThinking: true,
         betaApi: true,
         metadata: { user_id: 'session-test' },
@@ -50,7 +49,6 @@ describe('ProtocolAdapterRegistry', () => {
 
     expect(Reflect.get(provider, '_generationKwargs')).toMatchObject({ max_tokens: 12345 });
     expect(Reflect.get(provider, '_adaptiveThinking')).toBe(false);
-    expect(Reflect.get(provider, '_supportEfforts')).toEqual(['low', 'high']);
     expect(Reflect.get(provider, '_kimiThinking')).toBe(true);
     expect(Reflect.get(provider, '_betaApi')).toBe(true);
     expect(Reflect.get(provider, '_metadata')).toEqual({ user_id: 'session-test' });

@@ -4,9 +4,9 @@
  * Owns the last measured context token count in the wire `ContextSizeModel`
  * (`{ length, tokens }`): reads it through `wire.getModel`, writes it through
  * `wire.dispatch(contextSizeMeasured(...))` (called by `llmRequester` after each
- * measured exchange), and emits the `contextTokens` slice of
- * `agent.status.updated` live through `wire.signal` when the measured value
- * changes. `get(start?, end?)` returns `{ size, measured, estimated }` for the
+ * measured exchange), and derives the `contextTokens` slice of
+ * `agent.status.updated` from the Op's `toEvent` (published to `IEventBus` on
+ * dispatch) when the measured value changes. `get(start?, end?)` returns `{ size, measured, estimated }` for the
  * context-message range `[start, end)`, resolved like `Array.prototype.slice`
  * (defaulting to the whole context; negative indices count back from the end;
  * an inverted range is empty): `measured`
@@ -47,14 +47,10 @@ export class AgentContextSizeService extends Disposable implements IAgentContext
   get(start?: number, end?: number): ContextSize {
     const context = this.context.get();
     const model = this.wire.getModel(ContextSizeModel);
-    // Mirrors `Array.prototype.slice`: defaults to the whole context, negative
-    // indices count back from the end, and an inverted range is empty.
     const from = normalizeSliceIndex(start ?? 0, context.length);
     const to = normalizeSliceIndex(end ?? context.length, context.length);
     const measuredEnd = Math.min(to, model.length);
     const estimatedStart = Math.max(from, model.length);
-    // The measured-prefix total is the only deterministic measured value; use it
-    // when the range covers the whole prefix, otherwise estimate the sub-range.
     const measured =
       from === 0 && measuredEnd === model.length
         ? model.tokens
@@ -64,9 +60,6 @@ export class AgentContextSizeService extends Disposable implements IAgentContext
   }
 
   measured(input: readonly Message[], output: readonly Message[], usage: TokenUsage): void {
-    // Only adopt the measurement when `input` still matches the live context.
-    // This rejects stale readings (e.g. the context was spliced, or the request
-    // used overridden messages) so a mismatched measurement cannot poison state.
     if (!matchesContext(input, this.context.get())) return;
     const length = input.length + output.length;
     const tokens = tokenUsageTotal(usage);
@@ -102,6 +95,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentContextSizeService,
   AgentContextSizeService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'contextSize',
 );

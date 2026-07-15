@@ -6,18 +6,30 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { resolveKimiCodeRuntimeAuth } from '@moonshot-ai/kimi-code-oauth';
+import {
+  clearManagedKimiCodeConfig,
+  resolveKimiCodeOAuthKey,
+  resolveKimiCodeRuntimeAuth,
+} from '@moonshot-ai/kimi-code-oauth';
 
 import { DisposableStore } from '#/_base/di/lifecycle';
 import { createServices, type TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { IAuthSummaryService, IOAuthService, IOAuthToolkit } from '#/app/auth/auth';
 import { AuthSummaryService, OAuthService } from '#/app/auth/authService';
+import {
+  SERVICES_SECTION,
+  servicesFromToml,
+  servicesToToml,
+  ServicesConfigSchema,
+  type ServicesConfig,
+} from '#/app/auth/configSection';
 import { IWebSearchProviderService } from '#/app/auth/webSearch/webSearch';
 import { WebSearchProviderService } from '#/app/auth/webSearch/webSearchService';
 import { IAuthLegacyService } from '#/app/authLegacy/authLegacy';
 import { AuthLegacyService } from '#/app/authLegacy/authLegacyService';
 import { IConfigService } from '#/app/config/config';
+import { ConfigRegistry } from '#/app/config/configService';
 import { type DomainEvent, IEventService } from '#/app/event/event';
 import { ILogService } from '#/_base/log/log';
 import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
@@ -41,6 +53,21 @@ const deviceAuth = {
 };
 
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+const EXAMPLE_COM_SCOPED_REF = {
+  storage: 'file',
+  key: resolveKimiCodeOAuthKey({ baseUrl: 'https://api.example.com' }),
+  oauthHost: 'https://auth.kimi.com',
+} as const;
+
+const ENV_SCOPED_REF = {
+  storage: 'file',
+  key: resolveKimiCodeOAuthKey({
+    oauthHost: 'https://env-auth.example.com',
+    baseUrl: 'https://env-api.example.com/coding/v1',
+  }),
+  oauthHost: 'https://env-auth.example.com',
+} as const;
 
 interface FakeToolkit {
   readonly login: Mock<(...args: any[]) => any>;
@@ -156,6 +183,7 @@ describe('OAuthService', () => {
   afterEach(() => {
     disposables.dispose();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   function createService(): IOAuthService {
@@ -203,7 +231,11 @@ describe('OAuthService', () => {
     });
     expect(toolkit.login).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
-      expect.objectContaining({ oauthRef: { storage: 'file', key: 'oauth/kimi-code' } }),
+      expect.objectContaining({
+        oauthRef: EXAMPLE_COM_SCOPED_REF,
+        baseUrl: 'https://api.example.com',
+        oauthHost: undefined,
+      }),
     );
 
     await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
@@ -225,12 +257,12 @@ describe('OAuthService', () => {
         type: 'kimi',
         baseUrl: 'https://api.example.com',
         apiKey: '',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
   });
 
-  it('startLogin resolves a default oauth ref for the managed provider without oauth config', async () => {
+  it('startLogin resolves an env-scoped oauth ref for the managed provider without oauth config', async () => {
     providers[OAUTH_PROVIDER] = { type: 'kimi', baseUrl: 'https://api.example.com' };
     stubManagedModelsFetch();
     toolkit.login.mockImplementation((_provider, options) => {
@@ -243,7 +275,8 @@ describe('OAuthService', () => {
     expect(toolkit.login).toHaveBeenCalledWith(
       OAUTH_PROVIDER,
       expect.objectContaining({
-        oauthRef: expect.objectContaining({ storage: 'file', key: expect.any(String) }),
+        oauthRef: EXAMPLE_COM_SCOPED_REF,
+        baseUrl: 'https://api.example.com',
       }),
     );
     await flush();
@@ -251,7 +284,85 @@ describe('OAuthService', () => {
       OAUTH_PROVIDER,
       expect.objectContaining({
         type: 'kimi',
-        oauth: expect.objectContaining({ storage: 'file', key: expect.any(String) }),
+        baseUrl: 'https://api.example.com',
+        oauth: EXAMPLE_COM_SCOPED_REF,
+      }),
+    );
+  });
+
+  it('startLogin reuses the configured oauth ref when it matches the login environment', async () => {
+    providers[OAUTH_PROVIDER] = {
+      type: 'kimi',
+      baseUrl: 'https://api.kimi.com/coding/v1',
+      oauth: { storage: 'file', key: 'oauth/kimi-code' },
+    };
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+
+    expect(toolkit.login).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        oauthRef: { storage: 'file', key: 'oauth/kimi-code' },
+        baseUrl: 'https://api.kimi.com/coding/v1',
+      }),
+    );
+  });
+
+  it('startLogin honors KIMI_CODE_BASE_URL / KIMI_CODE_OAUTH_HOST for the login environment', async () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://env-api.example.com/coding/v1');
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://env-auth.example.com');
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+
+    expect(toolkit.login).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        oauthRef: ENV_SCOPED_REF,
+        baseUrl: 'https://env-api.example.com/coding/v1',
+        oauthHost: 'https://env-auth.example.com',
+      }),
+    );
+    await flush();
+    expect(providerSet).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        type: 'kimi',
+        baseUrl: 'https://env-api.example.com/coding/v1',
+        oauth: ENV_SCOPED_REF,
+      }),
+    );
+  });
+
+  it('resolves the runtime credential slot to the env environment after an env-scoped login', async () => {
+    vi.stubEnv('KIMI_CODE_BASE_URL', 'https://env-api.example.com/coding/v1');
+    vi.stubEnv('KIMI_CODE_OAUTH_HOST', 'https://env-auth.example.com');
+    stubManagedModelsFetch();
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return Promise.resolve({ providerName: OAUTH_PROVIDER, ok: true });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+    await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('authenticated'));
+
+    await svc.status(OAUTH_PROVIDER);
+    expect(toolkit.getCachedAccessToken).toHaveBeenCalledWith(
+      OAUTH_PROVIDER,
+      expect.objectContaining({
+        key: resolveKimiCodeOAuthKey({
+          oauthHost: 'https://env-auth.example.com',
+          baseUrl: 'https://env-api.example.com/coding/v1',
+        }),
       }),
     );
   });
@@ -280,7 +391,7 @@ describe('OAuthService', () => {
       expect.objectContaining({
         type: 'kimi',
         baseUrl: 'https://api.example.com',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -304,7 +415,7 @@ describe('OAuthService', () => {
       expect.objectContaining({
         type: 'kimi',
         baseUrl: 'https://api.example.com',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
     expect(configSet).not.toHaveBeenCalledWith('defaultModel', expect.any(String));
@@ -344,7 +455,7 @@ describe('OAuthService', () => {
       OAUTH_PROVIDER,
       expect.objectContaining({
         type: 'kimi',
-        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+        oauth: EXAMPLE_COM_SCOPED_REF,
       }),
     );
     expect(configReplace).toHaveBeenCalledWith(
@@ -381,7 +492,43 @@ describe('OAuthService', () => {
 
     providerChangedEmitter.fire({ added: [], removed: [OAUTH_PROVIDER], changed: [] });
 
-    expect(svc.getFlow(OAUTH_PROVIDER)).toBeUndefined();
+    const flow = svc.getFlow(OAUTH_PROVIDER);
+    expect(flow?.status).toBe('cancelled');
+    expect(flow?.error_message).toBe('Provider configuration changed during login.');
+  });
+
+  it('marks an in-flight OAuth flow cancelled (not vanished) when its provider config changes', async () => {
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return new Promise(() => { });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+    expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
+
+    providerChangedEmitter.fire({ added: [], removed: [], changed: [OAUTH_PROVIDER] });
+
+    const flow = svc.getFlow(OAUTH_PROVIDER);
+    expect(flow?.status).toBe('cancelled');
+    expect(flow?.error_message).toBe('Provider configuration changed during login.');
+  });
+
+  it('does not finalize a login whose provider changed after toolkit.login resolved', async () => {
+    let resolveLogin!: (value: { providerName: string; ok: true }) => void;
+    toolkit.login.mockImplementation((_provider, options) => {
+      options.onDeviceCode(deviceAuth);
+      return new Promise((resolve) => {
+        resolveLogin = resolve;
+      });
+    });
+    const svc = createService();
+    await svc.startLogin(OAUTH_PROVIDER);
+    expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('pending');
+
+    resolveLogin({ providerName: OAUTH_PROVIDER, ok: true });
+    providerChangedEmitter.fire({ added: [], removed: [], changed: [OAUTH_PROVIDER] });
+
+    await vi.waitFor(() => expect(svc.getFlow(OAUTH_PROVIDER)?.status).toBe('cancelled'));
   });
 
   it('cancelLogin aborts a pending flow and marks it cancelled', async () => {
@@ -410,10 +557,7 @@ describe('OAuthService', () => {
 
     const result = await svc.logout(OAUTH_PROVIDER);
     expect(result).toEqual({ logged_out: true, provider: OAUTH_PROVIDER });
-    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, {
-      storage: 'file',
-      key: 'oauth/kimi-code',
-    });
+    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, EXAMPLE_COM_SCOPED_REF);
     expect(configReplace).toHaveBeenCalledWith('providers', {
       [NON_OAUTH_PROVIDER]: { type: 'openai', apiKey: 'sk-test' },
     });
@@ -454,7 +598,7 @@ describe('OAuthService', () => {
   });
 
   it('logout removes managed web services while preserving unrelated services', async () => {
-    services = {
+    services = ServicesConfigSchema.parse({
       moonshotSearch: {
         baseUrl: 'https://api.example.com/search',
         apiKey: '',
@@ -468,7 +612,7 @@ describe('OAuthService', () => {
       customService: {
         baseUrl: 'https://service.example.com',
       },
-    };
+    });
     const svc = createService();
 
     await expect(svc.logout(OAUTH_PROVIDER)).resolves.toEqual({
@@ -489,10 +633,7 @@ describe('OAuthService', () => {
     const svc = createService();
 
     await expect(svc.logout(OAUTH_PROVIDER)).rejects.toThrow('config write failed');
-    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, {
-      storage: 'file',
-      key: 'oauth/kimi-code',
-    });
+    expect(toolkit.logout).toHaveBeenCalledWith(OAUTH_PROVIDER, EXAMPLE_COM_SCOPED_REF);
   });
 
   it('status reports loggedIn based on the cached access token', async () => {
@@ -578,9 +719,6 @@ describe('OAuthService', () => {
       }),
     );
     expect(configSet).toHaveBeenCalledWith('defaultModel', 'kimi-code/kimi-k2');
-    // Regression: the `[thinking] enabled` value computed by the shared oauth
-    // apply logic must be persisted, not dropped (previously only the legacy
-    // `default_thinking` key was written).
     expect(configSet).toHaveBeenCalledWith('thinking', { enabled: true });
     expect(events).toEqual([
       {
@@ -617,8 +755,6 @@ describe('OAuthService', () => {
 
     await Promise.all([svc.refreshOAuthProviderModels(), svc.refreshOAuthProviderModels()]);
 
-    // Without the refresh chain both remote fetches would overlap (peak 2); the
-    // chain holds the second run until the first finishes, so the peak stays 1.
     expect(maxInFlight).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -628,11 +764,13 @@ describe('WebSearchProviderService', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let providers: Record<string, ProviderConfig>;
+  let servicesConfig: ServicesConfig | undefined;
   let resolveTokenProvider: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     providers = {};
+    servicesConfig = undefined;
     resolveTokenProvider = vi
       .fn()
       .mockReturnValue({ getAccessToken: async () => 'access-token' });
@@ -650,6 +788,10 @@ describe('WebSearchProviderService', () => {
             'User-Agent': 'kimi-code-cli/test',
             'X-Msh-Device-Id': 'device-test',
           },
+        });
+        reg.definePartialInstance(IConfigService, {
+          get: ((domain: string) =>
+            domain === SERVICES_SECTION ? servicesConfig : undefined) as IConfigService['get'],
         });
         reg.define(IWebSearchProviderService, WebSearchProviderService);
       },
@@ -736,6 +878,198 @@ describe('WebSearchProviderService', () => {
     expect(headers['X-Msh-Device-Id']).toBe('device-test');
     expect(headers['X-Custom']).toBe('yes');
     expect(JSON.parse(init.body as string)).toEqual({ text_query: 'hello' });
+  });
+
+  it('builds a search provider from the services.moonshot_search api_key config', async () => {
+    servicesConfig = {
+      moonshotSearch: {
+        baseUrl: 'https://search.example.com/search',
+        apiKey: 'search-key',
+        customHeaders: { 'X-Custom': 'yes' },
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({
+        search_results: [{ title: 'Title', url: 'https://example.com', snippet: 'Snippet' }],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = createService().getWebSearchProvider();
+    expect(provider).not.toBeUndefined();
+    expect(resolveTokenProvider).not.toHaveBeenCalled();
+    const results = await provider!.search('hello');
+
+    expect(results).toEqual([
+      { title: 'Title', url: 'https://example.com', snippet: 'Snippet' },
+    ]);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://search.example.com/search');
+    const headers = init.headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer search-key');
+    expect(headers['User-Agent']).toBe('kimi-code-cli/test');
+    expect(headers['X-Msh-Device-Id']).toBe('device-test');
+    expect(headers['X-Custom']).toBe('yes');
+  });
+
+  it('prefers the services.moonshot_search config over the managed oauth provider', async () => {
+    servicesConfig = {
+      moonshotSearch: { baseUrl: 'https://config.example.com/search', apiKey: 'config-key' },
+    };
+    providers = {
+      [OAUTH_PROVIDER]: {
+        type: 'kimi',
+        baseUrl: 'https://managed.example.com/v1',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({ search_results: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = createService().getWebSearchProvider();
+    expect(provider).not.toBeUndefined();
+    await provider!.search('hello');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://config.example.com/search');
+    const headers = init.headers as Record<string, string>;
+    expect(headers['Authorization']).toBe('Bearer config-key');
+    expect(resolveTokenProvider).not.toHaveBeenCalled();
+  });
+
+  it('builds a search provider from the services.moonshot_search oauth ref', async () => {
+    servicesConfig = {
+      moonshotSearch: {
+        baseUrl: 'https://search.example.com/search',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    };
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      json: async () => ({ search_results: [] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const provider = createService().getWebSearchProvider();
+    expect(provider).not.toBeUndefined();
+    expect(resolveTokenProvider).toHaveBeenCalledWith(OAUTH_PROVIDER, {
+      storage: 'file',
+      key: 'oauth/kimi-code',
+    });
+    await provider!.search('hello');
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect((init.headers as Record<string, string>)['Authorization']).toBe('Bearer access-token');
+  });
+
+  it('returns undefined when services.moonshot_search has no baseUrl and no managed oauth', () => {
+    servicesConfig = { moonshotSearch: { apiKey: 'search-key' } };
+    expect(createService().getWebSearchProvider()).toBeUndefined();
+    expect(resolveTokenProvider).not.toHaveBeenCalled();
+  });
+});
+
+describe('services config section', () => {
+  it('registers the services section and validates its schema', () => {
+    const registry = new ConfigRegistry();
+
+    expect(registry.getSection(SERVICES_SECTION)).toBeDefined();
+    expect(
+      registry.validate(SERVICES_SECTION, {
+        moonshotSearch: { baseUrl: 'https://api.example.com/search', apiKey: 'search-key' },
+        moonshotFetch: { baseUrl: 'https://api.example.com/fetch' },
+        customService: { baseUrl: 'https://service.example.com', retries: 3 },
+      }),
+    ).toEqual({
+      moonshotSearch: { baseUrl: 'https://api.example.com/search', apiKey: 'search-key' },
+      moonshotFetch: { baseUrl: 'https://api.example.com/fetch' },
+      customService: { baseUrl: 'https://service.example.com', retries: 3 },
+    });
+    expect(() =>
+      registry.validate(SERVICES_SECTION, { moonshotSearch: { baseUrl: 42 } }),
+    ).toThrow();
+  });
+
+  it('maps services from TOML snake_case to camelCase', () => {
+    expect(
+      servicesFromToml({
+        moonshot_search: {
+          base_url: 'https://api.example.com/search',
+          api_key: 'search-key',
+          custom_headers: { 'X-Search': '1' },
+          oauth: { storage: 'file', key: 'oauth/kimi-code', oauth_host: 'https://auth.example.com' },
+        },
+        moonshot_fetch: { base_url: 'https://api.example.com/fetch', api_key: 'fetch-key' },
+      }),
+    ).toEqual({
+      moonshotSearch: {
+        baseUrl: 'https://api.example.com/search',
+        apiKey: 'search-key',
+        customHeaders: { 'X-Search': '1' },
+        oauth: { storage: 'file', key: 'oauth/kimi-code', oauthHost: 'https://auth.example.com' },
+      },
+      moonshotFetch: { baseUrl: 'https://api.example.com/fetch', apiKey: 'fetch-key' },
+    });
+  });
+
+  it('maps services back to TOML snake_case, preserving unknown entries', () => {
+    expect(
+      servicesToToml(
+        {
+          moonshotSearch: {
+            baseUrl: 'https://api.example.com/search',
+            apiKey: 'search-key',
+            customHeaders: { 'X-Search': '1' },
+            oauth: {
+              storage: 'file',
+              key: 'oauth/kimi-code',
+              oauthHost: 'https://auth.example.com',
+            },
+          },
+        },
+        { custom_service: { base_url: 'https://service.example.com' } },
+      ),
+    ).toEqual({
+      moonshot_search: {
+        base_url: 'https://api.example.com/search',
+        api_key: 'search-key',
+        custom_headers: { 'X-Search': '1' },
+        oauth: { storage: 'file', key: 'oauth/kimi-code', oauth_host: 'https://auth.example.com' },
+      },
+      custom_service: { base_url: 'https://service.example.com' },
+    });
+  });
+
+  it('preserves unknown services when managed services are removed', () => {
+    const rawServices = {
+      moonshot_search: {
+        base_url: 'https://api.example.com/search',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+      moonshot_fetch: {
+        base_url: 'https://api.example.com/fetch',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+      custom_service: {
+        base_url: 'https://service.example.com',
+        retries: 3,
+      },
+    };
+    const services = ServicesConfigSchema.parse(servicesFromToml(rawServices));
+    const config = { providers: {}, services };
+
+    clearManagedKimiCodeConfig(config);
+
+    expect(servicesToToml(config.services, rawServices)).toEqual({
+      custom_service: {
+        base_url: 'https://service.example.com',
+        retries: 3,
+      },
+    });
   });
 });
 

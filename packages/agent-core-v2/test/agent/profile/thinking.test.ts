@@ -16,12 +16,10 @@ const effortModelWithDefault = {
 const alwaysThinkingModel = {
   capabilities: ['thinking', 'always_thinking'],
   alwaysThinking: true,
-  protocol: 'kimi',
 };
 const alwaysThinkingEffortModel = {
   capabilities: ['thinking', 'always_thinking'],
   alwaysThinking: true,
-  protocol: 'kimi',
   supportEfforts: ['low', 'high', 'max'],
   defaultEffort: 'high',
 };
@@ -119,16 +117,6 @@ describe('resolveThinkingEffort', () => {
     expect(resolveThinkingEffort(undefined, { enabled: false }, booleanModel)).toBe('off');
   });
 
-  it('preserves off for Kimi-managed always-thinking models using Anthropic protocol', () => {
-    expect(
-      resolveThinkingEffort('off', undefined, {
-        ...alwaysThinkingEffortModel,
-        protocol: 'anthropic',
-        providerType: 'kimi',
-      }),
-    ).toBe('off');
-  });
-
   it('carries custom requested efforts through', () => {
     expect(resolveThinkingEffort('xhigh', undefined)).toBe('xhigh');
     expect(resolveThinkingEffort('bogus', { effort: 'low' })).toBe('bogus');
@@ -143,7 +131,6 @@ describe('resolveThinkingEffort', () => {
     expect(
       resolveThinkingEffort('ultra', undefined, {
         ...effortModel,
-        protocol: 'kimi',
         providerType: 'kimi',
       }),
     ).toBe('medium');
@@ -153,7 +140,6 @@ describe('resolveThinkingEffort', () => {
     expect(
       resolveThinkingEffort('ultra', undefined, {
         ...booleanModel,
-        protocol: 'kimi',
         providerType: 'kimi',
       }),
     ).toBe('on');
@@ -161,11 +147,7 @@ describe('resolveThinkingEffort', () => {
 
   it('reports unsupported concrete efforts only for Kimi effort models', () => {
     expect(
-      supportsThinkingEffort('ultra', {
-        ...effortModel,
-        protocol: 'kimi',
-        providerType: 'kimi',
-      }),
+      supportsThinkingEffort('ultra', { ...effortModel, providerType: 'kimi' }),
     ).toBe(false);
     expect(
       supportsThinkingEffort('ultra', { ...effortModel, providerType: 'openai' }),

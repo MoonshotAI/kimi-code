@@ -53,7 +53,7 @@ workspace_node_modules=(
   "docs:/workspace/kimi-code/docs/node_modules"
   "pkg_acp-adapter:/workspace/kimi-code/packages/acp-adapter/node_modules"
   "pkg_agent-core:/workspace/kimi-code/packages/agent-core/node_modules"
-  "pkg_server:/workspace/kimi-code/packages/server/node_modules"
+  "pkg_kap-server:/workspace/kimi-code/packages/kap-server/node_modules"
   "pkg_server-e2e:/workspace/kimi-code/packages/server-e2e/node_modules"
   "pkg_kaos:/workspace/kimi-code/packages/kaos/node_modules"
   "pkg_kosong:/workspace/kimi-code/packages/kosong/node_modules"

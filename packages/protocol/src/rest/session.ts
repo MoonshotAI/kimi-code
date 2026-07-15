@@ -17,6 +17,7 @@
 
 import { z } from 'zod';
 
+import { goalSnapshotSchema } from '../events';
 import { messageSchema } from '../message';
 import { cursorQuerySchema, pageResponseSchema } from '../pagination';
 import {
@@ -58,6 +59,25 @@ export type GetSessionResponse = z.infer<typeof getSessionResponseSchema>;
 
 export const getSessionProfileResponseSchema = sessionSchema;
 export type GetSessionProfileResponse = z.infer<typeof getSessionProfileResponseSchema>;
+
+export const MAX_SESSION_EXPORT_WEB_LOG_BYTES = 256 * 1024;
+
+export const exportSessionParamsSchema = z.object({
+  session_id: z.string().min(1),
+});
+export type ExportSessionParams = z.infer<typeof exportSessionParamsSchema>;
+
+export const exportSessionRequestSchema = z
+  .object({
+    web_log: z
+      .string()
+      .refine((value) => fitsUtf8ByteLimit(value, MAX_SESSION_EXPORT_WEB_LOG_BYTES), {
+        message: `web_log must not exceed ${MAX_SESSION_EXPORT_WEB_LOG_BYTES} UTF-8 bytes`,
+      })
+      .optional(),
+  })
+  .strict();
+export type ExportSessionRequest = z.infer<typeof exportSessionRequestSchema>;
 
 export const updateSessionProfileRequestSchema = sessionUpdateSchema;
 export type UpdateSessionProfileRequest = z.infer<typeof updateSessionProfileRequestSchema>;
@@ -120,6 +140,12 @@ export const sessionStatusResponseSchema = z.object({
 });
 export type SessionStatusResponse = z.infer<typeof sessionStatusResponseSchema>;
 
+// GET /sessions/{id}/goal — the session's current goal snapshot (camelCase,
+// same shape as the `goal.updated` WS event payload), or null when none is
+// active.
+export const getSessionGoalResponseSchema = goalSnapshotSchema.nullable();
+export type GetSessionGoalResponse = z.infer<typeof getSessionGoalResponseSchema>;
+
 export const sessionWarningSchema = z.object({
   code: z.string(),
   message: z.string(),
@@ -175,3 +201,22 @@ export const sessionAbortResponseSchema = z.object({
   aborted: z.boolean(),
 });
 export type SessionAbortResponse = z.infer<typeof sessionAbortResponseSchema>;
+
+function fitsUtf8ByteLimit(value: string, limit: number): boolean {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const codePoint = value.codePointAt(index)!;
+    if (codePoint < 0x80) {
+      bytes += 1;
+    } else if (codePoint < 0x800) {
+      bytes += 2;
+    } else if (codePoint > 0xffff) {
+      bytes += 4;
+      index += 1;
+    } else {
+      bytes += 3;
+    }
+    if (bytes > limit) return false;
+  }
+  return true;
+}

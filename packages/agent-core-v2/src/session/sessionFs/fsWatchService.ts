@@ -30,8 +30,15 @@ import type { FsChangeEntry, FsChangeEvent } from '@moonshot-ai/protocol';
 
 import { ISessionFsWatchService } from './fsWatch';
 
-const DEBOUNCE_MS = 200;
-const MAX_CHANGES_PER_WINDOW = 500;
+const DEFAULT_DEBOUNCE_MS = 200;
+const DEFAULT_MAX_CHANGES_PER_WINDOW = 500;
+
+function readPositiveIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 export class SessionFsWatchService extends Disposable implements ISessionFsWatchService {
   declare readonly _serviceBrand: undefined;
@@ -48,7 +55,15 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
   private rawCount = 0;
   private truncated = false;
 
-  /** Always present; starts with `.git/` and is augmented with `.gitignore` once loaded. */
+  private readonly debounceMs = readPositiveIntEnv(
+    'KIMI_CODE_FS_WATCH_DEBOUNCE_MS',
+    DEFAULT_DEBOUNCE_MS,
+  );
+  private readonly maxChangesPerWindow = readPositiveIntEnv(
+    'KIMI_CODE_FS_WATCH_MAX_CHANGES_PER_WINDOW',
+    DEFAULT_MAX_CHANGES_PER_WINDOW,
+  );
+
   private readonly matcher: Ignore = ignore().add('.git/');
   private gitignoreLoaded = false;
 
@@ -116,12 +131,12 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
 
     this.pending.push({ path: rel, change: e.action, kind: e.kind });
     this.rawCount += 1;
-    if (this.pending.length > MAX_CHANGES_PER_WINDOW) {
+    if (this.pending.length > this.maxChangesPerWindow) {
       this.truncated = true;
       this.pending = [];
     }
     if (this.debounceTimer === undefined) {
-      const timer = setTimeout(() => this.flush(), DEBOUNCE_MS);
+      const timer = setTimeout(() => this.flush(), this.debounceMs);
       timer.unref?.();
       this.debounceTimer = timer;
     }
@@ -139,7 +154,7 @@ export class SessionFsWatchService extends Disposable implements ISessionFsWatch
 
     const event: FsChangeEvent = {
       changes,
-      coalesced_window_ms: DEBOUNCE_MS,
+      coalesced_window_ms: this.debounceMs,
       ...(truncated ? { truncated: true, count } : {}),
     };
     this.emitter.fire(event);
@@ -211,6 +226,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionFsWatchService,
   SessionFsWatchService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionFsWatch',
 );

@@ -17,6 +17,7 @@
  */
 
 import {
+  IAgentContextSizeService,
   IAgentProfileService,
   IAgentUsageService,
   IAgentWireService,
@@ -39,6 +40,12 @@ interface LegacyStatusState {
  * Reacts to the Ops that can change the status line. The state itself carries
  * no business data; the handler re-reads the authoritative services on every
  * bump so the emitted snapshot is always consistent with the live Models.
+ *
+ * The context-append Ops are watched alongside the usage / measurement Ops
+ * because the emitted contextTokens is the live (measured + estimated) size:
+ * a freshly appended prompt or step event grows it before any LLM response
+ * lands. The derived model's dedupe (in the broadcaster) suppresses appends
+ * that don't move the size, so the extra watches cost no extra frames.
  */
 export const LegacyStatusModel = defineDerivedModel<LegacyStatusState>(
   'legacyStatus',
@@ -46,6 +53,8 @@ export const LegacyStatusModel = defineDerivedModel<LegacyStatusState>(
   {
     'usage.record': (s) => ({ version: s.version + 1 }),
     'context_size.measured': (s) => ({ version: s.version + 1 }),
+    'context.append_message': (s) => ({ version: s.version + 1 }),
+    'context.append_loop_event': (s) => ({ version: s.version + 1 }),
     'config.update': (s) => ({ version: s.version + 1 }),
   },
 );
@@ -61,7 +70,17 @@ export interface LegacyStatusSnapshot {
 export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot {
   const profile = agent.accessor.get(IAgentProfileService);
   const usage = agent.accessor.get(IAgentUsageService).status();
-  const contextTokens = agent.accessor.get(IAgentWireService).getModel(ContextSizeModel).tokens;
+  // Live (measured + estimated) context size — mirrors the REST status rollup
+  // (`ISessionLegacyService.status`) and v1's `context.tokenCount`, which
+  // reflect the context even before the first measured exchange completes.
+  // `size` alone can transiently dip below the last measured total while a
+  // post-step fold/rewrite leaves the context shorter than the measured
+  // prefix (the estimate then excludes the system prompt); the measured total
+  // is the better reading there. Every REAL shrink (undo / clear / compaction)
+  // rebases the measured model first, so the max only wins in that window.
+  const contextSize = agent.accessor.get(IAgentContextSizeService);
+  const measured = agent.accessor.get(IAgentWireService).getModel(ContextSizeModel);
+  const contextTokens = Math.max(contextSize.get().size, measured.tokens);
   const maxContextTokens = profile.getModelCapabilities().max_context_tokens;
   const model = profile.getModel();
   return { usage, contextTokens, maxContextTokens, model };

@@ -211,21 +211,21 @@ export class FlagService extends Disposable implements IFlagService {
 
 ## 场景 5：你的服务很重，想延迟初始化
 
-> 你要做的：服务依赖多、创建贵，不想在 scope 创建时就 new。
+> 你要做的：服务依赖多、创建贵，不想在被解析时就同步 new，而是推迟到空闲时。
 
 这一步引入：**`InstantiationType.Eager` vs `Delayed`**。
 
 ```ts
-// Eager：scope 创建时立刻 new
+// Eager（默认）：第一次被解析（作为依赖或被 get）时同步构造，返回真实实例
 registerScopedService(LifecycleScope.App, ILogService, LogService, InstantiationType.Eager, 'log');
 
-// Delayed：第一次被 get 时才 new
+// Delayed：第一次被解析时先返回一个 Proxy，真实构造推迟到空闲时
 registerScopedService(LifecycleScope.App, IScopeRegistry, ScopeRegistry, InstantiationType.Delayed, 'gateway');
 ```
 
-Delayed 服务返回的是一个 **Proxy**：在首次访问任意属性时才真正构造。即便还没构造好，别人提前订阅它的 `onDid…` / `onWill…` 事件也不会丢——容器会先记下监听器，实例真正出来后再回放订阅。
+Delayed 服务返回的是一个 **Proxy**：真实构造推迟到空闲回调，或在首次访问其属性 / 调用其方法时立即发生。即便还没构造好，别人提前订阅它的 `onDid…` / `onWill…` 事件也不会丢——容器会先记下监听器，实例真正出来后再回放订阅。
 
-> 经验：无依赖、被频繁使用、或有「尽早初始化副作用」的服务用 `Eager`（如 `ILogService`）；其余默认 `Delayed`。
+> 经验：默认即 `Eager`，绝大多数服务无需关心。只有「构造很贵、想推迟到空闲时」的服务才显式标 `Delayed`（遗留逃生舱，见场景 9.4）。
 
 ---
 

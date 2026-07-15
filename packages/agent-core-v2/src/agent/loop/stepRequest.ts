@@ -26,18 +26,14 @@ export type StepRequestAdmission =
   | 'activeOrNextTurn'
   | 'activeTurnOnly';
 
-/** Input/origin recorded through `turn.prompt` when a request starts a turn. */
 export interface TurnSeed {
   readonly input: readonly ContentPart[];
   readonly origin: PromptOrigin;
 }
 
 export interface StepRequestOptions {
-  /** Mergeable requests fold into the next step's driver instead of forcing their own. */
   readonly mergeable?: boolean;
-  /** Turn-scoped requests are aborted when the owning run ends; agent-scoped ones (steers) carry into the next turn. */
   readonly turnScoped?: boolean;
-  /** Turn admission semantics. Defaults to `activeOrNextTurn`. */
   readonly admission?: StepRequestAdmission;
 }
 
@@ -56,7 +52,6 @@ export abstract class StepRequest {
     this.admission = options.admission ?? 'activeOrNextTurn';
   }
 
-  /** Seed for the `turn.prompt` record when this request starts a turn. */
   get turnSeed(): TurnSeed | undefined {
     return undefined;
   }
@@ -69,11 +64,6 @@ export abstract class StepRequest {
     return this._state === 'aborted';
   }
 
-  /**
-   * Abort a still-pending request; the loop discards it when popped. Returns
-   * false once the request has materialized — its message already landed in
-   * context and can no longer be withdrawn.
-   */
   abort(): boolean {
     if (this._state !== 'pending') return false;
     this._state = 'aborted';
@@ -81,28 +71,16 @@ export abstract class StepRequest {
     return true;
   }
 
-  /**
-   * One-time side effects run by the loop right before the request's messages
-   * are appended (wire record-keeping, reminder rerouting). Called at most
-   * once, at pop time.
-   */
   onWillMaterialize(): void {}
 
-  /**
-   * Compute this request's context contribution at pop time. Called at most
-   * once; the loop appends the returned messages to the context. Requests
-   * that only drive a step (continuations, retries) return an empty list.
-   */
   abstract resolveContextMessages(): readonly ContextMessage[];
 
-  /** Loop-only transition invoked at pop time; idempotent. */
   markMaterialized(): void {
     if (this._state !== 'pending') return;
     this._state = 'materialized';
     this.onSettled();
   }
 
-  /** Fired exactly once when the request leaves the pending state (materialized or aborted). */
   protected onSettled(): void {}
 }
 
@@ -110,11 +88,6 @@ export interface MessageStepRequestOptions extends StepRequestOptions {
   readonly kind?: string;
 }
 
-/**
- * A request carrying a single pre-built context message. Domains with
- * materialization side effects (caption rerouting, steer record-keeping)
- * subclass it and override `onWillMaterialize`.
- */
 export class MessageStepRequest extends StepRequest {
   readonly kind: string;
 
@@ -135,12 +108,6 @@ export class MessageStepRequest extends StepRequest {
   }
 }
 
-/**
- * A message-less driver request: contributes no context of its own and simply
- * runs one more step over the current context. Enqueued by the loop after a
- * tool-executing step, and by orchestrators (`goal`, `externalHooks`) that
- * need one extra step after delivering their own input.
- */
 export class ContinuationStepRequest extends StepRequest {
   readonly kind: string;
 

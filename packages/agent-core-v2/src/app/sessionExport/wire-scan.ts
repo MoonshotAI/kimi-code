@@ -6,7 +6,10 @@
  * export manifest without depending on live Agent services.
  */
 
-import { readdir, readFile } from 'node:fs/promises';
+import { open, readdir, type FileHandle } from 'node:fs/promises';
+import { createInterface } from 'node:readline';
+import { Readable } from 'node:stream';
+import { finished } from 'node:stream/promises';
 
 import { join } from 'pathe';
 
@@ -19,15 +22,20 @@ export interface SessionWireScan {
   readonly firstUserInput?: string | undefined;
 }
 
-export async function scanSessionWire(sessionDir: string): Promise<SessionWireScan> {
-  const wireFiles = await collectWireFiles(sessionDir);
+export async function scanSessionWire(
+  sessionDir: string,
+  signal?: AbortSignal,
+): Promise<SessionWireScan> {
+  signal?.throwIfAborted();
+  const wireFiles = await collectWireFiles(sessionDir, signal);
   let firstActivityMs: number | undefined;
   let lastActivityMs: number | undefined;
   let lastUserMessageMs: number | undefined;
   let firstUserInput: string | undefined;
 
   for (const file of wireFiles) {
-    const scan = await scanWireFile(file);
+    signal?.throwIfAborted();
+    const scan = await scanWireFile(file, signal);
     firstActivityMs = minDefined(firstActivityMs, scan.firstActivityMs);
     lastActivityMs = maxDefined(lastActivityMs, scan.lastActivityMs);
     lastUserMessageMs = maxDefined(lastUserMessageMs, scan.lastUserMessageMs);
@@ -42,12 +50,16 @@ export async function scanSessionWire(sessionDir: string): Promise<SessionWireSc
   };
 }
 
-async function collectWireFiles(sessionDir: string): Promise<readonly string[]> {
+async function collectWireFiles(
+  sessionDir: string,
+  signal?: AbortSignal,
+): Promise<readonly string[]> {
   const files = [join(sessionDir, WIRE_FILENAME)];
   const agentsDir = join(sessionDir, 'agents');
   try {
     const entries = await readdir(agentsDir, { recursive: true, withFileTypes: true });
     for (const entry of entries) {
+      signal?.throwIfAborted();
       if (!entry.isFile() || entry.name !== WIRE_FILENAME) continue;
       files.push(join(entry.parentPath, entry.name));
     }
@@ -57,52 +69,74 @@ async function collectWireFiles(sessionDir: string): Promise<readonly string[]> 
   return files;
 }
 
-async function scanWireFile(path: string): Promise<SessionWireScan> {
-  let raw: string;
+async function scanWireFile(path: string, signal?: AbortSignal): Promise<SessionWireScan> {
+  let file: FileHandle;
   try {
-    raw = await readFile(path, 'utf-8');
+    file = await open(path, 'r');
   } catch (error) {
     if (!isMissingPath(error)) throw error;
     return {};
   }
+
+  let input: Readable | undefined;
 
   let firstActivityMs: number | undefined;
   let lastActivityMs: number | undefined;
   let lastUserMessageMs: number | undefined;
   let firstUserInput: string | undefined;
 
-  for (const line of raw.split('\n')) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed) as unknown;
-    } catch {
-      continue;
-    }
-    if (typeof parsed !== 'object' || parsed === null) continue;
-    const record = parsed as {
-      type?: unknown;
-      time?: unknown;
-      userInput?: unknown;
-    };
-    const timeMs = typeof record.time === 'number' ? normalizeTimestampMs(record.time) : undefined;
-    if (timeMs !== undefined) {
-      firstActivityMs = minDefined(firstActivityMs, timeMs);
-      lastActivityMs = maxDefined(lastActivityMs, timeMs);
-    }
-    if (record.type === 'turn_begin') {
+  try {
+    signal?.throwIfAborted();
+    const size = (await file.stat()).size;
+    signal?.throwIfAborted();
+    input =
+      size === 0
+        ? Readable.from([])
+        : file.createReadStream({
+            encoding: 'utf8',
+            autoClose: false,
+            end: size - 1,
+            signal,
+          });
+    const lines = createInterface({ input, crlfDelay: Infinity });
+    for await (const line of lines) {
+      const trimmed = line.trim();
+      if (trimmed.length === 0) continue;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(trimmed) as unknown;
+      } catch {
+        continue;
+      }
+      if (typeof parsed !== 'object' || parsed === null) continue;
+      const record = parsed as {
+        type?: unknown;
+        time?: unknown;
+        userInput?: unknown;
+      };
+      const timeMs =
+        typeof record.time === 'number' ? normalizeTimestampMs(record.time) : undefined;
       if (timeMs !== undefined) {
-        lastUserMessageMs = maxDefined(lastUserMessageMs, timeMs);
+        firstActivityMs = minDefined(firstActivityMs, timeMs);
+        lastActivityMs = maxDefined(lastActivityMs, timeMs);
       }
-      if (
-        firstUserInput === undefined &&
-        typeof record.userInput === 'string' &&
-        record.userInput.trim().length > 0
-      ) {
-        firstUserInput = record.userInput;
+      if (record.type === 'turn_begin') {
+        if (timeMs !== undefined) {
+          lastUserMessageMs = maxDefined(lastUserMessageMs, timeMs);
+        }
+        if (
+          firstUserInput === undefined &&
+          typeof record.userInput === 'string' &&
+          record.userInput.trim().length > 0
+        ) {
+          firstUserInput = record.userInput;
+        }
       }
     }
+  } finally {
+    input?.destroy();
+    if (input !== undefined) await finished(input, { cleanup: true }).catch(() => {});
+    await file.close();
   }
 
   return {

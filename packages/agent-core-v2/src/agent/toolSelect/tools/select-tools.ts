@@ -10,8 +10,8 @@
 
 import { z } from 'zod';
 
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import type { BuiltinTool, ToolExecution } from '#/agent/tool/toolContract';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentToolSelectService, SELECT_TOOLS_TOOL_NAME } from '../toolSelect';

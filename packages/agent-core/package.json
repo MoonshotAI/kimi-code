@@ -27,10 +27,23 @@
   ],
   "type": "module",
   "imports": {
-    "#/*": [
-      "./src/*.ts",
-      "./src/*/index.ts"
-    ]
+    "#/agent": "./src/agent/index.ts",
+    "#/agent/background": "./src/agent/background/index.ts",
+    "#/agent/compaction": "./src/agent/compaction/index.ts",
+    "#/agent/config": "./src/agent/config/index.ts",
+    "#/agent/context": "./src/agent/context/index.ts",
+    "#/agent/cron": "./src/agent/cron/index.ts",
+    "#/agent/goal": "./src/agent/goal/index.ts",
+    "#/agent/permission": "./src/agent/permission/index.ts",
+    "#/agent/plan": "./src/agent/plan/index.ts",
+    "#/agent/swarm": "./src/agent/swarm/index.ts",
+    "#/agent/tool": "./src/agent/tool/index.ts",
+    "#/config": "./src/config/index.ts",
+    "#/flags": "./src/flags/index.ts",
+    "#/loop": "./src/loop/index.ts",
+    "#/rpc": "./src/rpc/index.ts",
+    "#/session": "./src/session/index.ts",
+    "#/*": "./src/*.ts"
   },
   "exports": {
     ".": {

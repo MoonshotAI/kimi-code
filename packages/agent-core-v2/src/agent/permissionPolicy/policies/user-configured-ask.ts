@@ -1,4 +1,4 @@
-import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import type {
   PermissionPolicy,

@@ -180,6 +180,11 @@ const DOMAIN_LAYER = new Map([
   ['btw', 5],
   // L6 — coordination
   ['agentLifecycle', 6],
+  // `subagent` drives turns on other agents (`run`) and hosts the
+  // requester-side run hook/event surface (`SubagentStart`/`SubagentStop`).
+  // Its highest real dependency is `agentLifecycle` (target lookup), so it
+  // sits in L6 beside it.
+  ['subagent', 6],
   ['sessionLifecycle', 6],
   ['externalHooks', 6],
   ['externalHooksRunner', 6],
@@ -299,16 +304,15 @@ const ALLOWED_EXCEPTIONS = new Set([
   // auth-independent `web` domain.
   'auth>tool',
   'auth>toolRegistry',
-  // path-access (base tool policy) needs the `IHostEnvironment` type to stay
-  // host-aware (path class, home dir). Structural type dependency only —
-  // path-access does not construct or resolve the service.
-  '_base>os/interface',
   'permissionGate>approval',
   'userTool>interaction',
   'permissionPolicy>plan',
   'permissionPolicy>swarm',
   'skill>loop',
   'swarm>agentLifecycle',
+  // `swarm` (L4) drives sub-agent runs through the `subagent` domain (L6) —
+  // same shape as the `swarm>agentLifecycle` spawn exception above.
+  'swarm>subagent',
   'cron>agentLifecycle',
   'cron>sessionContext',
   'todo>agentLifecycle',

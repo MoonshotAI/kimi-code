@@ -2,12 +2,15 @@
  * SetGoalBudgetTool — lets the model record a user-stated hard runtime limit
  * for the current goal. The tool accepts one limit at a time, converts supported
  * time units to milliseconds, and rejects obviously unreasonable time limits.
+ * Registered for the main agent only, mirroring v1's `agent.type === 'main'`
+ * gate.
  */
 
 import { z } from 'zod';
 
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import type { BuiltinTool, ToolExecution } from '#/agent/tool/toolContract';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
@@ -21,8 +24,6 @@ const BUDGET_UNITS = ['turns', 'tokens', 'milliseconds', 'seconds', 'minutes', '
 
 export const SetGoalBudgetToolInputSchema = z
   .object({
-    // Keep the provider-facing schema simple. Fractional turn/token budgets
-    // are normalized during execution instead of rejected at schema validation.
     value: z.number().positive().describe('The positive numeric budget value.'),
     unit: z.enum(BUDGET_UNITS),
   })

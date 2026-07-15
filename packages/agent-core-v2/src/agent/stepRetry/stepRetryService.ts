@@ -112,8 +112,6 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
     });
     await sleepForRetry(delayMs, context.signal);
 
-    // The driver is already materialized, so its messages are not appended a
-    // second time; re-running it drives another step over the same context.
     if (context.currentStep?.signal.aborted === true) return false;
     context.retry(driver, { at: 'head' });
     return true;

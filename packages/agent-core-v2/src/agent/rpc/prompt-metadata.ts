@@ -11,7 +11,7 @@ import type { ContentPart } from '#/app/llmProtocol/message';
 import type { IEventService } from '#/app/event/event';
 import type { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 
-import { extractImageCompressionCaptions } from '#/_base/tools/support/image-compress';
+import { extractImageCompressionCaptions } from '#/agent/media/image-compress';
 
 import type {
   ActivatePluginCommandPayload,
@@ -102,9 +102,6 @@ export async function applyPromptMetadataUpdate(
 function promptPartText(part: ContentPart): string | undefined {
   switch (part.type) {
     case 'text': {
-      // Prompt ingestion may have annotated a compressed image with an inline
-      // caption (see buildImageCompressionCaption). It is harness metadata,
-      // not something the user typed, so keep it out of titles/lastPrompt.
       const { text } = extractImageCompressionCaptions(part.text);
       return text.trim().length === 0 ? undefined : text;
     }

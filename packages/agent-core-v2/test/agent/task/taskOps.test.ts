@@ -67,16 +67,12 @@ describe('task ops (wire-backed)', () => {
     wire.dispatch(taskStarted({ info: info('t1', 'running') }));
     expect(wire.getModel(TaskModel).get('t1')?.status).toBe('running');
 
-    // A later terminated overwrites the earlier started for the same id.
     wire.dispatch(taskTerminated({ info: info('t1', 'completed') }));
     expect(wire.getModel(TaskModel).get('t1')?.status).toBe('completed');
 
     wire.dispatch(taskStarted({ info: info('t2', 'running') }));
     expect(wire.getModel(TaskModel).size).toBe(2);
 
-    // `task.started` / `task.terminated` are persist: false — the model folds
-    // live, but nothing lands on the wire log (tasks restore from their own
-    // persistence, not the session log).
     expect(await readRecords()).toEqual([]);
   });
 
@@ -89,9 +85,6 @@ describe('task ops (wire-backed)', () => {
   });
 
   it('replay rebuilds the task map from legacy task.* records silently (no emissions, no subscriber notifications)', async () => {
-    // Live dispatch no longer persists task.* records; the ops stay registered
-    // so legacy logs that contain them still replay. Feed hand-written records
-    // directly.
     const records: PersistedRecord[] = [
       { type: 'task.started', info: info('t1', 'running') },
       { type: 'task.terminated', info: info('t1', 'completed') },

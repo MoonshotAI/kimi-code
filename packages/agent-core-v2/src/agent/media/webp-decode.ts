@@ -46,28 +46,18 @@ async function loadDecoder(): Promise<WebpDecodeFn> {
     await decodeModule.init(wasm as never);
     const decode = decodeModule.default;
     return async (bytes: Uint8Array) => {
-      const copy = new Uint8Array(bytes); // detach from any shared buffer
+      const copy = new Uint8Array(bytes);
       return (await decode(copy.buffer)) as unknown as DecodedWebp;
     };
   })();
   return decoderReady;
 }
 
-/**
- * Decode a (non-animated) WebP payload to RGBA. Throws on undecodable input —
- * callers keep their existing best-effort catch semantics.
- */
 export async function decodeWebp(bytes: Uint8Array): Promise<DecodedWebp> {
   const decode = await loadDecoder();
   return decode(bytes);
 }
 
-/**
- * True when the payload is a WebP whose VP8X container header carries the
- * ANIM flag. Animated WebP must be passed through, not re-encoded: decoding
- * yields a single frame and would silently destroy the animation (the same
- * reason GIF is passed through).
- */
 export function isAnimatedWebp(bytes: Uint8Array): boolean {
   if (bytes.length < 21) return false;
   return (

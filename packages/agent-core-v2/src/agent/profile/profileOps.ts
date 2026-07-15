@@ -30,9 +30,11 @@
  * Consumed by the Agent-scope `profileService`.
  */
 
+import { z } from 'zod';
+
 import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
+import type { PayloadOf } from '#/wire/types';
 
 import { ProfileError, ProfileErrors } from './profile';
 
@@ -49,17 +51,16 @@ export const ProfileModel = defineModel<ProfileModelState>('profile', () => ({
   systemPrompt: '',
 }));
 
-export interface ConfigUpdatePayload {
-  readonly cwd?: string;
-  readonly modelAlias?: string;
-  readonly profileName?: string;
-  readonly thinkingEffort?: ThinkingEffort;
-  readonly thinkingLevel?: ThinkingEffort;
-  readonly systemPrompt?: string;
-}
-
-export const configUpdate = defineOp(ProfileModel, 'config.update', {
-  apply: (s, p: ConfigUpdatePayload): ProfileModelState => {
+export const configUpdate = ProfileModel.defineOp('config.update', {
+  schema: z.object({
+    cwd: z.string().optional(),
+    modelAlias: z.string().optional(),
+    profileName: z.string().optional(),
+    thinkingEffort: z.custom<ThinkingEffort>().optional(),
+    thinkingLevel: z.custom<ThinkingEffort>().optional(),
+    systemPrompt: z.string().optional(),
+  }),
+  apply: (s, p) => {
     let next: ProfileModelState | undefined;
     if (p.cwd !== undefined && p.cwd !== s.cwd) {
       next = { ...(next ?? s), cwd: p.cwd };
@@ -81,7 +82,9 @@ export const configUpdate = defineOp(ProfileModel, 'config.update', {
   },
 });
 
-function configUpdateThinkingLevel(p: ConfigUpdatePayload): ThinkingEffort | undefined {
+function configUpdateThinkingLevel(
+  p: PayloadOf<typeof configUpdate>,
+): ThinkingEffort | undefined {
   if (p.thinkingEffort !== undefined && p.thinkingLevel !== undefined) {
     if (p.thinkingEffort !== p.thinkingLevel) {
       throw new ProfileError(
@@ -100,13 +103,6 @@ function configUpdateThinkingLevel(p: ConfigUpdatePayload): ThinkingEffort | und
   return p.thinkingLevel;
 }
 
-/**
- * The agent's active-tool set. `undefined` means "every tool is active" (the
- * unrestricted default before any `tools.set_active_tools`); a concrete array
- * restricts the set. Kept distinct from `[]` (which would mean "no tools
- * active"), so the initial `undefined` preserves the all-active default rather
- * than collapsing it to an empty allowlist.
- */
 export type ActiveToolsState = readonly string[] | undefined;
 
 export const ActiveToolsModel = defineModel<ActiveToolsState>(
@@ -114,10 +110,14 @@ export const ActiveToolsModel = defineModel<ActiveToolsState>(
   () => undefined,
 );
 
-export interface SetActiveToolsPayload {
-  readonly names: readonly string[];
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'config.update': typeof configUpdate;
+    'tools.set_active_tools': typeof setActiveTools;
+  }
 }
 
-export const setActiveTools = defineOp(ActiveToolsModel, 'tools.set_active_tools', {
-  apply: (s, p: SetActiveToolsPayload): ActiveToolsState => (p.names === s ? s : p.names),
+export const setActiveTools = ActiveToolsModel.defineOp('tools.set_active_tools', {
+  schema: z.object({ names: z.array(z.string()).readonly() }),
+  apply: (s, p) => (p.names === s ? s : p.names),
 });

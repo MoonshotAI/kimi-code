@@ -25,16 +25,11 @@ export interface OpenAIContentPart {
   video_url?: { url: string; id?: string | null } | undefined;
 }
 
-/**
- * Convert a kosong `ContentPart` to OpenAI-compatible content part.
- * Returns `null` for think parts (handled separately as reasoning_content).
- */
 export function convertContentPart(part: ContentPart): OpenAIContentPart | null {
   switch (part.type) {
     case 'text':
       return { type: 'text', text: part.text };
     case 'think':
-      // Think parts are handled separately as reasoning_content — skip them here.
       return null;
     case 'image_url':
       return {
@@ -73,9 +68,6 @@ export interface OpenAIToolParam {
   };
 }
 
-/**
- * Convert a kosong `Tool` to OpenAI tool format.
- */
 export function toolToOpenAI(tool: Tool): OpenAIToolParam {
   return {
     type: 'function',
@@ -87,21 +79,16 @@ export function toolToOpenAI(tool: Tool): OpenAIToolParam {
   };
 }
 
-/**
- * Convert an OpenAI SDK error (or raw Error) to a kosong `ChatProviderError`.
- */
 export function convertOpenAIError(error: unknown): ChatProviderError {
   if (error instanceof ChatProviderError) {
     return error;
   }
-  // v6: APIConnectionTimeoutError extends APIConnectionError, check timeout first
   if (error instanceof OpenAITimeoutError) {
     return new APITimeoutError(error.message);
   }
   if (error instanceof OpenAIConnectionError) {
     return new APIConnectionError(error.message);
   }
-  // APIError with a status code => status error
   if (error instanceof OpenAIAPIError && typeof error.status === 'number') {
     const reqId = error.requestID ?? null;
     return normalizeAPIStatusError(
@@ -111,9 +98,6 @@ export function convertOpenAIError(error: unknown): ChatProviderError {
       parseRetryAfterMs(error.headers),
     );
   }
-  // Base APIError with no status and no body => transport-layer failure.
-  // When the error has a body (e.g. SSE error events from the server),
-  // skip the heuristic to avoid misclassifying server-side errors.
   if (
     error instanceof OpenAIAPIError &&
     error.constructor === OpenAIAPIError &&
@@ -124,36 +108,22 @@ export function convertOpenAIError(error: unknown): ChatProviderError {
   if (error instanceof OpenAIError) {
     return new ChatProviderError(`Error: ${error.message}`);
   }
-  // Raw, non-SDK errors (e.g. undici's `TypeError: terminated` raised when a
-  // streaming response body is dropped mid-flight) never get wrapped by the
-  // OpenAI SDK during stream iteration. Route them through the same
-  // transport-layer heuristic so genuine connection failures become
-  // retryable instead of fatal generic errors.
   if (error instanceof Error) {
     return classifyBaseApiError(error.message);
   }
   return new ChatProviderError(`Error: ${String(error)}`);
 }
-/** Shape of a function-type tool call (subset used by the guard). */
 export interface FunctionToolCallShape {
   type: 'function';
   id: string;
   function: { name: string; arguments: string | null };
 }
 
-/**
- * Type guard: narrow a tool call union to the function-type variant.
- * Works with OpenAI SDK's `ChatCompletionMessageToolCall` as well as
- * any object carrying `{ type: string }`.
- */
 export function isFunctionToolCall<T extends { type: string }>(
   tc: T,
 ): tc is T & FunctionToolCallShape {
   return tc.type === 'function';
 }
-/**
- * Map kosong `ThinkingEffort` to OpenAI `reasoning_effort` string.
- */
 export function thinkingEffortToReasoningEffort(effort: ThinkingEffort): string | undefined {
   switch (effort) {
     case 'off':
@@ -172,9 +142,6 @@ export function thinkingEffortToReasoningEffort(effort: ThinkingEffort): string 
   }
 }
 
-/**
- * Map OpenAI `reasoning_effort` string back to kosong `ThinkingEffort`.
- */
 export function reasoningEffortToThinkingEffort(
   reasoning: string | undefined,
 ): ThinkingEffort | null {
@@ -198,9 +165,6 @@ export function reasoningEffortToThinkingEffort(
       return 'off';
   }
 }
-/**
- * Extract `TokenUsage` from an OpenAI-compatible usage object.
- */
 export function extractUsage(usage: unknown): TokenUsage | null {
   if (usage === null || usage === undefined || typeof usage !== 'object') {
     return null;
@@ -210,7 +174,6 @@ export function extractUsage(usage: unknown): TokenUsage | null {
   const completionTokens = typeof u['completion_tokens'] === 'number' ? u['completion_tokens'] : 0;
 
   let cached = 0;
-  // Moonshot proprietary: top-level cached_tokens
   if (typeof u['cached_tokens'] === 'number') {
     cached = u['cached_tokens'];
   } else if (
@@ -230,23 +193,6 @@ export function extractUsage(usage: unknown): TokenUsage | null {
     inputCacheCreation: 0,
   };
 }
-/**
- * Normalize an OpenAI Chat Completions–style `finish_reason` string to the
- * unified {@link FinishReason} enum.
- *
- * Used by both the Kimi and OpenAI Legacy adapters because they share the
- * Chat Completions wire format. Returns `{ finishReason: null,
- * rawFinishReason: null }` when the upstream value is missing or `null` so
- * callers can treat "no signal" uniformly.
- *
- * Mapping:
- * - `'stop'` → `'completed'`
- * - `'tool_calls'` → `'tool_calls'`
- * - `'function_call'` → `'tool_calls'` (legacy alias)
- * - `'length'` → `'truncated'`
- * - `'content_filter'` → `'filtered'`
- * - any other non-null string → `'other'`
- */
 export function normalizeOpenAIFinishReason(raw: string | null | undefined): {
   finishReason: FinishReason | null;
   rawFinishReason: string | null;
@@ -268,30 +214,15 @@ export function normalizeOpenAIFinishReason(raw: string | null | undefined): {
       return { finishReason: 'other', rawFinishReason: raw };
   }
 }
-/**
- * Strategy for converting tool-role message content.
- *
- * - `'extract_text'`: flatten all content parts into a single text string
- *   (some providers require tool results as plain text).
- * - `null`: convert content parts to the standard OpenAI content-part array.
- */
 export type ToolMessageConversion = 'extract_text' | null;
 
-/**
- * Shared wording for tool-result media that cannot live inside the tool
- * message itself and is reattached as a follow-up user message instead.
- */
 export const TOOL_RESULT_MEDIA_PROMPT = 'Attached media from tool result:';
 export const TOOL_RESULT_MEDIA_PLACEHOLDER = '(see attached media)';
 
-/** A content part that is neither plain text nor reasoning. */
 export function isMediaPart(part: ContentPart): boolean {
   return part.type !== 'text' && part.type !== 'think';
 }
 
-/**
- * Convert tool-role message content according to the chosen strategy.
- */
 export function convertToolMessageContent(
   message: Message,
   conversion: ToolMessageConversion,

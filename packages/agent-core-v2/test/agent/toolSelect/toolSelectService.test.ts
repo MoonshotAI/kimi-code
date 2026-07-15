@@ -35,7 +35,7 @@ import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
-import type { ExecutableTool, ToolExecution } from '#/agent/tool/toolContract';
+import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
 import { IAgentToolExecutorService, type ToolExecutionResult } from '#/agent/toolExecutor/toolExecutor';
 import { AgentToolExecutorService } from '#/agent/toolExecutor/toolExecutorService';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -657,9 +657,6 @@ describe('AgentToolSelectService.load', () => {
     expect(h.sut.load([MCP_ALPHA]).alreadyAvailable).toEqual([MCP_ALPHA]);
     expect(h.sut.load([MCP_BETA]).alreadyAvailable).toEqual([MCP_BETA]);
 
-    // Undo-style rewrite (v2's undo slices the tail wholesale): beta's schema
-    // message is gone while alpha's survives; the event is published after the
-    // memory service has rewritten history.
     h.contextMemory.history.splice(1, 1);
     h.eventBus.emit('context.spliced', { start: 1, deleteCount: 2, messages: [] });
 

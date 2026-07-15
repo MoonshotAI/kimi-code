@@ -1,11 +1,5 @@
 import type { WireMigration, WireMigrationRecord } from './migration';
 
-/**
- * Wire records before v1.1 used a nested `function` wrapper for each tool call:
- *   { function: { name: 'xxx', arguments: 'yyy' } }
- * v1.1 flattens it to:
- *   { name: 'xxx', arguments: 'yyy' }
- */
 interface V1_0ContextAppendMessageRecord extends WireMigrationRecord {
   readonly type: 'context.append_message';
   readonly message: V1_0ContextMessage;

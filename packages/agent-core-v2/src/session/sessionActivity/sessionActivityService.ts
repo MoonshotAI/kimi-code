@@ -43,4 +43,4 @@ export class SessionActivity implements ISessionActivity {
   }
 }
 
-registerScopedService(LifecycleScope.Session, ISessionActivity, SessionActivity, InstantiationType.Delayed, 'sessionActivity');
+registerScopedService(LifecycleScope.Session, ISessionActivity, SessionActivity, InstantiationType.Eager, 'sessionActivity');

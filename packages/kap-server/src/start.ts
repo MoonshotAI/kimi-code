@@ -9,6 +9,7 @@
 
 import {
   bootstrap,
+  hostRequestHeadersSeed,
   IConfigService,
   IModelCatalogService,
   logSeed,
@@ -16,6 +17,7 @@ import {
   resolveConfigPath,
   resolveKimiHome,
   resolveLoggingConfig,
+  skillCatalogRuntimeOptionsSeed,
   type Scope,
   type ScopeSeed,
 } from '@moonshot-ai/agent-core-v2';
@@ -100,6 +102,13 @@ export interface ServerStartOptions {
   readonly rpcToken?: string;
   /** Extra scope seeds applied at bootstrap (e.g. a host-provided `ISessionModelResolver`). */
   readonly seeds?: ScopeSeed;
+  /**
+   * Explicit skill directories for this process (v1's SDK `skillDirs`): when
+   * non-empty, default user / project skill discovery is skipped and these
+   * directories serve as the user skill source for every session. Applied to
+   * all sessions the server hosts — for embedding hosts, not per-session use.
+   */
+  readonly skillDirs?: readonly string[];
   /**
    * Directory of the built Kimi web UI (`dist-web`). When set, `GET /` and the
    * `/*` SPA fallback serve these assets (auth-exempt, matching v1). Omit to run
@@ -218,6 +227,12 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   // the session index — all persist to disk.
   const { app: core } = bootstrap({ homeDir, configPath }, [
     ...logSeed(logging),
+    // Default host identity so outbound requests (model, WebSearch, registry
+    // refresh) carry a product User-Agent even when the embedding host did not
+    // seed its own headers. Hosts like the CLI pass full Kimi identity headers
+    // through `opts.seeds`, which override this entry (last seed wins).
+    ...hostRequestHeadersSeed({ 'User-Agent': `kimi-code-cli/${hostVersion}` }),
+    ...skillCatalogRuntimeOptionsSeed(opts.skillDirs),
     ...(opts.seeds ?? []),
   ]);
 

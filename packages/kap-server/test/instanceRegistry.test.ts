@@ -210,7 +210,9 @@ describe('createInstanceRegistry — heartbeat', () => {
     let tick = 0;
     const registry = createInstanceRegistry({
       instancesDir,
-      heartbeatIntervalMs: 20,
+      // 1ms cadence keeps a write in flight at almost every moment, so
+      // `release()` is exercised against the recreate-after-unlink race.
+      heartbeatIntervalMs: 1,
       now: () => ++tick,
     });
     const reg = await registry.register(baseInfo);
@@ -221,7 +223,10 @@ describe('createInstanceRegistry — heartbeat', () => {
     expect(later).toBeGreaterThan(first);
 
     await reg.release();
-    // File is gone after release.
+    // File is gone after release, and a heartbeat write that was in flight
+    // when release() ran must not recreate it.
+    expect(existsSync(join(instancesDir, `${reg.serverId}.json`))).toBe(false);
+    await sleep(30);
     expect(existsSync(join(instancesDir, `${reg.serverId}.json`))).toBe(false);
   });
 });

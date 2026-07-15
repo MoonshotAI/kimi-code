@@ -80,8 +80,6 @@ interface ManagedTask {
   foregroundRelease?: ControlledPromise<ForegroundTaskReleaseReason>;
   /** Resettable deadline timer; reset on detach to apply `detachTimeoutMs`. */
   timeoutHandle?: ResettableTimeoutPromise<TerminalOutcome>;
-  /** Abort listener registered on `options.signal`; removed when the task completes. */
-  signalAbortListener?: (() => void) | null;
   /** User/tool stop request. */
   readonly stop: ControlledPromise<StopRequest>;
   /** Resolved once manager has finalized the task. */
@@ -219,11 +217,17 @@ export interface RegisterBackgroundTaskOptions {
    * foreground timeout run longer once it is moved to the background.
    */
   readonly detachTimeoutMs?: number;
+  /**
+   * When true, a foreground task whose deadline fires is detached to the
+   * background (re-armed to `detachTimeoutMs`) instead of being killed.
+   * Only meaningful for non-detached registrations.
+   */
+  readonly autoBackgroundOnTimeout?: boolean;
   /** Foreground caller signal. Ignored for tasks created already detached. */
   readonly signal?: AbortSignal;
 }
 
-export type ForegroundTaskReleaseReason = 'detached' | 'terminal';
+export type ForegroundTaskReleaseReason = 'detached' | 'timeout_detached' | 'terminal';
 
 interface StopRequest {
   readonly reason?: string;
@@ -301,6 +305,14 @@ export class BackgroundManager {
     return entry.foregroundRelease === undefined;
   }
 
+  /**
+   * Foreground tasks opted into auto-background survive their first deadline
+   * by detaching to the background instead of being killed.
+   */
+  private canAutoBackgroundOnTimeout(entry: ManagedTask): boolean {
+    return entry.options.autoBackgroundOnTimeout === true && !this.isDetached(entry);
+  }
+
   registerTask(task: BackgroundTask, options: RegisterBackgroundTaskOptions = {}): string {
     const detached = options.detached ?? true;
     const timeoutMs = options.timeoutMs ?? task.timeoutMs;
@@ -308,6 +320,7 @@ export class BackgroundManager {
       detached,
       timeoutMs,
       detachTimeoutMs: options.detachTimeoutMs,
+      autoBackgroundOnTimeout: options.autoBackgroundOnTimeout,
       signal: detached ? undefined : options.signal,
     };
     this.assertCanRegister(detached);
@@ -451,7 +464,12 @@ export class BackgroundManager {
     await this.persistLive(entry);
   }
 
-  detach(taskId: string): BackgroundTaskInfo | undefined {
+  /**
+   * Move a foreground task to the background, releasing its tool-call waiter.
+   * `viaTimeout` marks an automatic detach triggered by the task deadline (vs.
+   * an explicit user/RPC detach) so the waiter can word its result.
+   */
+  detach(taskId: string, viaTimeout = false): BackgroundTaskInfo | undefined {
     const entry = this.tasks.get(taskId);
     if (entry === undefined) return this.ghosts.get(taskId);
     if (TERMINAL_STATUSES.has(entry.status)) return this.toInfo(entry);
@@ -472,7 +490,7 @@ export class BackgroundManager {
     this.startOutputPersist(entry);
     void this.persistLive(entry);
     this.emitTaskStarted(this.toInfo(entry));
-    foregroundRelease.resolve('detached');
+    foregroundRelease.resolve(viaTimeout ? 'timeout_detached' : 'detached');
     return this.toInfo(entry);
   }
 
@@ -859,21 +877,30 @@ export class BackgroundManager {
         });
       });
 
-    const timeout = resettableTimeoutOutcome(entry.options.timeoutMs, { kind: 'timeout' as const });
+    let timeout = resettableTimeoutOutcome(entry.options.timeoutMs, { kind: 'timeout' as const });
     entry.timeoutHandle = timeout;
-    const outcome = await Promise.race([
-      worker.then((settlement): TerminalOutcome => ({ kind: 'worker', settlement })),
-      timeout,
-      entry.stop.then((request): TerminalOutcome => ({ kind: 'stop', request })),
-      this.signalOutcome(entry),
-    ]).finally(() => {
+    let outcome: TerminalOutcome;
+    try {
+      while (true) {
+        outcome = await Promise.race([
+          worker.then((settlement): TerminalOutcome => ({ kind: 'worker', settlement })),
+          timeout,
+          entry.stop.then((request): TerminalOutcome => ({ kind: 'stop', request })),
+          this.signalOutcome(entry),
+        ]);
+        if (outcome.kind !== 'timeout' || !this.canAutoBackgroundOnTimeout(entry)) break;
+        // Move the foreground task to the background instead of killing it:
+        // detach() releases the tool-call waiter, then a fresh deadline is
+        // armed (reset() is a no-op once the timeout promise has resolved).
+        this.detach(entry.taskId, true);
+        timeout.clear();
+        timeout = resettableTimeoutOutcome(entry.options.detachTimeoutMs, { kind: 'timeout' as const });
+        entry.timeoutHandle = timeout;
+      }
+    } finally {
       timeout.clear();
       entry.timeoutHandle = undefined;
-      if (entry.signalAbortListener !== null && entry.signalAbortListener !== undefined) {
-        entry.options.signal?.removeEventListener('abort', entry.signalAbortListener);
-        entry.signalAbortListener = null;
-      }
-    });
+    }
     const settlement = await this.settlementForOutcome(entry, outcome, worker);
     await this.finalizeTask(entry, settlement);
   }
@@ -887,11 +914,13 @@ export class BackgroundManager {
     });
     if (signal.aborted) return Promise.resolve(outcome());
     return new Promise((resolve) => {
-      const listener = () => {
-        if (!this.isDetached(entry)) resolve(outcome());
-      };
-      entry.signalAbortListener = listener;
-      signal.addEventListener('abort', listener, { once: true });
+      signal.addEventListener(
+        'abort',
+        () => {
+          if (!this.isDetached(entry)) resolve(outcome());
+        },
+        { once: true },
+      );
     });
   }
 

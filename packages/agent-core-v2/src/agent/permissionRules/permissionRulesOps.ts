@@ -19,8 +19,9 @@
  * `permissionRulesService`.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 import type { PermissionApprovalResultRecord, PermissionRule } from './permissionRules';
 
@@ -34,19 +35,30 @@ export const PermissionRulesModel = defineModel<PermissionRulesModelState>('perm
   sessionApprovalRulePatterns: [],
 }));
 
-export const addPermissionRules = defineOp(PermissionRulesModel, 'permission.rules.add', {
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'permission.record_approval_result': typeof recordApprovalResult;
+  }
+
+  interface TransientOpMap {
+    'permission.rules.add': typeof addPermissionRules;
+  }
+}
+
+export const addPermissionRules = PermissionRulesModel.defineOp('permission.rules.add', {
+  schema: z.object({ rules: z.custom<readonly PermissionRule[]>() }),
   persist: false,
-  apply: (s, p: { rules: readonly PermissionRule[] }): PermissionRulesModelState => {
+  apply: (s, p) => {
     if (p.rules.length === 0) return s;
     return { ...s, rules: [...s.rules, ...p.rules] };
   },
 });
 
-export const recordApprovalResult = defineOp(
-  PermissionRulesModel,
+export const recordApprovalResult = PermissionRulesModel.defineOp(
   'permission.record_approval_result',
   {
-    apply: (s, p: PermissionApprovalResultRecord): PermissionRulesModelState => {
+    schema: z.custom<PermissionApprovalResultRecord>(),
+    apply: (s, p) => {
       const pattern = p.sessionApprovalRule;
       if (
         p.result.decision !== 'approved' ||

@@ -66,7 +66,6 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     svc.addRules([denyRule]);
     expect(svc.rules).toEqual([allowRule, denyRule]);
 
-    // Empty add is a no-op: it does not dispatch.
     svc.addRules([]);
     expect(svc.rules).toEqual([allowRule, denyRule]);
   });
@@ -77,7 +76,6 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
 
     expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
 
-    // Duplicate session approval is deduped by the model.
     svc.recordApprovalResult(approval);
     expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
   });
@@ -138,8 +136,6 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
       rules: [],
       sessionApprovalRulePatterns: ['Bash(rm *)'],
     });
-    // Replay is silent: no subscriber notification and nothing written back to
-    // the wire log.
     expect(changes).toBe(0);
     const written: PersistedRecord[] = [];
     for await (const record of log2.read<PersistedRecord>(SCOPE, 'permission-rules-replay')) {

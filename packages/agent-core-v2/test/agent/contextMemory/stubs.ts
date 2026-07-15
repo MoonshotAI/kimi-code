@@ -7,10 +7,7 @@
  * `../contextMemory/stubs`).
  */
 
-import { toDisposable } from '#/_base/di/lifecycle';
 import type { ServiceRegistration } from '#/_base/di/test';
-import { Event } from '#/_base/event';
-import { createHooks } from '#/hooks';
 import { buildContextCompactionShape } from '#/agent/contextMemory/compactionHandoff';
 import {
   IAgentContextMemoryService,
@@ -24,20 +21,9 @@ import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
 
-/**
- * A no-op `IAgentWireRecordService`. `register` returns a disposable so services that
- * `_register(wireRecord.register(...))` in their constructor can be disposed
- * cleanly.
- */
 export function stubWireRecord(): IAgentWireRecordService {
-  const hooks = createHooks(['onDidRestoreRecord']) as IAgentWireRecordService['hooks'];
   return {
     _serviceBrand: undefined,
-    restoring: null,
-    postRestoring: false,
-    hooks,
-    onDidFinishResume: Event.None as Event<void>,
-    register: () => toDisposable(() => {}),
     restore: () => Promise.resolve({}),
     flush: () => Promise.resolve(),
     close: () => Promise.resolve(),
@@ -46,15 +32,9 @@ export function stubWireRecord(): IAgentWireRecordService {
 }
 
 export interface StubContextMemory extends IAgentContextMemoryService {
-  /** The live backing history, exposed so tests can inspect splices. */
   readonly messages: readonly ContextMessage[];
 }
 
-/**
- * An in-memory `IAgentContextMemoryService`. Each mutation updates the backing
- * history and publishes `context.spliced`, mirroring `AgentContextMemoryService`
- * enough for collaborators (e.g. `AgentContextInjectorService`) to react.
- */
 function publishSplice(
   eventBus: IEventBus | undefined,
   input: {
@@ -113,12 +93,6 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
   };
 }
 
-/**
- * DI-constructible variant of {@link stubContextMemory}: publishes
- * `context.spliced` to the Agent-scope {@link IEventBus} so collaborators
- * (e.g. `AgentContextInjectorService`) react to splices exactly as they do
- * against the real `AgentContextMemoryService`.
- */
 class StubContextMemoryService implements IAgentContextMemoryService {
   declare readonly _serviceBrand: undefined;
   private readonly impl: StubContextMemory;
@@ -148,12 +122,6 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   }
 }
 
-/**
- * Register the default collaborators consumed by `AgentContextMemoryService`
- * (`IAgentWireRecordService`) and an in-memory `IAgentContextMemoryService`.
- * Tests that exercise the real `AgentContextMemoryService` should override
- * `IAgentContextMemoryService` via `additionalServices`.
- */
 export function registerContextMemoryServices(reg: ServiceRegistration): void {
   reg.defineInstance(IAgentWireRecordService, stubWireRecord());
   reg.define(IEventBus, EventBusService);

@@ -10,7 +10,7 @@ import {
 import {
   SubagentTask,
   type SubagentHandle,
-} from '#/session/agentLifecycle/tools/subagent-task';
+} from '#/session/subagent/tools/subagent-task';
 import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
 import { createTestAgent, type TestAgentContext } from '../../harness';
 import { createAgentTaskPersistence } from './stubs';

@@ -75,6 +75,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentUsageService,
   AgentUsageService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'usage',
 );

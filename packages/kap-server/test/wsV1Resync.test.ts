@@ -147,7 +147,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
-    if (agents.getHandle('main') === undefined) {
+    if (agents.get('main') === undefined) {
       await agents.create({ agentId: 'main' });
     }
   }
@@ -160,7 +160,7 @@ describe('server-v2 /api/v1/ws resync', () => {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
     expect(session).toBeDefined();
     const agents = session!.accessor.get(IAgentLifecycleService);
-    const main = agents.getHandle('main');
+    const main = agents.get('main');
     expect(main).toBeDefined();
     main!.accessor.get(IEventBus).publish(event);
   }
@@ -280,7 +280,7 @@ describe('server-v2 /api/v1/ws resync', () => {
 
     // Emit one durable event per agent — only `main` is allowlisted.
     agents
-      .getHandle('main')!
+      .get('main')!
       .accessor.get(IEventBus)
       .publish({ type: 'turn.ended', turnId: 1 } as unknown as DomainEvent);
     sub.accessor

@@ -1,16 +1,7 @@
-import type { PrepareToolExecutionResult, ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+import type { PrepareToolExecutionResult, ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 
-/**
- * Top-level user-facing permission posture. Controls how non-deny rules
- * are treated when the closure is constructed. Independent of rule
- * merging: deny rules always fire regardless of mode.
- *
- *   - `manual` — rule set drives decision; unmatched tool calls ask
- *   - `yolo`   — only deny rules can block; everything else allows
- *   - `auto`   — caller may bypass rule checks entirely
- */
 export type PermissionMode = 'manual' | 'yolo' | 'auto';
 
 

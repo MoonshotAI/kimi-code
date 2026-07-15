@@ -38,48 +38,23 @@ export interface BeforeStepContext {
 export interface AfterStepContext extends BeforeStepContext {
   readonly usage: TokenUsage;
   readonly finishReason: FinishReason;
-  /**
-   * Set to true to end the turn at this step boundary. Takes precedence in
-   * the run loop over both requested tool calls and any queued step
-   * requests, so a hard stop (e.g. a reached goal budget) cannot be
-   * overridden by another hook's continuation.
-   */
   stopTurn: boolean;
 }
 
 export interface LoopErrorContext {
   readonly currentStep?: Step;
   readonly turnId: number;
-  /** The currently executing step, or undefined for turn-level failures. */
   readonly step?: number;
-  /** The failed step's wire uuid, when the failure happened inside a step. */
   readonly stepId?: string;
   readonly signal: AbortSignal;
   readonly error: unknown;
-  /**
-   * The driver whose step failed; already popped from the queue. A handler
-   * that recovers by re-running the step enqueues it back (at the head of
-   * the queue) itself before reporting the error as caught.
-   */
   readonly failedDriver?: StepRequest;
-  /** Reinsert recovery work into the failed driver's original Turn. */
   retry(request: StepRequest, options?: StepEnqueueOptions): Step;
 }
 
 export interface LoopErrorHandler {
   readonly id: string;
-  /** Claim the error: the first matching handler in registration order handles it. */
   match(context: LoopErrorContext): boolean;
-  /**
-   * Recover from a claimed error. Awaiting inside the handler (backoff sleeps,
-   * compaction) suspends the loop in its catch path — aborting `context.signal`
-   * still cancels the turn. Resolve `true` when the error is caught: the
-   * handler has already arranged how the turn continues (typically by
-   * enqueueing the requests it wants run next) and the loop simply drains on,
-   * learning nothing but caught-or-not. Resolve `false`/`undefined` to fail
-   * the turn with the original error; throwing fails it with the handler's
-   * error.
-   */
   handle(context: LoopErrorContext): Promise<boolean | undefined>;
 }
 
@@ -91,7 +66,6 @@ export interface LoopErrorHandlerRegistrationOptions {
 export interface LoopRunOptions {
   readonly turnId: number;
   readonly signal?: AbortSignal;
-  /** Fires on the first model response event for a step, or at step completion. */
   readonly onStarted?: (step: number) => void;
 }
 
@@ -133,16 +107,7 @@ export interface Step {
 export interface Turn {
   readonly id: number;
   readonly state?: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
-  /**
-   * Cancellation signal owned by the `activity` kernel's turn lease. Abort it
-   * through `IAgentLoopService.cancel(...)` rather than holding a controller;
-   * the kernel is the single authority for turn cancellation.
-   */
   readonly signal: AbortSignal;
-  /**
-   * Resolves on the first model response event for the first loop step, or at
-   * step completion; rejects if the turn ends earlier.
-   */
   readonly ready: Promise<void>;
   readonly result: Promise<LoopRunResult>;
   cancel(reason?: unknown): boolean;
@@ -166,40 +131,22 @@ export interface AgentLoopStatus {
 }
 
 export interface StepEnqueueOptions {
-  /** `tail` (default) preserves order for normal work; `head` jumps the queue (used to retry a failed step). */
   readonly at?: 'head' | 'tail';
 }
 
 export interface IAgentLoopService {
   readonly _serviceBrand: undefined;
 
-  /** Atomically admits a request according to its admission semantics. */
   enqueue(request: StepRequest, options?: StepEnqueueOptions): EnqueueReceipt;
 
-  /** Low-level loop runner used by focused loop tests and recovery integrations. */
   run(options: LoopRunOptions): Promise<LoopRunResult>;
 
-  /** Read-only scheduling state. */
   status(): AgentLoopStatus;
 
-  /**
-   * Cancel the active turn (optionally only when its id matches `turnId`),
-   * recording `turn.cancel` on the wire. The `activity` kernel owns the actual
-   * abort; returns false when no (matching) turn is active.
-   */
   cancel(turnId?: number, reason?: unknown): boolean;
 
-  /** True while any non-aborted step request is queued. */
   hasPendingRequests(): boolean;
 
-  /**
-   * Register a recovery handler for step failures. Handlers dispatch in
-   * registration order, first match wins — the loop itself knows nothing
-   * about concrete error types: retry policies (`stepRetry`) and overflow
-   * recovery (`fullCompaction`) plug in here. A handler that catches an
-   * error arranges the turn's continuation itself; the loop only learns
-   * whether the error was caught.
-   */
   registerLoopErrorHandler(
     handler: LoopErrorHandler,
     options?: LoopErrorHandlerRegistrationOptions,

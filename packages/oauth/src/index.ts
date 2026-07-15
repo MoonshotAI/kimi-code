@@ -145,7 +145,7 @@ export type {
   CustomRegistryProviderEntry,
   CustomRegistryProviderType,
   CustomRegistrySource,
-  SkippedEntryLogger,
+  FetchCustomRegistryOptions,
 } from './custom-registry';
 
 export { KimiOAuthToolkit, resolveKimiTokenStorageName } from './toolkit';

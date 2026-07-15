@@ -5,7 +5,7 @@ import type {
 import type {
   AuthorizeToolExecutionResult,
   ResolvedToolExecutionHookContext,
-} from '#/agent/tool/toolHooks';
+} from '#/agent/toolExecutor/toolHooks';
 
 export interface IAgentPermissionGate {
   readonly _serviceBrand: undefined;

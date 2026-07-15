@@ -6,8 +6,11 @@ import { join } from 'node:path';
 import { pino } from 'pino';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { hostRequestHeadersSeed, IHostRequestHeaders, ISkillCatalogRuntimeOptions } from '@moonshot-ai/agent-core-v2';
+
 import type { LockContents } from '../src/lock';
 import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
+import { getServerVersion } from '../src/version';
 import { authedFetch } from './helpers/auth';
 
 describe('server-v2 boot', () => {
@@ -75,6 +78,57 @@ describe('server-v2 boot', () => {
     const oauthBody = await oauthPoll.json() as { code: number; data: null };
     expect(oauthBody.code).toBe(0);
     expect(oauthBody.data).toBeNull();
+  });
+
+  it('seeds a default product User-Agent that opts.seeds can override', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ua-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    const defaults = server.core.accessor.get(IHostRequestHeaders);
+    expect(defaults.headers['User-Agent']).toBe(`kimi-code-cli/${getServerVersion()}`);
+
+    // Restart on the same homeDir with a host-provided seed; it must win over
+    // the default (the CLI passes full Kimi identity headers this way).
+    await server.close();
+    server = undefined;
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      seeds: hostRequestHeadersSeed({ 'User-Agent': 'custom-host/9.9' }),
+    });
+    const overridden = server.core.accessor.get(IHostRequestHeaders);
+    expect(overridden.headers['User-Agent']).toBe('custom-host/9.9');
+  });
+
+  it('seeds explicit skill dirs into the core scope when skillDirs is provided', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-skills-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      skillDirs: ['/skills/explicit'],
+    });
+    expect(server.core.accessor.get(ISkillCatalogRuntimeOptions).explicitDirs).toEqual([
+      '/skills/explicit',
+    ]);
+
+    // Without skillDirs the registered default carries no explicit dirs.
+    await server.close();
+    server = undefined;
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+    });
+    expect(server.core.accessor.get(ISkillCatalogRuntimeOptions).explicitDirs).toBeUndefined();
   });
 });
 

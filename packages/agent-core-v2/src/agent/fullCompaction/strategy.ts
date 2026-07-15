@@ -2,53 +2,6 @@ import type { Message } from '#/app/llmProtocol/message';
 import type { ProfileModelContext } from '#/agent/profile/profile';
 import type { CompactionSource } from './types';
 import { estimateTokensForMessage } from '#/_base/utils/tokens';
-import {
-  tryNativeComputeCompactCount,
-  tryNativeReduceCompactOnOverflow,
-} from '#/_base/native-tools';
-import type {
-  NativeCompactionMessageMeta,
-  NativeCompactionConfigMeta,
-} from '#/_base/native-tools';
-
-/**
- * Build the lightweight message projection that the Rust compaction
- * algorithm needs (role, tool_calls_count, tokens). The same projection
- * is built for both `computeCompactCount` and `reduceCompactOnOverflow`.
- *
- * Token values come from `estimateTokensForMessage`, which is already
- * native-backed (`nativeEstimateTokens` wired in tokens.ts).  This means
- * the Rust compaction functions see the exact same token numbers that
- * the TS fallback computes — the two paths cannot diverge on the input
- * data, only on the algorithm (which was audited line-for-line in
- * rust-migration-analysis.md §6.5).
- */
-function buildCompactionMeta(
-  messages: readonly Message[],
-): NativeCompactionMessageMeta[] {
-  return messages.map((m) => ({
-    role: m.role,
-    toolCallsCount: 'toolCalls' in m ? m.toolCalls.length : 0,
-    tokens: estimateTokensForMessage(m),
-  }));
-}
-
-function buildCompactionConfigMeta(
-  maxSize: number,
-  config: CompactionConfig,
-): NativeCompactionConfigMeta {
-  return {
-    maxSize,
-    maxRecentMessages: config.maxRecentMessages === Infinity
-      ? 0xFFFFFFFF // u32::MAX, matches Rust CompactionConfigMeta's stand-in for Infinity
-      : config.maxRecentMessages,
-    maxRecentUserMessages: config.maxRecentUserMessages === Infinity
-      ? 0xFFFFFFFF // u32::MAX, matches Rust CompactionConfigMeta's stand-in for Infinity
-      : config.maxRecentUserMessages,
-    maxRecentSizeRatio: config.maxRecentSizeRatio,
-    minOverflowReductionRatio: config.minOverflowReductionRatio,
-  };
-}
 
 export interface CompactionConfig {
   triggerRatio: number;
@@ -64,11 +17,11 @@ export interface CompactionConfig {
 
 export const DEFAULT_COMPACTION_CONFIG: CompactionConfig = {
   triggerRatio: 0.85,
-  blockRatio: 0.85, // Same as triggerRatio to disable async compaction
+  blockRatio: 0.85,
   reservedContextSize: 50_000,
   maxCompactionPerTurn: Infinity,
   maxOverflowCompactionAttempts: 3,
-  maxRecentMessages: Infinity,
+  maxRecentMessages: 4,
   maxRecentUserMessages: Infinity,
   maxRecentSizeRatio: 0.2,
   minOverflowReductionRatio: 0.05,
@@ -176,20 +129,7 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 
   computeCompactCount(messages: readonly Message[], source: CompactionSource): number {
-    // Return value: N messages to be compacted (0 means no compaction possible)
-    // LLM Input: messages.slice(0, N) + [user:instruction]
-    // Preserved recent messages: messages.slice(N)
 
-    // Preferred path: Rust native compaction (line-for-line port of the TS
-    // algorithm, audited in rust-migration-analysis.md §6.5). Both sides use
-    // the same token estimator (nativeEstimateTokens), so input data is
-    // identical. Falls through to TS when native is absent or fails.
-    const meta = buildCompactionMeta(messages);
-    const nativeConfig = buildCompactionConfigMeta(this.maxSize, this.config);
-    const nativeResult = tryNativeComputeCompactCount(meta, nativeConfig, source === 'manual');
-    if (nativeResult !== undefined) return nativeResult;
-
-    // Manual compaction
     if (source === 'manual') {
       for (let i = messages.length - 1; i > 0; i--) {
         if (canSplitAfter(messages, i)) {
@@ -199,15 +139,6 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
       return 0;
     }
 
-    // Auto compaction rules (in order of precedence):
-    // 1. The split after messages[N-1] must be safe per `canSplitAfter`:
-    //    messages[N-1] is not a user or asst-with-tool-calls, and the retained
-    //    suffix messages.slice(N) has no orphan tool result.
-    // 2. At least one recent message must be preserved
-    // 3. At most maxRecentMessages recent messages should be preserved
-    // 4. At most maxRecentUserMessages recent user messages should be preserved
-    // 5. At most maxRecentSizeRatio * maxSize recent messages should be preserved
-    // 6. N should be as small as possible
 
     let recentMessages = 1;
     let recentUserMessages = 0;
@@ -239,12 +170,6 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 
   reduceCompactOnOverflow(messages: readonly Message[]): number {
-    // Preferred path: Rust native (audited, same token estimator).
-    const meta = buildCompactionMeta(messages);
-    const nativeConfig = buildCompactionConfigMeta(this.maxSize, this.config);
-    const nativeResult = tryNativeReduceCompactOnOverflow(meta, nativeConfig);
-    if (nativeResult !== undefined) return nativeResult;
-
     const minReducedSize = Math.max(
       1,
       Math.ceil(this.maxSize * this.config.minOverflowReductionRatio),
@@ -308,21 +233,6 @@ export class DefaultCompactionStrategy implements CompactionStrategy {
   }
 }
 
-/**
- * Decide whether a compaction split is safe to place immediately after
- * `messages[index]`. A split is safe only when:
- *   - `messages[index]` itself is not a user message or an assistant message
- *     with pending tool calls (cutting either of those off from what follows
- *     would break the conversation), AND
- *   - the next message is not a tool result. The history is well-formed:
- *     tool results only appear after their owning `asst_w_tc` and all tool
- *     results for one exchange land consecutively before the next non-tool
- *     message. So if the suffix starts with a tool result, its `asst_w_tc`
- *     must be in the compacted prefix, which would orphan that result
- *     (e.g. splitting between tool_a and tool_b of a parallel call), AND
- *   - the compacted prefix itself does not end with an unresolved tool
- *     exchange, because pending tool results must remain in the retained tail.
- */
 function canSplitAfter(messages: readonly Message[], index: number): boolean {
   const m = messages[index];
   if (m === undefined) return false;

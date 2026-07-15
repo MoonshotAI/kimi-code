@@ -25,7 +25,7 @@ import type {
   ExecutableTool,
   ExecutableToolContext,
   ExecutableToolResult,
-} from '#/agent/tool/toolContract';
+} from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IAgentWireService } from '#/wire/tokens';
@@ -77,11 +77,6 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
   }
 
   private restoreRegisteredTools(): void {
-    // The persisted `ActiveToolsModel` is the source of truth for the active
-    // set on resume. Re-activating a tool whose registration predates the
-    // final `tools.set_active_tools` would resurrect a stale ephemeral
-    // overlay on top of an explicit base, so only activate tools the base
-    // does not exclude.
     const persistedActive = this.profile.getActiveToolNames();
     for (const registration of this.wire.getModel(UserToolModel).values()) {
       const activate =

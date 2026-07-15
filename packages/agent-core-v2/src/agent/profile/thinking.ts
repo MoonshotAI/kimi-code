@@ -15,28 +15,21 @@ import {
 
 import type { ThinkingConfig } from './configSection';
 
-type ThinkingModel = ModelThinkingMetadata & {
-  readonly protocol?: string;
-  readonly providerType?: string;
-};
-
-function usesKimiThinkingSemantics(model: ThinkingModel | undefined): boolean {
-  return model?.protocol === 'kimi';
-}
+type ThinkingModel = ModelThinkingMetadata & { readonly providerType?: string };
 
 export function resolveThinkingEffort(
   requested: string | undefined,
   defaults: ThinkingConfig | undefined,
   model?: ThinkingModel,
 ): ThinkingEffort {
-  return resolveThinkingEffortForModel(requested, defaults, model, usesKimiThinkingSemantics(model));
+  return resolveThinkingEffortForModel(requested, defaults, model, model?.providerType === 'kimi');
 }
 
 export function supportsThinkingEffort(
   effort: ThinkingEffort,
   model: ThinkingModel | undefined,
 ): boolean {
-  return modelSupportsThinkingEffort(effort, model, usesKimiThinkingSemantics(model));
+  return modelSupportsThinkingEffort(effort, model, model?.providerType === 'kimi');
 }
 
 const KEEP_OFF_VALUES = new Set(['0', 'false', 'no', 'off', 'none', 'null']);

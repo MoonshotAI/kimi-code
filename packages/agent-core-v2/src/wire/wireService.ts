@@ -13,7 +13,7 @@
  * `tokens`, each seeded with its own persistence key. `PersistedRecord` is the
  * on-the-wire append-log shape (`wire.jsonl`): intentionally flat
  * (`{ type, ...payload }`, optional `time`) so it stays byte-compatible with the
- * existing `WireRecord` journal (`{ type, time?, ...fields }`) — payload fields
+ * existing wire journal (`{ type, time?, ...fields }`) — payload fields
  * sit at the top level next to `type`, never nested under a `payload` key; the
  * index signature keeps it scope-agnostic and domains narrow via their Op
  * payload types. Scope-agnostic.
@@ -40,23 +40,10 @@ export interface ModelChange<S> {
   readonly prev: S;
 }
 
-/**
- * Outcome of a `replay`: how many records were skipped because their Op type
- * is absent from `OP_REGISTRY`. Skips are also reported individually through
- * `onUnexpectedError` (`wire.unknown_record`); the count lets callers detect a
- * lossy restore without subscribing to the global error hook.
- */
 export interface ReplayResult {
   readonly unknownRecords: number;
 }
 
-/**
- * Live append-log observation: `dispatch` emits each persisted record here so
- * observers (the test harness's `[wire]` capture, audit tooling) see the record
- * stream as it happens. Op-derived *facts* (`toEvent`) go to `IEventBus`
- * instead — they are not records and are not emitted here. The `signal`
- * variant that used to share this channel was retired in favor of `IEventBus`.
- */
 export interface WireEmission {
   readonly type: 'record';
   readonly record: PersistedRecord;
