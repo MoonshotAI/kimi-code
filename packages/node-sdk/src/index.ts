@@ -52,6 +52,7 @@ export {
 // RootLogger / getRootLogger / LoggingConfig stay inside agent-core.
 export {
   flushDiagnosticLogs,
+  flushDiagnosticLogsSync,
   log,
   redact,
   resolveGlobalLogPath,
