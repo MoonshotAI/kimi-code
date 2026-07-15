@@ -245,7 +245,10 @@ const CACHE_CONTROL = { type: 'ephemeral' as const };
 type CacheableBlock = ContentBlockParam & { cache_control?: { type: 'ephemeral' } };
 
 function shouldPreserveUnsignedThinking(model: string): boolean {
-  return matchKnownAnthropicModelProfile(model) === undefined;
+  return (
+    parseAnthropicModelVersion(model) === null &&
+    matchKnownAnthropicModelProfile(model) === undefined
+  );
 }
 
 function shouldBackfillPreservedThinking(

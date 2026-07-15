@@ -21,7 +21,10 @@ export function effectiveModelAlias(
     delete effective.defaultEffort;
   }
 
-  return withAnthropicProfile(effective, anthropicCompatible);
+  return withAnthropicProfile(
+    effective,
+    anthropicCompatible || effective.protocol === 'anthropic',
+  );
 }
 
 function withAnthropicProfile(model: ModelAlias, anthropicCompatible: boolean): ModelAlias {

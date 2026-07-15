@@ -37,6 +37,31 @@ describe('effectiveModelConfig', () => {
     });
   });
 
+  it('infers Anthropic effort metadata for an unknown model with an explicit Anthropic protocol', () => {
+    expect(
+      effectiveModelConfig({
+        provider: 'custom',
+        model: 'custom-anthropic-model',
+        maxContextSize: 200000,
+        protocol: 'anthropic',
+      }),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('does not infer Anthropic effort metadata for an unknown model without an Anthropic protocol', () => {
+    const model = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+    };
+
+    expect(effectiveModelConfig(model)).toEqual(model);
+  });
+
   it('marks official always-on models while preserving explicit effort metadata', () => {
     expect(
       effectiveModelConfig({

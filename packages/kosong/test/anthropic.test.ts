@@ -502,26 +502,27 @@ describe('withThinkingKeep (context_management)', () => {
     });
   });
 
-  it('does not synthesize unsigned thinking for an official Claude model with keep all', async () => {
-    const claudeHistory: Message[] = [
-      {
+  it.each(['claude-opus-4-8', 'claude-opus-4-9', 'claude-mythos-preview'])(
+    'does not synthesize unsigned thinking for Claude model %s with keep all',
+    async (model) => {
+      const claudeHistory: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Hello' }],
+          toolCalls: [],
+        },
+      ];
+      const provider = createProvider(model).withThinking('max').withThinkingKeep('all');
+
+      const body = await captureBetaRequestBody(provider, '', [], claudeHistory);
+      const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+
+      expect(messages[0]).toEqual({
         role: 'assistant',
-        content: [{ type: 'text', text: 'Hello' }],
-        toolCalls: [],
-      },
-    ];
-    const provider = createProvider('claude-opus-4-8')
-      .withThinking('max')
-      .withThinkingKeep('all');
-
-    const body = await captureBetaRequestBody(provider, '', [], claudeHistory);
-    const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
-
-    expect(messages[0]).toEqual({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } }],
-    });
-  });
+        content: [{ type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } }],
+      });
+    },
+  );
 });
 
 describe('AnthropicChatProvider', () => {
@@ -1521,7 +1522,13 @@ describe('AnthropicChatProvider', () => {
       expect(messages[0]!.content[0]).toEqual({ type: 'thinking', thinking: '' });
     });
 
-    it.each(['claude-opus-4-6', 'opus-4-6'])(
+    it.each([
+      'claude-opus-4-6',
+      'opus-4-6',
+      'claude-opus-4-9',
+      'opus-4-9',
+      'claude-mythos-preview',
+    ])(
       'drops unsigned thinking for Claude model %s before tool_use blocks',
       async (model) => {
         const provider = createProvider(model);

@@ -341,6 +341,42 @@ describe('empty thinking round-trip', () => {
     expect(messages[0]!.content[0]).toEqual({ type: 'thinking', thinking: '' });
   });
 
+  it.each(['claude-opus-4-9', 'opus-4-9', 'claude-mythos-preview'])(
+    'Claude model %s drops unsigned thinking blocks',
+    async (model) => {
+      let captured: Record<string, unknown> | undefined;
+      const create = vi.fn().mockImplementation((params: unknown) => {
+        captured = params as Record<string, unknown>;
+        return Promise.resolve({
+          id: 'msg_test',
+          content: [{ type: 'text', text: 'done' }],
+          usage: { input_tokens: 1, output_tokens: 1 },
+        });
+      });
+      const provider = new AnthropicChatProvider({
+        model,
+        apiKey: '',
+        defaultMaxTokens: 1024,
+        stream: false,
+        clientFactory: () => ({ messages: { create } }) as never,
+      });
+
+      const response = await provider.generate('', [], EMPTY_THINKING_TOOL_HISTORY);
+      await collectParts(response);
+
+      const messages = captured?.['messages'] as Array<{ content: unknown[] }>;
+      expect(messages[0]!.content).toEqual([
+        {
+          type: 'tool_use',
+          id: 'call_1',
+          name: 'lookup',
+          input: { q: 'test' },
+          cache_control: { type: 'ephemeral' },
+        },
+      ]);
+    },
+  );
+
   it('OpenAI Responses sends an explicitly empty ThinkPart as a reasoning item', async () => {
     let captured: Record<string, unknown> | undefined;
     async function* responseStream() {

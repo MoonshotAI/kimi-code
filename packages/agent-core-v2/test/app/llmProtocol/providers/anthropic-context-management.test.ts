@@ -230,24 +230,25 @@ describe('Anthropic withThinkingKeep context_management parity', () => {
     });
   });
 
-  it('does not synthesize unsigned thinking for an official Claude model with keep all', async () => {
-    const history: Message[] = [
-      {
+  it.each(['claude-opus-4-8', 'claude-opus-4-9', 'claude-mythos-preview'])(
+    'does not synthesize unsigned thinking for Claude model %s with keep all',
+    async (model) => {
+      const history: Message[] = [
+        {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Hello' }],
+          toolCalls: [],
+        },
+      ];
+      const provider = createProvider(model).withThinking('max').withThinkingKeep('all');
+
+      const body = await captureBetaRequestBody(provider, history);
+      const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+
+      expect(messages[0]).toEqual({
         role: 'assistant',
-        content: [{ type: 'text', text: 'Hello' }],
-        toolCalls: [],
-      },
-    ];
-    const provider = createProvider('claude-opus-4-8')
-      .withThinking('max')
-      .withThinkingKeep('all');
-
-    const body = await captureBetaRequestBody(provider, history);
-    const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
-
-    expect(messages[0]).toEqual({
-      role: 'assistant',
-      content: [{ type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } }],
-    });
-  });
+        content: [{ type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } }],
+      });
+    },
+  );
 });

@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import type { ModelAlias } from '@moonshot-ai/kimi-code-sdk';
+import type { KimiHarness, ModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 import {
   deriveAlwaysThinking,
   deriveDefaultThinkingEffort,
   deriveThinkingSupported,
+  listModelsFromHarness,
 } from '../src/model-catalog';
 
 function alias(model: string, capabilities?: readonly string[]): ModelAlias {
@@ -50,5 +51,32 @@ describe('deriveDefaultThinkingEffort', () => {
         overrides: { supportEfforts: ['low', 'high'], defaultEffort: 'high' },
       }),
     ).toBe('high');
+  });
+});
+
+describe('listModelsFromHarness', () => {
+  it('advertises thinking with a high default for an unknown model using the Anthropic protocol', async () => {
+    const harness = {
+      getConfig: async () => ({
+        models: {
+          custom: {
+            provider: 'custom',
+            model: 'custom-anthropic-model',
+            maxContextSize: 200000,
+            protocol: 'anthropic',
+          },
+        },
+      }),
+    } as unknown as KimiHarness;
+
+    await expect(listModelsFromHarness(harness)).resolves.toEqual([
+      {
+        id: 'custom',
+        name: 'custom-anthropic-model',
+        thinkingSupported: true,
+        alwaysThinking: false,
+        defaultThinkingEffort: 'high',
+      },
+    ]);
   });
 });

@@ -88,7 +88,10 @@ export function effectiveModelConfig(
   ) {
     delete effective.defaultEffort;
   }
-  return withAnthropicProfile(effective, anthropicCompatible);
+  return withAnthropicProfile(
+    effective,
+    anthropicCompatible || effective.protocol === 'anthropic',
+  );
 }
 
 function withAnthropicProfile(model: ModelConfig, anthropicCompatible: boolean): ModelConfig {
