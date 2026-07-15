@@ -97,7 +97,6 @@ export class ProviderManager implements ModelProvider {
       );
     }
 
-    const effectiveAlias = effectiveModelAlias(alias);
     const providerName = alias.provider ?? this.config.defaultProvider;
     if (providerName === undefined) {
       throw new KimiError(
@@ -113,6 +112,9 @@ export class ProviderManager implements ModelProvider {
         `Provider "${providerName}" for model "${model}" is not configured.`,
       );
     }
+
+    const protocol = alias.protocol ?? providerConfig.type;
+    const effectiveAlias = effectiveModelAlias(alias, protocol === 'anthropic');
 
     if (!Number.isInteger(effectiveAlias.maxContextSize) || effectiveAlias.maxContextSize <= 0) {
       throw new KimiError(

@@ -12,7 +12,7 @@
  */
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
@@ -31,10 +31,12 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
+import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
 import { APIRequestTooLargeError, APIStatusError } from '#/app/llmProtocol/errors';
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import type { Message } from '#/app/llmProtocol/message';
+import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { LLMEvent, LLMRequestInput, Model } from '#/app/model/modelInstance';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -127,16 +129,20 @@ function createService(
           >
         >)
     | undefined,
-  options: { readonly flagEnabled?: boolean } = {},
+  options: {
+    readonly flagEnabled?: boolean;
+    readonly thinkingLevel?: ThinkingEffort;
+  } = {},
 ) {
   const ix = disposables.add(new TestInstantiationService());
+  const thinkingLevel = options.thinkingLevel ?? 'off';
   const profile: Partial<IAgentProfileService> = {
     resolveModelContext: () => ({
       modelAlias: 'm',
       modelCapabilities: capabilities,
       maxOutputSize: undefined,
       alwaysThinking: undefined,
-      thinkingLevel: 'off',
+      thinkingLevel,
       reservedContextSize: undefined,
       compactionTriggerRatio: undefined,
     }),
@@ -146,7 +152,7 @@ function createService(
       cwd: '',
       modelAlias: 'm',
       modelCapabilities: capabilities,
-      thinkingLevel: 'off',
+      thinkingLevel,
       systemPrompt: 'system',
     }),
     isToolActive: () => true,
@@ -170,6 +176,12 @@ function createService(
   };
   const flagEnabled = options.flagEnabled ?? true;
   const testSnapshot = Object.freeze({}) as MediaStripSnapshot;
+  const events: DomainEvent[] = [];
+  const eventBus: IEventBus = {
+    _serviceBrand: undefined,
+    publish: (event) => events.push(event),
+    subscribe: () => toDisposable(() => {}),
+  };
 
   ix.stub(IAgentContextMemoryService, context);
   ix.stub(IAgentToolSelectService, toolSelect);
@@ -195,7 +207,10 @@ function createService(
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
   const records: WireRecord[] = [];
-  registerTestAgentWire(ix, 'wire/llm-requester', { log: recordingWireLog(records) });
+  registerTestAgentWire(ix, 'wire/llm-requester', {
+    log: recordingWireLog(records),
+    eventBus,
+  });
   ix.set(IFaultInjectionService, new SyncDescriptor(FaultInjectionService));
   ix.set(IAgentLLMRequesterService, new SyncDescriptor(AgentLLMRequesterService));
 
@@ -204,8 +219,32 @@ function createService(
     faultInjection: ix.get(IFaultInjectionService),
     wire: ix.get(IWireService),
     records,
+    events,
   };
 }
+
+describe('AgentLLMRequesterService Anthropic effort diagnostics', () => {
+  it('warns and sends when the effort is not listed by the model', async () => {
+    const calls = { value: 0 };
+    const model = createModel(calls, null);
+    Object.defineProperty(model, 'supportEfforts', { value: ['max'] });
+    Object.defineProperty(model, 'withMaxCompletionTokens', { value: () => model });
+    const { service, events } = createService(model, undefined, { thinkingLevel: 'high' });
+
+    const result = await service.request();
+
+    expect(result.message.content).toEqual([{ type: 'text', text: 'ok' }]);
+    expect(calls.value).toBe(1);
+    expect(events.filter((event) => event.type === 'warning')).toEqual([
+      {
+        type: 'warning',
+        code: 'anthropic-thinking-effort-not-listed',
+        message:
+          'Thinking effort "high" is not listed for model "wire-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
+      },
+    ]);
+  });
+});
 
 describe('AgentLLMRequesterService strict resend', () => {
   it('resends once with strict projection after a recoverable structural 400', async () => {

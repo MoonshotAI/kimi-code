@@ -13,7 +13,8 @@
  * handler, records `usage` through `IAgentUsageService`, resolves to an
  * `LLMRequestFinish` on the `finish` event, logs the request lifecycle
  * (config deduplicated by content, request/response/failure lines, plus
- * per-request fields) through `log`, records durable request-trace Ops
+ * per-request fields) through `log`, publishes advisory model-capability
+ * warnings through `eventBus`, records durable request-trace Ops
  * through `wire`, and reports provider failures through `telemetry`. Bound
  * at Agent scope.
  */
@@ -36,6 +37,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
+import { IEventBus } from '#/app/event/eventBus';
 import {
   APIConnectionError,
   APIContextOverflowError,
@@ -130,6 +132,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   private readonly turnConfigs = new Map<number, TurnRequestConfig>();
   private readonly mediaDegradedTurns = new Set<number>();
   private readonly mediaStrippedTurns = new Map<number, MediaStripSnapshot>();
+  private readonly emittedThinkingEffortWarnings = new Set<string>();
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
@@ -144,6 +147,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWireService private readonly wire: IWireService,
     @IFaultInjectionService private readonly faultInjection: IFaultInjectionService,
+    @IEventBus private readonly eventBus: IEventBus,
   ) {}
 
   async request(
@@ -240,6 +244,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         projection === 'normal'
           ? request.logFields
           : { ...request.logFields, projection };
+      this.warnAboutAnthropicThinkingEffort(request);
       const logInput: LLMRequestLogInput = {
         protocol: request.model.protocol,
         modelName: request.model.name,
@@ -369,6 +374,47 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         }
         throw error;
       }
+    }
+  }
+
+  private warnAboutAnthropicThinkingEffort(request: ResolvedLLMRequest): void {
+    if (request.model.protocol !== 'anthropic') return;
+    const effort = request.thinkingEffort;
+    if (effort === 'on') return;
+
+    let code: string;
+    let message: string;
+    let knownEfforts: string | undefined;
+    if (effort === 'off') {
+      if (!request.model.alwaysThinking) return;
+      code = 'anthropic-thinking-cannot-disable';
+      message = `Model "${request.model.name}" declares always-on thinking. The configured effort "off" will be sent unchanged to the Anthropic-compatible backend.`;
+    } else {
+      const supportEfforts = request.model.supportEfforts?.filter((value) => value.length > 0);
+      if (supportEfforts === undefined || supportEfforts.length === 0) return;
+      if (supportEfforts.includes(effort)) return;
+      code = 'anthropic-thinking-effort-not-listed';
+      knownEfforts = supportEfforts.join(',');
+      message = `Thinking effort "${effort}" is not listed for model "${request.model.name}" (known: ${supportEfforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`;
+    }
+
+    const key = [code, request.modelAlias, request.model.name, effort, knownEfforts].join('\u0000');
+    if (this.emittedThinkingEffortWarnings.has(key)) return;
+    this.emittedThinkingEffortWarnings.add(key);
+    try {
+      this.log.warn(message, {
+        modelAlias: request.modelAlias,
+        model: request.model.name,
+        effort,
+        knownEfforts,
+      });
+    } catch {
+      // Diagnostics must never block request dispatch.
+    }
+    try {
+      this.eventBus.publish({ type: 'warning', code, message });
+    } catch {
+      // Diagnostics must never block request dispatch.
     }
   }
 

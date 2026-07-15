@@ -1741,17 +1741,20 @@ describe('AnthropicChatProvider', () => {
       }
     });
 
-    it('rejects thinking off for always-on models instead of silently omitting it', () => {
-      expect(() => createProvider('claude-fable-5').withThinking('off')).toThrow(
-        'has always-on thinking and cannot be disabled',
-      );
-      expect(() => createProvider('claude-mythos-5').withThinking('off')).toThrow(
-        'has always-on thinking and cannot be disabled',
-      );
-      expect(() => createProvider('claude-mythos-preview').withThinking('off')).toThrow(
-        'has always-on thinking and cannot be disabled',
-      );
-    });
+    it.each(['claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview'])(
+      '%s: passes thinking off through for the backend to validate',
+      async (model) => {
+        const body = await captureRequestBody(
+          createProvider(model).withThinking('off'),
+          '',
+          [],
+          thinkHistory,
+        );
+
+        expect(body['thinking']).toEqual({ type: 'disabled' });
+        expect(body['output_config']).toBeUndefined();
+      },
+    );
 
     it.each([
       'claude-sonnet-4-6',
@@ -1783,7 +1786,7 @@ describe('AnthropicChatProvider', () => {
 
     it('adaptiveThinking=true forces adaptive on an unversioned model name', async () => {
       const provider = new AnthropicChatProvider({
-        model: 'coding-model-okapi-0527-vibe',
+        model: 'compatible-model',
         apiKey: 'test-key',
         defaultMaxTokens: 1024,
         stream: false,
@@ -1809,16 +1812,17 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toEqual({ effort: 'max' });
     });
 
-    it('adaptiveThinking=true keeps the official effort list for recognized models', () => {
+    it('adaptiveThinking=true passes an unlisted effort through unchanged', async () => {
       const provider = new AnthropicChatProvider({
         model: 'claude-opus-4-6',
         apiKey: 'test-key',
+        stream: false,
         adaptiveThinking: true,
-      });
+      }).withThinking('xhigh');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
 
-      expect(() => provider.withThinking('xhigh')).toThrow(
-        'Available: low, medium, high, max',
-      );
+      expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(body['output_config']).toEqual({ effort: 'xhigh' });
     });
 
     it('unversioned model without supportEfforts preserves max through the latest Opus profile', async () => {
@@ -1848,21 +1852,21 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toEqual({ effort: 'max' });
     });
 
-    it('rejects efforts outside declared supportEfforts without converting them', () => {
+    it('passes efforts outside declared supportEfforts without converting them', async () => {
       const provider = new AnthropicChatProvider({
         model: 'Example Compatible Model',
         apiKey: 'test-key',
         defaultMaxTokens: 1024,
         stream: false,
         supportEfforts: ['low', 'high'],
-      });
+      }).withThinking('max');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
 
-      expect(() => provider.withThinking('max')).toThrow(
-        'Unsupported thinking effort "max" for Anthropic model "Example Compatible Model". Available: low, high.',
-      );
+      expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+      expect(body['output_config']).toEqual({ effort: 'max' });
     });
 
-    it('rejects adaptiveThinking false when declared efforts require adaptive thinking', () => {
+    it('keeps a concrete effort when adaptiveThinking is false', async () => {
       const provider = new AnthropicChatProvider({
         model: 'Example Compatible Model',
         apiKey: 'test-key',
@@ -1870,11 +1874,11 @@ describe('AnthropicChatProvider', () => {
         stream: false,
         adaptiveThinking: false,
         supportEfforts: ['low', 'high', 'max'],
-      });
+      }).withThinking('max');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
 
-      expect(() => provider.withThinking('max')).toThrow(
-        /budget-based thinking cannot express.*adaptiveThinking is false/,
-      );
+      expect(body['thinking']).toEqual({ type: 'enabled' });
+      expect(body['output_config']).toEqual({ effort: 'max' });
     });
 
     it('Kimi thinking mode sends concrete effort without budget conversion', async () => {
@@ -1949,18 +1953,29 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toEqual({ effort: 'high' });
     });
 
-    it('pre-4.6 budget model rejects xhigh and max', () => {
+    it('pre-4.6 budget model passes xhigh and max through unchanged', async () => {
       for (const effort of ['xhigh', 'max'] as const) {
-        expect(() => createProvider('claude-sonnet-4-5').withThinking(effort)).toThrow(
-          /Unsupported thinking effort/,
+        const body = await captureRequestBody(
+          createProvider('claude-sonnet-4-5').withThinking(effort),
+          '',
+          [],
+          thinkHistory,
         );
+        expect(body['thinking']).toEqual({ type: 'enabled' });
+        expect(body['output_config']).toEqual({ effort });
       }
     });
 
-    it('opus-4-5 rejects xhigh', () => {
-      expect(() => createProvider('claude-opus-4-5').withThinking('xhigh')).toThrow(
-        /Unsupported thinking effort/,
+    it('opus-4-5 passes xhigh through unchanged', async () => {
+      const body = await captureRequestBody(
+        createProvider('claude-opus-4-5').withThinking('xhigh'),
+        '',
+        [],
+        thinkHistory,
       );
+
+      expect(body['thinking']).toEqual({ type: 'enabled' });
+      expect(body['output_config']).toEqual({ effort: 'xhigh' });
     });
 
     it('opus-4-6 with thinking off -> disabled', async () => {
@@ -2235,11 +2250,15 @@ describe('AnthropicChatProvider', () => {
         ['claude-sonnet-4-6', 'xhigh'],
         ['claude-haiku-4-5', 'max'],
       ] as const)(
-        'legacy budget rejects unsupported effort: %s + %s',
-        (model, effort) => {
-          expect(() => createProvider(model).withThinking(effort)).toThrow(
-            /Unsupported thinking effort/,
+        'legacy budget passes an unlisted effort through: %s + %s',
+        async (model, effort) => {
+          const body = await captureRequestBody(
+            createProvider(model).withThinking(effort),
+            '',
+            [],
+            thinkHistory,
           );
+          expect(body['output_config']).toEqual({ effort });
         },
       );
 

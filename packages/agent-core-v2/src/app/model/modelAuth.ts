@@ -7,7 +7,10 @@
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
-import { matchKnownAnthropicModelProfile } from '#/app/llmProtocol/providers/anthropic-profile';
+import {
+  inferAnthropicModelProfile,
+  matchKnownAnthropicModelProfile,
+} from '#/app/llmProtocol/providers/anthropic-profile';
 import { type PlatformConfig, UNKNOWN_PLATFORM_KEY } from '#/app/platform/platform';
 import type { OAuthRef, ProviderConfig } from '#/app/provider/provider';
 import type { Protocol } from '#/app/protocol/protocol';
@@ -71,7 +74,10 @@ export function resolveModelAuthMaterial(args: {
   return {};
 }
 
-export function effectiveModelConfig(model: ModelConfig): ModelConfig {
+export function effectiveModelConfig(
+  model: ModelConfig,
+  anthropicCompatible = false,
+): ModelConfig {
   const { overrides, ...base } = model;
   const effective: ModelConfig = overrides === undefined ? model : { ...base, ...overrides };
   if (
@@ -82,13 +88,17 @@ export function effectiveModelConfig(model: ModelConfig): ModelConfig {
   ) {
     delete effective.defaultEffort;
   }
-  return withKnownAnthropicProfile(effective);
+  return withAnthropicProfile(effective, anthropicCompatible);
 }
 
-function withKnownAnthropicProfile(model: ModelConfig): ModelConfig {
+function withAnthropicProfile(model: ModelConfig, anthropicCompatible: boolean): ModelConfig {
   const wireName = model.name ?? model.model;
   const profile =
-    wireName === undefined ? undefined : matchKnownAnthropicModelProfile(wireName);
+    wireName === undefined
+      ? undefined
+      : anthropicCompatible
+        ? inferAnthropicModelProfile(wireName)
+        : matchKnownAnthropicModelProfile(wireName);
   if (profile === undefined) return model;
   const capability = profile.canDisableThinking ? 'thinking' : 'always_thinking';
   const capabilities = model.capabilities ?? [];

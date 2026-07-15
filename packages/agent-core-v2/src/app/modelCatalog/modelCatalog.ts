@@ -104,8 +104,12 @@ export interface ProviderCredentialState {
   readonly hasOAuthToken: boolean;
 }
 
-export function toProtocolModel(modelId: string, alias: ModelAlias): ModelCatalogItem {
-  const effective = effectiveModelConfig(alias);
+export function toProtocolModel(
+  modelId: string,
+  alias: ModelAlias,
+  anthropicCompatible = false,
+): ModelCatalogItem {
+  const effective = effectiveModelConfig(alias, anthropicCompatible);
   return {
     provider: effective.provider ?? '',
     model: modelId,

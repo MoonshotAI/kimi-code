@@ -209,6 +209,25 @@ describe('ModelCatalogService', () => {
     expect(getCalls).toEqual([{ reload: true }, { reload: true }]);
   });
 
+  it('projects latest Opus efforts for unknown Anthropic-compatible models', async () => {
+    const configRef = { current: catalogConfig() };
+    configRef.current.models!['compatible'] = {
+      provider: 'kimi',
+      protocol: 'anthropic',
+      model: 'compatible-model',
+      maxContextSize: 128000,
+    };
+    const { core } = makeCore(configRef);
+    const svc = new ModelCatalogService(makeEnv(), core, makeEventService().svc);
+
+    const compatible = (await svc.listModels()).find((model) => model.model === 'compatible');
+    expect(compatible).toMatchObject({
+      capabilities: ['thinking'],
+      support_efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      default_effort: 'high',
+    });
+  });
+
   it('gets one provider or throws ProviderNotFoundError', async () => {
     const configRef = { current: catalogConfig() };
     const { core } = makeCore(configRef);

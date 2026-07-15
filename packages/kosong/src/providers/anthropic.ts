@@ -147,8 +147,6 @@ interface AnthropicContextManagement {
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
 const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
 const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
-const THINKING_EFFORT_CONFIG_DOCS_URL =
-  'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking';
 const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
@@ -277,11 +275,6 @@ function resolveThinkingProfile(
 ): AnthropicModelProfile {
   const inferred = inferAnthropicModelProfile(model);
   if (adaptiveThinking === false) {
-    if (supportEfforts !== undefined && requiresAdaptiveThinking(supportEfforts)) {
-      throw new ChatProviderError(
-        `Anthropic model "${model}" declares efforts that budget-based thinking cannot express while adaptiveThinking is false: ${supportEfforts.join(', ')}. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`,
-      );
-    }
     return {
       ...inferred,
       mode: 'budget',
@@ -310,31 +303,11 @@ function resolveThinkingProfile(
   };
 }
 
-function assertThinkingEffortSupported(
-  model: string,
-  effort: ThinkingEffort,
-  profile: AnthropicModelProfile,
-): void {
-  if (effort === 'off' && !profile.canDisableThinking) {
-    throw new ChatProviderError(
-      `Anthropic model "${model}" has always-on thinking and cannot be disabled. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`,
-    );
-  }
-  if (effort === 'off' || effort === 'on' || profile.efforts.includes(effort)) {
-    return;
-  }
-  throw new ChatProviderError(
-    `Unsupported thinking effort "${effort}" for Anthropic model "${model}". Available: ${profile.efforts.join(', ')}. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`,
-  );
-}
-
-function budgetTokensForEffort(effort: ThinkingEffort): number {
+function budgetTokensForEffort(effort: ThinkingEffort): number | undefined {
   if (effort === 'low') return 1024;
   if (effort === 'medium') return 4096;
   if (effort === 'on' || effort === 'high') return 32_000;
-  throw new Error(
-    `Anthropic budget-based thinking cannot express effort "${effort}". Use low, medium, or high, or configure an adaptive / effort-param-capable model. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`,
-  );
+  return undefined;
 }
 
 const CACHE_CONTROL = { type: 'ephemeral' as const };
@@ -1231,7 +1204,6 @@ export class AnthropicChatProvider implements ChatProvider {
       this._supportEfforts,
       this._kimiThinking ? true : this._adaptiveThinking,
     );
-    assertThinkingEffortSupported(this._model, effort, profile);
     let thinking: MessageCreateParams['thinking'];
     let outputConfig: MessageCreateParams['output_config'] | undefined;
 
@@ -1248,9 +1220,13 @@ export class AnthropicChatProvider implements ChatProvider {
           ? undefined
           : ({ effort } as MessageCreateParams['output_config']);
     } else {
-      thinking = { type: 'enabled', budget_tokens: budgetTokensForEffort(effort) };
+      const budgetTokens = budgetTokensForEffort(effort);
+      thinking =
+        budgetTokens === undefined
+          ? ({ type: 'enabled' } as MessageCreateParams['thinking'])
+          : { type: 'enabled', budget_tokens: budgetTokens };
       outputConfig =
-        profile.supportsEffortParam && effort !== 'on'
+        (profile.supportsEffortParam || budgetTokens === undefined) && effort !== 'on'
           ? ({ effort } as MessageCreateParams['output_config'])
           : undefined;
     }

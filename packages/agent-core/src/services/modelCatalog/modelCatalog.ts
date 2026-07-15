@@ -57,8 +57,9 @@ export class ModelNotFoundError extends Error {
 export function toProtocolModel(
   modelId: string,
   alias: ModelAlias,
+  anthropicCompatible = false,
 ): ModelCatalogItem {
-  const effective = effectiveModelAlias(alias);
+  const effective = effectiveModelAlias(alias, anthropicCompatible);
   return {
     provider: effective.provider,
     model: modelId,

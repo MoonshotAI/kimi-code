@@ -104,8 +104,10 @@ describe('resolveThinkingEffort', () => {
   });
 
   it('forces always-thinking models back on when the resolved effort is off', () => {
-    expect(resolveThinkingEffort('off', undefined, alwaysThinkingModel)).toBe('on');
-    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel)).toBe('on');
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingModel, true)).toBe('on');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel, true)).toBe(
+      'on',
+    );
   });
 
   it('honors a configured effort when clamping always-thinking models back on', () => {
@@ -113,12 +115,21 @@ describe('resolveThinkingEffort', () => {
     // an explicitly configured effort is preserved instead of falling back to
     // the model default.
     expect(
-      resolveThinkingEffort(undefined, { enabled: false, effort: 'max' }, alwaysThinkingEffortModel),
+      resolveThinkingEffort(
+        undefined,
+        { enabled: false, effort: 'max' },
+        alwaysThinkingEffortModel,
+        true,
+      ),
     ).toBe('max');
     // without an explicit effort, fall back to the model's default effort.
-    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingEffortModel)).toBe(
-      'high',
-    );
+    expect(
+      resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingEffortModel, true),
+    ).toBe('high');
+  });
+
+  it('preserves off for always-thinking models on compatible protocols', () => {
+    expect(resolveThinkingEffort('off', undefined, alwaysThinkingEffortModel, false)).toBe('off');
   });
 
   it('does not force on for models that are not always-thinking', () => {
@@ -165,6 +176,7 @@ describe('resolveThinkingEffort overrides', () => {
           capabilities: ['thinking'],
           overrides: { capabilities: ['thinking', 'always_thinking'] },
         }),
+        true,
       ),
     ).toBe('on');
   });

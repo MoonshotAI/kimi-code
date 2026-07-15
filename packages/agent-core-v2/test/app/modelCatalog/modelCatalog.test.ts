@@ -189,6 +189,24 @@ describe('ModelCatalogService', () => {
     });
   });
 
+  it('projects latest Opus efforts for unknown Kimi-managed Anthropic models', async () => {
+    backing.models['compatible'] = {
+      provider: 'kimi',
+      protocol: 'anthropic',
+      model: 'compatible-model',
+      maxContextSize: 128000,
+    };
+
+    const compatible = (await catalog().listModels()).find(
+      (model) => model.model === 'compatible',
+    );
+    expect(compatible).toMatchObject({
+      capabilities: ['thinking'],
+      support_efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      default_effort: 'high',
+    });
+  });
+
   it('projects effort fields from overrides when present', async () => {
     backing.models['k2'] = {
       ...backing.models['k2'],

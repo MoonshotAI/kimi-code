@@ -58,6 +58,34 @@ describe('HarnessAPI session model aliases', () => {
     await rm(tmp, { recursive: true, force: true });
   });
 
+  const compatibleConfig = (supportEfforts: string, defaultEffort: string) => `
+default_model = "compatible/model"
+
+[providers.compatible]
+type = "kimi"
+api_key = "test-key"
+base_url = "https://api.example.test"
+
+[models."compatible/model"]
+provider = "compatible"
+model = "compatible-model"
+protocol = "anthropic"
+max_context_size = 128000
+capabilities = ["thinking"]
+support_efforts = [${supportEfforts}]
+default_effort = "${defaultEffort}"
+`;
+
+  async function createEffortReplaySession(): Promise<string> {
+    await writeFile(configPath, compatibleConfig('"high", "max"', 'high'));
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir, model: 'compatible/model' });
+    await rpc.setThinking({ sessionId: created.id, agentId: 'main', effort: 'max' });
+    await rpc.closeSession({ sessionId: created.id });
+    await writeFile(configPath, compatibleConfig('"max"', 'max'));
+    return created.id;
+  }
+
   it('keeps the configured alias separate from the provider model across create, setModel, and resume', async () => {
     const rpc = await createTestRpc();
     const created = await rpc.createSession({
@@ -86,6 +114,40 @@ describe('HarnessAPI session model aliases', () => {
     expect(await freshRpc.getModel({ sessionId: created.id, agentId: 'main' })).toBe(
       'kimi-code/kimi-for-coding',
     );
+  });
+
+  it('restores the final effort after replaying an earlier unlisted Anthropic effort', async () => {
+    const sessionId = await createEffortReplaySession();
+
+    // The current catalog no longer lists the earlier `high` state. Replay
+    // must continue to the following `max` record instead of validating and
+    // aborting at the transient state.
+    const events: Array<Parameters<SDKAPI['emitEvent']>[0]> = [];
+    const freshRpc = await createTestRpc({ emitEvent: (event) => events.push(event) });
+
+    await expect(freshRpc.resumeSession({ sessionId })).resolves.toBeDefined();
+    expect(events).toContainEqual({
+      sessionId,
+      agentId: 'main',
+      type: 'warning',
+      code: 'anthropic-thinking-effort-not-listed',
+      message:
+        'Thinking effort "high" is not listed for model "compatible-model" (known: max). The configured value will be sent unchanged to the Anthropic-compatible backend.',
+    });
+    const restored = await freshRpc.getConfig({ sessionId, agentId: 'main' });
+    expect(restored.modelAlias).toBe('compatible/model');
+    expect(restored.thinkingEffort).toBe('max');
+  });
+
+  it('does not block resume when the warning sink fails', async () => {
+    const sessionId = await createEffortReplaySession();
+
+    const throwingRpc = await createTestRpc({
+      emitEvent: () => {
+        throw new Error('warning sink failed');
+      },
+    });
+    await expect(throwingRpc.resumeSession({ sessionId })).resolves.toBeDefined();
   });
 
   it('re-bootstraps profile and model when resuming a session whose wire has no config.update', async () => {
@@ -464,6 +526,7 @@ max_context_size = 1000000
   async function createTestRpc(
     options: {
       readonly appVersion?: string;
+      readonly emitEvent?: (event: Parameters<SDKAPI['emitEvent']>[0]) => void;
       readonly telemetry?: TelemetryClient;
     } = {},
   ) {
@@ -475,7 +538,7 @@ max_context_size = 1000000
       telemetry: options.telemetry,
     });
     return sdkRpc({
-      emitEvent: vi.fn(),
+      emitEvent: options.emitEvent ?? vi.fn(),
       requestApproval: vi.fn(async () => ({ decision: 'rejected' as const })),
       requestQuestion: vi.fn(async () => null),
       toolCall: vi.fn(async () => ({ output: '' })),

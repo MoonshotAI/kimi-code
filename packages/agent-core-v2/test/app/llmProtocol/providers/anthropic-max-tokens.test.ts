@@ -199,29 +199,31 @@ describe('AnthropicChatProvider thinking profiles', () => {
     expect(body['output_config']).toEqual({ effort: 'max' });
   });
 
-  it('rejects an effort outside declared supportEfforts', () => {
+  it('passes an effort outside declared supportEfforts through unchanged', async () => {
     const provider = new AnthropicChatProvider({
       model: 'compatible-model',
       apiKey: 'test-key',
+      stream: false,
       supportEfforts: ['low', 'high'],
-    });
+    }).withThinking('max');
+    const body = await captureRequestBody(provider);
 
-    expect(() => provider.withThinking('max')).toThrow(
-      'Unsupported thinking effort "max" for Anthropic model "compatible-model". Available: low, high.',
-    );
+    expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
+    expect(body['output_config']).toEqual({ effort: 'max' });
   });
 
-  it('rejects adaptive-only efforts when adaptiveThinking is false', () => {
+  it('keeps a concrete effort when adaptiveThinking is false', async () => {
     const provider = new AnthropicChatProvider({
       model: 'compatible-model',
       apiKey: 'test-key',
+      stream: false,
       adaptiveThinking: false,
       supportEfforts: ['low', 'high', 'max'],
-    });
+    }).withThinking('max');
+    const body = await captureRequestBody(provider);
 
-    expect(() => provider.withThinking('max')).toThrow(
-      'declares efforts that budget-based thinking cannot express while adaptiveThinking is false',
-    );
+    expect(body['thinking']).toEqual({ type: 'enabled' });
+    expect(body['output_config']).toEqual({ effort: 'max' });
   });
 
   it('infers the budget profile for a pre-4.6 Claude model', async () => {
@@ -237,18 +239,19 @@ describe('AnthropicChatProvider thinking profiles', () => {
     expect(body['output_config']).toEqual({ effort: 'high' });
   });
 
-  it('does not convert max for a pre-4.6 Claude model', () => {
+  it('passes max through without converting it for a pre-4.6 Claude model', async () => {
     const provider = new AnthropicChatProvider({
       model: 'claude-opus-4-5',
       apiKey: 'test-key',
-    });
+      stream: false,
+    }).withThinking('max');
+    const body = await captureRequestBody(provider);
 
-    expect(() => provider.withThinking('max')).toThrow(
-      'Unsupported thinking effort "max" for Anthropic model "claude-opus-4-5". Available: low, medium, high.',
-    );
+    expect(body['thinking']).toEqual({ type: 'enabled' });
+    expect(body['output_config']).toEqual({ effort: 'max' });
   });
 
-  it('rejects xhigh for 4.6 while preserving max', async () => {
+  it('passes xhigh through for 4.6 without affecting max', async () => {
     const provider = new AnthropicChatProvider({
       model: 'claude-sonnet-4-6',
       apiKey: 'test-key',
@@ -256,21 +259,26 @@ describe('AnthropicChatProvider thinking profiles', () => {
       adaptiveThinking: true,
     });
 
-    expect(() => provider.withThinking('xhigh')).toThrow(
-      'Available: low, medium, high, max',
-    );
+    const xhighBody = await captureRequestBody(provider.withThinking('xhigh'));
     const body = await captureRequestBody(provider.withThinking('max'));
+    expect(xhighBody['output_config']).toEqual({ effort: 'xhigh' });
     expect(body['output_config']).toEqual({ effort: 'max' });
   });
 
-  it('rejects off for official always-on models', () => {
-    for (const model of ['claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview']) {
-      const provider = new AnthropicChatProvider({ model, apiKey: 'test-key' });
-      expect(() => provider.withThinking('off')).toThrow(
-        'has always-on thinking and cannot be disabled',
-      );
-    }
-  });
+  it.each(['claude-fable-5', 'claude-mythos-5', 'claude-mythos-preview'])(
+    '%s: passes off through for the backend to validate',
+    async (model) => {
+      const provider = new AnthropicChatProvider({
+        model,
+        apiKey: 'test-key',
+        stream: false,
+      }).withThinking('off');
+      const body = await captureRequestBody(provider);
+
+      expect(body['thinking']).toEqual({ type: 'disabled' });
+      expect(body['output_config']).toBeUndefined();
+    },
+  );
 
   it('represents boolean on with the legacy high token budget', async () => {
     const provider = new AnthropicChatProvider({

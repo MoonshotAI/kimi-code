@@ -654,6 +654,21 @@ describe('ModelResolverService', () => {
       });
     });
 
+    it('infers latest Opus metadata for an unknown Kimi-managed Anthropic model', () => {
+      providers['p'] = { type: 'kimi', baseUrl: 'https://example.test', apiKey: 'sk' };
+      models['m'] = {
+        provider: 'p',
+        protocol: 'anthropic',
+        model: 'compatible-model',
+        maxContextSize: 1000,
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+
+      expect(model.supportEfforts).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+      expect(model.defaultEffort).toBe('high');
+    });
+
     it('passes Vertex service-account options and derives location from the baseUrl', async () => {
       providers['p'] = {
         type: 'vertexai',

@@ -1,8 +1,14 @@
-import { matchKnownAnthropicModelProfile } from '@moonshot-ai/kosong/providers/anthropic-profile';
+import {
+  inferAnthropicModelProfile,
+  matchKnownAnthropicModelProfile,
+} from '@moonshot-ai/kosong/providers/anthropic-profile';
 
 import type { ModelAlias } from './schema';
 
-export function effectiveModelAlias(alias: ModelAlias): ModelAlias {
+export function effectiveModelAlias(
+  alias: ModelAlias,
+  anthropicCompatible = false,
+): ModelAlias {
   const { overrides, ...base } = alias;
   const effective: ModelAlias = overrides === undefined ? alias : { ...base, ...overrides };
 
@@ -15,11 +21,13 @@ export function effectiveModelAlias(alias: ModelAlias): ModelAlias {
     delete effective.defaultEffort;
   }
 
-  return withKnownAnthropicProfile(effective);
+  return withAnthropicProfile(effective, anthropicCompatible);
 }
 
-function withKnownAnthropicProfile(model: ModelAlias): ModelAlias {
-  const profile = matchKnownAnthropicModelProfile(model.model);
+function withAnthropicProfile(model: ModelAlias, anthropicCompatible: boolean): ModelAlias {
+  const profile = anthropicCompatible
+    ? inferAnthropicModelProfile(model.model)
+    : matchKnownAnthropicModelProfile(model.model);
   if (profile === undefined) return model;
 
   const capability = profile.canDisableThinking ? 'thinking' : 'always_thinking';

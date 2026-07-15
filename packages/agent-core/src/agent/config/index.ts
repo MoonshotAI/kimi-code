@@ -46,6 +46,7 @@ export class ConfigState {
     const targetAlias = changed.modelAlias ?? this._modelAlias;
     const targetProvider = this.tryResolvedProviderConfigFor(targetAlias);
     const targetModel = this.modelForThinking(targetAlias, targetProvider);
+    const kimiProtocol = targetProvider?.provider.type === 'kimi';
     const kimiProvider = targetProvider?.type === 'kimi';
     let unforcedThinkingEffort: ThinkingEffort | undefined;
     let thinkingEffort: ThinkingEffort | undefined;
@@ -54,14 +55,14 @@ export class ConfigState {
         changed.thinkingEffort,
         this.agent.kimiConfig?.thinking,
         targetModel,
-        kimiProvider,
+        kimiProtocol,
       );
     } else if (changed.modelAlias !== undefined) {
       unforcedThinkingEffort = resolveThinkingEffort(
         this._modelAlias === undefined ? undefined : this._unforcedThinkingEffort,
         this.agent.kimiConfig?.thinking,
         targetModel,
-        kimiProvider,
+        kimiProtocol,
       );
     }
     if (unforcedThinkingEffort !== undefined) {
@@ -100,13 +101,16 @@ export class ConfigState {
     if (this.hasProvider && (changed.cwd !== undefined || changed.modelAlias)) {
       this.agent.tools.initializeBuiltinTools();
     }
+    if (thinkingEffort !== undefined || changed.modelAlias !== undefined) {
+      this.agent.warnAboutCurrentAnthropicThinkingEffort();
+    }
     this.agent.emitStatusUpdated(thinkingEffort !== undefined);
   }
 
   setThinkingEffort(effort: ThinkingEffort): void {
     const model = this.currentModel;
-    const kimiProvider = this.tryResolvedProviderConfig()?.type === 'kimi';
-    if (!supportsThinkingEffort(effort, model, kimiProvider)) {
+    const kimiProtocol = this.tryResolvedProviderConfig()?.provider.type === 'kimi';
+    if (!supportsThinkingEffort(effort, model, kimiProtocol)) {
       const efforts = model?.supportEfforts ?? [];
       const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
       throw new KimiError(

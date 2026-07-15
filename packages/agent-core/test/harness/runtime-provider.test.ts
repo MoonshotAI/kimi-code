@@ -868,8 +868,10 @@ describe('resolveThinkingEffort', () => {
   });
 
   it('forces always-thinking models back on even when off is requested', () => {
-    expect(resolveThinkingEffort('off', { enabled: false }, alwaysThinkingModel)).toBe('on');
-    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel)).toBe('on');
+    expect(resolveThinkingEffort('off', { enabled: false }, alwaysThinkingModel, true)).toBe('on');
+    expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingModel, true)).toBe(
+      'on',
+    );
   });
 });
 
