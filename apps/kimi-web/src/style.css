@@ -225,8 +225,9 @@ summary {
   --safe-left: env(safe-area-inset-left, 0px);
   /* Border-box height of the chat dock, written by ChatDock via ResizeObserver.
      Used to anchor fixed overlays (toasts, floating hints) just above the
-     composer — dynamic so multi-line input growth keeps them clear. */
-  --dock-h: 0px;
+     composer — dynamic so multi-line input growth keeps them clear. Left
+     undeclared on purpose: consumers use a fallback (e.g. the assumed
+     single-line dock height) on pages where ChatDock is not mounted. */
 }
 
 /* -- icon primitive (design-system §02) -------------------------------------

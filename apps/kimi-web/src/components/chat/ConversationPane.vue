@@ -1177,7 +1177,7 @@ function onKeyDown(event: KeyboardEvent): void {
 // the tail so the latest turn stays visible above the keyboard. No-op while the
 // user has manually scrolled away (following === false).
 function onVisualViewportResize(): void {
-  if (following.value) scheduleFollow(false);
+  if (following.value) scheduleFollow();
 }
 
 onMounted(() => {
