@@ -36,16 +36,6 @@ import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
-import type {
-  AssistantDeltaEvent,
-  ThinkingDeltaEvent,
-  ToolCallDeltaEvent,
-  TurnEndedEvent,
-  TurnStartedEvent,
-  TurnStepCompletedEvent,
-  TurnStepInterruptedEvent,
-  TurnStepStartedEvent,
-} from '@moonshot-ai/protocol';
 import { IAgentLLMRequesterService, type LLMRequestFinish } from '#/agent/llmRequester/llmRequester';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IConfigService } from '#/app/config/config';
@@ -92,19 +82,6 @@ import {
 } from './stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from './stepRequestQueue';
 import { cancelTurn, promptTurn, TurnModel } from './turnOps';
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'turn.started': TurnStartedEvent;
-    'turn.ended': TurnEndedEvent;
-    'turn.step.started': TurnStepStartedEvent;
-    'turn.step.completed': TurnStepCompletedEvent;
-    'turn.step.interrupted': TurnStepInterruptedEvent;
-    'assistant.delta': AssistantDeltaEvent;
-    'thinking.delta': ThinkingDeltaEvent;
-    'tool.call.delta': ToolCallDeltaEvent;
-  }
-}
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 

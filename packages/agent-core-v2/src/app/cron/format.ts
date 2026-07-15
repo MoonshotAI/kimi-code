@@ -7,7 +7,7 @@
  * them without pulling in the rest of the cron stack.
  */
 
-import type { CronJobOrigin } from '@moonshot-ai/protocol';
+import type { CronJobOrigin } from '#/agent/contextMemory/types';
 
 export function formatLocalIsoWithOffset(ms: number): string {
   const date = new Date(ms);

@@ -51,7 +51,6 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
 
-import type { WarningEvent } from '@moonshot-ai/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IWireService } from '#/wire/wire';
@@ -80,6 +79,12 @@ import {
   type ActiveToolsState,
   type ProfileModelState,
 } from './profileOps';
+
+export interface WarningEvent {
+  readonly type: 'warning';
+  readonly message: string;
+  readonly code?: string;
+}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {

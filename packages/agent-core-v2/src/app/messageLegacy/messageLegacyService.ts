@@ -18,7 +18,9 @@
  * (`packages/agent-core/src/services/message/messageService.ts`).
  */
 
-import type { Message, PageResponse } from '@moonshot-ai/protocol';
+import type { Message } from '#/agent/contextMemory/wireMessage';
+
+import type { PageResponse } from './messageLegacy';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';

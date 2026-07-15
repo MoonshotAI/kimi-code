@@ -8,11 +8,22 @@
 
 import type { Readable } from 'node:stream';
 
-import type { FileMeta } from '@moonshot-ai/protocol';
+import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2 } from '#/_base/errors/errors';
+import { isoDateTimeSchema } from '#/_base/utils/isoDateTime';
+
+export const fileMetaSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  media_type: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  created_at: isoDateTimeSchema,
+  expires_at: isoDateTimeSchema.optional(),
+});
+export type FileMeta = z.infer<typeof fileMetaSchema>;
 
 export const DEFAULT_MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
 

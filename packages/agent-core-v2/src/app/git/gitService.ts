@@ -10,7 +10,7 @@
  * paths.
  */
 
-import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from '@moonshot-ai/protocol';
+import type { FsDiffResponse, FsGitStatusResponse, FsPullRequest } from './git';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';

@@ -304,6 +304,11 @@ const ALLOWED_EXCEPTIONS = new Set([
   'auth>tool',
   'auth>toolRegistry',
   'permissionGate>approval',
+  // `permissionRules` (L3) persists the approval broker's `ApprovalResponse`
+  // (Session, L7) verbatim in its wire-logged `PermissionApprovalResultRecord`
+  // — a real cross-scope dependency, surfaced here rather than hidden behind a
+  // re-declared copy of the shape.
+  'permissionRules>approval',
   'userTool>interaction',
   'permissionPolicy>plan',
   'permissionPolicy>swarm',

@@ -17,20 +17,19 @@ import type {
   KimiOAuthLogoutResult,
   KimiOAuthTokenRef,
 } from '@moonshot-ai/kimi-code-oauth';
-import type {
-  OAuthFlowSnapshot,
-  OAuthFlowStart,
-  OAuthLoginCancelResponse,
-  OAuthLogoutResponse,
-  RefreshOAuthProviderModelsResponse,
-} from '@moonshot-ai/protocol';
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
 
 import type { OAuthRef } from '#/app/provider/provider';
 
 import { AuthErrors } from './errors';
+import type {
+  OAuthFlowSnapshot,
+  OAuthFlowStart,
+  OAuthLoginCancelResponse,
+  OAuthLogoutResponse,
+  RefreshOAuthProviderModelsResponse,
+} from './oauthWire';
 
 export interface AuthStatus {
   readonly loggedIn: boolean;

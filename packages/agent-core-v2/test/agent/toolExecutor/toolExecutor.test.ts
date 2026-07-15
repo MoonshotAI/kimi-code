@@ -1,5 +1,6 @@
 import type { ToolCall } from '#/app/llmProtocol/message';
-import type { AgentEvent, ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { DomainEvent } from '#/app/event/eventBus';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
@@ -33,7 +34,7 @@ let ix: TestInstantiationService;
 let executor: IAgentToolExecutorService;
 let registry: IAgentToolRegistryService;
 let events: ToolExecutorEvent[];
-let protocolEvents: AgentEvent[];
+let protocolEvents: DomainEvent[];
 let telemetryEvents: TelemetryRecord[];
 let truncateForModel: IAgentToolResultTruncationService['truncateForModel'];
 
@@ -56,7 +57,7 @@ beforeEach(() => {
       reg.defineInstance(IEventBus, {
         publish: (event: { type: string }) => {
           if (event.type.startsWith('tool.')) {
-            protocolEvents.push(event as unknown as AgentEvent);
+            protocolEvents.push(event as unknown as DomainEvent);
           }
         },
         subscribe: (..._args: unknown[]) => ({ dispose: () => {} }),
@@ -178,7 +179,7 @@ describe('AgentToolExecutorService', () => {
       note: '<system>Image compressed.</system>',
     });
     const protocolResult = protocolEvents.find(
-      (event): event is Extract<AgentEvent, { type: 'tool.result' }> =>
+      (event): event is Extract<DomainEvent, { type: 'tool.result' }> =>
         event.type === 'tool.result',
     );
     expect(protocolResult).toMatchObject({
@@ -334,7 +335,7 @@ describe('AgentToolExecutorService', () => {
       }),
     ]);
     const toolCallEvent = protocolEvents.find(
-      (event): event is Extract<AgentEvent, { type: 'tool.call.started' }> =>
+      (event): event is Extract<DomainEvent, { type: 'tool.call.started' }> =>
         event.type === 'tool.call.started',
     );
     expect(toolCallEvent?.args).toEqual({ x: 1 });
@@ -753,7 +754,7 @@ function eventTypes(): ToolExecutorEvent['type'][] {
   return events.map((event) => event.type);
 }
 
-function protocolEventTypes(): AgentEvent['type'][] {
+function protocolEventTypes(): DomainEvent['type'][] {
   return protocolEvents.map((event) => event.type);
 }
 
@@ -761,13 +762,13 @@ function pairedToolCallIds(): { readonly calls: string[]; readonly results: stri
   return {
     calls: protocolEvents
       .filter(
-        (event): event is Extract<AgentEvent, { type: 'tool.call.started' }> =>
+        (event): event is Extract<DomainEvent, { type: 'tool.call.started' }> =>
           event.type === 'tool.call.started',
       )
       .map((event) => event.toolCallId),
     results: protocolEvents
       .filter(
-        (event): event is Extract<AgentEvent, { type: 'tool.result' }> =>
+        (event): event is Extract<DomainEvent, { type: 'tool.result' }> =>
           event.type === 'tool.result',
       )
       .map((event) => event.toolCallId),

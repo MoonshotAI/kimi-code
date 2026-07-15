@@ -11,7 +11,25 @@
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
-import type { FsChangeEvent } from '@moonshot-ai/protocol';
+
+export type FsChangeKind = 'file' | 'directory' | 'symlink';
+
+export type FsChangeAction = 'created' | 'modified' | 'deleted';
+
+export interface FsChangeEntry {
+  path: string;
+  change: FsChangeAction;
+  kind: FsChangeKind;
+  size_delta?: number | undefined;
+  etag?: string | undefined;
+}
+
+export interface FsChangeEvent {
+  changes: FsChangeEntry[];
+  coalesced_window_ms: number;
+  truncated?: boolean | undefined;
+  count?: number | undefined;
+}
 
 export interface ISessionFsWatchService {
   readonly _serviceBrand: undefined;

@@ -11,7 +11,7 @@
  */
 
 import { KIMI_CODE_PROVIDER_NAME } from '@moonshot-ai/kimi-code-oauth';
-import type { AuthSummary } from '@moonshot-ai/protocol';
+import type { AuthSummary } from './authLegacy';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';

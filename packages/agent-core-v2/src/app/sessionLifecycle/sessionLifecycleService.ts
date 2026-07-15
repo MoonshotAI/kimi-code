@@ -333,7 +333,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     try {
       const workspace = await this.workspaceRegistry.get(workspaceId);
       if (workspace === undefined) {
-        throw new Error2('workspace.not_found', `workspace ${workspaceId} does not exist`);
+        throw new Error2(ErrorCodes.WORKSPACE_NOT_FOUND, `workspace ${workspaceId} does not exist`);
       }
 
       const sourceMeta =

@@ -11,12 +11,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { ContentPart } from '#/app/llmProtocol/message';
-import type {
-  ToolCallStartedEvent,
-  ToolInputDisplay,
-  ToolProgressEvent,
-  ToolResultEvent,
-} from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import {
   compileToolArgsValidator,
@@ -54,14 +49,10 @@ import {
   type UnavailableToolDescriber,
 } from './toolExecutor';
 import { ToolScheduler } from './toolScheduler';
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'tool.call.started': ToolCallStartedEvent;
-    'tool.result': ToolResultEvent;
-    'tool.progress': ToolProgressEvent;
-  }
-}
+// Loads the `DomainEventMap` augmentation for the `tool.call.*` / `tool.result`
+// events this service publishes (the augmentation lives with the event
+// definitions; without an import it would not enter every consumer's program).
+import './toolExecutorEvents';
 
 const ABORT_GRACE_MS = 2_000;
 const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';

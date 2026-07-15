@@ -23,7 +23,7 @@ import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionApprovalService } from "#/session/approval/approval";
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import {
   IAgentPermissionGate,
 } from './permissionGate';

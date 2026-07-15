@@ -17,7 +17,7 @@
 
 import type { ContentPart, ToolCall } from '#/app/llmProtocol/message';
 import type { Tool } from '#/app/llmProtocol/tool';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export type ExecutableToolOutput = string | ContentPart[];
 

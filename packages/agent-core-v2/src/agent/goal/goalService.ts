@@ -29,7 +29,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { TurnEndedEvent, TurnStartedEvent } from '@moonshot-ai/protocol';
+import type { TurnEndedEvent, TurnStartedEvent } from '#/agent/loop/turnEvents';
 import { Disposable, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
