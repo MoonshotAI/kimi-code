@@ -20,7 +20,7 @@
 
 ## 目录地图
 
-- `apps/desktop`：Electron 壳（`@moonshot-ai/kimi-desktop`）。`src/main/index.ts` 主进程入口（只做编排；窗口 `window.ts`、菜单 `menu.ts`、快捷键 `shortcuts.ts`、IPC `ipc.ts` + channel 常量 `ipc-channels.ts`、server 连接 `connect.ts`、启动失败页 `screens.ts`）；`src/main/server.ts` 内嵌 server（`startDesktopServer`：回环 + 临时端口 + 独立 lock）；`src/main/connect-target.ts` 外部 server 模式解析（`KIMI_SERVER_URL`，纯函数）；`src/main/protocol.ts` `app://renderer` 协议映射（带 `..` 越界防护）。主进程测试在 `tests/main/`，renderer 测试与源码同目录。细则见 `apps/desktop/README.md`。
+- `apps/desktop`：Electron 壳（`@moonshot-ai/kimi-desktop`）。`src/main/index.ts` 主进程入口（只做编排；窗口 `window.ts`、菜单 `menu.ts`、快捷键 `shortcuts.ts`、IPC `ipc.ts` + channel 常量 `ipc-channels.ts`、server 连接 `connect.ts`、启动失败页 `screens.ts`）；`src/main/server.ts` 内嵌 server（`startDesktopServer`：回环 + 临时端口 + 独立 lock）；`src/main/connect-target.ts` 外部 server 模式解析（`KIMI_SERVER_URL`，纯函数）；`src/main/protocol.ts` `app://renderer` 协议映射（带 `..` 越界防护）。`pnpm dev` 走 `scripts/dev.mjs`：起 renderer 的 Vite dev server（默认 `http://127.0.0.1:5174`）并把实际端口经 `KIMI_RENDERER_DEV_URL` 传给主进程，`connect.ts` 据此加载 dev server（renderer HMR）并把该 origin 加进内嵌 server 的 CORS 白名单；主进程改动需重启 dev。主进程测试在 `tests/main/`，renderer 测试与源码同目录。细则见 `apps/desktop/README.md`。
 - `apps/web`：浏览器 Web UI（`@moonshot-ai/kimi-web`，Vue 3 + Vite + vue-i18n）。dev 时 Vite 把 `/api/v1`（REST + WS）代理到 `KIMI_SERVER_URL`（默认 `http://127.0.0.1:58627`）。
 - `packages/*`：`@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` + `vite-preset`（exports→src，被 apps/web 与 desktop renderer 复用）。
 - `kimi-code/`：git submodule（核心仓）。`kimi-code/packages/*` 提供 `kap-server`、`agent-core-v2`、`kimi-code-sdk` 等源码。
@@ -32,7 +32,7 @@
 ```bash
 pnpm run sync      # git submodule update --init --recursive
 pnpm install       # 装依赖（首次或 workspace 变动后）
-pnpm dev:desktop   # 桌面端（默认启动内嵌 server）
+pnpm dev:desktop   # 桌面端（renderer HMR + 默认启动内嵌 server）
 pnpm dev:web       # Web UI（Vite，代理到 127.0.0.1:58627）
 KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm dev:desktop  # 外部 server 模式（不起内嵌 server）
 pnpm run sync:web  # 同步 web dist 到 kimi-code checkout（先 build web）
@@ -47,9 +47,11 @@ pnpm build         # pnpm -r run build
 - **kimi-code 侧改动（CLI / server / core）**：在你的 kimi-code 工作克隆里改并启动 server；code-app 用 `KIMI_SERVER_URL` 指过去联调（不启动内嵌 server，不用动 submodule）：
 
   ```bash
-  # 1. kimi-code 克隆里启动 server（KIMI_CODE_CORS_ORIGINS 仅 desktop 需要；
+  # 1. kimi-code 克隆里启动 server（KIMI_CODE_CORS_ORIGINS 仅 desktop 需要——
+  #    app://renderer 是生产 origin，http://127.0.0.1:5174 是 dev HMR 的
+  #    Vite dev server origin，端口被占会顺延，以 dev 启动日志为准；
   #    web dev server 走同源代理，不需要 CORS）：
-  KIMI_CODE_CORS_ORIGINS=app://renderer pnpm dev:server
+  KIMI_CODE_CORS_ORIGINS="app://renderer,http://127.0.0.1:5174" pnpm dev:server
 
   # 2a. desktop 指向该 server（不会启动内嵌 server）：
   KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm dev:desktop

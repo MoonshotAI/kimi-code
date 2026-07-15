@@ -43,10 +43,17 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `@moonshot-ai
 ```bash
 pnpm run sync          # 初始化/更新 kimi-code submodule（首次或 submodule 变动后）
 pnpm install
-pnpm dev:desktop       # = build:renderer + tsdown 主进程 + electron .
+pnpm dev:desktop       # = scripts/dev.mjs：vite dev server（renderer HMR）+ tsdown 主进程 + electron .
 ```
 
-仅改 renderer 时可单独构建：
+`pnpm dev:desktop` 现在走 `scripts/dev.mjs`：先起 renderer 的 Vite dev server（默认
+`http://127.0.0.1:5174`，端口被占会自动顺延），把实际端口经 `KIMI_RENDERER_DEV_URL`
+传给 Electron 主进程；主进程（`src/main/connect.ts`）据此改为加载 dev server 而不是
+`desktop-dist`，并把该 origin 加进内嵌 server 的 CORS 白名单（HMR 模式下不传
+`webAssetsDir`，因为 dev 不再构建 `desktop-dist`）。renderer 改动热更新；主进程改动需重新
+`pnpm dev:desktop`。打包/生产行为不变，仍走 `app://renderer` 自定义协议。
+
+生产形态单独构建 renderer：
 
 ```bash
 pnpm --filter @moonshot-ai/kimi-desktop run build:renderer   # 产物 apps/desktop/desktop-dist/

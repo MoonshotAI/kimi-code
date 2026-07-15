@@ -7,7 +7,7 @@ import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
 import { serverTokenPath } from '@moonshot-ai/kap-server';
 
 import { startDesktopServer, type DesktopServerHandle } from './server';
-import { rendererUrl } from './protocol';
+import { rendererUrl, rendererDevBase } from './protocol';
 import { resolveConnectTarget } from './connect-target';
 import { dataUrl, errorHtml } from './screens';
 import { DESKTOP_PRODUCT_NAME } from '../shared/identity';
@@ -48,20 +48,29 @@ export async function connect(win: BrowserWindow): Promise<void> {
     serverHandle = null;
     let origin: string;
     let token: string | undefined;
+    // Renderer HMR (scripts/dev.mjs sets KIMI_RENDERER_DEV_URL): load the
+    // renderer from the Vite dev server instead of the built desktop-dist, and
+    // allow that origin through the embedded server's CORS allowlist. Packaged
+    // builds always use `app://renderer`.
+    const devBase = app.isPackaged ? undefined : rendererDevBase(process.env['KIMI_RENDERER_DEV_URL']);
     const target = resolveConnectTarget(process.env['KIMI_SERVER_URL'], readServerToken);
     if (target.external) {
       ({ origin, token } = target);
       process.stdout.write(`[kimi-desktop] connected to external server ${origin}\n`);
     } else {
       serverHandle = await startDesktopServer({
-        webAssetsDir: rendererDistRoot(),
+        // No static fallback in HMR dev: the renderer comes from the Vite dev
+        // server, and desktop-dist may not exist (kap-server would refuse to
+        // start without index.html in it).
+        webAssetsDir: devBase === undefined ? rendererDistRoot() : undefined,
         identity: { userAgentProduct: DESKTOP_PRODUCT_NAME, version: app.getVersion() },
+        extraCorsOrigins: devBase === undefined ? [] : [new URL(devBase).origin],
       });
       ({ origin, token } = serverHandle);
       process.stdout.write(`[kimi-desktop] connected to ${origin}\n`);
     }
     if (!win.isDestroyed()) {
-      await win.loadURL(rendererUrl(origin, token));
+      await win.loadURL(rendererUrl(origin, token, devBase));
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

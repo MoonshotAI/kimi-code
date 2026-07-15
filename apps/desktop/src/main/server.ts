@@ -29,10 +29,17 @@ export interface StartDesktopServerOptions {
    * (`apps/desktop/desktop-dist` in dev, `<resources>/desktop-dist` packaged).
    * The server primarily serves the API; this is only the static-asset fallback,
    * and it points at the same `desktop-dist` the `app://renderer` protocol maps.
+   * Omit when the renderer is served by the Vite dev server (renderer HMR dev)
+   * — kap-server asserts the directory exists, and HMR dev never builds it.
    */
-  readonly webAssetsDir: string;
+  readonly webAssetsDir?: string;
   /** Host identity required upstream (Kimi-for-Coding rejects without it, 40340). */
   readonly identity: KimiHostIdentity;
+  /**
+   * Extra CORS origins beyond `app://renderer` — e.g. the Vite dev server
+   * origin (`http://127.0.0.1:<port>`) when running with renderer HMR.
+   */
+  readonly extraCorsOrigins?: readonly string[];
   readonly logger?: ReturnType<typeof createServerLogger>;
 }
 
@@ -84,7 +91,7 @@ export async function startDesktopServer(
     // Allow the local `app://renderer` origin so the renderer (served from
     // app://renderer) can call the loopback HTTP API. The v2 server takes the
     // origin allowlist directly (no KIMI_CODE_CORS_ORIGINS env needed).
-    corsOrigins: ['app://renderer'],
+    corsOrigins: ['app://renderer', ...(opts.extraCorsOrigins ?? [])],
     // Host identity is seeded as the full Kimi request headers (v2 dropped
     // `coreProcessOptions`); the upstream model API reads identity from these.
     seeds: hostRequestHeadersSeed(desktopHostHeaders(opts.identity)),

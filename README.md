@@ -14,7 +14,7 @@ Kimi Code 客户端仓库：桌面端（`apps/desktop`）+ Web UI（`apps/web`�
 ```bash
 pnpm run sync      # 初始化/更新 submodule
 pnpm install
-pnpm dev:desktop   # 桌面端（默认启动内嵌 server）
+pnpm dev:desktop   # 桌面端（renderer HMR + 默认启动内嵌 server）
 pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:58627）
 ```
 

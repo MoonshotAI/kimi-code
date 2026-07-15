@@ -55,6 +55,15 @@ export default defineConfig({
   // No `public/` dir for the desktop renderer; silence Vite's missing-public
   // warning and avoid copying anything unexpected into the bundle.
   publicDir: false,
+  // Dev server used by `pnpm dev` (scripts/dev.mjs) for renderer HMR. Pinned to
+  // loopback; the port is a stable default (localStorage sticks across restarts)
+  // but not strict — dev.mjs reads the actual port after listen and hands it to
+  // Electron via KIMI_RENDERER_DEV_URL.
+  server: {
+    host: '127.0.0.1',
+    port: 5174,
+    strictPort: false,
+  },
   build: {
     ...preset.build,
     outDir,

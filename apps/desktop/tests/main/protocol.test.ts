@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mimeFor, rendererUrl, handleRendererRequest } from '../../src/main/protocol';
+import { mimeFor, rendererUrl, rendererDevBase, handleRendererRequest } from '../../src/main/protocol';
 
 describe('mimeFor', () => {
   it('maps common web extensions and falls back to octet-stream', () => {
@@ -24,6 +24,27 @@ describe('rendererUrl', () => {
   });
   it('omits token fragment when undefined', () => {
     expect(rendererUrl('http://127.0.0.1:1', undefined)).not.toContain('#token=');
+  });
+  it('uses the given dev server base instead of app://renderer', () => {
+    const u = rendererUrl('http://127.0.0.1:54321', 'abc', 'http://127.0.0.1:5174/');
+    expect(u).toMatch(/^http:\/\/127\.0\.0\.1:5174\/\?/);
+    expect(u).toContain('kimi_desktop=1');
+    expect(u).toContain('kimi_origin=http%3A%2F%2F127.0.0.1%3A54321');
+    expect(u).toMatch(/#token=abc$/);
+  });
+});
+
+describe('rendererDevBase', () => {
+  it('returns undefined when unset or blank', () => {
+    expect(rendererDevBase(undefined)).toBeUndefined();
+    expect(rendererDevBase('   ')).toBeUndefined();
+  });
+  it('normalises a dev server URL (adds trailing slash)', () => {
+    expect(rendererDevBase('http://127.0.0.1:5174')).toBe('http://127.0.0.1:5174/');
+  });
+  it('rejects non-http(s) and unparseable values', () => {
+    expect(rendererDevBase('app://renderer')).toBeUndefined();
+    expect(rendererDevBase('not a url')).toBeUndefined();
   });
 });
 

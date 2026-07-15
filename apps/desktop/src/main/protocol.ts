@@ -51,8 +51,13 @@ export function registerRendererScheme(): void {
   ]);
 }
 
-export function rendererUrl(origin: string, token: string | undefined): string {
-  const base = `${RENDERER_SCHEME}://${RENDERER_HOST}/index.html`;
+const DEFAULT_RENDERER_BASE = `${RENDERER_SCHEME}://${RENDERER_HOST}/index.html`;
+
+export function rendererUrl(
+  origin: string,
+  token: string | undefined,
+  base: string = DEFAULT_RENDERER_BASE,
+): string {
   const params = new URLSearchParams({
     kimi_desktop: '1',
     platform: process.platform,
@@ -60,6 +65,22 @@ export function rendererUrl(origin: string, token: string | undefined): string {
   });
   const hash = token === undefined ? '' : `#token=${encodeURIComponent(token)}`;
   return `${base}?${params.toString()}${hash}`;
+}
+
+/**
+ * Normalise the `KIMI_RENDERER_DEV_URL` env var (set by scripts/dev.mjs for
+ * renderer HMR). Returns the dev server base URL to load instead of
+ * `app://renderer/index.html`, or undefined when unset/invalid/non-http(s).
+ */
+export function rendererDevBase(raw: string | undefined): string | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
+  }
 }
 
 /**
