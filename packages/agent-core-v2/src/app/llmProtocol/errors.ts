@@ -1,8 +1,5 @@
 import type { FinishReason } from './provider';
 
-/**
- * Base error for all chat provider errors.
- */
 export class ChatProviderError extends Error {
   constructor(message: string) {
     super(message);
@@ -10,9 +7,6 @@ export class ChatProviderError extends Error {
   }
 }
 
-/**
- * Network-level connection failure.
- */
 export class APIConnectionError extends ChatProviderError {
   constructor(message: string) {
     super(message);
@@ -20,9 +14,6 @@ export class APIConnectionError extends ChatProviderError {
   }
 }
 
-/**
- * Request timed out.
- */
 export class APITimeoutError extends ChatProviderError {
   constructor(message: string) {
     super(message);
@@ -30,72 +21,68 @@ export class APITimeoutError extends ChatProviderError {
   }
 }
 
-/**
- * HTTP status error from the API.
- */
 export class APIStatusError extends ChatProviderError {
   readonly statusCode: number;
   readonly requestId: string | null;
+  readonly retryAfterMs: number | null;
 
-  constructor(statusCode: number, message: string, requestId?: string | null) {
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
     super(message);
     this.name = 'APIStatusError';
     this.statusCode = statusCode;
     this.requestId = requestId ?? null;
+    this.retryAfterMs = retryAfterMs ?? null;
   }
 }
 
-/**
- * HTTP status error that specifically means the request exceeded the model
- * context window.
- */
 export class APIContextOverflowError extends APIStatusError {
-  constructor(statusCode: number, message: string, requestId?: string | null) {
-    super(statusCode, message, requestId);
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
+    super(statusCode, message, requestId, retryAfterMs);
     this.name = 'APIContextOverflowError';
   }
 }
 
-/**
- * HTTP 413 that specifically means the serialized request body exceeded the
- * provider's byte ceiling (e.g. accumulated base64 images), as opposed to a
- * token-count overflow. Token overflow is recoverable by compaction; a body
- * size rejection is not — it needs media to be dropped or shrunk.
- */
 export class APIRequestTooLargeError extends APIStatusError {
-  constructor(statusCode: number, message: string, requestId?: string | null) {
-    super(statusCode, message, requestId);
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
+    super(statusCode, message, requestId, retryAfterMs);
     this.name = 'APIRequestTooLargeError';
   }
 }
 
-/**
- * HTTP status error that specifically means the provider rate-limited the
- * request.
- */
 export class APIProviderRateLimitError extends APIStatusError {
-  constructor(message: string, requestId?: string | null) {
-    super(429, message, requestId);
+  constructor(message: string, requestId?: string | null, retryAfterMs?: number | null) {
+    super(429, message, requestId, retryAfterMs);
     this.name = 'APIProviderRateLimitError';
   }
 }
 
-/**
- * HTTP status error that specifically means the provider is overloaded / at
- * capacity (Anthropic 529 `overloaded_error`, OpenAI 503 "server is currently
- * overloaded"). Distinct from rate limiting: the caller's quota is not the
- * constraint, the provider is simply saturated — retry with backoff.
- */
 export class APIProviderOverloadedError extends APIStatusError {
-  constructor(statusCode: number, message: string, requestId?: string | null) {
-    super(statusCode, message, requestId);
+  constructor(
+    statusCode: number,
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+  ) {
+    super(statusCode, message, requestId, retryAfterMs);
     this.name = 'APIProviderOverloadedError';
   }
 }
 
-/**
- * The API returned an empty response (no content, no tool calls).
- */
 export class APIEmptyResponseError extends ChatProviderError {
   readonly finishReason: FinishReason | null;
   readonly rawFinishReason: string | null;
@@ -114,6 +101,40 @@ export class APIEmptyResponseError extends ChatProviderError {
   }
 }
 
+const IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS = [
+  /unsupported media type for base64 image/,
+  /invalid data url for image/,
+] as const;
+
+const IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS = [
+  /unsupported image (?:url|format|type)/,
+  /does not represent a valid image/,
+  /could not (?:process|decode) (?:the |input )?image/,
+  /unable to process (?:the |input )?image/,
+  /failed to decode (?:the )?image/,
+  /invalid image(?: data| type| format)?/,
+] as const;
+
+const MEDIA_TYPE_FIELD_PATTERN = /(?:media|mime)_?type/;
+
+export function isImageFormatError(error: unknown): boolean {
+  if (error instanceof APIStatusError) {
+    if (error instanceof APIContextOverflowError) return false;
+    if (error instanceof APIRequestTooLargeError) return false;
+    if (error.statusCode !== 400) return false;
+    const lowerMessage = error.message.toLowerCase();
+    return (
+      IMAGE_FORMAT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage)) ||
+      (MEDIA_TYPE_FIELD_PATTERN.test(lowerMessage) && lowerMessage.includes('image'))
+    );
+  }
+  if (error instanceof ChatProviderError) {
+    const lowerMessage = error.message.toLowerCase();
+    return IMAGE_FORMAT_PROVIDER_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+  }
+  return false;
+}
+
 export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
     return true;
@@ -124,9 +145,10 @@ export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIProviderOverloadedError) {
     return true;
   }
-  return (
-    error instanceof APIStatusError && [429, 500, 502, 503, 504, 529].includes(error.statusCode)
-  );
+  if (error instanceof APIStatusError) {
+    return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
+  }
+  return error instanceof ChatProviderError && !isImageFormatError(error);
 }
 
 const NETWORK_RE = /network|connection|connect|disconnect|terminated/i;
@@ -163,34 +185,40 @@ const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
   /rate-limited/,
 ] as const;
 
-// Wordings that mean the provider itself is saturated rather than throttling
-// this caller. Anchored on "overload" (Anthropic's `overloaded_error`, OpenAI's
-// "server is currently overloaded", Gemini's "model is overloaded") so a bare
-// proxy 503 ("Service Unavailable") does not get misclassified as overload.
 const PROVIDER_OVERLOAD_MESSAGE_PATTERNS = [/overload/] as const;
 
-// Wordings that mean the serialized request BODY was too big, matched against
-// the lowercased message of a 413. Kept separate from the context-overflow
-// patterns above: those describe token counts, these describe bytes. A 413
-// whose message matches neither family stays a plain `APIStatusError` —
-// Vertex phrases prompt-too-long as a 413, so the status alone is not proof
-// of a body-size rejection.
 const REQUEST_TOO_LARGE_MESSAGE_PATTERNS = [
-  // Moonshot / Kimi: "Request exceeds the maximum size".
   /request exceeds the maximum size/,
-  // Reverse proxies (nginx-style HTML body): "413 Request Entity Too Large".
   /request entity too large/,
-  // Anthropic: error type `request_too_large`, message "Request exceeds the
-  // maximum allowed number of bytes".
   /request_too_large/,
   /exceeds? the maximum allowed number of bytes/,
-  // RFC 9110 reason phrase (both the pre-2022 and current names).
   /payload too large/,
   /content too large/,
-  // Plain wordings: generic gateways say "request too large"; Go's
-  // http.MaxBytesReader (common in Go proxies) says "request body too large".
   /request (?:body )?too large/,
 ] as const;
+
+const THINKING_EFFORT_CONFIG_DOCS_URL =
+  'https://moonshotai.github.io/kimi-code/en/configuration/config-files.html#thinking';
+
+const THINKING_EFFORT_STATUS_MESSAGE_PATTERNS = [
+  /reasoning[_ .-]?effort/,
+  /thinking[_ .-]?effort/,
+  /output_config[\s\S]*effort/,
+  /unsupported[\s\S]*effort/,
+  /invalid[\s\S]*effort/,
+] as const;
+
+function appendThinkingEffortConfigHint(statusCode: number, message: string): string {
+  if (statusCode !== 400 && statusCode !== 422) return message;
+  const lowerMessage = message.toLowerCase();
+  if (!THINKING_EFFORT_STATUS_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage))) {
+    return message;
+  }
+  if (message.includes(THINKING_EFFORT_CONFIG_DOCS_URL)) return message;
+  return `${message}
+
+The provider rejected the configured thinking effort. Non-Kimi providers receive effort strings without client-side mapping; choose an effort supported by the selected model. For Kimi models, check support_efforts and default_effort. See ${THINKING_EFFORT_CONFIG_DOCS_URL}`;
+}
 
 export function isContextOverflowErrorCode(code: string | null | undefined): boolean {
   return code === 'context_length_exceeded';
@@ -200,22 +228,39 @@ export function normalizeAPIStatusError(
   statusCode: number,
   message: string,
   requestId?: string | null,
+  retryAfterMs?: number | null,
 ): APIStatusError {
   if (statusCode === 429) {
-    return new APIProviderRateLimitError(message, requestId);
+    return new APIProviderRateLimitError(message, requestId, retryAfterMs);
   }
-  // Context overflow first: Vertex returns prompt-too-long as a 413, and a
-  // token overflow must keep routing to compaction even on that status.
   if (isContextOverflowStatusError(statusCode, message)) {
-    return new APIContextOverflowError(statusCode, message, requestId);
+    return new APIContextOverflowError(statusCode, message, requestId, retryAfterMs);
   }
   if (isRequestTooLargeStatusError(statusCode, message)) {
-    return new APIRequestTooLargeError(statusCode, message, requestId);
+    return new APIRequestTooLargeError(statusCode, message, requestId, retryAfterMs);
   }
   if (isProviderOverloadStatusError(statusCode, message)) {
-    return new APIProviderOverloadedError(statusCode, message, requestId);
+    return new APIProviderOverloadedError(statusCode, message, requestId, retryAfterMs);
   }
-  return new APIStatusError(statusCode, message, requestId);
+  return new APIStatusError(
+    statusCode,
+    appendThinkingEffortConfigHint(statusCode, message),
+    requestId,
+    retryAfterMs,
+  );
+}
+
+export function parseRetryAfterMs(headers: unknown): number | null {
+  const raw =
+    headers !== null &&
+    typeof headers === 'object' &&
+    typeof (headers as { get?: unknown }).get === 'function'
+      ? (headers as { get(name: string): string | null }).get('retry-after')
+      : null;
+  if (raw === null || raw === undefined) return null;
+  const seconds = Number.parseInt(raw, 10);
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  return seconds * 1000;
 }
 
 export function isContextOverflowStatusError(statusCode: number, message: string): boolean {
@@ -225,7 +270,6 @@ export function isContextOverflowStatusError(statusCode: number, message: string
 }
 
 export function isProviderOverloadStatusError(statusCode: number, message: string): boolean {
-  // 529 is Anthropic's dedicated overloaded status — always overload.
   if (statusCode === 529) return true;
   if (statusCode !== 500 && statusCode !== 503) return false;
   const lowerMessage = message.toLowerCase();

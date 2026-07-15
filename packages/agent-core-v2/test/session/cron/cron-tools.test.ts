@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import type { CronJobOrigin } from '@moonshot-ai/protocol';
+import type { CronJobOrigin } from '#/agent/contextMemory/types';
 
 import type {
   ExecutableTool,
   ExecutableToolResult,
   RunnableToolExecution,
   ToolExecution,
-} from '#/agent/tool/toolContract';
+} from '#/tool/toolContract';
 import type { CronTask, CronTaskInit } from '#/app/cron/cronTask';
 import type { ISessionCronService } from '#/session/cron/sessionCronService';
 import {

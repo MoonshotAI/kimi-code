@@ -1,6 +1,10 @@
 /**
  * file-type — magic-byte + extension detection. No npm dependency.
+ * Image dimensions are sniffed via the Rust native module when available,
+ * falling back to pure-TS parsing for PNG/JPEG/GIF/BMP/WebP/HEIC/etc.
  */
+
+import { tryNativeSniffImageDimensions, tryNativeDetectFileType } from '../builtin/native-tools';
 
 export const MEDIA_SNIFF_BYTES = 512;
 
@@ -261,6 +265,12 @@ export interface ImageDimensions {
 export function sniffImageDimensions(data: Buffer | Uint8Array): ImageDimensions | null {
   const buf = toBuffer(data);
 
+  // Try the Rust native codec first (PNG/JPEG/GIF/BMP/WebP/HEIC).
+  const native = tryNativeSniffImageDimensions(new Uint8Array(buf));
+  if (native) {
+    return { width: native.width, height: native.height, transposed: native.transposed };
+  }
+
   // PNG — IHDR is the first chunk; width/height are big-endian uint32
   // at offsets 16 and 20.
   if (startsWith(buf, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) && buf.length >= 24) {
@@ -399,6 +409,13 @@ export function detectFileType(
   header?: Buffer | Uint8Array,
   type: DetectFileTypeMode = 'text',
 ): FileType {
+  // Try Rust native detection first (extension + magic bytes).
+  if (header) {
+    const native = tryNativeDetectFileType(path, new Uint8Array(toBuffer(header)));
+    if (native) {
+      return { kind: native.kind, mimeType: native.mimeType };
+    }
+  }
   const suffix = getSuffix(path);
   let mediaHint: FileType | null = null;
   if (suffix in TEXT_MIME_BY_SUFFIX) {

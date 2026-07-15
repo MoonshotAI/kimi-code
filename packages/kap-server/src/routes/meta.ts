@@ -14,11 +14,10 @@
  * **No DI**: pure server-self info; the payload is frozen at registration time.
  */
 
-import { metaResponseSchema } from '@moonshot-ai/protocol';
-import type { MetaResponse } from '@moonshot-ai/protocol';
-
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
+import { metaResponseSchema } from '../protocol/rest-meta';
+import type { MetaResponse } from '../protocol/rest-meta';
 
 interface RouteHost {
   get(

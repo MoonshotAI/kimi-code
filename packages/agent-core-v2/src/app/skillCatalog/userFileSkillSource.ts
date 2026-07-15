@@ -69,6 +69,6 @@ registerScopedService(
   LifecycleScope.App,
   IUserFileSkillSource,
   UserFileSkillSource,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'skillCatalog',
 );

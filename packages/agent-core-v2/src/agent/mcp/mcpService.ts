@@ -5,36 +5,57 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
 
 import { Disposable, type IDisposable } from "#/_base/di/lifecycle";
+import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import { ErrorCodes, makeErrorPayload } from "#/errors";
-import type {
-  ErrorEvent,
-  McpServerStatusEvent,
-  ToolListUpdatedEvent,
-} from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
+import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMcpService } from '#/session/mcp/sessionMcp';
 import type { McpServerEntry } from './connection-manager';
-import { IAgentMcpService, type McpServiceOptions } from './mcp';
+import { IAgentMcpService } from './mcp';
 import { qualifyMcpToolName } from './tool-naming';
 import type { MCPClient, MCPToolDefinition } from './types';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import {
   McpDiscoveryModel,
   mcpToolsDiscovered,
   type McpToolCollision,
 } from './mcpDiscoveryOps';
 
+export interface ErrorEvent extends KimiErrorPayload {
+  readonly type: 'error';
+}
+
+export interface McpServerStatusPayload {
+  readonly name: string;
+  readonly transport: 'stdio' | 'http' | 'sse';
+  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+  readonly toolCount: number;
+  readonly error?: string;
+}
+
+export interface McpServerStatusEvent {
+  readonly type: 'mcp.server.status';
+  readonly server: McpServerStatusPayload;
+}
+
+export type ToolListUpdatedReason = 'mcp.connected' | 'mcp.disconnected' | 'mcp.failed';
+
+export interface ToolListUpdatedEvent {
+  readonly type: 'tool.list.updated';
+  readonly reason: ToolListUpdatedReason;
+  readonly serverName: string;
+}
+
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'mcp.server.status': McpServerStatusEvent;
     'tool.list.updated': ToolListUpdatedEvent;
-    // Canonical home of the shared `error` event (`IEventBus`); other domains
-    // (`turn`, `fullCompaction`) reuse it via interface-merge, not re-declared.
     error: ErrorEvent;
   }
 }
@@ -52,11 +73,12 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
   private discoveryWritesReady = false;
 
   constructor(
-    private readonly options: McpServiceOptions = {},
+    @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
+    @ISessionContext private readonly sessionContext: ISessionContext,
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
@@ -70,44 +92,48 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
         },
       ),
     );
-    this._register(this.wire.onRestored(() => this.flushPendingDiscoveries()));
-    this._register(this.wire.onEmission(() => this.flushPendingDiscoveries()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('mcp', async (_ctx, next) => {
+        this.flushPendingDiscoveries();
+        await next();
+      }),
+    );
   }
 
   get oauthService() {
-    return this.options.manager?.oauthService;
+    return this.sessionMcp.connectionManager().oauthService;
   }
 
   waitForInitialLoad(signal?: AbortSignal): Promise<void> {
-    return this.options.manager?.waitForInitialLoad(signal) ?? Promise.resolve();
+    return this.sessionMcp.connectionManager().waitForInitialLoad(signal);
   }
 
   initialLoadDurationMs(): number {
-    return this.options.manager?.initialLoadDurationMs() ?? 0;
+    return this.sessionMcp.connectionManager().initialLoadDurationMs();
   }
 
   list() {
-    return this.options.manager?.list() ?? [];
+    return this.sessionMcp.connectionManager().list();
   }
 
   resolved(name: string) {
-    return this.options.manager?.resolved(name);
+    return this.sessionMcp.connectionManager().resolved(name);
   }
 
   getRemoteServerUrl(name: string) {
-    return this.options.manager?.getRemoteServerUrl(name);
+    return this.sessionMcp.connectionManager().getRemoteServerUrl(name);
   }
 
   async reconnect(name: string, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
-    await this.options.manager?.reconnect(name);
+    await this.sessionMcp.connectionManager().reconnect(name);
     signal?.throwIfAborted();
   }
 
   onStatusChange(listener: Parameters<IAgentMcpService['onStatusChange']>[0]) {
-    const unsubscribe = this.options.manager?.onStatusChange(listener);
+    const unsubscribe = this.sessionMcp.connectionManager().onStatusChange(listener);
     return {
-      dispose: unsubscribe ?? (() => undefined),
+      dispose: unsubscribe,
     };
   }
 
@@ -239,7 +265,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
       const disposable = this._register(
         this.registry.register(
           createMcpTool(qualified, tool, client, {
-            originalsDir: this.options.originalsDir,
+            originalsDir: sessionMediaOriginalsDir(this.sessionContext.sessionDir),
             telemetry: this.telemetry,
           }),
           { source: 'mcp' },
@@ -331,6 +357,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentMcpService,
   AgentMcpService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'mcp',
 );

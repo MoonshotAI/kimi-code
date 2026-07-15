@@ -10,7 +10,7 @@ import {
   type ApprovalResponse,
 } from '#/session/approval/approval';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
-import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentPermissionGate } from '#/agent/permissionGate/permissionGate';
 import { AgentPermissionGate } from '#/agent/permissionGate/permissionGateService';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -34,7 +34,7 @@ import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceCo
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import { stubApprovalService } from '../../session/approval/stubs';
 import { stubPermissionModeService } from '../permissionMode/stubs';

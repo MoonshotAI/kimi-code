@@ -1,5 +1,5 @@
 import { IAgentPlanService, type IAgentPlanService as AgentPlanService } from '#/agent/plan/plan';
-import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type {
   PermissionPolicy,
   PermissionPolicyResult,

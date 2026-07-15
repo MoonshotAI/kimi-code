@@ -46,11 +46,6 @@ export type PlatformConfig = z.infer<typeof PlatformConfigSchema>;
 
 export const PLATFORMS_SECTION = 'platforms';
 
-/**
- * Sentinel used by the flat-Model path when no Platform is declared. Auth is
- * resolved from the Model itself (Model.apiKey / Model.oauth) rather than
- * from a Platform.
- */
 export const UNKNOWN_PLATFORM_KEY = '__unknown__';
 
 export const PlatformsSectionSchema = z.record(z.string(), PlatformConfigSchema);

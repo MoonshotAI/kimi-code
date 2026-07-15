@@ -38,10 +38,10 @@ import {
   IAgentPromptService,
   type PromptSubmitContext,
 } from '#/agent/prompt/prompt';
-import type { HookResultEvent, TurnEndedEvent } from '@moonshot-ai/protocol';
+import type { TurnEndedEvent } from '#/agent/loop/turnEvents';
 import { IEventBus } from '#/app/event/eventBus';
-import type { ExecutableToolResult } from '#/agent/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/tool/toolHooks';
+import type { ExecutableToolResult } from '#/tool/toolContract';
+import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { toKimiErrorPayload } from '#/errors';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
@@ -52,6 +52,14 @@ import {
   renderUserPromptHookBlockResult,
   renderUserPromptHookResult,
 } from './user-prompt';
+
+export interface HookResultEvent {
+  readonly type: 'hook.result';
+  readonly turnId?: number;
+  readonly hookEvent: string;
+  readonly content: string;
+  readonly blocked?: boolean;
+}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -81,10 +89,6 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
     matcherValue?: string,
     signal?: AbortSignal,
   ): void {
-    // Genuinely fire-and-forget: never throw on an already-aborted signal. A
-    // cancelled tool still finalizes its result (e.g. the "manually interrupted"
-    // output), and throwing here would clobber that with a finalize-abort error.
-    // The runner mirrors the legacy fire-and-forget behavior.
     try {
       void this.runner.fireAndForgetTrigger(event, {
         matcherValue,
@@ -182,9 +186,6 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
         if (
           ctx.finishReason === 'tool_calls' ||
           ctx.finishReason === 'filtered' ||
-          // The turn already continues on its own (a queued steer or
-          // orchestrator continuation), so a Stop-hook continuation would
-          // pile a redundant step onto it.
           loop.hasPendingRequests()
         ) {
           return;
@@ -192,9 +193,6 @@ export class AgentExternalHooksService extends Disposable implements IAgentExter
         const reason = await this.runStop(ctx);
         if (reason !== undefined) {
           this.stopHookContinuationUsed = true;
-          // The message lands immediately so it stays in history even when the
-          // turn dies before the next step (e.g. max-steps); the queued
-          // message-less request only drives the continuation step.
           this.context.append({
             role: 'user',
             content: [{ type: 'text', text: reason }],

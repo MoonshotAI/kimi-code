@@ -281,7 +281,9 @@ describe('Session lifecycle hooks', () => {
       homedir: sessionDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
-      background: { keepAliveOnExit: true, printWaitCeilingS: 1 },
+      // Sub-second ceiling: the deadline path is identical, but the test no
+      // longer waits a real second for the drain loop to time out.
+      background: { keepAliveOnExit: true, printWaitCeilingS: 0.05 },
     });
     const agent = await session.createMain();
     const { proc } = pendingProcess();
@@ -295,16 +297,42 @@ describe('Session lifecycle hooks', () => {
     await session.close();
   });
 
-  it('handlePrintMainTurnCompleted returns finish by default (exit mode)', async () => {
+  it('handlePrintMainTurnCompleted finishes immediately by default once quiescent (steer mode)', async () => {
     const { sessionDir, workDir } = await hookFixture();
     const session = new Session({
       kaos: testKaos.withCwd(workDir),
-      id: 'session-print-mode-exit',
+      id: 'session-print-mode-default',
       homedir: sessionDir,
       rpc: createSessionRpc(),
       skills: { explicitDirs: [join(workDir, 'missing-skills')] },
     });
     await session.createMain();
+
+    // Default mode is 'steer'; with no pending background tasks the run finishes.
+    await expect(session.handlePrintMainTurnCompleted()).resolves.toBe('finish');
+    await session.close();
+  });
+
+  it('handlePrintMainTurnCompleted defaults to steer: continue while a task is pending, then finish', async () => {
+    const { sessionDir, workDir } = await hookFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-print-mode-default-steer',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+    const agent = await session.createMain();
+    const { proc } = pendingProcess();
+    agent.background.registerTask(new ProcessBackgroundTask(proc, 'sleep 60', 'steer by default'));
+
+    // No background config at all: the print default is 'steer', so a pending
+    // task keeps the run alive.
+    await expect(session.handlePrintMainTurnCompleted()).resolves.toBe('continue');
+
+    await proc.kill('SIGTERM');
+    // Let the background manager observe the terminal status.
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     await expect(session.handlePrintMainTurnCompleted()).resolves.toBe('finish');
     await session.close();

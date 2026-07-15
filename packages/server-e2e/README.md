@@ -9,14 +9,14 @@ typed `DaemonClient` you can reuse in vitest e2e files.
 - You want to drive a real, running server process from a Node script and
   observe HTTP + WS behavior end to end.
 - You're writing a vitest e2e that covers server REST + WS lifecycle as a
-  whole — not a single in-process unit (those belong in `packages/server/test/`).
+  whole — not a single in-process unit (those belong in `packages/kap-server/test/`).
 - You need a reference for the wire shape of approval / question / events.
 
 ## When NOT to use this
 
 - You're testing the WS gateway in isolation — keep using
-  `packages/server/test/ws-*.e2e.test.ts` (in-process `startServer` boots are
-  faster and assert on the server's internal services directly).
+  `packages/kap-server/test/` in-process `startServer` boots (faster, and they
+  assert on the server's internal services directly).
 - You want a typed in-process facade over the server for user-facing code —
   use `@moonshot-ai/node-sdk` instead (`KimiHarness`, `Session`).
 
@@ -138,7 +138,7 @@ Override the namespace with `KIMI_SERVER_E2E_RUN_ID`, or override paths with
 | `EnvelopeError` | Thrown by `unwrap()` / HTTP helpers when `envelope.code !== 0`. |
 | `fetchWithReport` / `writeHtmlReport` | Capture direct fetch calls and render the JSONL trace as a single HTML report. |
 | `installReverseRpcHandler` | Uniform helper powering `onApprovalRequested` / `onQuestionAsked`. |
-| `waitForFrame` / `waitForSessionStatus` | Standalone wait helpers reused by scenarios. |
+| `waitForFrame` / `waitForSessionBusy` | Standalone wait helpers reused by scenarios. |
 
 See `scenarios/README.md` for the executable script catalog and conventions.
 

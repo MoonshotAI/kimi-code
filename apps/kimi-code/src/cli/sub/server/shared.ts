@@ -8,7 +8,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { ServerLogLevel } from '@moonshot-ai/server';
+import type { ServerLogLevel } from '@moonshot-ai/kap-server';
 
 import { t } from '#/i18n';
 

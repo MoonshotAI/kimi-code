@@ -3,15 +3,8 @@ import { parseHTML as rawParseHTML } from 'linkedom';
 
 import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../tools/fetch-url-types';
 
-// Readability's .d.ts references the global `Document` type, but this
-// package compiles with `lib: ES2023` (no DOM). Extracting the
-// constructor parameter type keeps us off the global `Document` name
-// while still accepting whatever Readability wants.
 type ReadabilityDocument = ConstructorParameters<typeof Readability>[0];
 
-// linkedom's published types depend on DOM libs we don't load. Declare
-// the minimal surface we actually use so the rest of the file stays
-// type-safe without pulling lib.dom.d.ts into the host build.
 interface DomElementLike {
   textContent: string | null;
   querySelector(selector: string): DomElementLike | null;
@@ -31,15 +24,6 @@ export interface LocalFetchURLProviderOptions {
   userAgent?: string;
   fetchImpl?: typeof fetch;
   maxBytes?: number;
-  /**
-   * Allow fetching loopback / RFC 1918 / link-local / ULA addresses.
-   * Defaults to `false` — enabled only for tests and explicit opt-in.
-   *
-   * Note: the guard below is a static string check against the URL host; it
-   * does not resolve DNS, so a hostname that resolves to a private address
-   * (DNS rebinding) is not blocked. Do not rely on this as a security boundary
-   * against a determined attacker.
-   */
   allowPrivateAddresses?: boolean;
 }
 
@@ -70,7 +54,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
 
     if (response.status >= 400) {
       await response.body?.cancel().catch(() => {
-        /* already closed */
       });
       throw new HttpFetchError(
         response.status,
@@ -120,7 +103,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
         }
       }
     } catch {
-      // Fall through to the container-based fallback.
     }
 
     const { document } = parseHTML(html);

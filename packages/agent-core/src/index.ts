@@ -10,6 +10,7 @@ export * from './plugin';
 export { buildReplay } from './agent/replay/build';
 export {
   flushDiagnosticLogs,
+  flushDiagnosticLogsSync,
   getRootLogger,
   log,
   redact,

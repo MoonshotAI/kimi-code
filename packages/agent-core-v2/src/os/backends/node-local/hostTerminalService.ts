@@ -49,7 +49,6 @@ export class HostTerminalService extends Disposable implements IHostTerminalServ
       try {
         process.kill();
       } catch {
-        // best-effort cleanup
       }
     }
     this.processes.clear();
@@ -61,6 +60,6 @@ registerScopedService(
   LifecycleScope.App,
   IHostTerminalService,
   HostTerminalService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'terminal',
 );

@@ -27,10 +27,7 @@
   ],
   "type": "module",
   "imports": {
-    "#/*": [
-      "./src/*.ts",
-      "./src/*/index.ts"
-    ]
+    "#/*": "./src/*.ts"
   },
   "exports": {
     ".": {
@@ -65,20 +62,17 @@
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-native-tools": "workspace:^",
     "@moonshot-ai/minidb": "workspace:^",
-    "@moonshot-ai/protocol": "workspace:^",
     "@mozilla/readability": "^0.6.0",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
     "chokidar": "^4.0.3",
     "ignore": "^5.3.2",
-    "jimp": "^1.6.1",
     "js-yaml": "^4.1.1",
     "linkedom": "^0.18.12",
     "node-pty": "^1.1.0",
     "nunjucks": "^3.2.4",
     "openai": "^6.34.0",
     "pathe": "^2.0.3",
-    "picomatch": "^4.0.4",
     "retry": "0.13.1",
     "smol-toml": "^1.6.1",
     "socks": "^2.8.9",
@@ -93,7 +87,6 @@
     "@dagrejs/dagre": "^1.1.4",
     "@types/js-yaml": "^4.0.9",
     "@types/nunjucks": "^3.2.6",
-    "@types/picomatch": "^4.0.3",
     "@types/react": "^19.1.2",
     "@types/react-dom": "^19.1.2",
     "@types/retry": "0.12.0",

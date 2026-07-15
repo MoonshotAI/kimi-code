@@ -23,14 +23,6 @@ export interface SessionMeta {
   readonly [k: string]: unknown;
 }
 
-/** `session:status` result. The server may add new states; keep it open. */
-export type SessionActivityStatus =
-  | 'idle'
-  | 'running'
-  | 'awaiting_approval'
-  | 'awaiting_question'
-  | (string & {});
-
 /** Workspace record as returned by `workspaces:*`. */
 export interface WorkspaceInfo {
   readonly id: string;
@@ -98,8 +90,6 @@ export interface SessionResourcePrecise {
   update(arg?: unknown): Promise<SessionMeta>;
   setTitle(arg?: string): Promise<null>;
   setArchived(arg?: boolean): Promise<null>;
-  status(arg?: unknown): Promise<SessionActivityStatus>;
-  isIdle(arg?: unknown): Promise<boolean>;
   archive(arg?: unknown): Promise<null>;
 }
 

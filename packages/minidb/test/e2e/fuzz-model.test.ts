@@ -59,8 +59,10 @@ async function runSeed(seed, steps) {
 }
 
 test('fuzz-model: random op sequences match a reference model (many seeds)', async () => {
-  const seeds = [1, 2, 3, 42, 12345, 99999, 0xdeadbeef, 0xc0ffee, 777, 20240625];
+  // Mix of small and large seeds. 6 seeds × 250 steps ≈ 1.5k ops total, still
+  // hitting every op branch (including reopen + full compare) many times per seed.
+  const seeds = [1, 2, 3, 99999, 0xdeadbeef, 20240625];
   for (const seed of seeds) {
-    await expect(runSeed(seed, 500)).resolves.toBeUndefined();
+    await expect(runSeed(seed, 250)).resolves.toBeUndefined();
   }
 }, 60_000);

@@ -11,14 +11,15 @@
  * render, the stale reminder, the compaction summary) can trust the Model
  * without re-validating. Consumed cross-scope by the Session-scope
  * `SessionTodoService`: it dispatches to the MAIN agent's wire (the single
- * source of truth and replayable timeline) and, on `wire.onRestored`, reads the
- * rebuilt Model back from that same wire. The Ops register into the global
- * `OP_REGISTRY` at import time, so they are in place before the main agent
- * replays.
+ * source of truth and replayable timeline), and `getTodos` reads the rebuilt
+ * Model back from that same wire after restore. The Ops register into the
+ * global `OP_REGISTRY` at import time, so they are in place before the main
+ * agent restores.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 import { readTodoItems, type TodoItem } from './todoItem';
 
@@ -26,12 +27,13 @@ export type TodoModelState = readonly TodoItem[];
 
 export const TodoModel = defineModel<TodoModelState>('todo', () => []);
 
-export interface ToolStoreUpdatePayload {
-  readonly key: string;
-  readonly value: unknown;
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'tools.update_store': typeof todoSet;
+  }
 }
 
-export const todoSet = defineOp(TodoModel, 'tools.update_store', {
-  apply: (s, p: ToolStoreUpdatePayload): TodoModelState =>
-    p.key === 'todo' ? readTodoItems(p.value) : s,
+export const todoSet = TodoModel.defineOp('tools.update_store', {
+  schema: z.object({ key: z.string(), value: z.unknown() }),
+  apply: (s, p) => (p.key === 'todo' ? readTodoItems(p.value) : s),
 });

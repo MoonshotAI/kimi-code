@@ -1,9 +1,4 @@
 // apps/kimi-web/src/types.ts
-import type { AppSessionStatus } from './api/types';
-
-/** Real session lifecycle status (5 states), surfaced verbatim to the UI so the
-    list can distinguish awaiting / aborted instead of collapsing to running|idle. */
-export type SessionStatus = AppSessionStatus;
 
 /** File content loaded for preview (text or base64-encoded binary). */
 export interface FileData {
@@ -28,12 +23,16 @@ export interface Session {
   id: string;
   title: string;
   time: string;
-  status: SessionStatus;
-  /** True only when the session should show a "working" spinner: it is
-      `running` AND has a real task in flight. Awaiting-input and aborted are
-      NOT busy, so the spinner no longer spins while the session waits on the
-      user. (Distinct from `status`, which is the lifecycle label.) */
+  /** True while the session shows a "working" indicator — the unified
+      condition shared by the sidebar spinner, the chat moon, and the Stop
+      button: a prompt submitted but not yet terminated, or a main turn in
+      flight. Background tasks and subagent turns do NOT set it. */
   busy: boolean;
+  /** List-level fallback for action-required badges on unopened sessions. */
+  pendingInteraction?: 'none' | 'approval' | 'question';
+  /** Main agent's latest turn outcome — drives the "aborted" tag when the
+      session is quiet and the last turn was cancelled/failed. */
+  lastTurnReason?: 'completed' | 'cancelled' | 'failed';
   /** ISO timestamp for recency-based filtering (e.g. default visible sessions). */
   updatedAt?: string;
   /** Text of the most recent user prompt, used by sidebar search. */
@@ -231,6 +230,18 @@ export type TurnBlock =
   | { kind: 'thinking'; thinking: string }
   | { kind: 'tool'; tool: ToolCall };
 
+/** One attachment on a user turn: an uploaded file, image or video. Images
+    and pasted media carry no name; the chip falls back to a generic label.
+    `url` is browser-loadable (a data URL, or the authed file URL). */
+export interface TurnAttachment {
+  kind: 'image' | 'video' | 'file';
+  url: string;
+  fileId?: string;
+  name?: string;
+  mediaType?: string;
+  size?: number;
+}
+
 export interface ChatTurn {
   id: string;
   role: TurnRole;
@@ -244,8 +255,9 @@ export interface ChatTurn {
   blocks?: TurnBlock[];
   approval?: ApprovalBlock;
   approvalId?: string; // daemon approval id — present when approval needs a decision
-  /** Image attachments sent by the user (rendered above the text bubble). */
-  images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[];
+  /** Attachments sent by the user — files, images and videos, rendered as a
+      chip row above the text bubble. */
+  attachments?: TurnAttachment[];
   /** Compaction divider data (role 'compaction'): the transcript keeps all
       prior turns and renders this as a separator line; `text` holds the
       LLM-generated summary, opened in the right-side panel on click. */
@@ -322,10 +334,11 @@ export interface ActivationBadges {
 /** A queued prompt as shown inline at the tail of the transcript. */
 export interface QueuedPromptView {
   text: string;
-  /** Number of image attachments waiting with this prompt. */
+  /** Number of attachments waiting with this prompt. */
   attachmentCount: number;
-  /** Image/video attachments waiting with this prompt, with resolved URLs for thumbnails. */
-  attachments?: { fileId: string; kind: 'image' | 'video'; url: string }[];
+  /** Attachments waiting with this prompt, with resolved URLs for thumbnails
+      (file attachments render an icon chip, no thumbnail). */
+  attachments?: { fileId: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[];
 }
 
 /** Horizontal alignment of the conversation reading column within the pane. */

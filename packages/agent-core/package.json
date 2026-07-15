@@ -27,10 +27,23 @@
   ],
   "type": "module",
   "imports": {
-    "#/*": [
-      "./src/*.ts",
-      "./src/*/index.ts"
-    ]
+    "#/agent": "./src/agent/index.ts",
+    "#/agent/background": "./src/agent/background/index.ts",
+    "#/agent/compaction": "./src/agent/compaction/index.ts",
+    "#/agent/config": "./src/agent/config/index.ts",
+    "#/agent/context": "./src/agent/context/index.ts",
+    "#/agent/cron": "./src/agent/cron/index.ts",
+    "#/agent/goal": "./src/agent/goal/index.ts",
+    "#/agent/permission": "./src/agent/permission/index.ts",
+    "#/agent/plan": "./src/agent/plan/index.ts",
+    "#/agent/swarm": "./src/agent/swarm/index.ts",
+    "#/agent/tool": "./src/agent/tool/index.ts",
+    "#/config": "./src/config/index.ts",
+    "#/flags": "./src/flags/index.ts",
+    "#/loop": "./src/loop/index.ts",
+    "#/rpc": "./src/rpc/index.ts",
+    "#/session": "./src/session/index.ts",
+    "#/*": "./src/*.ts"
   },
   "exports": {
     ".": {
@@ -59,7 +72,6 @@
   },
   "dependencies": {
     "@antfu/utils": "^9.3.0",
-    "@jsquash/webp": "^1.5.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@moonshot-ai/kaos": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
@@ -71,14 +83,12 @@
     "ajv-formats": "^3.0.1",
     "chokidar": "^4.0.3",
     "ignore": "^5.3.2",
-    "jimp": "^1.6.1",
     "js-yaml": "^4.1.1",
     "linkedom": "^0.18.12",
     "node-pty": "^1.1.0",
     "nunjucks": "^3.2.4",
     "open": "^10.2.0",
     "pathe": "^2.0.3",
-    "picomatch": "^4.0.4",
     "proper-lockfile": "^4.1.2",
     "regexp.escape": "^2.0.1",
     "retry": "0.13.1",
@@ -93,7 +103,6 @@
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",
     "@types/nunjucks": "^3.2.6",
-    "@types/picomatch": "^4.0.3",
     "@types/proper-lockfile": "^4.1.4",
     "@types/regexp.escape": "^2.0.0",
     "@types/retry": "0.12.0",

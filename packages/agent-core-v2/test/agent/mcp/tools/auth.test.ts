@@ -1,9 +1,9 @@
-import { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '@moonshot-ai/protocol';
+import { MCP_OAUTH_AUTHORIZATION_URL_TOOL_UPDATE } from '#/agent/mcp/tools/auth';
 import { describe, expect, it } from 'vitest';
 
 import { AlreadyAuthorizedError, type BeginAuthorizationResult, type McpOAuthService } from '#/agent/mcp/oauth/service';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
-import type { ToolUpdate } from '#/agent/tool/toolContract';
+import type { ToolUpdate } from '#/tool/toolContract';
 
 import { executeTool } from '../stubs';
 

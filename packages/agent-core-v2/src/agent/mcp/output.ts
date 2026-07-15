@@ -30,33 +30,24 @@
 import type { ContentPart } from '#/app/llmProtocol/message';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
-import { compressImageContentParts } from '#/_base/tools/support/image-compress';
-import { persistOriginalImage } from '#/_base/tools/support/image-originals';
+import { compressImageContentParts } from '#/agent/media/image-compress';
+import {
+  buildUnsupportedImageNotice,
+  isModelAcceptedImageMime,
+} from '#/agent/media/image-format-policy';
+import { persistOriginalImage } from '#/agent/media/image-originals';
 import type { MCPContentBlock, MCPToolResult } from './types';
 
 export interface McpOutputOptions {
-  /**
-   * Session-owned directory for pre-compression originals (typically
-   * `sessionMediaOriginalsDir(sessionDir)` threaded down from the agent).
-   * Falls back to the shared temp-dir cache when absent.
-   */
   readonly originalsDir?: string;
   readonly telemetry?: ITelemetryService;
 }
 
-// MCP servers can produce arbitrarily large outputs; cap what we feed back to
-// the model so a single chatty server does not blow up the context window. The
-// notice text is fed to the model verbatim so it can react (e.g. paginate),
-// which is why the limits live in the agent layer rather than in kosong.
 export const MCP_MAX_OUTPUT_CHARS = 100_000;
 const MCP_OUTPUT_TRUNCATED_TEXT = `\n\n[Output truncated: exceeded ${String(
   MCP_MAX_OUTPUT_CHARS,
 )} character limit. Use pagination or more specific queries to get remaining content.]`;
 
-// Binary parts (image_url / audio_url / video_url) have an independent per-part
-// byte cap and do NOT share the text character budget. base64 length is not a
-// useful proxy for multimodal model cost, and a single screenshot is enough to
-// evict every text part if both compete for the same 100k budget.
 export const MCP_MAX_BINARY_PART_BYTES = 10 * 1024 * 1024;
 const MCP_MAX_BINARY_PART_CHARS = Math.ceil((MCP_MAX_BINARY_PART_BYTES * 4) / 3);
 
@@ -66,12 +57,6 @@ function binaryPartTooLargeNotice(kind: 'image' | 'audio' | 'video', urlLength: 
   return `[${kind}_url dropped: ~${approxMb} MB exceeds ${capMb} MB per-part limit. Try a smaller resource.]`;
 }
 
-/**
- * Convert a single MCP content block into a kosong {@link ContentPart}.
- *
- * Returns `null` for block types that cannot be represented (e.g. unknown
- * resource shapes) so the caller can drop them.
- */
 export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | null {
   if (block.type === 'text' && typeof block.text === 'string') {
     return { type: 'text', text: block.text };
@@ -93,8 +78,6 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
     };
   }
 
-  // EmbeddedResource: payload is nested under `resource`, as
-  // TextResourceContents (`text`) or BlobResourceContents (`blob`).
   if (block.type === 'resource' && typeof block.resource === 'object' && block.resource !== null) {
     const res = block.resource;
     if (typeof res.text === 'string') {
@@ -125,10 +108,12 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
     return null;
   }
 
-  // ResourceLink: URL reference, not an inline blob.
   if (block.type === 'resource_link' && typeof block.uri === 'string') {
     const mimeType = block.mimeType ?? 'application/octet-stream';
     if (mimeType.startsWith('image/')) {
+      if (!isModelAcceptedImageMime(mimeType)) {
+        return { type: 'text', text: buildUnsupportedImageNotice(mimeType, block.uri) };
+      }
       return { type: 'image_url', imageUrl: { url: block.uri } };
     }
     if (mimeType.startsWith('audio/')) {
@@ -143,14 +128,6 @@ export function convertMCPContentBlock(block: MCPContentBlock): ContentPart | nu
   return null;
 }
 
-/**
- * Convert an `MCPToolResult` into the success-shape `ExecutableToolResult`
- * output the agent loop expects.
- *
- * `qualifiedToolName` is the agent-side qualified name (e.g.
- * `mcp__github__create_pr`) — embedded into the `<mcp_tool_result name="…">`
- * wrap when the result is media-only, so the model can attribute binary parts.
- */
 export async function mcpResultToExecutableOutput(
   result: MCPToolResult,
   qualifiedToolName: string,
@@ -170,18 +147,7 @@ export async function mcpResultToExecutableOutput(
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);
-  // Text budget FIRST, on the tool's own text only: captions inserted by the
-  // compression step below must never compete with a chatty tool's text for
-  // the budget — an evicted or mid-string-sliced caption silently
-  // reintroduces the downsampling this pipeline promises to announce.
   const budgeted = applyTextBudget(wrapped);
-  // Shrink oversized images BEFORE the per-part byte cap, so a large but
-  // compressible screenshot is downsampled and kept rather than dropped to a
-  // text notice. Compression is never silent: each re-encoded image gains a
-  // caption stating what the original was, and the original bytes are
-  // persisted (best effort, into the session's media-originals dir when
-  // known) so the model can read detail back via ReadMediaFile + region.
-  // Parts that cannot be compressed pass through.
   const compressed = await compressImageContentParts(budgeted.parts, {
     telemetry:
       options.telemetry === undefined
@@ -208,11 +174,6 @@ export async function mcpResultToExecutableOutput(
   };
 }
 
-/**
- * If `parts` contains media but no non-empty text, surround it with
- * `<mcp_tool_result name="…">` text tags so the model can attribute the
- * binary content. Returns the input untouched otherwise.
- */
 function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string): ContentPart[] {
   const hasMedia = parts.some(
     (p) => p.type === 'image_url' || p.type === 'audio_url' || p.type === 'video_url',
@@ -226,16 +187,6 @@ function wrapMediaOnly(parts: readonly ContentPart[], qualifiedToolName: string)
   ];
 }
 
-/**
- * Apply the 100K text/think budget. Runs before image compression, so only
- * the tool's own text is charged — compression captions inserted afterwards
- * are exempt by construction. Binary parts pass through untouched (their
- * independent per-part cap is {@link applyBinaryPartCap}).
- *
- * When text/think parts get truncated, the truncation notice is appended to
- * the last surviving text part — this keeps the single-text-part collapse
- * working when the entire (oversized) input is a single text block.
- */
 function applyTextBudget(parts: readonly ContentPart[]): {
   readonly parts: ContentPart[];
   readonly truncated: boolean;
@@ -287,13 +238,6 @@ function applyTextBudget(parts: readonly ContentPart[]): {
   return { parts: out, truncated };
 }
 
-/**
- * Apply the per-part 10 MB binary cap, independent of the text character
- * budget. Oversized parts collapse into a per-part notice so the model can
- * pick a smaller resource instead of silently losing the blob. Runs after
- * image compression, so a large but compressible image has already been
- * shrunk under the cap.
- */
 function applyBinaryPartCap(parts: readonly ContentPart[]): {
   readonly parts: ContentPart[];
   readonly truncated: boolean;
@@ -327,9 +271,6 @@ function applyBinaryPartCap(parts: readonly ContentPart[]): {
 }
 
 function appendTruncationNotice(out: ContentPart[]): void {
-  // Merge the notice into the last text part so the very common
-  // "single oversized text" case still collapses to a plain string. Falls
-  // back to a standalone notice part if there is no text part to merge with.
   for (let i = out.length - 1; i >= 0; i--) {
     const candidate = out[i];
     if (candidate?.type === 'text') {

@@ -1,15 +1,14 @@
 /**
- * `LegacyStatus` — kap-server-layer derived model that re-derives the v1-style
+ * `LegacyStatus` — kap-server-layer projection of the v1-style
  * combined `agent.status.updated` payload from the agent's native v2 services.
  *
  * v1 emits a single `agent.status.updated` carrying usage + contextTokens +
  * maxContextTokens + model together. v2 splits those into independent Models /
  * Ops (`usage.record`, `context_size.measured`, `config.update` …), so the
  * partial events reach clients separately and a usage-only event can overwrite
- * a previously-known contextTokens with a stale zero. This derived model
- * watches the status-affecting Ops and, on each, re-reads the authoritative
- * services and emits a fresh combined event so the edge always has a real,
- * consistent context-window value to forward.
+ * a previously-known contextTokens with a stale zero. The v1 edge re-reads the
+ * authoritative services when a native status or context change arrives, so it
+ * always forwards a real, consistent context-window value.
  *
  * Temporary bridge while the v2 wire contract still exposes the slices
  * separately — defined at the kap-server edge rather than in agent-core-v2 so
@@ -17,38 +16,84 @@
  */
 
 import {
+  IAgentContextSizeService,
   IAgentProfileService,
   IAgentUsageService,
-  IAgentWireService,
-  defineDerivedModel,
+  IWireService,
   type IAgentScopeHandle,
   type UsageStatus,
 } from '@moonshot-ai/agent-core-v2';
 import { ContextSizeModel } from '@moonshot-ai/agent-core-v2';
-import type {
-  AgentActivitySnapshot,
-  AgentPhase,
-} from '@moonshot-ai/agent-core-v2';
-
-interface LegacyStatusState {
-  /** Monotonic change counter — only used to fan change notifications out. */
-  readonly version: number;
-}
+import type { AgentActivityState } from '@moonshot-ai/agent-core-v2';
+import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 
 /**
- * Reacts to the Ops that can change the status line. The state itself carries
- * no business data; the handler re-reads the authoritative services on every
- * bump so the emitted snapshot is always consistent with the live Models.
+ * The v1 `phase` field of the combined `agent.status.updated` payload — a
+ * v1-only concept with no producer on the v2 side (v2's native status events
+ * never carry it), so it is defined here at the v1 edge that projects it.
  */
-export const LegacyStatusModel = defineDerivedModel<LegacyStatusState>(
-  'legacyStatus',
-  () => ({ version: 0 }),
-  {
-    'usage.record': (s) => ({ version: s.version + 1 }),
-    'context_size.measured': (s) => ({ version: s.version + 1 }),
-    'config.update': (s) => ({ version: s.version + 1 }),
-  },
-);
+export type AgentPhase =
+  | { readonly kind: 'idle' }
+  | {
+      readonly kind: 'running';
+      readonly turnId: number;
+      readonly step: number;
+      readonly stepId: string;
+      readonly since: number;
+    }
+  | {
+      readonly kind: 'streaming';
+      readonly turnId: number;
+      readonly step: number;
+      readonly stepId: string;
+      readonly stream: 'assistant' | 'thinking' | 'tool_call';
+      readonly toolCallId?: string;
+      readonly toolName?: string;
+      readonly since: number;
+    }
+  | {
+      readonly kind: 'tool_call';
+      readonly turnId: number;
+      readonly step: number;
+      readonly toolCallId: string;
+      readonly name: string;
+      readonly since: number;
+    }
+  | {
+      readonly kind: 'retrying';
+      readonly turnId: number;
+      readonly step: number;
+      readonly stepId: string;
+      readonly failedAttempt: number;
+      readonly nextAttempt: number;
+      readonly maxAttempts: number;
+      readonly delayMs: number;
+      readonly errorName?: string;
+      readonly statusCode?: number;
+      readonly since: number;
+    }
+  | {
+      readonly kind: 'awaiting_approval';
+      readonly turnId: number;
+      readonly step?: number;
+      readonly approval?: unknown;
+      readonly since: number;
+    }
+  | {
+      readonly kind: 'interrupted';
+      readonly turnId: number;
+      readonly step?: number;
+      readonly reason: 'aborted' | 'max_steps' | 'error';
+      readonly message?: string;
+      readonly at: number;
+    }
+  | {
+      readonly kind: 'ended';
+      readonly turnId: number;
+      readonly reason: TurnEndReason;
+      readonly durationMs?: number;
+      readonly at: number;
+    };
 
 export interface LegacyStatusSnapshot {
   readonly usage?: UsageStatus;
@@ -57,22 +102,48 @@ export interface LegacyStatusSnapshot {
   readonly model: string;
 }
 
-/** Read the current combined status from the agent's authoritative services. */
-export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot {
-  const profile = agent.accessor.get(IAgentProfileService);
-  const usage = agent.accessor.get(IAgentUsageService).status();
-  const contextTokens = agent.accessor.get(IAgentWireService).getModel(ContextSizeModel).tokens;
+/** Read the current combined status when the handle exposes a complete agent. */
+export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot | undefined {
+  const profile = agent.accessor.get(IAgentProfileService) as
+    | IAgentProfileService
+    | undefined;
+  const usageService = agent.accessor.get(IAgentUsageService) as
+    | IAgentUsageService
+    | undefined;
+  const contextSize = agent.accessor.get(IAgentContextSizeService) as
+    | IAgentContextSizeService
+    | undefined;
+  const wire = agent.accessor.get(IWireService) as IWireService | undefined;
+  if (
+    profile === undefined ||
+    usageService === undefined ||
+    contextSize === undefined ||
+    wire === undefined
+  ) {
+    return undefined;
+  }
+  const usage = usageService.status();
+  // Live (measured + estimated) context size — mirrors the REST status rollup
+  // (`ISessionLegacyService.status`) and v1's `context.tokenCount`, which
+  // reflect the context even before the first measured exchange completes.
+  // `size` alone can transiently dip below the last measured total while a
+  // post-step fold/rewrite leaves the context shorter than the measured
+  // prefix (the estimate then excludes the system prompt); the measured total
+  // is the better reading there. Every REAL shrink (undo / clear / compaction)
+  // rebases the measured model first, so the max only wins in that window.
+  const measured = wire.getModel(ContextSizeModel);
+  const contextTokens = Math.max(contextSize.get().size, measured.tokens);
   const maxContextTokens = profile.getModelCapabilities().max_context_tokens;
   const model = profile.getModel();
   return { usage, contextTokens, maxContextTokens, model };
 }
 
 /**
- * Map the native v2 `AgentActivitySnapshot` to the legacy v1 `AgentPhase`
+ * Map the native v2 `AgentActivityState` to the legacy v1 `AgentPhase`
  * (`agent.status.updated` payload). Pure function — kept at the kap-server
  * edge so the core engine stays free of v1 wire-compatibility concerns.
  *
- * Returns `undefined` for `disposing` / `disposed` lanes, which have no v1
+ * Returns `undefined` for `disposing` / `disposed`, which have no v1
  * concept (emitting `idle` would mislead the UI).
  *
  * Three deliberate v1 divergences from the naive mapping (see status-refactor
@@ -80,11 +151,11 @@ export function readLegacyStatus(agent: IAgentScopeHandle): LegacyStatusSnapshot
  * approval is still pending (no premature `running`); `interrupted` carries the
  * `endingReason`; `disposing`/`disposed` emit nothing.
  */
-export function toLegacyPhase(snapshot: AgentActivitySnapshot): AgentPhase | undefined {
-  const { lane, turn, lastTurn } = snapshot;
+export function toLegacyPhase(state: AgentActivityState): AgentPhase | undefined {
+  const { lifecycle, turn, lastTurn } = state;
 
-  if (lane === 'idle' || lane === 'initializing') {
-    if (lastTurn !== undefined && lane === 'idle') {
+  if (turn === undefined && lifecycle === 'ready') {
+    if (lastTurn !== undefined && lifecycle === 'ready') {
       return {
         kind: 'ended',
         turnId: lastTurn.turnId,
@@ -96,7 +167,7 @@ export function toLegacyPhase(snapshot: AgentActivitySnapshot): AgentPhase | und
     return { kind: 'idle' };
   }
 
-  if (lane === 'turn' && turn !== undefined) {
+  if (lifecycle === 'ready' && turn !== undefined) {
     if (turn.pendingApprovals.length > 0) {
       const latest = turn.pendingApprovals[turn.pendingApprovals.length - 1]!;
       return {

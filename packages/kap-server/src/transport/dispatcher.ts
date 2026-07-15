@@ -7,6 +7,7 @@
 
 import {
   ErrorCodes,
+  IAgentGoalService,
   IAgentLifecycleService,
   ISessionLifecycleService,
   Error2,
@@ -51,7 +52,7 @@ export async function resolveScope(
         throw new Error2(ErrorCodes.SESSION_NOT_FOUND, `session ${sessionId} not found`);
       }
       if (agentId === MAIN_AGENT_ID) return ensureMainAgent(session);
-      const agent = session.accessor.get(IAgentLifecycleService).getHandle(agentId);
+      const agent = session.accessor.get(IAgentLifecycleService).get(agentId);
       if (agent === undefined) {
         throw new Error2(
           ErrorCodes.AGENT_NOT_FOUND,
@@ -84,6 +85,17 @@ export async function resolveService(
   const id = resolveChannel(serviceName);
   if (id === undefined) {
     throw new Error2(ErrorCodes.REQUEST_INVALID, `unknown service: ${serviceName}`);
+  }
+  if (
+    scopeKind === 'agent' &&
+    id === IAgentGoalService &&
+    params['agent_id'] !== MAIN_AGENT_ID
+  ) {
+    throw new Error2(
+      ErrorCodes.GOAL_UNSUPPORTED_AGENT,
+      'Goals are only supported by the main agent',
+      { details: { agentId: params['agent_id'] ?? '' } },
+    );
   }
   try {
     return scope.accessor.get(id) as object;

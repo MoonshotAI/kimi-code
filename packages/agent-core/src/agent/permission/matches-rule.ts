@@ -1,4 +1,4 @@
-import picomatch from 'picomatch';
+import { tryNativeGlobMatch } from '../../tools/support/native-glob-match';
 
 import type { RunnableToolExecution } from '../../loop/types';
 import type { PermissionRule } from './types';
@@ -84,7 +84,7 @@ export function matchPermissionRule({
     return undefined;
   }
 
-  if (parsed.toolName !== '*' && !picomatch.isMatch(toolName, parsed.toolName)) {
+  if (parsed.toolName !== '*' && !tryNativeGlobMatch(toolName, parsed.toolName)) {
     return undefined;
   }
 

@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore } from '#/_base/di/lifecycle';
@@ -10,10 +11,10 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService, PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from './stubs';
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -28,19 +29,23 @@ const KEY = 'store-event-test';
 const CounterModel = defineModel('store-event.counter', () => ({ value: 0 }));
 const OtherModel = defineModel('store-event.other', () => ({ value: 0 }));
 
-const addWithEvent = defineOp(CounterModel, 'store-event.counter.add', {
-  apply: (s, p: { by: number }) => ({ value: s.value + p.by }),
+const addWithEvent = CounterModel.defineOp('store-event.counter.add', {
+  schema: z.object({ by: z.number() }),
+  apply: (s, p) => ({ value: s.value + p.by }),
   toEvent: (_p, state) => ({ type: 'store-event.added' as const, value: state.value }),
 });
-const addNoEvent = defineOp(CounterModel, 'store-event.counter.addNoEvent', {
-  apply: (s, p: { by: number }) => ({ value: s.value + p.by }),
+const addNoEvent = CounterModel.defineOp('store-event.counter.addNoEvent', {
+  schema: z.object({ by: z.number() }),
+  apply: (s, p) => ({ value: s.value + p.by }),
 });
-const addUndefinedEvent = defineOp(CounterModel, 'store-event.counter.addUndef', {
-  apply: (s, p: { by: number }) => ({ value: s.value + p.by }),
+const addUndefinedEvent = CounterModel.defineOp('store-event.counter.addUndef', {
+  schema: z.object({ by: z.number() }),
+  apply: (s, p) => ({ value: s.value + p.by }),
   toEvent: () => undefined,
 });
-const otherSet = defineOp(OtherModel, 'store-event.other.set', {
-  apply: (_s, p: { value: number }) => ({ value: p.value }),
+const otherSet = OtherModel.defineOp('store-event.other.set', {
+  schema: z.object({ value: z.number() }),
+  apply: (_s, p) => ({ value: p.value }),
   toEvent: (p) => ({ type: 'store-event.otherSet' as const, value: p.value }),
 });
 
@@ -59,12 +64,17 @@ function setup(logKey: string): {
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey }]));
+  const log = ix.get(IAppendLogStore);
+  const eventBus = ix.get(IEventBus);
+  const wire = registerTestAgentWire(ix, testWireScope(SCOPE, logKey), {
+    log,
+    eventBus,
+  });
   return {
     ix,
-    log: ix.get(IAppendLogStore),
-    eventBus: ix.get(IEventBus),
-    wire: ix.get(IAgentWireService),
+    log,
+    eventBus,
+    wire,
   };
 }
 
@@ -78,9 +88,9 @@ afterEach(() => disposables.dispose());
 async function readRecords(
   target: IAppendLogStore = log,
   key = KEY,
-): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of target.read<PersistedRecord>(SCOPE, key)) {
+): Promise<WireRecord[]> {
+  const out: WireRecord[] = [];
+  for await (const record of target.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -125,7 +135,12 @@ describe('WireService Op.toEvent', () => {
     const seen: DomainEvent[] = [];
     disposables.add(replay.eventBus.subscribe((e) => seen.push(e)));
 
-    await replay.wire.replay(...records);
+    await restoreTestAgentWire(
+      replay.wire,
+      replay.log,
+      testWireScope(SCOPE, 'replay'),
+      records,
+    );
 
     expect(replay.wire.getModel(CounterModel)).toEqual({ value: 4 });
     expect(seen).toEqual([]);

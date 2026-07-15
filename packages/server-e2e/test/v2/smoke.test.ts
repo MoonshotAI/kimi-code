@@ -16,7 +16,6 @@ import { join } from 'node:path';
 import {
   ensureMainAgent,
   IAgentRPCService,
-  ISessionActivity,
   ISessionIndex,
   ISessionLifecycleService,
   ISessionMetadata,
@@ -98,10 +97,6 @@ describe('Klient (server-v2 smoke)', () => {
     await s.service(ISessionMetadata).setTitle('renamed');
     const after = await s.service(ISessionMetadata).read();
     expect(after.title).toBe('renamed');
-
-    // `status()` is sync in the shared interface but async over the wire.
-    const status = await Promise.resolve(s.service(ISessionActivity).status());
-    expect(['idle', 'running', 'awaiting_approval', 'awaiting_question']).toContain(status);
 
     await s.service(ISessionLifecycleService).archive(sid);
   });

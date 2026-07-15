@@ -8,12 +8,11 @@
  * untouched — the common case is a fast, codec-free pass-through.
  *
  * Design notes:
- *  - Pure JS (jimp + a wasm WebP decoder), imported lazily so the codecs are
- *    only paid for when an image actually needs work; startup and the fast
- *    path stay cheap.
+ *  - Rust native codec (image crate) handles the full decode→resize→encode
+ *    pipeline 10–100× faster than pure JS alternatives.
  *  - Best effort: any decode/encode failure returns the original bytes
- *    unchanged (`changed: false`), so a compression problem never blocks a
- *    prompt. Callers simply send the original instead.
+ *    unchanged (`changed: false`). Callers must verify that this unchanged
+ *    result satisfies their delivery limits before forwarding it.
  *  - PNG, JPEG, and (non-animated) WebP are re-encoded; WebP re-encodes
  *    through the PNG/JPEG ladder, so only its decoder wasm ships. GIF and
  *    animated WebP are passed through to preserve animation. Formats outside
@@ -48,7 +47,7 @@ import {
   resolveEffectiveImageMime,
   unsupportedImageMimeFromUrl,
 } from './image-format-policy';
-import { decodeWebp, isAnimatedWebp } from './webp-decode';
+import { isAnimatedWebp } from './webp-animated';
 import {
   tryNativeCompressImage,
   tryNativeCropImage,
@@ -205,7 +204,7 @@ const MAX_DECODE_PIXELS = 100_000_000;
  * This bounds that input allocation. Set well above legitimate
  * screenshots/photos; larger images pass through uncompressed.
  */
-const MAX_DECODE_BYTES = 64 * 1024 * 1024;
+export const MAX_IMAGE_DECODE_BYTES = 64 * 1024 * 1024;
 
 /** Formats we can decode and re-encode. WebP decodes via the bundled wasm
  * codec and re-encodes through the PNG/JPEG ladder (animated WebP is gated
@@ -291,7 +290,7 @@ export async function compressImageForModel(
   const startedAt = Date.now();
   const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
-  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
+  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_IMAGE_DECODE_BYTES;
   const normalizedMime = normalizeImageMime(mimeType);
   const dims = sniffImageDimensions(bytes);
 
@@ -370,55 +369,8 @@ export async function compressImageForModel(
     }
   }
 
-  // Native unavailable or returned null — fall back to jimp pipeline.
-  try {
-    const image = await decodeToJimp(bytes, normalizedMime);
-    // WebP joins PNG on the lossless-first ladder: both carry alpha and
-    // screenshot-grade detail that the PNG rungs preserve.
-    const preferLossless = normalizedMime !== 'image/jpeg';
-    // The decoded bitmap is authoritative for the original size: jimp
-    // applies EXIF orientation while decoding, and this is the coordinate
-    // space the encoded result and any later crop region (see
-    // cropImageForModel, which decodes the same way) actually live in. The
-    // header sniff also reports display space, but can miss formats or
-    // nonconforming EXIF that the decoder still handles.
-    const decodedWidth = image.width;
-    const decodedHeight = image.height;
-
-    // Scale so the longest edge fits maxEdge (never enlarges).
-    fitWithinEdge(image, maxEdge);
-
-    const encoded = await encodeWithinBudget(image, {
-      preferLossless,
-      byteBudget,
-      fallbackEdges: FALLBACK_EDGES_PX,
-    });
-
-    // Keep the result when it actually helps: fewer bytes, or fewer pixels
-    // (a smaller image costs fewer vision tokens even if the byte count is
-    // flat, as with near-solid graphics). Otherwise the re-encode bought us
-    // nothing — send the original.
-    const originalPixels = decodedWidth * decodedHeight;
-    const finalPixels = encoded.width * encoded.height;
-    const shrankBytes = encoded.data.length < bytes.length;
-    const shrankPixels = finalPixels < originalPixels;
-    if (!shrankBytes && !shrankPixels) return finish('passthrough_unhelpful', passthrough());
-
-    return finish('compressed', {
-      data: encoded.data,
-      mimeType: encoded.mimeType,
-      width: encoded.width,
-      height: encoded.height,
-      originalWidth: decodedWidth,
-      originalHeight: decodedHeight,
-      changed: true,
-      originalByteLength: bytes.length,
-      finalByteLength: encoded.data.length,
-    });
-  } catch {
-    // Decode/encode failure — keep the original bytes.
-    return finish('passthrough_error', passthrough());
-  }
+  // Native unavailable — passthrough the original image.
+  return finish('passthrough_unhelpful', passthrough());
 }
 
 export interface CompressBase64Result {
@@ -458,7 +410,7 @@ export async function compressBase64ForModel(
   // length, so a payload whose decoded size would exceed the cap is passed
   // through without the Buffer.from allocation (and without touching Jimp).
   const startedAt = Date.now();
-  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
+  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_IMAGE_DECODE_BYTES;
   const approxBytes = Math.floor((base64.length * 3) / 4);
   if (approxBytes > maxDecodeBytes) {
     const result: CompressBase64Result = {
@@ -773,7 +725,7 @@ export async function cropImageForModel(
   const startedAt = Date.now();
   const maxEdge = options.maxEdge ?? resolveMaxImageEdgePx();
   const byteBudget = options.byteBudget ?? IMAGE_BYTE_BUDGET;
-  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_DECODE_BYTES;
+  const maxDecodeBytes = options.maxDecodeBytes ?? MAX_IMAGE_DECODE_BYTES;
   const normalizedMime = normalizeImageMime(mimeType);
 
   const fail = (errorKind: CropErrorKind, error: string): CropImageFailure => {
@@ -861,85 +813,8 @@ export async function cropImageForModel(
     });
   }
 
-  // Native unavailable or returned null — fall back to jimp pipeline.
-  try {
-    const image = await decodeToJimp(bytes, normalizedMime);
-    const originalWidth = image.width;
-    const originalHeight = image.height;
-
-    const x = Math.floor(region.x);
-    const y = Math.floor(region.y);
-    if (x < 0 || y < 0 || x >= originalWidth || y >= originalHeight || region.width < 1 || region.height < 1) {
-      return fail(
-        'out_of_bounds',
-        `Region (x=${String(region.x)}, y=${String(region.y)}, width=${String(region.width)}, ` +
-          `height=${String(region.height)}) lies outside the ${String(originalWidth)}x${String(originalHeight)} image.`,
-      );
-    }
-    const w = Math.min(Math.floor(region.width), originalWidth - x);
-    const h = Math.min(Math.floor(region.height), originalHeight - y);
-    const applied: ImageCropRegion = { x, y, width: w, height: h };
-    image.crop({ x, y, w, h });
-    // WebP joins PNG on the lossless side: both carry alpha and
-    // screenshot-grade detail that PNG output preserves.
-    const preferLossless = normalizedMime !== 'image/jpeg';
-
-    if (options.skipResize === true) {
-      // Native resolution requested: encode once, favoring fidelity (lossless
-      // PNG, or high-quality JPEG), and refuse rather than degrade when the
-      // result cannot fit the byte budget.
-      const buffer = preferLossless
-        ? await image.getBuffer('image/png', { deflateLevel: 9 })
-        : await image.getBuffer('image/jpeg', { quality: 90 });
-      if (buffer.length > byteBudget) {
-        return fail(
-          'budget',
-          `The cropped region encodes to ${String(buffer.length)} bytes ` +
-            `(${formatByteSize(buffer.length)}), over the ${String(byteBudget)}-byte ` +
-            `(${formatByteSize(byteBudget)}) per-image limit. ` +
-            'Choose a smaller region, or allow downscaling.',
-        );
-      }
-      return succeed({
-        ok: true,
-        data: new Uint8Array(buffer),
-        mimeType: preferLossless ? 'image/png' : 'image/jpeg',
-        width: image.width,
-        height: image.height,
-        originalWidth,
-        originalHeight,
-        region: applied,
-        resized: false,
-        originalByteLength: bytes.length,
-        finalByteLength: buffer.length,
-      });
-    }
-
-    fitWithinEdge(image, maxEdge);
-    const encoded = await encodeWithinBudget(image, {
-      preferLossless,
-      byteBudget,
-      fallbackEdges: FALLBACK_EDGES_PX,
-    });
-    return succeed({
-      ok: true,
-      data: new Uint8Array(encoded.data),
-      mimeType: encoded.mimeType,
-      width: encoded.width,
-      height: encoded.height,
-      originalWidth,
-      originalHeight,
-      region: applied,
-      resized: encoded.width !== w || encoded.height !== h,
-      originalByteLength: bytes.length,
-      finalByteLength: encoded.data.length,
-    });
-  } catch (error) {
-    return fail(
-      'decode_failed',
-      `Failed to decode the image for cropping: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  // Native unavailable — return failure.
+  return fail('decode_failed', 'Image codec not available; native module is required for image operations.');
 }
 
 // ── compression caption ──────────────────────────────────────────────
@@ -1046,149 +921,6 @@ export function formatByteSize(bytes: number): string {
   if (bytes < 1024) return `${String(bytes)} B`;
   if (bytes < 1024 * 1024) return `${String(Math.round(bytes / 1024))} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-// ── internals ────────────────────────────────────────────────────────
-
-/** The concrete jimp image instance type, derived from the lazily-loaded module. */
-type JimpImage = Awaited<ReturnType<(typeof import('jimp'))['Jimp']['fromBuffer']>>;
-
-interface EncodedImage {
-  readonly data: Buffer;
-  readonly mimeType: string;
-  readonly width: number;
-  readonly height: number;
-}
-
-interface EncodeOptions {
-  /** Lossless-first (PNG rungs before JPEG): PNG and WebP sources, which
-   * carry alpha and screenshot-grade detail. JPEG sources skip straight to
-   * the quality ladder — their detail is already lossy. */
-  readonly preferLossless: boolean;
-  readonly byteBudget: number;
-  readonly fallbackEdges: readonly number[];
-}
-
-/**
- * Decode `bytes` into a jimp image. PNG/JPEG decode through jimp itself
- * (which applies EXIF orientation); WebP decodes through the bundled wasm
- * codec and enters jimp as a raw RGBA bitmap (WebP carries no EXIF-style
- * orientation, so the decoded pixels are already display space).
- */
-async function decodeToJimp(bytes: Uint8Array, normalizedMime: string): Promise<JimpImage> {
-  const { Jimp } = await import('jimp');
-  if (normalizedMime === 'image/webp') {
-    const decoded = await decodeWebp(bytes);
-    return Jimp.fromBitmap({
-      data: Buffer.from(decoded.data.buffer, decoded.data.byteOffset, decoded.data.byteLength),
-      width: decoded.width,
-      height: decoded.height,
-    });
-  }
-  return Jimp.fromBuffer(Buffer.from(bytes));
-}
-
-/**
- * Encode `image` (already fitted to the edge ceiling) under the byte budget.
- *
- * Strategy — prefer the source format so a downscaled screenshot stays lossless
- * PNG (preserving text and transparency), and only fall back to lossy JPEG when
- * PNG cannot meet the byte budget:
- *  - PNG source: PNG at the fitted size → smaller PNG rescales down to the
- *    {@link PNG_RESCALE_FLOOR_PX} floor → JPEG ladder at that size → JPEG
- *    ladder again at each sub-floor edge.
- *  - JPEG source: the full quality ladder at the fitted size, then again at
- *    each fallback edge — a smaller rescale must not skip the high-quality
- *    rungs its extra pixels just paid for.
- *
- * The sub-floor edges make the ladder converge for small (read-scale)
- * budgets: any budget of a few tens of KB is met by q20 at 256px even for
- * entropy-upper-bound content. Below that, the smallest buffer produced is
- * still returned — the caller gates on whether it actually helped.
- */
-async function encodeWithinBudget(image: JimpImage, opts: EncodeOptions): Promise<EncodedImage> {
-  const { preferLossless, byteBudget, fallbackEdges } = opts;
-  let smallest: EncodedImage | null = null;
-
-  const consider = (data: Buffer, mimeType: string): EncodedImage => {
-    const candidate: EncodedImage = { data, mimeType, width: image.width, height: image.height };
-    if (smallest === null || candidate.data.length < smallest.data.length) {
-      smallest = candidate;
-    }
-    return candidate;
-  };
-
-  const jpegLadder = async (): Promise<EncodedImage | null> => {
-    for (const quality of JPEG_QUALITY_STEPS) {
-      const jpeg = await image.getBuffer('image/jpeg', { quality });
-      if (jpeg.length <= byteBudget) return consider(jpeg, 'image/jpeg');
-      consider(jpeg, 'image/jpeg');
-    }
-    return null;
-  };
-
-  if (preferLossless) {
-    // Lossless PNG first: best for screenshots/UI (sharp text) and keeps alpha.
-    const png = await image.getBuffer('image/png', { deflateLevel: 9 });
-    if (png.length <= byteBudget) return consider(png, 'image/png');
-    consider(png, 'image/png');
-
-    // Over budget: progressively smaller PNGs (down to the floor) before
-    // going lossy.
-    for (const edge of fallbackEdges) {
-      if (edge < PNG_RESCALE_FLOOR_PX) break;
-      if (!fitWithinEdge(image, edge)) continue;
-      const smallerPng = await image.getBuffer('image/png', { deflateLevel: 9 });
-      if (smallerPng.length <= byteBudget) return consider(smallerPng, 'image/png');
-      consider(smallerPng, 'image/png');
-    }
-
-    // Lossy JPEG ladder (drops transparency) at the floored size, then at
-    // each sub-floor edge until the budget is met.
-    const atFloor = await jpegLadder();
-    if (atFloor !== null) return atFloor;
-    for (const edge of fallbackEdges) {
-      if (edge >= PNG_RESCALE_FLOOR_PX) continue;
-      if (!fitWithinEdge(image, edge)) continue;
-      const atEdge = await jpegLadder();
-      if (atEdge !== null) return atEdge;
-    }
-    return smallest!;
-  }
-
-  // JPEG source: quality ladder at the fitted size, then the full ladder
-  // again at each fallback rescale.
-  const atFitted = await jpegLadder();
-  if (atFitted !== null) return atFitted;
-  for (const edge of fallbackEdges) {
-    if (!fitWithinEdge(image, edge)) continue;
-    const atEdge = await jpegLadder();
-    if (atEdge !== null) return atEdge;
-  }
-
-  return smallest!;
-}
-
-/**
- * Scale `image` so its longest edge is at most `edge`, preserving aspect
- * ratio. No-op (returns false) when the image already fits.
- *
- * Deliberately passes no `mode`: without one, jimp's default resizer
- * downscales with a full-coverage area average (every source pixel
- * contributes to the output), which does not alias. The named
- * ResizeStrategy modes (BILINEAR, BICUBIC, …) switch to point-sampled
- * interpolation that skips source pixels beyond ~2x reduction and produces
- * moiré on text and fine patterns — do not "upgrade" this call to one.
- */
-function fitWithinEdge(image: JimpImage, edge: number): boolean {
-  const longest = Math.max(image.width, image.height);
-  if (longest <= edge) return false;
-  const factor = edge / longest;
-  image.resize({
-    w: Math.max(1, Math.round(image.width * factor)),
-    h: Math.max(1, Math.round(image.height * factor)),
-  });
-  return true;
 }
 
 // ── telemetry ────────────────────────────────────────────────────────

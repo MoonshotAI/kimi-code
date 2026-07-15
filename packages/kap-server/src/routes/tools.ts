@@ -54,19 +54,18 @@ import {
   type ToolInfo,
   type ToolSource,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  ErrorCode,
-  listMcpServersResponseSchema,
-  listToolsQuerySchema,
-  listToolsResponseSchema,
-  restartMcpServerResultSchema,
-  type McpServer,
-  type ToolDescriptor,
-} from '@moonshot-ai/protocol';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
+import { ErrorCode } from '../protocol/error-codes';
+import {
+  listMcpServersResponseSchema,
+  listToolsQuerySchema,
+  listToolsResponseSchema,
+  restartMcpServerResultSchema,
+} from '../protocol/rest-tool';
+import type { McpServer, ToolDescriptor } from '../protocol/tool';
 import { parseActionSuffix } from './action-suffix';
 
 /** v2 MCP tool-name prefix / separator (see `mcp/tool-naming.ts`). */

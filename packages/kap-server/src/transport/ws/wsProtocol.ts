@@ -5,7 +5,8 @@
  * JSON message protocol. Every request carries a client-chosen `id`; the server
  * correlates responses / events by that id. This is the lean counterpart of
  * VSCode's framed `IMessagePassingProtocol`, carrying the same safety features
- * (request ids, cancellation, heartbeats, schema validation, cleanup).
+ * (request ids, cancellation, schema validation, cleanup). There is no
+ * heartbeat: the server never pings and never terminates an idle connection.
  */
 
 import { z } from 'zod';
@@ -54,10 +55,6 @@ const unlistenMessageSchema = z.object({
   id: z.string().min(1),
 });
 
-const pongMessageSchema = z.object({
-  type: z.literal('pong'),
-});
-
 export const clientMessageSchema = z.discriminatedUnion('type', [
   helloMessageSchema,
   callMessageSchema,
@@ -65,7 +62,6 @@ export const clientMessageSchema = z.discriminatedUnion('type', [
   listenMessageSchema,
   eventResultMessageSchema,
   unlistenMessageSchema,
-  pongMessageSchema,
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
@@ -76,7 +72,6 @@ export type ListenMessage = z.infer<typeof listenMessageSchema>;
 
 export interface ReadyMessage {
   readonly type: 'ready';
-  readonly heartbeatMs: number;
 }
 
 export interface ResultMessage {
@@ -110,15 +105,10 @@ export interface EventCancelMessage {
   readonly eventId: string;
 }
 
-export interface PingMessage {
-  readonly type: 'ping';
-}
-
 export type ServerMessage =
   | ReadyMessage
   | ResultMessage
   | ErrorMessage
   | ListenResultMessage
   | EventMessage
-  | EventCancelMessage
-  | PingMessage;
+  | EventCancelMessage;

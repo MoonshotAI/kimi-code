@@ -21,8 +21,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IEventBus } from '#/app/event/eventBus';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import SWARM_MODE_ENTER_REMINDER from './enter-reminder.md?raw';
 import SWARM_MODE_EXIT_REMINDER from './exit-reminder.md?raw';
 import { IAgentSwarmService, type SwarmModeTrigger } from './swarm';
@@ -32,7 +31,7 @@ export class AgentSwarmService extends Disposable implements IAgentSwarmService 
   declare readonly _serviceBrand: undefined;
 
   constructor(
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IEventBus private readonly eventBus: IEventBus,
@@ -96,6 +95,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentSwarmService,
   AgentSwarmService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'swarm',
 );

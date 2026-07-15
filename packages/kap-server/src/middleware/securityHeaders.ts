@@ -9,8 +9,17 @@
  * Headers:
  *   - `X-Content-Type-Options: nosniff` — stop MIME sniffing.
  *   - `Referrer-Policy: no-referrer` — never leak the URL to third parties.
- *   - `Content-Security-Policy: default-src 'self'` — the bundled Web UI is
- *     same-origin, so `'self'` covers it; tighten later if needed.
+ *   - `Content-Security-Policy` — the bundled Web UI is same-origin, so
+ *     `default-src 'self'` covers scripts, styles, and connections.
+ *     `img-src` additionally allows `data:` (persisted base64 images) and
+ *     `blob:` (local attachment previews, authenticated media — #1672);
+ *     `font-src` additionally allows `data:` (KaTeX and the Inter /
+ *     JetBrains Mono Variable fonts ship `@font-face` data URIs in their
+ *     distributed CSS). `form-action`, `base-uri`, and `frame-ancestors`
+ *     do NOT fall back to `default-src`, so they are set explicitly.
+ *     Invariant: the served bundle must contain no inline scripts (guarded
+ *     by a kimi-web test), so plain `script-src` falling back to
+ *     `default-src 'self'` suffices.
  *   - `Strict-Transport-Security` — ONLY when `opts.tls === true`. In this
  *     phase TLS is terminated by a reverse proxy (Caddy/nginx), so `start.ts`
  *     passes `tls: false` and HSTS is omitted here; the proxy is responsible
@@ -25,6 +34,8 @@ export interface SecurityHeadersOptions {
 }
 
 const HSTS_VALUE = 'max-age=31536000';
+const CONTENT_SECURITY_POLICY =
+  "default-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'self'";
 
 /**
  * Build the `onSend` hook. Returns the payload unchanged so Fastify continues
@@ -36,7 +47,7 @@ export function createSecurityHeadersHook(
   return async (_req, reply, payload) => {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'no-referrer');
-    reply.header('Content-Security-Policy', "default-src 'self'");
+    reply.header('Content-Security-Policy', CONTENT_SECURITY_POLICY);
     if (opts.tls === true) {
       reply.header('Strict-Transport-Security', HSTS_VALUE);
     }

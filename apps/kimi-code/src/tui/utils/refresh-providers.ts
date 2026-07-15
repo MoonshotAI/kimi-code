@@ -17,6 +17,8 @@ export interface RefreshProviderHost {
   removeProvider(providerId: string): Promise<KimiConfig>;
   setConfig(patch: KimiConfigPatch): Promise<KimiConfig>;
   resolveOAuthToken(providerName: string, oauthRef?: OAuthRef): Promise<string>;
+  /** Product User-Agent sent on custom-registry (api.json) fetches. */
+  readonly userAgent?: string;
 }
 
 export type { ProviderChange, RefreshProviderOptions, RefreshProviderScope, RefreshResult };
@@ -37,6 +39,7 @@ export async function refreshAllProviderModels(
       setConfig: (patch) => host.setConfig(patch as unknown as KimiConfigPatch),
       resolveOAuthToken: (providerName, oauthRef) =>
         host.resolveOAuthToken(providerName, oauthRef as unknown as OAuthRef),
+      userAgent: host.userAgent,
     },
     options,
   );

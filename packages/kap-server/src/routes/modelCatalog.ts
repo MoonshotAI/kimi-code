@@ -12,7 +12,7 @@
  *   POST /providers:refresh_oauth      — refresh OAuth-backed provider models
  *   POST /providers/{tail} (:refresh)  — refresh a single provider by id
  *
- * **Wire fidelity**: reuses `@moonshot-ai/protocol`'s catalog schemas and the
+ * **Wire fidelity**: reuses agent-core-v2's catalog schemas and the local
  * numeric `ErrorCode` envelope verbatim, so the response shape and error codes
  * (`40412` provider-not-found, `40413` model-not-found, `40001` validation) are
  * byte-for-byte compatible with v1's `routes/modelCatalog.ts`. The v2 domain
@@ -28,17 +28,19 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  ErrorCode,
-  getProviderResponseSchema,
-  listModelsResponseSchema,
-  listProvidersResponseSchema,
   refreshProviderModelsResponseSchema,
   setDefaultModelResponseSchema,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
+import {
+  getProviderResponseSchema,
+  listModelsResponseSchema,
+  listProvidersResponseSchema,
+} from '../protocol/rest-modelCatalog';
 import { parseActionSuffix } from './action-suffix';
 
 interface ModelCatalogRouteHost {

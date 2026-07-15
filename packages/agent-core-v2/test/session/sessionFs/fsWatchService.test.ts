@@ -17,10 +17,9 @@ import {
   IHostFsWatchService,
 } from '#/os/interface/hostFsWatch';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
-import type { FsChangeEvent } from '@moonshot-ai/protocol';
+import type { FsChangeEvent } from '#/session/sessionFs/fsWatch';
 
 import { ISessionFsWatchService } from '#/session/sessionFs/fsWatch';
-// Imported for its scoped-registration side effect.
 import { SessionFsWatchService } from '#/session/sessionFs/fsWatchService';
 
 const WORK_DIR = '/repo';
@@ -176,7 +175,6 @@ describe('SessionFsWatchService', () => {
   it('filters out `.gitignore`d paths once loaded', async () => {
     const { svc, watch, events } = makeSession('dist/\n');
     svc.setWatchedPaths(['.']);
-    // Let the async `.gitignore` load (Promise.then) land on the matcher.
     await Promise.resolve();
     await Promise.resolve();
 

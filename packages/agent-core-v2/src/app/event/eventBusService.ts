@@ -6,7 +6,7 @@
  * emitter for `subscribe(type, handler)`, so a type with no subscribers costs
  * nothing on `publish`. `publish` fires the full stream first, then the
  * per-type emitter (if any), preserving producer order within a single
- * synchronous dispatch. Bound at App scope as a `Delayed` singleton; the
+ * synchronous dispatch. Bound at Agent scope as an `Eager` singleton; the
  * companion `IEventService` (`./eventService`) stays registered until Phase 3.
  */
 
@@ -54,6 +54,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IEventBus,
   EventBusService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'event',
 );

@@ -22,6 +22,7 @@ import { MODEL_CATALOG_SECTION } from '#/app/modelCatalog/configSection';
 import { IModelCatalogService } from '#/app/modelCatalog/modelCatalog';
 import { ModelCatalogService } from '#/app/modelCatalog/modelCatalogService';
 import { IModelService, type ModelAlias } from '#/app/model/model';
+import { HostRequestHeaders, IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
 import { ModelService } from '#/app/model/modelService';
 import { IProviderService, type ProviderConfig } from '#/app/provider/provider';
 import { ProviderService } from '#/app/provider/providerService';
@@ -118,6 +119,10 @@ describe('ModelCatalogService', () => {
         reg.define(IModelService, ModelService);
         reg.define(IProviderService, ProviderService);
         reg.define(IModelCatalogService, ModelCatalogService);
+        reg.defineInstance(
+          IHostRequestHeaders,
+          new HostRequestHeaders({ 'User-Agent': 'kimi-code-cli/test' }),
+        );
       },
     });
   });
@@ -152,6 +157,68 @@ describe('ModelCatalogService', () => {
         max_context_size: 128000,
       },
     ]);
+  });
+
+  it('projects support_efforts and default_effort from the model config', async () => {
+    backing.models['k2'] = {
+      ...backing.models['k2'],
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+    };
+    const [k2] = await catalog().listModels();
+    expect(k2).toMatchObject({
+      model: 'k2',
+      support_efforts: ['low', 'high', 'max'],
+      default_effort: 'max',
+    });
+  });
+
+  it('projects official Anthropic effort metadata inferred from the model name', async () => {
+    backing.providers['anthropic'] = { type: 'anthropic' };
+    backing.models['opus'] = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-6',
+      maxContextSize: 200000,
+    };
+
+    const opus = (await catalog().listModels()).find((model) => model.model === 'opus');
+    expect(opus).toMatchObject({
+      capabilities: ['thinking'],
+      support_efforts: ['low', 'medium', 'high', 'max'],
+      default_effort: 'high',
+    });
+  });
+
+  it('projects latest Opus efforts for unknown Kimi-managed Anthropic models', async () => {
+    backing.models['compatible'] = {
+      provider: 'kimi',
+      protocol: 'anthropic',
+      model: 'compatible-model',
+      maxContextSize: 128000,
+    };
+
+    const compatible = (await catalog().listModels()).find(
+      (model) => model.model === 'compatible',
+    );
+    expect(compatible).toMatchObject({
+      capabilities: ['thinking'],
+      support_efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      default_effort: 'high',
+    });
+  });
+
+  it('projects effort fields from overrides when present', async () => {
+    backing.models['k2'] = {
+      ...backing.models['k2'],
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'high',
+      overrides: { supportEfforts: ['low', 'high', 'max'], defaultEffort: 'max' },
+    };
+    const [k2] = await catalog().listModels();
+    expect(k2).toMatchObject({
+      support_efforts: ['low', 'high', 'max'],
+      default_effort: 'max',
+    });
   });
 
   it('lists providers with per-provider models, default model, and credential state', async () => {
@@ -233,7 +300,6 @@ describe('ModelCatalogService', () => {
   });
 
   it('registers and validates the modelCatalog config section', () => {
-    // Constructing the service registers the section as a side effect.
     catalog();
     const registry = ix.get(IConfigRegistry);
     expect(registry.getSection(MODEL_CATALOG_SECTION)).toBeDefined();
@@ -261,16 +327,12 @@ describe('ModelCatalogService', () => {
   });
 
   it('refreshProviderModels returns an empty result and stays silent when nothing is refreshable', async () => {
-    // `kimi` (api_key) and `openai` are plain API-key providers with no
-    // server-side catalog endpoint, so the orchestrator has nothing to refresh.
     const result = await catalog().refreshProviderModels({ scope: 'all' });
     expect(result).toEqual({ changed: [], unchanged: [], failed: [] });
     expect(publishEvent).not.toHaveBeenCalled();
   });
 
   it('serializes concurrent refreshProviderModels runs so they never overlap', async () => {
-    // Seed the managed OAuth provider so the orchestrator actually refreshes it
-    // (a plain api-key provider is a no-op and would not exercise the chain).
     backing.providers = {
       [KIMI_CODE_PROVIDER_NAME]: {
         type: 'kimi',
@@ -309,9 +371,46 @@ describe('ModelCatalogService', () => {
       catalog().refreshProviderModels({ scope: 'all' }),
     ]);
 
-    // Without the refresh chain both remote fetches would overlap (peak 2); the
-    // chain holds the second run until the first finishes, so the peak stays 1.
     expect(maxInFlight).toBe(1);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshProviderModels sends the host User-Agent on custom-registry fetches', async () => {
+    backing.providers = {
+      acme: {
+        type: 'openai',
+        apiKey: 'sk-acme',
+        source: {
+          kind: 'apiJson',
+          url: 'https://registry.example.test/api.json',
+          apiKey: 'sk-registry',
+        },
+      },
+    };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            acme: {
+              id: 'acme',
+              name: 'Acme',
+              api: 'https://acme.example.test/v1',
+              type: 'openai',
+              models: { m1: { id: 'm1', name: 'M1' } },
+            },
+          }),
+          { headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await catalog().refreshProviderModels({ scope: 'all' });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://registry.example.test/api.json',
+      expect.objectContaining({
+        headers: expect.objectContaining({ 'User-Agent': 'kimi-code-cli/test' }),
+      }),
+    );
   });
 });

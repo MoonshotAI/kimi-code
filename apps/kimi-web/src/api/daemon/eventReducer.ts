@@ -15,6 +15,8 @@ import type {
   AppGoal,
   AppMessage,
   AppMessageContent,
+  AppNotice,
+  AppNoticeDetail,
   AppWarning,
   AppQuestionRequest,
   AppSession,
@@ -30,6 +32,12 @@ const OPTIMISTIC_USER_MESSAGE_METADATA_KEY = 'kimiWeb.optimisticUserMessage';
  *  tasks, whose stdout can be noisy and unbounded. Subagent progress is kept
  *  in full (small synthesized lines). */
 const MAX_BACKGROUND_OUTPUT_LINES = 40;
+
+/** Skeleton description used by `patchSubagent` in agentEventProjector.ts when
+ *  a lifecycle event re-projects a subagent the projector never saw spawn
+ *  (e.g. after a page refresh, where the snapshot roster — not the WS stream —
+ *  carried the real description). */
+const PLACEHOLDER_SUBAGENT_DESCRIPTION = 'Sub Agent';
 
 // ---------------------------------------------------------------------------
 // State
@@ -55,7 +63,16 @@ export interface KimiClientState {
   questionsBySession: Record<string, AppQuestionRequest[]>;
   tasksBySession: Record<string, AppTask[]>;
   goalBySession: Record<string, AppGoal>;
+  /** Monotonic per-session counter bumped on EVERY `goalUpdated` event —
+   *  including delete/clear ones — so an async recovery read can detect that a
+   *  live event won the race even when the goal entry stayed absent. */
+  goalVersionBySession: Record<string, number>;
   lastSeqBySession: Record<string, number>;
+  /** MAIN-agent turn in flight, per session — set from the main agent's
+   *  turn.started/turn.ended boundary events and seeded from the snapshot's
+   *  (main-only) inFlightTurn. Half of the working moon; subagent turns never
+   *  reach the events that set this. */
+  turnActiveBySession: Record<string, boolean>;
   compactionBySession: Record<string, CompactionStatus>;
   config?: AppConfig | null;
   warnings: AppWarning[];
@@ -71,7 +88,9 @@ export function createInitialState(): KimiClientState {
     questionsBySession: {},
     tasksBySession: {},
     goalBySession: {},
+    goalVersionBySession: {},
     lastSeqBySession: {},
+    turnActiveBySession: {},
     compactionBySession: {},
     warnings: [],
   };
@@ -97,7 +116,9 @@ function cloneState(s: KimiClientState): KimiClientState {
     questionsBySession: { ...s.questionsBySession },
     tasksBySession: { ...s.tasksBySession },
     goalBySession: { ...s.goalBySession },
+    goalVersionBySession: { ...s.goalVersionBySession },
     lastSeqBySession: { ...s.lastSeqBySession },
+    turnActiveBySession: { ...s.turnActiveBySession },
     compactionBySession: { ...s.compactionBySession },
     warnings: [...s.warnings],
   };
@@ -217,6 +238,64 @@ function appendToolOutputToMessages(messages: AppMessage[], toolCallId: string, 
 // Reducer
 // ---------------------------------------------------------------------------
 
+/** Agent error code → semantic title key under `warnings.agentError`. Codes
+ *  come from the protocol error domain (agent-core-v2 `ProtocolErrors`);
+ *  anything unmapped falls back to the generic `title`. */
+const AGENT_ERROR_TITLE_KEYS: Readonly<Record<string, string>> = {
+  'provider.connection_error': 'connection',
+  'provider.auth_error': 'auth',
+  'provider.rate_limit': 'rateLimit',
+  'provider.overloaded': 'overloaded',
+  'provider.filtered': 'filtered',
+  'provider.api_error': 'api',
+  'context.overflow': 'contextOverflow',
+};
+
+interface AgentErrorRaw {
+  code?: string;
+  message?: string;
+  name?: string;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Build the structured error notice for a failed agent turn (typically a
+ * model-provider failure). The wire payload already carries the coded error —
+ * surface it in full so a rate-limit / auth / endpoint failure is diagnosable
+ * from the toast: semantic title, the provider's raw message as the body, and
+ * a diagnostics list (error code, HTTP status, request id, SDK error name,
+ * plus any extra detail fields such as finishReason).
+ */
+function buildAgentErrorNotice(raw: AgentErrorRaw): AppNotice {
+  const t = i18n.global.t;
+  const details: AppNoticeDetail[] = [];
+  const push = (label: string, value: unknown): void => {
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      details.push({ label, value: String(value) });
+    } else if (typeof value === 'string' && value.length > 0) {
+      details.push({ label, value });
+    }
+  };
+  push(t('warnings.details.code'), raw.code);
+  const rawDetails = raw.details ?? {};
+  push(t('warnings.details.status'), rawDetails['statusCode']);
+  push(t('warnings.details.requestId'), rawDetails['requestId']);
+  push(t('warnings.details.errorName'), raw.name);
+  // Keep any remaining detail fields (finishReason, rawFinishReason, …) so no
+  // diagnostics the daemon sent are hidden.
+  for (const [key, value] of Object.entries(rawDetails)) {
+    if (key === 'statusCode' || key === 'requestId') continue;
+    push(key, value);
+  }
+  const titleKey = (raw.code !== undefined ? AGENT_ERROR_TITLE_KEYS[raw.code] : undefined) ?? 'title';
+  return {
+    severity: 'error',
+    title: t(`warnings.agentError.${titleKey}`),
+    message: raw.message,
+    details: details.length > 0 ? details : undefined,
+  };
+}
+
 /**
  * Apply a single AppEvent to the state, returning a new state object.
  * The event carries `_wireSeq` and `_wireSessionId` as hidden extras when
@@ -270,6 +349,7 @@ export function reduceAppEvent(
       delete next.approvalsBySession[id];
       delete next.questionsBySession[id];
       delete next.lastSeqBySession[id];
+      delete next.turnActiveBySession[id];
       if (next.activeSessionId === id) {
         next.activeSessionId = undefined;
       }
@@ -277,15 +357,25 @@ export function reduceAppEvent(
     }
 
     // -------------------------------------------------------------------------
-    case 'sessionStatusChanged': {
+    case 'sessionWorkChanged': {
       next.sessions = next.sessions.map((s) => {
         if (s.id !== event.sessionId) return s;
         return {
           ...s,
-          status: event.status,
-          currentPromptId: event.currentPromptId,
+          busy: event.busy,
+          mainTurnActive: event.mainTurnActive ?? (event.busy ? s.mainTurnActive : false),
+          pendingInteraction: event.pendingInteraction ?? s.pendingInteraction,
+          // Authoritative, not nullish-merge: an omitted last_turn_reason is
+          // how the server says "no current outcome" (a fresh turn cleared
+          // the previous one), so the stale value must not survive.
+          lastTurnReason: event.lastTurnReason,
         };
       });
+      if (event.mainTurnActive === true) {
+        next.turnActiveBySession[event.sessionId] = true;
+      } else if (event.mainTurnActive === false || !event.busy) {
+        delete next.turnActiveBySession[event.sessionId];
+      }
       break;
     }
 
@@ -558,10 +648,19 @@ export function reduceAppEvent(
           ...event.task,
           outputLines: previous.outputLines,
           text: previous.text,
+          // A post-refresh lifecycle event re-projects the task with skeleton
+          // metadata; don't let its placeholder clobber the roster-seeded
+          // description.
+          description:
+            event.task.description === PLACEHOLDER_SUBAGENT_DESCRIPTION &&
+            previous.description !== PLACEHOLDER_SUBAGENT_DESCRIPTION
+              ? previous.description
+              : event.task.description,
           swarmIndex: event.task.swarmIndex ?? previous.swarmIndex,
           parentToolCallId: event.task.parentToolCallId ?? previous.parentToolCallId,
           subagentType: event.task.subagentType ?? previous.subagentType,
           runInBackground: event.task.runInBackground ?? previous.runInBackground,
+          backgroundTaskId: event.task.backgroundTaskId ?? previous.backgroundTaskId,
         };
         next.tasksBySession[sid] = patched;
       }
@@ -613,6 +712,9 @@ export function reduceAppEvent(
     // -------------------------------------------------------------------------
     case 'goalUpdated': {
       const sid = event.sessionId;
+      // Bump on every goal event — including clears — so refreshSessionGoal's
+      // recovery read can detect any live event that landed mid-flight.
+      next.goalVersionBySession[sid] = (next.goalVersionBySession[sid] ?? 0) + 1;
       if (event.goal === null || event.goal.status === 'complete') {
         delete next.goalBySession[sid];
       } else {
@@ -641,6 +743,29 @@ export function reduceAppEvent(
     case 'agentTurnEnded':
       break;
 
+    // -------------------------------------------------------------------------
+    // Prompt-level lifecycle events drive the web layer's in-flight cleanup
+    // (see useKimiWebClient.processEvent), not reducer state. Advance seq
+    // silently.
+    case 'promptCompleted':
+    case 'promptAborted':
+      break;
+
+    // -------------------------------------------------------------------------
+    case 'turnActiveChanged': {
+      next.sessions = next.sessions.map((session) =>
+        session.id === event.sessionId
+          ? { ...session, mainTurnActive: event.active }
+          : session,
+      );
+      if (event.active) {
+        next.turnActiveBySession[event.sessionId] = true;
+      } else {
+        delete next.turnActiveBySession[event.sessionId];
+      }
+      break;
+    }
+
     case 'unknown': {
       // Distinguish no-op known events (sentinel _noop) from agent errors/warnings
       // and truly unknown events.
@@ -650,18 +775,20 @@ export function reduceAppEvent(
         _agentWarning?: boolean;
         code?: string;
         message?: string;
+        name?: string;
+        details?: Record<string, unknown>;
         type?: string;
       } | null;
       if (raw && raw._noop === true) {
         // No-op streaming/tool event — seq already advanced, nothing else to do
-      } else if (raw && (raw._agentError || raw._agentWarning)) {
-        // Surface the agent's real error/warning message (e.g. a 403 from the
-        // model provider) instead of a useless "Unhandled event".
-        const label = raw._agentError
-          ? i18n.global.t('warnings.errorLabel')
-          : i18n.global.t('warnings.noteLabel');
-        const msg = raw.message ?? raw.code ?? 'agent error';
-        next.warnings = [...next.warnings, `${label}: ${msg}`];
+      } else if (raw && raw._agentError) {
+        // Surface the agent's real error (e.g. a 429 from the model provider)
+        // as a structured notice: semantic title + raw provider message +
+        // diagnostics (code / HTTP status / request id) for troubleshooting.
+        next.warnings = [...next.warnings, buildAgentErrorNotice(raw)];
+      } else if (raw && raw._agentWarning) {
+        const msg = raw.message ?? raw.code ?? 'agent warning';
+        next.warnings = [...next.warnings, `${i18n.global.t('warnings.noteLabel')}: ${msg}`];
       } else {
         // Truly unknown — push a warning
         const wireType = raw?.type ?? '(unknown)';

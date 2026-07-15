@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveThinkingEffort } from '#/agent/profile/thinking';
+import { resolveThinkingEffort, supportsThinkingEffort } from '#/agent/profile/thinking';
 import { defaultThinkingEffortForModel } from '#/app/model/thinking';
 
 const booleanModel = { capabilities: ['thinking'] };
@@ -10,16 +10,18 @@ const effortModel = {
 };
 const effortModelWithDefault = {
   capabilities: ['thinking'],
-  supportEfforts: ['low', 'high'],
+  supportEfforts: ['low', 'high', 'max'],
   defaultEffort: 'max',
 };
 const alwaysThinkingModel = {
   capabilities: ['thinking', 'always_thinking'],
   alwaysThinking: true,
+  protocol: 'kimi',
 };
 const alwaysThinkingEffortModel = {
   capabilities: ['thinking', 'always_thinking'],
   alwaysThinking: true,
+  protocol: 'kimi',
   supportEfforts: ['low', 'high', 'max'],
   defaultEffort: 'high',
 };
@@ -36,10 +38,18 @@ describe('defaultThinkingEffortForModel', () => {
     expect(defaultThinkingEffortForModel(effortModelWithDefault)).toBe('max');
   });
 
+  it('ignores a defaultEffort that is not declared in supportEfforts', () => {
+    expect(
+      defaultThinkingEffortForModel({
+        capabilities: ['thinking'],
+        supportEfforts: ['low', 'high'],
+        defaultEffort: 'max',
+      }),
+    ).toBe('high');
+  });
+
   it('falls back to the middle supportEfforts entry when defaultEffort is absent', () => {
-    // odd length -> exact middle
     expect(defaultThinkingEffortForModel(effortModel)).toBe('medium');
-    // even length -> upper-middle index
     expect(
       defaultThinkingEffortForModel({
         capabilities: ['thinking'],
@@ -63,9 +73,7 @@ describe('resolveThinkingEffort', () => {
     expect(resolveThinkingEffort('low', undefined, effortModel)).toBe('low');
     expect(resolveThinkingEffort('on', { enabled: false }, booleanModel)).toBe('on');
     expect(resolveThinkingEffort('off', undefined, booleanModel)).toBe('off');
-    // 'on' is a valid wire value, not a request for the configured effort —
-    // normalizing it to a concrete effort is the UI boundary's job (v1 parity).
-    expect(resolveThinkingEffort('on', { effort: 'medium' }, effortModel)).toBe('on');
+    expect(resolveThinkingEffort('on', { effort: 'medium' }, effortModel)).toBe('medium');
   });
 
   it('returns off when config.enabled is false and no effort is requested', () => {
@@ -94,9 +102,6 @@ describe('resolveThinkingEffort', () => {
   });
 
   it('honors a configured effort when clamping always-thinking models back on', () => {
-    // enabled=false resolves to 'off', then always_thinking clamps back on;
-    // an explicitly configured effort is preserved instead of falling back to
-    // the model default.
     expect(
       resolveThinkingEffort(
         undefined,
@@ -104,7 +109,6 @@ describe('resolveThinkingEffort', () => {
         alwaysThinkingEffortModel,
       ),
     ).toBe('max');
-    // without an explicit effort, fall back to the model's default effort.
     expect(resolveThinkingEffort(undefined, { enabled: false }, alwaysThinkingEffortModel)).toBe(
       'high',
     );
@@ -115,6 +119,16 @@ describe('resolveThinkingEffort', () => {
     expect(resolveThinkingEffort(undefined, { enabled: false }, booleanModel)).toBe('off');
   });
 
+  it('preserves off for Kimi-managed always-thinking models using Anthropic protocol', () => {
+    expect(
+      resolveThinkingEffort('off', undefined, {
+        ...alwaysThinkingEffortModel,
+        protocol: 'anthropic',
+        providerType: 'kimi',
+      }),
+    ).toBe('off');
+  });
+
   it('carries custom requested efforts through', () => {
     expect(resolveThinkingEffort('xhigh', undefined)).toBe('xhigh');
     expect(resolveThinkingEffort('bogus', { effort: 'low' })).toBe('bogus');
@@ -123,5 +137,38 @@ describe('resolveThinkingEffort', () => {
   it('normalizes requested effort case and whitespace', () => {
     expect(resolveThinkingEffort('  Medium ', undefined)).toBe('medium');
     expect(resolveThinkingEffort('OFF', { effort: 'high' })).toBe('off');
+  });
+
+  it('falls back to the model default for an unsupported Kimi effort', () => {
+    expect(
+      resolveThinkingEffort('ultra', undefined, {
+        ...effortModel,
+        protocol: 'kimi',
+        providerType: 'kimi',
+      }),
+    ).toBe('medium');
+  });
+
+  it('projects a concrete effort to on for a boolean-only Kimi model', () => {
+    expect(
+      resolveThinkingEffort('ultra', undefined, {
+        ...booleanModel,
+        protocol: 'kimi',
+        providerType: 'kimi',
+      }),
+    ).toBe('on');
+  });
+
+  it('reports unsupported concrete efforts only for Kimi effort models', () => {
+    expect(
+      supportsThinkingEffort('ultra', {
+        ...effortModel,
+        protocol: 'kimi',
+        providerType: 'kimi',
+      }),
+    ).toBe(false);
+    expect(
+      supportsThinkingEffort('ultra', { ...effortModel, providerType: 'openai' }),
+    ).toBe(true);
   });
 });

@@ -14,9 +14,10 @@ import { InMemoryStorageService } from '#/persistence/backends/memory/inMemorySt
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService, PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'user-tool-test';
@@ -41,8 +42,6 @@ function createProfileStub(): IAgentProfileService & ProfileStub {
   return {
     active,
     _serviceBrand: undefined,
-    // `undefined` = every tool active (the unrestricted default), matching the
-    // real profile service's `ActiveToolsModel` initial state.
     getActiveToolNames: () => undefined,
     addActiveTool: (name: string) => {
       active.add(name);
@@ -76,23 +75,23 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: KEY }]));
   ix.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
   profile = createProfileStub();
   ix.stub(IAgentProfileService, profile);
   ix.stub(ISessionInteractionService, createInteractionStub());
   ix.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
   log = ix.get(IAppendLogStore);
-  wire = ix.get(IAgentWireService);
+  wire = registerTestAgentWire(ix, testWireScope(SCOPE, KEY), { log });
   registry = ix.get(IAgentToolRegistryService);
   svc = ix.get(IAgentUserToolService);
 });
 
 afterEach(() => disposables.dispose());
 
-async function readRecords(key = KEY): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of log.read<PersistedRecord>(SCOPE, key)) {
+async function readRecords(key = KEY): Promise<WireRecord[]> {
+  await wire.flush();
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -140,18 +139,16 @@ describe('AgentUserToolService (wire-backed)', () => {
     const ixChild = disposables.add(new TestInstantiationService());
     ixChild.stub(IFileSystemStorageService, new InMemoryStorageService());
     ixChild.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ixChild.set(
-      IAgentWireService,
-      new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: 'user-tool-child' }]),
-    );
     ixChild.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const childProfile = createProfileStub();
     ixChild.stub(IAgentProfileService, childProfile);
     ixChild.stub(ISessionInteractionService, createInteractionStub());
     ixChild.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
 
+    const childWire = registerTestAgentWire(ixChild, testWireScope(SCOPE, 'user-tool-child'), {
+      log: ixChild.get(IAppendLogStore),
+    });
     const child = ixChild.get(IAgentUserToolService);
-    const childWire = ixChild.get(IAgentWireService);
     const childRegistry = ixChild.get(IAgentToolRegistryService);
     child.inheritUserTools(svc);
 
@@ -162,10 +159,10 @@ describe('AgentUserToolService (wire-backed)', () => {
     expect(childProfile.active.has(toolA.name)).toBe(true);
     expect(childProfile.active.has(toolB.name)).toBe(false);
 
-    const childRecords: PersistedRecord[] = [];
+    const childRecords: WireRecord[] = [];
     for await (const record of ixChild
       .get(IAppendLogStore)
-      .read<PersistedRecord>(SCOPE, 'user-tool-child')) {
+      .read<WireRecord>(testWireScope(SCOPE, 'user-tool-child'), AGENT_WIRE_RECORD_KEY)) {
       childRecords.push(record);
     }
     expect(childRecords).toEqual([
@@ -177,55 +174,51 @@ describe('AgentUserToolService (wire-backed)', () => {
     svc.register(toolA);
     const before = modelOf(wire);
     svc.register(toolA);
-    // apply returns the same reference when the registration is already equal.
     expect(modelOf(wire)).toBe(before);
   });
 
-  it('replay rebuilds the model silently and onRestored re-registers tools after replay', async () => {
+  it('replay rebuilds the model silently and onDidRestore re-registers tools after replay', async () => {
     svc.register(toolA);
     svc.register(toolB);
     const records = await readRecords();
 
-    // Fresh host + wire: replay the persisted records and confirm the post-
-    // restore side effect (registry.register + profile.addActiveTool) runs from
-    // the rebuilt model, while the replay itself does not register anything
-    // before onRestored fires.
     const ix2 = disposables.add(new TestInstantiationService());
     ix2.stub(IFileSystemStorageService, new InMemoryStorageService());
     ix2.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-    ix2.set(
-      IAgentWireService,
-      new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: 'user-tool-replay' }]),
-    );
     ix2.set(IAgentToolRegistryService, new SyncDescriptor(AgentToolRegistryService));
     const profile2 = createProfileStub();
     ix2.stub(IAgentProfileService, profile2);
     ix2.stub(ISessionInteractionService, createInteractionStub());
     ix2.set(IAgentUserToolService, new SyncDescriptor(AgentUserToolService));
 
-    const wire2 = ix2.get(IAgentWireService);
+    const wire2 = registerTestAgentWire(ix2, testWireScope(SCOPE, 'user-tool-replay'), {
+      log: ix2.get(IAppendLogStore),
+    });
     const registry2 = ix2.get(IAgentToolRegistryService);
-    // Realize the service so its ctor registers `wire.onRestored` BEFORE replay.
     ix2.get(IAgentUserToolService);
 
     expect(registry2.resolve(toolA.name)).toBeUndefined();
-    await wire2.replay(...records);
+    await restoreTestAgentWire(
+      wire2,
+      ix2.get(IAppendLogStore),
+      testWireScope(SCOPE, 'user-tool-replay'),
+      records,
+    );
 
     expect(modelOf(wire2).get(toolA.name)).toEqual(toolA);
     expect(modelOf(wire2).get(toolB.name)).toEqual(toolB);
-    // onRestored re-derived the live side effects from the rebuilt model.
     expect(registry2.resolve(toolA.name)).toBeDefined();
     expect(registry2.resolve(toolB.name)).toBeDefined();
     expect(profile2.active.has(toolA.name)).toBe(true);
     expect(profile2.active.has(toolB.name)).toBe(true);
 
-    // Replay is silent: nothing was written back to the replay wire log.
-    const written: PersistedRecord[] = [];
+    const written: WireRecord[] = [];
     for await (const record of ix2
       .get(IAppendLogStore)
-      .read<PersistedRecord>(SCOPE, 'user-tool-replay')) {
+      .read<WireRecord>(testWireScope(SCOPE, 'user-tool-replay'), AGENT_WIRE_RECORD_KEY)) {
       written.push(record);
     }
-    expect(written).toEqual([]);
+    expect(written[0]).toMatchObject({ type: 'metadata' });
+    expect(written.slice(1)).toEqual(records);
   });
 });

@@ -3,12 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  IAgentActivityView,
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentRPCService,
   IEventService,
   IPluginService,
-  ISessionActivity,
   ISessionIndex,
   ISessionLifecycleService,
   ISessionMetadata,
@@ -132,6 +132,12 @@ describe('server-v2 /api/v2 RPC', () => {
     const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
     if (session === undefined) throw new Error(`session ${sessionId} not found`);
     await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+  }
+
+  async function createSubagent(sessionId: string, agentId: string): Promise<void> {
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(sessionId);
+    if (session === undefined) throw new Error(`session ${sessionId} not found`);
+    await session.accessor.get(IAgentLifecycleService).create({ agentId });
   }
 
   // --- Core scope -----------------------------------------------------------
@@ -268,11 +274,15 @@ describe('server-v2 /api/v2 RPC', () => {
     expect(read2.body.data.title).toBe('renamed');
   });
 
-  it('returns session status', async () => {
+  it('reads agent activity state', async () => {
     const id = await createSession(home as string);
-    const { body } = await call<string>('POST', rpc('session', ISessionActivity, 'status', { sid: id }));
+    await createMainAgent(id);
+    const { body } = await call<{ lifecycle: string }>(
+      'POST',
+      rpc('agent', IAgentActivityView, 'state', { sid: id, aid: 'main' }),
+    );
     expect(body.code).toBe(0);
-    expect(['idle', 'running', 'awaiting_approval', 'awaiting_question']).toContain(body.data);
+    expect(body.data.lifecycle).toBe('ready');
   });
 
   it('archives a session', async () => {
@@ -431,6 +441,20 @@ describe('server-v2 /api/v2 RPC', () => {
       { objective: 'second' },
     );
     expect(duplicate.body.code).toBe(40913);
+  });
+
+  it('rejects reflected goal helper access for subagents', async () => {
+    const id = await createSession(home as string);
+    await createSubagent(id, 'sub-1');
+
+    const { body } = await call<null>(
+      'POST',
+      rpc('agent', IAgentGoalService, 'clearInternal', { sid: id, aid: 'sub-1' }),
+      'user',
+    );
+
+    expect(body.code).toBe(40920);
+    expect(body.msg).toBe('Goals are only supported by the main agent');
   });
 
   it('lists and installs plugins through RPC', async () => {

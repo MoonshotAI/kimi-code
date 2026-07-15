@@ -2,7 +2,7 @@
  * `media` domain (L4) — bridge from the `image` config section into the
  * compression support module's resolver seam.
  *
- * `image-compress` (`#/_base/tools/support/image-compress`) is deliberately
+ * `image-compress` (`#/agent/media/image-compress`) is deliberately
  * config-agnostic so foundational code never imports the config domain: it
  * exposes `setConfiguredMaxImageEdgePx` / `setConfiguredReadImageByteBudget`
  * and resolves its defaults as `configured ?? built-in`. This bridge is the
@@ -26,7 +26,7 @@ import { IConfigService } from '#/app/config/config';
 import {
   setConfiguredMaxImageEdgePx,
   setConfiguredReadImageByteBudget,
-} from '#/_base/tools/support/image-compress';
+} from '#/agent/media/image-compress';
 
 import { IMAGE_SECTION, type ImageConfig } from './configSection';
 
@@ -42,10 +42,6 @@ export class ImageConfigBridge extends Disposable implements IImageConfigBridge 
 
   constructor(@IConfigService private readonly config: IConfigService) {
     super();
-    // Push the current effective value immediately (covers the already-loaded
-    // case), then re-push whenever the `image` section changes (load / reload /
-    // set). The event carries the env-resolved effective value, so env overrides
-    // are reflected without this bridge reading env.
     this.push(this.config.get<ImageConfig>(IMAGE_SECTION));
     this._register(
       this.config.onDidSectionChange((e) => {

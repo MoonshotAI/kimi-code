@@ -3,15 +3,17 @@
  * Op (`configUpdate`) for the agent's persistent configuration slice.
  *
  * Declares the persistent profile config — `cwd`, `modelAlias`, `profileName`,
- * the resolved thinking effort, and `systemPrompt` — as a wire Model (initial
- * `defaultProfileModel()`), plus the single Op whose `apply` is a pure merge of
- * an already-resolved payload. Live records carry `thinkingEffort` (matching
+ * the resolved base thinking effort, and `systemPrompt` — as a wire Model
+ * (initial `defaultProfileModel()`), plus the single Op whose `apply` is a pure
+ * merge of an already-resolved payload. Live records carry `thinkingEffort` (matching
  * the v1 wire field); legacy replay still accepts `thinkingLevel`. The value is
  * resolved to a `ThinkingEffort` at the call site (via `resolveThinkingEffort` +
  * the `thinking` config section) and carried in the payload, so `apply` stays
- * pure and a resumed agent restores
- * the persisted resolved value rather than re-resolving against a possibly-
- * drifted config. `modelCapabilities` is intentionally NOT in the Model — it is
+ * pure and a resumed agent restores the persisted base value rather than
+ * re-resolving against a possibly-drifted config. Runtime-only Kimi env forcing
+ * is projected by `AgentProfileService`; keeping it out of this Model prevents
+ * that Kimi-only value from leaking through model switches or agent forks.
+ * `modelCapabilities` is intentionally NOT in the Model — it is
  * derived live from `IModelResolver` so resume never pins stale capabilities.
  * Each `apply` returns the same reference when nothing changes so the wire's
  * reference-equality gate stays quiet. The `chdir` side effect and the
@@ -28,9 +30,11 @@
  * Consumed by the Agent-scope `profileService`.
  */
 
+import { z } from 'zod';
+
 import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
+import type { PayloadOf } from '#/wire/types';
 
 import { ProfileError, ProfileErrors } from './profile';
 
@@ -47,17 +51,16 @@ export const ProfileModel = defineModel<ProfileModelState>('profile', () => ({
   systemPrompt: '',
 }));
 
-export interface ConfigUpdatePayload {
-  readonly cwd?: string;
-  readonly modelAlias?: string;
-  readonly profileName?: string;
-  readonly thinkingEffort?: ThinkingEffort;
-  readonly thinkingLevel?: ThinkingEffort;
-  readonly systemPrompt?: string;
-}
-
-export const configUpdate = defineOp(ProfileModel, 'config.update', {
-  apply: (s, p: ConfigUpdatePayload): ProfileModelState => {
+export const configUpdate = ProfileModel.defineOp('config.update', {
+  schema: z.object({
+    cwd: z.string().optional(),
+    modelAlias: z.string().optional(),
+    profileName: z.string().optional(),
+    thinkingEffort: z.custom<ThinkingEffort>().optional(),
+    thinkingLevel: z.custom<ThinkingEffort>().optional(),
+    systemPrompt: z.string().optional(),
+  }),
+  apply: (s, p) => {
     let next: ProfileModelState | undefined;
     if (p.cwd !== undefined && p.cwd !== s.cwd) {
       next = { ...(next ?? s), cwd: p.cwd };
@@ -79,7 +82,9 @@ export const configUpdate = defineOp(ProfileModel, 'config.update', {
   },
 });
 
-function configUpdateThinkingLevel(p: ConfigUpdatePayload): ThinkingEffort | undefined {
+function configUpdateThinkingLevel(
+  p: PayloadOf<typeof configUpdate>,
+): ThinkingEffort | undefined {
   if (p.thinkingEffort !== undefined && p.thinkingLevel !== undefined) {
     if (p.thinkingEffort !== p.thinkingLevel) {
       throw new ProfileError(
@@ -98,13 +103,6 @@ function configUpdateThinkingLevel(p: ConfigUpdatePayload): ThinkingEffort | und
   return p.thinkingLevel;
 }
 
-/**
- * The agent's active-tool set. `undefined` means "every tool is active" (the
- * unrestricted default before any `tools.set_active_tools`); a concrete array
- * restricts the set. Kept distinct from `[]` (which would mean "no tools
- * active"), so the initial `undefined` preserves the all-active default rather
- * than collapsing it to an empty allowlist.
- */
 export type ActiveToolsState = readonly string[] | undefined;
 
 export const ActiveToolsModel = defineModel<ActiveToolsState>(
@@ -112,10 +110,14 @@ export const ActiveToolsModel = defineModel<ActiveToolsState>(
   () => undefined,
 );
 
-export interface SetActiveToolsPayload {
-  readonly names: readonly string[];
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'config.update': typeof configUpdate;
+    'tools.set_active_tools': typeof setActiveTools;
+  }
 }
 
-export const setActiveTools = defineOp(ActiveToolsModel, 'tools.set_active_tools', {
-  apply: (s, p: SetActiveToolsPayload): ActiveToolsState => (p.names === s ? s : p.names),
+export const setActiveTools = ActiveToolsModel.defineOp('tools.set_active_tools', {
+  schema: z.object({ names: z.array(z.string()).readonly() }),
+  apply: (s, p) => (p.names === s ? s : p.names),
 });

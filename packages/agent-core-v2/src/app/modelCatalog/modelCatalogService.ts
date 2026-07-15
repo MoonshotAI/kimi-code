@@ -23,7 +23,7 @@ import type {
   ProviderCatalogItem,
   RefreshProviderModelsResponse,
   SetDefaultModelResponse,
-} from '@moonshot-ai/protocol';
+} from './modelCatalog';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -32,6 +32,7 @@ import { IConfigService } from '#/app/config/config';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IEventService } from '#/app/event/event';
 import { IModelService, MODELS_SECTION, type ModelAlias } from '#/app/model/model';
+import { IHostRequestHeaders } from '#/app/model/hostRequestHeaders';
 import {
   IProviderService,
   type OAuthRef,
@@ -53,11 +54,6 @@ const THINKING_SECTION = 'thinking';
 export class ModelCatalogService implements IModelCatalogService {
   declare readonly _serviceBrand: undefined;
 
-  /**
-   * Serializes refresh runs so a scheduled refresh and a manual one (or two
-   * manual ones with different options) never race on reading/patching the
-   * persisted config. Mirrors v1's `_refreshChain`.
-   */
   private refreshChain: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -66,11 +62,14 @@ export class ModelCatalogService implements IModelCatalogService {
     @IConfigService private readonly config: IConfigService,
     @IOAuthService private readonly oauth: IOAuthService,
     @IEventService private readonly events: IEventService,
+    @IHostRequestHeaders private readonly hostRequestHeaders: IHostRequestHeaders,
   ) {}
 
   async listModels(): Promise<readonly ModelCatalogItem[]> {
     const models = this.modelService.list();
-    return Object.entries(models).map(([modelId, alias]) => toProtocolModel(modelId, alias));
+    return Object.entries(models).map(([modelId, alias]) =>
+      toProtocolModel(modelId, alias, this.usesAnthropicProtocol(alias)),
+    );
   }
 
   async listProviders(): Promise<readonly ProviderCatalogItem[]> {
@@ -103,8 +102,14 @@ export class ModelCatalogService implements IModelCatalogService {
     const updatedAlias = this.modelService.get(modelId) ?? alias;
     return {
       default_model: modelId,
-      model: toProtocolModel(modelId, updatedAlias),
+      model: toProtocolModel(modelId, updatedAlias, this.usesAnthropicProtocol(updatedAlias)),
     };
+  }
+
+  private usesAnthropicProtocol(alias: ModelAlias): boolean {
+    const providerId =
+      alias.providerId ?? alias.provider ?? this.config.get<string>('defaultProvider');
+    return (alias.protocol ?? this.providerService.get(providerId ?? '')?.type) === 'anthropic';
   }
 
   refreshProviderModels(
@@ -138,8 +143,6 @@ export class ModelCatalogService implements IModelCatalogService {
     });
     const response = mapRefreshResult(result);
     if (response.changed.length > 0) {
-      // Broadcasts to every connected client via the core event bus →
-      // `SessionEventBroadcaster` (any provider kind, not just OAuth).
       this.events.publish({ type: 'event.model_catalog.changed', payload: response });
     }
     return response;
@@ -151,14 +154,10 @@ export class ModelCatalogService implements IModelCatalogService {
       removeProvider: (providerId) => this.removeProviderForRefresh(providerId),
       setConfig: (patch) => this.applyRefreshPatch(patch),
       resolveOAuthToken: (providerName, oauthRef) => this.resolveOAuthToken(providerName, oauthRef),
+      userAgent: this.hostRequestHeaders.headers['User-Agent'],
     };
   }
 
-  /**
-   * User-layer config shape the orchestrator diffs and edits. Mirrors
-   * `OAuthService.readUserConfigShape` so both refresh paths edit the same
-   * persisted user config (never env/memory-overlaid effective values).
-   */
   private readUserConfigShape(): ManagedKimiConfigShape {
     const providers =
       this.config.inspect<Record<string, ProviderConfig>>(PROVIDERS_SECTION).userValue ?? {};
@@ -302,6 +301,6 @@ registerScopedService(
   LifecycleScope.App,
   IModelCatalogService,
   ModelCatalogService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'modelCatalog',
 );

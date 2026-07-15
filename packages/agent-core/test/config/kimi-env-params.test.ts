@@ -5,8 +5,8 @@ import { describe, expect, it } from 'vitest';
 import {
   applyAnthropicThinkingKeep,
   applyKimiEnvSamplingParams,
-  applyKimiEnvThinkingEffort,
   applyKimiEnvThinkingKeep,
+  resolveKimiEnvThinkingEffort,
 } from '../../src/config/kimi-env-params';
 import { KimiError } from '../../src/errors';
 
@@ -113,44 +113,38 @@ describe('applyKimiEnvThinkingKeep', () => {
   });
 });
 
-describe('applyKimiEnvThinkingEffort', () => {
-  it('injects thinking.effort when thinking is on', () => {
-    const out = applyKimiEnvThinkingEffort(kimi(), 'high', {
-      KIMI_MODEL_THINKING_EFFORT: 'max',
-    });
-    expect(genState(out).extra_body?.thinking?.effort).toBe('max');
-  });
-
-  it('forces the effort even when the model does not declare it', () => {
-    // kimi() has no support_efforts, so withThinking('high') carries no effort;
-    // the env var injects one anyway, bypassing the support_efforts gate.
-    const provider = kimi().withThinking('high');
-    const out = applyKimiEnvThinkingEffort(provider, 'high', {
-      KIMI_MODEL_THINKING_EFFORT: 'max',
-    });
-    expect(genState(out).extra_body?.thinking).toEqual({ type: 'enabled', effort: 'max' });
-  });
-
-  it('does NOT inject thinking.effort when thinking is off', () => {
-    const out = applyKimiEnvThinkingEffort(kimi(), 'off', {
-      KIMI_MODEL_THINKING_EFFORT: 'max',
-    });
-    expect(genState(out).extra_body).toBeUndefined();
-  });
-
-  it('returns the same provider when the env var is unset or blank', () => {
-    const provider = kimi();
-    expect(applyKimiEnvThinkingEffort(provider, 'high', {})).toBe(provider);
+describe('resolveKimiEnvThinkingEffort', () => {
+  it('returns the trimmed force override for an enabled Kimi model', () => {
     expect(
-      applyKimiEnvThinkingEffort(provider, 'high', { KIMI_MODEL_THINKING_EFFORT: '  ' }),
-    ).toBe(provider);
+      resolveKimiEnvThinkingEffort('high', true, {
+        KIMI_MODEL_THINKING_EFFORT: ' max ',
+      }),
+    ).toBe('max');
   });
 
-  it('leaves non-kimi providers untouched', () => {
-    const stub = { name: 'stub' } as unknown as ChatProvider;
+  it('does not override an explicit off effort', () => {
     expect(
-      applyKimiEnvThinkingEffort(stub, 'high', { KIMI_MODEL_THINKING_EFFORT: 'max' }),
-    ).toBe(stub);
+      resolveKimiEnvThinkingEffort('off', true, {
+        KIMI_MODEL_THINKING_EFFORT: 'max',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('ignores an unset or blank force override', () => {
+    expect(resolveKimiEnvThinkingEffort('high', true, {})).toBeUndefined();
+    expect(
+      resolveKimiEnvThinkingEffort('high', true, {
+        KIMI_MODEL_THINKING_EFFORT: '  ',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('does not apply the Kimi force override to another provider', () => {
+    expect(
+      resolveKimiEnvThinkingEffort('high', false, {
+        KIMI_MODEL_THINKING_EFFORT: 'max',
+      }),
+    ).toBeUndefined();
   });
 });
 

@@ -2,6 +2,16 @@ export default {
   dismiss: 'Close',
   errorLabel: 'Error',
   noteLabel: 'Note',
+  agentError: {
+    title: 'Model request failed',
+    connection: 'Cannot connect to the model service',
+    auth: 'Model authentication failed',
+    rateLimit: 'Model rate limit reached',
+    overloaded: 'Model overloaded',
+    filtered: 'Response filtered by the provider',
+    api: 'Model API error',
+    contextOverflow: 'Context size exceeded',
+  },
   details: {
     cause: 'Cause',
     code: 'Error code',

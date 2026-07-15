@@ -21,7 +21,6 @@ import {
 
 import { PLATFORMS_SECTION, PlatformsSectionSchema } from './platform';
 
-/** Read transform: snake_case file → camelCase in-memory platforms record. */
 export const platformsFromToml = (rawSnake: unknown): unknown => {
   if (!isPlainObject(rawSnake)) return rawSnake;
   const out: Record<string, unknown> = {};
@@ -59,7 +58,6 @@ function authFromToml(data: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-/** Write transform: camelCase in-memory platforms record → snake_case file. */
 export const platformsToToml = (value: unknown, rawSnake: unknown): unknown => {
   if (!isPlainObject(value)) return value;
   const rawSub = cloneRecord(rawSnake);

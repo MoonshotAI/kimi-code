@@ -29,7 +29,7 @@
  */
 
 import { type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
-import type { PersistedRecord } from '#/wire/wireService';
+import type { WireRecord } from '#/wire/record';
 
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
@@ -44,10 +44,14 @@ const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
 
 export interface ContextTranscript {
-  /** Full message history, compacted prefixes included. */
   readonly entries: readonly ContextMessage[];
-  /** Length the live (folded) `context.history` would have after these records. */
+  readonly times: readonly (number | undefined)[];
   readonly foldedLength: number;
+}
+
+export interface ContextTranscriptReducer {
+  add(record: WireRecord): void;
+  result(): ContextTranscript;
 }
 
 interface MutableMessage {
@@ -62,14 +66,18 @@ interface MutableMessage {
 
 interface MutableEntry {
   message: MutableMessage;
+  time?: number;
 }
 
-/** Reduce `context.*` wire records into the full transcript. Pure (no I/O). */
-export function reduceContextTranscript(records: Iterable<PersistedRecord>): ContextTranscript {
+export function reduceContextTranscript(records: Iterable<WireRecord>): ContextTranscript {
+  const reducer = createContextTranscriptReducer();
+  for (const record of records) reducer.add(record);
+  return reducer.result();
+}
+
+export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const transcript: MutableEntry[] = [];
-  /** What `context.history.length` would be right now (post-folding). */
   let foldedLength = 0;
-  /** Transcript index `context.undo` may not cross (set by `context.clear`). */
   let clearFloor = 0;
   const openSteps = new Map<string, MutableEntry>();
   const pendingToolResultIds = new Set<string>();
@@ -84,7 +92,7 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
     push(...deferred);
     deferred = [];
   };
-  const closePendingToolResults = (): void => {
+  const closePendingToolResults = (time: number | undefined): void => {
     if (pendingToolResultIds.size === 0) return;
     const interruptedToolCallIds = [...pendingToolResultIds];
     for (const toolCallId of interruptedToolCallIds) {
@@ -96,6 +104,7 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
           toolCallId,
           isError: true,
         },
+        time,
       });
       pendingToolResultIds.delete(toolCallId);
     }
@@ -107,12 +116,13 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
     deferred = [];
   };
 
-  const applyLoopEvent = (event: LoopRecordedEvent): void => {
+  const applyLoopEvent = (event: LoopRecordedEvent, time: number | undefined): void => {
     switch (event.type) {
       case 'step.begin': {
-        closePendingToolResults();
+        closePendingToolResults(time);
         const entry: MutableEntry = {
           message: { role: 'assistant', content: [], toolCalls: [] },
+          time,
         };
         push(entry);
         openSteps.set(event.uuid, entry);
@@ -124,8 +134,6 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
         return;
       }
       case 'content.part': {
-        // Lenient where the live reducer throws: a dangling part in a damaged
-        // file should not take the whole transcript down.
         openSteps.get(event.stepUuid)?.message.content.push(event.part);
         return;
       }
@@ -153,6 +161,7 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
             toolCallId: event.toolCallId,
             isError: event.result.isError,
           },
+          time,
         });
         pendingToolResultIds.delete(event.toolCallId);
         flushDeferredIfToolExchangeClosed();
@@ -178,20 +187,18 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
     resetOpenState();
   };
 
-  for (const record of records) {
+  const add = (record: WireRecord): void => {
     switch (record.type) {
       case 'context.append_message': {
-        const entry = toMutableEntry(record['message'] as ContextMessage);
+        const entry = toMutableEntry(record['message'] as ContextMessage, record.time);
         if (pendingToolResultIds.size > 0) deferred.push(entry);
         else push(entry);
         break;
       }
       case 'context.append_loop_event':
-        applyLoopEvent(record['event'] as LoopRecordedEvent);
+        applyLoopEvent(record['event'] as LoopRecordedEvent, record.time);
         break;
       case 'context.apply_compaction': {
-        // The live context folds into `[...keptUserMessages, summary]`; the
-        // transcript keeps the full history and appends the summary marker.
         transcript.push({
           message: {
             role: 'user',
@@ -199,6 +206,7 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
             toolCalls: [],
             origin: { kind: 'compaction_summary' },
           },
+          time: record.time,
         });
         foldedLength = recoverFoldedLength(record, transcript, clearFloor, foldedLength);
         resetOpenState();
@@ -215,12 +223,19 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
       default:
         break;
     }
-  }
+  };
 
-  return { entries: transcript.map((e) => e.message), foldedLength };
+  return {
+    add,
+    result: () => ({
+      entries: transcript.map((e) => e.message),
+      times: transcript.map((e) => e.time),
+      foldedLength,
+    }),
+  };
 }
 
-function toMutableEntry(message: ContextMessage): MutableEntry {
+function toMutableEntry(message: ContextMessage, time: number | undefined): MutableEntry {
   return {
     message: {
       ...(message.id !== undefined ? { id: message.id } : {}),
@@ -231,12 +246,12 @@ function toMutableEntry(message: ContextMessage): MutableEntry {
       ...(message.isError !== undefined ? { isError: message.isError } : {}),
       ...(message.origin !== undefined ? { origin: message.origin } : {}),
     },
+    time,
   };
 }
 
-/** Recover the live `context.history.length` after a `context.apply_compaction` record. */
 function recoverFoldedLength(
-  record: PersistedRecord,
+  record: WireRecord,
   transcript: readonly MutableEntry[],
   clearFloor: number,
   foldedLength: number,
@@ -245,17 +260,11 @@ function recoverFoldedLength(
   const keptHeadUserMessageCount = readNumber(record, 'keptHeadUserMessageCount');
   const compactedCount = readNumber(record, 'compactedCount');
   if (keptUserMessageCount !== undefined) {
-    // +1 for the summary message; +1 more when the selection split into
-    // head + tail (the live context then also holds an elision marker).
     return keptUserMessageCount + (keptHeadUserMessageCount === undefined ? 1 : 2);
   }
   if (compactedCount !== undefined && compactedCount < foldedLength) {
-    // Legacy record that kept `history.slice(compactedCount)` verbatim.
     return 1 + (foldedLength - compactedCount);
   }
-  // Legacy record covering the whole live history: re-derive from the
-  // post-clear transcript only (the live context rebuilds from the
-  // post-`/clear` messages).
   const keptUserMessages = selectRecentUserMessages(
     collectCompactableUserMessages(transcript.slice(clearFloor).map((e) => e.message)),
     COMPACT_USER_MESSAGE_MAX_TOKENS,
@@ -263,12 +272,11 @@ function recoverFoldedLength(
   return keptUserMessages.length + 1;
 }
 
-function readCompactionSummaryText(record: PersistedRecord): string {
+function readCompactionSummaryText(record: WireRecord): string {
   const summary = record['summary'];
   if (typeof summary === 'string') return summary;
   const contextSummary = record['contextSummary'];
   if (typeof contextSummary === 'string') return contextSummary;
-  // Legacy record whose `summary` is a whole ContextMessage — flatten its text.
   if (isContextMessageLike(summary)) return textOfParts(summary.content);
   return '';
 }
@@ -287,12 +295,11 @@ function textOfParts(content: readonly ContentPart[]): string {
   return text;
 }
 
-function readNumber(record: PersistedRecord, key: string): number | undefined {
+function readNumber(record: WireRecord, key: string): number | undefined {
   const value = record[key];
   return typeof value === 'number' ? value : undefined;
 }
 
-/** Raw output verbatim — status text is added only at LLM projection, never in the transcript. */
 function rawToolResultContent(output: string | readonly ContentPart[]): ContentPart[] {
   return typeof output === 'string' ? [{ type: 'text', text: output }] : [...output];
 }

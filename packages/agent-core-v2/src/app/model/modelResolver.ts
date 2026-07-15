@@ -21,9 +21,7 @@ import type { Model } from './modelInstance';
 export interface IModelResolver {
   readonly _serviceBrand: undefined;
 
-  /** Resolve a Model id into a runnable god-object Model instance. */
   resolve(id: string): Model;
-  /** All Model ids whose `name` or `aliases` match the given routing key. */
   findByName(name: string): readonly string[];
 }
 

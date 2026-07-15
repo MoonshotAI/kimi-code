@@ -16,15 +16,18 @@ import {
   oauthFlowSnapshotSchema,
   oauthFlowStartSchema,
   oauthLoginCancelResponseSchema,
-  oauthLoginQuerySchema,
-  oauthLoginStartRequestSchema,
-  oauthLogoutRequestSchema,
   oauthLogoutResponseSchema,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import {
+  oauthLoginQuerySchema,
+  oauthLoginStartRequestSchema,
+  oauthLogoutRequestSchema,
+} from '../protocol/rest-oauth';
 
 interface RouteHost {
   get(
@@ -71,6 +74,7 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const result = await core.accessor.get(IOAuthService).startLogin(req.body.provider);
+      requestLog(req)?.info({ provider: req.body.provider, action: 'login' }, 'oauth login started');
       reply.send(okEnvelope(result, req.id));
     },
   );
@@ -113,6 +117,10 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const result = await core.accessor.get(IOAuthService).cancelLogin(req.query.provider);
+      requestLog(req)?.info(
+        { provider: req.query.provider, action: 'cancel_login' },
+        'oauth login cancelled',
+      );
       reply.send(okEnvelope(result, req.id));
     },
   );
@@ -134,6 +142,7 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     },
     async (req, reply) => {
       const result = await core.accessor.get(IOAuthService).logout(req.body.provider);
+      requestLog(req)?.info({ provider: req.body.provider, action: 'logout' }, 'oauth logout');
       reply.send(okEnvelope(result, req.id));
     },
   );

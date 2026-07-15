@@ -1,8 +1,8 @@
 /**
  * Session-scope resources — `/api/v2/session/<sid>/<resource>:<action>`.
  *
- * The `session` resource (read/update/setTitle/setArchived/status/isIdle/
- * archive) is flattened onto the {@link SessionScope} handle itself, since it
+ * The `session` resource (read/update/setTitle/setArchived/archive) is
+ * flattened onto the {@link SessionScope} handle itself, since it
  * is the primary thing you do with a session; every other resource
  * (`approvals`, `questions`, `interactions`, `workspace`, `fs`) is
  * a sub-namespace. `agent(agentId)` enters the agent scope, and
@@ -19,11 +19,7 @@ import {
 
 import { AgentScope } from './agent.js';
 import { SESSION, type SessionManifest } from './manifest.js';
-import type {
-  SessionActivityStatus,
-  SessionMeta,
-  SessionResourcePrecise,
-} from './types.js';
+import type { SessionMeta, SessionResourcePrecise } from './types.js';
 
 export type SessionResource = ResourceShape<SessionManifest['session'], SessionResourcePrecise>;
 export type ApprovalsResource = ResourceShape<SessionManifest['approvals']>;
@@ -73,12 +69,6 @@ export class SessionScope {
   }
   setArchived(arg?: boolean): Promise<null> {
     return this.sessionResource.setArchived(arg);
-  }
-  status(arg?: unknown): Promise<SessionActivityStatus> {
-    return this.sessionResource.status(arg);
-  }
-  isIdle(arg?: unknown): Promise<boolean> {
-    return this.sessionResource.isIdle(arg);
   }
   archive(arg?: unknown): Promise<null> {
     return this.sessionResource.archive(arg ?? this.sessionId);

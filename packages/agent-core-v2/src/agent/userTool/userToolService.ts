@@ -7,8 +7,9 @@
  * (`wire.dispatch(...)`). The live side effects — `registry.register` +
  * `profile.addActiveTool` (and the matching dispose / `removeActiveTool`) — run
  * after the dispatch, and are re-derived from the rebuilt Model by
- * `wire.onRestored` after `wire.replay`, so a resumed agent re-registers exactly
- * the tools the persisted ops describe without re-firing any live notification.
+ * `wire.hooks.onDidRestore` after `wire.restore`, so a resumed agent re-registers
+ * exactly the tools the persisted ops describe without re-firing any live
+ * notification.
  * The restore re-registers into the tool registry only: the active-tool set is
  * owned by the persisted `ActiveToolsModel`, so the ephemeral `addActiveTool`
  * overlay is not rebuilt (it is live-only by design). The per-tool
@@ -25,11 +26,10 @@ import type {
   ExecutableTool,
   ExecutableToolContext,
   ExecutableToolResult,
-} from '#/agent/tool/toolContract';
+} from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 
 import { IAgentUserToolService, type UserToolRegistration } from './userTool';
 import { registerUserTool, unregisterUserTool, UserToolModel } from './userToolOps';
@@ -50,10 +50,15 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
   ) {
     super();
-    this._register(this.wire.onRestored(() => this.restoreRegisteredTools()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('user-tool', async (_ctx, next) => {
+        this.restoreRegisteredTools();
+        await next();
+      }),
+    );
   }
 
   list(): readonly UserToolRegistration[] {
@@ -77,11 +82,6 @@ export class AgentUserToolService extends Disposable implements IAgentUserToolSe
   }
 
   private restoreRegisteredTools(): void {
-    // The persisted `ActiveToolsModel` is the source of truth for the active
-    // set on resume. Re-activating a tool whose registration predates the
-    // final `tools.set_active_tools` would resurrect a stale ephemeral
-    // overlay on top of an explicit base, so only activate tools the base
-    // does not exclude.
     const persistedActive = this.profile.getActiveToolNames();
     for (const registration of this.wire.getModel(UserToolModel).values()) {
       const activate =

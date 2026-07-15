@@ -1,6 +1,7 @@
 <!-- apps/kimi-web/src/components/chat/tool-calls/SwarmTool.vue -->
 <!-- A single AgentSwarm tool call, rendered as one inline "operation card".
-     Defaults to collapsed; when opened the body shows a phase overview and a
+     Expanded by default while the swarm runs, collapsed once settled; when
+     opened the body shows a phase overview and a phase overview and a
      per-member accordion — each subagent is a collapsible row (state dot +
      name + one-line activity + phase) that expands on its own to reveal the
      full output. While the swarm runs the rows come from the AppTask store
@@ -120,8 +121,10 @@ const segments = computed<Segment[]>(() =>
   ),
 );
 
-// Collapsed by default — §04 tool rows expand on demand.
-const open = ref(false);
+// Running swarms start expanded so live progress is visible without a click;
+// settled cards (history, finished runs) stay collapsed — §04 tool rows
+// expand on demand. The default applies only at mount; manual toggles stick.
+const open = ref(status.value === 'running' || inProgress.value > 0);
 function toggle(): void {
   open.value = !open.value;
 }

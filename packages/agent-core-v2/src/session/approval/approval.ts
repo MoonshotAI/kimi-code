@@ -8,7 +8,7 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 export interface ApprovalRequest {
   readonly id?: string;
@@ -34,11 +34,6 @@ export interface ISessionApprovalService {
   readonly _serviceBrand: undefined;
 
   request(req: ApprovalRequest): Promise<ApprovalResponse>;
-  /**
-   * Submit an approval request without blocking on the decision. Returns the
-   * request with its resolved `id`; the decision is delivered through the
-   * interaction `onDidResolve` stream.
-   */
   enqueue(req: ApprovalRequest): ApprovalRequest & { readonly id: string };
   decide(id: string, response: ApprovalResponse): void;
   listPending(): readonly ApprovalRequest[];

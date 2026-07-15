@@ -24,7 +24,6 @@ All other workspace packages are private internal packages, are not published to
 - `@moonshot-ai/kosong`
 - `@moonshot-ai/migration-legacy`
 - `@moonshot-ai/protocol`
-- `@moonshot-ai/server`
 - `@moonshot-ai/server-e2e`
 - `@moonshot-ai/vis`
 - `@moonshot-ai/vis-server`

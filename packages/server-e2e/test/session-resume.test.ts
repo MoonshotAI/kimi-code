@@ -1,5 +1,5 @@
 /**
- * Session-resume / status invariants — assertions for the two gaps the
+ * Session-resume / activity invariants — assertions for the two gaps the
  * "browser refresh" walkthrough flagged:
  *
  *   1. **Cold-session `GET /messages` must NOT 401.** Pre-fix, the
@@ -9,13 +9,10 @@
  *      `core.rpc.resumeSession({sessionId})` before `getContext`, so any
  *      session whose snapshot exists on disk is rehydrated transparently.
  *
- *   2. **`GET /sessions/{sid}.status` must reflect runtime state.** The
- *      protocol exposes `idle | running | awaiting_approval |
- *      awaiting_question | aborted` (`session.ts:36-42`); pre-fix,
- *      `toProtocolSession` (`services/src/session/session.ts:178`) hardcoded
- *      `status: 'idle'`; the v2 backend pulls real status, so this test
- *      asserts the live server transitions `idle → running → idle` across a
- *      prompt.
+ *   2. **`GET /sessions/{sid}.busy` must reflect runtime work.** Session
+ *      activity is aggregated from agent turns and background tasks, so this
+ *      test asserts the live server transitions `false → true → false` across
+ *      a prompt.
  *
  * Both tests gate on `daemonReachable()` so CI without a server stays green.
  */
@@ -60,7 +57,7 @@ afterEach(async () => {
   }
 });
 
-describeLive('session resume + status (live server required)', () => {
+describeLive('session resume + activity (live server required)', () => {
   // ── Gap 1: cold-session /messages ──────────────────────────────────────
   it(
     'GET /messages on a persisted session returns 200 (resumeSession injection)',
@@ -118,21 +115,18 @@ describeLive('session resume + status (live server required)', () => {
     PROMPT_TIMEOUT_MS + 30_000,
   );
 
-  // ── Gap 2: live status field ───────────────────────────────────────────
-  // Asserts the live server transitions `idle → running → idle` across a
-  // prompt. Historically gated behind `it.fails` pending v1's
-  // `toProtocolSession` hardcode (`services/src/session/session.ts:178`);
-  // the v2 backend pulls real status and the transition now passes, so the
-  // gate was removed.
+  // ── Gap 2: live busy field ─────────────────────────────────────────────
+  // Asserts the live server transitions `false → true → false` across a
+  // prompt, using the aggregate work fact exposed by both backends.
   it(
-    'GET /sessions/{sid}.status transitions idle → running → idle across a prompt',
+    'GET /sessions/{sid}.busy transitions false → true → false across a prompt',
     async () => {
-      const log = createCaseLogger('session status: live transition');
+      const log = createCaseLogger('session busy: live transition');
       const client = new DaemonClient({ baseUrl: BASE_URL });
       const session = await client.createSession({ metadata: { cwd: process.cwd() } });
       created.push({ client, sid: session.id });
       log('created session', session);
-      expect(session.status).toBe('idle');
+      expect(session.busy).toBe(false);
 
       await client.connect();
       await client.subscribe(session.id);
@@ -144,10 +138,10 @@ describeLive('session resume + status (live server required)', () => {
       });
       log('submit response', submit);
 
-      // Race the server: poll status quickly until we observe a non-idle
-      // value or `prompt.completed` lands. Either outcome ends the loop; we
-      // assert on the captured `seenRunning` flag afterward.
-      let seenRunning = false;
+      // Race the server: poll busy quickly until we observe active work or
+      // `prompt.completed` lands. Either outcome ends the loop; we
+      // assert on the captured `seenBusy` flag afterward.
+      let seenBusy = false;
       const ackPromise = client.waitForFrame(
         (f) => {
           if (f.type !== 'prompt.completed') return false;
@@ -157,29 +151,29 @@ describeLive('session resume + status (live server required)', () => {
         { timeoutMs: PROMPT_TIMEOUT_MS },
       );
       const deadline = Date.now() + 5_000;
-      const statusSamples: Array<{ at_ms: number; status: string; current_prompt_id?: string }> = [];
+      const busySamples: Array<{ at_ms: number; busy: boolean; current_prompt_id?: string }> = [];
       const startedAt = Date.now();
-      while (Date.now() < deadline && !seenRunning) {
+      while (Date.now() < deadline && !seenBusy) {
         const snap = await client.http.getSession(session.id);
-        statusSamples.push({
+        busySamples.push({
           at_ms: Date.now() - startedAt,
-          status: snap.status,
+          busy: snap.busy,
           current_prompt_id: snap.current_prompt_id,
         });
-        if (snap.status !== 'idle') {
-          seenRunning = true;
+        if (snap.busy) {
+          seenBusy = true;
           break;
         }
         await new Promise((r) => setTimeout(r, 50));
       }
       const completedFrame = await ackPromise;
-      log('status poll samples', statusSamples);
+      log('busy poll samples', busySamples);
       log('prompt completed frame', frameForLog(completedFrame));
       const after = await client.http.getSession(session.id);
       log('final session snapshot', after);
 
-      expect(seenRunning, 'expected at least one non-idle status reading during prompt').toBe(true);
-      expect(after.status).toBe('idle');
+      expect(seenBusy, 'expected at least one busy reading during prompt').toBe(true);
+      expect(after.busy).toBe(false);
     },
     PROMPT_TIMEOUT_MS + 30_000,
   );
@@ -197,7 +191,7 @@ function frameForLog(frame: { type: string; seq?: number; session_id?: string; p
 function sessionSummaryForLog(session: {
   id: string;
   title: string;
-  status: string;
+  busy: boolean;
   message_count: number;
   last_seq: number;
   metadata: Record<string, unknown>;
@@ -205,7 +199,7 @@ function sessionSummaryForLog(session: {
   return {
     id: session.id,
     title: session.title,
-    status: session.status,
+    busy: session.busy,
     message_count: session.message_count,
     last_seq: session.last_seq,
     cwd: session.metadata['cwd'],

@@ -1,5 +1,207 @@
 # @moonshot-ai/kimi-code
 
+## 0.24.2
+
+### Patch Changes
+
+- [#1704](https://github.com/MoonshotAI/kimi-code/pull/1704) [`38a2363`](https://github.com/MoonshotAI/kimi-code/commit/38a2363a006d8ed32ff6100ccff2dc7d1a70b2b0) Thanks [@sailist](https://github.com/sailist)! - Align the print-mode run lifecycle across engines: `print_background_mode` and `print_max_turns` now take effect for `kimi -p` on the experimental engine, with the same exit / drain / steer semantics and defaults as the default engine, and `kimi -p "/goal ..."` now stays alive until the goal reaches a terminal state instead of exiting after the first turn.
+
+- [#1704](https://github.com/MoonshotAI/kimi-code/pull/1704) [`38a2363`](https://github.com/MoonshotAI/kimi-code/commit/38a2363a006d8ed32ff6100ccff2dc7d1a70b2b0) Thanks [@sailist](https://github.com/sailist)! - Align the subagent timeout across engines: a fixed 2-hour default, overridable with `[subagent] timeout_ms` in config.toml or the KIMI_SUBAGENT_TIMEOUT_MS environment variable.
+
+- [#1727](https://github.com/MoonshotAI/kimi-code/pull/1727) [`286d3e7`](https://github.com/MoonshotAI/kimi-code/commit/286d3e7aca40a778cc4136eb377e14f14c70141c) Thanks [@liruifengv](https://github.com/liruifengv)! - Add a builtin `check-kimi-code-docs` skill that answers Kimi Code product questions (CLI usage, configuration, membership, error codes) against the official documentation with source links. It triggers automatically on product questions, or run `/check-kimi-code-docs`.
+
+- [#1707](https://github.com/MoonshotAI/kimi-code/pull/1707) [`8490c3e`](https://github.com/MoonshotAI/kimi-code/commit/8490c3e36b6a6cc3ba5c0f15d93b87347ce23878) Thanks [@sailist](https://github.com/sailist)! - Add the number of messages dropped during compaction retries to the session wire log's LLM request traces.
+
+- [#1740](https://github.com/MoonshotAI/kimi-code/pull/1740) [`a74ab44`](https://github.com/MoonshotAI/kimi-code/commit/a74ab44ac7d5656e2dd9cf93b8e484936b05a0c8) Thanks [@sailist](https://github.com/sailist)! - Increase the default per-step LLM retry budget from 3 to 10 attempts, so transient provider failures (429 / overload) are retried with exponential backoff for a few minutes before the turn fails. Tune with `loop_control.max_retries_per_step` in config.toml.
+
+- [#1707](https://github.com/MoonshotAI/kimi-code/pull/1707) [`8490c3e`](https://github.com/MoonshotAI/kimi-code/commit/8490c3e36b6a6cc3ba5c0f15d93b87347ce23878) Thanks [@sailist](https://github.com/sailist)! - Rename the dynamic tool loading model capability from `select_tools` to `dynamically_loaded_tools`, matching the model catalog vocabulary; the `select_tools` tool and the `tool-select` flag are unchanged.
+
+- [#1698](https://github.com/MoonshotAI/kimi-code/pull/1698) [`722694a`](https://github.com/MoonshotAI/kimi-code/commit/722694adf99c53dc608d417ea6d8c90a5712c33f) Thanks [@chengluyu](https://github.com/chengluyu)! - Enforce goal wall-clock budgets while model or tool work is still running.
+
+- [#1730](https://github.com/MoonshotAI/kimi-code/pull/1730) [`72f425e`](https://github.com/MoonshotAI/kimi-code/commit/72f425e18d0264010e1442af67ee8d9acf5f0659) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix tool call id collisions across turns for Gemini-protocol models, which merged separate swarm runs into a single card in the web UI.
+
+- [#1695](https://github.com/MoonshotAI/kimi-code/pull/1695) [`5c0f17c`](https://github.com/MoonshotAI/kimi-code/commit/5c0f17cfcf99c27eb697be11ae9b61243d993e4a) Thanks [@chengluyu](https://github.com/chengluyu)! - Preserve active goal elapsed time across crash recovery.
+
+- [#1743](https://github.com/MoonshotAI/kimi-code/pull/1743) [`481b28b`](https://github.com/MoonshotAI/kimi-code/commit/481b28b8f4d527c43c640c4d742c52aa006c3bb0) Thanks [@chengluyu](https://github.com/chengluyu)! - Correct the guidance text shown when a goal cannot be paused or resumed.
+
+- [#1692](https://github.com/MoonshotAI/kimi-code/pull/1692) [`e53cd79`](https://github.com/MoonshotAI/kimi-code/commit/e53cd799572db6b2c73f6938703d586b83013cec) Thanks [@chengluyu](https://github.com/chengluyu)! - Allow goals to use every configured turn before the turn budget stops further work.
+
+- [#1719](https://github.com/MoonshotAI/kimi-code/pull/1719) [`b24a347`](https://github.com/MoonshotAI/kimi-code/commit/b24a347e20a3efa7bba948316784a76439ed7cf5) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Restore the AgentSwarm member list after a page refresh on the v2 backend.
+
+- [#1704](https://github.com/MoonshotAI/kimi-code/pull/1704) [`38a2363`](https://github.com/MoonshotAI/kimi-code/commit/38a2363a006d8ed32ff6100ccff2dc7d1a70b2b0) Thanks [@sailist](https://github.com/sailist)! - Fix sessions created by newer builds failing to open in older CLI builds on the same machine; new sessions are written in a compatible layout, and existing sessions are healed on first open.
+
+- [#1708](https://github.com/MoonshotAI/kimi-code/pull/1708) [`ddfdfb0`](https://github.com/MoonshotAI/kimi-code/commit/ddfdfb0b09b59d95888eca7e9ddb7bb63be5e204) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Fix sub-agent completions being signaled as session turn completions, which fired premature completion notifications, sounds, and unread markers while the main turn was still running.
+
+- [#1714](https://github.com/MoonshotAI/kimi-code/pull/1714) [`20b6972`](https://github.com/MoonshotAI/kimi-code/commit/20b69724aafc8fb0b56a414988eb762a8b8a3ed1) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix code block copy buttons when the web UI is served over plain HTTP.
+
+- [#1643](https://github.com/MoonshotAI/kimi-code/pull/1643) [`d8d4e8c`](https://github.com/MoonshotAI/kimi-code/commit/d8d4e8ceb55d7a5cae7ce9b579996c9ff5601914) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Prevent long streaming responses from stalling after a tab is backgrounded.
+
+- [#1715](https://github.com/MoonshotAI/kimi-code/pull/1715) [`de493ae`](https://github.com/MoonshotAI/kimi-code/commit/de493aeec973623bc0e258d6598f6d9215693a5f) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Use an upward chevron for the expand button on minimized plan review and question cards so the icon matches the direction the cards open.
+
+- [#1641](https://github.com/MoonshotAI/kimi-code/pull/1641) [`b6ae0a1`](https://github.com/MoonshotAI/kimi-code/commit/b6ae0a1054635fc71efde61dafa03da8a8b0c4c8) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Show session list loading failures without discarding sessions that are still available.
+
+- [#1719](https://github.com/MoonshotAI/kimi-code/pull/1719) [`b24a347`](https://github.com/MoonshotAI/kimi-code/commit/b24a347e20a3efa7bba948316784a76439ed7cf5) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Expand the AgentSwarm card by default while its subagents are still running.
+
+- [#1693](https://github.com/MoonshotAI/kimi-code/pull/1693) [`7de218a`](https://github.com/MoonshotAI/kimi-code/commit/7de218a909d8f3e676ea3c160834090c9f19ca54) Thanks [@chengluyu](https://github.com/chengluyu)! - web: Resume paused goals when you select Resume.
+
+- [#1700](https://github.com/MoonshotAI/kimi-code/pull/1700) [`3107f96`](https://github.com/MoonshotAI/kimi-code/commit/3107f963a532de88d0affd0a08c60749455c5013) Thanks [@chengluyu](https://github.com/chengluyu)! - Prevent late activity from replaced goals from changing or consuming the budget of replacement goals.
+
+- [#1459](https://github.com/MoonshotAI/kimi-code/pull/1459) [`6eb8e13`](https://github.com/MoonshotAI/kimi-code/commit/6eb8e13417f28a553b4183f113e5b96eb31e4211) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix mobile safe-area handling, including the composer floating above the on-screen keyboard on iOS, doubled landscape insets, the PWA top bar under the notch, and toasts overlapping the composer as it grows.
+
+- [#1696](https://github.com/MoonshotAI/kimi-code/pull/1696) [`b781e8c`](https://github.com/MoonshotAI/kimi-code/commit/b781e8cbcfac2cd0e73e3b1b79fa3386c632fa5b) Thanks [@chengluyu](https://github.com/chengluyu)! - Preserve final status messages when automatic goal continuations reach a budget or report a blocker.
+
+- [#1722](https://github.com/MoonshotAI/kimi-code/pull/1722) [`3703d03`](https://github.com/MoonshotAI/kimi-code/commit/3703d0346e79e42f18b5097f5606e6ef7b0ff2dd) Thanks [@sailist](https://github.com/sailist)! - In print mode (`kimi -p`), keep the run alive by default while background tasks are pending and feed each completion back to the main agent as a new turn, with an effectively unbounded wait ceiling and turn cap and a 72-hour subagent timeout. Set `print_background_mode = "exit"` (or `"drain"`) to restore the previous exit-after-one-turn behavior.
+
+- [#1737](https://github.com/MoonshotAI/kimi-code/pull/1737) [`5d6ff02`](https://github.com/MoonshotAI/kimi-code/commit/5d6ff022b1a3732cf0b12d1a87497870def52c0c) Thanks [@sailist](https://github.com/sailist)! - In print mode (`kimi -p`), background Bash tasks and subagents no longer have a timeout by default — they run until they finish or the model stops them, and a foreground Bash command that times out is moved to the background without a new deadline. Interactive defaults are unchanged; tune per mode with `bash_task_timeout_s` under `[background]` or `timeout_ms` under `[subagent]` (`0` = no timeout).
+
+- [#1697](https://github.com/MoonshotAI/kimi-code/pull/1697) [`2bf009f`](https://github.com/MoonshotAI/kimi-code/commit/2bf009fe27d1b0259e90f285e94264a8bf6b5832) Thanks [@chengluyu](https://github.com/chengluyu)! - Reject subagent goal requests consistently instead of starting goals they cannot finish.
+
+- [#1711](https://github.com/MoonshotAI/kimi-code/pull/1711) [`9eff230`](https://github.com/MoonshotAI/kimi-code/commit/9eff230f976c6bd8cc757678293276d8dec013d8) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Log failed requests, WebSocket auth rejections, shutdowns, and key operations (abort, cancel, approvals, config changes) in the web UI server so daemon problems can be diagnosed from its logs.
+
+- [#1704](https://github.com/MoonshotAI/kimi-code/pull/1704) [`38a2363`](https://github.com/MoonshotAI/kimi-code/commit/38a2363a006d8ed32ff6100ccff2dc7d1a70b2b0) Thanks [@sailist](https://github.com/sailist)! - Fix `kimi server` reporting the internal server package version instead of the CLI version in its metadata; the web UI settings now show the CLI version.
+
+- [#1741](https://github.com/MoonshotAI/kimi-code/pull/1741) [`8a3f1ff`](https://github.com/MoonshotAI/kimi-code/commit/8a3f1ffa6fbd7855fd0b10d96587afc6b690ebe3) Thanks [@chengluyu](https://github.com/chengluyu)! - web: Fix the session title not being generated when the first message is a skill slash command.
+
+- [#1694](https://github.com/MoonshotAI/kimi-code/pull/1694) [`513f374`](https://github.com/MoonshotAI/kimi-code/commit/513f374aa08bd86b428f62697c1ca12594d533e9) Thanks [@chengluyu](https://github.com/chengluyu)! - Reject malformed persisted goal records during session recovery.
+
+- [#1704](https://github.com/MoonshotAI/kimi-code/pull/1704) [`38a2363`](https://github.com/MoonshotAI/kimi-code/commit/38a2363a006d8ed32ff6100ccff2dc7d1a70b2b0) Thanks [@sailist](https://github.com/sailist)! - web: Show each message's actual send time in chat history after reloading a session, instead of the session creation time.
+
+- [#1711](https://github.com/MoonshotAI/kimi-code/pull/1711) [`9eff230`](https://github.com/MoonshotAI/kimi-code/commit/9eff230f976c6bd8cc757678293276d8dec013d8) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Surface server error details when actions such as stopping a session, archiving, or toggling modes fail, instead of failing silently, and log every operation failure to the console and the exported web log.
+
+- [#1701](https://github.com/MoonshotAI/kimi-code/pull/1701) [`07c3632`](https://github.com/MoonshotAI/kimi-code/commit/07c3632415fa77972c49c39d7171ee5a4790bd01) Thanks [@sailist](https://github.com/sailist)! - Keep the workspace catalog complete and durable: creating a session registers its directory as a workspace, the server backfills missing workspaces from session history at startup, and a removed workspace no longer reappears after a restart.
+
+## 0.24.1
+
+### Patch Changes
+
+- [#1678](https://github.com/MoonshotAI/kimi-code/pull/1678) [`ec1c974`](https://github.com/MoonshotAI/kimi-code/commit/ec1c9748c816d152bf06af2456e82ac35786bba9) Thanks [@chengluyu](https://github.com/chengluyu)! - Preserve goal completion summaries and show untyped LLM errors without an internal error-code prefix in step interruption events.
+
+- [#1688](https://github.com/MoonshotAI/kimi-code/pull/1688) [`94c0ef8`](https://github.com/MoonshotAI/kimi-code/commit/94c0ef89d29ea8532be02828201328fa1281273c) Thanks [@sailist](https://github.com/sailist)! - Fix built-in tools being unavailable when the model provider becomes ready after the session starts.
+
+- [#1684](https://github.com/MoonshotAI/kimi-code/pull/1684) [`e417ee7`](https://github.com/MoonshotAI/kimi-code/commit/e417ee7c2c282f00113dc0e4f4514ca5018b76c9) Thanks [@RealKai42](https://github.com/RealKai42)! - Fix Kimi sessions getting stuck when preserved-thinking history contains an empty reasoning step.
+
+- [#1673](https://github.com/MoonshotAI/kimi-code/pull/1673) [`0f64b4d`](https://github.com/MoonshotAI/kimi-code/commit/0f64b4dcc4f2d295d0039b176d96d8003cb49991) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Align thinking-level handling with the CLI: submit the selected level verbatim instead of silently downgrading it, pin the model's catalog default when nothing was chosen, pre-select the target model's default on model switches, and persist explicit picks as the daemon-wide default so new sessions inherit them.
+
+- [#1689](https://github.com/MoonshotAI/kimi-code/pull/1689) [`ab22a2a`](https://github.com/MoonshotAI/kimi-code/commit/ab22a2adf0ca17cbb94f1abdab334ebc58814e8d) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Show just the level name (e.g. Max) in the model pill instead of "thinking: max".
+
+- [#1625](https://github.com/MoonshotAI/kimi-code/pull/1625) [`d158e0a`](https://github.com/MoonshotAI/kimi-code/commit/d158e0a7ac4e432046d56787263dd2dbac40285e) Thanks [@RealKai42](https://github.com/RealKai42)! - Fix Thinking effort routing so non-Kimi providers preserve configured values for upstream validation, while Kimi models validate runtime selections, fall back safely during model resolution, and synchronize the effective effort back to clients.
+
+## 0.24.0
+
+### Minor Changes
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Add v2 session export support for packaging diagnostic zip archives.
+
+- [#1591](https://github.com/MoonshotAI/kimi-code/pull/1591) [`83e1753`](https://github.com/MoonshotAI/kimi-code/commit/83e175399f4dc3dfc3bb478543ff5897a24dfa3d) Thanks [@liruifengv](https://github.com/liruifengv)! - Move foreground Bash commands that hit their timeout to the background instead of killing them, so long-running commands survive the timeout and report back on completion. Set `bash_auto_background_on_timeout = false` under `[background]` in config.toml to restore the kill-on-timeout behavior.
+
+- [#1617](https://github.com/MoonshotAI/kimi-code/pull/1617) [`4ec2e7f`](https://github.com/MoonshotAI/kimi-code/commit/4ec2e7fab14ab89cddf77821082c3ff4911f737b) Thanks [@sailist](https://github.com/sailist)! - Run the local server (`kimi server run` / `kimi web`) on the agent-core-v2 engine by default — the `KIMI_CODE_EXPERIMENTAL_FLAG` opt-in is no longer needed, and the legacy v1 server package has been removed.
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Port progressive tool disclosure to the new agent engine: MCP tool schemas stay out of the top-level tool list, and the model loads them by name on demand through the announcements plus the select_tools tool, keeping the prompt cache stable. Off by default; set KIMI_CODE_EXPERIMENTAL_TOOL_SELECT=1 to enable.
+
+- [#1646](https://github.com/MoonshotAI/kimi-code/pull/1646) [`5eb6217`](https://github.com/MoonshotAI/kimi-code/commit/5eb62178b3b67d8659788bdf91132469f6588653) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Add session diagnostic export to download a session and bounded metadata-only troubleshooting logs as a ZIP. Run `/export` or pick Export session from a session's more menu. Web downloads are limited to 64 MiB.
+
+### Patch Changes
+
+- [#1638](https://github.com/MoonshotAI/kimi-code/pull/1638) [`7c889f3`](https://github.com/MoonshotAI/kimi-code/commit/7c889f3a960482cc9382203bda55d972b6fb6acd) Thanks [@RealKai42](https://github.com/RealKai42)! - In auto permission mode, plan exits are now marked as auto-approved (not user-reviewed) in both the tool result and the transcript, so the agent no longer treats automatic plan approval as a user signal to start executing.
+
+- [#1598](https://github.com/MoonshotAI/kimi-code/pull/1598) [`4feca6b`](https://github.com/MoonshotAI/kimi-code/commit/4feca6b0738ee0120ab8bea04604b8f467a72e48) Thanks [@kermanx](https://github.com/kermanx)! - web: Recover transient subagent rate limits without surfacing them as session errors.
+
+- [#1635](https://github.com/MoonshotAI/kimi-code/pull/1635) [`e49b3b8`](https://github.com/MoonshotAI/kimi-code/commit/e49b3b877750ba5ca0ea80e154549d5b53455575) Thanks [@sailist](https://github.com/sailist)! - Request task-owned work to stop on session close, honoring `background.keep_alive_on_exit` for independent processes and `background.kill_grace_period_ms` before attempting force-stop.
+
+- [#1629](https://github.com/MoonshotAI/kimi-code/pull/1629) [`0527ca2`](https://github.com/MoonshotAI/kimi-code/commit/0527ca2267f8cf355d0c158953f3dbfc0c9692ac) Thanks [@sailist](https://github.com/sailist)! - Fix session fork losing everything except the conversation log: forked sessions now carry over media attachments, plan files, background task output, and cron tasks, and a failed fork no longer leaves a broken half-copy behind.
+
+- [#1627](https://github.com/MoonshotAI/kimi-code/pull/1627) [`28e9dd4`](https://github.com/MoonshotAI/kimi-code/commit/28e9dd4d627f01143b715976cb071e7d16cd2001) Thanks [@chengluyu](https://github.com/chengluyu)! - web: Continue blocked goals after the user resumes them from the goal controls.
+
+- [#1631](https://github.com/MoonshotAI/kimi-code/pull/1631) [`2d874fb`](https://github.com/MoonshotAI/kimi-code/commit/2d874fbd73eb511e4ef4c8d4c88bd47e429580b2) Thanks [@sailist](https://github.com/sailist)! - Fix a race where a heartbeat write in flight during server shutdown could recreate the instance file right after it was removed.
+
+- [#1663](https://github.com/MoonshotAI/kimi-code/pull/1663) [`1294a0e`](https://github.com/MoonshotAI/kimi-code/commit/1294a0e1ad739151573163505f9c58afb2d543e4) Thanks [@7Sageer](https://github.com/7Sageer)! - Fix OAuth login hanging after browser authorization when the provider configuration changes during sign-in.
+
+- [#1657](https://github.com/MoonshotAI/kimi-code/pull/1657) [`32a89c3`](https://github.com/MoonshotAI/kimi-code/commit/32a89c36432f9aea452a697734102a7956e42e92) Thanks [@RealKai42](https://github.com/RealKai42)! - Prevent oversized image reads from poisoning sessions and recover existing request-too-large failures by removing unsafe media from provider requests.
+
+- [#1635](https://github.com/MoonshotAI/kimi-code/pull/1635) [`e49b3b8`](https://github.com/MoonshotAI/kimi-code/commit/e49b3b877750ba5ca0ea80e154549d5b53455575) Thanks [@sailist](https://github.com/sailist)! - Store background task records per agent again, so tasks written by older versions are found on resume and one agent's restore no longer marks another agent's tasks as lost.
+
+- [#1632](https://github.com/MoonshotAI/kimi-code/pull/1632) [`a4aae87`](https://github.com/MoonshotAI/kimi-code/commit/a4aae87cd9a240d3567601ed1a9aefaab540b075) Thanks [@sailist](https://github.com/sailist)! - Fix providers without a configured base_url being rejected: anthropic/openai and other protocol providers now fall back to their official default endpoints again, as before.
+
+- [#1588](https://github.com/MoonshotAI/kimi-code/pull/1588) [`2061590`](https://github.com/MoonshotAI/kimi-code/commit/20615902c2c3776d17c6c334cedec1c8723222b1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix pasted media being dropped from /skill and plugin command arguments.
+
+- [#1588](https://github.com/MoonshotAI/kimi-code/pull/1588) [`2061590`](https://github.com/MoonshotAI/kimi-code/commit/20615902c2c3776d17c6c334cedec1c8723222b1) Thanks [@liruifengv](https://github.com/liruifengv)! - Fix pasted images being dropped when steering with Ctrl-S.
+
+- [#1629](https://github.com/MoonshotAI/kimi-code/pull/1629) [`0527ca2`](https://github.com/MoonshotAI/kimi-code/commit/0527ca2267f8cf355d0c158953f3dbfc0c9692ac) Thanks [@sailist](https://github.com/sailist)! - Fix the v2 engine never activating tool-call deduplication: identical tool calls issued in the same step no longer execute multiple times, and repeated identical calls across steps receive escalating reminders again.
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Fix a race in the experimental v2 config service that could drop a just-written setting from the config response.
+
+- [#1614](https://github.com/MoonshotAI/kimi-code/pull/1614) [`3c0e368`](https://github.com/MoonshotAI/kimi-code/commit/3c0e368cbdfebff9632cffca3b18365615a146b8) Thanks [@chengluyu](https://github.com/chengluyu)! - Fix a server crash when the first goal-mode prompt is submitted while the v2 agent is still starting.
+
+- [#1631](https://github.com/MoonshotAI/kimi-code/pull/1631) [`2d874fb`](https://github.com/MoonshotAI/kimi-code/commit/2d874fbd73eb511e4ef4c8d4c88bd47e429580b2) Thanks [@sailist](https://github.com/sailist)! - Surface the provider's actual rejection message instead of a misleading re-login prompt when an OAuth-managed model keeps returning 401 after a token refresh.
+
+- [#1631](https://github.com/MoonshotAI/kimi-code/pull/1631) [`2d874fb`](https://github.com/MoonshotAI/kimi-code/commit/2d874fbd73eb511e4ef4c8d4c88bd47e429580b2) Thanks [@sailist](https://github.com/sailist)! - Rewrite repeated-tool-call reminders to redirect the agent toward a different action instead of prohibiting the call, and treat a dismissed question prompt as no answer rather than the recommended option.
+
+- [#1636](https://github.com/MoonshotAI/kimi-code/pull/1636) [`8027fe2`](https://github.com/MoonshotAI/kimi-code/commit/8027fe291b03fbfce6dc60aa06f8699ad0976ec5) Thanks [@sailist](https://github.com/sailist)! - Make file tools able to reach skill directories outside the working directory in the v2 engine (experimental), and honor --skillsDir in v2 print mode and the server's skillDirs option.
+
+- [#1630](https://github.com/MoonshotAI/kimi-code/pull/1630) [`0303b82`](https://github.com/MoonshotAI/kimi-code/commit/0303b82c3e691836163ecf906febfb6324c81d74) Thanks [@sailist](https://github.com/sailist)! - Fix ReadMediaFile results losing their image rendering after a session reload or resume on the v2 server backend.
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Fix a storage race in the experimental v2 engine that could fail value reads when writes overlap with compaction.
+
+- [#1601](https://github.com/MoonshotAI/kimi-code/pull/1601) [`dc309a7`](https://github.com/MoonshotAI/kimi-code/commit/dc309a7dfb38b6ef885b8ae80be51b49f8486207) Thanks [@kermanx](https://github.com/kermanx)! - web: Fix the context usage indicator dropping to 0 when a session is reopened or the session list reloads (e.g. after a sidebar search) — the cached live usage is now kept instead of the session record's all-zero placeholder.
+
+- [#1620](https://github.com/MoonshotAI/kimi-code/pull/1620) [`e91a616`](https://github.com/MoonshotAI/kimi-code/commit/e91a616f2196ab9ffc69b3fcc0f2015398d86bd4) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix duplicate user message bubbles after a session snapshot resync.
+
+- [#1672](https://github.com/MoonshotAI/kimi-code/pull/1672) [`88629ba`](https://github.com/MoonshotAI/kimi-code/commit/88629bac3add2a8a17ae8288ee4edbdc9313d55a) Thanks [@yicun](https://github.com/yicun)! - web: Fix uploaded and persisted images failing to display on non-loopback server connections.
+
+- [#1609](https://github.com/MoonshotAI/kimi-code/pull/1609) [`e223549`](https://github.com/MoonshotAI/kimi-code/commit/e223549a79c80e442850947c0cf60d58b2d18667) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix a running multi-step turn rendering a duplicated wall of text after the page reconnects or refreshes mid-turn.
+
+- [#1611](https://github.com/MoonshotAI/kimi-code/pull/1611) [`32cbd0c`](https://github.com/MoonshotAI/kimi-code/commit/32cbd0cf6109f4f3f124e6e4ee7c4c87fa344247) Thanks [@chengluyu](https://github.com/chengluyu)! - web: Fix the workspace picker menu sizing too narrowly for its content.
+
+- [#1635](https://github.com/MoonshotAI/kimi-code/pull/1635) [`e49b3b8`](https://github.com/MoonshotAI/kimi-code/commit/e49b3b877750ba5ca0ea80e154549d5b53455575) Thanks [@sailist](https://github.com/sailist)! - Fix possible record loss when resuming sessions whose wire log needs migration, and reject session logs missing the version envelope instead of silently misreading them.
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Fix MCP tools being unavailable on the first turn after session startup.
+
+- [#1580](https://github.com/MoonshotAI/kimi-code/pull/1580) [`83370f1`](https://github.com/MoonshotAI/kimi-code/commit/83370f17ef38770561a421e3b3a15f6244219aa5) Thanks [@wszqkzqk](https://github.com/wszqkzqk)! - Fix bash auto-detection on Windows failing when git comes from a native MSYS2 toolchain (ucrt64/clang64/clangarm64).
+
+- [#1676](https://github.com/MoonshotAI/kimi-code/pull/1676) [`d1820ff`](https://github.com/MoonshotAI/kimi-code/commit/d1820ff0f853689e84b3e9d4c482532c481eb9bd) Thanks [@RealKai42](https://github.com/RealKai42)! - Preserve empty model reasoning blocks across providers so multi-step tool calls can continue.
+
+- [#1669](https://github.com/MoonshotAI/kimi-code/pull/1669) [`490303d`](https://github.com/MoonshotAI/kimi-code/commit/490303db16ed374eae20572e4c6f9880db911547) Thanks [@chengluyu](https://github.com/chengluyu)! - web: Refine goal mode controls with animated strip interactions, budget-aware progress, and design-system cancellation confirmation.
+
+- [#1597](https://github.com/MoonshotAI/kimi-code/pull/1597) [`d601847`](https://github.com/MoonshotAI/kimi-code/commit/d601847f22366b041d949d7c9f7857471be8970c) Thanks [@7Sageer](https://github.com/7Sageer)! - Send the kimi-code-cli User-Agent on provider registry (api.json) and model catalog fetches, so registries can identify the client version.
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Fix approval and question prompts not appearing in real time for web clients connected to the v2 server; they previously only showed up after a page refresh.
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Log a warning when a skill fails to parse instead of silently dropping it, and fix the skill catalog so scanned skill roots and policy-skipped skills are actually reported.
+
+- [#1589](https://github.com/MoonshotAI/kimi-code/pull/1589) [`f338fcd`](https://github.com/MoonshotAI/kimi-code/commit/f338fcdac4fa8d4235c44310953e5d512f6549fb) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Fix the AgentSwarm member list disappearing after a page refresh while subagents are still running.
+
+- [#1591](https://github.com/MoonshotAI/kimi-code/pull/1591) [`83e1753`](https://github.com/MoonshotAI/kimi-code/commit/83e175399f4dc3dfc3bb478543ff5897a24dfa3d) Thanks [@liruifengv](https://github.com/liruifengv)! - Optimize the TaskOutput tool prompts to discourage blocking waits on background tasks.
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Enforce a typed registry for v2 engine telemetry events and redact URLs, tokens, and file paths from outgoing telemetry properties.
+
+- [#1624](https://github.com/MoonshotAI/kimi-code/pull/1624) [`3215129`](https://github.com/MoonshotAI/kimi-code/commit/321512986099037acb4b2677d4455db316d27b50) Thanks [@kermanx](https://github.com/kermanx)! - Fix the experimental v2 engine crashing when the first prompt is sent right after a new conversation is created (for example sending /goal on the web's new-conversation page): agent creation now joins the in-flight bootstrap instead of failing, and the v2 agent lifecycle is split into focused existence, sub-agent, and session MCP domains.
+
+- [#1637](https://github.com/MoonshotAI/kimi-code/pull/1637) [`0e0a6e9`](https://github.com/MoonshotAI/kimi-code/commit/0e0a6e9a5170c28c5e6809c1b2cf6d6f8904de73) Thanks [@sailist](https://github.com/sailist)! - Support caller-supplied MCP server configs on session create in the v2 engine (experimental), merged over the file config and under plugin servers.
+
+- [#1626](https://github.com/MoonshotAI/kimi-code/pull/1626) [`1c85f94`](https://github.com/MoonshotAI/kimi-code/commit/1c85f94472ead2746ad6860ec0e09f4384dd95ec) Thanks [@sailist](https://github.com/sailist)! - v2 engine: expose the prompt scheduler over /api/v2 for native clients, and add an experimental fault-injection service (KIMI_CODE_EXPERIMENTAL_FAULT_INJECTION) that arms a one-shot provider failure so the media-degraded / media-stripped recovery resends can be exercised end-to-end.
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Introduce a graded error taxonomy for the v2 engine's filesystem, storage, and wire layers, translating raw OS and parse failures into specific error codes instead of generic internal errors.
+
+- [#1626](https://github.com/MoonshotAI/kimi-code/pull/1626) [`1c85f94`](https://github.com/MoonshotAI/kimi-code/commit/1c85f94472ead2746ad6860ec0e09f4384dd95ec) Thanks [@sailist](https://github.com/sailist)! - v2 engine: block unsupported image formats (AVIF, HEIC, BMP, TIFF, ICO) at every ingestion point so they can no longer poison session history, and auto-recover provider image-format rejections with a media-stripped resend.
+
+- [#1626](https://github.com/MoonshotAI/kimi-code/pull/1626) [`1c85f94`](https://github.com/MoonshotAI/kimi-code/commit/1c85f94472ead2746ad6860ec0e09f4384dd95ec) Thanks [@sailist](https://github.com/sailist)! - v2 engine: recover image-heavy sessions from provider request-size rejections (HTTP 413) by resending with older media degraded to text markers, re-encode oversized WebP images instead of passing them through, and keep downscaled PNGs readable by switching to JPEG below 1000px.
+
+- [#1613](https://github.com/MoonshotAI/kimi-code/pull/1613) [`b2daa40`](https://github.com/MoonshotAI/kimi-code/commit/b2daa405f075cb6847c0a313809b1bcac750b611) Thanks [@7Sageer](https://github.com/7Sageer)! - Support the `services.moonshot_search` api-key config for WebSearch in the v2 engine, matching v1: the tool is now available without an OAuth login, and explicit config takes precedence over the OAuth-derived provider.
+
+- [#1590](https://github.com/MoonshotAI/kimi-code/pull/1590) [`8a4ee05`](https://github.com/MoonshotAI/kimi-code/commit/8a4ee05951ebe4f804fd1fb0989aaf44b3b7a3ed) Thanks [@sailist](https://github.com/sailist)! - Fix bash auto-detection on Windows in the experimental v2 engine when git comes from a native MSYS2 toolchain (ucrt64/clang64/clangarm64).
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Send the CLI identity headers (User-Agent and device identity) with outbound requests from the experimental v2 server, matching direct CLI runs.
+
+- [#1593](https://github.com/MoonshotAI/kimi-code/pull/1593) [`2185237`](https://github.com/MoonshotAI/kimi-code/commit/2185237c2f5c5fb3cc6b44c01ac158c6e2b81fe6) Thanks [@kermanx](https://github.com/kermanx)! - Declare v2 engine wire op payloads with required zod schemas and derive their types from the schemas, with ops declared on their models and every op type registered for replay classification.
+
+- [#1441](https://github.com/MoonshotAI/kimi-code/pull/1441) [`ceb158d`](https://github.com/MoonshotAI/kimi-code/commit/ceb158dc54586f254819edbc83c27e21dca1ecf6) Thanks [@sailist](https://github.com/sailist)! - Keep sessions from the new agent engine compatible with existing transcript replay.
+
+- [#1592](https://github.com/MoonshotAI/kimi-code/pull/1592) [`924d5c9`](https://github.com/MoonshotAI/kimi-code/commit/924d5c914143d178020c2dddc56906ce15088680) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Show the connected backend engine (v1 / v2) in Settings, and add a dev-mode backend pill next to the sidebar brand that can switch the dev proxy between the two engines at runtime.
+
+- [#1606](https://github.com/MoonshotAI/kimi-code/pull/1606) [`2da45fc`](https://github.com/MoonshotAI/kimi-code/commit/2da45fc419cf5285a9353df8690bba444037ffe4) Thanks [@liruifengv](https://github.com/liruifengv)! - web: Fix the goal card disappearing after a page refresh while a session goal is active.
+
+- [#1587](https://github.com/MoonshotAI/kimi-code/pull/1587) [`49a8c84`](https://github.com/MoonshotAI/kimi-code/commit/49a8c84a493610c2b2cc2c7da0a8ec0261d876db) Thanks [@wbxl2000](https://github.com/wbxl2000)! - web: Let wide Markdown tables in the desktop chat grow up to 1040px with each column capped at 700px so long cell content wraps, temporarily hiding the conversation outline while a table passes under it; anything wider still scrolls inside the table.
+
 ## 0.23.6
 
 ### Patch Changes

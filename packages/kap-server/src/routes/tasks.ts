@@ -45,18 +45,19 @@ import {
   type AgentTaskInfo,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { ErrorCode } from '../protocol/error-codes';
 import {
-  ErrorCode,
   cancelTaskResultSchema,
   getTaskQuerySchema,
   getTaskResponseSchema,
   listTasksQuerySchema,
   listTasksResponseSchema,
-} from '@moonshot-ai/protocol';
-import type { Task, TaskKind, TaskStatus } from '@moonshot-ai/protocol';
+} from '../protocol/rest-task';
+import type { Task, TaskKind, TaskStatus } from '../protocol/task';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
@@ -256,6 +257,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
       }
 
       await resolved.tasks?.stop(task_id);
+      requestLog(req)?.info({ session_id, task_id }, 'task cancelled');
       reply.send(okEnvelope({ cancelled: true as const }, req.id));
     },
   );

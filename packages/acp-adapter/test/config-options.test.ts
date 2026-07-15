@@ -11,18 +11,30 @@ import {
 import type { AcpModelEntry } from '../src/model-catalog';
 
 function makeHarnessWithModels(
-  entries: ReadonlyArray<{ id: string; model?: string; displayName?: string; capabilities?: readonly string[] }>,
+  entries: ReadonlyArray<{
+    id: string;
+    model?: string;
+    displayName?: string;
+    capabilities?: readonly string[];
+    protocol?: 'anthropic';
+  }>,
 ): { harness: KimiHarness; getConfig: ReturnType<typeof vi.fn> } {
   // Mirror the `listAvailableModels` derivation: `id` is the config map
   // key, `model` defaults to id, `displayName` to model. The test fixtures
   // below pick names that exercise the three thinkingSupported triggers
   // (name regex, capabilities array, toggleable allow-list).
-  const models: Record<string, { model: string; displayName?: string; capabilities?: readonly string[] }> = {};
+  const models: Record<string, {
+    model: string;
+    displayName?: string;
+    capabilities?: readonly string[];
+    protocol?: 'anthropic';
+  }> = {};
   for (const entry of entries) {
     models[entry.id] = {
       model: entry.model ?? entry.id,
       ...(entry.displayName !== undefined ? { displayName: entry.displayName } : {}),
       ...(entry.capabilities !== undefined ? { capabilities: entry.capabilities } : {}),
+      protocol: entry.protocol,
     };
   }
   const getConfig = vi.fn(async () => ({ models }));
@@ -155,6 +167,20 @@ describe('buildSessionConfigOptions', () => {
     if (result[2]!.type === 'select') {
       expect(result[2]!.currentValue).toBe('default');
     }
+  });
+
+  it('shows the thinking control for an unknown model using the Anthropic protocol', async () => {
+    const { harness } = makeHarnessWithModels([
+      {
+        id: 'custom',
+        model: 'custom-anthropic-model',
+        protocol: 'anthropic',
+      },
+    ]);
+
+    const result = await buildSessionConfigOptions(harness, 'custom', false, 'default');
+
+    expect(result.map((option) => option.id)).toEqual(['model', 'thinking', 'mode']);
   });
 
   it('omits the thinking toggle when current model is non-thinking-supported', async () => {

@@ -28,8 +28,6 @@ export function saveTags(tags: TagMap): void {
   try {
     localStorage.setItem(TAGS_STORAGE_KEY, JSON.stringify(tags));
   } catch {
-    // Storage disabled (private mode / quota) — silently drop; the graph
-    // still works, tags just won't survive a reload.
   }
 }
 
@@ -46,7 +44,6 @@ export interface TagCount {
   count: number;
 }
 
-/** All tags present in the map with their node counts, sorted by name. */
 export function collectTagCounts(tags: TagMap): TagCount[] {
   const counts = new Map<string, number>();
   for (const list of Object.values(tags)) {
@@ -57,14 +54,12 @@ export function collectTagCounts(tags: TagMap): TagCount[] {
     .sort((a, b) => a.tag.localeCompare(b.tag));
 }
 
-/** `true` when `next` equals the current tag list for `nodeId`. */
 export function tagsEqual(tags: TagMap, nodeId: string, next: string[]): boolean {
   const cur = tags[nodeId];
   if (next.length === 0) return !(nodeId in tags);
   return cur !== undefined && cur.length === next.length && cur.every((t, i) => t === next[i]);
 }
 
-/** Deterministic, dark-theme-readable color pair for a tag string. */
 export function tagColor(tag: string): { color: string; bg: string } {
   const hue = ((hashString(tag) % 360) + 360) % 360;
   return {

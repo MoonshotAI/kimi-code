@@ -1,3 +1,8 @@
+// Scenario: workspace/session actions exposed by useWorkspaceState.
+// Responsibilities: observable state and error reporting across load, paging, and user actions.
+// Wiring: the composable is real; daemon requests and unrelated facade collaborators are stubbed.
+// Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/workspace-state.test.ts
+
 import { computed, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
@@ -7,6 +12,7 @@ import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
 import { useWorkspaceState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
+import { clearTrace, traceKeyEvent } from '../src/debug/trace';
 
 const apiMock = vi.hoisted(() => ({
   abortPrompt: vi.fn(),
@@ -14,6 +20,7 @@ const apiMock = vi.hoisted(() => ({
   addWorkspace: vi.fn(),
   updateWorkspace: vi.fn(),
   createSession: vi.fn(),
+  exportSession: vi.fn(),
   updateSession: vi.fn(),
   submitPrompt: vi.fn(),
   respondQuestion: vi.fn(),
@@ -39,7 +46,7 @@ function createSession(): AppSession {
     title: 'Session',
     createdAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
-    status: 'running',
+    busy: true,
     archived: false,
     currentPromptId: 'prompt_live',
     cwd: '/workspace',
@@ -66,6 +73,8 @@ function createState(): ExtendedState {
     activeSessionId: 'sess_1',
     connected: true,
     serverVersion: '',
+    dangerousBypassAuth: false,
+    backend: 'v1',
     workspaceName: 'kimi-web',
     connection: 'connected',
     permission: 'manual',
@@ -78,13 +87,18 @@ function createState(): ExtendedState {
     queuedBySession: {},
     gitStatusBySession: {},
     promptIdBySession: { sess_1: 'prompt_stale' },
-    sendingBySession: {},
+    inFlightBySession: {},
     unreadBySession: {},
     authReady: true,
     defaultModel: null,
     managedProviderStatus: null,
     workspaces: [],
     activeWorkspaceId: null,
+    sessionsHasMoreByWorkspace: {},
+    sessionsLoadingMoreByWorkspace: {},
+    sessionsCursorByWorkspace: {},
+    sessionsInitialCountByWorkspace: {},
+    sessionsFullyLoaded: false,
     fsHome: null,
     recentRoots: [],
     hiddenWorkspaceRoots: [],
@@ -106,7 +120,6 @@ function createDeps(): UseWorkspaceStateDeps {
     modelProvider: {},
     pushOperationFailure: vi.fn(),
     activity: computed(() => 'running'),
-    inFlightPromptSessions: new Set(),
     sessionsKnownEmpty: new Set(),
     setSessions: vi.fn(),
     updateSession: vi.fn(),
@@ -121,6 +134,7 @@ function createDeps(): UseWorkspaceStateDeps {
     subscribeToSessionEvents: vi.fn(),
     hasLoadedMessages: vi.fn(),
     refreshSessionStatus: vi.fn(),
+    refreshSessionGoal: vi.fn(),
     persistSessionProfile: vi.fn(),
     mergedWorkspaces: computed(() => []),
     workspacesView: computed(() => []),
@@ -271,6 +285,128 @@ describe('useWorkspaceState — abortCurrentPrompt', () => {
 
     expect(apiMock.abortPrompt).not.toHaveBeenCalled();
     expect(apiMock.abortSession).toHaveBeenCalledWith('sess_1');
+  });
+});
+
+describe('useWorkspaceState — exportSession', () => {
+  let anchor: {
+    href: string;
+    download: string;
+    click: ReturnType<typeof vi.fn>;
+    remove: ReturnType<typeof vi.fn>;
+  };
+  let append: ReturnType<typeof vi.fn>;
+  let createObjectURL: ReturnType<typeof vi.fn>;
+  let revokeObjectURL: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    apiMock.exportSession.mockReset();
+    clearTrace();
+    anchor = { href: '', download: '', click: vi.fn(), remove: vi.fn() };
+    append = vi.fn();
+    createObjectURL = vi.fn(() => 'blob:session-export');
+    revokeObjectURL = vi.fn();
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => anchor),
+      body: { append },
+    });
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+  });
+
+  afterEach(() => {
+    clearTrace();
+    vi.unstubAllGlobals();
+  });
+
+  it('downloads the returned ZIP and reclaims its temporary browser resources', async () => {
+    const secret = 'PROMPT_TEXT_MUST_NOT_ENTER_EXPORT_REQUEST';
+    const metadata = {
+      sessionId: 'sess_1',
+      contentCount: 1,
+      mediaCount: 0,
+      text: secret,
+    };
+    traceKeyEvent('prompt:start', metadata);
+    const blob = new Blob(['zip']);
+    apiMock.exportSession.mockResolvedValue({ blob, fileName: 'sess_1.zip' });
+    const workspace = useWorkspaceState(createState(), createDeps());
+
+    await workspace.exportSession();
+
+    const webLog = apiMock.exportSession.mock.calls[0]?.[1] as string;
+    expect(webLog).toContain('prompt:start');
+    expect(webLog).toContain('contentCount');
+    expect(webLog).not.toContain(secret);
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(anchor).toMatchObject({ href: 'blob:session-export', download: 'sess_1.zip' });
+    expect(append).toHaveBeenCalledWith(anchor);
+    expect(anchor.click).toHaveBeenCalledOnce();
+    expect(anchor.remove).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledOnce();
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
+  });
+
+  it('keeps one request targeted at the session selected when export started', async () => {
+    let resolveExport!: (value: { blob: Blob; fileName: string }) => void;
+    apiMock.exportSession.mockReturnValue(
+      new Promise((resolve) => {
+        resolveExport = resolve;
+      }),
+    );
+    const state = createState();
+    const workspace = useWorkspaceState(state, createDeps());
+
+    const first = workspace.exportSession();
+    state.activeSessionId = 'sess_2';
+    const second = workspace.exportSession();
+    resolveExport({ blob: new Blob(['zip']), fileName: 'sess_1.zip' });
+    await Promise.all([first, second]);
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
+
+    expect(apiMock.exportSession).toHaveBeenCalledTimes(1);
+    expect(apiMock.exportSession).toHaveBeenCalledWith('sess_1', expect.any(String));
+  });
+
+  it('reclaims the object URL when the browser rejects the download click', async () => {
+    apiMock.exportSession.mockResolvedValue({ blob: new Blob(['zip']), fileName: 'sess_1.zip' });
+    anchor.click.mockImplementation(() => {
+      throw new Error('download blocked');
+    });
+    const deps = createDeps();
+    const workspace = useWorkspaceState(createState(), deps);
+
+    await workspace.exportSession();
+
+    expect(anchor.remove).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledOnce();
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'exportSession',
+      expect.any(Error),
+      { sessionId: 'sess_1' },
+    );
+  });
+
+  it('surfaces an error instead of silently exporting without an active session', async () => {
+    const state = createState();
+    state.activeSessionId = undefined;
+    const deps = createDeps();
+    const workspace = useWorkspaceState(state, deps);
+
+    await workspace.exportSession();
+
+    expect(apiMock.exportSession).not.toHaveBeenCalled();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'exportSession',
+      expect.any(Error),
+      expect.objectContaining({ message: expect.any(String) }),
+    );
   });
 });
 
@@ -682,12 +818,10 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
   });
 
-  it('coerces a stale thinking level against the new session model before persisting', async () => {
-    // Regression for: rawState.thinking can be stale relative to the new
-    // session's model (e.g. 'max' carried over from an effort model). Persisting
-    // the raw value would make the first skill turn run at a level the UI
-    // wouldn't send for this model; we must coerce it like the first-prompt
-    // path does.
+  it('persists the stored thinking level verbatim, even when the new session model does not declare it', async () => {
+    // Thinking levels are never coerced onto the session model (same as the
+    // first-prompt path and the TUI): a carried-over effort like 'max' is
+    // persisted and sent as-is.
     const activateSkill2 = vi.fn().mockResolvedValue(undefined);
     const persistSessionProfile2 = vi.fn().mockResolvedValue(undefined);
     const state2 = createState();
@@ -702,8 +836,8 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
       }),
       draftModes: { planMode: true, swarmMode: false, goalMode: false },
     };
-    // 'kimi-code' declares efforts ['low','medium','high']; 'max' isn't in the
-    // list so coercion picks the default (middle) level → 'medium'.
+    // 'kimi-code' declares efforts ['low','medium','high'] — 'max' isn't in the
+    // list, and must still be persisted verbatim.
     (deps2.modelProvider as unknown as { models: unknown }).models = ref([
       {
         id: 'kimi-code',
@@ -718,10 +852,8 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 
     await ws2.startSessionAndActivateSkill('wd_1', 'pre-changelog');
 
-    // Effort model default level = middle of supportEfforts: 'medium'.
-    // Confirms the raw carry-over 'max' was coerced, not persisted verbatim.
     expect(persistSessionProfile2).toHaveBeenCalledWith(
-      expect.objectContaining({ thinking: 'medium' }),
+      expect.objectContaining({ thinking: 'max' }),
       'sess_new',
     );
     expect(activateSkill2).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
@@ -984,6 +1116,7 @@ describe('useWorkspaceState — first-load auth gate', () => {
       serverVersion: '0.0.0',
       openInApps: [],
       dangerousBypassAuth: false,
+      backend: 'v1',
     });
     apiMock.getConfig.mockReset().mockResolvedValue({});
     apiMock.listWorkspaces.mockReset().mockResolvedValue([]);
@@ -1087,6 +1220,319 @@ describe('useWorkspaceState — first-load auth gate', () => {
   );
 });
 
+describe('useWorkspaceState — session list loading', () => {
+  beforeEach(() => {
+    apiMock.getAuth.mockReset().mockResolvedValue({
+      ready: true,
+      defaultModel: 'kimi-code',
+      managedProvider: null,
+    });
+    apiMock.getHealth.mockReset().mockResolvedValue({ ok: true });
+    apiMock.getMeta.mockReset().mockResolvedValue({
+      serverVersion: '0.0.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      backend: 'v1',
+    });
+    apiMock.getConfig.mockReset().mockResolvedValue({});
+    apiMock.listWorkspaces.mockReset().mockResolvedValue([]);
+    apiMock.getFsHome.mockReset().mockResolvedValue({ home: '', recentRoots: [] });
+    apiMock.listSessions.mockReset();
+  });
+
+  function createSessionLoadRig(sessions: AppSession[]) {
+    const state = createState();
+    state.sessions = sessions;
+    state.activeSessionId = sessions[0]?.id ?? null;
+    const deps = {
+      ...createDeps(),
+      modelProvider: { loadModels: vi.fn().mockResolvedValue(undefined) },
+      initialized: ref(false),
+      connectIssue: ref<string | null>(null),
+      setSessions: vi.fn((next: AppSession[]) => {
+        state.sessions = next;
+      }),
+      workspaceIdForSession: vi.fn(
+        (session: { workspaceId?: string; cwd: string }) =>
+          state.workspaces.find((item) => item.root === session.cwd)?.id ??
+          session.workspaceId ??
+          session.cwd,
+      ),
+    } as unknown as UseWorkspaceStateDeps;
+    return { state, deps, workspaceState: useWorkspaceState(state, deps) };
+  }
+
+  it('reports one load failure when the no-workspace session fallback rejects', async () => {
+    const error = new Error('session index unavailable');
+    apiMock.listSessions.mockRejectedValue(error);
+    const { deps, workspaceState } = createSessionLoadRig([]);
+
+    await workspaceState.load();
+
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+  });
+
+  it('keeps failed workspace sessions while replacing a successful shared-root workspace', async () => {
+    const error = new Error('legacy workspace unavailable');
+    const cached = {
+      ...createSession(),
+      id: 'sess_cached',
+      title: 'Cached legacy',
+      workspaceId: 'wd_legacy',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const fresh = {
+      ...createSession(),
+      id: 'sess_fresh',
+      title: 'Fresh current',
+      workspaceId: 'wd_current',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    };
+    const staleCurrent = {
+      ...createSession(),
+      id: 'sess_stale',
+      title: 'Stale current',
+      workspaceId: 'wd_current',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([
+      workspace('wd_current', '/workspace', 'Workspace'),
+      workspace('wd_legacy', '/workspace', 'Workspace'),
+    ]);
+    apiMock.listSessions.mockImplementation(
+      async ({ workspaceId }: { workspaceId?: string }) => {
+        if (workspaceId === 'wd_current') return { items: [fresh], hasMore: false };
+        throw error;
+      },
+    );
+    const { state, deps, workspaceState } = createSessionLoadRig([cached, staleCurrent]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_fresh', 'sess_cached']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+  });
+
+  it('keeps root-matched sessions when their stored workspace id is no longer registered', async () => {
+    const error = new Error('current workspace unavailable');
+    const cached = {
+      ...createSession(),
+      id: 'sess_cached',
+      title: 'Cached old workspace id',
+      workspaceId: 'wd_removed',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const fresh = {
+      ...createSession(),
+      id: 'sess_fresh',
+      title: 'Fresh other workspace',
+      cwd: '/other-workspace',
+      workspaceId: 'wd_other',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([
+      workspace('wd_current', '/workspace', 'Workspace'),
+      workspace('wd_other', '/other-workspace', 'Other'),
+    ]);
+    apiMock.listSessions.mockImplementation(
+      async ({ workspaceId }: { workspaceId?: string }) => {
+        if (workspaceId === 'wd_current') throw error;
+        return { items: [fresh], hasMore: false };
+      },
+    );
+    const { state, deps, workspaceState } = createSessionLoadRig([cached]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_fresh', 'sess_cached']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+  });
+
+  it('loads the next page when a retry follows an automatic continuation failure', async () => {
+    const error = new Error('automatic continuation unavailable');
+    const cached = {
+      ...createSession(),
+      title: 'Cached first page',
+      workspaceId: 'wd_1',
+      updatedAt: '2099-01-01T00:00:00.000Z',
+    };
+    const fresh = { ...cached, title: 'Fresh first page' };
+    const older = {
+      ...createSession(),
+      id: 'sess_older',
+      workspaceId: 'wd_1',
+      updatedAt: '2025-12-31T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_1', '/workspace', 'Workspace')]);
+    apiMock.listSessions
+      .mockResolvedValueOnce({ items: [fresh], hasMore: true })
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue({ items: [older], hasMore: false });
+    const { state, deps, workspaceState } = createSessionLoadRig([cached]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.title)).toEqual(['Fresh first page']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+
+    await workspaceState.loadMoreSessions('wd_1');
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+  });
+
+  it('recovers the global session list when a retry follows a second-page failure', async () => {
+    const error = new Error('global continuation unavailable');
+    const cached = { ...createSession(), title: 'Cached first page' };
+    const fresh = {
+      ...cached,
+      title: 'Fresh first page',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const older = {
+      ...createSession(),
+      id: 'sess_older',
+      updatedAt: '2025-12-31T00:00:00.000Z',
+    };
+    const cachedOlder = { ...older, title: 'Cached older page' };
+    apiMock.listSessions
+      .mockResolvedValueOnce({ items: [fresh], hasMore: true })
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue({ items: [fresh, older], hasMore: false });
+    const { state, deps, workspaceState } = createSessionLoadRig([cached, cachedOlder]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.title)).toEqual([
+      'Fresh first page',
+      'Cached older page',
+    ]);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
+  });
+
+  it('preserves cached sessions when every workspace initial page rejects', async () => {
+    const firstError = new Error('workspace A unavailable');
+    const cachedA = {
+      ...createSession(),
+      id: 'sess_a',
+      cwd: '/workspace-a',
+      workspaceId: 'wd_a',
+    };
+    const cachedB = {
+      ...createSession(),
+      id: 'sess_b',
+      cwd: '/workspace-b',
+      workspaceId: 'wd_b',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([
+      workspace('wd_a', '/workspace-a', 'A'),
+      workspace('wd_b', '/workspace-b', 'B'),
+    ]);
+    apiMock.listSessions.mockImplementation(
+      async ({ workspaceId }: { workspaceId?: string }) => {
+        if (workspaceId === 'wd_a') throw firstError;
+        throw new Error('workspace B unavailable');
+      },
+    );
+    const { state, deps, workspaceState } = createSessionLoadRig([cachedA, cachedB]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_a', 'sess_b']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', firstError);
+  });
+
+  it('loads workspace sessions when a retry follows an initial failure', async () => {
+    const cached = {
+      ...createSession(),
+      title: 'Cached',
+      workspaceId: 'wd_1',
+    };
+    const recovered = { ...cached, title: 'Recovered' };
+    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_1', '/workspace', 'Workspace')]);
+    apiMock.listSessions
+      .mockRejectedValueOnce(new Error('session index unavailable'))
+      .mockResolvedValue({ items: [recovered], hasMore: false });
+    const { state, workspaceState } = createSessionLoadRig([cached]);
+
+    await workspaceState.load();
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.title)).toEqual(['Recovered']);
+  });
+
+  it('loads the next workspace page when a retry follows a rejection', async () => {
+    const loaded = { ...createSession(), workspaceId: 'wd_1' };
+    const older = {
+      ...createSession(),
+      id: 'sess_older',
+      workspaceId: 'wd_1',
+      updatedAt: '2025-12-31T00:00:00.000Z',
+    };
+    const { state, deps, workspaceState } = createSessionLoadRig([loaded]);
+    state.workspaces = [workspace('wd_1', '/workspace', 'Workspace')];
+    state.sessionsHasMoreByWorkspace = { wd_1: true };
+    state.sessionsCursorByWorkspace = { wd_1: 'sess_1' };
+    state.sessionsLoadingMoreByWorkspace = { wd_1: false };
+    apiMock.listSessions
+      .mockRejectedValueOnce(new Error('next page unavailable'))
+      .mockResolvedValue({ items: [older], hasMore: false });
+
+    await workspaceState.loadMoreSessions('wd_1');
+    await workspaceState.loadMoreSessions('wd_1');
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+  });
+});
+
+// /meta re-read on every WS (re)connect — keeps version / backend truthful
+// across backend restarts and dev-proxy backend switches.
+describe('useWorkspaceState — refreshServerMeta', () => {
+  beforeEach(() => {
+    apiMock.getMeta.mockReset();
+  });
+
+  it('applies the meta payload including the v2 backend marker', async () => {
+    apiMock.getMeta.mockResolvedValue({
+      serverVersion: '9.9.9',
+      openInApps: ['finder'],
+      dangerousBypassAuth: true,
+      backend: 'v2',
+    });
+    const state = createState();
+    const ws = useWorkspaceState(state, createDeps());
+
+    await ws.refreshServerMeta();
+
+    expect(state.serverVersion).toBe('9.9.9');
+    expect(state.availableOpenInApps).toEqual(['finder']);
+    expect(state.dangerousBypassAuth).toBe(true);
+    expect(state.backend).toBe('v2');
+  });
+
+  it('keeps the previous meta when /meta fails', async () => {
+    apiMock.getMeta.mockRejectedValue(new Error('connection refused'));
+    const state = createState();
+    state.backend = 'v2';
+    const ws = useWorkspaceState(state, createDeps());
+
+    await ws.refreshServerMeta();
+
+    expect(state.backend).toBe('v2');
+    expect(state.serverVersion).toBe('');
+  });
+});
+
 // Regression coverage for wake/reconnect snapshot recovery.
 describe('useWorkspaceState — snapshot prompt recovery', () => {
   function promptDeps(overrides: Partial<UseWorkspaceStateDeps> = {}): UseWorkspaceStateDeps {
@@ -1104,17 +1550,15 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
   it('clears a finished prompt from a terminal snapshot so the next send is immediate', async () => {
     const state = createState();
-    const inFlight = new Set(['sess_1']);
-    state.sendingBySession = { sess_1: true };
+    state.inFlightBySession = { sess_1: true };
     const ws = useWorkspaceState(
       state,
-      promptDeps({ inFlightPromptSessions: inFlight, activity: computed(() => 'idle') }),
+      promptDeps({ activity: computed(() => 'idle') }),
     );
 
-    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, status: 'idle' });
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
 
-    expect(inFlight.has('sess_1')).toBe(false);
-    expect(state.sendingBySession.sess_1).toBe(false);
+    expect(state.inFlightBySession.sess_1).toBe(false);
     expect(state.promptIdBySession.sess_1).toBeUndefined();
 
     await ws.sendPrompt('next');
@@ -1124,33 +1568,64 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
   it('keeps a genuinely running prompt in flight and queues the next send', async () => {
     const state = createState();
-    const inFlight = new Set(['sess_1']);
-    state.sendingBySession = { sess_1: true };
-    const ws = useWorkspaceState(state, promptDeps({ inFlightPromptSessions: inFlight }));
+    state.inFlightBySession = { sess_1: true };
+    const ws = useWorkspaceState(state, promptDeps());
 
     ws.handleSessionSnapshot('sess_1', {
       inFlightTurn: { turnId: 1, assistantText: '', thinkingText: '', runningTools: [] },
-      status: 'running',
+      busy: true,
     });
     await ws.sendPrompt('next');
 
-    expect(inFlight.has('sess_1')).toBe(true);
-    expect(state.sendingBySession.sess_1).toBe(true);
+    expect(state.inFlightBySession.sess_1).toBe(true);
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
     expect(state.queuedBySession.sess_1).toEqual([{ text: 'next', attachments: undefined }]);
   });
 
+  it('drains one queued prompt when only background work remains', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.promptIdBySession = { sess_1: 'prompt_old' };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first queued', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: true });
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'second queued', attachments: undefined },
+    ]);
+  });
+
+  it('clears local prompt state when busy disproves a stale snapshot turn', () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.promptIdBySession = { sess_1: 'prompt_old' };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.handleSessionSnapshot('sess_1', {
+      inFlightTurn: { turnId: 1, assistantText: '', thinkingText: '', runningTools: [] },
+      busy: false,
+    });
+
+    expect(state.inFlightBySession.sess_1).toBe(false);
+    expect(state.promptIdBySession.sess_1).toBeUndefined();
+  });
+
   it('rejects a snapshot when a new local prompt started during the request', async () => {
     const state = createState();
-    const inFlight = new Set<string>();
-    const ws = useWorkspaceState(state, promptDeps({ inFlightPromptSessions: inFlight }));
+    const ws = useWorkspaceState(state, promptDeps());
     const atRequest = ws.localTurnStartState('sess_1');
 
     await ws.submitPromptInternal('sess_1', 'fresh prompt');
 
     expect(ws.isLocalTurnSnapshotCurrent('sess_1', atRequest)).toBe(false);
-    expect(inFlight.has('sess_1')).toBe(true);
-    expect(state.sendingBySession.sess_1).toBe(true);
+    expect(state.inFlightBySession.sess_1).toBe(true);
   });
 
   it('rejects a snapshot requested while the local submit is still pending', async () => {
@@ -1175,5 +1650,96 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     await pendingSubmit;
     expect(ws.localTurnStartState('sess_1').pending).toBe(false);
     expect(retrySnapshot).toHaveBeenCalledOnce();
+  });
+
+  it('maps attachments to the matching content parts on submit (file parts included)', async () => {
+    const ws = useWorkspaceState(createState(), promptDeps());
+
+    await ws.submitPromptInternal('sess_1', 'look at these', [
+      { fileId: 'f_img', kind: 'image' },
+      { fileId: 'f_vid', kind: 'video' },
+      { fileId: 'f_pdf', kind: 'file', name: 'a.pdf', mediaType: 'application/pdf', size: 42 },
+    ]);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [
+          { type: 'text', text: 'look at these' },
+          { type: 'image', source: { kind: 'file', fileId: 'f_img' } },
+          { type: 'video', source: { kind: 'file', fileId: 'f_vid' } },
+          { type: 'file', fileId: 'f_pdf', name: 'a.pdf', mediaType: 'application/pdf', size: 42 },
+        ],
+      }),
+    );
+  });
+
+  it('normalizes an empty attachment MIME to application/octet-stream on submit', async () => {
+    const ws = useWorkspaceState(createState(), promptDeps());
+
+    await ws.submitPromptInternal('sess_1', 'look at this', [
+      { fileId: 'f_mk', kind: 'file', name: 'Makefile', mediaType: '', size: 10 },
+    ]);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [
+          { type: 'text', text: 'look at this' },
+          { type: 'file', fileId: 'f_mk', name: 'Makefile', mediaType: 'application/octet-stream', size: 10 },
+        ],
+      }),
+    );
+  });
+});
+
+// Regression: a search-triggered full session-list reload must not clobber the
+// live usage (context ring) with the list endpoint's all-zero placeholder.
+describe('useWorkspaceState — loadAllSessions usage preservation', () => {
+  beforeEach(() => {
+    apiMock.listSessions.mockReset();
+  });
+
+  function liveUsage() {
+    return {
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      totalCostUsd: 0,
+      contextTokens: 28772,
+      contextLimit: 1048576,
+      turnCount: 3,
+    };
+  }
+
+  it('keeps the cached live usage when the reloaded row carries the placeholder', async () => {
+    const state = createState();
+    state.sessions = [{ ...createSession(), usage: liveUsage() }];
+    apiMock.listSessions.mockResolvedValue({
+      items: [{ ...createSession(), title: 'Fresh from server' }],
+      hasMore: false,
+    });
+    const setSessions = vi.fn();
+    const ws = useWorkspaceState(state, { ...createDeps(), setSessions });
+
+    await ws.loadAllSessions();
+
+    expect(setSessions).toHaveBeenCalledOnce();
+    const next = setSessions.mock.calls[0][0];
+    expect(next[0].title).toBe('Fresh from server');
+    expect(next[0].usage).toEqual(liveUsage());
+  });
+
+  it('takes the server row as-is when there is no live usage to preserve', async () => {
+    const state = createState();
+    apiMock.listSessions.mockResolvedValue({ items: [createSession()], hasMore: false });
+    const setSessions = vi.fn();
+    const ws = useWorkspaceState(state, { ...createDeps(), setSessions });
+
+    await ws.loadAllSessions();
+
+    const next = setSessions.mock.calls[0][0];
+    expect(next[0].usage.contextTokens).toBe(0);
   });
 });

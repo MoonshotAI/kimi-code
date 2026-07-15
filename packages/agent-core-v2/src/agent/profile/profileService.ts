@@ -4,9 +4,9 @@
  * Owns the active agent's model alias, thinking level, system prompt, and
  * active-tool set; resolves the runnable god-object Model through the App-
  * scope `IModelResolver`, persists the persistent config slice (`cwd` /
- * `modelAlias` / `profileName` / resolved `thinkingLevel` / `systemPrompt`) in
- * the `wire` `ProfileModel` through the `config.update` Op and the persisted
- * active-tool set in the `wire` `ActiveToolsModel` through the
+ * `modelAlias` / `profileName` / resolved base `thinkingLevel` /
+ * `systemPrompt`) in the `wire` `ProfileModel` through the `config.update` Op
+ * and the persisted active-tool set in the `wire` `ActiveToolsModel` through the
  * `tools.set_active_tools` Op (`wire.dispatch`), and reads both through
  * `wire.getModel`. The effective active-tool set read by consumers is the
  * persisted base (`ActiveToolsModel`, rebuilt by `wire.replay`) overlaid with
@@ -32,27 +32,29 @@ import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/a
 import { type Model } from '#/app/model/modelInstance';
 import { type KimiModelOverrides } from '#/app/model/modelOverrides';
 import { IModelResolver } from '#/app/model/modelResolver';
-import picomatch from 'picomatch';
+import {
+  normalizeRequestedThinkingEffort,
+  resolveKimiThinkingEffortOverride,
+} from '#/app/model/thinking';
+import { tryNativeGlobMatch } from '../../tool/native-glob-match';
 
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
-import { resolveThinkingEffort, resolveThinkingKeep } from './thinking';
+import { resolveThinkingEffort, resolveThinkingKeep, supportsThinkingEffort } from './thinking';
 import type { LoopControl } from '#/agent/loop/configSection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { isMcpToolName } from '#/agent/tool/toolName';
+import { isMcpToolName, type ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
 
-import type { WarningEvent } from '@moonshot-ai/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import type { ToolSource } from '#/agent/tool/toolContract';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
+import type { PayloadOf } from '#/wire/types';
 import { IEventBus } from '#/app/event/eventBus';
 import { prepareSystemPromptContext } from './context';
 import type {
@@ -64,7 +66,7 @@ import type {
   ProfileSetModelResult,
   ProfileUpdateData,
 } from './profile';
-import { IAgentProfileService } from './profile';
+import { IAgentProfileService, ProfileError, ProfileErrors } from './profile';
 import {
   THINKING_SECTION,
   type ThinkingConfig,
@@ -75,21 +77,17 @@ import {
   ProfileModel,
   setActiveTools,
   type ActiveToolsState,
-  type ConfigUpdatePayload,
   type ProfileModelState,
 } from './profileOps';
 
-declare module '#/agent/wireRecord/wireRecord' {
-  interface WireRecordMap {
-    'tools.set_active_tools': {
-      names: readonly string[];
-    };
-  }
+export interface WarningEvent {
+  readonly type: 'warning';
+  readonly message: string;
+  readonly code?: string;
 }
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
-    // `warning` is owned by `profile` (the agents-md-oversized notice).
     warning: WarningEvent;
   }
 }
@@ -98,14 +96,10 @@ export class AgentProfileService implements IAgentProfileService {
   declare readonly _serviceBrand: undefined;
 
   private optionsValue: ProfileServiceOptions = {};
-  // Live overlay of ephemeral per-tool deltas (`addActiveTool` /
-  // `removeActiveTool`) on top of the persisted `ActiveToolsModel`. `undefined`
-  // means "no overlay — read the Model". Reset on every full `setActiveTools`.
   private activeToolNamesOverlay: readonly string[] | undefined;
   private agentsMdWarning: string | undefined;
+  private readonly emittedThinkingEffortWarnings = new Set<string>();
 
-  // Effective active-tool set: the live overlay when present, else the persisted
-  // base rebuilt by `wire.replay`. `undefined` means every tool is active.
   private get activeToolNames(): ActiveToolsState {
     return (
       this.activeToolNamesOverlay ??
@@ -116,7 +110,7 @@ export class AgentProfileService implements IAgentProfileService {
   private activeProfile: ResolvedAgentProfile | undefined;
 
   constructor(
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
@@ -163,8 +157,6 @@ export class AgentProfileService implements IAgentProfileService {
     if (profile === undefined) {
       throw new Error(`Unknown agent profile: "${input.profile}"`);
     }
-    // Resolve eagerly so an unknown model id fails the bind here rather than on
-    // the first turn.
     const model = this.modelFactory.resolve(input.model);
 
     const context = await this.buildSystemPromptContext(input.cwd);
@@ -207,7 +199,17 @@ export class AgentProfileService implements IAgentProfileService {
 
   setThinking(level: string): void {
     const previousEffort = this.thinkingLevel;
-    this.update({ thinkingLevel: level });
+    const model = this.tryResolveRawModel();
+    const normalized = normalizeRequestedThinkingEffort(level);
+    if (normalized !== undefined && !supportsThinkingEffort(normalized, model)) {
+      const efforts = model?.supportEfforts ?? [];
+      const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
+      throw new ProfileError(
+        ProfileErrors.codes.MODEL_CONFIG_INVALID,
+        `Thinking effort "${level}" is not supported by model "${this.modelAlias}". Supported efforts: ${supported}.`,
+      );
+    }
+    this.update({ thinkingLevel: normalized ?? level });
     const effort = this.thinkingLevel;
     if (effort !== previousEffort) {
       this.telemetry.track2('thinking_toggle', {
@@ -269,6 +271,10 @@ export class AgentProfileService implements IAgentProfileService {
     };
   }
 
+  getEffectiveThinkingLevel(): ThinkingEffort {
+    return this.resolveThinkingState(this.tryResolveRawModel()).effective;
+  }
+
   resolveModelContext(): ProfileModelContext {
     const modelAlias = this.model;
     const model = this.modelFactory.resolve(modelAlias);
@@ -278,7 +284,7 @@ export class AgentProfileService implements IAgentProfileService {
       modelCapabilities: model.capabilities,
       maxOutputSize: model.maxOutputSize,
       alwaysThinking: model.alwaysThinking || undefined,
-      thinkingLevel: this.thinkingLevel,
+      thinkingLevel: this.resolveThinkingState(model).effective,
       reservedContextSize: loopControl?.reservedContextSize,
       compactionTriggerRatio: loopControl?.compactionTriggerRatio,
     };
@@ -299,12 +305,8 @@ export class AgentProfileService implements IAgentProfileService {
   resolveModel(): Model | undefined {
     if (this.modelAlias === undefined) return undefined;
     let model: Model = this.modelFactory.resolve(this.modelAlias);
-    const thinkingLevel = this.thinkingLevel;
+    const thinking = this.resolveThinkingState(model);
     const thinkingConfig = this.config.get<ThinkingConfig>(THINKING_SECTION);
-    const forcedKimiThinkingEffort =
-      model.protocol === 'kimi' && thinkingLevel !== 'off'
-        ? normalizeKimiThinkingEffort(thinkingConfig?.effort)
-        : undefined;
     const kwargs: GenerationKwargs = {};
     if (model.protocol === 'kimi') {
       kwargs.prompt_cache_key = this.sessionContext.sessionId;
@@ -321,24 +323,24 @@ export class AgentProfileService implements IAgentProfileService {
     const keep = resolveThinkingKeep(
       overrides?.thinkingKeep,
       thinkingConfig?.keep,
-      thinkingLevel,
+      thinking.effective,
     );
     if (keep !== undefined) {
-      if (model.protocol === 'kimi' && forcedKimiThinkingEffort === undefined) {
+      if (model.protocol === 'kimi' && thinking.forced === undefined) {
         kwargs.extra_body = { thinking: { keep } };
       } else if (model.protocol === 'anthropic') {
         model = model.withThinkingKeep(keep);
       }
     }
     if (Object.keys(kwargs).length > 0) model = model.withGenerationKwargs(kwargs);
-    model = model.withThinking(forcedKimiThinkingEffort ?? thinkingLevel);
-    if (forcedKimiThinkingEffort !== undefined) {
-      const thinking: { type: 'enabled'; effort: string; keep?: string } = {
+    model = model.withThinking(thinking.effective);
+    if (model.protocol === 'kimi' && thinking.forced !== undefined) {
+      const requestThinking: { type: 'enabled'; effort: string; keep?: string } = {
         type: 'enabled',
-        effort: forcedKimiThinkingEffort,
+        effort: thinking.forced,
       };
-      if (keep !== undefined) thinking.keep = keep;
-      model = model.withGenerationKwargs({ extra_body: { thinking } });
+      if (keep !== undefined) requestThinking.keep = keep;
+      model = model.withGenerationKwargs({ extra_body: { thinking: requestThinking } });
     }
     return model;
   }
@@ -377,34 +379,36 @@ export class AgentProfileService implements IAgentProfileService {
     if (source !== 'mcp') return activeToolNames.includes(name);
     return activeToolNames
       .filter((pattern) => isMcpToolName(pattern))
-      .some((pattern) => picomatch.isMatch(name, pattern));
+      .some((pattern) => tryNativeGlobMatch(name, pattern));
   }
 
   addActiveTool(name: string): void {
     const activeToolNames = this.activeToolNames;
     if (activeToolNames === undefined || activeToolNames.includes(name)) return;
-    // Ephemeral overlay: not persisted; re-derived on resume by `userTool`.
     this.activeToolNamesOverlay = [...activeToolNames, name];
   }
 
   removeActiveTool(name: string): void {
     const activeToolNames = this.activeToolNames;
     if (activeToolNames === undefined || !activeToolNames.includes(name)) return;
-    // Ephemeral overlay: not persisted; re-derived on resume by `userTool`.
     this.activeToolNamesOverlay = activeToolNames.filter((candidate) => candidate !== name);
   }
 
   private resolveConfigPayload(
     changed: Omit<ProfileUpdateData, 'activeToolNames'>,
-  ): ConfigUpdatePayload {
-    const payload: { -readonly [K in keyof ConfigUpdatePayload]: ConfigUpdatePayload[K] } = {};
+  ): PayloadOf<typeof configUpdate> {
+    const payload: {
+      -readonly [K in keyof PayloadOf<typeof configUpdate>]: PayloadOf<typeof configUpdate>[K];
+    } = {};
     if (changed.cwd !== undefined) payload.cwd = changed.cwd;
     if (changed.modelAlias !== undefined) payload.modelAlias = changed.modelAlias;
     if (changed.profileName !== undefined) payload.profileName = changed.profileName;
-    if (changed.thinkingLevel !== undefined) {
-      const model = this.resolveModelForThinking(changed.modelAlias);
+    if (changed.thinkingLevel !== undefined || changed.modelAlias !== undefined) {
+      const model = this.resolveModelForThinking(changed.modelAlias ?? this.modelAlias);
+      const requested =
+        changed.thinkingLevel ?? (this.modelAlias === undefined ? undefined : this.thinkingLevel);
       payload.thinkingEffort = resolveThinkingEffort(
-        changed.thinkingLevel,
+        requested,
         this.config.get<ThinkingConfig>(THINKING_SECTION),
         model,
       );
@@ -418,23 +422,53 @@ export class AgentProfileService implements IAgentProfileService {
       void this.optionsValue.chdir?.(changed.cwd);
     }
     if (changed.modelAlias !== undefined) {
-      // Mirror the resolved model protocol into the ambient telemetry context
-      // (v1 parity: both keys carry the protocol — v2 has no separate provider
-      // type). Unresolvable models yield undefined; never throw.
       const protocol = this.tryResolveRawModel()?.protocol;
       this.telemetryContext.set({ provider_type: protocol, protocol });
     }
-    this.emitStatusUpdated();
+    if (changed.modelAlias !== undefined || changed.thinkingLevel !== undefined) {
+      this.warnAboutAnthropicThinkingEffort();
+    }
+    this.emitStatusUpdated(
+      changed.modelAlias !== undefined || changed.thinkingLevel !== undefined,
+    );
+  }
+
+  private warnAboutAnthropicThinkingEffort(): void {
+    try {
+      const model = this.tryResolveRawModel();
+      if (model?.protocol !== 'anthropic') return;
+      const effort = this.getEffectiveThinkingLevel();
+      if (effort === 'on') return;
+
+      let code: string;
+      let message: string;
+      let knownEfforts = '';
+      if (effort === 'off') {
+        if (!model.alwaysThinking) return;
+        code = 'anthropic-thinking-cannot-disable';
+        message = `Model "${model.name}" declares always-on thinking. The configured effort "off" will be sent unchanged to the Anthropic-compatible backend.`;
+      } else {
+        const efforts = model.supportEfforts?.filter((value) => value.length > 0);
+        if (efforts === undefined || efforts.length === 0 || efforts.includes(effort)) return;
+        knownEfforts = efforts.join(',');
+        code = 'anthropic-thinking-effort-not-listed';
+        message = `Thinking effort "${effort}" is not listed for model "${model.name}" (known: ${efforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`;
+      }
+
+      const key = [code, model.id, model.name, effort, knownEfforts].join('\u0000');
+      if (this.emittedThinkingEffortWarnings.has(key)) return;
+      this.emittedThinkingEffortWarnings.add(key);
+      this.eventBus.publish({ type: 'warning', code, message });
+    } catch {
+    }
   }
 
   private setActiveTools(names: readonly string[]): void {
-    // Full replace: drop the ephemeral overlay (subsequent reads fall back to the
-    // Model) and persist the new base set through the wire.
     this.activeToolNamesOverlay = undefined;
     this.wire.dispatch(setActiveTools({ names: [...names] }));
   }
 
-  private emitStatusUpdated(): void {
+  private emitStatusUpdated(includeThinkingEffort = false): void {
     const custom = this.optionsValue.emitStatusUpdated;
     if (custom !== undefined) {
       custom();
@@ -444,6 +478,9 @@ export class AgentProfileService implements IAgentProfileService {
     this.eventBus.publish({
       type: 'agent.status.updated',
       model: this.modelAlias,
+      thinkingEffort: includeThinkingEffort
+        ? this.getEffectiveThinkingLevel()
+        : undefined,
       maxContextTokens: this.getModelCapabilities().max_context_tokens,
     });
   }
@@ -479,8 +516,6 @@ export class AgentProfileService implements IAgentProfileService {
   private get thinkingLevel(): ThinkingEffort {
     const stored = this.profileState.thinkingLevel;
     if (stored === 'off' && this.alwaysThinkingModel) {
-      // Re-run the resolver so the always_thinking clamp restores the
-      // configured effort (or the model default) instead of a stale 'off'.
       return resolveThinkingEffort(
         stored,
         this.config.get<ThinkingConfig>(THINKING_SECTION),
@@ -488,6 +523,19 @@ export class AgentProfileService implements IAgentProfileService {
       );
     }
     return stored;
+  }
+
+  private resolveThinkingState(model: Model | undefined): {
+    readonly effective: ThinkingEffort;
+    readonly forced: ThinkingEffort | undefined;
+  } {
+    const base = this.thinkingLevel;
+    const forced = resolveKimiThinkingEffortOverride(
+      this.config.get<ThinkingConfig>(THINKING_SECTION)?.forcedEffort,
+      base,
+      model?.providerType === 'kimi',
+    );
+    return { effective: forced ?? base, forced };
   }
 
   private get alwaysThinkingModel(): boolean {
@@ -567,15 +615,10 @@ export class AgentProfileService implements IAgentProfileService {
   }
 }
 
-function normalizeKimiThinkingEffort(raw: string | undefined): ThinkingEffort | undefined {
-  const trimmed = raw?.trim();
-  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
-}
-
 registerScopedService(
   LifecycleScope.Agent,
   IAgentProfileService,
   AgentProfileService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'profile',
 );

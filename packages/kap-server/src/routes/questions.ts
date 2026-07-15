@@ -53,22 +53,25 @@ import {
   type QuestionResult,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { ErrorCode } from '../protocol/error-codes';
 import {
-  ErrorCode,
-  listPendingQuestionsQuerySchema,
-  listPendingQuestionsResponseSchema,
   type QuestionItem as ProtocolQuestionItem,
   type QuestionOption as ProtocolQuestionOption,
   type QuestionRequest as ProtocolQuestionRequest,
   type QuestionResponse as ProtocolQuestionResponse,
+} from '../protocol/question';
+import {
+  listPendingQuestionsQuerySchema,
+  listPendingQuestionsResponseSchema,
   questionAlreadyResolvedDataSchema,
   questionDismissResultSchema,
   questionResolveRequestSchema,
   questionResolveResultSchema,
-} from '@moonshot-ai/protocol';
+} from '../protocol/rest-question';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { parseActionSuffix } from './action-suffix';
 
@@ -201,6 +204,10 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
 
       if (action === 'dismiss') {
         questions.dismiss(questionId);
+        requestLog(req)?.info(
+          { session_id, question_id: questionId, action: 'dismiss' },
+          'question dismissed',
+        );
         reply.send({
           code: ErrorCode.QUESTION_DISMISSED, // 40909
           msg: `question ${questionId} dismissed`,
@@ -243,6 +250,10 @@ export function registerQuestionsRoutes(app: QuestionRouteHost, core: Scope): vo
         toWireQuestion(pendingInteraction, session_id),
       );
       questions.answer(questionId, result);
+      requestLog(req)?.info(
+        { session_id, question_id: questionId, action: 'answer' },
+        'question answered',
+      );
       reply.send(
         okEnvelope({ resolved: true as const, resolved_at: new Date().toISOString() }, req.id),
       );

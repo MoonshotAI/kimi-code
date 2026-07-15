@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 
 import {
   InMemoryWireRecordPersistence,
@@ -31,8 +31,6 @@ describe('AgentProfileService.bind', () => {
   });
 
   function buildContext(): { ctx: TestAgentContext; profile: IAgentProfileService } {
-    // Hermetic home dir so a developer's real ~/.kimi-code / ~/.agents files
-    // never leak into the rendered system prompt.
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
     return { ctx, profile: ctx.get(IAgentProfileService) };
   }
@@ -40,12 +38,9 @@ describe('AgentProfileService.bind', () => {
   it('binds a profile + model atomically and becomes runnable', async () => {
     const { ctx: context, profile: svc } = buildContext();
 
-    // Sanity: the builtin default profile is registered in the catalog.
     const catalog = context.get(IAgentProfileCatalogService);
     expect(catalog.get(DEFAULT_AGENT_PROFILE_NAME)).toBeDefined();
 
-    // Auto-configure sets a model alias but no profile, so the agent is not
-    // runnable until a profile is bound (no default agent).
     expect(svc.isRunnable()).toBe(false);
 
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
@@ -54,7 +49,6 @@ describe('AgentProfileService.bind', () => {
     expect(svc.data().modelAlias).toBe(MOCK_MODEL);
     expect(svc.isRunnable()).toBe(true);
     expect(svc.getActiveToolNames()?.length).toBeGreaterThan(0);
-    // The rendered system prompt is the full base template (not an overlay).
     expect(svc.getSystemPrompt()).toContain('Kimi Code CLI');
   });
 
@@ -69,8 +63,18 @@ describe('AgentProfileService.bind', () => {
       },
       hostEnvironmentServices(homeDir),
     );
+    ctx.configure({
+      modelCapabilities: {
+        image_in: false,
+        video_in: false,
+        audio_in: false,
+        thinking: true,
+        tool_use: true,
+        max_context_tokens: 1_000_000,
+      },
+    });
     const svc = ctx.get(IAgentProfileService);
-    await ctx.get(IAgentWireService).flush();
+    await ctx.get(IWireService).flush();
     const start = persistence.records.length;
 
     await svc.bind({
@@ -79,7 +83,7 @@ describe('AgentProfileService.bind', () => {
       thinking: 'low',
       cwd: homeDir,
     });
-    await ctx.get(IAgentWireService).flush();
+    await ctx.get(IWireService).flush();
 
     const records = persistence.records
       .slice(start)
@@ -103,7 +107,7 @@ describe('AgentProfileService.bind', () => {
     expect(records[2]).toMatchObject({
       type: 'config.update',
       modelAlias: MOCK_MODEL,
-      thinkingEffort: 'low',
+      thinkingEffort: 'on',
     });
     expect(records[2]).not.toHaveProperty('thinkingLevel');
   });

@@ -14,7 +14,7 @@ const SESSION = {
   title: 'demo',
   created_at: TS,
   updated_at: TS,
-  status: 'running',
+  busy: true,
   metadata: { cwd: '/tmp/demo' },
   agent_config: { model: 'kimi' },
   usage: {
@@ -103,6 +103,52 @@ describe('rest/snapshot — session snapshot', () => {
       expect(result.data.in_flight_turn?.current_prompt_id).toBe(
         'prompt_01KV589KCS5PG9ZYDNP8KFDQHZ',
       );
+    }
+  });
+
+  it('parses a snapshot with a subagent roster', () => {
+    const result = sessionSnapshotResponseSchema.safeParse({
+      as_of_seq: 12,
+      epoch: 'ep_01ABC',
+      session: SESSION,
+      messages: { items: [], has_more: false },
+      in_flight_turn: null,
+      subagents: [
+        {
+          id: 'agent_1',
+          session_id: 'sess_1',
+          kind: 'subagent',
+          description: 'explore the auth flow',
+          status: 'running',
+          created_at: TS,
+          started_at: TS,
+          subagent_phase: 'working',
+          subagent_type: 'explore',
+          parent_tool_call_id: 'call_1',
+          swarm_index: 0,
+          run_in_background: false,
+        },
+        {
+          id: 'agent_2',
+          session_id: 'sess_1',
+          kind: 'subagent',
+          description: 'write tests',
+          status: 'completed',
+          created_at: TS,
+          completed_at: TS,
+          output_preview: 'done',
+          subagent_phase: 'completed',
+          swarm_index: 1,
+        },
+      ],
+      pending_approvals: [],
+      pending_questions: [],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.subagents).toHaveLength(2);
+      expect(result.data.subagents?.[0]?.parent_tool_call_id).toBe('call_1');
+      expect(result.data.subagents?.[1]?.subagent_phase).toBe('completed');
     }
   });
 

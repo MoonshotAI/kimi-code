@@ -14,6 +14,7 @@
     "dev:desktop": "pnpm -C apps/kimi-desktop run dev",
     "dev:server": "pnpm -C apps/kimi-code run dev:server",
     "dev:kap-server": "pnpm -C apps/kimi-code run dev:kap-server",
+    "dev:v2": "pnpm -C apps/kimi-code run dev:kap-server:multi",
     "build:plugin-marketplace": "pnpm -C apps/kimi-code run build:plugin-marketplace",
     "vis": "pnpm -C apps/vis run dev",
     "dev:docs": "pnpm -C docs install --ignore-workspace && pnpm -C docs run dev",
@@ -49,10 +50,10 @@
     "tsdown": "0.22.0",
     "tsx": "^4.21.0",
     "typescript": "6.0.2",
+    "vite": "^6.4.2",
     "vitest": "4.1.4"
   },
-  "simple-git-hooks": {
-  },
+  "simple-git-hooks": {},
   "lint-staged": {
     "*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}": [
       "oxlint --fix --quiet",
@@ -62,5 +63,28 @@
   "engines": {
     "node": ">=24.15.0"
   },
-  "packageManager": "pnpm@10.33.0"
+  "packageManager": "pnpm@10.33.0",
+  "workspaces": {
+    "packages": [
+      "packages/*",
+      "apps/*",
+      "apps/vis/server",
+      "apps/vis/web",
+      "docs"
+    ],
+    "catalog": {
+      "zod": "4.3.6",
+      "pathe": "^2.0.3",
+      "smol-toml": "^1.6.1",
+      "jimp": "^1.6.1",
+      "yazl": "^3.3.1",
+      "ulid": "^3.0.1",
+      "ws": "^8.18.0",
+      "tsx": "^4.21.0"
+    }
+  },
+  "overrides": {
+    "ssh2@1.17.0>cpu-features": "-",
+    "ssh2@1.17.0>nan": "-"
+  }
 }

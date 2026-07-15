@@ -81,10 +81,6 @@ async function waitForTaskNotifications(
   );
   if (tasks.length === 0) return;
 
-  // Live notifications auto-launch their own turn when the loop is idle
-  // (`activeOrNewTurn` admission) and materialize when that turn pops them.
-  // Queue one response in case the turn's LLM request has not fired yet,
-  // then wait for every enqueue and for the notification turns to drain.
   ctx.mockNextResponse({ type: 'text', text: 'notification drain ack' });
   await vi.waitFor(() => {
     const delivered = ctx.allEvents.filter((e) => e.event === 'task.notified').length;

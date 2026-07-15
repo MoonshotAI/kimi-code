@@ -361,8 +361,15 @@ describe('BashTool', () => {
       await vi.advanceTimersByTimeAsync(1);
       const result = await running;
 
-      expect(proc.kill).toHaveBeenCalled();
-      expect(result.output).toContain('Command killed by timeout (2s)');
+      // The 2s deadline is interpreted as seconds — and instead of killing,
+      // the command moves to the background (auto-background is on by default).
+      expect(proc.kill).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        isError: false,
+        message: expect.stringContaining('timed out and moved to background'),
+      });
+      expect(result.output).toContain('task_id: bash-');
+      resolveWait(0);
     } finally {
       vi.useRealTimers();
     }
@@ -392,6 +399,33 @@ describe('BashTool', () => {
     expect(tool.description).toContain('absolute paths');
     // The failure trailer is non-zero-exit-specific; timeout/interrupt differ.
     expect(tool.description).toContain('exits non-zero');
+  });
+
+  it('describes timeout behavior according to the auto-background option', () => {
+    const autoBg = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+    );
+    expect(autoBg.description).toContain('moved to the background instead of being killed');
+
+    const killOnTimeout = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+      { autoBackgroundOnTimeout: false },
+    );
+    expect(killOnTimeout.description).not.toContain('moved to the background instead of being killed');
+    expect(killOnTimeout.description).toContain('hits its timeout is killed');
+
+    const noBackground = bashTool(
+      createFakeKaos({ osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+      { allowBackground: false },
+    );
+    expect(noBackground.description).not.toContain('moved to the background instead of being killed');
+    expect(noBackground.description).toContain('hits its timeout is killed');
   });
 
   it('runs through execWithEnv, injects cwd, noninteractive env, and closes stdin', async () => {
@@ -635,6 +669,46 @@ describe('BashTool', () => {
     });
   });
 
+  it('moves a timed-out foreground command to the background instead of killing it', async () => {
+    vi.useFakeTimers();
+    try {
+      const { proc, finish } = pendingProcess();
+      const manager = createBackgroundManager().manager;
+      const tool = bashTool(
+        createFakeKaos({
+          execWithEnv: vi.fn().mockResolvedValue(proc),
+          osEnv: posixEnv,
+        }),
+        '/workspace',
+        manager,
+      );
+
+      const running = executeTool(tool, context({ command: 'sleep 30', timeout: 1 }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      const result = await running;
+
+      expect(proc.kill).not.toHaveBeenCalled();
+      expect(result).toMatchObject({
+        isError: false,
+        message: expect.stringContaining('timed out and moved to background'),
+        brief: expect.stringContaining('after timeout'),
+      });
+      const taskId = /^task_id: (\S+)/m.exec(result.output as string)?.[1];
+      expect(taskId).toBeDefined();
+      expect(manager.getTask(taskId!)).toMatchObject({ status: 'running', detached: true });
+
+      // The backgrounded command keeps streaming output and settles through
+      // the manager like any other background task.
+      (proc.stdout as PassThrough).write('after timeout\n');
+      finish(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(manager.getTask(taskId!)).toMatchObject({ status: 'completed' });
+      await expect(manager.readOutput(taskId!)).resolves.toContain('after timeout\n');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('does not recommend disabled task tools when a foreground command is detached', async () => {
     const { proc, finish } = pendingProcess();
     const manager = createBackgroundManager().manager;
@@ -807,6 +881,107 @@ describe('BashTool', () => {
     expect(result.output).toContain('do NOT wait, poll, or call TaskOutput on it');
     expect(result.output).not.toContain('block=false');
     expect(manager.list(false)).toHaveLength(1);
+  });
+
+  describe('background timeout default (backgroundTimeoutS)', () => {
+    async function launchBackground(
+      manager: ReturnType<typeof createBackgroundManager>['manager'],
+      options?: ConstructorParameters<typeof BashTool>[3],
+      args?: Partial<BashInput>,
+    ) {
+      const registerSpy = vi.spyOn(manager, 'registerTask');
+      const execWithEnv = vi.fn().mockResolvedValue(processWithOutput());
+      const tool = bashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace', manager, options);
+      const result = await executeTool(tool,
+        context({ command: 'sleep 10', run_in_background: true, description: 'task', ...args }),
+      );
+      expect(result.isError).not.toBe(true);
+      return registerSpy.mock.calls[0]?.[1];
+    }
+
+    it('defaults to a 600s deadline and detach re-arm when no config is provided', async () => {
+      const manager = createBackgroundManager().manager;
+      const options = await launchBackground(manager);
+      expect(options).toMatchObject({ timeoutMs: 600_000, detachTimeoutMs: 600_000 });
+    });
+
+    it('arms no timer when backgroundTimeoutS is 0', async () => {
+      const manager = createBackgroundManager().manager;
+      const options = await launchBackground(manager, { backgroundTimeoutS: 0 });
+      // detachTimeoutMs must be `0` (clear-on-detach), not `undefined`
+      // (which would keep the armed foreground deadline).
+      expect(options).toMatchObject({ timeoutMs: undefined, detachTimeoutMs: 0 });
+    });
+
+    it('uses the configured seconds as the default deadline and detach re-arm', async () => {
+      const manager = createBackgroundManager().manager;
+      const options = await launchBackground(manager, { backgroundTimeoutS: 30 });
+      expect(options).toMatchObject({ timeoutMs: 30_000, detachTimeoutMs: 30_000 });
+    });
+
+    it('honors an explicit per-call timeout even when the default is disabled', async () => {
+      const manager = createBackgroundManager().manager;
+      const options = await launchBackground(manager, { backgroundTimeoutS: 0 }, { timeout: 42 });
+      expect(options?.timeoutMs).toBe(42_000);
+    });
+
+    it('keeps disable_timeout authoritative regardless of the configured default', async () => {
+      const manager = createBackgroundManager().manager;
+      const options = await launchBackground(manager, { backgroundTimeoutS: 30 }, { disable_timeout: true });
+      expect(options?.timeoutMs).toBeUndefined();
+    });
+
+    it('keeps a manually detached foreground command alive when backgroundTimeoutS is 0', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const manager = createBackgroundManager().manager;
+        const { proc, finish } = pendingProcess();
+        const execWithEnv = vi.fn().mockResolvedValue(proc);
+        const tool = bashTool(
+          createFakeKaos({ execWithEnv, osEnv: posixEnv }),
+          '/workspace',
+          manager,
+          { backgroundTimeoutS: 0 },
+        );
+        let foregroundTaskId: string | undefined;
+        const run = executeTool(tool, {
+          ...context({ command: 'sleep 10', timeout: 1 }),
+          onForegroundTaskStart: (taskId: string) => {
+            foregroundTaskId = taskId;
+          },
+        });
+        // Flush the async spawn + registration, then detach before the 1s
+        // foreground deadline fires.
+        await vi.advanceTimersByTimeAsync(0);
+        expect(foregroundTaskId).toBeDefined();
+        manager.detach(foregroundTaskId!);
+        const released = await run;
+        expect(released.output).toContain(foregroundTaskId);
+        // Without the clear-on-detach fix, the original 1s deadline would
+        // still fire here and settle the task as timed_out.
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(manager.getTask(foregroundTaskId!)?.status).toBe('running');
+        finish();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('tells the model there is no default timeout when backgroundTimeoutS is 0', () => {
+      const tool = bashTool(
+        createFakeKaos({ osEnv: posixEnv }),
+        '/workspace',
+        createBackgroundManager().manager,
+        { backgroundTimeoutS: 0 },
+      );
+      expect(tool.description).toContain('Background commands have no timeout by default');
+      expect(tool.description).not.toContain('default to a 600s timeout');
+      const timeoutParam = (
+        tool.parameters as { properties: { timeout: { description?: string } } }
+      ).properties.timeout;
+      expect(timeoutParam.description).toContain('Background default no timeout');
+      expect(timeoutParam.description).not.toContain('Background default 600s');
+    });
   });
 
   it('kills a spawned background command when the task limit is reached', async () => {
@@ -1079,7 +1254,7 @@ describe('BashTool', () => {
     expect(output).toContain('Output is truncated');
   });
 
-  it('reports a timed-out command with both message and brief lines', async () => {
+  it('reports a timed-out command with both message and brief lines when auto-background is disabled', async () => {
     vi.useFakeTimers();
     try {
       let resolveWait: (code: number) => void = () => {};
@@ -1095,6 +1270,8 @@ describe('BashTool', () => {
       const tool = bashTool(
         createFakeKaos({ execWithEnv: vi.fn().mockResolvedValue(proc), osEnv: posixEnv }),
         '/workspace',
+        undefined,
+        { autoBackgroundOnTimeout: false },
       );
 
       const running = executeTool(tool, context({ command: 'sleep 2', timeout: 1 }));
@@ -1119,6 +1296,8 @@ describe('BashTool', () => {
       const tool = bashTool(
         createFakeKaos({ execWithEnv: vi.fn().mockResolvedValue(proc), osEnv: posixEnv }),
         '/workspace',
+        undefined,
+        { autoBackgroundOnTimeout: false },
       );
 
       const running = executeTool(tool, context({ command: 'sleep 2', timeout: 1 }));

@@ -1,5 +1,5 @@
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
-import type { KimiConfig, ProviderConfig } from '../../config';
+import type { KimiConfig, ModelAlias, ProviderConfig } from '../../config';
 import type {
   ModelCatalogItem,
   ProviderCatalogItem,
@@ -61,7 +61,7 @@ export class ModelCatalogService
   async listModels(): Promise<readonly ModelCatalogItem[]> {
     const config = await this._readConfig();
     return Object.entries(config.models ?? {}).map(([modelId, alias]) =>
-      toProtocolModel(modelId, alias),
+      toProtocolModel(modelId, alias, this._usesAnthropicProtocol(config, alias)),
     );
   }
 
@@ -94,8 +94,17 @@ export class ModelCatalogService
     const updatedAlias = updated.models?.[modelId] ?? alias;
     return {
       default_model: modelId,
-      model: toProtocolModel(modelId, updatedAlias),
+      model: toProtocolModel(
+        modelId,
+        updatedAlias,
+        this._usesAnthropicProtocol(updated, updatedAlias),
+      ),
     };
+  }
+
+  private _usesAnthropicProtocol(config: KimiConfig, alias: ModelAlias): boolean {
+    const providerId = alias.provider ?? config.defaultProvider;
+    return (alias.protocol ?? config.providers[providerId ?? '']?.type) === 'anthropic';
   }
 
   async refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse> {
@@ -150,6 +159,7 @@ export class ModelCatalogService
       setConfig: (patch) => this.core.rpc.setKimiConfig(patch as Record<string, unknown>),
       resolveOAuthToken: (providerName, oauthRef) =>
         this._resolveOAuthToken(providerName, oauthRef),
+      userAgent: this.core.kimiRequestHeaders?.['User-Agent'],
     };
   }
 

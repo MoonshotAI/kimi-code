@@ -12,7 +12,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { connectionsListResponseSchema } from '@moonshot-ai/protocol';
+import { connectionsListResponseSchema } from '../src/protocol/rest-connection';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 

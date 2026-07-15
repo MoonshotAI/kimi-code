@@ -24,28 +24,42 @@
  * the in-flight worker promise — stays OUT of the Model (live-only service
  * members): none of it can be resumed, and a session never restores mid-flight.
  * A `running` phase stranded by a crash is reset to `idle` by the service's
- * `wire.onRestored` handler (mirroring `goal`'s post-replay normalization).
+ * `wire.hooks.onDidRestore` hook (mirroring `goal`'s post-replay normalization).
  *
  * The `compaction.*` events publish to `IEventBus` (`compaction.started` via the
- * `begin` Op's `toEvent`; the rest directly) and also emit live through
- * `wire.signal` (legacy channel, until Phase 3); they are declared here via
- * interface-merge (`error` is already declared by `mcp`, so it is not
- * re-declared). The `full_compaction.*` record shapes stay declared in
- * `WireRecordMap` (see `fullCompactionService.ts`) because the records still
- * ride the per-agent `wire.jsonl` log read by `wireRecord.restore()` /
- * `getRecords()`. Consumed by the Agent-scope `fullCompactionService`.
+ * `begin` Op's `toEvent`; the rest directly from the service); they are
+ * declared here via interface-merge (`error` is already declared by `mcp`, so
+ * it is not re-declared). The `full_compaction.*` record shapes are registered in
+ * `PersistedOpMap` (`#/wire/types`, below) because the records still
+ * ride the per-agent `wire.jsonl` journal restored by `IWireService`.
+ * Consumed by the Agent-scope `fullCompactionService`.
  */
 
-import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
-import type {
-  CompactionBlockedEvent,
-  CompactionCancelledEvent,
-  CompactionCompletedEvent,
-  CompactionStartedEvent,
-} from '@moonshot-ai/protocol';
+import { z } from 'zod';
 
-import type { CompactionBeginData } from './types';
+import { defineModel } from '#/wire/model';
+
+import type { CompactionBeginData, CompactionResult } from './types';
+
+export interface CompactionStartedEvent {
+  readonly type: 'compaction.started';
+  readonly trigger: 'manual' | 'auto';
+  readonly instruction?: string;
+}
+
+export interface CompactionBlockedEvent {
+  readonly type: 'compaction.blocked';
+  readonly turnId?: number;
+}
+
+export interface CompactionCancelledEvent {
+  readonly type: 'compaction.cancelled';
+}
+
+export interface CompactionCompletedEvent {
+  readonly type: 'compaction.completed';
+  readonly result: CompactionResult;
+}
 
 export type CompactionPhase = 'idle' | 'running' | 'cancelled' | 'completed';
 
@@ -66,11 +80,17 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-export type FullCompactionBeginPayload = CompactionBeginData;
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'full_compaction.begin': typeof fullCompactionBegin;
+    'full_compaction.cancel': typeof fullCompactionCancel;
+    'full_compaction.complete': typeof fullCompactionComplete;
+  }
+}
 
-export const fullCompactionBegin = defineOp(CompactionModel, 'full_compaction.begin', {
-  apply: (s, _p: FullCompactionBeginPayload): CompactionState =>
-    s.phase === 'running' ? s : { phase: 'running' },
+export const fullCompactionBegin = CompactionModel.defineOp('full_compaction.begin', {
+  schema: z.custom<CompactionBeginData>(),
+  apply: (s) => (s.phase === 'running' ? s : { phase: 'running' }),
   toEvent: (p) => ({
     type: 'compaction.started' as const,
     trigger: p.source,
@@ -78,13 +98,12 @@ export const fullCompactionBegin = defineOp(CompactionModel, 'full_compaction.be
   }),
 });
 
-export const fullCompactionCancel = defineOp(CompactionModel, 'full_compaction.cancel', {
-  apply: (s): CompactionState => (s.phase === 'idle' ? s : { phase: 'idle' }),
+export const fullCompactionCancel = CompactionModel.defineOp('full_compaction.cancel', {
+  schema: z.object({}),
+  apply: (s) => (s.phase === 'idle' ? s : { phase: 'idle' }),
 });
 
-export type FullCompactionCompletePayload = Record<string, never>;
-
-export const fullCompactionComplete = defineOp(CompactionModel, 'full_compaction.complete', {
-  apply: (s, _p: FullCompactionCompletePayload): CompactionState =>
-    s.phase === 'idle' ? s : { phase: 'idle' },
+export const fullCompactionComplete = CompactionModel.defineOp('full_compaction.complete', {
+  schema: z.object({}),
+  apply: (s) => (s.phase === 'idle' ? s : { phase: 'idle' }),
 });

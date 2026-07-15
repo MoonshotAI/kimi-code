@@ -13,8 +13,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IWorkspaceLocalConfigService } from '#/app/workspaceLocalConfig/workspaceLocalConfig';
-import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { MAIN_AGENT_ID } from '#/session/agentLifecycle/mainAgent';
+import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 import {
@@ -39,7 +38,8 @@ export class SessionWorkspaceCommandService
   ) {
     super();
     this._register(
-      this.agents.onDidCreateMain((handle) => {
+      this.agents.onDidCreate((handle) => {
+        if (handle.id !== MAIN_AGENT_ID) return;
         if (this.pendingMainInjections.length === 0) return;
         const pending = this.pendingMainInjections.splice(0);
         handle.accessor.get(IAgentContextMemoryService).append(...pending);
@@ -106,7 +106,7 @@ export class SessionWorkspaceCommandService
       origin: { kind: 'injection', variant: 'local-command-stdout' },
     };
 
-    const main = this.agents.getHandle(MAIN_AGENT_ID);
+    const main = this.agents.get(MAIN_AGENT_ID);
     if (main !== undefined) {
       main.accessor.get(IAgentContextMemoryService).append(message);
       return;
@@ -119,6 +119,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionWorkspaceCommandService,
   SessionWorkspaceCommandService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'workspaceCommand',
 );

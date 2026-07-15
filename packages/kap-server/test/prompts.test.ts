@@ -1,6 +1,6 @@
 import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
 import {
@@ -326,6 +326,227 @@ describe('server-v2 /api/v1 prompts', () => {
     });
   });
 
+  function avifBytes(): Buffer {
+    // Minimal ftyp box: size(4) + 'ftyp' + major_brand 'avif' + minor(4) + compat(8).
+    const buf = Buffer.alloc(24);
+    buf.writeUInt32BE(24, 0);
+    buf.write('ftyp', 4, 'latin1');
+    buf.write('avif', 8, 'latin1');
+    buf.write('avif', 16, 'latin1');
+    return buf;
+  }
+
+  it('replaces an inline base64 image in an unsupported format with a text notice', async () => {
+    // An AVIF payload (accepted by no provider) must never enter the session
+    // history as an image part — the bytes are authoritative, so even a
+    // mislabeled media_type is gated on the sniffed format.
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        {
+          type: 'image',
+          source: {
+            kind: 'base64',
+            media_type: 'image/png',
+            data: avifBytes().toString('base64'),
+          },
+        },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    const notice = content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+  });
+
+  it('replaces an uploaded image file in an unsupported format with a text notice', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const form = new FormData();
+    form.set('file', new Blob([avifBytes()], { type: 'image/avif' }), 'photo.avif');
+    const uploadRes = await fetch(`${base}/api/v1/files`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer),
+      body: form,
+    } as never);
+    const uploaded = (await uploadRes.json()) as Envelope<{ id: string }>;
+    expect(uploaded.code).toBe(0);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.data.id } }],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    const notice = content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    expect(notice.text).toContain('photo.avif');
+  });
+
+  it('replaces a remote image URL with an unsupported extension with a text notice', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'image', source: { kind: 'url', url: 'https://example.com/pic.avif' } }],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as PromptContentPart[];
+    expect(content).toHaveLength(1);
+    const notice = content[0];
+    if (notice?.type !== 'text') throw new Error('expected a text notice');
+    expect(notice.text).toContain('image/avif');
+    // The notice keeps the URL so the model can fetch and convert the image.
+    expect(notice.text).toContain('https://example.com/pic.avif');
+  });
+
+  async function uploadFile(
+    bytes: Buffer,
+    mediaType: string,
+    name: string,
+  ): Promise<{ id: string; size: number }> {
+    const form = new FormData();
+    form.set('file', new Blob([bytes], { type: mediaType }), name);
+    const uploadRes = await fetch(`${base}/api/v1/files`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer),
+      body: form,
+    } as never);
+    const uploaded = (await uploadRes.json()) as Envelope<{ id: string; size: number }>;
+    expect(uploaded.code).toBe(0);
+    return uploaded.data;
+  }
+
+  // The path-reference notice for a materialized attachment ends with the
+  // absolute path: `Attached file "<name>" (<mime>, <n> bytes): <path> — open
+  // it with the Read tool`.
+  function attachedPathFrom(notice: string): string {
+    const match = /bytes\): (.+) — open it with the Read tool$/.exec(notice);
+    expect(match).not.toBeNull();
+    return match![1]!;
+  }
+
+  it('materializes an arbitrary file attachment into the session attachments dir', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const pdfBytes = Buffer.from('%PDF-1.4 fake pdf bytes');
+    const uploaded = await uploadFile(pdfBytes, 'application/pdf', 'report.pdf');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        { type: 'text', text: 'summarize this' },
+        { type: 'file', file_id: uploaded.id, name: 'report.pdf', media_type: 'application/pdf', size: pdfBytes.length },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
+    expect(content).toHaveLength(2);
+    expect(content[0]).toEqual({ type: 'text', text: 'summarize this' });
+    const notice = content[1];
+    expect(notice?.type).toBe('text');
+    expect(notice?.text).toContain('Attached file "report.pdf"');
+    expect(notice?.text).toContain('application/pdf');
+    expect(notice?.text).toContain(`${pdfBytes.length} bytes`);
+    const attachedPath = attachedPathFrom(notice?.text ?? '');
+    expect(attachedPath).toContain('/attachments/');
+    expect(attachedPath.endsWith(`${uploaded.id}-report.pdf`)).toBe(true);
+    expect((await realpath(attachedPath)).startsWith(await realpath(home as string))).toBe(true);
+    expect(await readFile(attachedPath)).toEqual(pdfBytes);
+  });
+
+  it('materializes an uploaded SVG image as a path-referenced attachment', async () => {
+    // SVG is not a provider-accepted image format, but the bytes are still the
+    // user's content: keep them as a file the model can open by path instead
+    // of dropping them with an "[Image omitted]" notice.
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const svgBytes = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"></svg>');
+    const uploaded = await uploadFile(svgBytes, 'image/svg+xml', 'vector.svg');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'image', source: { kind: 'file', file_id: uploaded.id } }],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
+    expect(content).toHaveLength(1);
+    const notice = content[0];
+    expect(notice?.type).toBe('text');
+    expect(notice?.text).not.toContain('[Image omitted');
+    expect(notice?.text).toContain('"vector.svg"');
+    expect(notice?.text).toContain('image/svg+xml');
+    const attachedPath = attachedPathFrom(notice?.text ?? '');
+    expect(attachedPath).toContain('/attachments/');
+    expect(attachedPath.endsWith(`${uploaded.id}-vector.svg`)).toBe(true);
+    expect(await readFile(attachedPath)).toEqual(svgBytes);
+  });
+
+  it('persists an inline base64 image in an unsupported format as a path-referenced attachment', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const data = avifBytes();
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        {
+          type: 'image',
+          source: {
+            kind: 'base64',
+            media_type: 'image/avif',
+            data: data.toString('base64'),
+          },
+        },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
+    expect(content).toHaveLength(1);
+    const notice = content[0];
+    expect(notice?.type).toBe('text');
+    expect(notice?.text).not.toContain('[Image omitted');
+    // No original name exists for inline base64 — it is derived from the
+    // sniffed format and the file is addressed by content hash.
+    expect(notice?.text).toContain('"image.avif"');
+    expect(notice?.text).toContain('image/avif');
+    const attachedPath = attachedPathFrom(notice?.text ?? '');
+    expect(attachedPath).toContain('/attachments/');
+    expect(attachedPath.endsWith('-image.avif')).toBe(true);
+    expect(await readFile(attachedPath)).toEqual(data);
+  });
+
+  it('sanitizes an attachment file name before materializing it', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const scriptBytes = Buffer.from('#!/bin/sh\necho hi');
+    const uploaded = await uploadFile(scriptBytes, 'text/plain', '../../etc/evil.sh');
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [
+        { type: 'file', file_id: uploaded.id, name: '../../etc/evil.sh', media_type: 'text/plain', size: scriptBytes.length },
+      ],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const content = submitted.body.data.content as Array<{ type: string; text?: string }>;
+    expect(content).toHaveLength(1);
+    const attachedPath = attachedPathFrom(content[0]?.text ?? '');
+    // The materialized file must stay inside the session's attachments dir —
+    // the `../` segments in the original name can never escape it.
+    expect(dirname(attachedPath).endsWith('/attachments')).toBe(true);
+    expect((await realpath(attachedPath)).startsWith(await realpath(home as string))).toBe(true);
+    expect(await readFile(attachedPath)).toEqual(scriptBytes);
+  });
+
   it('returns 40402 when aborting a prompt that already settled', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);
@@ -414,7 +635,7 @@ describe('server-v2 /api/v1 prompts', () => {
 
     // The main agent must NOT have received it — previously the route ignored
     // agent_id and always targeted main, so the reply landed in the main view.
-    const main = lifecycle.getHandle('main');
+    const main = lifecycle.get('main');
     expect(main).toBeDefined();
     expect(contextHasUserText(main!, 'side question')).toBe(false);
   });

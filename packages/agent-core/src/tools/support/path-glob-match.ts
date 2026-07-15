@@ -1,6 +1,6 @@
 import { isAbsolute, join, parse } from 'pathe';
 
-import picomatch from 'picomatch';
+import { tryNativeGlobMatch } from './native-glob-match';
 
 import { canonicalizePath, type PathClass } from '../policies/path-access';
 
@@ -20,12 +20,12 @@ interface PathMatchSemantics {
  * `*` and `**` work as wildcards, but the value is not treated as a file path.
  */
 export function globMatch(value: string, pattern: string, options?: { nocase?: boolean }): boolean {
-  if (picomatch.isMatch(value, pattern, options)) return true;
+  if (tryNativeGlobMatch(value, pattern, options)) return true;
 
   const normalizedValue = stripLeadingDotSlash(value);
   const normalizedPattern = stripLeadingDotSlash(pattern);
   if (normalizedValue === value && normalizedPattern === pattern) return false;
-  return picomatch.isMatch(normalizedValue, normalizedPattern, options);
+  return tryNativeGlobMatch(normalizedValue, normalizedPattern, options);
 }
 
 function stripLeadingDotSlash(value: string): string {

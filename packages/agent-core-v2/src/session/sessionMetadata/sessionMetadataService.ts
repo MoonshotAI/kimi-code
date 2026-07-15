@@ -4,8 +4,13 @@
  * Persists the session metadata document (`state.json`) through the `storage`
  * access-pattern store (`IAtomicDocumentStore`), rooted at the `metaScope`
  * namespace from `sessionContext`. Loads the existing document on
- * construction (creating it on first run), and logs through `log`. Bound at
- * Session scope.
+ * construction (creating it on first run), and logs through `log`. The
+ * document always carries the `agents` / `custom` maps that v1's
+ * `Session.resume()` reads unconditionally — seeded at creation, backfilled
+ * and persisted on load for documents written before the seeding existed
+ * (without touching `updatedAt`, so a format heal never reorders session
+ * listings) — keeping sessions on a shared `KIMI_CODE_HOME` resumable by
+ * released v1 builds. Bound at Session scope.
  *
  * Read-model mirroring (flag `persistence_minidb_readmodel`): after a metadata
  * update is persisted, the fresh summary is mirrored into the `IQueryStore`
@@ -131,6 +136,14 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
     const existing = await this.store.get<SessionMeta>(this.scope, META_KEY);
     if (existing !== undefined) {
       this.data = normalizeSessionMeta(existing, this.ctx.sessionId);
+      if (this.data.agents === undefined || this.data.custom === undefined) {
+        this.data = {
+          ...this.data,
+          agents: this.data.agents ?? {},
+          custom: this.data.custom ?? {},
+        };
+        await this.store.set(this.scope, META_KEY, this.data);
+      }
       return;
     }
     const now = Date.now();
@@ -141,32 +154,20 @@ export class SessionMetadata extends Disposable implements ISessionMetadata {
       createdAt: now,
       updatedAt: now,
       archived: false,
+      agents: {},
+      custom: {},
     };
     await this.store.set(this.scope, META_KEY, this.data);
     this.log.debug('session metadata created', { sessionId: this.ctx.sessionId });
   }
 }
 
-/**
- * Normalize a persisted `state.json` document into the v2 `SessionMeta` shape.
- *
- * Documents tagged `version: 2` are already v2-shaped and returned as-is.
- * Legacy v1 documents (no `version`) store `createdAt`/`updatedAt` as ISO
- * strings and omit the `id` field; we coerce the timestamps to epoch ms and
- * backfill `id` from the session identity so every reader sees a consistent
- * v2-shaped object. Normalization is in-memory only — the on-disk document is
- * left untouched until an explicit write, so a read-only snapshot of a v1
- * session does not migrate it.
- */
 export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): SessionMeta {
   const legacy = raw as unknown as {
     createdAt?: unknown;
     updatedAt?: unknown;
     workDir?: unknown;
   };
-  // Backfill `cwd` for legacy v1 documents, which store the working directory
-  // as `workDir` (older v1 sessions used `custom.cwd`). New v2 documents already
-  // carry `cwd` and pass through unchanged.
   const cwd =
     raw.cwd ?? (typeof legacy.workDir === 'string' && legacy.workDir.length > 0
       ? legacy.workDir
@@ -184,7 +185,6 @@ export function normalizeSessionMeta(raw: SessionMeta, sessionId: string): Sessi
   };
 }
 
-/** Coerce a persisted timestamp (v2 epoch-ms number or v1 ISO string) to epoch ms. */
 export function toEpochMs(value: unknown): number {
   if (typeof value === 'number' && Number.isFinite(value)) return value;
   if (typeof value === 'string') {
@@ -198,6 +198,6 @@ registerScopedService(
   LifecycleScope.Session,
   ISessionMetadata,
   SessionMetadata,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'sessionMetadata',
 );

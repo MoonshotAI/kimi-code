@@ -10,11 +10,6 @@ import {
 import { InstantiationService } from '#/_base/di/instantiationService';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 
-/**
- * Cycle-detection tests declare the loop with real constructor dependencies,
- * the same way production services do. The container detects the cycle while
- * resolving the constructor graph.
- */
 
 describe('Cyclic dependency detection', () => {
   it('direct self-cycle A → A throws CyclicDependencyError', () => {
@@ -171,7 +166,6 @@ describe('Recursive instantiation regression (#105562)', () => {
     class Service1Impl implements IService1 {
       tag = 's1' as const;
       constructor(@IInstantiationService insta: IInstantiationServiceType) {
-        // Re-entrancy: while Service1 is being constructed, resolve Service2.
         const c = insta.invokeFunction((accessor) => accessor.get(IService2));
         expect(c).toBeTruthy();
       }
@@ -201,7 +195,6 @@ describe('Recursive instantiation regression (#105562)', () => {
     expect(obj).toBeInstanceOf(Service21Impl);
     expect(obj.service1).toBeInstanceOf(Service1Impl);
     expect(obj.service2).toBeInstanceOf(Service2Impl);
-    // Regression guard: Service2 must be constructed exactly once.
     expect(service2CtorCount).toBe(1);
   });
 });

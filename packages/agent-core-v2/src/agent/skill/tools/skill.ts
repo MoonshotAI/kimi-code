@@ -28,14 +28,14 @@ import { z } from 'zod';
 import type { SkillActivationOrigin } from '#/agent/contextMemory/types';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { renderModelToolSkillPrompt } from '#/agent/skill/prompt';
-import type { BuiltinTool, ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/agent/tool/toolContract';
+import type { BuiltinTool, ExecutableToolResult, ToolDeliveryMessage, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { isInlineSkillType } from '#/app/skillCatalog/types';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { renderPrompt } from '#/_base/utils/render-prompt';
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import skillDescriptionTemplate from './skill.md?raw';
 
 export const MAX_SKILL_QUERY_DEPTH = 3;
@@ -81,11 +81,6 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
   });
   readonly parameters: Record<string, unknown> = toInputJsonSchema(SkillToolInputSchema);
 
-  /**
-   * Current inline-skill recursion depth. Zero for the root tool; set on clones
-   * produced by `withInitialQueryDepth` so a Skill→Skill chain cannot recurse
-   * past `MAX_SKILL_QUERY_DEPTH`.
-   */
   private queryDepth: number = 0;
 
   constructor(
@@ -130,11 +125,6 @@ export async function executeModelSkill(
   queryDepth: number,
   sessionId: string,
 ): Promise<ExecutableToolResult> {
-  // Recursion hard cap. Once `currentDepth` has reached
-  // MAX_SKILL_QUERY_DEPTH, firing another Skill call would push the
-  // child to depth+1 which violates the invariant. Throw a structured
-  // error (rather than a soft tool-error) so Runtime can distinguish
-  // "LLM mis-dispatched" from "safety net fired".
   const currentDepth = queryDepth;
   if (currentDepth >= MAX_SKILL_QUERY_DEPTH) {
     throw new NestedSkillTooDeepError(MAX_SKILL_QUERY_DEPTH, args.skill);
@@ -146,8 +136,6 @@ export async function executeModelSkill(
     return errorResult(`Skill "${args.skill}" not found in the current skill listing.`);
   }
   if (skill.metadata.disableModelInvocation === true) {
-    // Keep the exact wording "can only be triggered by the user" so
-    // contract audits and integration tests stay deterministic.
     return errorResult(
       `Skill "${args.skill}" can only be triggered by the user (model invocation is disabled).`,
     );

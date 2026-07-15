@@ -15,16 +15,11 @@ export interface ModelCapability {
   readonly thinking: boolean;
   readonly tool_use: boolean;
   readonly max_context_tokens: number;
-  readonly select_tools?: boolean;
+  readonly dynamically_loaded_tools?: boolean;
 }
 
 const UNKNOWN_CAPABILITY_MARKER = Symbol.for('moonshot-ai.kosong.UNKNOWN_CAPABILITY');
 
-/**
- * Shared read-only default returned when a provider has not catalogued a
- * given model. Frozen so accidental mutation at one call site cannot leak
- * into another.
- */
 export const UNKNOWN_CAPABILITY: ModelCapability = Object.freeze(
   Object.defineProperty(
     {
@@ -34,7 +29,7 @@ export const UNKNOWN_CAPABILITY: ModelCapability = Object.freeze(
       thinking: false,
       tool_use: false,
       max_context_tokens: 0,
-      select_tools: false,
+      dynamically_loaded_tools: false,
     },
     UNKNOWN_CAPABILITY_MARKER,
     { value: true },
@@ -52,7 +47,7 @@ export function isUnknownCapability(capability: ModelCapability): boolean {
     !capability.audio_in &&
     !capability.thinking &&
     !capability.tool_use &&
-    capability.select_tools !== true &&
+    capability.dynamically_loaded_tools !== true &&
     capability.max_context_tokens === 0
   );
 }

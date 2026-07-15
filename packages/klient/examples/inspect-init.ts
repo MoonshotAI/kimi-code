@@ -31,7 +31,10 @@ console.log('agents in metadata:', agentIds);
 for (const agentId of ['main', ...agentIds.filter((id) => id !== 'main')]) {
   const agent = client.session(sid).agent(agentId);
   try {
-    const mode = await agent.service(IAgentPermissionModeService).mode();
+    // Klient maps property reads to zero-argument RPC calls at runtime.
+    const mode = await (
+      agent.service(IAgentPermissionModeService) as unknown as { mode(): Promise<string> }
+    ).mode();
     // `get()` is sync in the shared interface but async over the wire.
     const context = await Promise.resolve(agent.service(IAgentContextMemoryService).get());
     console.log(`\n== agent ${agentId} == mode=${mode} messages=${context.length}`);

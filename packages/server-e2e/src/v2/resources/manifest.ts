@@ -56,8 +56,6 @@ export const SESSION = {
     update: RW,
     setTitle: RW,
     setArchived: RW,
-    status: RO,
-    isIdle: RO,
     archive: RW,
   },
   approvals: { listPending: RO, request: RW, decide: RW },

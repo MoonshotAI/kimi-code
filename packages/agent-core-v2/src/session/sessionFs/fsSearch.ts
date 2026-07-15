@@ -6,8 +6,7 @@
  * be unit-tested directly. Ported from v1 `services/fs/fsSearchService.ts`.
  */
 
-import type { FsGrepRequest } from '@moonshot-ai/protocol';
-import { tryNativeGlobMatchesAny } from '#/_base/native-tools';
+import type { FsGrepRequest } from './fs';
 
 export function computeFuzzyScore(name: string, queryLower: string): number {
   if (queryLower.length === 0) return 0;
@@ -48,11 +47,6 @@ export function computeMatchPositions(
 }
 
 export function matchesAnyGlob(rel: string, globs: readonly string[]): boolean {
-  // Preferred: the Rust native glob-set matcher (when the module is built).
-  // Falls back to the TS `globToRegExp` implementation below when native is
-  // unavailable — same case-sensitive semantics, behavior unchanged.
-  const native = tryNativeGlobMatchesAny(globs, rel);
-  if (native !== undefined) return native;
   for (const g of globs) {
     if (globToRegExp(g).test(rel)) return true;
   }

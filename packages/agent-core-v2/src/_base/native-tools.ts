@@ -288,3 +288,39 @@ export async function tryNativeCropImage(
   );
   return result ?? undefined;
 }
+
+export interface NativeImageDimensions {
+  readonly width: number;
+  readonly height: number;
+  readonly transposed: boolean;
+}
+
+export function tryNativeSniffImageDimensions(data: Uint8Array): NativeImageDimensions | undefined {
+  const m = getNativeModule();
+  if (m) {
+    try {
+      return (m as any).nativeSniffImageDimensions(new Uint8Array(data)) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+export interface NativeFileTypeResult {
+  readonly kind: 'text' | 'image' | 'video' | 'unknown';
+  readonly mimeType: string;
+}
+
+export function tryNativeDetectFileType(path: string, header: Uint8Array): NativeFileTypeResult | undefined {
+  const m = getNativeModule();
+  if (m && (m as any).nativeDetectFileType) {
+    try {
+      const r = (m as any).nativeDetectFileType(path, new Uint8Array(header));
+      return r ? { kind: r.kind, mimeType: r.mimeType ?? r.mime_type } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+}

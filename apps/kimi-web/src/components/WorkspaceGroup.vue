@@ -42,6 +42,7 @@ const emit = defineEmits<{
   renameSession: [id: string, title: string];
   archiveSession: [id: string];
   forkSession: [id: string];
+  exportSession: [id: string];
   loadMore: [workspaceId: string];
   toggleExpand: [workspaceId: string];
   confirmRename: [];
@@ -183,6 +184,7 @@ function onHeaderDragStart(event: DragEvent): void {
         @rename="(id, title) => emit('renameSession', id, title)"
         @archive="emit('archiveSession', $event)"
         @fork="emit('forkSession', $event)"
+        @export="emit('exportSession', $event)"
       />
       <button
         v-if="group.hasMore || group.loadingMore"

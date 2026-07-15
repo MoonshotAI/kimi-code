@@ -38,9 +38,6 @@ const noopLogService: ILogService = {
   flush: () => Promise.resolve(),
 };
 
-// ---------------------------------------------------------------------------
-// Legacy implementation (verbatim copy of the pre-rewrite `project`)
-// ---------------------------------------------------------------------------
 
 function projectLegacy(history: readonly ContextMessage[]): Message[] {
   const openCalls = new Map<string, ToolCall>();
@@ -149,9 +146,6 @@ function stripContextMetadata(message: ContextMessage): Message {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
 
 function makeExchangeHistory(exchanges: number, callsPerStep: number): ContextMessage[] {
   const history: ContextMessage[] = [];
@@ -206,19 +200,14 @@ function createProjector(disposables: DisposableStore): IAgentContextProjectorSe
   return ix.get(IAgentContextProjectorService);
 }
 
-// ---------------------------------------------------------------------------
-// Benchmarks
-// ---------------------------------------------------------------------------
 
 const disposables = new DisposableStore();
 const projector = createProjector(disposables);
 
-const TYPICAL = makeMixedHistory(4); // ~76 messages, a normal mid-session turn
-const EXCHANGE_HEAVY = makeExchangeHistory(1000, 4); // 6000 messages of tool exchanges
-const MERGE_HEAVY = makeMergeHistory(2000, 500); // 2000 adjacent user prompts
+const TYPICAL = makeMixedHistory(4);
+const EXCHANGE_HEAVY = makeExchangeHistory(1000, 4);
+const MERGE_HEAVY = makeMergeHistory(2000, 500);
 
-// Long warmup and sample windows: the large fixtures allocate multi-thousand
-// element outputs per iteration, so short runs are dominated by GC noise.
 const OPTIONS = { warmupTime: 500, time: 3000 };
 
 describe(`typical mid-session history (${TYPICAL.length} messages)`, () => {

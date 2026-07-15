@@ -7,7 +7,7 @@ import {
   matchPermissionRule,
   type PermissionRuleMatch,
 } from '#/agent/permissionRules/matchesRule';
-import type { ResolvedToolExecutionHookContext } from '#/agent/tool/toolHooks';
+import type { ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
 import type { IAgentPermissionRulesService } from '#/agent/permissionRules/permissionRules';
 import type { PermissionPolicyResult } from '#/agent/permissionPolicy/types';
 

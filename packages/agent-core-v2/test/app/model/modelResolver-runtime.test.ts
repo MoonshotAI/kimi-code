@@ -5,8 +5,6 @@ import { IConfigService } from '#/app/config/config';
 import { IModelResolver } from '#/app/model/modelResolver';
 import { createAppScope } from '#/_base/di/scope';
 import { ErrorCodes, Error2 } from '#/errors';
-// Load every domain barrel so all App-scope services (provider / platform /
-// model / protocol / config registry) are registered before we build a scope.
 import '#/index';
 
 function stubConfig(sections: Record<string, unknown>): IConfigService {

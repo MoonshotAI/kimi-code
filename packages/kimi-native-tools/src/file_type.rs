@@ -55,6 +55,42 @@ pub fn detect_file_type(path: &Path, header: &[u8]) -> FileKind {
     }
 }
 
+/// Resolve MIME type from file extension and header bytes.
+/// Returns "application/octet-stream" when the type cannot be determined.
+pub fn resolve_mime(path: &Path, header: &[u8]) -> String {
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        let mime = match ext.to_ascii_lowercase().as_str() {
+            "png" => "image/png",
+            "jpg" | "jpeg" => "image/jpeg",
+            "gif" => "image/gif",
+            "bmp" => "image/bmp",
+            "webp" => "image/webp",
+            "svg" => "image/svg+xml",
+            "ico" => "image/x-icon",
+            "tiff" | "tif" => "image/tiff",
+            "avif" => "image/avif",
+            "heic" => "image/heic",
+            "heif" => "image/heif",
+            "mp4" => "video/mp4",
+            "webm" => "video/webm",
+            "mkv" => "video/x-matroska",
+            "avi" => "video/x-msvideo",
+            "mov" => "video/quicktime",
+            "mpg" | "mpeg" => "video/mpeg",
+            "pdf" => "application/pdf",
+            _ => {
+                if is_image_magic(header) { "image/unknown" }
+                else if is_video_magic(header) { "video/unknown" }
+                else { "application/octet-stream" }
+            }
+        };
+        return mime.to_string();
+    }
+    if is_image_magic(header) { return "image/unknown".to_string(); }
+    if is_video_magic(header) { return "video/unknown".to_string(); }
+    "application/octet-stream".to_string()
+}
+
 fn is_image_magic(header: &[u8]) -> bool {
     if header.len() < 4 {
         return false;

@@ -73,7 +73,6 @@ describe('LLMRequester service migration coverage', () => {
     ];
 
     beforeEach(() => {
-      // Stubbed before createTestAgent snapshots the env into bootstrap.
       vi.stubEnv(TOOL_SELECT_FLAG_ENV, '1');
       ctx = createTestAgent();
       llmRequester = ctx.get(IAgentLLMRequesterService);
@@ -89,9 +88,6 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('records one tools snapshot per unique provider-visible tool table and one request per outbound call', async () => {
-      // Gate the scenario on like v1's recorder contract requires: `toolSelect`
-      // in the record is the disclosure gate (flag × capability), not the
-      // presence of deferred entries in this request's tool table.
       ctx.configure({
         modelCapabilities: {
           image_in: false,
@@ -100,7 +96,7 @@ describe('LLMRequester service migration coverage', () => {
           thinking: false,
           tool_use: true,
           max_context_tokens: 128_000,
-          select_tools: true,
+          dynamically_loaded_tools: true,
         },
       });
       ctx.mockNextResponse({ type: 'text', text: 'first response' });
@@ -165,6 +161,16 @@ describe('LLMRequester service migration coverage', () => {
     });
 
     it('records the resolved Kimi thinking keep default when thinking is enabled', async () => {
+      ctx.configure({
+        modelCapabilities: {
+          image_in: false,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000_000,
+        },
+      });
       ctx.get(IAgentProfileService).update({ thinkingLevel: 'high' });
       ctx.mockNextResponse({ type: 'text', text: 'thinking response' });
 
@@ -172,8 +178,37 @@ describe('LLMRequester service migration coverage', () => {
 
       expect(wireEvents(ctx, 'llm.request')).toHaveLength(1);
       expect(wireEvents(ctx, 'llm.request')[0]?.args).toMatchObject({
-        thinkingEffort: 'high',
+        thinkingEffort: 'on',
         thinkingKeep: 'all',
+      });
+    });
+
+    it('records the env-forced Kimi effort used by the provider', async () => {
+      await ctx.dispose();
+      vi.stubEnv('KIMI_MODEL_THINKING_EFFORT', 'max');
+      ctx = createTestAgent();
+      llmRequester = ctx.get(IAgentLLMRequesterService);
+      ctx.configure({
+        modelCapabilities: {
+          image_in: false,
+          video_in: false,
+          audio_in: false,
+          thinking: true,
+          tool_use: true,
+          max_context_tokens: 1_000_000,
+        },
+      });
+      const profile = ctx.get(IAgentProfileService);
+      profile.update({ thinkingLevel: 'high' });
+      expect(profile.data().thinkingLevel).toBe('on');
+      expect(profile.resolveModelContext().thinkingLevel).toBe('max');
+      ctx.mockNextResponse({ type: 'text', text: 'forced thinking response' });
+
+      await llmRequester.request();
+
+      expect(wireEvents(ctx, 'llm.request')).toHaveLength(1);
+      expect(wireEvents(ctx, 'llm.request')[0]?.args).toMatchObject({
+        thinkingEffort: 'max',
       });
     });
 
@@ -516,12 +551,8 @@ describe('LLMRequester service migration coverage', () => {
       const timing = finish.timing;
 
       expect(timing?.firstTokenLatencyMs).toBeGreaterThanOrEqual(0);
-      // kosong accounts the decode window (server wait vs. client consume) and
-      // the requester surfaces it on the timing event.
       expect(timing?.serverDecodeMs).toBeGreaterThanOrEqual(0);
       expect(timing?.clientConsumeMs).toBeGreaterThanOrEqual(0);
-      // The scripted provider does not fire onRequestSent, so the TTFT split is
-      // not reported through the requester event.
       expect(timing?.requestBuildMs).toBeUndefined();
       expect(timing?.serverFirstTokenMs).toBeUndefined();
     });

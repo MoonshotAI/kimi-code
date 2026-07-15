@@ -11,19 +11,29 @@
  * Agent-scope `swarmService`.
  */
 
+import { z } from 'zod';
+
 import { defineModel } from '#/wire/model';
-import { defineOp } from '#/wire/op';
 
 import type { SwarmModeTrigger } from './swarm';
 
 export const SwarmModel = defineModel<SwarmModeTrigger | null>('swarm', () => null);
 
-export const swarmEnter = defineOp(SwarmModel, 'swarm_mode.enter', {
-  apply: (_s, p: { trigger: SwarmModeTrigger }) => p.trigger,
+declare module '#/wire/types' {
+  interface PersistedOpMap {
+    'swarm_mode.enter': typeof swarmEnter;
+    'swarm_mode.exit': typeof swarmExit;
+  }
+}
+
+export const swarmEnter = SwarmModel.defineOp('swarm_mode.enter', {
+  schema: z.object({ trigger: z.custom<SwarmModeTrigger>() }),
+  apply: (_s, p) => p.trigger,
   toEvent: () => ({ type: 'agent.status.updated' as const, swarmMode: true }),
 });
 
-export const swarmExit = defineOp(SwarmModel, 'swarm_mode.exit', {
+export const swarmExit = SwarmModel.defineOp('swarm_mode.exit', {
+  schema: z.object({}),
   apply: () => null,
   toEvent: () => ({ type: 'agent.status.updated' as const, swarmMode: false }),
 });

@@ -3,7 +3,7 @@
  * `HttpClient.getSession`. Kept separate from `client.ts` so scenarios can
  * import them directly without dragging the whole `DaemonClient` class.
  */
-import type { Session, SessionStatus } from '@moonshot-ai/protocol';
+import type { Session } from '@moonshot-ai/protocol';
 
 import type { HttpClient } from './http.js';
 import type { AnyFrame, WsClient } from './ws.js';
@@ -24,15 +24,15 @@ export function waitForFrame(
 }
 
 /**
- * Poll `GET /sessions/{sid}` until `status` matches. Useful as a final
- * synchronization point — the server's `turn.ended` arrives before the
- * session row flips to `idle`, so scenarios that want a quiescent session
- * must poll.
+ * Poll `GET /sessions/{sid}` until aggregate `busy` matches. Useful as a
+ * final synchronization point — the server's `turn.ended` arrives before
+ * the session work projection flips to false, so scenarios that want a
+ * quiescent session must poll.
  */
-export async function waitForSessionStatus(
+export async function waitForSessionBusy(
   http: HttpClient,
   sid: string,
-  status: SessionStatus,
+  busy: boolean,
   opts?: { timeoutMs?: number; pollMs?: number },
 ): Promise<Session> {
   const timeoutMs = opts?.timeoutMs ?? DEFAULT_FRAME_TIMEOUT_MS;
@@ -42,12 +42,12 @@ export async function waitForSessionStatus(
   while (Date.now() < deadline) {
     const session = await http.getSession(sid);
     last = session;
-    if (session.status === status) return session;
+    if (session.busy === busy) return session;
     await sleep(pollMs);
   }
   throw new Error(
-    `session ${sid} did not reach status="${status}" within ${timeoutMs}ms ` +
-      `(last status="${last?.status ?? 'unknown'}")`,
+    `session ${sid} did not reach busy=${busy} within ${timeoutMs}ms ` +
+      `(last busy=${last?.busy ?? 'unknown'})`,
   );
 }
 

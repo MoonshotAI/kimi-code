@@ -7,7 +7,6 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { IAgentGoalService } from '#/agent/goal/goal';
-import type { PluginCommandActivatedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { IEventService } from '#/app/event/event';
 import { ErrorCodes, Error2 } from '#/errors';
@@ -65,6 +64,15 @@ import {
   promptMetadataTextFromSkill,
 } from './prompt-metadata';
 
+export interface PluginCommandActivatedEvent {
+  readonly type: 'plugin_command.activated';
+  readonly activationId: string;
+  readonly pluginId: string;
+  readonly commandName: string;
+  readonly commandArgs?: string;
+  readonly trigger: 'user-slash';
+}
+
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'plugin_command.activated': PluginCommandActivatedEvent;
@@ -103,9 +111,6 @@ export class AgentRPCService implements IAgentRPCService {
   ) { }
 
   async prompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
-    // Mirror v1: persist `lastPrompt` and derive an easy title from the first
-    // prompt BEFORE launching the turn, so the web session title is populated as
-    // soon as the conversation starts (gap closed — v2 used to leave it empty).
     await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
     const handle = await this.promptService.enqueue({ message: {
       role: 'user',
@@ -360,6 +365,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentRPCService,
   AgentRPCService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'rpc',
 );

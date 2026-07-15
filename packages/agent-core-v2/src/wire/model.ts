@@ -5,8 +5,10 @@
  * dehydrate large inline media before persistence and rehydrate blob references
  * in its state after replay.
  *
- * A `ModelDef` is a stateless descriptor: it names a model and manufactures its
- * initial state via `initial`. It never holds state itself — per-scope state
+ * A `ModelDef` is a stateless descriptor: it names a model, manufactures its
+ * initial state via `initial`, and declares the model's Ops through
+ * `defineOp` (the model-bound form of the primitive in `op.ts`). It never
+ * holds state itself — per-scope state
  * instances are owned by `IWireService`, and domain services read them through
  * `wire.getModel(model)`. The optional `blobs` codec declares both directions
  * of the blob offload pipeline:
@@ -27,23 +29,24 @@
  * cast happens once inside `WireService`.
  *
  * A primary Model may register cross-model reducers keyed by foreign op types:
- * `WireService.execute` runs them on both dispatch and replay, so v1-derived
+ * `WireService` runs them on both dispatch and restore, so v1-derived
  * restore effects can stay replayable without persisting extra records.
- *
  * `DeepReadonly<T>` recursively maps a state type to its deeply-readonly view
- * for the references returned by `getModel` / `subscribe`: functions pass
+ * for the references returned by `getModel`: functions pass
  * through, `Map` / `Set` widen to `ReadonlyMap` / `ReadonlySet`, arrays and
  * tuples widen to `ReadonlyArray`, plain objects become a readonly mapped type,
  * and primitives are unchanged. It pairs with the runtime `Object.freeze`
  * applied by `WireService` after every `apply`. Scope-agnostic.
  */
 
-import type { PersistedRecord } from './wireService';
+import { bindDefineOp, type DefineOpFn } from '#/wire/op';
+import type { ModelReducers } from '#/wire/types';
+import type { WireRecord } from '#/wire/record';
 
 export type PartsTransformer = (parts: readonly unknown[]) => Promise<readonly unknown[]>;
 
 export interface ModelBlobCodec<S> {
-  dehydrate(record: PersistedRecord, transform: PartsTransformer): PersistedRecord | Promise<PersistedRecord>;
+  dehydrate(record: WireRecord, transform: PartsTransformer): WireRecord | Promise<WireRecord>;
   rehydrate(state: S, transform: PartsTransformer): S | Promise<S>;
 }
 
@@ -51,6 +54,7 @@ export interface ModelDef<S> {
   readonly name: string;
   readonly initial: () => S;
   readonly blobs?: ModelBlobCodec<S>;
+  readonly defineOp: DefineOpFn<S>;
 }
 
 export interface ModelCrossReducerEntry {
@@ -67,13 +71,18 @@ export function defineModel<S>(
   initial: () => S,
   opts?: {
     blobs?: ModelBlobCodec<S>;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    reducers?: Record<string, (state: S, payload: any) => S>;
+    reducers?: ModelReducers<S>;
   },
 ): ModelDef<S> {
-  const def: ModelDef<S> = { name, initial, blobs: opts?.blobs };
+  const def: ModelDef<S> = {
+    name,
+    initial,
+    blobs: opts?.blobs,
+    defineOp: bindDefineOp(() => def),
+  };
   if (opts?.reducers !== undefined) {
     for (const [opType, reducer] of Object.entries(opts.reducers)) {
+      if (reducer === undefined) continue;
       let list = MODEL_CROSS_REDUCERS.get(opType);
       if (list === undefined) {
         list = [];
@@ -84,24 +93,6 @@ export function defineModel<S>(
   }
   return def;
 }
-
-export interface DerivedModelDef<S> {
-  readonly name: string;
-  readonly initial: () => S;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  readonly reducers: Readonly<Record<string, (state: S, payload: any) => S>>;
-  readonly blobs?: ModelBlobCodec<S>;
-}
-
-export function defineDerivedModel<S>(
-  name: string,
-  initial: () => S,
-  reducers: Record<string, (state: S, payload: any) => S>,
-  opts?: { blobs?: ModelBlobCodec<S> },
-): DerivedModelDef<S> {
-  return { name, initial, reducers, blobs: opts?.blobs };
-}
-
 
 export type DeepReadonly<T> = T extends (...args: infer A) => infer R
   ? (...args: A) => R

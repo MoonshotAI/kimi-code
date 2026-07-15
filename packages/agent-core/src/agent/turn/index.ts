@@ -10,6 +10,7 @@ import {
   inputTotal,
   isContextOverflowStatusError,
   type ContentPart,
+  type Message,
   type TokenUsage,
 } from '@moonshot-ai/kosong';
 import { basename } from 'pathe';
@@ -37,6 +38,11 @@ import type { TelemetryPropertyValue } from '../../telemetry';
 import { gateImageFormatParts } from '../../tools/support/image-compress';
 import { abortable, isUserCancellation, userCancellationReason } from '../../utils/abort';
 import { USER_PROMPT_ORIGIN, type PromptOrigin } from '../context';
+import {
+  captureMediaStripSnapshot,
+  stripMediaPartsBySnapshot,
+  type MediaStripSnapshot,
+} from '../context/projector';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
 import { ToolCallDeduplicator } from './tool-dedup';
@@ -515,7 +521,7 @@ export class TurnFlow {
     const telemetryMode = this.telemetryMode();
     this.telemetryModeByTurn.set(turnId, telemetryMode);
     this.currentStepByTurn.set(turnId, 0);
-    this.agent.telemetry.track('turn_started', { mode: telemetryMode, ...this.requestProtocolProps() });
+    this.agent.telemetry.track('turn_started', { turn_id: turnId, mode: telemetryMode, ...this.requestProtocolProps() });
     this.agent.fullCompaction.resetForTurn();
     this.agent.usage.beginTurn();
     this.agent.emitEvent({ type: 'turn.started', turnId, origin });
@@ -613,6 +619,7 @@ export class TurnFlow {
       });
     }
     this.agent.telemetry.track('turn_ended', {
+      turn_id: turnId,
       reason: ended.reason,
       duration_ms: ended.durationMs,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
@@ -727,6 +734,12 @@ export class TurnFlow {
     // appended only when the loadable set actually changed, so quiet turns
     // keep the prompt cache fully warm.
     this.agent.injection.injectToolsDiff();
+    let mediaStripSnapshot: MediaStripSnapshot | undefined;
+    const buildMessagesMediaStripped = (): Message[] => {
+      const messages = this.agent.context.messages;
+      mediaStripSnapshot ??= captureMediaStripSnapshot(messages);
+      return stripMediaPartsBySnapshot(messages, mediaStripSnapshot);
+    };
     while (true) {
       signal.throwIfAborted();
       const model = this.agent.config.model;
@@ -740,7 +753,7 @@ export class TurnFlow {
           buildMessages: () => this.agent.context.messages,
           buildMessagesStrict: () => this.agent.context.strictMessages,
           buildMessagesMediaDegraded: () => this.agent.context.mediaDegradedMessages,
-          buildMessagesMediaStripped: () => this.agent.context.mediaStrippedMessages,
+          buildMessagesMediaStripped,
           dispatchEvent: this.buildDispatchEvent(turnId),
           // Re-read per step (not snapshotted per turn) so a select_tools load
           // is dispatchable on the very next step of the same turn.
@@ -1045,6 +1058,7 @@ export class TurnFlow {
       this.toolCallDupType.delete(event.toolCallId);
       const outcome = telemetryToolOutcome(event.result);
       const properties: Record<string, TelemetryPropertyValue> = {
+        turn_id: turnId,
         tool_name: started.name,
         outcome,
         duration_ms: Date.now() - started.startedAt,
@@ -1104,6 +1118,7 @@ export class TurnFlow {
     if (this.interruptedTelemetryTurnIds.has(turnId)) return;
     this.interruptedTelemetryTurnIds.add(turnId);
     this.agent.telemetry.track('turn_interrupted', {
+      turn_id: turnId,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
       at_step: atStep,
       interrupt_reason: interruptReason,

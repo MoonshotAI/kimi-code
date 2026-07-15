@@ -1,20 +1,18 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { APIConnectionError, APIStatusError } from '#/app/llmProtocol/errors';
+import {
+  APIConnectionError,
+  APIProviderRateLimitError,
+  APIStatusError,
+} from '#/app/llmProtocol/errors';
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import { IEventBus } from '#/app/event/eventBus';
+import { retryBackoffDelays } from '#/_base/utils/retry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { ContinuationStepRequest } from '#/agent/loop/stepRequest';
 
 import { createTestAgent, llmGenerateServices, type TestAgentContext } from '../../harness';
 
-/**
- * The `stepRetry` plugin drives loop-level retries of retryable provider
- * failures: it claims the error from the loop's handler registry, backs off,
- * and re-runs the failed driver as the same step. Backoff sleeps use
- * `setTimeout`, so the suite runs on fake timers and flushes them between the
- * loop's `run()` promise and its resolution.
- */
 describe('stepRetry plugin', () => {
   let ctx: TestAgentContext;
 
@@ -72,7 +70,7 @@ describe('stepRetry plugin', () => {
           step: 1,
           failedAttempt: 1,
           nextAttempt: 2,
-          maxAttempts: 3,
+          maxAttempts: 10,
           delayMs: expect.any(Number),
           errorName: 'APIConnectionError',
           errorMessage: 'terminated',
@@ -82,7 +80,6 @@ describe('stepRetry plugin', () => {
     expect(
       rpcEvents('turn.step.started').map((event) => (event.args as { step: number }).step),
     ).toEqual([1, 2]);
-    // A recovered error never surfaces as an interruption.
     expect(rpcEvents('turn.step.interrupted')).toEqual([]);
     expect(ctx.contextData().history).toEqual([
       expect.objectContaining({
@@ -105,11 +102,44 @@ describe('stepRetry plugin', () => {
     const result = await runTurn(1);
 
     expect(result.type).toBe('failed');
-    expect(calls).toBe(3);
-    expect(rpcEvents('turn.step.retrying')).toHaveLength(2);
+    expect(calls).toBe(10);
+    expect(rpcEvents('turn.step.retrying')).toHaveLength(9);
     expect(rpcEvents('turn.step.interrupted')).toEqual([
       expect.objectContaining({
-        args: expect.objectContaining({ reason: 'error', step: 3 }),
+        args: expect.objectContaining({ reason: 'error', step: 10 }),
+      }),
+    ]);
+  });
+
+  it('honors the provider retry-after delay before retrying', async () => {
+    let calls = 0;
+    ctx = createTestAgent(
+      llmGenerateServices(async () => {
+        calls += 1;
+        if (calls === 1) throw new APIProviderRateLimitError('slow down', null, 1);
+        return {
+          id: 'retry-after-response',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'recovered' }],
+            toolCalls: [],
+          },
+          usage: emptyUsage(),
+          finishReason: 'completed',
+          rawFinishReason: 'stop',
+        };
+      }),
+    );
+
+    ctx.get(IEventBus).publish({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+    const loop = ctx.get(IAgentLoopService);
+    loop.enqueue(new ContinuationStepRequest());
+    const result = await loop.run({ turnId: 1 });
+
+    expect(result.type).toBe('completed');
+    expect(rpcEvents('turn.step.retrying')).toEqual([
+      expect.objectContaining({
+        args: expect.objectContaining({ delayMs: 1 }),
       }),
     ]);
   });
@@ -191,10 +221,31 @@ describe('stepRetry plugin', () => {
 
     const first = await runTurn(1);
     expect(first.type).toBe('failed');
-    expect(calls).toBe(3);
+    expect(calls).toBe(10);
 
     failing = false;
     const second = await runTurn(2);
     expect(second).toEqual({ type: 'completed', steps: 1, truncated: false });
+  });
+});
+
+describe('retryBackoffDelays', () => {
+  it('starts at 500 milliseconds and doubles with up to 25 percent jitter', () => {
+    const delays = retryBackoffDelays(3);
+
+    expect(delays[0]).toBeGreaterThanOrEqual(500);
+    expect(delays[0]).toBeLessThanOrEqual(625);
+    expect(delays[1]).toBeGreaterThanOrEqual(1_000);
+    expect(delays[1]).toBeLessThanOrEqual(1_250);
+  });
+
+  it('caps high-attempt backoff at 32 seconds plus up to 25 percent jitter', () => {
+    const delays = retryBackoffDelays(10);
+
+    expect(delays).toHaveLength(9);
+    expect(delays[6]).toBeGreaterThanOrEqual(32_000);
+    expect(delays[6]).toBeLessThanOrEqual(40_000);
+    expect(delays[8]).toBeGreaterThanOrEqual(32_000);
+    expect(delays[8]).toBeLessThanOrEqual(40_000);
   });
 });

@@ -2,7 +2,6 @@ import { resolve } from 'node:path';
 
 import { defineConfig } from 'tsdown';
 
-import { hashImportsPlugin } from '../../build/hash-imports-plugin.mjs';
 import { rawTextPlugin } from '../../build/raw-text-plugin.mjs';
 import { BUILT_IN_CATALOG_DEFINE, builtInCatalogDefine } from './scripts/built-in-catalog.mjs';
 
@@ -24,7 +23,7 @@ export default defineConfig({
       'const __dirname = __cjsShimDirname(__filename);',
     ].join('\n'),
   },
-  plugins: [hashImportsPlugin(), rawTextPlugin()],
+  plugins: [rawTextPlugin()],
   alias: {
     '@': resolve(appRoot, 'src'),
   },

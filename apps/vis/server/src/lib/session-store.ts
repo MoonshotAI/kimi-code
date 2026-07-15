@@ -26,15 +26,15 @@ export function isSafeAgentId(id: string): boolean {
 }
 
 interface StateJson {
-  createdAt?: string;
-  updatedAt?: string;
+  createdAt?: string | number;
+  updatedAt?: string | number;
   title?: string;
   isCustomTitle?: boolean;
   lastPrompt?: string;
   // Agent metadata comes from an untrusted state.json (a corrupt or imported
   // bundle may hold non-object entries like `{ "main": null }`), so the value
   // type allows null and inventoryAgents skips anything that isn't an object.
-  agents?: Record<string, { homedir: string; type: 'main' | 'sub' | 'independent'; parentAgentId: string | null; swarmItem?: string } | null>;
+  agents?: Record<string, { type: 'main' | 'sub' | 'independent'; parentAgentId?: string | null; swarmItem?: string } | null>;
   custom?: Record<string, unknown>;
 }
 
@@ -109,7 +109,7 @@ async function readImportedDetail(home: string, importId: string): Promise<Sessi
   // `agents` map. When the inventory comes back empty, fall back to probing
   // `agents/*` on disk so routes that require an agent (wire/context/…) still
   // resolve `main`.
-  let agents = await inventoryAgents(sessionDir, state, true);
+  let agents = await inventoryAgents(sessionDir, state);
   if (agents.length === 0) {
     agents = await discoverAgentsFromDisk(sessionDir);
   }
@@ -260,7 +260,7 @@ async function readSessionIndex(home: string): Promise<Map<string, SessionIndexE
   return out;
 }
 
-async function inventoryAgents(sessionDir: string, state: StateJson, deriveHomedir = false): Promise<AgentInfo[]> {
+async function inventoryAgents(sessionDir: string, state: StateJson): Promise<AgentInfo[]> {
   const result: AgentInfo[] = [];
   for (const [id, meta] of Object.entries(state.agents ?? {})) {
     if (!isSafeAgentId(id)) continue;
@@ -286,11 +286,8 @@ async function inventoryAgents(sessionDir: string, state: StateJson, deriveHomed
     result.push({
       agentId: id,
       type: meta.type,
-      parentAgentId: meta.parentAgentId,
-      // For imported bundles the persisted homedir is the exporting machine's
-      // absolute path; re-derive it from the local extraction so blob reads
-      // (which join homedir) resolve under the imported directory.
-      homedir: deriveHomedir ? join(sessionDir, 'agents', id) : meta.homedir,
+      parentAgentId: meta.parentAgentId ?? null,
+      homedir: join(sessionDir, 'agents', id),
       wireExists: readable,
       wireRecordCount: info.count,
       wireProtocolVersion: info.protocolVersion,
@@ -366,7 +363,8 @@ async function scanWire(path: string): Promise<{ count: number; protocolVersion:
   return { count, protocolVersion };
 }
 
-function parseTs(input: string | undefined): number {
+function parseTs(input: string | number | undefined): number {
+  if (typeof input === 'number') return Number.isFinite(input) ? input : 0;
   if (!input) return 0;
   const n = Date.parse(input);
   return Number.isFinite(n) ? n : 0;

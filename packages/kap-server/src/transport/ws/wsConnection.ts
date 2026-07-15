@@ -4,10 +4,13 @@
  * Multiplexes RPC `call`s and event `listen`s over one socket, carrying the
  * safety features from v1's `WsConnection` and VSCode's `ChannelServer`:
  *   - request ids + active-request table (cancel / unlisten disposes them)
- *   - heartbeat (ping / pong timeout → terminate)
  *   - schema validation (invalid frames are dropped, not fatal)
  *   - graceful cleanup on close (dispose listeners, cancel pending)
  *   - no stack traces over the wire
+ *
+ * The server never initiates a disconnect: there is no heartbeat / pong
+ * timeout — a connection stays open until the client closes it or the process
+ * shuts down.
  *
  * Captures per-connection metadata (`connectedAt`, `remoteAddress`,
  * `userAgent`, handshake state) and tracks the session ids of active
@@ -23,13 +26,20 @@ import type { ScopeKind } from '../channel';
 import { dispatch, resolveScope, resolveService } from '../dispatcher';
 import { assertSerializable, mapError } from '../errors';
 import type { CredentialValidator } from '../../services/auth/credentials';
+import { ErrorCode } from '../../protocol/error-codes';
 import { resolveEventSource } from './eventMap';
 import type { CallMessage, ListenMessage, ServerMessage } from './wsProtocol';
 import { clientMessageSchema } from './wsProtocol';
 
-const DEFAULT_PING_INTERVAL_MS = 30_000;
-const DEFAULT_PONG_TIMEOUT_MS = 10_000;
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
+
+/** Minimal logger surface — keeps the connection decoupled from the server logger. */
+export interface WsConnectionLogger {
+  warn(obj: unknown, msg: string): void;
+  error(obj: unknown, msg: string): void;
+}
+
+const noopLogger: WsConnectionLogger = { warn: () => {}, error: () => {} };
 
 interface PendingEntry {
   /** Dispose the listener / drop the call result. */
@@ -46,8 +56,6 @@ export interface WsConnectionOptions {
    * When omitted, the handshake accepts any client (upgrade already ran).
    */
   readonly validateCredential?: CredentialValidator;
-  readonly pingIntervalMs?: number;
-  readonly pongTimeoutMs?: number;
   readonly callTimeoutMs?: number;
   /** ISO 8601 timestamp the socket was accepted at; defaults to `now`. */
   readonly connectedAt?: string;
@@ -55,6 +63,8 @@ export interface WsConnectionOptions {
   readonly remoteAddress: string | null;
   /** `User-Agent` header from the upgrade request. Null when absent. */
   readonly userAgent: string | null;
+  /** Server-side logger for dispatch / serialization / socket failures. */
+  readonly logger?: WsConnectionLogger;
 }
 
 export class WsConnection {
@@ -65,9 +75,8 @@ export class WsConnection {
   private readonly socket: WebSocket;
   private readonly core: Scope;
   private readonly validateCredential?: CredentialValidator;
-  private readonly pingIntervalMs: number;
-  private readonly pongTimeoutMs: number;
   private readonly callTimeoutMs: number;
+  private readonly logger: WsConnectionLogger;
 
   private closed = false;
   private gotHello = false;
@@ -75,8 +84,6 @@ export class WsConnection {
   private readonly eventWaits = new Map<string, Map<string, () => void>>();
   /** Active session/agent-scoped `listen`s: listen id → session id. */
   private readonly subscriptions = new Map<string, string>();
-  private pingTimer?: ReturnType<typeof setInterval>;
-  private pongTimer?: ReturnType<typeof setTimeout>;
 
   constructor(opts: WsConnectionOptions) {
     this.id = `conn_${ulid()}`;
@@ -86,16 +93,17 @@ export class WsConnection {
     this.socket = opts.socket;
     this.core = opts.core;
     this.validateCredential = opts.validateCredential;
-    this.pingIntervalMs = opts.pingIntervalMs ?? DEFAULT_PING_INTERVAL_MS;
-    this.pongTimeoutMs = opts.pongTimeoutMs ?? DEFAULT_PONG_TIMEOUT_MS;
     this.callTimeoutMs = opts.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+    this.logger = opts.logger ?? noopLogger;
 
     this.socket.on('message', (data: RawData) => this.onMessage(data));
     this.socket.on('close', () => this.onClose());
-    this.socket.on('error', () => this.onClose());
+    this.socket.on('error', (err) => {
+      this.logger.warn({ err, connId: this.id }, 'ws socket error');
+      this.onClose();
+    });
 
-    this.startHeartbeat();
-    this.send({ type: 'ready', heartbeatMs: this.pingIntervalMs });
+    this.send({ type: 'ready' });
   }
 
   /** Whether the client has completed the `hello` (auth) handshake. */
@@ -132,9 +140,6 @@ export class WsConnection {
     switch (msg.type) {
       case 'hello':
         this.onHello(msg.token);
-        return;
-      case 'pong':
-        this.onPong();
         return;
       case 'call':
         void this.onCall(msg);
@@ -214,6 +219,14 @@ export class WsConnection {
       if (settled || this.closed) return;
       this.pending.delete(msg.id);
       const env = mapError(error, msg.id);
+      // 50001 (incl. call timeout) is a server-side failure; mapped business
+      // codes are expected client outcomes — mirror the REST RPC route.
+      const ctx = { err: error, connId: this.id, service: msg.service, method: msg.method };
+      if (env.code === ErrorCode.INTERNAL_ERROR) {
+        this.logger.error(ctx, 'ws rpc call failed');
+      } else {
+        this.logger.warn(ctx, 'ws rpc call failed');
+      }
       this.send({ type: 'error', id: msg.id, code: env.code, msg: env.msg });
     }
   }
@@ -264,6 +277,12 @@ export class WsConnection {
       }
     } catch (error) {
       const env = mapError(error, msg.id);
+      const ctx = { err: error, connId: this.id, service: msg.service, event: msg.event };
+      if (env.code === ErrorCode.INTERNAL_ERROR) {
+        this.logger.error(ctx, 'ws listen failed');
+      } else {
+        this.logger.warn(ctx, 'ws listen failed');
+      }
       this.send({ type: 'error', id: msg.id, code: env.code, msg: env.msg });
       return;
     }
@@ -340,6 +359,12 @@ export class WsConnection {
       this.send({ type: 'event', id, eventId, data: wire });
     } catch (error) {
       const env = mapError(error, id);
+      // Serialization failures cancel the whole listen subscription below —
+      // log so the dropped event stream is diagnosable.
+      this.logger.warn(
+        { err: error, connId: this.id, event },
+        'ws event send failed; subscription cancelled',
+      );
       this.send({ type: 'error', id, code: env.code, msg: env.msg });
       this.cancel(id);
     }
@@ -351,35 +376,6 @@ export class WsConnection {
       this.socket.send(JSON.stringify(msg));
     } catch {
       // best-effort
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Heartbeat
-  // -------------------------------------------------------------------------
-
-  private startHeartbeat(): void {
-    this.pingTimer = setInterval(() => {
-      if (this.closed) return;
-      this.send({ type: 'ping' });
-      if (this.pongTimer !== undefined) clearTimeout(this.pongTimer);
-      this.pongTimer = setTimeout(() => {
-        if (this.closed) return;
-        try {
-          this.socket.terminate();
-        } catch {
-          // ignore
-        }
-      }, this.pongTimeoutMs);
-      this.pongTimer.unref?.();
-    }, this.pingIntervalMs);
-    this.pingTimer.unref?.();
-  }
-
-  private onPong(): void {
-    if (this.pongTimer !== undefined) {
-      clearTimeout(this.pongTimer);
-      this.pongTimer = undefined;
     }
   }
 
@@ -399,8 +395,6 @@ export class WsConnection {
   private onClose(): void {
     if (this.closed) return;
     this.closed = true;
-    if (this.pingTimer !== undefined) clearInterval(this.pingTimer);
-    if (this.pongTimer !== undefined) clearTimeout(this.pongTimer);
     for (const entry of this.pending.values()) {
       try {
         entry.cancel();

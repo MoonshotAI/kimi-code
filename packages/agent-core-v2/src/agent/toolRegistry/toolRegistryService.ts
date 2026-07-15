@@ -1,7 +1,7 @@
 import { toDisposable, type IDisposable } from "#/_base/di/lifecycle";
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import type { ExecutableTool, ToolInfo, ToolSource } from '#/agent/tool/toolContract';
+import type { ExecutableTool, ToolInfo, ToolSource } from '#/tool/toolContract';
 import { IAgentToolRegistryService, type ToolRegistrationOptions } from './toolRegistry';
 
 interface ToolEntry {
@@ -53,6 +53,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolRegistryService,
   AgentToolRegistryService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'toolRegistry',
 );

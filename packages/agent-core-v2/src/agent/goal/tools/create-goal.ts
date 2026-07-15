@@ -1,20 +1,21 @@
 /**
  * CreateGoalTool — lets the main agent start an explicit goal on the user's
  * behalf. The goal becomes durable, structured state owned by the agent's
- * goal service, not text parsed from a slash command.
+ * goal service, not text parsed from a slash command. Registered for the main
+ * agent only, mirroring v1's `agent.type === 'main'` gate.
  */
 
 import { z } from 'zod';
 
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
+import { toInputJsonSchema } from '#/tool/input-schema';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
-import type { BuiltinTool, ToolExecution } from '#/agent/tool/toolContract';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import DESCRIPTION from './create-goal.md?raw';
 import { goalForModel } from './serialize';
 
@@ -45,11 +46,19 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
   ) {}
 
   resolveExecution(args: CreateGoalToolInput): ToolExecution {
+    const goalAtResolution = this.goal.getGoal().goal;
     return {
       description: 'Creating a goal',
       display: this.resolveGoalStartDisplay(args),
       approvalRule: this.name,
-      execute: async () => {
+      execute: async ({ turnId }) => {
+        const currentGoal = this.goal.getGoal().goal;
+        if (
+          currentGoal?.goalId !== goalAtResolution?.goalId &&
+          (currentGoal === null || !this.goal.isGoalToolTarget(turnId, currentGoal.goalId))
+        ) {
+          return { output: 'Goal not created: the current goal changed.' };
+        }
         const snapshot = await this.goal.createGoal(
           {
             objective: args.objective,
@@ -63,12 +72,6 @@ export class CreateGoalTool implements BuiltinTool<CreateGoalToolInput> {
     };
   }
 
-  /**
-   * Starting a goal switches the agent into autonomous, multi-turn work, so its
-   * approval reuses the same choice the `/goal` command offers: pick the
-   * permission mode to run under, or decline. `auto` mode auto-approves the goal
-   * upstream and never reaches this prompt, so the menu only covers manual/yolo.
-   */
   private resolveGoalStartDisplay(args: CreateGoalToolInput): ToolInputDisplay | undefined {
     const mode = this.permissionMode.mode;
     if (mode === 'auto') return undefined;

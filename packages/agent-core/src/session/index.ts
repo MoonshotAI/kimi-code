@@ -17,6 +17,8 @@ import {
   appendWorkspaceAdditionalDir,
   normalizeAdditionalDirs,
   parseBooleanEnv,
+  PRINT_MAX_TURNS_DEFAULT,
+  PRINT_WAIT_CEILING_S_DEFAULT,
   readWorkspaceAdditionalDirs,
   resolveWorkspaceAdditionalDirs,
   resolveConfigValue,
@@ -99,9 +101,9 @@ export interface SessionSkillConfig {
 }
 
 export interface AgentMeta {
-  readonly homedir: string;
+  readonly homedir?: string;
   readonly type: AgentType;
-  readonly parentAgentId: string | null;
+  readonly parentAgentId?: string | null;
   readonly swarmItem?: string;
 }
 
@@ -451,7 +453,8 @@ export class Session {
    * `resolvePrintBackgroundMode`): `print_background_mode = "drain"`, or the
    * legacy `keep_alive_on_exit = true` fallback. In every other mode it returns
    * immediately. The wait is bounded by `background.print_wait_ceiling_s`
-   * (default 3600s) so a wedged task cannot keep the process alive forever.
+   * (default `PRINT_WAIT_CEILING_S_DEFAULT`, effectively unbounded) so a wedged
+   * task can still be given up on eventually.
    *
    * Terminal notifications are suppressed for each task while we wait, so a task
    * completing cannot `turn.steer` the (already finished) main agent into launching
@@ -460,7 +463,7 @@ export class Session {
   async waitForBackgroundTasksOnPrint(): Promise<void> {
     if (this.resolvePrintBackgroundMode() !== 'drain') return;
 
-    const ceilingS = this.options.background?.printWaitCeilingS ?? 3600;
+    const ceilingS = this.options.background?.printWaitCeilingS ?? PRINT_WAIT_CEILING_S_DEFAULT;
     const timeoutMs = ceilingS * 1000;
     const deadline = Date.now() + timeoutMs;
 
@@ -518,7 +521,9 @@ export class Session {
    * `background.print_background_mode` is authoritative when set. Otherwise we
    * fall back to the legacy `background.keep_alive_on_exit` mapping so existing
    * configs keep their behavior: `keep_alive_on_exit = true` ⇒ `'drain'`
-   * (suppress + drain background tasks before exit), otherwise `'exit'`.
+   * (suppress + drain background tasks before exit). When neither is set the
+   * mode defaults to `'steer'`: a headless run stays alive while background
+   * tasks are pending so their completions can steer new main turns.
    */
   private resolvePrintBackgroundMode(): 'exit' | 'drain' | 'steer' {
     const configured = this.options.background?.printBackgroundMode;
@@ -530,7 +535,7 @@ export class Session {
       defaultValue: false,
       parseEnv: parseBooleanEnv,
     });
-    return keepAliveOnExit ? 'drain' : 'exit';
+    return keepAliveOnExit ? 'drain' : 'steer';
   }
 
   private countActiveBackgroundTasks(): number {
@@ -547,13 +552,13 @@ export class Session {
    * `'continue'` when the driver must stay alive so a background-task completion
    * can `turn.steer` the main agent into a new turn.
    *
-   *  - 'exit'  : finish immediately (default).
+   *  - 'exit'  : finish immediately.
    *  - 'drain' : suppress + drain background tasks, then finish (legacy
    *              `keep_alive_on_exit = true` behavior).
    *  - 'steer' : while background tasks are still pending, return 'continue' so
    *              completions steer new main turns; finish once quiescent, or when
    *              the wall-clock ceiling (`print_wait_ceiling_s`) or the turn cap
-   *              (`print_max_turns`) is reached.
+   *              (`print_max_turns`) is reached. This is the default mode.
    */
   async handlePrintMainTurnCompleted(): Promise<'finish' | 'continue'> {
     const mode = this.resolvePrintBackgroundMode();
@@ -564,8 +569,8 @@ export class Session {
     }
 
     // 'steer'
-    const ceilingS = this.options.background?.printWaitCeilingS ?? 3600;
-    const maxTurns = this.options.background?.printMaxTurns ?? 50;
+    const ceilingS = this.options.background?.printWaitCeilingS ?? PRINT_WAIT_CEILING_S_DEFAULT;
+    const maxTurns = this.options.background?.printMaxTurns ?? PRINT_MAX_TURNS_DEFAULT;
     const now = Date.now();
     this.printSteerDeadline ??= now + ceilingS * 1000;
     this.printSteerTurns += 1;
@@ -999,7 +1004,13 @@ export class Session {
         : await this.resumeAgent(parentAgentId, [...stack, id]);
 
     try {
-      const agent = this.instantiateAgent(id, meta.homedir, meta.type, {}, parentAgentId);
+      const agent = this.instantiateAgent(
+        id,
+        join(this.options.homedir, 'agents', id),
+        meta.type,
+        {},
+        parentAgentId,
+      );
       const result = await agent.resume();
       this.restoreAgentProfileHandle(agent, meta, parent?.agent);
       this.agents.set(id, agent);

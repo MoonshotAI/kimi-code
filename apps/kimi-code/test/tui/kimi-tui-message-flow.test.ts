@@ -12,6 +12,7 @@ import type { ApprovalRequest, ApprovalResponse, Event } from '@moonshot-ai/kimi
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ApprovalPanelComponent } from '#/tui/components/dialogs/approval-panel';
+import { EffortSelectorComponent } from '#/tui/components/dialogs/effort-selector';
 import { KIMI_CODE_PLUGIN_MARKETPLACE_URL } from '#/constant/app';
 import { MOON_SPINNER_FRAMES } from '#/tui/constant/rendering';
 import {
@@ -140,6 +141,8 @@ function makeStartupInput(): KimiTUIStartupInput {
 }
 
 function makeSession(overrides: Record<string, unknown> = {}) {
+  let model = 'k2';
+  let thinkingEffort = 'off';
   return {
     id: 'ses-1',
     model: 'k2',
@@ -152,8 +155,8 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     cancel: vi.fn(async () => {}),
     cancelCompaction: vi.fn(async () => {}),
     getStatus: vi.fn(async () => ({
-      model: 'k2',
-      thinkingEffort: 'off',
+      model,
+      thinkingEffort,
       permission: 'manual',
       planMode: false,
       contextTokens: 0,
@@ -163,8 +166,12 @@ function makeSession(overrides: Record<string, unknown> = {}) {
     getGoal: vi.fn(async () => ({ goal: null })),
     setApprovalHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
-    setModel: vi.fn(async () => {}),
-    setThinking: vi.fn(async () => {}),
+    setModel: vi.fn(async (alias: string) => {
+      model = alias;
+    }),
+    setThinking: vi.fn(async (effort: string) => {
+      thinkingEffort = effort;
+    }),
     setPermission: vi.fn(async () => {}),
     setPlanMode: vi.fn(async () => {}),
     setSwarmMode: vi.fn(async () => {}),
@@ -1730,6 +1737,225 @@ command = "vim"
     expect(driver.state.editor.getText()).toBe('ls');
   });
 
+  it('drains a queued image message with its media parts', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.handleUserInput(`describe ${attachment.placeholder}`);
+
+    expect(session.prompt).not.toHaveBeenCalled();
+    const queued = driver.state.queuedMessages[0];
+    expect(queued?.parts).toEqual([
+      { type: 'text', text: 'describe ' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+    ]);
+
+    driver.sendQueuedMessage(session, queued!);
+
+    expect(session.prompt).toHaveBeenCalledWith([
+      { type: 'text', text: 'describe ' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+    ]);
+  });
+
+  it('steers editor image input as media parts', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+    driver.state.editor.setText(`check ${attachment.placeholder}`);
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).toHaveBeenCalledWith([
+      { type: 'text', text: 'check ' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+    ]);
+  });
+
+  it('steers queued image messages with their media parts', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+    driver.state.queuedMessages = [
+      {
+        text: `look ${attachment.placeholder}`,
+        agentId: 'main',
+        parts: [
+          { type: 'text', text: 'look ' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+        ],
+        imageAttachmentIds: [attachment.id],
+      },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).toHaveBeenCalledWith([
+      { type: 'text', text: 'look ' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+    ]);
+    expect(driver.state.queuedMessages).toEqual([]);
+  });
+
+  it('steers consecutive image-only messages without a whitespace-only separator part', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const first = imageStore.addImage(new Uint8Array([0xaa]), 'image/png', 1, 1);
+    const second = imageStore.addImage(new Uint8Array([0xbb]), 'image/png', 1, 1);
+    const imagePart = (bytes: Uint8Array) => ({
+      type: 'image_url' as const,
+      imageUrl: { url: `data:image/png;base64,${Buffer.from(bytes).toString('base64')}` },
+    });
+    driver.state.queuedMessages = [
+      {
+        text: first.placeholder,
+        agentId: 'main',
+        parts: [imagePart(first.bytes)],
+        imageAttachmentIds: [first.id],
+      },
+      {
+        text: second.placeholder,
+        agentId: 'main',
+        parts: [imagePart(second.bytes)],
+        imageAttachmentIds: [second.id],
+      },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    // normalizePromptInput rejects whitespace-only text parts, so the
+    // item separator must not become a standalone `{type:'text',text:'\n\n'}`
+    // between two image parts.
+    expect(session.steer).toHaveBeenCalledWith([imagePart(first.bytes), imagePart(second.bytes)]);
+  });
+
+  it('steers a media item followed by plain text with a blank-line separator', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+    driver.state.queuedMessages = [
+      {
+        text: `look ${attachment.placeholder}`,
+        agentId: 'main',
+        parts: [
+          { type: 'text', text: 'look ' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+        ],
+        imageAttachmentIds: [attachment.id],
+      },
+      { text: 'focus on tests', agentId: 'main' },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    // The historical '\n\n' item separator merges into the following text
+    // part (legal for normalizePromptInput) instead of vanishing after a
+    // media part.
+    expect(session.steer).toHaveBeenCalledWith([
+      { type: 'text', text: 'look ' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+      { type: 'text', text: '\n\nfocus on tests' },
+    ]);
+  });
+
+  it('steers plain text followed by a media item with a blank-line separator', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    driver.streamingUI.setTurnId('1');
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const attachment = imageStore.addImage(new Uint8Array([0xaa, 0xbb]), 'image/png', 1, 1);
+    driver.state.queuedMessages = [
+      { text: 'hello', agentId: 'main' },
+      {
+        text: attachment.placeholder,
+        agentId: 'main',
+        parts: [{ type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } }],
+        imageAttachmentIds: [attachment.id],
+      },
+    ];
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).toHaveBeenCalledWith([
+      { type: 'text', text: 'hello\n\n' },
+      { type: 'image_url', imageUrl: { url: 'data:image/png;base64,qrs=' } },
+    ]);
+  });
+
+  it('shows an error instead of throwing when skill media materialization fails', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    // The pasted video's source file vanished before submit — the cache copy
+    // throws, and it must surface as a TUI error, not an unhandled rejection.
+    const missing = imageStore.addVideo('video/quicktime', '/tmp/kimi-missing-source.mov');
+
+    (
+      driver as unknown as {
+        sendSkillActivation(s: unknown, name: string, args: string): void;
+      }
+    ).sendSkillActivation(session, 'test', `look ${missing.placeholder}`);
+
+    expect(session.activateSkill).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).toContain('Failed to prepare media attachment');
+  });
+
+  it('shows an error instead of throwing when plugin command media materialization fails', async () => {
+    const activatePluginCommand = vi.fn(async () => {});
+    const session = makeSession({ activatePluginCommand });
+    const { driver } = await makeDriver(session);
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const missing = imageStore.addVideo('video/mp4', '/tmp/kimi-missing-source.mp4');
+
+    (
+      driver as unknown as {
+        activatePluginCommand(s: unknown, pluginId: string, command: string, args: string): void;
+      }
+    ).activatePluginCommand(session, 'plug', 'cmd', missing.placeholder);
+
+    expect(activatePluginCommand).not.toHaveBeenCalled();
+    expect(stripSgr(renderTranscript(driver))).toContain('Failed to prepare media attachment');
+  });
+
+  it('keeps the queue and draft intact when steer media extraction fails', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session);
+    driver.state.appState.model = 'k2';
+    driver.state.appState.streamingPhase = 'waiting';
+    const imageStore = (driver as unknown as { imageStore: ImageAttachmentStore }).imageStore;
+    const missing = imageStore.addVideo('video/quicktime', '/tmp/kimi-missing-source.mov');
+    driver.state.queuedMessages = [{ text: 'queued note', agentId: 'main' }];
+    driver.state.editor.setText(`look ${missing.placeholder}`);
+
+    driver.state.editor.onCtrlS?.();
+
+    expect(session.steer).not.toHaveBeenCalled();
+    expect(driver.state.queuedMessages).toEqual([{ text: 'queued note', agentId: 'main' }]);
+    expect(driver.state.editor.getText()).toBe(`look ${missing.placeholder}`);
+    expect(stripSgr(renderTranscript(driver))).toContain('Failed to prepare media attachment');
+  });
+
   it('recalls a queued bash command back into bash mode on Up', async () => {
     const { driver } = await makeDriver();
     driver.state.appState.streamingPhase = 'waiting';
@@ -2767,6 +2993,24 @@ command = "vim"
 
     expect(session.startBtw).not.toHaveBeenCalled();
     expect(stripSgr(renderTranscript(driver))).toContain('LLM not set');
+  });
+
+  it('applies the effective thinking effort from status updates', async () => {
+    const { driver } = await makeDriver();
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'agent.status.updated',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        model: 'turbo',
+        thinkingEffort: 'mid',
+      } as Event,
+      vi.fn(),
+    );
+
+    expect(driver.state.appState.model).toBe('turbo');
+    expect(driver.state.appState.thinkingEffort).toBe('mid');
   });
 
   it('renders swarm mode markers from /swarm commands, not tool-triggered status updates', async () => {
@@ -4370,6 +4614,67 @@ command = "vim"
     expect(driver.state.appState.thinkingEffort).toBe('on');
   });
 
+  it('uses the effective effort returned after a model-switch fallback', async () => {
+    let switched = false;
+    const session = makeSession({
+      getStatus: vi.fn(async () => ({
+        model: switched ? 'turbo' : 'k2',
+        thinkingEffort: switched ? 'mid' : 'ultra',
+        permission: 'manual',
+        planMode: false,
+        contextTokens: 0,
+        maxContextTokens: 100,
+        contextUsage: 0,
+      })),
+      setModel: vi.fn(async () => {
+        switched = true;
+      }),
+    });
+    const setConfig = vi.fn(async () => ({ providers: {} }));
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        models: {
+          k2: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-k2',
+            maxContextSize: 100,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high', 'ultra'],
+            defaultEffort: 'ultra',
+          },
+          turbo: {
+            provider: 'managed:kimi-code',
+            model: 'kimi-turbo',
+            maxContextSize: 100,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'mid', 'high'],
+            defaultEffort: 'mid',
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'ultra' },
+      })),
+      setConfig,
+    });
+
+    driver.handleUserInput('/model turbo');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(TabbedModelSelectorComponent);
+    });
+    (driver.state.editorContainer.children[0] as TabbedModelSelectorComponent).handleInput('\r');
+
+    await vi.waitFor(() => {
+      expect(setConfig).toHaveBeenCalledWith({
+        defaultModel: 'turbo',
+        thinking: { enabled: true, effort: 'mid' },
+      });
+    });
+    expect(driver.state.appState.model).toBe('turbo');
+    expect(driver.state.appState.thinkingEffort).toBe('mid');
+    expect(renderTranscript(driver)).toContain('Switched to kimi-turbo with thinking mid.');
+  });
+
   it('persists /model selection even when runtime state is unchanged', async () => {
     const session = makeSession();
     const setConfig = vi.fn(async () => ({ providers: {} }));
@@ -4858,16 +5163,20 @@ describe('/model status displayName override', () => {
 });
 
 describe('/effort support_efforts override', () => {
-  it('rejects efforts hidden by support_efforts override', async () => {
+  it('warns and applies efforts hidden by an Anthropic support_efforts override', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session, {
       getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
         models: {
           k2: {
-            provider: 'managed:kimi-code',
-            model: 'kimi-k2',
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
             maxContextSize: 100,
-            displayName: 'Kimi K2',
+            displayName: 'Compatible Model',
             capabilities: ['thinking'],
             supportEfforts: ['low', 'high', 'max'],
             overrides: { supportEfforts: ['low', 'high'] },
@@ -4881,8 +5190,73 @@ describe('/effort support_efforts override', () => {
     driver.handleUserInput('/effort max');
 
     await vi.waitFor(() => {
-      expect(renderTranscript(driver)).toContain('Unsupported thinking effort "max" for k2. Available: off, low, high');
+      expect(session.setThinking).toHaveBeenCalledWith('max');
     });
-    expect(renderTranscript(driver)).not.toContain('Switched to Kimi K2 with thinking max.');
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain('Thinking set to max.');
+    });
+    const transcript = renderTranscript(driver).replaceAll(/\s+/g, ' ');
+    expect(transcript).toContain(
+      'Thinking effort "max" is not listed for k2 (known: low, high). Sending "max" unchanged; the configured provider will validate it.',
+    );
+    expect(transcript).toContain('Thinking set to max.');
+  });
+
+  it('offers the latest Opus efforts for an unknown Anthropic-compatible model', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          compatible: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).toContain('Max');
+  });
+
+  it('keeps rejecting efforts hidden by a Kimi support_efforts override', async () => {
+    const session = makeSession();
+    const { driver } = await makeDriver(session, {
+      getConfig: vi.fn(async () => ({
+        providers: {
+          kimi: { type: 'kimi', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'kimi',
+            model: 'kimi-model',
+            maxContextSize: 100,
+            capabilities: ['thinking'],
+            supportEfforts: ['low', 'high'],
+          },
+        },
+        defaultModel: 'k2',
+        thinking: { enabled: true, effort: 'low' },
+      })),
+    });
+
+    driver.handleUserInput('/effort max');
+
+    await vi.waitFor(() => {
+      expect(renderTranscript(driver)).toContain(
+        'Unsupported thinking effort "max" for k2. Available: off, low, high',
+      );
+    });
+    expect(session.setThinking).not.toHaveBeenCalled();
   });
 });

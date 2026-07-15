@@ -1,6 +1,6 @@
 import { uniq } from '@antfu/utils';
 import type { ChatProvider, Tool } from '@moonshot-ai/kosong';
-import picomatch from 'picomatch';
+import { tryNativeGlobMatch } from '../../tools/support/native-glob-match';
 
 import type { Agent } from '..';
 import {
@@ -18,21 +18,6 @@ import { resolveSubagentTimeoutMs } from '../../session/subagent-host';
 import { extendWorkspaceWithSkillRoots } from '../../skill';
 import { fingerprint } from '../llm-request-logger';
 import * as b from '../../tools/builtin';
-import { EDIT_DESCRIPTION } from '../../tools/builtin/file/edit';
-import { GLOB_DESCRIPTION, WINDOWS_PATH_HINT } from '../../tools/builtin/file/glob';
-import { GREP_DESCRIPTION } from '../../tools/builtin/file/grep';
-import { READ_DESCRIPTION } from '../../tools/builtin/file/read';
-import { WRITE_DESCRIPTION } from '../../tools/builtin/file/write';
-import {
-  isNativeToolsEnabled,
-  tryLoadNative,
-  NativeReadTool,
-  NativeWriteTool,
-  NativeEditTool,
-  NativeGrepTool,
-  NativeGlobTool,
-  NativeBashTool,
-} from '../../tools/builtin/native-tools';
 import type { ToolStore, ToolStoreData, ToolStoreKey } from '../../tools/store';
 import type {
   BuiltinTool,
@@ -543,7 +528,7 @@ export class ToolManager {
   }
 
   private isMcpToolEnabled(name: string): boolean {
-    return this.mcpAccessPatterns.some((pattern) => picomatch.isMatch(name, pattern));
+    return this.mcpAccessPatterns.some((pattern) => tryNativeGlobMatch(name, pattern));
   }
 
   /**
@@ -707,56 +692,19 @@ export class ToolManager {
       this.enabledTools.has('TaskOutput') &&
       this.enabledTools.has('TaskStop');
     const goalToolsEnabled = this.agent.type === 'main';
-
-    // Check if native tools are available and enabled.
-    const useNative = isNativeToolsEnabled() && tryLoadNative() !== undefined;
-
-    // Tool descriptions for native tools — mirror the TypeScript originals.
-    const toolDescs = {
-      read: READ_DESCRIPTION,
-      write: WRITE_DESCRIPTION,
-      edit: EDIT_DESCRIPTION,
-      grep: GREP_DESCRIPTION,
-      glob:
-        kaos.pathClass() === 'win32'
-          ? GLOB_DESCRIPTION + WINDOWS_PATH_HINT
-          : GLOB_DESCRIPTION,
-    };
-
     this.builtinTools = new Map(
       [
-        useNative
-          ? new NativeReadTool(kaos, workspace, toolDescs.read)
-          : new b.ReadTool(kaos, workspace),
-        useNative
-          ? new NativeWriteTool(kaos, workspace, toolDescs.write)
-          : new b.WriteTool(kaos, workspace),
-        useNative
-          ? new NativeEditTool(kaos, workspace, toolDescs.edit)
-          : new b.EditTool(kaos, workspace),
-        useNative
-          ? new NativeGrepTool(
-              kaos,
-              workspace,
-              toolDescs.grep,
-              new b.GrepTool(kaos, workspace, this.agent.telemetry),
-            )
-          : new b.GrepTool(kaos, workspace, this.agent.telemetry),
-        useNative
-          ? new NativeGlobTool(
-              kaos,
-              workspace,
-              toolDescs.glob,
-              new b.GlobTool(kaos, workspace, this.agent.telemetry),
-            )
-          : new b.GlobTool(kaos, workspace, this.agent.telemetry),
-        useNative
-          ? new NativeBashTool(kaos, cwd, background, {
-              allowBackground,
-            })
-          : new b.BashTool(kaos, cwd, background, {
-              allowBackground,
-            }),
+        new b.ReadTool(kaos, workspace),
+        new b.WriteTool(kaos, workspace),
+        new b.EditTool(kaos, workspace),
+        new b.GrepTool(kaos, workspace, this.agent.telemetry),
+        new b.GlobTool(kaos, workspace, this.agent.telemetry),
+        new b.BashTool(kaos, cwd, background, {
+          allowBackground,
+          autoBackgroundOnTimeout:
+            this.agent.kimiConfig?.background?.bashAutoBackgroundOnTimeout ?? true,
+          backgroundTimeoutS: this.agent.kimiConfig?.background?.bashTaskTimeoutS,
+        }),
         (modelCapabilities.image_in || modelCapabilities.video_in) &&
           new b.ReadMediaFileTool(
             kaos,
@@ -802,13 +750,11 @@ export class ToolManager {
             },
           ),
         this.agent.subagentHost &&
-new b.AgentSwarmTool(
+          new b.AgentSwarmTool(
             this.agent.subagentHost,
             this.agent.swarmMode,
             resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
           ),
-        this.agent.subagentHost &&
-          new b.SwarmDiscussionTool(this.agent.subagentHost, this.agent.swarmMode),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),
       ]
@@ -885,6 +831,23 @@ new b.AgentSwarmTool(
 
   get loopTools(): readonly ExecutableTool[] {
     if (this.loopToolsOverride !== undefined) return this.loopToolsOverride;
+    // Self-heal an empty builtin table. The constructor and every config-
+    // mutation checkpoint gate initializeBuiltinTools() on hasProvider, but a
+    // provider that becomes resolvable asynchronously (OAuth / managed
+    // free-tokens model registration) trips none of them — without this the
+    // agent runs with zero tools while the system prompt still advertises them.
+    // loopTools is re-read before every step, so the table is populated on the
+    // first step after the provider resolves. Steady state short-circuits on
+    // `builtinTools.size === 0`, so hasProvider is not evaluated per read.
+    if (this.builtinTools.size === 0 && this.agent.config.hasProvider) {
+      try {
+        this.initializeBuiltinTools();
+      } catch (error) {
+        this.agent.log.warn('lazy initializeBuiltinTools failed; will retry on next read', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
     const disclosure = this.progressiveDisclosure;
     const enabledMcpNames = [...this.mcpTools.keys()].filter((name) =>
       this.isMcpToolEnabled(name),

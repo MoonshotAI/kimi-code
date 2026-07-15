@@ -6,6 +6,128 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## Fork Changes (2026-07-16)
+
+These are custom modifications on top of upstream 0.24.2.
+
+### Performance & Rust Native
+
+- **Remove jimp & @jsquash/webp**: Replace pure-JS image processing with Rust `image` crate (native `image_compress.rs`). 10-100× faster per image, saves ~8 MB bundle size.
+- **Remove picomatch**: Replace glob matcher with native `glob_matches_any()` using Rust `globset` crate. Saves ~30 KB, enables native parallel matching.
+- **Route sniffImageDimensions through native**: All PNG/JPEG/GIF/BMP/WebP/HEIC dimension sniffing now goes through Rust `native_sniff_image_dimensions`.
+- **Add native detectFileType napi binding**: New `native_detect_file_type` Rust function with `resolve_mime` helper. All file reads now classify via native code.
+
+### Bug Fixes
+
+- **Node v24 native compatibility**: Fix `Vec<u8>` → `Uint8Array` parameter type for napi bindings on Node.js v24 (NAPI v10).
+- **Lazy server import**: Convert `getLiveLock` from static to dynamic import to avoid `@moonshot-ai/server` hard dependency blocking CLI startup.
+- **`reasoning_content` thinking fix**: Cherry-pick upstream Anthropic model capability alignment (#1746) to fix "reasoning_content must be passed back" errors on DeepSeek-compatible backends.
+
+### i18n
+
+- **Expand CLI i18n coverage**: Migrate 20+ hardcoded strings in `commands/config.ts` to `t()` calls. Add missing keys `cannotSwitchModelsWhileStreaming` and `unknownPlanSubcommand`.
+
+### Infrastructure
+
+- Merge upstream v0.23.6 → v0.24.2 (158 commits, 2205 files, +277K/-32K lines).
+- Keep fork customizations: packages/server/, i18n, Rust optimizations, WSL compatibility.
+
+## 0.24.2 (2026-07-15)
+
+### Features
+
+- Add a builtin `/check-kimi-code-docs` skill that automatically answers Kimi Code product questions with official-docs sources.
+
+### Polish
+
+- Align `kimi -p` behavior across engines: `print_background_mode` and `print_max_turns` now apply, and `/goal` runs stay alive until the goal finishes.
+- `kimi -p` now stays alive by default while background tasks are pending, with no effective wait or turn limit, and feeds each completion back to the agent. Set `print_background_mode = "exit"` or `"drain"` to restore the old exit-after-one-turn behavior.
+- `kimi -p` background tasks and subagents no longer time out by default (interactive mode is unchanged); restore limits with `[background] bash_task_timeout_s` or `[subagent] timeout_ms`.
+- Subagent timeout now defaults to 2 hours everywhere; override with `[subagent] timeout_ms` or `KIMI_SUBAGENT_TIMEOUT_MS`.
+- The per-step LLM retry limit is raised from 3 to 10 attempts, so transient provider failures (429 / overload) are retried before a turn fails; tune with `loop_control.max_retries_per_step`.
+- Workspaces now stay in sync: new sessions register automatically, missing workspaces are restored at startup, and removed ones stay removed.
+- `kimi web` now logs failed requests and key operations so daemon issues are easier to diagnose.
+- web: AgentSwarm cards now stay expanded while subagents are still running.
+- web: Minimized plan review and question cards now use an upward chevron for expand.
+
+### Bug Fixes
+
+- web: Fix mobile layout on iOS, including the composer, safe areas, and toasts.
+- Fix new sessions not opening in older CLI versions.
+- Fix completion notifications firing early when a subagent finished while the main turn was still running.
+- Fix the web UI showing the wrong CLI version.
+- Fix Gemini tool call IDs colliding across turns and merging swarm runs into one card.
+- web: Show server error details when actions like stopping or archiving a session fail.
+- web: Fix long responses stalling after the tab was backgrounded.
+- web: Fix code block copy buttons over plain HTTP.
+- web: Keep loaded sessions visible when the session list fails to reload.
+- web: Restore the AgentSwarm member list after a page refresh.
+- web: Fix session titles not generating when the first message is a slash command.
+- web: Show each message's actual send time after reloading a session.
+- Fix several goal-mode issues around budgets and turn limits, pausing and resuming, crash recovery, final status messages, and invalid persisted goal records.
+- Fix replaced goals being able to affect the new goal's budget, and reject subagent goals consistently.
+- Correct the guidance shown when a goal cannot be paused or resumed.
+
+### Refactors
+
+- Rename the dynamic tool loading capability from `select_tools` to `dynamically_loaded_tools`; behavior is unchanged.
+
+## 0.24.1 (2026-07-14)
+
+### Bug Fixes
+
+- Fix Kimi sessions getting stuck when preserved-thinking history contains an empty reasoning step.
+- Fix built-in tools being unavailable when the model provider becomes ready after the session starts.
+- Fix Thinking effort routing: non-Kimi providers now preserve configured values, while Kimi models validate runtime selections and fall back safely during model resolution.
+- web: Align thinking-level handling with the CLI: submit the selected level verbatim instead of silently downgrading it, fall back to the model's own default when nothing was chosen or the model switches, and persist explicit picks as the default for new sessions.
+- Preserve goal completion summaries and show untyped LLM errors without an internal error-code prefix in step interruption events.
+
+### Polish
+
+- web: Show just the level name (e.g. Max) in the model pill instead of "thinking: max".
+
+## 0.24.0 (2026-07-14)
+
+### Features
+
+- web: Add session export: run `/export` or pick Export session from a session's more menu to download the session and troubleshooting logs as a ZIP (limited to 64 MiB).
+- Move foreground Bash commands that hit their timeout to the background instead of killing them, so long-running commands survive the timeout and report back on completion. Set `bash_auto_background_on_timeout = false` under `[background]` in config.toml to restore the kill-on-timeout behavior.
+
+### Polish
+
+- web: Refine goal mode controls with animated strip interactions, budget-aware progress, and design-system cancellation confirmation.
+- On session close, background tasks are now asked to stop and given a grace period before being force-stopped.
+- Rewrite repeated-tool-call reminders to redirect the agent toward a different action instead of prohibiting the call.
+- Optimize the TaskOutput tool prompts to discourage blocking waits on background tasks.
+- Send the kimi-code-cli User-Agent on provider registry (api.json) and model catalog fetches, so registries can identify the client version.
+- Log a warning when a skill fails to parse instead of silently dropping it, and fix skill scan results not being reported.
+
+### Bug Fixes
+
+- Prevent oversized image reads from poisoning sessions; sessions that already failed with request-too-large errors now recover automatically.
+- Fix session fork losing everything except the conversation log: forked sessions now carry over media attachments, plan files, background task output, and cron tasks, and a failed fork no longer leaves a broken copy behind.
+- web: Fix several session rendering glitches when reopening, reconnecting, or resyncing a session, including the context usage indicator dropping to 0, duplicate user message bubbles, and duplicated text in multi-step turns.
+- web: Fix uploaded images failing to display when connecting to the server over a non-localhost address.
+- web: Continue blocked goals after the user resumes them from the goal controls.
+- web: Fix the AgentSwarm member list disappearing after a page refresh while subagents are still running.
+- web: Fix the goal card disappearing after a page refresh while a session goal is active.
+- web: Fix the workspace picker menu sizing too narrowly for its content.
+- web: Recover transient subagent rate limits without surfacing them as session errors.
+- Fix Bash auto-detection on Windows failing when git comes from a native MSYS2 toolchain (ucrt64/clang64/clangarm64).
+- Fix OAuth login hanging after browser authorization when the provider configuration changes during sign-in.
+- Show the provider's actual rejection message instead of a misleading re-login prompt when an OAuth-managed model keeps returning 401 after a token refresh.
+- Fix providers without a configured `base_url` being rejected: anthropic/openai and other protocol providers now fall back to their official default endpoints again.
+- Fix MCP tools being unavailable on the first turn after session startup.
+- Fix pasted media and images being dropped from `/skill` and plugin command arguments, and when steering with `Ctrl-S`.
+- Fix empty reasoning blocks being dropped across providers, which broke multi-step tool calls.
+- In auto permission mode, plan exits are now marked as auto-approved instead of user-reviewed, so the agent no longer mistakes the approval for a user signal to start executing.
+- Fix background tasks being lost or wrongly marked as lost when resuming sessions.
+- Fix server shutdown sometimes leaving a stale instance file behind.
+
+### Refactors
+
+- `kimi web` now runs on the reworked agent engine by default.
+
 ## 0.23.6 (2026-07-12)
 
 ### Polish

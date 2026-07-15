@@ -57,6 +57,8 @@ const MAIN_AGENT_TRANSCRIPT_FRAMES = new Set<string>([
   'tool.result',
   'agent.status.updated',
   'prompt.completed',
+  'prompt.aborted',
+  'error',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -100,9 +102,9 @@ interface SessionState {
   // Assistant message tracking
   currentAssistantMsgId: string | undefined;
 
-  // Per-turn accumulated stream lengths — aligned against the wire `offset`
-  // on volatile delta frames (v2 sync protocol) to skip duplicates and
-  // detect gaps after a snapshot seed.
+  // Per-step accumulated stream lengths — aligned against the (step-relative)
+  // wire `offset` on volatile delta frames (v2 sync protocol) to skip
+  // duplicates and detect gaps after a snapshot seed.
   turnTextLen: number;
   turnThinkLen: number;
 
@@ -125,6 +127,10 @@ interface SessionState {
   // Subagent lifecycle deltas after spawned only carry subagentId. Keep the
   // spawned metadata here so later updates can replace the full AppTask.
   subagentMeta: Map<string, AppTask>;
+
+  // Bubble cleared by turn.step.retrying, to be reused by the retried
+  // step.started (same turn) instead of stacking a new bubble.
+  retryReuseMsgId: string | undefined;
 }
 
 function createSessionState(): SessionState {
@@ -145,6 +151,7 @@ function createSessionState(): SessionState {
     model: '',
     messages: [],
     subagentMeta: new Map(),
+    retryReuseMsgId: undefined,
   };
 }
 
@@ -499,9 +506,10 @@ export interface AgentProjector {
   /**
    * Seed mid-turn state from a session snapshot's `in_flight_turn` (v2 sync):
    * resets per-session state, builds the partially-streamed assistant message
-   * (thinking + text + running tool_use parts), and returns the messageCreated
-   * AppEvent to apply to the reducer. Live deltas continue appending; their
-   * wire `offset` aligns against the seeded text so the overlap window around
+   * (thinking + text + running tool_use parts — the current step only; earlier
+   * steps arrive via the transcript), and returns the messageCreated AppEvent
+   * to apply to the reducer. Live deltas continue appending; their wire
+   * `offset` aligns against the seeded text so the overlap window around
    * snapshot/subscribe is exact. Session status is NOT seeded here — the REST
    * snapshot's `session.status` is the authoritative value.
    */
@@ -572,6 +580,7 @@ export function createAgentProjector(): AgentProjector {
       s.toolStartTimes.set(tool.toolCallId, Date.now());
     }
     s.currentAssistantMsgId = msg.id;
+    // Seeded step-relative lengths; the next turn.step.started resets both.
     s.turnTextLen = turn.assistantText.length;
     s.turnThinkLen = turn.thinkingText.length;
 
@@ -693,21 +702,23 @@ export function createAgentProjector(): AgentProjector {
       // -----------------------------------------------------------------------
       case 'turn.started': {
         // Bind turnId → promptId. Generate a synthetic one if none was pre-bound.
-        // Session status is intentionally NOT projected here — the daemon's
-        // `event.session.status_changed` is the single source of status
-        // transitions (it carries the authoritative previousStatus /
-        // currentPromptId and dedupes per real transition); projecting a
-        // second running/idle event per turn from the raw stream made every
-        // turn-end consumer (notifications, sounds) fire twice.
+        // Session busy is intentionally NOT projected here — the daemon's
+        // `event.session.work_changed` is the single source of the busy fact
+        // (it re-reads the authoritative drain registry and dedupes per real
+        // transition); projecting a second busy flip per turn from the raw
+        // stream made every turn-end consumer fire twice.
         const turnId: number = p?.turnId;
         const existingPromptId = s.currentPromptId ?? ulid('pr_');
         s.currentPromptId = existingPromptId;
         if (turnId !== undefined) {
           s.turnPromptId.set(turnId, existingPromptId);
         }
-        // Fresh turn → fresh per-turn stream offsets.
+        // Fresh turn → fresh step stream offsets.
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
+        // Main-conversation liveness (the moon) keys off the main agent's turn
+        // boundary directly — only main-agent frames reach this switch arm.
+        out.push({ type: 'turnActiveChanged', sessionId, active: true });
         break;
       }
 
@@ -722,6 +733,23 @@ export function createAgentProjector(): AgentProjector {
           promptId = ulid('pr_');
           s.currentPromptId = promptId;
           if (turnId !== undefined) s.turnPromptId.set(turnId, promptId);
+        }
+
+        // Fresh step → fresh stream offsets: the server's delta `offset` is
+        // step-relative, so without this reset every delta from step 2 on is
+        // silently skipped or misread as a gap.
+        s.turnTextLen = 0;
+        s.turnThinkLen = 0;
+
+        // A retry continuation: refill the bubble turn.step.retrying cleared,
+        // instead of creating a second bubble with the same step's content.
+        if (s.retryReuseMsgId !== undefined) {
+          const reuseId = s.retryReuseMsgId;
+          s.retryReuseMsgId = undefined;
+          if (getMsgById(s, reuseId) !== undefined) {
+            s.currentAssistantMsgId = reuseId;
+            break;
+          }
         }
 
         // Create a new pending assistant message
@@ -944,6 +972,16 @@ export function createAgentProjector(): AgentProjector {
         const reason: string = p?.reason ?? 'completed';
         const durationMs = numberField(p ?? {}, 'durationMs');
 
+        // Main-conversation liveness: the prompt this turn served is done.
+        // This — not the session-busy status — is what ends the working moon.
+        // It MUST be emitted first in this arm: the onMainTurnEnd side effect
+        // gates on `seq > lastSeqBySession`, and sibling events in this arm
+        // advance that cursor — emitted after them, this event would compare
+        // equal and the prompt-finish cleanup (moon, queue drain) would never
+        // fire (observed: moon stuck when a turn ends with background tasks
+        // still running, where no work_changed(busy:false) fallback exists).
+        out.push({ type: 'turnActiveChanged', sessionId, active: false, reason: p?.reason });
+
         if (msgId) {
           finishAssistantMessage(s, msgId);
           const msg = getMsgById(s, msgId);
@@ -963,30 +1001,86 @@ export function createAgentProjector(): AgentProjector {
         const usageSnapshot = buildUsageSnapshot(s);
         out.push({ type: 'sessionUsageUpdated', sessionId, usage: usageSnapshot });
 
-        // No sessionStatusChanged here — see turn.started. The daemon's
-        // `event.session.status_changed` flips the session to idle/aborted.
+        // No busy projection here — see turn.started. The daemon's
+        // `event.session.work_changed` flips the session busy fact.
 
         // Clear per-turn state. Reset the stream offsets too so a stale length
         // from this turn can't wedge the next turn's delta alignment into a
-        // silent skip if its turn.started is missed across a reconnect.
+        // silent skip if its turn.started is missed across a reconnect. The
+        // retry reuse target is per-turn as well: if the turn died between
+        // turn.step.retrying and the retried step.started, the next prompt
+        // must open a fresh bubble, not refill this turn's emptied one.
         s.currentAssistantMsgId = undefined;
         s.currentPromptId = undefined;
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
+        s.retryReuseMsgId = undefined;
         break;
       }
 
       // -----------------------------------------------------------------------
       case 'prompt.completed': {
-        // No-op at AppEvent level — turn.ended already handles the transition to idle
+        // No state change at AppEvent level — turn.ended / the session
+        // status_changed ahead of this event already finished the prompt. The
+        // event rides along so the web layer can spot the one case that has no
+        // turn-level signal: a prompt blocked before any turn started (reason
+        // 'blocked'), which would otherwise pin the in-flight state forever.
+        const promptId: string | undefined = p?.promptId;
+        if (typeof promptId === 'string' && promptId.length > 0) {
+          out.push({ type: 'promptCompleted', sessionId, promptId, reason: p?.reason ?? 'completed' });
+        }
         break;
       }
 
       // -----------------------------------------------------------------------
-      case 'turn.step.retrying':
+      case 'prompt.aborted': {
+        // Fires both for an active-turn abort (a turn.ended + status_changed
+        // precede it — the prompt is already finished) and for a QUEUED prompt
+        // that never started a turn (no turn events, no status flip). The web
+        // layer keys on promptId to clear the in-flight state in the latter case.
+        const promptId: string | undefined = p?.promptId;
+        if (typeof promptId === 'string' && promptId.length > 0) {
+          out.push({ type: 'promptAborted', sessionId, promptId });
+        }
+        break;
+      }
+
+      // -----------------------------------------------------------------------
+      case 'turn.step.retrying': {
+        // The step's stream restarts from offset 0. Reuse the abandoned
+        // bubble instead of stacking a new one: strip its streamed parts and
+        // keep the id in retryReuseMsgId so the retried step.started refills
+        // it in place. Otherwise the failed attempt's partial bubble stays
+        // rendered next to the retry's full stream — the "text/tool shown
+        // twice" duplication (far more visible since the retry budget grew).
+        const msgId = s.currentAssistantMsgId;
+        if (msgId !== undefined) {
+          const msg = getMsgById(s, msgId);
+          if (msg !== undefined) {
+            msg.content = msg.content.filter(
+              (c) => c.type !== 'text' && c.type !== 'thinking' && c.type !== 'toolUse',
+            );
+            out.push({
+              type: 'messageUpdated',
+              sessionId,
+              messageId: msgId,
+              content: msg.content.map((c) => ({ ...c })),
+              status: 'pending',
+            });
+            s.retryReuseMsgId = msgId;
+          }
+        }
+        s.turnTextLen = 0;
+        s.turnThinkLen = 0;
+        s.toolStartTimes.clear();
+        break;
+      }
+
       case 'turn.step.interrupted': {
-        // Discard current assistant message; next step.started will create a new one
+        // Discard current assistant message; next step.started will create a
+        // new one. Drop any pending retry reuse target for the same reason.
         s.currentAssistantMsgId = undefined;
+        s.retryReuseMsgId = undefined;
         break;
       }
 
@@ -1075,10 +1169,20 @@ export function createAgentProjector(): AgentProjector {
 
       // -----------------------------------------------------------------------
       case 'error': {
-        // Fold into an unknown event so the reducer pushes a warning string
+        // Fold into an unknown event so the reducer surfaces it as a structured
+        // error notice (semantic title + code/status/requestId details). The
+        // wire payload already carries name/details/retryable — pass them
+        // through untouched; the reducer decides what to display.
         out.push({
           type: 'unknown',
-          raw: { _agentError: true, code: p?.code, message: p?.message },
+          raw: {
+            _agentError: true,
+            code: p?.code,
+            message: p?.message,
+            name: p?.name,
+            details: p?.details,
+            retryable: p?.retryable,
+          },
         });
         break;
       }
@@ -1111,6 +1215,48 @@ export function createAgentProjector(): AgentProjector {
             : typeof info.command === 'string'
               ? info.command
               : i18n.global.t('tasks.defaultDescription');
+        // A background subagent registers into the background-task store under
+        // a fresh task id that differs from its agent id. Record the task id on
+        // the existing WS-owned row (keyed by agent id) instead of adding a
+        // second row — REST `/tasks` returns the same agent keyed by task id,
+        // and keepLiveSubagents folds that copy into this row.
+        if (info.kind === 'agent') {
+          const agentId =
+            typeof info.agentId === 'string' && info.agentId.length > 0
+              ? info.agentId
+              : undefined;
+          if (agentId !== undefined) {
+            // Key by agent id even when the spawn event never reached this
+            // client (subscribed late): later agent-scoped progress frames are
+            // routed by agent id, and seeding subagentMeta here keeps them on
+            // this one row instead of synthesizing a second one.
+            const task = patchSubagent(s, sessionId, agentId, {
+              description,
+              backgroundTaskId: taskId,
+              runInBackground: true,
+            });
+            if (task) out.push({ type: 'taskCreated', sessionId, task });
+          } else {
+            // No agent id — nothing to link; key the row by the background
+            // task id so the REST poll dedupes it.
+            out.push({
+              type: 'taskCreated',
+              sessionId,
+              task: {
+                id: taskId,
+                sessionId,
+                kind: 'subagent',
+                description,
+                status: 'running',
+                createdAt: startedAt ?? new Date().toISOString(),
+                startedAt,
+                subagentPhase: 'queued',
+                runInBackground: true,
+              },
+            });
+          }
+          break;
+        }
         const command = typeof info.command === 'string' ? info.command : undefined;
         out.push({
           type: 'taskCreated',
@@ -1305,6 +1451,7 @@ const KNOWN_AGENT_CORE_TYPES = new Set([
   'agent.status.updated',
   'prompt.submitted',
   'prompt.completed',
+  'prompt.aborted',
   'session.meta.updated',
   'compaction.started',
   'compaction.completed',

@@ -1,10 +1,15 @@
-import { APIConnectionError, emptyUsage, isRetryableGenerateError } from '@moonshot-ai/kosong';
-import { describe, expect, it, vi } from 'vitest';
+import {
+  APIConnectionError,
+  APIProviderRateLimitError,
+  emptyUsage,
+  isRetryableGenerateError,
+} from '@moonshot-ai/kosong';
+import { describe, expect, it } from 'vitest';
 
 import type { KimiConfig } from '#/config';
 import { ErrorCodes, KimiError } from '#/errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from '#/loop/llm';
-import { chatWithRetry } from '#/loop/retry';
+import { chatWithRetry, DEFAULT_MAX_RETRY_ATTEMPTS, retryBackoffDelays } from '#/loop/retry';
 import { ProviderManager } from '#/session/provider-manager';
 
 function okResponse(): LLMChatResponse {
@@ -52,7 +57,7 @@ describe('chatWithRetry: terminated stream drops', () => {
 
     expect(seenFields).toEqual([
       { projection: 'strict', turnStep: 't.1' },
-      { projection: 'strict', turnStep: 't.1', attempt: '2/5' },
+      { projection: 'strict', turnStep: 't.1', attempt: '2/10' },
     ]);
   });
 
@@ -75,33 +80,6 @@ describe('chatWithRetry: terminated stream drops', () => {
 
     expect(calls).toBe(2);
     expect(response).toEqual(okResponse());
-  });
-
-  it('retries through the fifth attempt by default', async () => {
-    vi.spyOn(Math, 'random').mockReturnValue(0);
-    vi.useFakeTimers();
-    try {
-      let calls = 0;
-      const llm: LLM = {
-        systemPrompt: '',
-        modelName: 'mock',
-        isRetryableError: (e) => isRetryableGenerateError(e),
-        async chat(_params: LLMChatParams): Promise<LLMChatResponse> {
-          calls += 1;
-          if (calls < 5) throw new APIConnectionError('socket hang up');
-          return okResponse();
-        },
-      };
-
-      const running = chatWithRetry(makeInput(llm, new AbortController().signal));
-      await vi.advanceTimersByTimeAsync(500 + 1_000 + 2_000 + 4_000);
-
-      await expect(running).resolves.toEqual(okResponse());
-      expect(calls).toBe(5);
-    } finally {
-      vi.useRealTimers();
-      vi.restoreAllMocks();
-    }
   });
 
   it('does NOT retry when the signal is aborted (user ESC), surfacing a clean AbortError', async () => {
@@ -161,6 +139,107 @@ describe('chatWithRetry: terminated stream drops', () => {
     });
     expect(chatCalls).toBe(1);
     expect(tokenCalls).toBe(1);
+  });
+});
+
+describe('retryBackoffDelays', () => {
+  it('uses a 500ms base, factor-2 ramp, 32s cap, and up to +25% jitter', () => {
+    const delays = retryBackoffDelays(10);
+    expect(delays).toHaveLength(9);
+    // Max possible delay is the capped base (32s) plus 25% jitter = 40s.
+    for (const d of delays) {
+      expect(d).toBeGreaterThan(0);
+      expect(d).toBeLessThanOrEqual(40_000);
+    }
+    // First attempt base is 500ms (plus up to 25% jitter) -> within [500, 625].
+    expect(delays[0]).toBeGreaterThanOrEqual(500);
+    expect(delays[0]).toBeLessThanOrEqual(625);
+  });
+
+  it('reaches the 32s cap for high-attempt configs (overload ride-out)', () => {
+    // The ramp hits 32s by attempt 7 (500 * 2^6); across many draws the peak
+    // approaches the cap (32s..40s with jitter), well above the old 5s cap.
+    let maxSeen = 0;
+    for (let i = 0; i < 50; i += 1) {
+      for (const d of retryBackoffDelays(12)) {
+        maxSeen = Math.max(maxSeen, d);
+      }
+    }
+    expect(maxSeen).toBeGreaterThan(30_000);
+  });
+
+  it('keeps low-attempt configs quick so latency-sensitive runs are not slowed', () => {
+    // 3 attempts -> 2 delays at the bottom of the ramp (~0.5s / ~1s before
+    // jitter); their sum stays small.
+    const delays = retryBackoffDelays(3);
+    expect(delays).toHaveLength(2);
+    expect(delays.reduce((a, b) => a + b, 0)).toBeLessThan(3_000);
+  });
+});
+
+describe('chatWithRetry: default retry budget', () => {
+  it('retries up to DEFAULT_MAX_RETRY_ATTEMPTS before giving up', async () => {
+    // A sustained 429 carries a 1ms server retry-after so the test exercises
+    // the full default budget without sleeping through the real backoff.
+    let calls = 0;
+    const captured: Array<{ type: string }> = [];
+    const llm: LLM = {
+      systemPrompt: '',
+      modelName: 'mock',
+      isRetryableError: (e) => isRetryableGenerateError(e),
+      async chat(): Promise<LLMChatResponse> {
+        calls += 1;
+        throw new APIProviderRateLimitError('rate limited', null, 1);
+      },
+    };
+    const input = makeInput(llm, new AbortController().signal);
+
+    await expect(
+      chatWithRetry({
+        ...input,
+        dispatchEvent: async (event) => {
+          captured.push(event as { type: string });
+        },
+      }),
+    ).rejects.toMatchObject({ name: 'APIProviderRateLimitError' });
+
+    expect(calls).toBe(DEFAULT_MAX_RETRY_ATTEMPTS);
+    expect(captured.filter((e) => e.type === 'step.retrying')).toHaveLength(
+      DEFAULT_MAX_RETRY_ATTEMPTS - 1,
+    );
+  });
+});
+
+describe('chatWithRetry: honors server retry-after', () => {
+  it('uses the error retryAfterMs as the retry delay instead of the backoff', async () => {
+    let calls = 0;
+    const captured: Array<{ type: string; delayMs?: number }> = [];
+    const llm: LLM = {
+      systemPrompt: '',
+      modelName: 'mock',
+      isRetryableError: (e) => isRetryableGenerateError(e),
+      async chat(): Promise<LLMChatResponse> {
+        calls += 1;
+        if (calls === 1) {
+          // 429 carrying a server `retry-after` of 42ms. Kept tiny so the test
+          // sleeps only briefly, while still being distinguishable from the
+          // attempt-1 backoff (500..625ms) it must override.
+          throw new APIProviderRateLimitError('rate limited', null, 42);
+        }
+        return okResponse();
+      },
+    };
+    const input = makeInput(llm, new AbortController().signal);
+    await chatWithRetry({
+      ...input,
+      dispatchEvent: async (event) => {
+        captured.push(event as { type: string; delayMs?: number });
+      },
+    });
+
+    expect(calls).toBe(2);
+    const retrying = captured.find((e) => e.type === 'step.retrying');
+    expect(retrying?.delayMs).toBe(42);
   });
 });
 

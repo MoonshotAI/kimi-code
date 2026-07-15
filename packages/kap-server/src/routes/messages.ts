@@ -18,15 +18,13 @@
  */
 
 import { IMessageLegacyService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
-import {
-  ErrorCode,
-  getMessageResponseSchema,
-  listMessagesResponseSchema,
-  messageRoleSchema,
-} from '@moonshot-ai/protocol';
+import { messageRoleSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import { ErrorCode } from '../protocol/error-codes';
+import { getMessageResponseSchema, listMessagesResponseSchema } from '../protocol/rest-message';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 
 interface MessageRouteHost {
@@ -102,7 +100,7 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
         const page = await core.accessor.get(IMessageLegacyService).list(session_id, req.query);
         reply.send(okEnvelope(page, req.id));
       } catch (err) {
-        sendMappedError(reply, req.id, err);
+        sendMappedError(reply, req, err);
       }
     },
   );
@@ -133,7 +131,7 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
         const message = await core.accessor.get(IMessageLegacyService).get(session_id, message_id);
         reply.send(okEnvelope(message, req.id));
       } catch (err) {
-        sendMappedError(reply, req.id, err);
+        sendMappedError(reply, req, err);
       }
     },
   );
@@ -152,9 +150,11 @@ export function registerMessagesRoutes(app: MessageRouteHost, core: Scope): void
  */
 function sendMappedError(
   reply: { send(payload: unknown): unknown },
-  requestId: string,
+  req: { id: string },
   err: unknown,
 ): void {
+  const requestId = req.id;
+  const log = requestLog(req);
   if (isError2(err)) {
     switch (err.code) {
       case 'session.not_found':
@@ -165,6 +165,7 @@ function sendMappedError(
         return;
     }
   }
+  log?.error({ err }, 'message request failed');
   reply.send(
     errEnvelope(ErrorCode.INTERNAL_ERROR, err instanceof Error ? err.message : String(err), requestId, err instanceof Error ? err.stack : undefined),
   );

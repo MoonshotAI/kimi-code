@@ -9,15 +9,13 @@
  * scope.
  */
 
-import type { ShellOutputEvent, ShellStartedEvent } from '@moonshot-ai/protocol';
-
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
 import { escapeXml } from '#/_base/utils/xml-escape';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
-import type { ToolUpdate } from '#/agent/tool/toolContract';
+import type { ToolUpdate } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IEventBus } from '#/app/event/eventBus';
 
@@ -26,6 +24,28 @@ import {
   type RunShellCommandInput,
   type RunShellCommandResult,
 } from './shellCommand';
+
+/**
+ * Live stdout/stderr chunk from a user-initiated `!` shell command. Transient
+ * (never persisted, never replayed) — the final output is still recorded once
+ * via `context.append_message` on completion. `commandId` lets the TUI route
+ * chunks to the matching live entry and drop stale events from a prior run.
+ */
+export interface ShellOutputEvent {
+  readonly type: 'shell.output';
+  readonly commandId: string;
+  readonly update: ToolUpdate;
+}
+
+/**
+ * Fired once when a `!` shell command's foreground process task is registered,
+ * carrying the task id so the client can detach (ctrl+b) it. Transient.
+ */
+export interface ShellStartedEvent {
+  readonly type: 'shell.started';
+  readonly commandId: string;
+  readonly taskId: string;
+}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
@@ -48,10 +68,6 @@ export class AgentShellCommandService implements IAgentShellCommandService {
   ) { }
 
   async run(input: RunShellCommandInput): Promise<RunShellCommandResult> {
-    // Record the command up front so the model sees it on the next turn even if
-    // resolution or execution fails below. Mirrors v1 `runShellCommand`
-    // (parity with claude-code's `shouldQuery: false`): a foreground `!`
-    // command is written into context but does NOT itself start a turn.
     this.appendShellInput(input.command);
 
     const controller = new AbortController();
@@ -94,11 +110,6 @@ export class AgentShellCommandService implements IAgentShellCommandService {
 
       const isError = result.isError === true;
       if (typeof result.output === 'string' && result.output.startsWith('task_id: ')) {
-        // Detached to background (ctrl+b): inject the background-task metadata
-        // (task_id / status / output path) as a user-invisible message and
-        // immediately notify the model — mirrors the background-task completion
-        // notification, but hidden. Not recorded as a `shell_command` output;
-        // the input above is the only user-visible trace.
         this.notifyBackgrounded(result.output);
         return { stdout: result.output, stderr: '', isError: false, backgrounded: true };
       }
@@ -108,10 +119,6 @@ export class AgentShellCommandService implements IAgentShellCommandService {
       this.appendShellOutput(stdout, stderr, isError);
       return { stdout, stderr, isError };
     } catch (error) {
-      // Covers `ensureBashTool` throwing (Bash not registered) and any
-      // exception escaping `execute`. Surface the reason as stderr and record
-      // it so the model and replay see what went wrong instead of a bare RPC
-      // error.
       stderr += error instanceof Error ? error.message : String(error);
       this.appendShellOutput(stdout, stderr, true);
       return { stdout, stderr, isError: true };
@@ -171,6 +178,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentShellCommandService,
   AgentShellCommandService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'shellCommand',
 );

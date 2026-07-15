@@ -19,3 +19,5 @@ export interface CronTask {
 }
 
 export type CronTaskInit = Omit<CronTask, 'id' | 'createdAt'>;
+
+export const CRON_SESSION_TAG = 'sessionId';

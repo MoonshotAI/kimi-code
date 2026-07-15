@@ -4,9 +4,9 @@
 
 import { z } from 'zod';
 
-import { toInputJsonSchema } from '#/_base/tools/support/input-schema';
-import { matchesGlobRuleSubject } from '#/_base/tools/support/rule-match';
-import type { BuiltinTool, ToolExecution } from '#/agent/tool/toolContract';
+import { toInputJsonSchema } from '#/tool/input-schema';
+import { matchesGlobRuleSubject } from '#/tool/rule-match';
+import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentTaskService } from '#/agent/task/task';
@@ -14,7 +14,6 @@ import type { AgentTaskInfo } from '#/agent/task/task';
 import { formatPlainObject } from './format';
 import TASK_LIST_DESCRIPTION from './task-list.md?raw';
 
-// ── Input schema ─────────────────────────────────────────────────────
 
 export const TaskListInputSchema = z.object({
   active_only: z
@@ -34,11 +33,8 @@ export const TaskListInputSchema = z.object({
 
 export type TaskListInput = z.infer<typeof TaskListInputSchema>;
 
-// ── Implementation ───────────────────────────────────────────────────
 
 export function formatTaskList(tasks: readonly AgentTaskInfo[], activeOnly: boolean): string {
-  // `active_only=false` mixes in terminal/lost tasks, so the count is no
-  // longer purely "active" — use a neutral label to avoid mislabeling them.
   const label = activeOnly ? 'active_background_tasks' : 'background_tasks';
   const header = `${label}: ${String(tasks.length)}`;
   if (tasks.length === 0) return `${header}\nNo background tasks found.`;

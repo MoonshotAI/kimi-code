@@ -9,7 +9,7 @@ import type { PermissionRuleMatchExecution } from '#/agent/permissionRules/match
 import {
   matchesGlobRuleSubject,
   matchesPathRuleSubject,
-} from '#/_base/tools/support/rule-match';
+} from '#/tool/rule-match';
 
 function rule(pattern: string): PermissionRule {
   return { decision: 'allow', scope: 'user', pattern };

@@ -19,9 +19,10 @@ export * from '#/_base/log/logConfig';
 export * from '#/_base/log/formatter';
 export * from '#/_base/log/fileLog';
 export * from '#/_base/log/logService';
-export { IAgentWireService, ISessionWireService } from '#/wire/tokens';
-export { type IWireService, type WireEmission } from '#/wire/wireService';
-export { defineDerivedModel, type DerivedModelDef } from '#/wire/model';
+export * from '#/wire/wire';
+export * from '#/wire/wireService';
+export * from '#/wire/record';
+export * from '#/wire/migration/migration';
 export * from '#/session/sessionLog/sessionLogService';
 export * from '#/app/telemetry/telemetry';
 export * from '#/app/telemetry/events';
@@ -166,10 +167,8 @@ export * from '#/app/flag/flagService';
 import '#/app/multiServer/flag';
 export * from '#/app/multiServer/flag';
 
-export * from '#/activity/activity';
-export * from '#/activity/activityOps';
-import '#/activity/agentActivityService';
-import '#/activity/sessionActivityKernel';
+export * from '#/agent/activityView/activityView';
+import '#/agent/activityView/activityViewService';
 import '#/agent/plan/profile/plan';
 import '#/agent/plan/tools/enter-plan-mode';
 import '#/agent/plan/tools/exit-plan-mode';
@@ -181,6 +180,8 @@ import '#/agent/goal/tools/create-goal';
 import '#/agent/goal/tools/get-goal';
 import '#/agent/goal/tools/set-goal-budget';
 import '#/agent/goal/tools/update-goal';
+export * from '#/agent/goal/goalDeadlineScheduler';
+import '#/agent/goal/goalDeadlineSchedulerService';
 export * from '#/agent/goal/goal';
 export * from '#/agent/goal/goalService';
 export * from '#/agent/goal/types';
@@ -189,12 +190,10 @@ export * from '#/agent/swarm/swarm';
 export * from '#/agent/swarm/swarmService';
 export * from '#/agent/usage/usage';
 export * from '#/agent/usage/usageService';
-export * from '#/agent/runtime/runtime';
-export * from '#/agent/runtime/runtimeOps';
-export * from '#/agent/runtime/runtimeService';
 export * from '#/agent/toolDedupe/toolDedupe';
 export * from '#/agent/toolDedupe/toolDedupeService';
 import '#/agent/toolSelect/flag';
+import '#/agent/faultInjection/flag';
 import '#/agent/toolSelect/tools/select-tools';
 export * from '#/agent/toolSelect/dynamicTools';
 export * from '#/agent/toolSelect/toolSelect';
@@ -203,6 +202,12 @@ export * from '#/agent/toolSelect/toolSelectAnnouncements';
 export * from '#/agent/toolSelect/toolSelectAnnouncementsService';
 
 import '#/agent/task/configSection';
+export {
+  resolveAgentTaskConfig,
+  resolvePrintBackgroundMode,
+  type AgentTaskConfig,
+  type PrintBackgroundMode,
+} from '#/agent/task/configSection';
 import '#/agent/task/tools/task-list';
 import '#/agent/task/tools/task-output';
 import '#/agent/task/tools/task-stop';
@@ -224,11 +229,16 @@ export * from '#/session/cron/sessionCronServiceImpl';
 import '#/session/agentLifecycle/profile/profiles';
 export * from '#/session/agentLifecycle/agentLifecycle';
 export * from '#/session/agentLifecycle/agentLifecycleService';
-export * from '#/session/agentLifecycle/tools/subagent-task';
-export { AGENT_RUN_PROMPT_ORIGIN } from '#/session/agentLifecycle/runAgentTurn';
 export * from '#/session/agentLifecycle/mainAgent';
-export * from '#/session/agentLifecycle/mirrorAgentRun';
-import '#/session/agentLifecycle/tools/agent';
+export * from '#/session/mcp/sessionMcp';
+export * from '#/session/mcp/sessionMcpService';
+export * from '#/session/subagent/subagent';
+export * from '#/session/subagent/subagentService';
+export * from '#/session/subagent/tools/subagent-task';
+export { AGENT_RUN_PROMPT_ORIGIN } from '#/session/subagent/runAgentTurn';
+export * from '#/session/subagent/mirrorAgentRun';
+import '#/session/subagent/configSection';
+import '#/session/subagent/tools/agent';
 export * from '#/app/sessionLifecycle/sessionLifecycle';
 export * from '#/app/sessionLifecycle/sessionLifecycleService';
 export * from '#/session/externalHooks/externalHooks';
@@ -244,8 +254,6 @@ export * from '#/app/sessionLegacy/sessionLegacyService';
 export * from '#/session/interaction/interaction';
 export * from '#/session/interaction/interactionService';
 export * from '#/session/sessionContext/sessionContext';
-export * from '#/session/sessionActivity/sessionActivity';
-export * from '#/session/sessionActivity/sessionActivityService';
 
 import '#/session/approval/approval';
 import '#/session/approval/approvalService';
@@ -265,7 +273,6 @@ export * from '#/app/workspaceRegistry/workspaceRegistry';
 export * from '#/app/workspaceRegistry/workspaceRegistryService';
 export * from '#/app/workspaceRegistry/workspacePersistence';
 export * from '#/app/workspaceRegistry/fileWorkspacePersistence';
-// Register-only bindings not re-exported by their domain barrel — loaded for side effects.
 import '#/app/workspaceRegistry/workspaceQueryService';
 import '#/app/git/gitService';
 export * from '#/session/process/processRunner';
@@ -296,6 +303,7 @@ export * from '#/persistence/backends/memory/inMemoryStorageService';
 import '#/app/auth/webSearch/tools/web-search';
 export * from '#/app/auth/auth';
 export * from '#/app/auth/authService';
+export * from '#/app/auth/configSection';
 export * from '#/app/auth/webSearch/webSearch';
 export * from '#/app/auth/webSearch/webSearchService';
 export * from '#/app/auth/webSearch/providers/moonshot-web-search';
@@ -307,17 +315,40 @@ export {
   buildImageCompressionCaption,
   compressBase64ForModel,
   compressImageForModel,
+  gateImageFormatParts,
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,
   READ_IMAGE_BYTE_BUDGET,
   resolveMaxImageEdgePx,
   resolveReadImageByteBudget,
   type ImageCompressionTelemetry,
-} from '#/_base/tools/support/image-compress';
+} from '#/agent/media/image-compress';
+export {
+  MODEL_ACCEPTED_IMAGE_MIMES,
+  buildImageConversionGuidance,
+  buildUnsupportedImageNotice,
+  decodeBase64Prefix,
+  isModelAcceptedImageMime,
+  normalizeImageMime,
+  parseImageDataUrl,
+  resolveEffectiveImageMime,
+  unsupportedImageMimeFromUrl,
+} from '#/agent/media/image-format-policy';
+export {
+  MODEL_ACCEPTED_IMAGE_MIMES,
+  buildImageConversionGuidance,
+  buildUnsupportedImageNotice,
+  decodeBase64Prefix,
+  isModelAcceptedImageMime,
+  normalizeImageMime,
+  parseImageDataUrl,
+  resolveEffectiveImageMime,
+  unsupportedImageMimeFromUrl,
+} from '#/agent/media/image-format-policy';
 export {
   persistOriginalImage,
   sessionMediaOriginalsDir,
-} from '#/_base/tools/support/image-originals';
+} from '#/agent/media/image-originals';
 export * from '#/app/edit/fileEdit';
 export * from '#/app/edit/fileEditService';
 export * from '#/app/edit/editService';
@@ -331,7 +362,6 @@ export * from '#/app/web/webService';
 export * from '#/app/web/providers/local-fetch-url';
 export * from '#/app/web/providers/moonshot-fetch-url';
 
-// Ported agent services. These keep the current service boundaries during the migration.
 export * from '#/agent/blob/agentBlobService';
 export * from '#/agent/blob/agentBlobServiceImpl';
 export * from '#/agent/contextMemory/contextMemory';
@@ -364,6 +394,8 @@ export * from '#/agent/fullCompaction/compactionOps';
 export * from '#/agent/fullCompaction/types';
 export * from '#/agent/llmRequester/llmRequester';
 export * from '#/agent/llmRequester/llmRequesterService';
+export * from '#/agent/faultInjection/faultInjection';
+export * from '#/agent/faultInjection/faultInjectionService';
 export * from '#/agent/llmRequester/llmRequestOps';
 export * from '#/_base/utils/retry';
 import '#/agent/loop/configSection';
@@ -400,7 +432,6 @@ export * from '#/agent/prompt/promptService';
 import '#/app/messageLegacy/errors';
 export * from '#/app/messageLegacy/messageLegacy';
 export * from '#/app/messageLegacy/messageLegacyService';
-export * from '#/agent/replayBuilder/replayTimelineModel';
 export * from '#/agent/replayBuilder/types';
 export * from '#/agent/shellCommand/shellCommand';
 export * from '#/agent/shellCommand/shellCommandService';
@@ -422,10 +453,8 @@ export * from '#/session/todo/todoListReminder';
 export * from '#/session/todo/sessionTodo';
 export * from '#/session/todo/sessionTodoService';
 export * from '#/session/todo/tools/todo-list';
-export * from '#/agent/tool/toolContract';
-export * from '#/agent/tool/tool-access';
-export * from '#/agent/tool/toolHooks';
-export * from '#/agent/tool/toolName';
+export * from '#/tool/toolContract';
+export * from '#/agent/toolExecutor/toolHooks';
 export * from '#/agent/toolExecutor/toolExecutor';
 export * from '#/agent/toolExecutor/toolExecutorService';
 export * from '#/agent/toolResultTruncation/toolResultTruncation';
@@ -441,6 +470,3 @@ export type { ToolContribution, ToolContributionOptions } from '#/agent/toolRegi
 export * from '#/agent/userTool/userTool';
 export * from '#/agent/userTool/userToolOps';
 export * from '#/agent/userTool/userToolService';
-export * from '#/agent/wireRecord/wireRecord';
-export * from '#/agent/wireRecord/wireRecordService';
-export * from '#/agent/wireRecord/metadataOps';

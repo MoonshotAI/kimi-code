@@ -19,20 +19,15 @@ import { registerConfigOverlay } from '#/app/config/configOverlayContributions';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ENV_MODEL_PROVIDER_KEY } from '#/app/provider/provider';
 
-/** Reserved key for the env-driven synthetic model alias. */
 export const ENV_MODEL_ALIAS_KEY = '__kimi_env_model__';
 
-/** Default context window (256K) used when KIMI_MODEL_MAX_CONTEXT_SIZE is unset. */
 const DEFAULT_MAX_CONTEXT_SIZE = 262144;
 
-/** Default capabilities when KIMI_MODEL_CAPABILITIES is unset. */
 const DEFAULT_CAPABILITIES = ['image_in', 'thinking'];
 
-/** Default base URL per provider type when KIMI_MODEL_BASE_URL is unset. */
 const DEFAULT_BASE_URL: Partial<Record<string, string>> = {
   kimi: 'https://api.moonshot.ai/v1',
   openai: 'https://api.openai.com/v1',
-  // anthropic: omitted -> let the Anthropic SDK pick its default
 };
 
 function trimmed(value: string | undefined): string | undefined {
@@ -78,8 +73,6 @@ function parseCapabilities(raw: string | undefined): string[] | undefined {
   return caps.length === 0 ? undefined : caps;
 }
 
-// Treat a non-empty but unparseable value (e.g. a typo like `flase`) as a
-// config error so it fails fast like the other KIMI_MODEL_* values.
 function parseBooleanVar(raw: string | undefined, varName: string): boolean | undefined {
   const value = trimmed(raw);
   if (value === undefined) return undefined;
@@ -240,7 +233,4 @@ function collectModelOverrides(input: {
   return Object.keys(modelOverrides).length > 0 ? modelOverrides : undefined;
 }
 
-// Self-register at module load so the overlay takes effect even when
-// `ModelService` is never instantiated (the DI layer does not auto-instantiate
-// `Eager` services). Drained by `ConfigRegistry` on construction.
 registerConfigOverlay(kimiModelEnvOverlay);

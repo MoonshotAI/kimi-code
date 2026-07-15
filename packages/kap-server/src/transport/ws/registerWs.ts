@@ -7,7 +7,7 @@
  *   - each connection is a {@link WsConnection}, tracked in the shared
  *     {@link IConnectionRegistry};
  *   - shutdown (close-all + wss.close) is owned by the bootstrap;
- *   - per-connection heartbeat / cleanup lives in {@link WsConnection}.
+ *   - per-connection cleanup lives in {@link WsConnection}.
  */
 
 import type { Scope } from '@moonshot-ai/agent-core-v2';
@@ -15,17 +15,17 @@ import { WebSocketServer } from 'ws';
 
 import type { CredentialValidator } from '../../services/auth/credentials';
 import { type IConnectionRegistry } from './connectionRegistry';
-import { WsConnection } from './wsConnection';
+import { WsConnection, type WsConnectionLogger } from './wsConnection';
 import { selectWsBearerProtocol } from './bearerProtocol';
 
 export interface RegisterWsOptions {
   /** Present-only credential validator forwarded to {@link WsConnection}. */
   readonly validateCredential?: CredentialValidator;
-  readonly pingIntervalMs?: number;
-  readonly pongTimeoutMs?: number;
   readonly callTimeoutMs?: number;
   /** Registry that tracks live connections; populated by this module. */
   readonly registry: IConnectionRegistry;
+  /** Per-connection logger forwarded to {@link WsConnection}. */
+  readonly logger?: WsConnectionLogger;
 }
 
 export const WS_PATH = '/api/v2/ws';
@@ -39,11 +39,10 @@ export function registerWs(core: Scope, opts: RegisterWsOptions): WebSocketServe
       socket,
       core,
       validateCredential: opts.validateCredential,
-      pingIntervalMs: opts.pingIntervalMs,
-      pongTimeoutMs: opts.pongTimeoutMs,
       callTimeoutMs: opts.callTimeoutMs,
       remoteAddress: req.socket.remoteAddress ?? null,
       userAgent: req.headers['user-agent'] ?? null,
+      logger: opts.logger,
     });
     registry.add(conn);
     socket.on('close', () => registry.remove(conn.id));

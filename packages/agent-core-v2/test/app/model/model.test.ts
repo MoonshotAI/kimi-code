@@ -20,6 +20,80 @@ import {
 import { modelsFromToml, modelsToToml } from '#/app/model/configSection';
 import { ModelService } from '#/app/model/modelService';
 import { ENV_MODEL_PROVIDER_KEY } from '#/app/provider/provider';
+import { effectiveModelConfig } from '#/app/model/modelAuth';
+
+describe('effectiveModelConfig', () => {
+  it('derives the official effort metadata from a Claude model name', () => {
+    expect(
+      effectiveModelConfig({
+        provider: 'anthropic',
+        model: 'claude-opus-4-6',
+        maxContextSize: 200000,
+      }),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('infers Anthropic effort metadata for an unknown model with an explicit Anthropic protocol', () => {
+    expect(
+      effectiveModelConfig({
+        provider: 'custom',
+        model: 'custom-anthropic-model',
+        maxContextSize: 200000,
+        protocol: 'anthropic',
+      }),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('limits an adaptive_thinking=false model to budget efforts', () => {
+    expect(
+      effectiveModelConfig({
+        provider: 'custom',
+        model: 'custom-anthropic-model',
+        maxContextSize: 200000,
+        protocol: 'anthropic',
+        adaptiveThinking: false,
+      }),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('does not infer Anthropic effort metadata for an unknown model without an Anthropic protocol', () => {
+    const model = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+    };
+
+    expect(effectiveModelConfig(model)).toEqual(model);
+  });
+
+  it('marks official always-on models while preserving explicit effort metadata', () => {
+    expect(
+      effectiveModelConfig({
+        provider: 'anthropic',
+        model: 'claude-fable-5',
+        maxContextSize: 200000,
+        supportEfforts: ['high', 'max'],
+        defaultEffort: 'max',
+      }),
+    ).toMatchObject({
+      capabilities: ['always_thinking'],
+      supportEfforts: ['high', 'max'],
+      defaultEffort: 'max',
+    });
+  });
+});
 
 describe('ModelService', () => {
   let disposables: DisposableStore;
@@ -255,8 +329,6 @@ describe('kimiModelEnvOverlay', () => {
   });
 
   it('honors an explicit baseUrl over the type default', () => {
-    // The KIMI_MODEL_BASE_URL binding is applied by the provider config section;
-    // emulate its effect by seeding the resolved provider with the bound baseUrl.
     const { effective } = applyKimiModelEnvOverlay(
       { KIMI_MODEL_NAME: 'env-model' },
       {
@@ -383,12 +455,6 @@ describe('kimiModelEnvOverlay', () => {
   });
 
   it('self-registers into ConfigRegistry without ModelService instantiation', () => {
-    // envOverlay.ts calls registerConfigOverlay(kimiModelEnvOverlay) at module
-    // load, so a freshly constructed ConfigRegistry drains it even though no
-    // Service (notably ModelService) has been instantiated. This guards the
-    // release-e2e wire-llm-request-trace scenario, where KIMI_MODEL_NAME must
-    // synthesize the env model (and its thinking capability) even when nothing
-    // resolves IModelService.
     const freshRegistry = new ConfigRegistry();
     expect(freshRegistry.listEffectiveOverlays()).toContain(kimiModelEnvOverlay);
   });

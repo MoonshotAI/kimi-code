@@ -11,26 +11,28 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { ContentPart } from '#/app/llmProtocol/message';
-import type {
-  ToolCallStartedEvent,
-  ToolInputDisplay,
-  ToolProgressEvent,
-  ToolResultEvent,
-} from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 
 import {
   compileToolArgsValidator,
   validateToolArgs,
   type JsonType,
   type ToolArgsValidator,
-} from '#/_base/tools/args-validator';
-import { PathSecurityError } from '#/_base/tools/policies/path-access';
+} from '#/tool/args-validator';
+import { PathSecurityError } from '#/tool/path-access';
 import { isUserCancellation } from "#/_base/utils/abort";
 import { isAbortError } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
-import { ToolAccesses } from '#/agent/tool/tool-access';
-import type { ExecutableTool, ExecutableToolResult, RunnableToolExecution, ToolExecution, ToolResult, ToolUpdate } from '#/agent/tool/toolContract';
-import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/tool/toolHooks';
+import {
+  ToolAccesses,
+  type ExecutableTool,
+  type ExecutableToolResult,
+  type RunnableToolExecution,
+  type ToolExecution,
+  type ToolResult,
+  type ToolUpdate,
+} from '#/tool/toolContract';
+import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import type { ToolCall } from '#/app/llmProtocol/message';
 import { ILogService } from '#/_base/log/log';
@@ -47,14 +49,10 @@ import {
   type UnavailableToolDescriber,
 } from './toolExecutor';
 import { ToolScheduler } from './toolScheduler';
-
-declare module '#/app/event/eventBus' {
-  interface DomainEventMap {
-    'tool.call.started': ToolCallStartedEvent;
-    'tool.result': ToolResultEvent;
-    'tool.progress': ToolProgressEvent;
-  }
-}
+// Loads the `DomainEventMap` augmentation for the `tool.call.*` / `tool.result`
+// events this service publishes (the augmentation lives with the event
+// definitions; without an import it would not enter every consumer's program).
+import './toolExecutorEvents';
 
 const ABORT_GRACE_MS = 2_000;
 const TOOL_OUTPUT_EMPTY = 'Tool output is empty.';
@@ -101,9 +99,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
 
   private missingToolDescriber: MissingToolDescriber | undefined;
   private unavailableToolDescriber: UnavailableToolDescriber | undefined;
-  // Duplicate-call tags written by the `toolDedupe` plugin, consumed by
-  // `trackToolCall`. Pruned on turn change so entries from calls that never
-  // reached telemetry (e.g. an aborted batch) cannot leak across turns.
   private readonly toolCallDupTypes = new Map<string, ToolCallDupType>();
   private dupTypeTurnId: number | undefined;
 
@@ -583,7 +578,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     const effectiveResult = normalizeToolResult(coercedResult);
     const finalResult: ToolResult = {
       ...effectiveResult,
-      message: coercedResult.message ?? result.message,
       description: result.description,
       display: result.display,
       approvalRule: result.approvalRule,
@@ -592,9 +586,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
         didCtx.stopTurn === true ||
         effectiveResult.stopTurn === true,
       stopBatchAfterThis: result.stopBatchAfterThis,
-      // Thread the declared delivery through to the yielded result. An
-      // `onDidExecuteTool` hook (the agent/L4 layer) may have already consumed
-      // it by stripping it from `didCtx.result`; in that case this is undefined.
       delivery: coercedResult.delivery,
     };
     return this.resultTruncation.truncateForModel({
@@ -890,7 +881,6 @@ async function raceWithAbortGrace<Result>(
       try {
         signal.removeEventListener('abort', onAbort);
       } catch {
-        // Some AbortSignal polyfills do not implement removeEventListener.
       }
     }
   }
@@ -904,6 +894,6 @@ registerScopedService(
   LifecycleScope.Agent,
   IAgentToolExecutorService,
   AgentToolExecutorService,
-  InstantiationType.Delayed,
+  InstantiationType.Eager,
   'toolExecutor',
 );

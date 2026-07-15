@@ -9,7 +9,7 @@
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 
-import type { ExecutableTool, ExecutableToolResult } from '#/agent/tool/toolContract';
+import type { ExecutableTool, ExecutableToolResult } from '#/tool/toolContract';
 import { mcpResultToExecutableOutput } from '#/agent/mcp/output';
 import type { MCPClient } from '#/agent/mcp/types';
 
