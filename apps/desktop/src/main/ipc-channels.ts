@@ -1,0 +1,18 @@
+// IPC channel names used by the main-process modules. The preload bridge
+// (preload.ts) keeps its own string literals by design; preload.test.ts pins
+// the exposed mapping, so a rename here without a matching preload change
+// fails tests.
+export const IPC = {
+  theme: 'kimi:theme',
+  openExternal: 'kimi:open-external',
+  dialogOpen: 'kimi:dialog-open',
+  dialogSave: 'kimi:dialog-save',
+  getServerToken: 'kimi:get-server-token',
+  menuAction: 'kimi:menu-action',
+  shortcut: 'kimi:shortcut',
+} as const;
+
+export type ColorScheme = 'light' | 'dark' | 'system';
+
+// Channels that carry main → renderer events (see window.ts sendToRenderer).
+export type RendererEventChannel = typeof IPC.menuAction | typeof IPC.shortcut;

@@ -24,13 +24,19 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `@moonshot-ai
 
 关键文件：
 
-- `src/main/index.ts` — 窗口、原生菜单、window-state、loading/error 页、`rendererDistRoot()`、
-  `connect()` 串联启动 server 与加载 renderer。
+- `src/main/index.ts` — 主进程入口，只做编排：注册 scheme / IPC、生命周期事件、`whenReady`
+  后起窗口。
+- `src/main/connect.ts` — `connect()` 串联启动 server 与加载 renderer；`rendererDistRoot()`、
+  token 读取、server 日志路径也在这里。
+- `src/main/window.ts` — 窗口创建、window-state 持久化、`sendToRenderer()`。
+- `src/main/menu.ts` / `shortcuts.ts` / `screens.ts` — 原生菜单、全局快捷键、启动失败页。
+- `src/main/ipc.ts` / `ipc-channels.ts` — IPC handler 注册、channel 常量与 payload 类型。
 - `src/main/server.ts` — `startDesktopServer`：进程内起 server，写入 CORS allowlist。
 - `src/main/protocol.ts` — `app://renderer` scheme/protocol 注册与 `rendererUrl` 拼接。
-- `src/main/preload.cjs` — contextIsolation 下的白名单 IPC（主题、菜单/快捷键转发等）。
+- `src/main/preload.ts` — contextIsolation 下的白名单 IPC（主题、菜单/快捷键转发等）。
 - `src/renderer/` — web UI 副本（构建源）。
 - `vite.renderer.config.ts` — renderer 构建配置。
+- 主进程测试在 `tests/main/`，renderer 测试与源码同目录。
 
 ## 开发
 
