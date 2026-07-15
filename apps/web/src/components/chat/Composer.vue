@@ -582,8 +582,6 @@ onUnmounted(() => {
   document.removeEventListener('click', onDocClick, true);
 });
 
-// Context formatting
-const kFmt = (n: number) => `${Math.round(n / 1000)}k`;
 // Clamped to 0–100: ctxUsed can momentarily exceed ctxMax (estimates), and
 // ctxMax can be 0 before the first status fetch — both broke the ring.
 const pct = computed(() => {
@@ -1073,12 +1071,10 @@ function selectModel(modelId: string): void {
           <!-- Compact chip when context is high -->
           <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
 
-          <!-- Context meter — circular ring + token count. The ring is
-               aria-hidden, so the trigger exposes the full usage (used/max/pct)
-               via aria-label; focusable so keyboard and switch-control users
-               reach the same tooltip hover users see. The visible "12k/256k"
-               count is hidden under 980px by CSS, but SR users still get this
-               label. -->
+          <!-- Context meter — circular ring only; the full usage (used/max/pct)
+               lives in the tooltip. The ring is aria-hidden, so the trigger
+               exposes those numbers via aria-label; focusable so keyboard and
+               switch-control users reach the same tooltip hover users see. -->
           <Tooltip :text="ctxTooltip">
             <span
               v-if="status && !hideContext"
@@ -1088,7 +1084,6 @@ function selectModel(modelId: string): void {
               :aria-label="ctxTooltip"
             >
               <ContextRing :pct="pct" />
-              <span class="ctx-num">{{ kFmt(status.ctxUsed) }}/{{ kFmt(status.ctxMax) }}</span>
             </span>
           </Tooltip>
 
@@ -1220,15 +1215,14 @@ function selectModel(modelId: string): void {
   --composer-send-inset: var(--space-2);
   position: relative;
   border: 1px solid var(--line);
-  border-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset) + var(--space-3));
-  corner-shape: superellipse(1.5);
+  border-radius: var(--radius-2xl);
   background: var(--bg);
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-input);
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .composer-card:focus-within {
   border-color: var(--color-accent);
-  box-shadow: var(--shadow-md), 0 0 0 3px var(--color-accent-soft);
+  box-shadow: var(--shadow-input), 0 0 0 3px var(--color-accent-soft);
 }
 
 
@@ -1628,8 +1622,8 @@ function selectModel(modelId: string): void {
   color: var(--color-danger);
 }
 
-/* Context group — circular ring + num. Focusable for keyboard / switch access
-   to its aria-label and tooltip (see template), so it needs a focus ring. */
+/* Context group — circular ring. Focusable for keyboard / switch access to its
+   aria-label and tooltip (see template), so it needs a focus ring. */
 .ctx-group {
   display: flex;
   align-items: center;
@@ -1641,16 +1635,6 @@ function selectModel(modelId: string): void {
 .ctx-group:focus-visible {
   outline: 2px solid var(--color-accent);
   outline-offset: 2px;
-}
-
-.ctx-num {
-  font-size: var(--ui-font-size);
-  color: var(--muted);
-  font-family: var(--font-ui);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum";
-  letter-spacing: 0;
-  line-height: 16px;
 }
 
 /* Model pill */
@@ -2136,16 +2120,11 @@ function selectModel(modelId: string): void {
    toolbar shows every control on one row and toolbar-left / toolbar-right are
    overflow:hidden, so without shedding ink the row clips its own content. The
    context ring stays visible at every width (it is the live context-pressure
-   signal) but the "12k/256k" readout moves into the ring's tooltip, the model
-   name truncates earlier, and the permission label is capped so the ring and
-   the send button are never squeezed out. Mobile (≤640px) additionally hides
-   perm / modes via the rules below (those live in MobileSettingsSheet there). */
+   signal; the exact numbers live in its tooltip), the model name truncates
+   earlier, and the permission label is capped so the ring and the send button
+   are never squeezed out. Mobile (≤640px) additionally hides perm / modes via
+   the rules below (those live in MobileSettingsSheet there). */
 @media (max-width: 980px) {
-  /* The ring already conveys context pressure; the "12k/256k" readout lives in
-     the tooltip and returns at wider widths. */
-  .ctx-num {
-    display: none;
-  }
   /* Model name was budgeted for a wide card (280px); trim it so the ring and
      send button are not squeezed out on a narrow column. */
   .model-pill b {
@@ -2225,9 +2204,9 @@ function selectModel(modelId: string): void {
   /* Mobile toolbar: hide secondary controls; attach / context ring / model /
      send stay visible. Permission + plan move into the MobileSettingsSheet.
      The context ring stays at every width by design — it is the live
-     context-pressure signal on a phone (the "12k/256k" readout is hidden here
-     by the ≤980px rule above and remains in the ring's tooltip). The /compact
-     chip also stays so compaction is one tap away at ≥80% usage. */
+     context-pressure signal on a phone (the exact numbers live in the ring's
+     tooltip). The /compact chip also stays so compaction is one tap away at
+     ≥80% usage. */
   .perm-pill,
   .modes {
     display: none;

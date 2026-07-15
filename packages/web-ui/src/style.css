@@ -268,6 +268,9 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   /* -- shadows (light) ----------------------------------------------------- */
   --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.04);
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
+  /* Chat-input elevation (Kimi tokens `effect.shadow.inputDefault`): single
+     layer, negative spread — sits closer to the page than --shadow-md. */
+  --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
   --shadow-md: 0 4px 12px rgba(16, 24, 40, 0.07), 0 2px 4px rgba(16, 24, 40, 0.05);
   --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12), 0 4px 10px rgba(16, 24, 40, 0.08);
   --shadow-xl: 0 24px 64px rgba(16, 24, 40, 0.18), 0 8px 20px rgba(16, 24, 40, 0.1);
@@ -362,6 +365,8 @@ html[data-color-scheme="dark"] {
   --color-info: #58a6ff;
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+  /* Dark value is a local fill-in — the Kimi token only defines light. */
+  --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
   --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
@@ -404,6 +409,8 @@ html[data-color-scheme="dark"] {
     --color-info: #58a6ff;
     --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+    /* Dark value is a local fill-in — the Kimi token only defines light. */
+    --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
     --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
     --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
