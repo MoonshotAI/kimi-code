@@ -14,7 +14,6 @@ import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import type { GoalBudgetLimits } from '#/agent/goal/types';
 import DESCRIPTION from './set-goal-budget.md?raw';
 

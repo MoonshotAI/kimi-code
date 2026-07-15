@@ -9,6 +9,7 @@ export function getLlmNotSetMessage(): string {
 export function getNoActiveSessionMessage(): string {
   return t('tui.chrome.hints.noActiveSession');
 }
+export const NO_ACTIVE_SESSION_MESSAGE = 'No active session. Send /login to login.';
 export function getCtrlDHint(): string {
   return t('tui.chrome.hints.ctrlDExit');
 }

@@ -13,7 +13,6 @@ import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import DESCRIPTION from './get-goal.md?raw';
 import { goalResultForModel } from './serialize';
 
