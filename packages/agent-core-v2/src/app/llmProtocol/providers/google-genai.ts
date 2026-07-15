@@ -141,8 +141,9 @@ interface GooglePart {
 function toolCallIdToName(toolCallId: string, toolNameById: Map<string, string>): string {
   const name = toolNameById.get(toolCallId);
   if (name !== undefined) return name;
-  const match = /^(.+)_[^_]+$/.exec(toolCallId);
-  return match?.[1] ?? toolCallId;
+  const withoutEntropy = toolCallId.replace(/_[0-9a-f]{8}$/, '');
+  const match = /^(.+)_[^_]+$/.exec(withoutEntropy);
+  return match?.[1] ?? withoutEntropy;
 }
 
 function convertMediaUrl(
@@ -510,7 +511,7 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
           const name = fc['name'] as string;
           if (!name) continue;
           const id_ = (fc['id'] as string) ?? crypto.randomUUID();
-          const toolCallId = `${name}_${id_}`;
+          const toolCallId = `${name}_${id_}_${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}`;
           const thoughtSigB64 = p['thoughtSignature'] ?? p['thought_signature'];
           const toolCall: ToolCall = {
             type: 'function',
