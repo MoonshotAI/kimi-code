@@ -120,7 +120,7 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`server`（运行并管理本地 REST/WebSocket/web 服务）、`web`（`kimi server run --open` 的别名）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`server`（运行并管理本地 REST/WebSocket/web 服务）、`web`（`kimi server run --open` 的别名）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`vis`（启动会话可视化工具）、`provider`（管理供应商）、`plugins`（管理 plugins）。
 
 ### `kimi login`
 
@@ -390,6 +390,138 @@ kimi provider catalog list anthropic
 ```sh
 kimi provider catalog list anthropic          # 先看可选的模型
 kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-opus-4-7
+```
+
+### `kimi plugins`
+
+在 shell 中管理 plugins——相当于 TUI 中 `/plugins` 的非交互版本。适合在新机器上安装一组标准 plugins、在 CI 中脚本化管理 plugin 状态，或无需打开终端 UI 即可管理自定义 registries。
+
+```sh
+kimi plugins <action> [options]
+```
+
+可用动作：
+
+| 动作 | 说明 |
+| --- | --- |
+| `list` | 列出已安装 plugins |
+| `info <id>` | 显示已安装 plugin 的详情 |
+| `install <source>` | 从本地路径、zip URL 或 GitHub URL 安装 plugin |
+| `remove <id>` | 移除已安装 plugin |
+| `enable <id>` | 启用已安装 plugin |
+| `disable <id>` | 禁用已安装 plugin |
+| `marketplace` | 从 marketplace 和自定义 registries 列出 plugins |
+| `registry list` | 列出自定义 registries |
+| `registry add <url>` | 添加自定义 registry |
+| `registry remove <name-or-url>` | 按名称或 URL 移除自定义 registry |
+
+#### `kimi plugins list`
+
+以制表符分隔的表格输出已安装 plugins。加 `--json` 输出结构化数据。
+
+| 选项 | 说明 |
+| --- | --- |
+| `--json` | 以 JSON 形式输出 |
+
+```sh
+kimi plugins list
+kimi plugins list --json | jq '.[] | {id, enabled}'
+```
+
+#### `kimi plugins info <id>`
+
+显示已安装 plugin 的元数据和 diagnostics，包括启用状态、skill 数量、MCP server 数量、hook 数量和 command 数量。
+
+| 选项 | 说明 |
+| --- | --- |
+| `--json` | 以 JSON 形式输出 |
+
+```sh
+kimi plugins info kimi-finance
+```
+
+#### `kimi plugins install <source>`
+
+从本地目录、zip URL 或 GitHub URL 安装 plugin。`source` 支持与 TUI 中 `/plugins install` 相同的 URL 形式。第三方来源需要确认，除非传入 `--yes`。
+
+| 选项 | 说明 |
+| --- | --- |
+| `-y, --yes` | 跳过第三方来源的信任确认 |
+
+```sh
+kimi plugins install ./my-plugin
+kimi plugins install https://github.com/example/kimi-finance
+kimi plugins install https://github.com/example/kimi-finance --yes
+```
+
+#### `kimi plugins remove <id>`
+
+移除已安装 plugin。这会删除安装记录；`$KIMI_CODE_HOME/plugins/managed/<id>/` 下的托管副本仍会保留在磁盘上。加 `--yes` 跳过确认提示。
+
+| 选项 | 说明 |
+| --- | --- |
+| `-y, --yes` | 跳过确认 |
+
+```sh
+kimi plugins remove my-plugin --yes
+```
+
+#### `kimi plugins enable <id>` 与 `kimi plugins disable <id>`
+
+启用或禁用已安装 plugin。
+
+```sh
+kimi plugins enable my-plugin
+kimi plugins disable my-plugin
+```
+
+#### `kimi plugins marketplace`
+
+从默认 marketplace 以及通过 `kimi plugins registry add` 注册的自定义 registries 列出 plugins。自定义 registries 保存在 `$KIMI_CODE_HOME/plugins/registries.json` 中，并与默认目录合并；多个 registry 之间重复的 id 会去重，默认目录优先。加 `--json` 输出结构化数据。
+
+| 选项 | 说明 |
+| --- | --- |
+| `--registry <name-or-url>` | 通过名称或直接 URL/路径指定 registry |
+| `--json` | 以 JSON 形式输出 |
+
+```sh
+kimi plugins marketplace
+kimi plugins marketplace --registry my-team
+kimi plugins marketplace --registry https://registry.example.com/marketplace.json
+```
+
+#### `kimi plugins registry`
+
+管理自定义 marketplace registries。Registries 按用户持久化，当 `kimi plugins marketplace` 不带 `--registry` 运行时会与默认 marketplace 合并。
+
+##### `kimi plugins registry list`
+
+| 选项 | 说明 |
+| --- | --- |
+| `--json` | 以 JSON 形式输出 |
+
+```sh
+kimi plugins registry list
+```
+
+##### `kimi plugins registry add <url>`
+
+添加自定义 registry。`--name` 指定一个短名，之后可与 `--registry` 一起使用。
+
+| 选项 | 说明 |
+| --- | --- |
+| `--name <name>` | 可选显示名称 |
+
+```sh
+kimi plugins registry add https://registry.example.com/marketplace.json --name my-team
+```
+
+##### `kimi plugins registry remove <name-or-url>`
+
+按名称或 URL 移除自定义 registry。
+
+```sh
+kimi plugins registry remove my-team
 ```
 
 ## 下一步

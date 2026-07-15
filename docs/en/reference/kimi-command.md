@@ -120,7 +120,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `server` (run and manage the local REST/WebSocket/web service), `web` (alias for `kimi server run --open`), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `server` (run and manage the local REST/WebSocket/web service), `web` (alias for `kimi server run --open`), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), `vis` (launch the session visualizer), `provider` (manage providers), and `plugins` (manage plugins).
 
 ### `kimi login`
 
@@ -390,6 +390,138 @@ Import a known provider directly from the catalog by ID. The protocol type, base
 ```sh
 kimi provider catalog list anthropic          # Browse available models first
 kimi provider catalog add anthropic --api-key sk-ant-... --default-model claude-opus-4-7
+```
+
+### `kimi plugins`
+
+Manage plugins in the shell — the non-interactive equivalent of `/plugins` in the TUI. Suitable for installing a standard set of plugins on a new machine, scripting plugin state in CI, or managing custom registries without opening the terminal UI.
+
+```sh
+kimi plugins <action> [options]
+```
+
+Available actions:
+
+| Action | Description |
+| --- | --- |
+| `list` | List installed plugins |
+| `info <id>` | Show details of an installed plugin |
+| `install <source>` | Install a plugin from a local path, zip URL, or GitHub URL |
+| `remove <id>` | Remove an installed plugin |
+| `enable <id>` | Enable an installed plugin |
+| `disable <id>` | Disable an installed plugin |
+| `marketplace` | List plugins from the marketplace and custom registries |
+| `registry list` | List custom registries |
+| `registry add <url>` | Add a custom registry |
+| `registry remove <name-or-url>` | Remove a custom registry by name or URL |
+
+#### `kimi plugins list`
+
+Print installed plugins in a tab-separated table. Add `--json` for structured output.
+
+| Option | Description |
+| --- | --- |
+| `--json` | Output as JSON |
+
+```sh
+kimi plugins list
+kimi plugins list --json | jq '.[] | {id, enabled}'
+```
+
+#### `kimi plugins info <id>`
+
+Show metadata and diagnostics for an installed plugin, including enabled state, skill count, MCP server count, hook count, and command count.
+
+| Option | Description |
+| --- | --- |
+| `--json` | Output as JSON |
+
+```sh
+kimi plugins info kimi-finance
+```
+
+#### `kimi plugins install <source>`
+
+Install a plugin from a local directory, zip URL, or GitHub URL. The source supports the same URL forms as `/plugins install` in the TUI. Third-party sources require confirmation unless `--yes` is passed.
+
+| Option | Description |
+| --- | --- |
+| `-y, --yes` | Skip trust confirmation for third-party sources |
+
+```sh
+kimi plugins install ./my-plugin
+kimi plugins install https://github.com/example/kimi-finance
+kimi plugins install https://github.com/example/kimi-finance --yes
+```
+
+#### `kimi plugins remove <id>`
+
+Remove an installed plugin. This deletes the installation record; the managed copy under `$KIMI_CODE_HOME/plugins/managed/<id>/` remains on disk. Add `--yes` to skip the confirmation prompt.
+
+| Option | Description |
+| --- | --- |
+| `-y, --yes` | Skip confirmation |
+
+```sh
+kimi plugins remove my-plugin --yes
+```
+
+#### `kimi plugins enable <id>` and `kimi plugins disable <id>`
+
+Enable or disable an installed plugin.
+
+```sh
+kimi plugins enable my-plugin
+kimi plugins disable my-plugin
+```
+
+#### `kimi plugins marketplace`
+
+List plugins from the default marketplace and any custom registries registered with `kimi plugins registry add`. Custom registries are stored in `$KIMI_CODE_HOME/plugins/registries.json` and merged with the default catalog; duplicate IDs across registries are deduplicated with the default catalog winning. Add `--json` for structured output.
+
+| Option | Description |
+| --- | --- |
+| `--registry <name-or-url>` | Use a specific registry by name or direct URL/path |
+| `--json` | Output as JSON |
+
+```sh
+kimi plugins marketplace
+kimi plugins marketplace --registry my-team
+kimi plugins marketplace --registry https://registry.example.com/marketplace.json
+```
+
+#### `kimi plugins registry`
+
+Manage custom marketplace registries. Registries are persisted per-user and merged with the default marketplace when `kimi plugins marketplace` runs without `--registry`.
+
+##### `kimi plugins registry list`
+
+| Option | Description |
+| --- | --- |
+| `--json` | Output as JSON |
+
+```sh
+kimi plugins registry list
+```
+
+##### `kimi plugins registry add <url>`
+
+Add a custom registry. `--name` assigns a short name you can use with `--registry` later.
+
+| Option | Description |
+| --- | --- |
+| `--name <name>` | Optional display name |
+
+```sh
+kimi plugins registry add https://registry.example.com/marketplace.json --name my-team
+```
+
+##### `kimi plugins registry remove <name-or-url>`
+
+Remove a custom registry by its name or URL.
+
+```sh
+kimi plugins registry remove my-team
 ```
 
 ## Next steps

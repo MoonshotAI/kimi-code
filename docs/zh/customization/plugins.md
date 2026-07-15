@@ -35,6 +35,39 @@ Plugins 把可复用的 Kimi Code CLI 能力打包成可安装单元——可以
 
 **Installed** tab 列出已安装的 plugin，并在 marketplace 有更新版本时显示更新徽章。**Official** 和 **Third-party** tab 按 tier 列出 marketplace plugin；**Custom** tab 从 URL 安装。marketplace 目录会在需要时自动加载。每个安装会显示信任徽章：`kimi-official`（来自官方地址）、`curated`（来自精选地址）、`third-party`（其他所有情况）。安装第三方 plugin（任何非官方地址的 plugin，包括 Custom 安装）会先显示一个默认「取消」的确认提示，只有在你选择信任该来源后才会继续安装。
 
+### 使用 `kimi plugins` 进行非交互式管理
+
+如果你需要在脚本、CI 或 shell 中管理 plugin，可以使用 `kimi plugins` 子命令。它覆盖了与 TUI `/plugins` 斜杠命令相同的核心操作，但采用非交互方式运行，执行完毕后即退出。
+
+```sh
+kimi plugins list
+kimi plugins info <id>
+kimi plugins install <source>
+kimi plugins remove <id>
+kimi plugins enable <id>
+kimi plugins disable <id>
+kimi plugins marketplace
+kimi plugins registry list
+kimi plugins registry add <url> --name <name>
+kimi plugins registry remove <name-or-url>
+```
+
+大多数列表命令支持 `--json`，便于程序化解析；`--yes` / `-y` 可以跳过第三方来源安装或移除时的确认提示。例如，在 CI 流水线中从 GitHub 仓库安装 plugin：
+
+```sh
+kimi plugins install https://github.com/example/kimi-finance --yes
+```
+
+以 JSON 列出已安装 plugins 并提取 id：
+
+```sh
+kimi plugins list --json | jq '.[].id'
+```
+
+由于 `kimi plugins` 会启动一个新进程，plugin 变更会在下次运行 `kimi` 或开启新会话时生效——TUI `/reload` 命令在 shell 中没有对应命令。
+
+完整命令表请参考 [`kimi plugins` 参考](../reference/kimi-command.md#kimi-plugins)。
+
 ### 从 GitHub 安装
 
 通过 `/plugins install <url>` 可以直接从 GitHub 仓库安装，支持四种 URL 形式：

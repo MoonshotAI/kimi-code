@@ -1,4 +1,4 @@
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,7 @@ import {
   KIMI_CODE_PLUGIN_MARKETPLACE_URL,
   KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV,
 } from '#/constant/app';
-import { computeUpdateStatus, loadPluginMarketplace } from '#/utils/plugin-marketplace';
+import { computeUpdateStatus, loadMergedMarketplace, loadPluginMarketplace } from '#/utils/plugin-marketplace';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '../../../..');
 
@@ -502,4 +502,59 @@ describe('loadPluginMarketplace', () => {
     );
   });
 
+});
+
+describe('loadMergedMarketplace', () => {
+  it('merges default and persistent registries, default wins on duplicate ids', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-merged-marketplace-'));
+    const defaultFile = join(dir, 'default.json');
+    const customFile = join(dir, 'custom.json');
+    await writeFile(
+      defaultFile,
+      JSON.stringify({
+        plugins: [
+          { id: 'a', displayName: 'A Default', source: './a', version: '1.0.0' },
+          { id: 'b', displayName: 'B Default', source: './b', version: '1.0.0' },
+        ],
+      }),
+      'utf8',
+    );
+    await writeFile(
+      customFile,
+      JSON.stringify({
+        plugins: [
+          { id: 'a', displayName: 'A Custom', source: './a-custom', version: '2.0.0' },
+          { id: 'c', displayName: 'C Custom', source: './c', version: '1.0.0' },
+        ],
+      }),
+      'utf8',
+    );
+
+    const homeDir = await mkdtemp(join(tmpdir(), 'kimi-registries-home-'));
+    await mkdir(join(homeDir, 'plugins'), { recursive: true });
+    await writeFile(
+      join(homeDir, 'plugins', 'registries.json'),
+      JSON.stringify({ version: 1, registries: [{ name: 'custom', url: customFile }] }),
+      'utf8',
+    );
+
+    const previous = process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV];
+    process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] = defaultFile;
+    try {
+      const marketplace = await loadMergedMarketplace({
+        kimiHomeDir: homeDir,
+        workDir: '/tmp/work',
+      });
+      const byId = new Map(marketplace.plugins.map((p) => [p.id, p]));
+      expect(byId.get('a')?.displayName).toBe('A Default');
+      expect(byId.get('b')?.displayName).toBe('B Default');
+      expect(byId.get('c')?.displayName).toBe('C Custom');
+    } finally {
+      if (previous === undefined) {
+        delete process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV];
+      } else {
+        process.env[KIMI_CODE_PLUGIN_MARKETPLACE_URL_ENV] = previous;
+      }
+    }
+  });
 });

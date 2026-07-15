@@ -35,6 +35,39 @@ You can also use slash commands directly:
 
 The **Installed** tab lists your installed plugins and shows an update badge when a newer version is available in the marketplace. The **Official** and **Third-party** tabs list marketplace plugins by tier; the **Custom** tab installs from a URL. Marketplace catalogs load automatically when needed. Each install shows a trust badge: `kimi-official` (from an official address), `curated` (from a curated address), or `third-party` (everything else). Installing a third-party plugin (anything not from the official address, including Custom installs) first shows a confirmation prompt that defaults to cancelling, so it is only installed if you choose to trust the source.
 
+### Non-interactive management with `kimi plugins`
+
+For scripts, CI, or when you prefer the shell, use the `kimi plugins` subcommand. It covers the same operations as the TUI `/plugins` slash command but runs non-interactively and exits when finished.
+
+```sh
+kimi plugins list
+kimi plugins info <id>
+kimi plugins install <source>
+kimi plugins remove <id>
+kimi plugins enable <id>
+kimi plugins disable <id>
+kimi plugins marketplace
+kimi plugins registry list
+kimi plugins registry add <url> --name <name>
+kimi plugins registry remove <name-or-url>
+```
+
+Most list commands support `--json` for programmatic parsing, and `--yes` / `-y` skips confirmation prompts for third-party installs or removals. For example, install a plugin from a GitHub repository in a CI pipeline:
+
+```sh
+kimi plugins install https://github.com/example/kimi-finance --yes
+```
+
+List installed plugins as JSON and extract their IDs:
+
+```sh
+kimi plugins list --json | jq '.[].id'
+```
+
+Because `kimi plugins` starts a fresh process, plugin changes take effect the next time you run `kimi` or start a new session — there is no shell equivalent of the TUI `/reload` command.
+
+See the [`kimi plugins` reference](../reference/kimi-command.md#kimi-plugins) for the full command table.
+
 ### Installing from GitHub
 
 Use `/plugins install <url>` to install directly from a GitHub repository. Four URL forms are supported:
