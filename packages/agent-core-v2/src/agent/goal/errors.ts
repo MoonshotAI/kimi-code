@@ -44,7 +44,7 @@ export const GoalErrors = {
       title: 'Invalid goal status transition',
       retryable: false,
       public: true,
-      action: 'Use a status allowed for this actor (complete, blocked, or impossible).',
+      action: 'Only an active goal can be paused; resume a blocked goal with `/goal resume`.',
     },
     'goal.metadata_reserved': {
       title: 'Goal metadata is reserved',
@@ -56,7 +56,7 @@ export const GoalErrors = {
       title: 'Goal is not resumable',
       retryable: false,
       public: true,
-      action: 'Only paused goals can be resumed.',
+      action: 'Only paused or blocked goals can be resumed.',
     },
     'goal.unsupported_agent': {
       title: 'Goals are unavailable for subagents',
