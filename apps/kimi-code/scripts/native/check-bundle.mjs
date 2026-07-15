@@ -21,6 +21,7 @@ const optionalRuntimeRequires = new Set([
   'fast-json-stringify/lib/serializer',
   'fast-json-stringify/lib/validator',
   'utf-8-validate',
+  '@moonshot-ai/server',
 ]);
 const optionalRelativeRuntimeRequires = new Set(['./crypto/build/Release/sshcrypto.node']);
 const handledNativeRuntimeRequires = new Set();
