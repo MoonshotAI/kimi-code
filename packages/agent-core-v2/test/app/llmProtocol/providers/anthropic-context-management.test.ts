@@ -97,7 +97,7 @@ describe('Anthropic withThinkingKeep context_management parity', () => {
     ]);
   });
 
-  it('backfills empty thinking when compatible text history is replayed with keep all', async () => {
+  it('backfills non-empty thinking when compatible text history is replayed with keep all', async () => {
     const history: Message[] = [
       { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
       {
@@ -117,13 +117,13 @@ describe('Anthropic withThinkingKeep context_management parity', () => {
     expect(messages[1]).toEqual({
       role: 'assistant',
       content: [
-        { type: 'thinking', thinking: '' },
+        { type: 'thinking', thinking: ' ' },
         { type: 'text', text: 'Hello' },
       ],
     });
   });
 
-  it('backfills empty thinking before a compatible assistant tool call with keep all', async () => {
+  it('backfills non-empty thinking before a compatible assistant tool call with keep all', async () => {
     const history: Message[] = [
       {
         role: 'assistant',
@@ -143,7 +143,7 @@ describe('Anthropic withThinkingKeep context_management parity', () => {
     expect(messages[0]).toEqual({
       role: 'assistant',
       content: [
-        { type: 'thinking', thinking: '' },
+        { type: 'thinking', thinking: ' ' },
         {
           type: 'tool_use',
           id: 'call_1',
@@ -155,7 +155,7 @@ describe('Anthropic withThinkingKeep context_management parity', () => {
     });
   });
 
-  it('preserves one existing thinking block when compatible history uses keep all', async () => {
+  it('replaces an existing empty thinking block when compatible history uses keep all', async () => {
     const history: Message[] = [
       {
         role: 'assistant',
@@ -176,7 +176,7 @@ describe('Anthropic withThinkingKeep context_management parity', () => {
     expect(messages[0]).toEqual({
       role: 'assistant',
       content: [
-        { type: 'thinking', thinking: '' },
+        { type: 'thinking', thinking: ' ' },
         { type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } },
       ],
     });

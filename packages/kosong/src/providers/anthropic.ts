@@ -524,6 +524,8 @@ function convertMessage(
   // user or assistant
   const blocks: ContentBlockParam[] = [];
   let hasThinkingPart = false;
+  let lastUnsignedThinkingBlockIndex: number | undefined;
+  let hasNonEmptyEmittedThinking = false;
   for (const part of message.content) {
     if (part.type === 'text') {
       blocks.push({ type: 'text', text: part.text } satisfies TextBlockParam);
@@ -550,8 +552,11 @@ function convertMessage(
           thinking: part.think,
           signature: part.encrypted,
         } satisfies ThinkingBlockParam);
+        hasNonEmptyEmittedThinking ||= part.think.length > 0;
       } else if (shouldPreserveUnsignedThinking(model)) {
+        lastUnsignedThinkingBlockIndex = blocks.length;
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
+        hasNonEmptyEmittedThinking ||= part.think.length > 0;
       }
     } else if (part.type === 'video_url') {
       blocks.push(videoUrlPartToAnthropic(part.videoUrl.url) as unknown as ContentBlockParam);
@@ -564,8 +569,21 @@ function convertMessage(
     }
   }
 
-  if (role === 'assistant' && backfillPreservedThinking && !hasThinkingPart) {
-    blocks.unshift({ type: 'thinking', thinking: '' } as unknown as ThinkingBlockParam);
+  if (role === 'assistant' && backfillPreservedThinking) {
+    // Some compatible endpoints require every replayed assistant message to
+    // carry non-empty thinking. Keep the placeholder wire-only, and never
+    // alter signed blocks because their text is covered by the signature.
+    if (!hasThinkingPart) {
+      blocks.unshift({ type: 'thinking', thinking: ' ' } as unknown as ThinkingBlockParam);
+    } else if (
+      lastUnsignedThinkingBlockIndex !== undefined &&
+      !hasNonEmptyEmittedThinking
+    ) {
+      blocks[lastUnsignedThinkingBlockIndex] = {
+        type: 'thinking',
+        thinking: ' ',
+      } as unknown as ThinkingBlockParam;
+    }
   }
 
   // Tool calls -> ToolUseBlockParam

@@ -438,6 +438,8 @@ function convertMessage(
 
   const blocks: ContentBlockParam[] = [];
   let hasThinkingPart = false;
+  let lastUnsignedThinkingBlockIndex: number | undefined;
+  let hasNonEmptyEmittedThinking = false;
   for (const part of message.content) {
     if (part.type === 'text') {
       blocks.push({ type: 'text', text: part.text } satisfies TextBlockParam);
@@ -446,12 +448,15 @@ function convertMessage(
     } else if (part.type === 'think') {
       hasThinkingPart = true;
       if (part.encrypted !== undefined) {
+        hasNonEmptyEmittedThinking ||= part.think.length > 0;
         blocks.push({
           type: 'thinking',
           thinking: part.think,
           signature: part.encrypted,
         } satisfies ThinkingBlockParam);
       } else if (shouldPreserveUnsignedThinking(model)) {
+        lastUnsignedThinkingBlockIndex = blocks.length;
+        hasNonEmptyEmittedThinking ||= part.think.length > 0;
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
       }
     } else if (part.type === 'video_url') {
@@ -465,8 +470,18 @@ function convertMessage(
     }
   }
 
-  if (role === 'assistant' && backfillPreservedThinking && !hasThinkingPart) {
-    blocks.unshift({ type: 'thinking', thinking: '' } as unknown as ThinkingBlockParam);
+  if (role === 'assistant' && backfillPreservedThinking) {
+    if (!hasThinkingPart) {
+      blocks.unshift({ type: 'thinking', thinking: ' ' } as unknown as ThinkingBlockParam);
+    } else if (
+      lastUnsignedThinkingBlockIndex !== undefined &&
+      !hasNonEmptyEmittedThinking
+    ) {
+      blocks[lastUnsignedThinkingBlockIndex] = {
+        type: 'thinking',
+        thinking: ' ',
+      } as unknown as ThinkingBlockParam;
+    }
   }
 
   if (message.toolCalls.length > 0) {

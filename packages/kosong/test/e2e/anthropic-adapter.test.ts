@@ -154,7 +154,7 @@ describe('e2e: Anthropic adapter bridge', () => {
           {
             role: 'assistant',
             content: [
-              { type: 'thinking', thinking: '' },
+              { type: 'thinking', thinking: ' ' },
               { type: 'text', text: 'Hello from Opus' },
             ],
           },

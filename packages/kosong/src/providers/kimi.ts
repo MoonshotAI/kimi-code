@@ -167,7 +167,12 @@ function convertMessage(message: Message, preservedThinkingEnabled: boolean): Op
   }
 
   if (hasReasoningPart || (preservedThinkingEnabled && message.role === 'assistant')) {
-    result.reasoning_content = reasoningContent;
+    // Keep the non-empty replay placeholder on the wire; canonical history
+    // continues to retain the original empty reasoning value.
+    result.reasoning_content =
+      preservedThinkingEnabled && message.role === 'assistant' && reasoningContent.length === 0
+        ? ' '
+        : reasoningContent;
   }
 
   // Message-level tool declarations: a system message carrying `tools` loads

@@ -182,19 +182,23 @@ async function collectAnthropicStreamParts(
 async function captureAnthropicMessages(
   model: string,
   history: Message[],
+  configure?: (provider: AnthropicChatProvider) => AnthropicChatProvider,
 ): Promise<Array<{ role: string; content: unknown[] }>> {
   let captured: Record<string, unknown> | undefined;
   const create = vi.fn().mockImplementation((params: unknown) => {
     captured = params as Record<string, unknown>;
     return Promise.resolve(makeAnthropicResponse(model));
   });
-  const provider = new AnthropicChatProvider({
+  let provider = new AnthropicChatProvider({
     model,
     apiKey: '',
     defaultMaxTokens: 1024,
     stream: false,
-    clientFactory: () => ({ messages: { create } }) as never,
+    clientFactory: () => ({ messages: { create }, beta: { messages: { create } } }) as never,
   });
+  if (configure !== undefined) {
+    provider = configure(provider);
+  }
 
   const response = await provider.generate('', [], history);
   await collectParts(response);
@@ -433,7 +437,7 @@ describe('withThinkingKeep (context_management)', () => {
     expect(body['betas']).toContain('context-management-2025-06-27');
   });
 
-  it('backfills empty thinking when compatible text history is replayed with keep all', async () => {
+  it('backfills non-empty thinking when compatible text history is replayed with keep all', async () => {
     const compatibleHistory: Message[] = [
       { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
       {
@@ -443,23 +447,22 @@ describe('withThinkingKeep (context_management)', () => {
       },
       { role: 'user', content: [{ type: 'text', text: 'Continue' }], toolCalls: [] },
     ];
-    const provider = createProvider('compatible-preserved-thinking-model')
-      .withThinking('max')
-      .withThinkingKeep('all');
-
-    const body = await captureBetaRequestBody(provider, '', [], compatibleHistory);
-    const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      compatibleHistory,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
 
     expect(messages[1]).toEqual({
       role: 'assistant',
       content: [
-        { type: 'thinking', thinking: '' },
+        { type: 'thinking', thinking: ' ' },
         { type: 'text', text: 'Hello' },
       ],
     });
   });
 
-  it('backfills empty thinking before a compatible assistant tool call with keep all', async () => {
+  it('backfills non-empty thinking before a compatible assistant tool call with keep all', async () => {
     const compatibleHistory: Message[] = [
       {
         role: 'assistant',
@@ -469,17 +472,16 @@ describe('withThinkingKeep (context_management)', () => {
         ],
       },
     ];
-    const provider = createProvider('compatible-preserved-thinking-model')
-      .withThinking('max')
-      .withThinkingKeep('all');
-
-    const body = await captureBetaRequestBody(provider, '', [], compatibleHistory);
-    const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      compatibleHistory,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
 
     expect(messages[0]).toEqual({
       role: 'assistant',
       content: [
-        { type: 'thinking', thinking: '' },
+        { type: 'thinking', thinking: ' ' },
         {
           type: 'tool_use',
           id: 'call_1',
@@ -491,7 +493,7 @@ describe('withThinkingKeep (context_management)', () => {
     });
   });
 
-  it('preserves one existing thinking block when compatible history uses keep all', async () => {
+  it('makes an existing unsigned empty thinking block non-empty when keep all is active', async () => {
     const compatibleHistory: Message[] = [
       {
         role: 'assistant',
@@ -502,20 +504,176 @@ describe('withThinkingKeep (context_management)', () => {
         toolCalls: [],
       },
     ];
-    const provider = createProvider('compatible-preserved-thinking-model')
-      .withThinking('max')
-      .withThinkingKeep('all');
-
-    const body = await captureBetaRequestBody(provider, '', [], compatibleHistory);
-    const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      compatibleHistory,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
 
     expect(messages[0]).toEqual({
       role: 'assistant',
       content: [
-        { type: 'thinking', thinking: '' },
+        { type: 'thinking', thinking: ' ' },
         { type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } },
       ],
     });
+  });
+
+  it('makes only the last unsigned block non-empty when every unsigned block is empty', async () => {
+    const compatibleHistory: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: '' },
+          { type: 'think', think: '' },
+          { type: 'text', text: 'Hello' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      compatibleHistory,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
+
+    expect(messages[0]!.content).toEqual([
+      { type: 'thinking', thinking: '' },
+      { type: 'thinking', thinking: ' ' },
+      { type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } },
+    ]);
+  });
+
+  it('backfills each empty assistant message independently when keep all is active', async () => {
+    const compatibleHistory: Message[] = [
+      { role: 'user', content: [{ type: 'text', text: 'First' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'First response' }],
+        toolCalls: [],
+      },
+      { role: 'user', content: [{ type: 'text', text: 'Second' }], toolCalls: [] },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'Second response' }],
+        toolCalls: [],
+      },
+      { role: 'user', content: [{ type: 'text', text: 'Third' }], toolCalls: [] },
+    ];
+
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      compatibleHistory,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
+
+    expect([messages[1]!.content[0], messages[3]!.content[0]]).toEqual([
+      { type: 'thinking', thinking: ' ' },
+      { type: 'thinking', thinking: ' ' },
+    ]);
+  });
+
+  it('preserves every unsigned block when one contains non-empty thinking', async () => {
+    const compatibleHistory: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: '' },
+          { type: 'think', think: 'reasoning' },
+          { type: 'text', text: 'Hello' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      compatibleHistory,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
+
+    expect(messages[0]!.content).toEqual([
+      { type: 'thinking', thinking: '' },
+      { type: 'thinking', thinking: 'reasoning' },
+      { type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } },
+    ]);
+  });
+
+  it('preserves an empty signed thinking block when keep all is active', async () => {
+    const compatibleHistory: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: '', encrypted: 'signature' },
+          { type: 'text', text: 'Hello' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      compatibleHistory,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
+
+    expect(messages[0]!.content).toEqual([
+      { type: 'thinking', thinking: '', signature: 'signature' },
+      { type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } },
+    ]);
+  });
+
+  it('makes the unsigned block non-empty when signed and unsigned thinking are empty', async () => {
+    const compatibleHistory: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: '', encrypted: 'signature' },
+          { type: 'think', think: '' },
+          { type: 'text', text: 'Hello' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      compatibleHistory,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
+
+    expect(messages[0]!.content).toEqual([
+      { type: 'thinking', thinking: '', signature: 'signature' },
+      { type: 'thinking', thinking: ' ' },
+      { type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } },
+    ]);
+  });
+
+  it('leaves unsigned empty thinking unchanged when signed thinking is non-empty', async () => {
+    const compatibleHistory: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: 'signed reasoning', encrypted: 'signature' },
+          { type: 'think', think: '' },
+          { type: 'text', text: 'Hello' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      compatibleHistory,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
+
+    expect(messages[0]!.content).toEqual([
+      { type: 'thinking', thinking: 'signed reasoning', signature: 'signature' },
+      { type: 'thinking', thinking: '' },
+      { type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } },
+    ]);
   });
 
   it('leaves missing compatible thinking absent when keep all is not enabled', async () => {
@@ -526,10 +684,11 @@ describe('withThinkingKeep (context_management)', () => {
         toolCalls: [],
       },
     ];
-    const provider = createProvider('compatible-preserved-thinking-model').withThinking('max');
-
-    const body = await captureRequestBody(provider, '', [], compatibleHistory);
-    const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      compatibleHistory,
+      (provider) => provider.withThinking('max'),
+    );
 
     expect(messages[0]).toEqual({
       role: 'assistant',
@@ -545,12 +704,11 @@ describe('withThinkingKeep (context_management)', () => {
         toolCalls: [],
       },
     ];
-    const provider = createProvider('compatible-preserved-thinking-model')
-      .withThinking('off')
-      .withThinkingKeep('all');
-
-    const body = await captureBetaRequestBody(provider, '', [], compatibleHistory);
-    const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      compatibleHistory,
+      (provider) => provider.withThinking('off').withThinkingKeep('all'),
+    );
 
     expect(messages[0]).toEqual({
       role: 'assistant',
@@ -568,10 +726,9 @@ describe('withThinkingKeep (context_management)', () => {
           toolCalls: [],
         },
       ];
-      const provider = createProvider(model).withThinking('max').withThinkingKeep('all');
-
-      const body = await captureBetaRequestBody(provider, '', [], claudeHistory);
-      const messages = body['messages'] as Array<{ role: string; content: unknown[] }>;
+      const messages = await captureAnthropicMessages(model, claudeHistory, (provider) =>
+        provider.withThinking('max').withThinkingKeep('all'),
+      );
 
       expect(messages[0]).toEqual({
         role: 'assistant',
