@@ -31,9 +31,10 @@
   - 现状：`useWorkspaceState.ts:2405-2439`（`openWorkspaceFile` / `revealWorkspaceFile` / `openInApp`）走 daemon REST 由 server 执行 OS 打开；UI 入口 `FilePreview.vue:493`、`OpenInMenu.vue`。
   - 做法：desktop 里 server 同进程，可主进程直接 `shell.openPath` / `shell.showItemInFolder`，省一跳。
 
-- [ ] **文件导出走保存对话框**
-  - 现状：会话导出（`useWorkspaceState.ts:2159`）、调试日志导出（`debug/trace.ts:608`）是 blob + `<a download>` 静默落盘。
-  - 做法：desktop 下用已暴露的 `kimi:dialog-save` 让用户选路径。
+- [x] **文件导出走保存对话框**（已完成，desktop 专属）
+  - 实现：新增 `src/main/downloads.ts`——主进程 `will-download` 统一接管所有下载（会话导出 zip、trace 日志、未来任何下载），`dialog.showSaveDialogSync` 弹系统保存框（预选"上次目录 + 建议文件名"，首次 `~/Downloads`），确认才 `setSavePath` 落盘、取消 `item.cancel()` 不落盘；`WeakSet` 防窗口重建重复注册（renderer 零改动、零 web 分叉，未走 `kimi:dialog-save` IPC）。
+  - 测试：`tests/main/downloads.test.ts`（6 用例：首次目录、写入选中路径、取消不落盘、记住目录、取消不清记忆、防重复安装）。
+  - 已知限制：目录记忆只存内存，重启 app 回 `~/Downloads`。
 
 - [ ] **确认弹窗原生化**
   - 现状：自研 Promise 化确认框 `useConfirmDialog.ts` + `ConfirmDialogHost.vue`。

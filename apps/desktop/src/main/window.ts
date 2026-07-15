@@ -1,9 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, dialog, shell } from 'electron';
 
 import { connect } from './connect';
+import { installDownloadHandler } from './downloads';
 import { installExternalLinkGuard } from './external-links';
 import type { RendererEventChannel } from './ipc-channels';
 
@@ -100,6 +101,18 @@ export function createWindow(): void {
   // system browser, not in frameless Electron windows; cross-origin
   // navigation of the main window is intercepted the same way.
   installExternalLinkGuard(win.webContents, (url) => shell.openExternal(url));
+  // Exports (session zip, trace logs) always prompt a native save dialog and
+  // remember the last used directory. The handler outlives this window (one
+  // install per session), so the dialog parent is resolved at call time.
+  installDownloadHandler(win.webContents.session, {
+    showSaveDialog: (opts) => {
+      const current = getMainWindow();
+      return current === null || current.isDestroyed()
+        ? dialog.showSaveDialogSync(opts)
+        : dialog.showSaveDialogSync(current, opts);
+    },
+    downloadsDir: app.getPath('downloads'),
+  });
   // Keep the window title as the product name. The web page sets document.title
   // ("Kimi Code Web"), which would otherwise replace it.
   win.webContents.on('page-title-updated', (event) => {
