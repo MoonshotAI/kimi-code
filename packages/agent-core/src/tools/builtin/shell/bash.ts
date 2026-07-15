@@ -363,9 +363,12 @@ export class BashTool implements BuiltinTool<BashInput> {
           timeoutMs,
           // Detaching (ctrl+b) moves a foreground command to the background;
           // give it the background default so it is not still bounded by the
-          // shorter foreground deadline (`undefined` = no timer when the
-          // config disables the background timeout).
-          detachTimeoutMs: this.backgroundTimeoutMs,
+          // shorter foreground deadline. When the config disables the
+          // background timeout this must be `0`, not `undefined`: `detach()`
+          // only re-arms when the value is defined, so `undefined` would keep
+          // the already-armed foreground deadline and kill the task anyway
+          // (`reset(0)` clears the timer and arms nothing).
+          detachTimeoutMs: this.backgroundTimeoutMs ?? 0,
           // A foreground command that hits its timeout is moved to the
           // background (re-armed to detachTimeoutMs) instead of being killed —
           // unless disabled via config, or background tooling is unavailable

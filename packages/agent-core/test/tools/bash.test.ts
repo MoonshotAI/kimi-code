@@ -908,7 +908,9 @@ describe('BashTool', () => {
     it('arms no timer when backgroundTimeoutS is 0', async () => {
       const manager = createBackgroundManager().manager;
       const options = await launchBackground(manager, { backgroundTimeoutS: 0 });
-      expect(options).toMatchObject({ timeoutMs: undefined, detachTimeoutMs: undefined });
+      // detachTimeoutMs must be `0` (clear-on-detach), not `undefined`
+      // (which would keep the armed foreground deadline).
+      expect(options).toMatchObject({ timeoutMs: undefined, detachTimeoutMs: 0 });
     });
 
     it('uses the configured seconds as the default deadline and detach re-arm', async () => {
@@ -927,6 +929,42 @@ describe('BashTool', () => {
       const manager = createBackgroundManager().manager;
       const options = await launchBackground(manager, { backgroundTimeoutS: 30 }, { disable_timeout: true });
       expect(options?.timeoutMs).toBeUndefined();
+    });
+
+    it('keeps a manually detached foreground command alive when backgroundTimeoutS is 0', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const manager = createBackgroundManager().manager;
+        const { proc, finish } = pendingProcess();
+        const execWithEnv = vi.fn().mockResolvedValue(proc);
+        const tool = bashTool(
+          createFakeKaos({ execWithEnv, osEnv: posixEnv }),
+          '/workspace',
+          manager,
+          { backgroundTimeoutS: 0 },
+        );
+        let foregroundTaskId: string | undefined;
+        const run = executeTool(tool, {
+          ...context({ command: 'sleep 10', timeout: 1 }),
+          onForegroundTaskStart: (taskId: string) => {
+            foregroundTaskId = taskId;
+          },
+        });
+        // Flush the async spawn + registration, then detach before the 1s
+        // foreground deadline fires.
+        await vi.advanceTimersByTimeAsync(0);
+        expect(foregroundTaskId).toBeDefined();
+        manager.detach(foregroundTaskId!);
+        const released = await run;
+        expect(released.output).toContain(foregroundTaskId);
+        // Without the clear-on-detach fix, the original 1s deadline would
+        // still fire here and settle the task as timed_out.
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(manager.getTask(foregroundTaskId!)?.status).toBe('running');
+        finish();
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it('tells the model there is no default timeout when backgroundTimeoutS is 0', () => {
