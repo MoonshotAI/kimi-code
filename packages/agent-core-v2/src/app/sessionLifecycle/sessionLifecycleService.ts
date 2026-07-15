@@ -183,10 +183,19 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
     void handle.accessor.get(ISessionSkillCatalog).ready;
-    // Kick agent-file discovery at materialize time too, mirroring the skill
-    // catalog: a resumed session's first turn should see file-defined agent
-    // types in the `Agent` tool description, not only from the second turn on.
-    void handle.accessor.get(ISessionAgentProfileCatalog).ready;
+    // Agent-file discovery is awaited (unlike the skill catalog above): it is
+    // local-fs and cheap, and a resumed session's first turn must see
+    // file-defined agent types in the `Agent` tool description. `ready` only
+    // rejects for a fatal explicit-source error — exactly the case that
+    // should fail fast here. On that failure the half-materialized handle is
+    // removed and disposed instead of poisoning the session cache.
+    try {
+      await handle.accessor.get(ISessionAgentProfileCatalog).ready;
+    } catch (error) {
+      this.sessions.delete(opts.sessionId);
+      handle.dispose();
+      throw error;
+    }
     await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
     // Force-instantiate the session-level eager services whose subscriptions
     // must exist before the first agent / turn (external hooks, cron).
