@@ -15,6 +15,7 @@
 - **不改包名**：`@moonshot-ai/kimi-web`、`@moonshot-ai/kimi-desktop`。
 - **不在本仓直接改 `kimi-code/` submodule 的内容**；kimi-code 侧改动在你的工作克隆里做（见"双仓工作流"），本仓只 bump submodule 指针。
 - **提交规范**：Conventional Commits；禁止任何 `Co-Authored-By` 署名；commit message、PR、代码、文档不得出现 agent / AI 工具的名称或身份信息。PR 描述用英文。
+- **stage 用显式路径，不用 `git add -A` / `git add .`**：本仓有构建产物目录（如 desktop 的 `desktop-dist`、已清理的 `web-dist`），gitignore 变动会让它们突然"显形"，`git add -A` 会误扫进 commit（2026-07 实际出过一次）。
 - Node `>=24.15.0`，pnpm `10.33.0`（`.npmrc` 设 `engine-strict=true`，Node 不符装不上依赖）。
 
 ## 目录地图
