@@ -9,7 +9,12 @@ const {
   startServerMock: vi.fn(),
   installProxyMock: vi.fn(),
   hostRequestHeadersSeedMock: vi.fn(() => 'HOST_HEADERS_SEED'),
-  createKimiDefaultHeadersMock: vi.fn(() => ({ 'User-Agent': 'kimi-desktop/1.2.3' })),
+  // Mirrors the real createKimiDefaultHeaders: X-Msh-Platform starts out as
+  // the CLI value so the test can verify the desktop override flips it.
+  createKimiDefaultHeadersMock: vi.fn(() => ({
+    'User-Agent': 'kimi-code-desktop/1.2.3',
+    'X-Msh-Platform': 'kimi_code_cli',
+  })),
 }));
 
 vi.mock('@moonshot-ai/kap-server', () => ({
@@ -48,7 +53,7 @@ describe('startDesktopServer', () => {
 
     const handle = await startDesktopServer({
       webAssetsDir: '/app/web-dist',
-      identity: { userAgentProduct: 'kimi-desktop', version: '1.2.3' },
+      identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
     });
 
     expect(installProxyMock).toHaveBeenCalledOnce();
@@ -64,11 +69,12 @@ describe('startDesktopServer', () => {
     // `coreProcessOptions`); no serviceOverrides / process.exit hack remains.
     expect(createKimiDefaultHeadersMock).toHaveBeenCalledWith({
       homeDir: '/tmp/kimi-test',
-      userAgentProduct: 'kimi-desktop',
+      userAgentProduct: 'kimi-code-desktop',
       version: '1.2.3',
     });
     expect(hostRequestHeadersSeedMock).toHaveBeenCalledWith({
-      'User-Agent': 'kimi-desktop/1.2.3',
+      'User-Agent': 'kimi-code-desktop/1.2.3',
+      'X-Msh-Platform': 'kimi_code_desktop',
     });
     expect(args.seeds).toBe('HOST_HEADERS_SEED');
 

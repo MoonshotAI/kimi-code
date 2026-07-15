@@ -3,7 +3,7 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <!-- Electron/V8 and the bundled Node SEA both need JIT pages. -->
+  <!-- Electron/V8 needs JIT pages. -->
   <key>com.apple.security.cs.allow-jit</key>
   <true/>
 
@@ -11,9 +11,9 @@
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
   <true/>
 
-  <!-- The bundled server dlopen's koffi.node / clipboard.node at runtime;
-       they are third-party and not signed by our Team. Without this the
-       hardened runtime rejects them. (Same as the TUI's native build.) -->
+  <!-- The in-process server dlopen's node-pty (pty.node) at runtime; it is a
+       third-party native module and not signed by our Team. Without this the
+       hardened runtime rejects it. -->
   <key>com.apple.security.cs.disable-library-validation</key>
   <true/>
 

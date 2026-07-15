@@ -17,8 +17,9 @@ declare global {
   // plugin is not mounted.
   const __KIMI_DEV_BACKENDS__: { default: string; multi: string };
 
-  // Injected by Vite `define` from apps/kimi-web/package.json.
-  const __KIMI_WEB_VERSION__: string;
+  // Injected by Vite `define`: the client version, from apps/web/package.json
+  // (see vite.config.ts).
+  const __KIMI_CLIENT_VERSION__: string;
 
   // Injected by Vite `define`: true only in the web bundle embedded in the Kimi
   // Desktop app. Gates the internal-build banner (see InternalBuildBanner.vue).

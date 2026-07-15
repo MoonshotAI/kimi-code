@@ -8,3 +8,4 @@ resources-stage
 coverage
 .vite
 .kimi-code/local.toml
+.ci-signing/

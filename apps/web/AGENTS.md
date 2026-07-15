@@ -56,6 +56,6 @@ All via `pnpm --filter @moonshot-ai/kimi-web …`:
 
 - **Do not depend on `@moonshot-ai/agent-core`** (mirrors the CLI/SDK rule). The web app is decoupled from core/protocol; wire types are re-implemented locally in `src/api/daemon/wire.ts`. Keep it that way.
 - **Same-origin by default:** the browser only talks to its own origin; Vite proxies `/api/v1` for both HTTP and WS. Set `VITE_KIMI_SERVER_HTTP_URL` only when you intentionally want direct (CORS) mode.
-- Vite-injected globals (`__KIMI_DEV_PROXY_TARGET__`, `__KIMI_WEB_VERSION__`, `__KIMI_WEB_COMMIT__`) are declared in `src/env.d.ts` and defined in `vite.config.ts`. Do not hand-edit `dist/`.
+- Vite-injected globals (`__KIMI_DEV_PROXY_TARGET__`, `__KIMI_CLIENT_VERSION__`) are declared in `src/env.d.ts` and defined in `vite.config.ts`. Do not hand-edit `dist/`.
 - **Theming:** the root element carries `data-color-scheme` (`light` | `dark` | `system`); react to it through `useIsDark()`, not by reading the DOM directly.
 - Keep the Vite **dev** proxy and **`preview`** proxy in sync — both are defined in `vite.config.ts`.

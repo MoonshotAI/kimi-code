@@ -14,6 +14,8 @@ import {
   type KimiHostIdentity,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import { DESKTOP_MSH_PLATFORM } from '../shared/identity';
+
 export interface DesktopServerHandle {
   readonly origin: string;
   readonly port: number;
@@ -35,6 +37,16 @@ export interface StartDesktopServerOptions {
 }
 
 const DESKTOP_LOCK_FILE = 'server-desktop.lock';
+
+// The desktop host identifies itself to the upstream model API as its own
+// platform. `createKimiDefaultHeaders` hardcodes X-Msh-Platform to the CLI's
+// `kimi_code_cli`, so we override the header after building it (value lives
+// in src/shared/identity.ts).
+function desktopHostHeaders(identity: KimiHostIdentity): Record<string, string> {
+  const headers = createKimiDefaultHeaders({ homeDir: resolveKimiHome(), ...identity });
+  headers['X-Msh-Platform'] = DESKTOP_MSH_PLATFORM;
+  return headers;
+}
 
 function desktopLockPath(): string {
   return join(resolveKimiHome(), DESKTOP_LOCK_FILE);
@@ -75,9 +87,7 @@ export async function startDesktopServer(
     corsOrigins: ['app://renderer'],
     // Host identity is seeded as the full Kimi request headers (v2 dropped
     // `coreProcessOptions`); the upstream model API reads identity from these.
-    seeds: hostRequestHeadersSeed(
-      createKimiDefaultHeaders({ homeDir: resolveKimiHome(), ...opts.identity }),
-    ),
+    seeds: hostRequestHeadersSeed(desktopHostHeaders(opts.identity)),
   });
 
   return {

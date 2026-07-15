@@ -18,6 +18,7 @@ import { serverTokenPath } from '@moonshot-ai/kap-server';
 import { startDesktopServer, type DesktopServerHandle } from './server';
 import { registerRendererScheme, registerRendererProtocol, rendererUrl } from './protocol';
 import { resolveConnectTarget } from './connect-target';
+import { DESKTOP_PRODUCT_NAME } from '../shared/identity';
 
 let mainWindow: BrowserWindow | null = null;
 let serverHandle: DesktopServerHandle | null = null;
@@ -126,7 +127,7 @@ function errorHtml(message: string): string {
     <h1>无法启动本地服务</h1>
     <p>${safe}</p>
     <p>查看日志：<code>${serverLogPath()}</code></p>
-    <p>菜单 → Kimi Code Desktop → 重试连接，或先检查日志。</p>`;
+    <p>菜单 → Kimi Code → 重试连接，或先检查日志。</p>`;
 }
 
 // --- connect flow -------------------------------------------------------------
@@ -145,7 +146,7 @@ async function connect(win: BrowserWindow): Promise<void> {
     } else {
       serverHandle = await startDesktopServer({
         webAssetsDir: rendererDistRoot(),
-        identity: { userAgentProduct: 'kimi-desktop', version: app.getVersion() },
+        identity: { userAgentProduct: DESKTOP_PRODUCT_NAME, version: app.getVersion() },
       });
       ({ origin, token } = serverHandle);
       process.stdout.write(`[kimi-desktop] connected to ${origin}\n`);
@@ -168,7 +169,7 @@ function createWindow(): void {
     minWidth: 720,
     minHeight: 480,
     backgroundColor: '#0b0b0c',
-    title: 'Kimi Code Desktop',
+    title: 'Kimi Code',
     // macOS: hide the native title bar and float the traffic lights over the
     // content; the web UI reserves a draggable strip at the top to clear them.
     // 'hidden' (not 'hiddenInset') so trafficLightPosition can pin the lights
@@ -274,7 +275,7 @@ function registerGlobalShortcuts(): void {
 function buildMenu(): void {
   const isMac = process.platform === 'darwin';
   const appMenu: MenuItemConstructorOptions = {
-    label: 'Kimi Code Desktop',
+    label: 'Kimi Code',
     submenu: [
       ...(isMac ? [{ role: 'about' as const }, { type: 'separator' as const }] : []),
       {

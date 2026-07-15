@@ -1,0 +1,102 @@
+# Kimi Code 桌面端打包流水线。
+#
+# 当前阶段：全部 job 手动触发（在 Pipeline 页面点击运行），产物只进 GitLab
+# artifacts（保留 7 天），不做 Release / OSS 分发，不做自动更新。
+#
+# 使用前需要确认的外部条件：
+#
+# 1. Runner tags：下方 tags 是占位值，替换为实际 runner 的 tag。
+#    - macOS runner 需预装 Xcode（xcrun/notarytool）、Node >= 24.15.0、
+#      pnpm 10.33.0，且允许钥匙串（security/codesign）操作。
+#    - 所有 runner 需要能访问 github.com（kimi-code 是 GitHub 上的公开
+#      submodule，GIT_SUBMODULE_STRATEGY: recursive 会拉取它）。
+#
+# 2. macOS 签名所需的 CI/CD 变量（Settings -> CI/CD -> Variables）：
+#      APPLE_CERTIFICATE_P12        base64 编码的 Developer ID Application .p12
+#      APPLE_CERTIFICATE_PASSWORD   .p12 导出密码
+#      APPLE_NOTARIZATION_KEY_P8    base64 编码的 App Store Connect API Key (.p8)
+#      APPLE_NOTARIZATION_KEY_ID    API Key ID
+#      APPLE_NOTARIZATION_ISSUER_ID Issuer ID (UUID)
+#    建议 masked；若值不满足 masking 规则则至少保持 protected。
+#    注意：protected 变量只在 protected branch/tag 的 pipeline 里可见——
+#    在普通特性分支上手动测试签名时，要么把该分支设为 protected，
+#    要么临时取消变量的 protected 限制。
+#
+# 3. 触发方式：任意分支 push 后都会产生 pipeline，4 个打包 job 处于手动状态，
+#    点击即跑。默认 macOS 签名 + 公证；在 "Run pipeline" 页面传变量
+#    DESKTOP_SIGN_MACOS=false 可出未签名包（win/linux 始终不签名）。
+
+workflow:
+  rules:
+    - when: always
+
+stages:
+  - package
+
+variables:
+  DESKTOP_SIGN_MACOS: "true"
+  DESKTOP_DIST_DIR: apps/desktop/dist-app
+
+.desktop-package:
+  stage: package
+  when: manual
+  variables:
+    GIT_SUBMODULE_STRATEGY: recursive
+    # mac 签名 job 会在 before_script 里把它覆盖为 true（导出环境变量）。
+    CSC_IDENTITY_AUTO_DISCOVERY: "false"
+  before_script:
+    - node --version
+    - pnpm --version
+    - pnpm install --frozen-lockfile
+  script:
+    - pnpm --filter @moonshot-ai/kimi-desktop run dist
+  artifacts:
+    expire_in: 7 days
+    paths:
+      - ${DESKTOP_DIST_DIR}/*.dmg
+      - ${DESKTOP_DIST_DIR}/*.zip
+      - ${DESKTOP_DIST_DIR}/*.exe
+      - ${DESKTOP_DIST_DIR}/*.AppImage
+      - ${DESKTOP_DIST_DIR}/*.deb
+
+package:macos-arm64:
+  extends: .desktop-package
+  tags:
+    - macos-arm64 # TODO: 替换为实际 macOS arm64 runner tag
+  before_script:
+    - source apps/desktop/scripts/ci/macos-sign-setup.sh
+    - node --version
+    - pnpm --version
+    - pnpm install --frozen-lockfile
+  after_script:
+    - bash apps/desktop/scripts/ci/macos-sign-cleanup.sh || true
+  artifacts:
+    name: kimi-desktop-darwin-arm64
+
+package:macos-x64:
+  extends: .desktop-package
+  tags:
+    - macos-x64 # TODO: 替换为实际 macOS x64 runner tag
+  before_script:
+    - source apps/desktop/scripts/ci/macos-sign-setup.sh
+    - node --version
+    - pnpm --version
+    - pnpm install --frozen-lockfile
+  after_script:
+    - bash apps/desktop/scripts/ci/macos-sign-cleanup.sh || true
+  artifacts:
+    name: kimi-desktop-darwin-x64
+
+package:windows-x64:
+  extends: .desktop-package
+  tags:
+    - windows # TODO: 替换为实际 Windows runner tag
+  artifacts:
+    name: kimi-desktop-win32-x64
+
+package:linux-x64:
+  extends: .desktop-package
+  tags:
+    - linux # TODO: 替换为实际 Linux runner tag
+  artifacts:
+    name: kimi-desktop-linux-x64
