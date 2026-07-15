@@ -376,4 +376,24 @@ describe('AcpServer kimi/session/steer', () => {
       client.extMethod('kimi/session/steer', { sessionId, prompt: [] }),
     ).rejects.toMatchObject({ code: -32602 });
   });
+
+  it('rejects malformed prompt blocks with invalidParams', async () => {
+    const { harness } = makeSteerHarness();
+    const client = wireUp(harness);
+
+    const { sessionId } = await client.newSession({ cwd: '/tmp/work', mcpServers: [] });
+
+    // null element.
+    await expect(
+      client.extMethod('kimi/session/steer', { sessionId, prompt: [null] }),
+    ).rejects.toMatchObject({ code: -32602 });
+    // text block without text.
+    await expect(
+      client.extMethod('kimi/session/steer', { sessionId, prompt: [{ type: 'text' }] }),
+    ).rejects.toMatchObject({ code: -32602 });
+    // primitive element.
+    await expect(
+      client.extMethod('kimi/session/steer', { sessionId, prompt: ['text'] }),
+    ).rejects.toMatchObject({ code: -32602 });
+  });
 });

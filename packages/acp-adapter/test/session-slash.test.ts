@@ -60,12 +60,13 @@ function makeInMemoryStreamPair(): {
  * `getContext` feeds the `/undo` pre-check: `opts.history` defaults to
  * three plain user messages (all real user input — no `origin`), so
  * `/undo` and `/undo 3` pass the pre-check unless a test overrides the
- * history to exercise a refusal.
+ * history to exercise a refusal. `opts.undoError` makes `undoHistory`
+ * reject after recording the call, for the post-precheck race fallback.
  */
 function makeFakeSession(
   sessionId: string,
   script: readonly Event[],
-  opts?: { history?: readonly ContextMessage[] },
+  opts?: { history?: readonly ContextMessage[]; undoError?: Error },
 ): {
   session: Session;
   calls: {
@@ -104,6 +105,7 @@ function makeFakeSession(
     },
     undoHistory: async (count: number) => {
       calls.undoHistory.push(count);
+      if (opts?.undoError !== undefined) throw opts.undoError;
     },
     getContext: async () => ({ history, tokenCount: 0 }),
     cancel: async () => undefined,
@@ -568,6 +570,177 @@ describe('AcpSession slash routing', () => {
         (t) =>
           t ===
           'Cannot undo 3 prompts; only 2 prompts can be undone in the active context after the last compaction.',
+      ),
+    ).toBe(true);
+  });
+
+  it('surfaces the kernel "Cannot undo" race error verbatim, without the /undo failed wrapper', async () => {
+    const sessionId = 'sess-slash-undo-race';
+    // Pre-check passes (3 undoable prompts), but the kernel throws its
+    // REQUEST_INVALID guard anyway — a compaction (or concurrent undo)
+    // landed between the pre-check and the kernel call. The adapter must
+    // relay the kernel's wording so the user sees what was actually
+    // undoable, not the generic `/undo failed:` wrapper.
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)], {
+      undoError: new Error(
+        'Cannot undo 3 prompts; only 2 prompts can be undone in the active context.',
+      ),
+    });
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/undo 2')] });
+
+    expect(calls.undoHistory).toEqual([2]);
+    const texts = collecting.updates
+      .filter(
+        (n) =>
+          (n.update as { sessionUpdate?: string }).sessionUpdate === 'agent_message_chunk',
+      )
+      .map((n) => (n.update as { content?: { text?: string } }).content?.text ?? '');
+    expect(
+      texts.some(
+        (t) => t === 'Cannot undo 3 prompts; only 2 prompts can be undone in the active context.',
+      ),
+    ).toBe(true);
+    expect(texts.some((t) => t.startsWith('/undo failed:'))).toBe(false);
+    expect(texts.some((t) => t.includes('Undid the last'))).toBe(false);
+  });
+
+  it('wraps non-"Cannot undo" undoHistory failures with /undo failed:', async () => {
+    const sessionId = 'sess-slash-undo-boom';
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)], {
+      undoError: new Error('boom'),
+    });
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/undo 2')] });
+
+    expect(calls.undoHistory).toEqual([2]);
+    const texts = collecting.updates
+      .filter(
+        (n) =>
+          (n.update as { sessionUpdate?: string }).sessionUpdate === 'agent_message_chunk',
+      )
+      .map((n) => (n.update as { content?: { text?: string } }).content?.text ?? '');
+    expect(texts.some((t) => t === '/undo failed: boom')).toBe(true);
+  });
+
+  it('counts only real prompts for `/undo N`: injections are skipped, not counted or blocking', async () => {
+    const sessionId = 'sess-slash-undo-injection';
+    const userMessage = (text: string): ContextMessage =>
+      ({
+        role: 'user',
+        content: [{ type: 'text', text }],
+      }) as unknown as ContextMessage;
+    const injection = (role: 'user' | 'assistant', text: string): ContextMessage =>
+      ({
+        role,
+        content: [{ type: 'text', text }],
+        origin: { kind: 'injection' },
+      }) as unknown as ContextMessage;
+    // Three real prompts interleaved with injections: `/undo 3` must
+    // pass the pre-check — injections neither count towards N nor stop
+    // the walk.
+    const history = [
+      userMessage('user message 1'),
+      injection('user', 'injected reminder'),
+      userMessage('user message 2'),
+      injection('assistant', 'injected notice'),
+      userMessage('user message 3'),
+    ] as unknown as readonly ContextMessage[];
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)], { history });
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/undo 3')] });
+
+    expect(calls.undoHistory).toEqual([3]);
+    const texts = collecting.updates
+      .filter(
+        (n) =>
+          (n.update as { sessionUpdate?: string }).sessionUpdate === 'agent_message_chunk',
+      )
+      .map((n) => (n.update as { content?: { text?: string } }).content?.text ?? '');
+    expect(texts.some((t) => t.includes('Undid the last 3 turns.'))).toBe(true);
+  });
+
+  it('refuses `/undo N` against an injection-only tail with the real-prompt count', async () => {
+    const sessionId = 'sess-slash-undo-injection-short';
+    // Two real prompts plus injections: `/undo 3` must be refused with
+    // the count of real prompts (2), injections contributing nothing.
+    const history = [
+      { role: 'user', content: [{ type: 'text', text: 'user message 1' }] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'injected reminder' }],
+        origin: { kind: 'injection' },
+      },
+      { role: 'user', content: [{ type: 'text', text: 'user message 2' }] },
+      {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'injected notice' }],
+        origin: { kind: 'injection' },
+      },
+    ] as unknown as readonly ContextMessage[];
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)], { history });
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/undo 3')] });
+
+    expect(calls.undoHistory).toEqual([]);
+    const texts = collecting.updates
+      .filter(
+        (n) =>
+          (n.update as { sessionUpdate?: string }).sessionUpdate === 'agent_message_chunk',
+      )
+      .map((n) => (n.update as { content?: { text?: string } }).content?.text ?? '');
+    expect(
+      texts.some(
+        (t) =>
+          t === 'Cannot undo 3 prompts; only 2 prompts can be undone in the active context.',
       ),
     ).toBe(true);
   });

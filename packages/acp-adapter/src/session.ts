@@ -800,14 +800,24 @@ export class AcpSession {
    * `{ steered: false, reason: 'no_active_turn' }` so the client can
    * fall back to a normal `session/prompt`.
    *
-   * The no-active-turn signal is the adapter-tracked
-   * {@link currentTurnId} — the same guard `/undo` uses. It must live
-   * adapter-side because the embedded v1 kernel's `Turn.steer` never
-   * rejects for a missing turn: with no active turn it LAUNCHES a fresh
-   * one, which is exactly what this method's contract promises not to
-   * do. The `prompt.not_found` catch is forward-compat for hosts whose
-   * steer RPC rejects with that code (the v2/protocol stack's
-   * PROMPT_NOT_FOUND) instead of launching.
+   * The no-active-turn gate is best-effort, not a closed-loop
+   * guarantee. It reads the adapter-tracked {@link currentTurnId} — the
+   * same guard `/undo` uses — because the embedded v1 kernel has no
+   * idle-rejecting steer variant: with no active turn its `Turn.steer`
+   * LAUNCHES a fresh one, which is exactly what this method's contract
+   * promises not to do. The gate is re-checked after the
+   * image-compression await to shrink the race window, but the RPC hop
+   * into the kernel leaves a residual gap that cannot be closed
+   * adapter-side. The `prompt.not_found` catch only fires for hosts on
+   * the v2/protocol stack, whose steer RPC rejects with that code
+   * (PROMPT_NOT_FOUND) instead of launching.
+   *
+   * Known blind spot: `currentTurnId` tracks client-prompted turns
+   * only. Turns the kernel starts on its own — e.g. from background
+   * task or cron completion notifications — are invisible to the
+   * adapter, so steer can report `no_active_turn` while such a turn is
+   * running. Closing that gap needs a kernel-side turn-state query
+   * (follow-up).
    */
   async steer(
     blocks: readonly ContentBlock[],
@@ -829,6 +839,14 @@ export class AcpSession {
                 track(event, properties === undefined ? undefined : { ...properties }),
             },
     });
+    // Re-check after the compression await: image payloads make that
+    // I/O window milliseconds wide, and a turn ending inside it would
+    // otherwise hit the v1 kernel's launch-a-fresh-turn path while this
+    // method still reports `{ steered: true }`. The RPC hop below keeps
+    // a theoretical gap that cannot be closed adapter-side.
+    if (this.currentTurnId === undefined) {
+      return { steered: false, reason: 'no_active_turn' };
+    }
     try {
       await this.session.steer(parts);
     } catch (error) {

@@ -902,6 +902,23 @@ export class AcpServer implements Agent {
         'kimi/session/steer requires a non-empty prompt array of content blocks',
       );
     }
+    // Element-level guard so malformed blocks fail as invalidParams here
+    // instead of surfacing as a downstream TypeError (internal error).
+    for (const block of prompt as readonly unknown[]) {
+      const candidate = block as { type?: unknown; text?: unknown } | null;
+      const valid =
+        candidate !== null &&
+        typeof candidate === 'object' &&
+        typeof candidate.type === 'string' &&
+        candidate.type.length > 0 &&
+        (candidate.type !== 'text' || typeof candidate.text === 'string');
+      if (!valid) {
+        throw RequestError.invalidParams(
+          undefined,
+          'kimi/session/steer prompt blocks must be objects with a string type (text blocks require string text)',
+        );
+      }
+    }
     return acpSession.steer(prompt as readonly ContentBlock[]);
   }
 
