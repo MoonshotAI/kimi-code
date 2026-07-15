@@ -38,6 +38,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { IAgentLLMRequesterService, type LLMRequestFinish } from '#/agent/llmRequester/llmRequester';
+import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
@@ -103,6 +104,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private activeTurnJob: TurnJob | undefined;
   private nextReservedTurnId: number | undefined;
   private readonly settleWaiters: Array<() => void> = [];
+  private activeRequestTrace: LLMRequestTrace | undefined;
+  private lastRequestTraceId: string | undefined;
   private disposing = false;
 
   constructor(
@@ -184,6 +187,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       activeTurnId: this.activeTurnJob?.turn.id,
       pendingTurnIds: this.pendingTurns.map((job) => job.turn.id),
       hasPendingRequests: this.hasPendingRequests(),
+      activeTraceId: this.activeRequestTrace?.traceId,
     };
   }
 
@@ -365,7 +369,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     ready: ReturnType<typeof createControlledPromise<void>>,
   ): Promise<TurnResult> {
     const startedAt = Date.now();
-    this.telemetryContext.set({ turn_id: turn.id, trace_id: undefined });
+    this.telemetryContext.set({ turn_id: turn.id });
     const telemetryContext = this.telemetryContext.get();
     const turnTelemetry = this.telemetry.withContext(telemetryContext);
     const { mode, provider_type, protocol } = telemetryContext;
@@ -385,7 +389,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     } finally {
       this.settleTurnReady(ready, result);
       this.releaseActiveTurn(turn, result);
-      const traceId = this.telemetryContext.get().trace_id;
+      const traceId =
+        result?.type === 'completed'
+          ? this.lastRequestTraceId
+          : this.activeRequestTrace?.traceId;
       if (result !== undefined) {
         const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
         this.eventBus.publish({
@@ -419,6 +426,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         trace_id: traceId,
       };
       turnTelemetry.track2('turn_ended', ended);
+      this.activeRequestTrace = undefined;
+      this.lastRequestTraceId = undefined;
       this.pumpTurns();
     }
   }
@@ -682,16 +691,17 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     stepUuid: string,
     onStarted: ((step: number) => void) | undefined,
   ): Promise<StepExecutionResult> {
+    this.activeRequestTrace = undefined;
     await this.hooks.onWillBeginStep.run({ turnId, step: currentStep, signal });
     const markStepStarted = this.beginStep(turnId, signal, currentStep, stepUuid, onStarted);
-    const response = await this.llmRequester.request(
-      {
-        source: { type: 'turn', turnId, step: currentStep },
-        onTraceId: (traceId) => this.telemetryContext.set({ trace_id: traceId }),
-      },
+    const request = this.llmRequester.start(
+      { source: { type: 'turn', turnId, step: currentStep } },
       this.createStreamPartHandler(turnId, markStepStarted),
       signal,
     );
+    this.activeRequestTrace = request.trace;
+    const response = await request.result;
+    this.lastRequestTraceId = request.trace.traceId;
     this.appendResponseContent(turnId, currentStep, stepUuid, response);
     const finishReason = await this.executeStepTools(
       turnId,
@@ -699,6 +709,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       currentStep,
       stepUuid,
       response,
+      request.trace,
     );
     this.finishStep(turnId, signal, currentStep, stepUuid, response, finishReason, markStepStarted);
     const hookStopTurn = await this.runAfterStep(
@@ -758,6 +769,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     currentStep: number,
     stepUuid: string,
     response: LLMRequestFinish,
+    trace: LLMRequestTrace,
   ): Promise<FinishReason> {
     let finishReason = response.providerFinishReason ?? 'completed';
     if (response.message.toolCalls.length === 0) {
@@ -768,6 +780,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     for await (const toolResult of this.toolExecutor.execute(response.message.toolCalls, {
       signal,
       turnId,
+      trace,
       onToolCall: ({ toolCallId, name, args }) => {
         const callUuid = randomUUID();
         toolCallUuids.set(toolCallId, callUuid);

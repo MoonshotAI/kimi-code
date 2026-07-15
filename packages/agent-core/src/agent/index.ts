@@ -511,7 +511,7 @@ export class Agent {
         if (this.turn.hasActiveTurn) {
           this.telemetry.track('cancel', {
             from: 'streaming',
-            trace_id: this.turn.currentTraceId(),
+            trace_id: this.turn.activeRequestTraceId(),
           });
         }
         this.turn.cancel(payload.turnId);
@@ -585,11 +585,7 @@ export class Agent {
         if (this.fullCompaction.isCompacting) {
           this.telemetry.track('cancel', {
             from: 'compacting',
-            // The in-flight summarizer request's trace id when its headers
-            // have arrived; otherwise the turn's most recent request (the
-            // request-building gap). lastTraceId is reset at every round
-            // start, so it can never leak a previous compaction's value.
-            trace_id: this.fullCompaction.lastTraceId ?? this.turn.currentTraceId(),
+            trace_id: this.fullCompaction.lastTraceId,
           });
         }
         this.fullCompaction.cancel();

@@ -20,7 +20,7 @@ export interface GenerateResult {
   readonly usage: TokenUsage | null;
   readonly finishReason: FinishReason | null;
   readonly rawFinishReason: string | null;
-  readonly traceId: string | null;
+  readonly traceId?: string | null;
 }
 
 export interface GenerateCallbacks {
@@ -51,7 +51,9 @@ export async function generate(
 
   options?.onRequestStart?.();
   const stream = await provider.generate(systemPrompt, wireTools, history, options);
-  options?.onTraceId?.(stream.traceId);
+  if (stream.traceId !== undefined) {
+    options?.onTraceId?.(stream.traceId);
+  }
 
   await throwIfAborted(options?.signal, stream);
 
@@ -155,14 +157,17 @@ export async function generate(
     }
   }
 
-  return {
+  const result: GenerateResult = {
     id: stream.id,
     message,
     usage: stream.usage,
     finishReason: stream.finishReason,
     rawFinishReason: stream.rawFinishReason,
-    traceId: stream.traceId,
   };
+  if (stream.traceId !== undefined) {
+    return { ...result, traceId: stream.traceId };
+  }
+  return result;
 }
 
 type CancelableStream = StreamedMessage & {

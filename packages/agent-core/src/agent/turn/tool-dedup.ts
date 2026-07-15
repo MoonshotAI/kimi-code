@@ -1,6 +1,7 @@
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { TelemetryClient } from '../../telemetry';
+import type { LLMRequestTrace } from '../../loop/llm';
 import type { ExecutableToolResult } from '../../loop/types';
 
 import { canonicalTelemetryArgs } from './canonical-args';
@@ -129,18 +130,16 @@ export class ToolCallDeduplicator {
   private consecutiveKey: string | null = null;
   private consecutiveCount = 0;
   private readonly telemetry: TelemetryClient | undefined;
-  private readonly getTraceId: (() => string | undefined) | undefined;
+  private requestTrace: LLMRequestTrace | undefined;
 
   constructor(options?: {
     readonly telemetry?: TelemetryClient | undefined;
-    /** Latest trace id (`x-trace-id`) of the turn's provider request, attached to repeat telemetry. */
-    readonly getTraceId?: () => string | undefined;
   }) {
     this.telemetry = options?.telemetry;
-    this.getTraceId = options?.getTraceId;
   }
 
-  beginStep(): void {
+  beginStep(trace?: LLMRequestTrace): void {
+    this.requestTrace = trace;
     for (const deferred of this.stepDeferreds.values()) {
       deferred.resolve({
         output: 'Tool call deduplicated but original result was lost',
@@ -253,7 +252,7 @@ export class ToolCallDeduplicator {
         tool_name: toolName,
         repeat_count: streak,
         action,
-        trace_id: this.getTraceId?.(),
+        trace_id: this.requestTrace?.traceId,
       });
     }
 

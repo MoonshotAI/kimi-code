@@ -98,7 +98,6 @@ describe('KosongLLM response id', () => {
       usage: emptyUsage(),
       finishReason: 'completed',
       rawFinishReason: 'stop',
-      traceId: null,
     });
     const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
 
@@ -135,7 +134,6 @@ describe('KosongLLM stream timing', () => {
         usage: emptyUsage(),
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       };
     };
     const llm = new KosongLLM({
@@ -177,7 +175,6 @@ describe('KosongLLM stream timing', () => {
         usage: emptyUsage(),
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       };
     };
     const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
@@ -216,7 +213,6 @@ describe('KosongLLM stream timing', () => {
         usage: emptyUsage(),
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       };
     };
     const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
@@ -251,7 +247,6 @@ describe('KosongLLM stream timing', () => {
         usage: emptyUsage(),
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       };
     };
     const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
@@ -284,7 +279,6 @@ describe('KosongLLM stream timing', () => {
         usage: emptyUsage(),
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       };
     };
     const llm = new KosongLLM({ provider, systemPrompt: 'system', generate });
@@ -319,7 +313,6 @@ describe('KosongLLM completion budget', () => {
         usage: emptyUsage(),
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       };
     };
     const llm = new KosongLLM({
@@ -361,7 +354,6 @@ async function collectToolCallDeltas(
       usage: emptyUsage(),
       finishReason: 'tool_calls',
       rawFinishReason: 'tool_calls',
-      traceId: null,
     };
   };
   const llm = new KosongLLM({
@@ -478,7 +470,6 @@ describe('downgradeUnsupportedMedia', () => {
         usage: emptyUsage(),
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       };
     };
     const llm = new KosongLLM({

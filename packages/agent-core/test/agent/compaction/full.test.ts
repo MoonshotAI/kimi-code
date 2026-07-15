@@ -411,6 +411,7 @@ describe('FullCompaction', () => {
   });
 
   it('force-refreshes OAuth credentials on compaction 401 and treats replay 401 as provider auth error', async () => {
+    const records: TelemetryRecord[] = [];
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
     const oauthOptions = oauthTestAgentOptions(async (options) => {
@@ -427,11 +428,17 @@ describe('FullCompaction', () => {
     ) => {
       authKeys.push(options?.auth?.apiKey ?? '<missing>');
       if (authKeys.length <= 2) {
-        throw new APIStatusError(401, 'Unauthorized', 'req-compact-401');
+        throw new APIStatusError(
+          401,
+          'Unauthorized',
+          'req-compact-401',
+          null,
+          authKeys.length === 1 ? 'trace-compact-initial-401' : 'trace-compact-replay-401',
+        );
       }
       return textResult('Recovered compacted summary.');
     };
-    const ctx = testAgent({ ...oauthOptions, generate });
+    const ctx = testAgent({ ...oauthOptions, generate, telemetry: recordingTelemetry(records) });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -456,6 +463,9 @@ describe('FullCompaction', () => {
     );
     expect(authKeys).toEqual(['fresh-token', 'forced-refresh-token']);
     expect(tokenCalls).toEqual([undefined, true]);
+    expect(
+      records.find((record) => record.event === 'compaction_failed')?.properties?.['trace_id'],
+    ).toBe('trace-compact-replay-401');
     expect(ctx.compactHistory()).toEqual([
       { role: 'user', text: 'old user one' },
       { role: 'assistant', text: 'old assistant one' },
@@ -1052,7 +1062,6 @@ describe('FullCompaction', () => {
         ...textResult('Partial summary.'),
         finishReason: 'truncated',
         rawFinishReason: 'length',
-        traceId: null,
       };
     };
     const ctx = testAgent({ generate, compactionStrategy: alwaysCompactOnce });
@@ -2504,7 +2513,6 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     },
     finishReason: 'completed',
     rawFinishReason: 'stop',
-    traceId: null,
   };
 }
 
@@ -2518,7 +2526,6 @@ function mockStreamedMessage(parts: readonly StreamedMessagePart[]): StreamedMes
     },
     finishReason: null,
     rawFinishReason: null,
-    traceId: null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;

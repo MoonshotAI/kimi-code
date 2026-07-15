@@ -176,7 +176,6 @@ describe('ConfigState model capabilities', () => {
         usage: emptyUsage(),
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       };
     };
 
@@ -298,7 +297,6 @@ describe('ConfigState thinking clamp for always-thinking models', () => {
           usage: emptyUsage(),
           finishReason: 'completed',
           rawFinishReason: 'stop',
-          traceId: null,
         };
       }),
     );
@@ -480,7 +478,6 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
           usage: emptyUsage(),
           finishReason: 'completed',
           rawFinishReason: 'stop',
-          traceId: null,
         };
       }),
     );

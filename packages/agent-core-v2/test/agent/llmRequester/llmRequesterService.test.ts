@@ -11,6 +11,9 @@
  * pnpm test -- test/agent/llmRequester/llmRequesterService.test.ts
  */
 
+import { createControlledPromise } from '@antfu/utils';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
 import { SyncDescriptor } from '#/_base/di/descriptors';
 import { DisposableStore, toDisposable } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
@@ -50,7 +53,6 @@ import { Error2, ErrorCodes } from '#/errors';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { recordingWireLog, registerTestAgentWire } from '../../wire/stubs';
 
@@ -715,27 +717,48 @@ describe('AgentLLMRequesterService trace id', () => {
     return build();
   }
 
-  it('captures the trace id early via onTraceId and returns it on finish', async () => {
-    const { service } = createService(createTracedModel('trace-req-1'), passthroughProjector);
-    const captured: Array<string | undefined> = [];
-
-    const finish = await service.request({
-      source: { type: 'turn', turnId: 1, step: 1 },
-      onTraceId: (traceId) => captured.push(traceId),
+  it('exposes the request trace and returns it on finish', async () => {
+    const model = createTracedModel('trace-req-1');
+    const headersArrived = createControlledPromise<void>();
+    const releaseStream = createControlledPromise<void>();
+    Object.defineProperty(model, 'request', {
+      value: async function* (_input: unknown, _signal: unknown, requestOptions: {
+        onTraceId?: (traceId: string | null) => void;
+      }) {
+        requestOptions.onTraceId?.('trace-req-1');
+        headersArrived.resolve();
+        await releaseStream;
+        yield {
+          type: 'finish',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
+          providerFinishReason: 'completed',
+          rawFinishReason: 'stop',
+          id: 'resp-1',
+          traceId: 'trace-req-1',
+        } satisfies LLMEvent;
+      },
     });
+    Object.defineProperty(model, 'withMaxCompletionTokens', {
+      value: () => model,
+    });
+    const { service } = createService(model, passthroughProjector);
+    const request = service.start({ source: { type: 'turn', turnId: 1, step: 1 } });
+    await headersArrived;
+    expect(request.trace.traceId).toBe('trace-req-1');
+    releaseStream.resolve();
+    const finish = await request.result;
 
     expect(finish.traceId).toBe('trace-req-1');
-    expect(captured).toEqual([undefined, 'trace-req-1']);
+    expect(request.trace.traceId).toBe('trace-req-1');
   });
 
   it('reports an absent trace before a request that returns none', async () => {
     const { service } = createService(createTracedModel(null), passthroughProjector);
-    const captured: Array<string | undefined> = [];
-
-    const finish = await service.request({ onTraceId: (traceId) => captured.push(traceId) });
+    const request = service.start();
+    const finish = await request.result;
 
     expect(finish.traceId).toBeUndefined();
-    expect(captured).toEqual([undefined]);
+    expect(request.trace.traceId).toBeUndefined();
   });
 
   it('attaches trace_id, turn_id and step_no to api_error from the failed request', async () => {
@@ -751,14 +774,8 @@ describe('AgentLLMRequesterService trace id', () => {
       value: () => model,
     });
     const { service, telemetryRecords } = createService(model, passthroughProjector);
-    const captured: Array<string | undefined> = [];
-
-    await expect(
-      service.request({
-        source: { type: 'turn', turnId: 3, step: 2 },
-        onTraceId: (traceId) => captured.push(traceId),
-      }),
-    ).rejects.toMatchObject({ statusCode: 500 });
+    const request = service.start({ source: { type: 'turn', turnId: 3, step: 2 } });
+    await expect(request.result).rejects.toMatchObject({ statusCode: 500 });
 
     expect(telemetryRecords).toContainEqual({
       event: 'api_error',
@@ -769,13 +786,13 @@ describe('AgentLLMRequesterService trace id', () => {
         step_no: 2,
       }),
     });
-    expect(captured).toEqual([undefined, 'trace-fail-1']);
+    expect(request.trace.traceId).toBe('trace-fail-1');
   });
 
   it('keeps the header-captured trace when the request fails after headers arrived', async () => {
     // A failure after the response headers arrived (empty response, mid-stream
     // decode error) carries no trace on the error itself; the trace captured
-    // via onTraceId must win over clearing the ambient context.
+    // through the provider callback must remain on the request trace.
     const model = createTracedModel(null);
     Object.defineProperty(model, 'request', {
       value: async function* (...args: unknown[]) {
@@ -792,18 +809,12 @@ describe('AgentLLMRequesterService trace id', () => {
       value: () => model,
     });
     const { service, telemetryRecords } = createService(model, passthroughProjector);
-    const captured: Array<string | undefined> = [];
-
-    await expect(
-      service.request({
-        source: { type: 'turn', turnId: 4, step: 1 },
-        onTraceId: (traceId) => captured.push(traceId),
-      }),
-    ).rejects.toThrow();
+    const request = service.start({ source: { type: 'turn', turnId: 4, step: 1 } });
+    await expect(request.result).rejects.toThrow();
 
     const apiError = telemetryRecords.find((record) => record.event === 'api_error');
     expect(apiError?.properties?.['trace_id']).toBe('trace-mid-stream');
-    expect(captured).toEqual([undefined, 'trace-mid-stream']);
+    expect(request.trace.traceId).toBe('trace-mid-stream');
   });
 
   it('clears the previous physical request trace before a projection retry', async () => {
@@ -811,6 +822,8 @@ describe('AgentLLMRequesterService trace id', () => {
     let attempts = 0;
     Object.defineProperty(model, 'request', {
       value: async function* (...args: unknown[]) {
+        const events: LLMEvent[] = [];
+        for (const event of events) yield event;
         attempts += 1;
         const requestOptions = args[2] as
           | { onTraceId?: (traceId: string | null) => void }
@@ -826,14 +839,11 @@ describe('AgentLLMRequesterService trace id', () => {
       value: () => model,
     });
     const { service, telemetryRecords } = createService(model, passthroughProjector);
-    const captured: Array<string | undefined> = [];
-
-    await expect(
-      service.request({ onTraceId: (traceId) => captured.push(traceId) }),
-    ).rejects.toThrow('socket hang up');
+    const request = service.start();
+    await expect(request.result).rejects.toThrow('socket hang up');
 
     expect(attempts).toBe(2);
-    expect(captured).toEqual([undefined, 'trace-first-projection', undefined]);
+    expect(request.trace.traceId).toBeUndefined();
     expect(
       telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['trace_id'],
     ).toBeUndefined();

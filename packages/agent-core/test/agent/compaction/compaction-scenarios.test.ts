@@ -15,9 +15,8 @@
 import type { ContentPart, Message } from '@moonshot-ai/kosong';
 import { describe, expect, it } from 'vitest';
 
-import type { AgentOptions } from '../../../src/agent';
+import type { AgentOptions, AgentRecord } from '../../../src/agent';
 import { COMPACTION_ELISION_VARIANT, COMPACTION_SUMMARY_PREFIX } from '../../../src/agent/compaction';
-import type { AgentRecord } from '../../../src/agent';
 import {
   AGENT_WIRE_PROTOCOL_VERSION,
   InMemoryAgentRecordPersistence,
@@ -45,7 +44,6 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
     finishReason: 'completed',
     rawFinishReason: 'stop',
-    traceId: null,
   };
 }
 

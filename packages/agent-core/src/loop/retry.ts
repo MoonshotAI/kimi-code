@@ -40,9 +40,11 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
 
   if (input.llm.isRetryableError === undefined || maxAttempts <= 1) {
     const effectiveMaxAttempts = Math.max(maxAttempts, 1);
-    input.params.onTraceId?.(null);
+    input.params.trace?.reset();
     try {
-      return await input.llm.chat(paramsForAttempt(input, 1, effectiveMaxAttempts));
+      const response = await input.llm.chat(paramsForAttempt(input, 1, effectiveMaxAttempts));
+      input.params.trace?.capture(response.traceId);
+      return response;
     } catch (error) {
       captureAttemptTraceId(input, error);
       logRequestFailure(input, error, 1, effectiveMaxAttempts);
@@ -53,9 +55,11 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
   const delays = retryBackoffDelays(maxAttempts);
 
   for (let attempt = 1; ; attempt += 1) {
-    input.params.onTraceId?.(null);
+    input.params.trace?.reset();
     try {
-      return await input.llm.chat(paramsForAttempt(input, attempt, maxAttempts));
+      const response = await input.llm.chat(paramsForAttempt(input, attempt, maxAttempts));
+      input.params.trace?.capture(response.traceId);
+      return response;
     } catch (error) {
       captureAttemptTraceId(input, error);
       if (attempt >= maxAttempts || !input.llm.isRetryableError(error)) {
@@ -106,13 +110,25 @@ function logRequestFailure(
  * it here (before the failure propagates to the loop's `turn.interrupted`
  * dispatch) lets turn-level telemetry attribute the turn to the failed
  * request rather than the previous successful one. Mid-stream failures were
- * already captured by the attempt's own `onTraceId`; failures before any
+ * already captured by the attempt's request trace; failures before any
  * response (network errors, local aborts) keep the attempt-start reset.
  */
 function captureAttemptTraceId(input: ChatWithRetryInput, error: unknown): void {
-  if (error instanceof APIStatusError && error.traceId !== null) {
-    input.params.onTraceId?.(error.traceId);
+  const statusError = findAPIStatusError(error);
+  if (statusError?.traceId !== null && statusError?.traceId !== undefined) {
+    input.params.trace?.capture(statusError.traceId);
   }
+}
+
+export function findAPIStatusError(error: unknown): APIStatusError | undefined {
+  let current = error;
+  const visited = new Set<unknown>();
+  while (current !== null && typeof current === 'object' && !visited.has(current)) {
+    if (current instanceof APIStatusError) return current;
+    visited.add(current);
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
 
 function paramsForAttempt(

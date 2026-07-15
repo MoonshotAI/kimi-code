@@ -113,7 +113,6 @@ describe('ConfigState model capabilities', () => {
           usage: emptyUsage(),
           finishReason: 'completed',
           rawFinishReason: 'stop',
-          traceId: null,
         };
       },
       providerManager: new ProviderManager({

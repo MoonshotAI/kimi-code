@@ -229,7 +229,6 @@ describe('generate() deferred tool stripping', () => {
       usage: null,
       finishReason: 'completed',
       rawFinishReason: 'stop',
-      traceId: null,
       async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
         yield { type: 'text', text: 'ok' };
       },
@@ -255,6 +254,16 @@ describe('generate() deferred tool stripping', () => {
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
     ]);
     expect(seenTools()).toEqual([ADD_TOOL]);
+  });
+
+  it('omits trace metadata when the provider does not expose it', async () => {
+    const { provider } = createCapturingProvider();
+    const onTraceId = vi.fn();
+
+    const result = await generate(provider, 'sys', [], [], undefined, { onTraceId });
+
+    expect(onTraceId).not.toHaveBeenCalled();
+    expect(Object.hasOwn(result, 'traceId')).toBe(false);
   });
 
   it('passes the identical array through when nothing is deferred', async () => {

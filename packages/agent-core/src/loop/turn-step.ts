@@ -19,7 +19,13 @@ import type { Logger } from '#/logging/types';
 
 import type { LoopEventDispatcher } from './events';
 import { errorMessage } from './errors';
-import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
+import {
+  LLMRequestTraceState,
+  type LLM,
+  type LLMChatParams,
+  type LLMChatResponse,
+  type LLMRequestTrace,
+} from './llm';
 import { chatWithRetry } from './retry';
 import { runToolCallBatch, type ToolCallStepContext } from './tool-call';
 import type {
@@ -67,13 +73,7 @@ export interface ExecuteLoopStepDeps {
   readonly currentStep: number;
   readonly maxRetryAttempts?: number;
   readonly recordUsage: (usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>;
-  /**
-   * See LLMChatParams.onTraceId. Fires per request attempt as soon as the
-   * response headers arrive (or with the failed attempt's trace when a status
-   * error still carried response headers), so the host captures the trace id
-   * of an in-flight request even when the stream is later cancelled.
-   */
-  readonly onTraceId?: (traceId: string | null) => void;
+  readonly onRequestTrace?: (trace: LLMRequestTrace) => void;
 }
 
 export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
@@ -112,7 +112,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     currentStep,
     maxRetryAttempts,
     recordUsage,
-    onTraceId,
+    onRequestTrace,
   } = deps;
 
   if (hooks?.beforeStep !== undefined) {
@@ -138,6 +138,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
   signal.throwIfAborted();
 
   const stepUuid = randomUUID();
+  const trace = new LLMRequestTraceState();
 
   const step: ToolCallStepContext = {
     tools: stepTools,
@@ -150,6 +151,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     turnId,
     currentStep,
     stepUuid,
+    trace,
   };
 
   await dispatchEvent({
@@ -158,6 +160,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     turnId,
     step: currentStep,
   });
+  onRequestTrace?.(trace);
 
   const chatParams: LLMChatParams = {
     messages,
@@ -167,7 +170,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
       initialMediaProjection === 'normal'
         ? undefined
         : { projection: initialMediaProjection },
-    onTraceId,
+    trace,
     ...createChatStreamingCallbacks({
       dispatchEvent,
       turnId,

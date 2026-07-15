@@ -21,7 +21,6 @@ import type {
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ISessionApprovalService } from "#/session/approval/approval";
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
@@ -62,8 +61,6 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
     @ISessionContext private readonly session: ISessionContext,
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentTelemetryContextService
-    private readonly telemetryContext: IAgentTelemetryContextService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
   ) {
@@ -184,7 +181,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
           duration_ms: Date.now() - startedAt,
           session_cache_written: false,
           has_feedback: false,
-          trace_id: this.telemetryContext.get().trace_id,
+          trace_id: context.trace?.traceId,
         });
         this.eventBus.publish({
           type: 'permission.approval.resolved',
@@ -231,7 +228,7 @@ export class AgentPermissionGate extends Disposable implements IAgentPermissionG
       duration_ms: Date.now() - startedAt,
       session_cache_written: sessionApprovalRule !== undefined,
       has_feedback: response.feedback !== undefined && response.feedback.length > 0,
-      trace_id: this.telemetryContext.get().trace_id,
+      trace_id: context.trace?.traceId,
     });
 
     const resolved = result.resolveApproval?.(response);

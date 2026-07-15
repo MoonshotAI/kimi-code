@@ -461,10 +461,6 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
     return this._rawFinishReason;
   }
 
-  get traceId(): string | null {
-    return null;
-  }
-
   async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
     yield* this._iter;
   }

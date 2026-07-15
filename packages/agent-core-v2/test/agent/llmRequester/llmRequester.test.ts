@@ -231,7 +231,6 @@ describe('LLMRequester service migration coverage', () => {
             usage: emptyUsage(),
             finishReason: 'completed',
             rawFinishReason: 'stop',
-            traceId: null,
           };
         }),
       );
@@ -444,7 +443,6 @@ describe('LLMRequester service migration coverage', () => {
             usage: emptyUsage(),
             finishReason: 'completed',
             rawFinishReason: 'stop',
-            traceId: null,
           };
         }),
         configServices(() => ({

@@ -16,6 +16,7 @@ import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentLLMRequesterService, type LLMRequestFinish } from '#/agent/llmRequester/llmRequester';
+import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
 import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { isAbortError } from '#/_base/utils/abort';
@@ -79,7 +80,7 @@ type CompactionTelemetryProperties = Pick<
 >;
 
 interface ActiveCompaction extends FullCompactionTask {
-  traceId?: string;
+  trace?: LLMRequestTrace;
   blockedByTurn: boolean;
 }
 
@@ -299,6 +300,9 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         promise,
         trigger,
         tokenCount,
+        get traceId() {
+          return this.trace?.traceId;
+        },
         blockedByTurn: false,
       },
       resolve,
@@ -534,27 +538,21 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages);
 
         try {
-          attempt = collectSummary(
-            await this.llmRequester.request(
-              {
-                messages,
-                maxOutputSize: compactionMaxOutputSize,
-                source: {
-                  type: 'operation',
-                  requestKind: 'full_compaction',
-                  // Per-attempt count of messages dropped by overflow/empty
-                  // shrinks so far; recorded on the llm.request wire op so a
-                  // replay can see how much history each retry round blinded.
-                  logFields: { droppedCount },
-                },
-                onTraceId: (traceId) => {
-                  active.traceId = traceId;
-                },
+          const request = this.llmRequester.start(
+            {
+              messages,
+              maxOutputSize: compactionMaxOutputSize,
+              source: {
+                type: 'operation',
+                requestKind: 'full_compaction',
+                logFields: { droppedCount },
               },
-              undefined,
-              signal,
-            ),
+            },
+            undefined,
+            signal,
           );
+          active.trace = request.trace;
+          attempt = collectSummary(await request.result);
           break;
         } catch (error) {
           const isContextOverflow = this.shouldRecoverFromContextOverflow(

@@ -22,7 +22,6 @@ function createMockStream(
     },
     finishReason: null,
     rawFinishReason: null,
-    traceId: null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;
@@ -70,7 +69,6 @@ function createStreamErrorProvider(partsBefore: StreamedMessagePart[], error: Er
         },
         finishReason: null,
         rawFinishReason: null,
-        traceId: null,
         async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
           for (const part of partsBefore) {
             yield part;
@@ -391,7 +389,6 @@ describe('e2e: error recovery', () => {
             },
             finishReason: null,
             rawFinishReason: null,
-            traceId: null,
             async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
               yield tc;
               yield { type: 'text', text: 'some text' };

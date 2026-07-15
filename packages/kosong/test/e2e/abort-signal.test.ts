@@ -21,7 +21,6 @@ function createMockStream(
     },
     finishReason: null,
     rawFinishReason: null,
-    traceId: null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         if (opts?.delayMs !== undefined && opts.delayMs > 0) {

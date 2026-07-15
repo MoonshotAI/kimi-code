@@ -17,7 +17,8 @@
 
 import type { ContentPart, ToolCall } from '#/app/llmProtocol/message';
 import type { Tool } from '#/app/llmProtocol/tool';
-import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
+import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
 export type ExecutableToolOutput = string | ContentPart[];
 
@@ -66,6 +67,7 @@ export interface ToolUpdate {
 export interface ExecutableToolContext {
   readonly turnId: number;
   readonly toolCallId: string;
+  readonly trace?: LLMRequestTrace;
   readonly metadata?: unknown;
   readonly signal: AbortSignal;
   readonly onUpdate?: ((update: ToolUpdate) => void) | undefined;

@@ -25,7 +25,6 @@ import { ISessionBtwService } from '#/session/btw/btw';
 import { IAgentSkillService } from '#/agent/skill/skill';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUsageService } from '#/agent/usage/usage';
@@ -102,8 +101,6 @@ export class AgentRPCService implements IAgentRPCService {
     @IAgentSkillService private readonly skills: IAgentSkillService,
     @IAgentUsageService private readonly usage: IAgentUsageService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentTelemetryContextService
-    private readonly telemetryContext: IAgentTelemetryContextService,
     @IAgentGoalService private readonly goal: IAgentGoalService,
     @IEventBus private readonly eventBus: IEventBus,
     @IEventService private readonly eventService: IEventService,
@@ -150,7 +147,7 @@ export class AgentRPCService implements IAgentRPCService {
     if (this.loop.status().state === 'running') {
       this.telemetry.track2('cancel', {
         from: 'streaming',
-        trace_id: this.telemetryContext.get().trace_id,
+        trace_id: this.loop.status().activeTraceId,
       });
     }
     this.loop.cancel(turnId);

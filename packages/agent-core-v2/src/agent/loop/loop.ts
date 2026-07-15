@@ -128,6 +128,7 @@ export interface AgentLoopStatus {
   readonly activeTurnId?: number;
   readonly pendingTurnIds: readonly number[];
   readonly hasPendingRequests: boolean;
+  readonly activeTraceId?: string;
 }
 
 export interface StepEnqueueOptions {

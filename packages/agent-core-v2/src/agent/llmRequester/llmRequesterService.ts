@@ -68,15 +68,17 @@ import type { PayloadOf } from '#/wire/types';
 import { THINKING_SECTION, type ThinkingConfig } from '#/agent/profile/configSection';
 import { resolveThinkingKeep } from '#/agent/profile/thinking';
 
-import type {
-  LLMRequestFinish,
-  LLMRequestLogFields,
-  LLMRequestOverrides,
-  LLMRequestPartHandler,
-  LLMRequestSource,
-  LLMStreamTiming,
+import {
+  IAgentLLMRequesterService,
+  type LLMRequestFinish,
+  type LLMRequestLogFields,
+  type LLMRequestOverrides,
+  type LLMRequestPartHandler,
+  type LLMRequestSource,
+  type LLMRequestTask,
+  type LLMStreamTiming,
 } from './llmRequester';
-import { IAgentLLMRequesterService } from './llmRequester';
+import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
 import {
   LlmRequestTraceModel,
   llmRequest,
@@ -155,22 +157,42 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     onPart: LLMRequestPartHandler = noopOnPart,
     signal?: AbortSignal,
   ): Promise<LLMRequestFinish> {
+    return this.start(overrides, onPart, signal).result;
+  }
+
+  start(
+    overrides: LLMRequestOverrides = {},
+    onPart: LLMRequestPartHandler = noopOnPart,
+    signal?: AbortSignal,
+  ): LLMRequestTask {
+    const trace = new MutableLLMRequestTrace();
+    return {
+      trace,
+      result: this.requestWithTrace(trace, overrides, onPart, signal),
+    };
+  }
+
+  private async requestWithTrace(
+    trace: MutableLLMRequestTrace,
+    overrides: LLMRequestOverrides,
+    onPart: LLMRequestPartHandler,
+    signal: AbortSignal | undefined,
+  ): Promise<LLMRequestFinish> {
     signal?.throwIfAborted();
     const startedAt = Date.now();
-    let requestTraceId: string | undefined;
-    let traceInitialized = false;
-    const setTraceId = (traceId: string | undefined): void => {
-      if (traceInitialized && requestTraceId === traceId) return;
-      traceInitialized = true;
-      requestTraceId = traceId;
-      overrides.onTraceId?.(traceId);
-    };
-    setTraceId(undefined);
+    trace.set(undefined);
     try {
-      return await this.runRequest(this.resolveRequest(overrides), onPart, signal, setTraceId);
+      return await this.runRequest(
+        this.resolveRequest(overrides),
+        onPart,
+        signal,
+        (traceId) => {
+          trace.set(traceId);
+        },
+      );
     } catch (error) {
       this.logRequestFailure(error, overrides, signal);
-      setTraceId(this.trackApiError(error, startedAt, signal, overrides.source, requestTraceId));
+      trace.set(this.trackApiError(error, startedAt, signal, overrides.source, trace.traceId));
       throw error;
     }
   }
@@ -628,6 +650,14 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         parameters: tool.parameters ?? EMPTY_TOOL_PARAMETERS,
         deferred: tool.deferred,
       }));
+  }
+}
+
+class MutableLLMRequestTrace implements LLMRequestTrace {
+  traceId: string | undefined;
+
+  set(traceId: string | undefined): void {
+    this.traceId = traceId;
   }
 }
 

@@ -178,7 +178,6 @@ describe('generate() deferred tool stripping', () => {
       usage: null,
       finishReason: 'completed',
       rawFinishReason: 'stop',
-      traceId: null,
       async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
         yield { type: 'text', text: 'ok' };
       },

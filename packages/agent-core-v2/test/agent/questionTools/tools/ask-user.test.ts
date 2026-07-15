@@ -15,7 +15,6 @@ import {
   type AskUserQuestionInput,
 } from '#/agent/questionTools/tools/ask-user';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import type {
   ISessionQuestionService,
@@ -52,7 +51,6 @@ function makeTool(
       req: QuestionRequest,
       requestOptions?: { readonly signal?: AbortSignal },
     ) => Promise<QuestionResult>;
-    readonly traceId?: string;
   } = {},
 ): {
   readonly tool: AskUserQuestionTool;
@@ -66,11 +64,6 @@ function makeTool(
   const telemetryTrack = vi.fn();
   const question = { request } as unknown as ISessionQuestionService;
   const telemetry = { track2: telemetryTrack } as unknown as ITelemetryService;
-  const telemetryContext = {
-    _serviceBrand: undefined,
-    get: () => ({ mode: 'agent' as const, trace_id: options.traceId }),
-    set: () => {},
-  } satisfies IAgentTelemetryContextService;
   let lastTask: QuestionBackgroundTask | undefined;
   const registerTask = vi.fn((task: QuestionBackgroundTask) => {
     lastTask = task;
@@ -80,7 +73,7 @@ function makeTool(
     id === 'q_test_task_id' ? { status: 'running' } : undefined,
   );
   const tasks = { registerTask, getTask } as unknown as IAgentTaskService;
-  const tool = new AskUserQuestionTool(question, telemetry, tasks, telemetryContext);
+  const tool = new AskUserQuestionTool(question, telemetry, tasks);
   return { tool, request, telemetryTrack, registerTask, getTask, lastRegisteredTask: () => lastTask };
 }
 
@@ -326,14 +319,15 @@ describe('AskUserQuestionTool', () => {
     });
   });
 
-  it('merges the ambient trace id into question telemetry', async () => {
-    const { tool, telemetryTrack } = makeTool({ traceId: 'trace-q-1' });
+  it('merges the request trace id into question telemetry', async () => {
+    const { tool, telemetryTrack } = makeTool();
 
     const result = await executeTool(tool, {
       turnId: 0,
       toolCallId: 'call_question',
       args: input(),
       signal,
+      trace: { traceId: 'trace-q-1' },
     });
 
     expect(result).toMatchObject({ isError: false });

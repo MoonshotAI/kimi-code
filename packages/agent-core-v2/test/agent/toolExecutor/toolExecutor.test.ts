@@ -21,6 +21,7 @@ import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
+import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
@@ -142,12 +143,15 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
-  it('merges the ambient trace id into tool_call telemetry', async () => {
+  it('merges the request trace id into tool_call telemetry', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);
-    ix.get(IAgentTelemetryContextService).set({ trace_id: 'trace-tool-1' });
 
-    await execute([toolCall('call_traced', 'echo', { text: 'hi' })]);
+    await execute(
+      [toolCall('call_traced', 'echo', { text: 'hi' })],
+      undefined,
+      { traceId: 'trace-tool-1' },
+    );
 
     expect(telemetryEvents).toContainEqual({
       event: 'tool_call',
@@ -748,11 +752,16 @@ describe('parseToolCallArguments', () => {
   });
 });
 
-async function execute(calls: ToolCall[], signal?: AbortSignal): Promise<ToolResult[]> {
+async function execute(
+  calls: ToolCall[],
+  signal?: AbortSignal,
+  trace?: LLMRequestTrace,
+): Promise<ToolResult[]> {
   const results: ToolResult[] = [];
   for await (const item of executor.execute(calls, {
     turnId: 0,
     signal: signal ?? new AbortController().signal,
+    trace,
   })) {
     results.push(item.result);
     events.push({ type: 'tool.result', toolCallId: item.toolCallId, result: item.result });

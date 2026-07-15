@@ -117,7 +117,7 @@ export interface StreamedMessage {
    * interrupted stream to its server-side request. `null` when the provider
    * does not report one.
    */
-  readonly traceId: string | null;
+  readonly traceId?: string | null;
 }
 
 /**

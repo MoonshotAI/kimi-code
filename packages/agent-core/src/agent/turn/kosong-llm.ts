@@ -122,7 +122,7 @@ export class KosongLLM implements LLM {
       onRequestStart: markRequestStart,
       onRequestSent: markRequestSent,
       onStreamEnd: markStreamEnd,
-      onTraceId: params.onTraceId,
+      onTraceId: (traceId) => params.trace?.capture(traceId),
       requestLogFields: params.requestLogFields,
     };
 

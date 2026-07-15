@@ -589,7 +589,6 @@ describe('goal session end-to-end', () => {
       usage: { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 },
       finishReason: 'filtered',
       rawFinishReason: 'content_filter',
-      traceId: null,
     });
     const { session, agent } = await setupSession(sessionDir, events, ['GetGoal'], generate);
     const api = new SessionAPIImpl(session);
@@ -705,7 +704,6 @@ describe('goal session end-to-end', () => {
         usage: largeInputSmallOutput,
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       },
       {
         id: 'usage-2',
@@ -724,7 +722,6 @@ describe('goal session end-to-end', () => {
         usage: largeInputSmallOutput,
         finishReason: 'tool_calls',
         rawFinishReason: 'tool_calls',
-        traceId: null,
       },
       {
         id: 'usage-3',
@@ -736,7 +733,6 @@ describe('goal session end-to-end', () => {
         usage: largeInputSmallOutput,
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       },
     ];
     const generate: NonNullable<AgentOptions['generate']> = async (
@@ -864,7 +860,6 @@ describe('goal session end-to-end', () => {
         },
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       };
     };
     const { session, agent } = await setupSession(sessionDir, events, ['GetGoal'], generate);

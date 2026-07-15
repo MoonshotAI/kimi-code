@@ -89,7 +89,6 @@ describe('Agent turn flow', () => {
         usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       };
     };
     const ctx = testAgent({ generate });
@@ -155,7 +154,6 @@ describe('Agent turn flow', () => {
         usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
       };
     };
     const ctx = testAgent({ generate });
@@ -292,7 +290,6 @@ describe('Agent turn flow', () => {
         usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
         finishReason: 'completed' as const,
         rawFinishReason: 'stop',
-        traceId: null,
       };
     }
 
@@ -330,7 +327,6 @@ describe('Agent turn flow', () => {
             usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
             finishReason: 'tool_calls',
             rawFinishReason: 'tool_calls',
-            traceId: null,
           };
         }
         return okResponse();
@@ -1086,7 +1082,6 @@ describe('Agent turn flow', () => {
       },
       finishReason: 'filtered',
       rawFinishReason: 'content_filter',
-      traceId: null,
     });
     const ctx = testAgent({
       generate,
@@ -1924,6 +1919,7 @@ describe('Agent turn flow', () => {
   });
 
   it('treats 401 after force-refresh as provider auth error', async () => {
+    const records: TelemetryRecord[] = [];
     const tokenCalls: Array<boolean | undefined> = [];
     const authKeys: string[] = [];
     const oauthOptions = oauthAgentOptions(
@@ -1942,9 +1938,15 @@ describe('Agent turn flow', () => {
       options,
     ) => {
       authKeys.push(options?.auth?.apiKey ?? '<missing>');
-      throw new APIStatusError(401, 'Unauthorized', 'req-401');
+      throw new APIStatusError(
+        401,
+        'Unauthorized',
+        'req-401',
+        null,
+        authKeys.length === 1 ? 'trace-initial-401' : 'trace-replay-401',
+      );
     };
-    const ctx = testAgent({ ...oauthOptions, generate });
+    const ctx = testAgent({ ...oauthOptions, generate, telemetry: recordingTelemetry(records) });
     ctx.configure();
     await ctx.rpc.setModel({ model: 'kimi-code' });
     ctx.newEvents();
@@ -1969,6 +1971,12 @@ describe('Agent turn flow', () => {
           }),
         }),
       }),
+    );
+    expect(records.find((record) => record.event === 'api_error')?.properties?.['trace_id']).toBe(
+      'trace-replay-401',
+    );
+    expect(records.find((record) => record.event === 'turn_ended')?.properties?.['trace_id']).toBe(
+      'trace-replay-401',
     );
   });
 
@@ -2266,6 +2274,51 @@ describe('Agent turn flow', () => {
     expect(ended?.properties?.['trace_id']).toBe('trace-fail-2');
     const interrupted = records.find((candidate) => candidate.event === 'turn_interrupted');
     expect(interrupted?.properties?.['trace_id']).toBe('trace-fail-2');
+  });
+
+  it('does not reuse the previous step trace when beforeStep fails before a request', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, _callbacks, options) => {
+      options?.onTraceId?.('trace-step-1');
+      return {
+        id: 'mock-step-1',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'running' }],
+          toolCalls: [
+            {
+              type: 'function',
+              id: 'call_traced',
+              name: 'Bash',
+              arguments: '{"command":"printf traced"}',
+            },
+          ],
+        },
+        usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+        finishReason: 'tool_calls',
+        rawFinishReason: 'tool_calls',
+        traceId: 'trace-step-1',
+      };
+    };
+    const ctx = testAgent({
+      generate,
+      kaos: createCommandKaos('traced'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    let beforeStepCalls = 0;
+    vi.spyOn(ctx.agent.fullCompaction, 'beforeStep').mockImplementation(async () => {
+      beforeStepCalls += 1;
+      if (beforeStepCalls === 2) throw new Error('before step failed');
+    });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run' }] });
+    await ctx.untilTurnEnd();
+
+    expect(records.find((record) => record.event === 'tool_call')?.properties?.['trace_id']).toBe('trace-step-1');
+    expect(records.find((record) => record.event === 'turn_interrupted')?.properties?.['trace_id']).toBeUndefined();
+    expect(records.find((record) => record.event === 'turn_ended')?.properties?.['trace_id']).toBeUndefined();
   });
 
   it('attributes turn-level telemetry to the last failed attempt after retries', async () => {
@@ -2785,7 +2838,6 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     },
     finishReason: 'completed',
     rawFinishReason: 'stop',
-    traceId: null,
   };
 }
 

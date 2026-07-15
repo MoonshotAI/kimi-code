@@ -29,8 +29,6 @@ import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile'
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import type { ToolCall } from '#/app/llmProtocol/message';
@@ -49,6 +47,7 @@ function makeContext(
   toolName: string,
   args: Record<string, unknown> = {},
   display?: ToolInputDisplay,
+  traceId?: string,
 ): ResolvedToolExecutionHookContext {
   const toolCall: ToolCall = {
     type: 'function',
@@ -59,6 +58,7 @@ function makeContext(
   return {
     turnId: 1,
     signal: new AbortController().signal,
+    trace: { traceId },
     toolCall,
     toolCalls: [toolCall],
     args,
@@ -105,7 +105,6 @@ describe('AgentPermissionGate', () => {
         );
         reg.defineInstance(IEventBus, eventBus);
         reg.definePartialInstance(ITelemetryService, { track: () => {}, track2: () => {} });
-        reg.defineInstance(IAgentTelemetryContextService, new AgentTelemetryContextService());
         reg.defineInstance(ISessionApprovalService, stubApprovalService(() => approvalResponse));
         reg.defineInstance(ISessionContext, makeSessionContext({
           sessionId: 'test-session',
@@ -547,15 +546,14 @@ describe('AgentPermissionGate', () => {
     });
   });
 
-  it('merges the ambient trace id into approval result telemetry', async () => {
+  it('merges the request trace id into approval result telemetry', async () => {
     mode = 'manual';
     policyResult = { policyName: 'p', result: { kind: 'ask' } };
     approvalResponse = { decision: 'approved' };
-    ix.get(IAgentTelemetryContextService).set({ trace_id: 'trace-approval-1' });
     const records = recordTelemetry();
     const svc = make();
 
-    await svc.authorize(makeContext('bash'));
+    await svc.authorize(makeContext('bash', {}, undefined, 'trace-approval-1'));
 
     expect(records).toContainEqual({
       event: 'permission_approval_result',

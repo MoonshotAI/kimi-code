@@ -27,6 +27,7 @@ import { isAbortError, isMaxStepsExceededError } from '../../loop/errors';
 import {
   createLoopEventDispatcher,
   runTurn,
+  type LLMRequestTrace,
   type ExecutableToolResult,
   type LoopEvent,
   type LoopRecordedEvent,
@@ -123,35 +124,19 @@ export class TurnFlow {
   private steerBuffer: BufferedSteer[] = [];
   private turnId = -1;
   private activeTurn: 'resuming' | ActiveTurn | null = null;
-  private readonly toolCallStartedAt = new Map<string, { name: string; startedAt: number }>();
+  private readonly toolCallStartedAt = new Map<
+    string,
+    { name: string; startedAt: number; traceId: string | undefined }
+  >();
   private readonly toolCallDupType = new Map<string, 'normal' | 'cross_step'>();
   private readonly stepToolCallKeys = new Map<number, Set<string>>();
   private readonly telemetryModeByTurn = new Map<number, 'agent' | 'plan'>();
   private readonly currentStepByTurn = new Map<number, number>();
   private readonly interruptedTelemetryTurnIds = new Set<number>();
+  private readonly interruptedTraceIdByTurn = new Map<number, string | undefined>();
   private readonly stepFailureByTurn = new Map<number, LoopTurnInterruptedEvent>();
-  /**
-   * Latest provider trace id (`x-trace-id`, Kimi/KFC only) per turn. Written
-   * early from the onTraceId callback (response headers, before the stream
-   * body), from a failed attempt's status error (its error response still
-   * carried headers), and finally from each step.end event, so turn/tool-level
-   * telemetry can attribute events to the server-side request that produced
-   * them.
-   */
-  private readonly traceIdByTurn = new Map<number, string>();
-  /**
-   * Trace id of the turn's in-flight request whose response headers have
-   * arrived. Unlike traceIdByTurn (the turn's latest request), this is
-   * cleared at step begin and step end, so it only ever names the current
-   * step's request: api_error can then attribute a post-headers failure
-   * (mid-stream decode error, empty response — the error itself carries no
-   * trace) to the request that actually failed, while a failure before any
-   * response headers (network error, local abort) still reports no trace
-   * rather than a previous request's. After exhausted retries it may name
-   * an earlier attempt of the same step — still a request that genuinely
-   * failed in this step.
-   */
-  private readonly requestTraceIdByTurn = new Map<number, string>();
+  private activeRequestTrace: LLMRequestTrace | undefined;
+  private latestTraceId: string | undefined;
   private currentStep = 0;
 
   constructor(protected readonly agent: Agent) {}
@@ -302,14 +287,8 @@ export class TurnFlow {
     return this.turnId;
   }
 
-  /** Latest provider trace id (`x-trace-id`) captured for the given turn. */
-  traceIdForTurn(turnId: number): string | undefined {
-    return this.traceIdByTurn.get(turnId);
-  }
-
-  /** Latest provider trace id (`x-trace-id`) captured for the current turn. */
-  currentTraceId(): string | undefined {
-    return this.traceIdByTurn.get(this.currentId);
+  activeRequestTraceId(): string | undefined {
+    return this.activeRequestTrace?.traceId;
   }
 
   get hasActiveTurn(): boolean {
@@ -629,8 +608,7 @@ export class TurnFlow {
           // itself, but the request's headers were captured. Failures before
           // any response (network errors, local aborts) leave the per-step
           // capture empty, so those still report no trace.
-          const errorTraceId = error instanceof APIStatusError ? error.traceId : null;
-          const traceId = errorTraceId ?? this.requestTraceIdByTurn.get(turnId);
+          const traceId = this.activeRequestTrace?.traceId;
           if (traceId !== undefined) {
             properties['trace_id'] = traceId;
           }
@@ -662,13 +640,19 @@ export class TurnFlow {
         inputData: { turnId, reason: 'cancelled' },
       });
     }
+    const terminalTraceId =
+      ended.reason === 'completed'
+        ? this.latestTraceId
+        : this.interruptedTraceIdByTurn.has(turnId)
+          ? this.interruptedTraceIdByTurn.get(turnId)
+          : this.activeRequestTrace?.traceId;
     this.agent.telemetry.track('turn_ended', {
       turn_id: turnId,
       reason: ended.reason,
       duration_ms: ended.durationMs,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
       ...this.requestProtocolProps(),
-      trace_id: this.traceIdByTurn.get(turnId),
+      trace_id: terminalTraceId,
     });
     this.agent.emitEvent(ended);
     // Release the active turn in the same frame as turn.ended for a standalone
@@ -702,14 +686,16 @@ export class TurnFlow {
         turnId,
         this.currentStepByTurn.get(turnId) ?? this.currentStep,
         interruptReason,
+        this.activeRequestTrace?.traceId,
       );
     }
     this.telemetryModeByTurn.delete(turnId);
     this.currentStepByTurn.delete(turnId);
     this.interruptedTelemetryTurnIds.delete(turnId);
+    this.interruptedTraceIdByTurn.delete(turnId);
     this.stepFailureByTurn.delete(turnId);
-    this.traceIdByTurn.delete(turnId);
-    this.requestTraceIdByTurn.delete(turnId);
+    this.activeRequestTrace = undefined;
+    this.latestTraceId = undefined;
     return { event: ended, stopReason: completedStopReason, blockedByUserPromptHook };
   }
 
@@ -771,10 +757,7 @@ export class TurnFlow {
     let stopHookContinuationUsed = false;
     let goalOutcomeMessageContinuationUsed = false;
     let goalOutcomeToolResultPending = false;
-    const deduper = new ToolCallDeduplicator({
-      telemetry: this.agent.telemetry,
-      getTraceId: () => this.currentTraceId(),
-    });
+    const deduper = new ToolCallDeduplicator({ telemetry: this.agent.telemetry });
     await this.agent.mcp?.waitForInitialLoad(signal);
     // Surface the active goal at the start of the turn (append-only; no-op when
     // there is no active goal). Each goal continuation is its own turn, so this
@@ -820,17 +803,9 @@ export class TurnFlow {
               this.agent.log.warn('goal token accounting failed', { error });
             }
           },
-          // Early capture: fires when the response headers arrive, so the
-          // in-flight request's trace id is available even if the stream is
-          // cancelled mid-flight. step.end makes the final write.
-          onTraceId: (traceId) => {
-            if (traceId === null) {
-              this.traceIdByTurn.delete(turnId);
-              this.requestTraceIdByTurn.delete(turnId);
-            } else {
-              this.traceIdByTurn.set(turnId, traceId);
-              this.requestTraceIdByTurn.set(turnId, traceId);
-            }
+          onRequestTrace: (trace) => {
+            this.activeRequestTrace = trace;
+            deduper.beginStep(trace);
           },
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
@@ -844,7 +819,6 @@ export class TurnFlow {
               // re-injected later, so append them only after compaction runs.
               this.flushSteerBuffer();
               await this.agent.injection.inject();
-              deduper.beginStep();
               return;
             },
             afterStep: async ({ usage }) => {
@@ -1080,13 +1054,12 @@ export class TurnFlow {
     if (event.type === 'step.end') {
       // Final write: the completed step's last attempt wins over any earlier
       // mid-stream capture (e.g. from a retried attempt).
-      if (event.traceId !== undefined) this.traceIdByTurn.set(turnId, event.traceId);
-      // The step completed, so its request is no longer in flight: a later
-      // inter-step failure (e.g. a beforeStep hook) must not attribute to it.
-      this.requestTraceIdByTurn.delete(turnId);
+      this.latestTraceId = event.traceId;
+      this.activeRequestTrace = undefined;
       return;
     }
     if (event.type === 'turn.interrupted') {
+      this.interruptedTraceIdByTurn.set(turnId, event.traceId);
       if (event.reason === 'error' && event.activeStep !== undefined) {
         this.stepFailureByTurn.set(turnId, event);
       }
@@ -1094,6 +1067,7 @@ export class TurnFlow {
         turnId,
         interruptedStep(event),
         event.interruptReason ?? telemetryInterruptReason(event.reason, false),
+        event.traceId,
       );
       return;
     }
@@ -1103,10 +1077,7 @@ export class TurnFlow {
   private beginTrackedStep(turnId: number, step: number): void {
     this.currentStepByTurn.set(turnId, step);
     this.currentStep = step;
-    // A new step's first request has no response headers yet: drop any stale
-    // in-flight capture so api_error cannot attribute a pre-headers failure
-    // to an earlier request.
-    this.requestTraceIdByTurn.delete(turnId);
+    this.activeRequestTrace = undefined;
     if (!this.stepToolCallKeys.has(step)) {
       this.stepToolCallKeys.set(step, new Set());
     }
@@ -1114,7 +1085,13 @@ export class TurnFlow {
 
   private trackToolLifecycle(event: LoopEvent, turnId: number): void {
     if (event.type === 'tool.call') {
-      const dupType = this.trackDuplicateToolCall(turnId, event.step, event.name, event.args);
+      const dupType = this.trackDuplicateToolCall(
+        turnId,
+        event.step,
+        event.name,
+        event.args,
+        event.traceId,
+      );
       this.toolCallDupType.set(
         event.toolCallId,
         dupType === 'cross_step' ? 'cross_step' : 'normal',
@@ -1122,6 +1099,7 @@ export class TurnFlow {
       this.toolCallStartedAt.set(event.toolCallId, {
         name: event.name,
         startedAt: Date.now(),
+        traceId: event.traceId,
       });
       return;
     }
@@ -1138,7 +1116,7 @@ export class TurnFlow {
         outcome,
         duration_ms: Date.now() - started.startedAt,
         dup_type: dupType,
-        trace_id: this.traceIdByTurn.get(turnId),
+        trace_id: event.traceId ?? started.traceId,
       };
       const errorType = outcome === 'error' ? telemetryToolErrorType(event.result) : undefined;
       if (errorType !== undefined) {
@@ -1153,6 +1131,7 @@ export class TurnFlow {
     step: number,
     toolName: string,
     args: unknown,
+    traceId: string | undefined,
   ): 'normal' | 'same_step' | 'cross_step' {
     const argsText = canonicalTelemetryArgs(args);
     const key = `${toolName}\u0000${argsText}`;
@@ -1175,7 +1154,7 @@ export class TurnFlow {
       tool_name: toolName,
       dup_type: dupType,
       args_hash: createHash('sha256').update(argsText).digest('hex').slice(0, 8),
-      trace_id: this.traceIdByTurn.get(turnId),
+      trace_id: traceId,
     });
     return dupType;
   }
@@ -1191,16 +1170,18 @@ export class TurnFlow {
     turnId: number,
     atStep: number,
     interruptReason: TelemetryInterruptReason,
+    traceId: string | undefined,
   ): void {
     if (this.interruptedTelemetryTurnIds.has(turnId)) return;
     this.interruptedTelemetryTurnIds.add(turnId);
+    this.interruptedTraceIdByTurn.set(turnId, traceId);
     this.agent.telemetry.track('turn_interrupted', {
       turn_id: turnId,
       mode: this.telemetryModeByTurn.get(turnId) ?? this.telemetryMode(),
       at_step: atStep,
       interrupt_reason: interruptReason,
       ...this.requestProtocolProps(),
-      trace_id: this.traceIdByTurn.get(turnId),
+      trace_id: traceId,
     });
   }
 

@@ -23,7 +23,6 @@ function createMockStream(
     },
     finishReason: opts?.finishReason ?? null,
     rawFinishReason: opts?.rawFinishReason ?? null,
-    traceId: null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;
@@ -48,6 +47,21 @@ function createMockProvider(stream: StreamedMessage): ChatProvider {
   };
 }
 describe('generate()', () => {
+  it('omits trace metadata when the provider does not expose it', async () => {
+    const onTraceId = vi.fn();
+    const result = await generate(
+      createMockProvider(createMockStream([{ type: 'text', text: 'ok' }])),
+      '',
+      [],
+      [],
+      undefined,
+      { onTraceId },
+    );
+
+    expect(onTraceId).not.toHaveBeenCalled();
+    expect(Object.hasOwn(result, 'traceId')).toBe(false);
+  });
+
   it('merges consecutive TextParts and filters empty ones', async () => {
     const stream = createMockStream([
       { type: 'text', text: 'Hello, ' },
@@ -759,7 +773,6 @@ describe('generate()', () => {
       },
       finishReason: null,
       rawFinishReason: null,
-      traceId: null,
       async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
         observedParts += 1;
         yield { type: 'text', text: 'leaked' };
@@ -843,7 +856,6 @@ describe('generate()', () => {
       },
       finishReason: null,
       rawFinishReason: null,
-      traceId: null,
       async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
         yield { type: 'text', text: 'leaked' };
       },
@@ -916,7 +928,6 @@ describe('generate()', () => {
         usage: null,
         finishReason,
         rawFinishReason,
-        traceId: null,
         async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
           for (const part of parts) {
             yield part;
@@ -970,7 +981,6 @@ describe('generate()', () => {
         },
         finishReason: 'completed',
         rawFinishReason: 'stop',
-        traceId: null,
         async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
           let first = true;
           for (const part of parts) {

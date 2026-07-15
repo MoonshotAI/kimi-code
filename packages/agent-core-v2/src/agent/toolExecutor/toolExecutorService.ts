@@ -10,8 +10,13 @@
 import { InstantiationType } from '#/_base/di/extensions';
 import { toDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import type { ContentPart } from '#/app/llmProtocol/message';
-import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
+import type { ContentPart, ToolCall } from '#/app/llmProtocol/message';
+import type {
+  ToolCallStartedEvent,
+  ToolInputDisplay,
+  ToolProgressEvent,
+  ToolResultEvent,
+} from '@moonshot-ai/protocol';
 
 import {
   compileToolArgsValidator,
@@ -20,8 +25,7 @@ import {
   type ToolArgsValidator,
 } from '#/tool/args-validator';
 import { PathSecurityError } from '#/tool/path-access';
-import { isUserCancellation } from "#/_base/utils/abort";
-import { isAbortError } from '#/_base/utils/abort';
+import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
 import { IEventBus } from '#/app/event/eventBus';
 import {
   ToolAccesses,
@@ -34,11 +38,9 @@ import {
 } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import type { ToolCall } from '#/app/llmProtocol/message';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import {
@@ -127,8 +129,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentToolResultTruncationService
     private readonly resultTruncation: IAgentToolResultTruncationService,
-    @IAgentTelemetryContextService
-    private readonly telemetryContext: IAgentTelemetryContextService,
     @ILogService private readonly log?: ILogService,
   ) {}
 
@@ -248,7 +248,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     const finalized = await this.finalizeToolResult(call, rawResult, options);
 
     this.dispatchToolResult(call, finalized, options);
-    this.trackToolCall(call, finalized, timedResult.durationMs, options.turnId);
+    this.trackToolCall(call, finalized, timedResult.durationMs, options);
 
     return {
       toolCallId: call.toolCall.id,
@@ -261,20 +261,20 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     call: PreflightedToolCall,
     result: ToolResult,
     durationMs: number,
-    turnId: number,
+    options: ToolExecutorExecuteOptions,
   ): void {
     const outcome = toolTelemetryOutcome(result);
     const toolCallId = call.toolCall.id;
     const dupType = this.toolCallDupTypes.get(toolCallId) ?? 'normal';
     this.toolCallDupTypes.delete(toolCallId);
     const properties: ToolCallEvent = {
-      turn_id: turnId,
+      turn_id: options.turnId,
       tool_call_id: toolCallId,
       tool_name: call.toolName,
       outcome,
       duration_ms: durationMs,
       dup_type: dupType,
-      trace_id: this.telemetryContext.get().trace_id,
+      trace_id: options.trace?.traceId,
     };
     if (result.isError === true) properties['error_type'] = toolTelemetryErrorType(outcome);
     this.telemetry.track2('tool_call', properties);
@@ -458,6 +458,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       const executePromise = execution.execute({
         turnId: options.turnId,
         toolCallId: call.toolCall.id,
+        trace: options.trace,
         metadata,
         signal,
         onUpdate: (update) => {
@@ -555,6 +556,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     const didCtx: ToolDidExecuteContext = {
       turnId: options.turnId,
       signal: options.signal,
+      trace: options.trace,
       toolCall: call.toolCall,
       toolCalls: [call.toolCall],
       tool: call.tool,
@@ -637,6 +639,7 @@ function buildWillExecuteContext(
   return {
     turnId: options.turnId,
     signal: options.signal,
+    trace: options.trace,
     toolCall: call.toolCall,
     toolCalls: allCalls,
     tool: call.tool,

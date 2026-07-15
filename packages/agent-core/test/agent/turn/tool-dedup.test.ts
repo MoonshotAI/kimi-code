@@ -488,12 +488,9 @@ describe('ToolCallDeduplicator', () => {
 
     it('attaches the injected trace id to tool_call_repeat', async () => {
       const { client, events } = makeRecordingTelemetry();
-      const dedup = new ToolCallDeduplicator({
-        telemetry: client,
-        getTraceId: () => 'trace-repeat-1',
-      });
+      const dedup = new ToolCallDeduplicator({ telemetry: client });
       for (let i = 0; i < 2; i += 1) {
-        dedup.beginStep();
+        dedup.beginStep({ traceId: 'trace-repeat-1' });
         await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
         dedup.endStep();
       }

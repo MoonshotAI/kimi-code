@@ -68,6 +68,22 @@ export interface LLMStreamTiming {
   readonly clientConsumeMs?: number;
 }
 
+export interface LLMRequestTrace {
+  readonly traceId: string | undefined;
+}
+
+export class LLMRequestTraceState implements LLMRequestTrace {
+  traceId: string | undefined;
+
+  reset(): void {
+    this.traceId = undefined;
+  }
+
+  capture(traceId: string | null | undefined): void {
+    this.traceId = traceId ?? undefined;
+  }
+}
+
 export interface LLMChatParams {
   messages: Message[];
   tools: readonly Tool[];
@@ -90,16 +106,7 @@ export interface LLMChatParams {
    * order. Durable transcript writes receive completed blocks only.
    */
   onThinkPart?: ((part: ThinkPart) => Promise<void> | void) | undefined;
-  /**
-   * Fires as soon as the provider response headers arrive (before the stream
-   * body is drained), carrying the provider trace identifier from the
-   * `x-trace-id` header (Kimi/KFC only), or `null` when the provider does not
-   * report one. Firing early lets hosts attribute a stream that is cancelled
-   * mid-flight to its server-side request. Also fires with a failed attempt's
-   * trace id when the attempt failed with a status error, whose error
-   * response still carried headers (see chatWithRetry).
-   */
-  onTraceId?: (traceId: string | null) => void;
+  trace?: LLMRequestTraceState;
 }
 
 export interface LLMChatResponse {

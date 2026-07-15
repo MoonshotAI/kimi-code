@@ -60,7 +60,6 @@ function createTrackingStream(
     },
     finishReason: null,
     rawFinishReason: null,
-    traceId: null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       stats.started++;
       let finishedNormally = false;

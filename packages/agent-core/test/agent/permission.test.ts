@@ -2198,13 +2198,14 @@ describe('ExitPlanMode permission policy', () => {
     );
   });
 
-  it('attaches the turn trace id to permission_approval_result', async () => {
+  it('attaches the request trace id to permission_approval_result', async () => {
     const { manager, telemetryTrack } = makePermissionManager(
       async () => ({ decision: 'approved' }),
-      { traceId: 'trace-perm-1' },
     );
 
-    await expect(manager.beforeToolCall(hookContext({ id: 'call_traced' }))).resolves.toBeUndefined();
+    await expect(
+      manager.beforeToolCall(hookContext({ id: 'call_traced', traceId: 'trace-perm-1' })),
+    ).resolves.toBeUndefined();
 
     expect(telemetryTrack).toHaveBeenCalledWith(
       'permission_approval_result',
@@ -3893,7 +3894,6 @@ function makePermissionManager(
     readonly hooks?: Agent['hooks'];
     readonly approvalRpc?: boolean;
     readonly swarmModeActive?: boolean;
-    readonly traceId?: string;
   } = {},
 ): {
   manager: PermissionManager;
@@ -3916,7 +3916,6 @@ function makePermissionManager(
     rpc: options.approvalRpc === false ? undefined : { requestApproval },
     hooks: options.hooks,
     telemetry: { track: telemetryTrack },
-    turn: { traceIdForTurn: () => options.traceId },
     planMode: {
       get isActive() {
         return options.planModeActive ?? false;
@@ -4004,6 +4003,7 @@ function hookContext(input: {
   readonly args?: Record<string, unknown> | undefined;
   readonly execution?: PermissionPolicyContext['execution'] | undefined;
   readonly toolCalls?: readonly ToolCall[] | undefined;
+  readonly traceId?: string | undefined;
 }): PermissionPolicyContext {
   const toolName = input.toolName ?? 'Bash';
   const args = input.args ?? { command: 'printf first', timeout: 60 };
@@ -4016,6 +4016,7 @@ function hookContext(input: {
   return {
     turnId: '0',
     stepNumber: 1,
+    traceId: input.traceId,
     signal: new AbortController().signal,
     llm: {} as PermissionPolicyContext['llm'],
     toolCall,

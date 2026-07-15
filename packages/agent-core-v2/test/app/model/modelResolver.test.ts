@@ -57,7 +57,6 @@ describe('ModelResolverService', () => {
       usage: null,
       finishReason: 'completed',
       rawFinishReason: null,
-      traceId: null,
       async *[Symbol.asyncIterator]() {
         yield { type: 'text' as const, text: 'ok' };
       },
@@ -339,7 +338,6 @@ describe('ModelResolverService', () => {
           usage: null,
           finishReason: 'completed',
           rawFinishReason: null,
-          traceId: null,
           async *[Symbol.asyncIterator]() {
             yield { type: 'text' as const, text: 'recovered' };
           },

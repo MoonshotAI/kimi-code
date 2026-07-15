@@ -52,7 +52,7 @@ export interface StreamedMessage {
    * Trace id from the provider's `x-trace-id` response header (Kimi only;
    * `null` for every other protocol and for headerless responses).
    */
-  readonly traceId: string | null;
+  readonly traceId?: string | null;
 }
 
 export interface ProviderRequestAuth {

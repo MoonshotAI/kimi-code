@@ -55,7 +55,6 @@ describe('stepRetry plugin', () => {
           usage: emptyUsage(),
           finishReason: 'completed',
           rawFinishReason: 'stop',
-          traceId: null,
         };
       }),
     );
@@ -128,7 +127,6 @@ describe('stepRetry plugin', () => {
           usage: emptyUsage(),
           finishReason: 'completed',
           rawFinishReason: 'stop',
-          traceId: null,
         };
       }),
     );
@@ -217,7 +215,6 @@ describe('stepRetry plugin', () => {
           usage: emptyUsage(),
           finishReason: 'completed',
           rawFinishReason: 'stop',
-          traceId: null,
         };
       }),
     );

@@ -156,6 +156,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     {
       toolCallId,
       signal,
+      traceId,
       turnId,
     }: ExecutableToolContext,
   ): Promise<ExecutableToolResult> {
@@ -167,10 +168,10 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     }
 
     if (args.background === true) {
-      return this.executeInBackground(args, { toolCallId, turnId, signal });
+      return this.executeInBackground(args, { toolCallId, turnId, signal, traceId });
     }
 
-    return this.executeQuestion(args, { toolCallId, turnId, signal });
+    return this.executeQuestion(args, { toolCallId, turnId, signal, traceId });
   }
 
   private inputSchema(): z.ZodType<AskUserQuestionInput> {
@@ -182,8 +183,9 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     {
       toolCallId,
       signal,
+      traceId,
       turnId,
-    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId'>,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'traceId' | 'turnId'>,
   ): Promise<ExecutableToolResult> {
     try {
       const result = await this.agent.rpc!.requestQuestion!(
@@ -206,14 +208,14 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
         this.agent.telemetry.track('question_dismissed', {
-          trace_id: this.traceIdForTurn(turnId),
+          trace_id: traceId,
         });
         return dismissedQuestionResult();
       }
 
       const properties: Record<string, TelemetryPropertyValue> = {
         answered: Object.keys(normalized.answers).length,
-        trace_id: this.traceIdForTurn(turnId),
+        trace_id: traceId,
       };
       if (normalized.method !== undefined) properties['method'] = normalized.method;
       this.agent.telemetry.track('question_answered', properties);
@@ -235,18 +237,14 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     }
   }
 
-  private traceIdForTurn(turnId: string): string | undefined {
-    const numeric = numericTurnId(turnId);
-    return numeric === undefined ? undefined : this.agent.turn.traceIdForTurn(numeric);
-  }
-
   private executeInBackground(
     args: AskUserQuestionInput,
     {
       toolCallId,
       signal,
+      traceId,
       turnId,
-    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'turnId'>,
+    }: Pick<ExecutableToolContext, 'toolCallId' | 'signal' | 'traceId' | 'turnId'>,
   ): ExecutableToolResult {
     if (signal.aborted) {
       signal.throwIfAborted();
@@ -258,7 +256,8 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     try {
       taskId = backgroundManager.registerTask(
         new QuestionBackgroundTask(
-          (taskSignal) => this.executeQuestion(args, { toolCallId, turnId, signal: taskSignal }),
+          (taskSignal) =>
+            this.executeQuestion(args, { toolCallId, turnId, signal: taskSignal, traceId }),
           description,
           {
             questionCount: args.questions.length,
