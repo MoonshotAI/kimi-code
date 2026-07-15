@@ -245,6 +245,29 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     }
   });
 
+  it('serves fs actions when the session cwd itself goes through a symlink', async () => {
+    const link = join(tmpdir(), `kimi-server-v2-fs-cwd-link-${process.pid}`);
+    await symlink(work!, link, 'dir');
+    try {
+      const res = await fetch(`${base}/api/v1/sessions`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ metadata: { cwd: link } }),
+      } as never);
+      const body = (await res.json()) as Envelope<{ id: string }>;
+      expect(body.code).toBe(0);
+
+      await writeFile(join(work!, 'via-link.txt'), 'through-link');
+      const read = await postFs<{ content: string }>(body.data.id, 'read', {
+        path: 'via-link.txt',
+      });
+      expect(read.code).toBe(0);
+      expect(read.data.content).toBe('through-link');
+    } finally {
+      await rm(link, { force: true });
+    }
+  });
+
   it('GET fs/{path}:download streams the file and honors If-None-Match', async () => {
     await writeFile(join(work!, 'a.txt'), 'download-me');
     const id = await createSession();
