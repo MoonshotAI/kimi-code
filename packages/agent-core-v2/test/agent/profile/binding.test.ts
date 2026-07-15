@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
@@ -242,21 +242,26 @@ describe('AgentProfileService.bind', () => {
 });
 
 describe('AgentProfileService tool denylist', () => {
-  registerAgentProfile({
-    name: 'deny-builtin',
-    disallowedTools: ['Bash'],
-    systemPrompt: () => 'deny test',
-  });
-  registerAgentProfile({
-    name: 'deny-over-allow',
-    tools: ['Read', 'Bash'],
-    disallowedTools: ['Bash'],
-    systemPrompt: () => 'deny test',
-  });
-  registerAgentProfile({
-    name: 'deny-mcp',
-    disallowedTools: ['mcp__github__*'],
-    systemPrompt: () => 'deny test',
+  // Registration is idempotent (replace-by-name) and scoped to this describe's
+  // run window — module-scope registration would also pollute the bind
+  // describe above at collection time.
+  beforeAll(() => {
+    registerAgentProfile({
+      name: 'deny-builtin',
+      disallowedTools: ['Bash'],
+      systemPrompt: () => 'deny test',
+    });
+    registerAgentProfile({
+      name: 'deny-over-allow',
+      tools: ['Read', 'Bash'],
+      disallowedTools: ['Bash'],
+      systemPrompt: () => 'deny test',
+    });
+    registerAgentProfile({
+      name: 'deny-mcp',
+      disallowedTools: ['mcp__github__*'],
+      systemPrompt: () => 'deny test',
+    });
   });
 
   let ctx: TestAgentContext;

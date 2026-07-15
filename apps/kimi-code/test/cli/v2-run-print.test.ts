@@ -347,6 +347,27 @@ describe('runV2Print', () => {
     expect(profile.bind).toHaveBeenCalledWith({ profile: 'file-reviewer', model: 'k2' });
   });
 
+  it('fails before any turn when --agent-file is invalid', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kimi-agent-file-'));
+    const agentFile = join(dir, 'broken.md');
+    await writeFile(agentFile, '---\ndescription: no name\n---\n\nbody\n');
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent, agentServices } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await expect(
+      runV2Print(opts({ agentFiles: [agentFile] }) as never, '1.2.3-test', { stdout, stderr }),
+    ).rejects.toThrow(/Invalid agent file/);
+
+    const profile = agentServices.get(IAgentProfileService) as {
+      bind: ReturnType<typeof vi.fn>;
+    };
+    expect(profile.bind).not.toHaveBeenCalled();
+  });
+
   it('leaves the agent runtime options unseeded when --agentFile is empty', async () => {
     const stdout = writer();
     const stderr = writer();
