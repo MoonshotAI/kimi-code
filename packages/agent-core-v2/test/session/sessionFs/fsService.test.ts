@@ -39,7 +39,11 @@ function stubWorkspace(): ISessionWorkspaceContext {
   };
 }
 
-function fakeFs(files: Record<string, string>, symlinks: readonly string[] = []): IHostFileSystem {
+function fakeFs(
+  files: Record<string, string>,
+  symlinks: readonly string[] = [],
+  symlinkTargets: Record<string, string> = {},
+): IHostFileSystem {
   const fileMap = new Map<string, string>();
   const dirSet = new Set<string>([WORK_DIR]);
   const addAncestors = (rel: string): void => {
@@ -55,6 +59,13 @@ function fakeFs(files: Record<string, string>, symlinks: readonly string[] = [])
   const symlinkSet = new Set<string>();
   for (const rel of symlinks) {
     symlinkSet.add(join(WORK_DIR, rel));
+    addAncestors(rel);
+  }
+  const symlinkTargetMap = new Map<string, string>();
+  for (const [rel, target] of Object.entries(symlinkTargets)) {
+    const abs = join(WORK_DIR, rel);
+    symlinkTargetMap.set(abs, target);
+    symlinkSet.add(abs);
     addAncestors(rel);
   }
   const isDir = (p: string): boolean => p === WORK_DIR || dirSet.has(p);
@@ -162,6 +173,29 @@ function fakeFs(files: Record<string, string>, symlinks: readonly string[] = [])
       dirSet.add(p);
     },
     remove: async () => {},
+    realpath: async (p) => {
+      let current = p;
+      for (let i = 0; i < 40; i++) {
+        let longest: string | undefined;
+        for (const linkPath of symlinkTargetMap.keys()) {
+          if (
+            (current === linkPath || current.startsWith(`${linkPath}/`)) &&
+            (longest === undefined || linkPath.length > longest.length)
+          ) {
+            longest = linkPath;
+          }
+        }
+        if (longest === undefined) {
+          if (current === p) {
+            if (p === WORK_DIR || fileMap.has(p) || isDir(p) || symlinkSet.has(p)) return p;
+            throw enoent(p);
+          }
+          return current;
+        }
+        current = symlinkTargetMap.get(longest)! + current.slice(longest.length);
+      }
+      return current;
+    },
   };
 }
 
@@ -291,11 +325,12 @@ function makeSession(
   git: IGitService = defaultGitStub(),
   symlinks: readonly string[] = [],
   runner?: ISessionProcessRunner,
+  symlinkTargets: Record<string, string> = {},
 ): ISessionFsService {
   host = createScopedTestHost();
   const session = host.child(LifecycleScope.Session, 's1', [
     stubPair(ISessionWorkspaceContext, stubWorkspace()),
-    stubPair(IHostFileSystem, fakeFs(files, symlinks)),
+    stubPair(IHostFileSystem, fakeFs(files, symlinks, symlinkTargets)),
     stubPair(ISessionProcessRunner, runner ?? fakeRunner(handler)),
     stubPair(ITelemetryService, telemetryStub(events)),
     stubPair(IGitService, git),
@@ -709,5 +744,86 @@ describe('SessionFsService.resolveDownload', () => {
   it('throws fs.is_directory for a directory', async () => {
     const fs = makeSession({ 'src/a.ts': '' }, emptyHandler);
     await expect(fs.resolveDownload('src')).rejects.toMatchObject({ code: 'fs.is_directory' });
+  });
+});
+
+describe('SessionFsService symlink confinement', () => {
+  const escapeTargets = { docs: '/outside' };
+
+  function escapeSession(): ISessionFsService {
+    return makeSession(
+      { 'src/a.ts': '' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      escapeTargets,
+    );
+  }
+
+  it('rejects reads that escape through a symlinked directory', async () => {
+    const fs = escapeSession();
+    await expect(
+      fs.read({ path: 'docs/secret.txt', offset: 0, length: 1024, encoding: 'utf-8' }),
+    ).rejects.toMatchObject({ code: 'fs.path_escapes' });
+  });
+
+  it('rejects list through a symlinked directory', async () => {
+    const fs = escapeSession();
+    await expect(
+      fs.list({
+        path: 'docs',
+        depth: 1,
+        limit: 200,
+        show_hidden: false,
+        follow_gitignore: false,
+        sort: 'name_asc',
+        include_git_status: false,
+      }),
+    ).rejects.toMatchObject({ code: 'fs.path_escapes' });
+  });
+
+  it('rejects stat, mkdir, resolvePath and resolveDownload through a symlinked directory', async () => {
+    const fs = escapeSession();
+    await expect(fs.stat({ path: 'docs/secret.txt' })).rejects.toMatchObject({
+      code: 'fs.path_escapes',
+    });
+    await expect(fs.mkdir({ path: 'docs/newdir', recursive: true })).rejects.toMatchObject({
+      code: 'fs.path_escapes',
+    });
+    await expect(fs.resolvePath('docs/secret.txt')).rejects.toMatchObject({
+      code: 'fs.path_escapes',
+    });
+    await expect(fs.resolveDownload('docs/secret.txt')).rejects.toMatchObject({
+      code: 'fs.path_escapes',
+    });
+  });
+
+  it('rejects statMany when any path escapes through a symlinked directory', async () => {
+    const fs = escapeSession();
+    await expect(fs.statMany({ paths: ['docs/secret.txt'] })).rejects.toMatchObject({
+      code: 'fs.path_escapes',
+    });
+  });
+
+  it('still allows a symlink whose target stays inside the workspace', async () => {
+    const fs = makeSession(
+      { 'real/a.txt': 'hi' },
+      emptyHandler,
+      [],
+      defaultGitStub(),
+      [],
+      undefined,
+      { link: '/repo/real' },
+    );
+    const entry = await fs.stat({ path: 'link' });
+    expect(entry.kind).toBe('symlink');
+  });
+
+  it('still resolves ordinary in-workspace paths', async () => {
+    const fs = makeSession({ 'src/a.ts': 'content' }, emptyHandler);
+    const res = await fs.read({ path: 'src/a.ts', offset: 0, length: 1024, encoding: 'utf-8' });
+    expect(res.content).toBe('content');
   });
 });
