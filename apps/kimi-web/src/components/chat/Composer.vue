@@ -1328,7 +1328,7 @@ function selectModel(modelId: string): void {
 }
 .att-lightbox-name {
   max-width: 100%;
-  color: var(--color-text-on-accent);
+  color: var(--color-text-inverse);
   font-family: var(--mono);
   font-size: calc(var(--ui-font-size) - 2px);
   overflow: hidden;
@@ -1344,7 +1344,7 @@ function selectModel(modelId: string): void {
   border: 1px solid rgba(255,255,255,0.45);
   border-radius: 50%;
   background: rgba(20,23,28,0.82);
-  color: var(--color-text-on-accent);
+  color: var(--color-text-inverse);
   cursor: pointer;
 }
 

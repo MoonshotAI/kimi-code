@@ -343,6 +343,7 @@ html[data-accent="mono"] {
 html[data-color-scheme="dark"][data-accent="mono"] {
   --accent-primary: #e8eaed;
   --color-accent: #e8eaed;
+  --color-text-on-accent: #171717;
   --color-accent-hover: #c9cdd4;
   --color-accent-soft: #21262d;
   --color-accent-bd: #444c56;
@@ -358,6 +359,7 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   html[data-color-scheme="system"][data-accent="mono"] {
     --accent-primary: #e8eaed;
     --color-accent: #e8eaed;
+    --color-text-on-accent: #171717;
     --color-accent-hover: #c9cdd4;
     --color-accent-soft: #21262d;
     --color-accent-bd: #444c56;
@@ -398,11 +400,13 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --color-surface-sunken: #f3f5f8;
   /* Foreground text colours. `--color-text` is the default solid body / UI
      colour (headings and emphasis share it); muted / faint step down for
-     secondary and tertiary copy; on-accent is text drawn on the accent fill. */
+     secondary and tertiary copy; on-accent is text drawn on the accent fill;
+     inverse stays light on dark image and modal overlays. */
   --color-text: rgba(0, 0, 0, 0.9);
   --color-text-muted: #6b7280;
   --color-text-faint: #9aa3af;
   --color-text-on-accent: #ffffff;
+  --color-text-inverse: #ffffff;
   --color-line: #e7eaee;
   --color-line-strong: #d4d9e0;
   /* Neutral selected fill (sidebar rows, list pickers) — deliberately NOT

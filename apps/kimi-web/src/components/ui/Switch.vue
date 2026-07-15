@@ -48,9 +48,9 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
   width: 16px;
   height: 16px;
   border-radius: var(--radius-full);
-  background: var(--color-text-on-accent);
+  background: var(--color-text-inverse);
   box-shadow: var(--shadow-xs);
   transition: transform var(--duration-base) var(--ease-out);
 }
-.ui-switch.is-on .ui-switch__thumb { transform: translateX(16px); }
+.ui-switch.is-on .ui-switch__thumb { background: var(--color-text-on-accent); transform: translateX(16px); }
 </style>
