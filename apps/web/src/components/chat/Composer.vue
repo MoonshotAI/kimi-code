@@ -2040,20 +2040,21 @@ function selectModel(modelId: string): void {
   width: 34px;
   height: 19px;
   border-radius: 999px;
-  background: var(--panel2);
-  border: 1px solid var(--line);
+  /* Colors mirror the design-system Switch (web-ui Switch.vue): a track that
+     stays visible on the menu surface in dark mode, and an always-white knob. */
+  background: var(--color-line-strong);
   position: relative;
   transition: background 0.15s;
 }
-.mode-switch.on { background: var(--color-accent); border-color: var(--color-accent); }
+.mode-switch.on { background: var(--color-accent); }
 .mode-knob {
   position: absolute;
-  top: 1px;
-  left: 1px;
+  top: 2px;
+  left: 2px;
   width: 15px;
   height: 15px;
   border-radius: 50%;
-  background: var(--bg);
+  background: var(--color-text-on-accent);
   box-shadow: var(--shadow-xs);
   transition: transform 0.15s;
 }
