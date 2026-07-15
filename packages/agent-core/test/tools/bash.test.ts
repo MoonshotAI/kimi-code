@@ -883,6 +883,69 @@ describe('BashTool', () => {
     expect(manager.list(false)).toHaveLength(1);
   });
 
+  describe('background timeout default (backgroundTimeoutS)', () => {
+    async function launchBackground(
+      manager: ReturnType<typeof createBackgroundManager>['manager'],
+      options?: ConstructorParameters<typeof BashTool>[3],
+      args?: Partial<BashInput>,
+    ) {
+      const registerSpy = vi.spyOn(manager, 'registerTask');
+      const execWithEnv = vi.fn().mockResolvedValue(processWithOutput());
+      const tool = bashTool(createFakeKaos({ execWithEnv, osEnv: posixEnv }), '/workspace', manager, options);
+      const result = await executeTool(tool,
+        context({ command: 'sleep 10', run_in_background: true, description: 'task', ...args }),
+      );
+      expect(result.isError).not.toBe(true);
+      return registerSpy.mock.calls[0]?.[1];
+    }
+
+    it('defaults to a 600s deadline and detach re-arm when no config is provided', async () => {
+      const manager = createBackgroundManager().manager;
+      const options = await launchBackground(manager);
+      expect(options).toMatchObject({ timeoutMs: 600_000, detachTimeoutMs: 600_000 });
+    });
+
+    it('arms no timer when backgroundTimeoutS is 0', async () => {
+      const manager = createBackgroundManager().manager;
+      const options = await launchBackground(manager, { backgroundTimeoutS: 0 });
+      expect(options).toMatchObject({ timeoutMs: undefined, detachTimeoutMs: undefined });
+    });
+
+    it('uses the configured seconds as the default deadline and detach re-arm', async () => {
+      const manager = createBackgroundManager().manager;
+      const options = await launchBackground(manager, { backgroundTimeoutS: 30 });
+      expect(options).toMatchObject({ timeoutMs: 30_000, detachTimeoutMs: 30_000 });
+    });
+
+    it('honors an explicit per-call timeout even when the default is disabled', async () => {
+      const manager = createBackgroundManager().manager;
+      const options = await launchBackground(manager, { backgroundTimeoutS: 0 }, { timeout: 42 });
+      expect(options?.timeoutMs).toBe(42_000);
+    });
+
+    it('keeps disable_timeout authoritative regardless of the configured default', async () => {
+      const manager = createBackgroundManager().manager;
+      const options = await launchBackground(manager, { backgroundTimeoutS: 30 }, { disable_timeout: true });
+      expect(options?.timeoutMs).toBeUndefined();
+    });
+
+    it('tells the model there is no default timeout when backgroundTimeoutS is 0', () => {
+      const tool = bashTool(
+        createFakeKaos({ osEnv: posixEnv }),
+        '/workspace',
+        createBackgroundManager().manager,
+        { backgroundTimeoutS: 0 },
+      );
+      expect(tool.description).toContain('Background commands have no timeout by default');
+      expect(tool.description).not.toContain('default to a 600s timeout');
+      const timeoutParam = (
+        tool.parameters as { properties: { timeout: { description?: string } } }
+      ).properties.timeout;
+      expect(timeoutParam.description).toContain('Background default no timeout');
+      expect(timeoutParam.description).not.toContain('Background default 600s');
+    });
+  });
+
   it('kills a spawned background command when the task limit is reached', async () => {
     const manager = createBackgroundManager({ maxRunningTasks: 1 }).manager;
     registerProcess(manager, processWithOutput(), 'sleep 10', 'existing task');

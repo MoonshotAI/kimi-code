@@ -91,6 +91,8 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   constructor(
     private readonly subagentHost: SessionSubagentHost,
     private readonly swarmMode: SwarmMode,
+    // `0` = no timeout, preserved on purpose (`0 ?? DEFAULT` stays `0`);
+    // SubagentBatch arms no timer for non-positive timeouts.
     private readonly subagentTimeoutMs?: number,
   ) {}
 

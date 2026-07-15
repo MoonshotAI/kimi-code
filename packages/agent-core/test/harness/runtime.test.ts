@@ -1192,7 +1192,8 @@ describe('KimiCore print-mode defaults', () => {
     });
 
     const main = core.sessions.get(created.id)?.getReadyAgent('main');
-    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(259_200_000);
+    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(0);
+    expect(main?.kimiConfig?.background?.bashTaskTimeoutS).toBe(0);
     expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(0);
 
     // The raw user config is left untouched so config reads/writes still
@@ -1252,7 +1253,8 @@ timeout_ms = 5000
     // The reload path rebuilds the session through resumeSessionWithOverrides;
     // the agent it constructs must carry the same print-mode defaults.
     const main = core.sessions.get(created.id)?.getReadyAgent('main');
-    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(259_200_000);
+    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(0);
+    expect(main?.kimiConfig?.background?.bashTaskTimeoutS).toBe(0);
     expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(0);
   });
 });
