@@ -7,8 +7,8 @@
  * per-agent wire records and the wire state machine, the blob store, and MCP,
  * and registers the agent in the session registry. New logs receive a metadata
  * envelope while non-empty unversioned logs are rejected. Removal awaits the
- * agent task manager's graceful exit policy before draining activity and
- * disposing the child scope. Bound at Session scope.
+ * agent task manager's graceful exit policy before draining turns and full
+ * compaction, then disposing the child scope. Bound at Session scope.
  *
  * No agent id is special here: the main agent is simply the agent created
  * with the conventional `MAIN_AGENT_ID`, and `fork` requires its source to
@@ -305,12 +305,17 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     this.handles.delete(agentId);
     await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
     const loop = handle.accessor.get(IAgentLoopService);
+    const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
+    const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
     const reason = abortError('Agent removed');
     for (const turnId of loop.status().pendingTurnIds) {
       loop.cancel(turnId, reason);
     }
     loop.cancel(undefined, reason);
-    await loop.settled();
+    if (compaction !== null && !compaction.abortController.signal.aborted) {
+      compaction.abortController.abort(reason);
+    }
+    await Promise.all([loop.settled(), compactionSettled]);
     handle.dispose();
     this.onDidDisposeEmitter.fire(agentId);
   }

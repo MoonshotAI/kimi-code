@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import type { IScopeHandle, Scope } from '@moonshot-ai/agent-core-v2';
 import {
   ContextSizeModel,
+  IAgentActivityView,
   IAgentContextSizeService,
   IAgentLifecycleService,
   IAgentProfileService,
@@ -115,6 +116,9 @@ class FakeLifecycle {
   }
   addAgent(id: string): FakeAgentHandle {
     const handle = new FakeAgentHandle(id);
+    handle.set(IAgentActivityView, {
+      state: () => ({ lifecycle: 'ready', background: [] }),
+    });
     this.turnCounters.set(
       id,
       handle.bus.subscribe((e) => {
@@ -748,6 +752,27 @@ describe('SessionEventBroadcaster', () => {
     // fact (idle phase + busy session is exactly "background work only").
     expect(envelopes.filter((e) => e.type === 'agent.status.updated').map((e) => e.payload))
       .toMatchObject([{ phase: { kind: 'idle' } }, { phase: { kind: 'idle' } }]);
+  });
+
+  it('emits the first background-work change from an agent created after activation', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    const late = lc.addAgent('agent-0');
+    late.bus.emit(
+      agentEvent('agent.activity.updated', {
+        lifecycle: 'ready',
+        background: [{ kind: 'process', id: 'bash-1', since: 100 }],
+      }),
+    );
+    await bc.getCursor('s1');
+
+    const workChanged = envelopes.filter((event) => event.type === 'event.session.work_changed');
+    expect(workChanged).toHaveLength(1);
+    expect(workChanged[0]?.payload).toMatchObject({ busy: true });
   });
 
   it('reports the main turn ending while sub-agent background work keeps busy true', async () => {

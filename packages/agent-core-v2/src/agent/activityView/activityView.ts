@@ -6,12 +6,13 @@
  * phase/stream/step/retry/pending-approval/tool-call detail and the latest
  * turn outcome, published on the agent's event bus as
  * `agent.activity.updated`. The view OWNS NO authoritative state: every fact
- * is folded from the agent's own event bus (loop turn/step/delta/tool/retry
- * events and permission approval events) and seeded once from the loop's own
- * status; it can be discarded and rebuilt at any time. Turn mechanics live in
- * the loop, admission/drain in the session lifecycle, background bookkeeping
- * in the agent lifecycle — none of that is duplicated here. Bound at Agent
- * scope — one instance per agent, dying with it.
+ * is folded from the agent's own event bus (loop turn/step/delta/tool/retry,
+ * permission approval, task, and full-compaction events) and seeded once from
+ * the owning services; it can be discarded and rebuilt at any time. Turn
+ * mechanics live in the loop, admission/drain in the session lifecycle, and
+ * background work in task/full-compaction services — none of that is
+ * duplicated here. Bound at Agent scope — one instance per agent, dying with
+ * it.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -63,10 +64,10 @@ export interface ActivityLastTurnState {
 }
 
 /**
- * Coarse existence reference to one of the agent's active background tasks
- * (any kind: process / agent / question / …) — the second busy layer. Task
- * details (output, status machine) live in the task channel; this carries
- * only "there is live background work".
+ * Coarse existence reference to one piece of the agent's active background
+ * work (task or full compaction) — the second busy layer. Owner-specific
+ * details live in their own domains; this carries only "there is live
+ * background work".
  */
 export interface BackgroundRef {
   readonly kind: string;

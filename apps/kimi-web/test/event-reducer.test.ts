@@ -154,6 +154,33 @@ describe('reduceAppEvent sessionWorkChanged', () => {
     expect(next.sessions[0]).toMatchObject({ busy: true, mainTurnActive: false });
     expect(next.turnActiveBySession['s1']).toBeUndefined();
   });
+
+  it('clears stale main-turn liveness when an idle update omits the optional field', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [
+        {
+          ...makeSession('s1', '2026-01-01T00:00:00.000Z'),
+          busy: true,
+          mainTurnActive: true,
+        },
+      ],
+      turnActiveBySession: { s1: true },
+    };
+
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'sessionWorkChanged',
+        sessionId: 's1',
+        busy: false,
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.sessions[0]).toMatchObject({ busy: false, mainTurnActive: false });
+    expect(next.turnActiveBySession['s1']).toBeUndefined();
+  });
 });
 
 describe('reduceAppEvent messageCreated', () => {

@@ -303,14 +303,14 @@ export function reduceAppEvent(
         return {
           ...s,
           busy: event.busy,
-          mainTurnActive: event.mainTurnActive ?? s.mainTurnActive,
+          mainTurnActive: event.mainTurnActive ?? (event.busy ? s.mainTurnActive : false),
           pendingInteraction: event.pendingInteraction ?? s.pendingInteraction,
           lastTurnReason: event.lastTurnReason ?? s.lastTurnReason,
         };
       });
       if (event.mainTurnActive === true) {
         next.turnActiveBySession[event.sessionId] = true;
-      } else if (event.mainTurnActive === false) {
+      } else if (event.mainTurnActive === false || !event.busy) {
         delete next.turnActiveBySession[event.sessionId];
       }
       break;

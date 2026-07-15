@@ -515,6 +515,10 @@ export class SessionEventBroadcaster {
     const agents = session.accessor.get(IAgentLifecycleService);
     const subscribeAgent = (handle: IAgentScopeHandle): void => {
       if (state.agentDisposables.has(handle.id)) return;
+      if (!state.activityByAgent.has(handle.id)) {
+        state.activityByAgent.set(handle.id, readAgentWorkFold(handle));
+        this.enqueueWorkChanged(state);
+      }
       state.agentDisposables.set(handle.id, this.attachAgent(sessionId, handle));
     };
     for (const handle of agents.list()) subscribeAgent(handle);

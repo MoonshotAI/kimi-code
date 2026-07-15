@@ -46,6 +46,7 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { createWireMetadataRecord, type WireRecord } from '#/wire/record';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import { IAgentLoopService } from '#/agent/loop/loop';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { _clearToolContributionsForTests } from '#/agent/toolRegistry/toolContribution';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -290,6 +291,10 @@ describe('AgentLifecycleService', () => {
       _serviceBrand: undefined,
       stopAllOnExit,
     } as unknown as IAgentTaskService);
+    ix.stub(IAgentFullCompactionService, {
+      _serviceBrand: undefined,
+      compacting: null,
+    } as unknown as IAgentFullCompactionService);
     ix.set(IAgentLifecycleService, new SyncDescriptor(AgentLifecycleService));
   });
   afterEach(() => {
@@ -326,6 +331,46 @@ describe('AgentLifecycleService', () => {
 
     expect(loopCancel.mock.calls.map(([turnId]) => turnId)).toEqual([2, 3, undefined]);
     expect(loopSettled).toHaveBeenCalledOnce();
+  });
+
+  it('remove waits for an active full compaction to reject after aborting it', async () => {
+    const abortController = new AbortController();
+    let rejectCompaction!: (reason: unknown) => void;
+    const promise = new Promise<never>((_resolve, reject) => {
+      rejectCompaction = reject;
+    });
+    const aborted = new Promise<void>((resolve) => {
+      abortController.signal.addEventListener(
+        'abort',
+        () => {
+          resolve();
+        },
+        { once: true },
+      );
+    });
+    ix.stub(IAgentFullCompactionService, {
+      _serviceBrand: undefined,
+      compacting: {
+        abortController,
+        promise,
+        trigger: 'manual',
+        tokenCount: 100,
+      },
+    } as unknown as IAgentFullCompactionService);
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    let removed = false;
+    const removal = svc.remove('main').then(() => {
+      removed = true;
+    });
+    await aborted;
+    await Promise.resolve();
+    expect(removed).toBe(false);
+
+    rejectCompaction(abortController.signal.reason);
+    await removal;
+    expect(removed).toBe(true);
   });
 
   it('ignites the self-wiring toolDedupe plugin so its hooks exist before the first turn', async () => {

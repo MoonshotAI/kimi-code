@@ -4,10 +4,11 @@
  * A pure fold of the agent's own event bus: turn boundaries drive the turn
  * slice (active → detail updates → ended → `lastTurn`), step/delta/tool/retry
  * events drive the live phase/stream/retry detail, permission approval events
- * drive the pending-approval list, and `task.started`/`task.terminated` drive
- * the background-work slice. The view seeds once from `IAgentLoopService` and
- * `IAgentTaskService` (reads, never writes) and otherwise holds only derived
- * state, so it can be discarded and rebuilt at any time. Bound at Agent scope.
+ * drive the pending-approval list, while task and full-compaction events drive
+ * the background-work slice. The view seeds once from `IAgentLoopService`,
+ * `IAgentTaskService`, and `IAgentFullCompactionService` (reads, never writes)
+ * and otherwise holds only derived state, so it can be discarded and rebuilt
+ * at any time. Bound at Agent scope.
  */
 
 import { Disposable } from '#/_base/di/lifecycle';
@@ -16,6 +17,7 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentFullCompactionService } from '#/agent/fullCompaction/fullCompaction';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { TurnEndReason } from '#/agent/loop/turnEvents';
@@ -34,6 +36,7 @@ import type {
 import { IAgentActivityView } from './activityView';
 
 type EndingReason = NonNullable<ActivityTurnState['endingReason']>;
+const FULL_COMPACTION_BACKGROUND_ID = 'full-compaction';
 
 export class AgentActivityView extends Disposable implements IAgentActivityView {
   declare readonly _serviceBrand: undefined;
@@ -48,10 +51,12 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentFullCompactionService private readonly fullCompaction: IAgentFullCompactionService,
   ) {
     super();
     this.seedFromLoop();
     this.seedFromTasks();
+    this.seedFromFullCompaction();
 
     this._register(this.eventBus.subscribe('turn.started', (e) => this.onTurnStarted(e.turnId, e.origin)));
     this._register(this.eventBus.subscribe('turn.step.started', (e) => this.onStepStarted(e.step)));
@@ -118,6 +123,26 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
         if (this.background.delete(e.info.taskId)) this.publish();
       }),
     );
+    this._register(
+      this.eventBus.subscribe('compaction.started', () => {
+        this.background.set(FULL_COMPACTION_BACKGROUND_ID, {
+          kind: 'compaction',
+          id: FULL_COMPACTION_BACKGROUND_ID,
+          since: Date.now(),
+        });
+        this.publish();
+      }),
+    );
+    this._register(
+      this.eventBus.subscribe('compaction.completed', () => {
+        this.onFullCompactionEnded();
+      }),
+    );
+    this._register(
+      this.eventBus.subscribe('compaction.cancelled', () => {
+        this.onFullCompactionEnded();
+      }),
+    );
   }
 
   state(): AgentActivityState {
@@ -146,6 +171,20 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
       this.background.set(info.taskId, { kind: info.kind, id: info.taskId, since: info.startedAt });
     }
     if (this.background.size > 0) this.publish();
+  }
+
+  private seedFromFullCompaction(): void {
+    if (this.fullCompaction.compacting === null) return;
+    this.background.set(FULL_COMPACTION_BACKGROUND_ID, {
+      kind: 'compaction',
+      id: FULL_COMPACTION_BACKGROUND_ID,
+      since: Date.now(),
+    });
+    this.publish();
+  }
+
+  private onFullCompactionEnded(): void {
+    if (this.background.delete(FULL_COMPACTION_BACKGROUND_ID)) this.publish();
   }
 
   private onTurnStarted(turnId: number, origin?: PromptOrigin): void {

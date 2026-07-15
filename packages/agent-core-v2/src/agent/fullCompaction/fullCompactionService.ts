@@ -304,8 +304,8 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     };
   }
 
-  /** Agent teardown aborts the in-flight compaction via scope disposal — no
-   *  registry: the service owns its own background work. */
+  /** Scope disposal is the fallback abort path; normal agent teardown aborts
+   *  and awaits the exposed task before disposing the scope. */
   override dispose(): void {
     if (this._compacting !== null && !this._compacting.abortController.signal.aborted) {
       this._compacting.abortController.abort();
