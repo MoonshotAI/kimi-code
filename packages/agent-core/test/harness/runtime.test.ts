@@ -1147,6 +1147,116 @@ base_url = "https://search.example.test/v1"
   });
 });
 
+describe('KimiCore print-mode defaults', () => {
+  let tmp: string;
+
+  afterEach(async () => {
+    if (tmp !== undefined) {
+      await rm(tmp, { recursive: true, force: true });
+    }
+    await __resetRootLoggerForTest();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  async function createCorePair(homeDir: string, uiMode?: string) {
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir, uiMode });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    return { core, rpc };
+  }
+
+  async function setupDirs(configToml: string): Promise<{ homeDir: string; workDir: string }> {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-print-defaults-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), configToml);
+    return { homeDir, workDir };
+  }
+
+  it('applies print-mode subagent/loop defaults to sessions when uiMode is print', async () => {
+    const { homeDir, workDir } = await setupDirs(baseModelConfig());
+    const { core, rpc } = await createCorePair(homeDir, 'print');
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults',
+      workDir,
+      model: 'default-mock',
+    });
+
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(259_200_000);
+    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(0);
+
+    // The raw user config is left untouched so config reads/writes still
+    // round-trip the user's file values.
+    const raw = await core.getKimiConfig();
+    expect(raw.subagent).toBeUndefined();
+    expect(raw.loopControl).toBeUndefined();
+  });
+
+  it('keeps explicit user config over the print-mode defaults', async () => {
+    const { homeDir, workDir } = await setupDirs(`${baseModelConfig()}
+[loop_control]
+max_steps_per_turn = 7
+
+[subagent]
+timeout_ms = 5000
+`);
+    const { core, rpc } = await createCorePair(homeDir, 'print');
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults_user_config',
+      workDir,
+      model: 'default-mock',
+    });
+
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(5000);
+    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(7);
+  });
+
+  it('does not apply print-mode defaults outside print mode', async () => {
+    const { homeDir, workDir } = await setupDirs(baseModelConfig());
+    const { core, rpc } = await createCorePair(homeDir);
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults_off',
+      workDir,
+      model: 'default-mock',
+    });
+
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent).toBeUndefined();
+    expect(main?.kimiConfig?.loopControl).toBeUndefined();
+  });
+
+  it('applies print-mode defaults when a session is reloaded', async () => {
+    const { homeDir, workDir } = await setupDirs(baseModelConfig());
+    const { core, rpc } = await createCorePair(homeDir, 'print');
+
+    const created = await rpc.createSession({
+      id: 'ses_print_defaults_reload',
+      workDir,
+      model: 'default-mock',
+    });
+    await rpc.reloadSession({ sessionId: created.id });
+
+    // The reload path rebuilds the session through resumeSessionWithOverrides;
+    // the agent it constructs must carry the same print-mode defaults.
+    const main = core.sessions.get(created.id)?.getReadyAgent('main');
+    expect(main?.kimiConfig?.subagent?.timeoutMs).toBe(259_200_000);
+    expect(main?.kimiConfig?.loopControl?.maxStepsPerTurn).toBe(0);
+  });
+});
+
 async function writeSessionStartPlugin(root: string, skillBody: string): Promise<void> {
   await mkdir(join(root, 'skills', 'greeter'), { recursive: true });
   await writeFile(
