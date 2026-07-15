@@ -60,6 +60,7 @@ import type {
   SessionCursor,
   SessionMetaUpdatedEvent,
   SessionStatus,
+  SnapshotSubagent,
 } from '@moonshot-ai/protocol';
 import { isVolatileEventType } from '@moonshot-ai/protocol';
 
@@ -67,6 +68,7 @@ import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';
 import { readLegacyStatus, toLegacyPhase } from '../../../services/legacyStatus/legacyStatus';
 import { InFlightTurnTracker } from './inFlightTurnTracker';
+import { SubagentRosterTracker } from './subagentRosterTracker';
 import {
   type EventEnvelope,
   type JournalLogger,
@@ -88,6 +90,7 @@ export interface SessionSnapshotState {
   seq: number;
   epoch: string;
   inFlightTurn: InFlightTurn | null;
+  subagents: SnapshotSubagent[];
 }
 
 /** A connection (or test double) that receives sequenced envelopes. */
@@ -107,6 +110,7 @@ interface SessionState {
   readonly sessionId: string;
   readonly journal: SessionEventJournal;
   readonly tracker: InFlightTurnTracker;
+  readonly roster: SubagentRosterTracker;
   readonly activity?: ISessionActivity;
   /** Last status emitted (initialized from live session activity). */
   lastStatus?: SessionStatus;
@@ -233,14 +237,15 @@ export class SessionEventBroadcaster {
     if (state === undefined) {
       const cold = await this.readColdWatermark(sessionId);
       return cold !== undefined
-        ? { ...cold, inFlightTurn: null }
-        : { seq: 0, epoch: '', inFlightTurn: null };
+        ? { ...cold, inFlightTurn: null, subagents: [] }
+        : { seq: 0, epoch: '', inFlightTurn: null, subagents: [] };
     }
     await state.queue;
     return {
       seq: state.journal.seq,
       epoch: state.journal.epoch,
       inFlightTurn: state.tracker.get(sessionId),
+      subagents: state.roster.get(sessionId),
     };
   }
 
@@ -296,6 +301,7 @@ export class SessionEventBroadcaster {
       sessionId,
       journal,
       tracker: new InFlightTurnTracker(),
+      roster: new SubagentRosterTracker(),
       activity,
       lastStatus: activity.status(),
       tail: [],
@@ -330,6 +336,7 @@ export class SessionEventBroadcaster {
       sessionId: GLOBAL_SESSION_ID,
       journal,
       tracker: new InFlightTurnTracker(),
+      roster: new SubagentRosterTracker(),
       tail: [],
       targets: new Map(),
       queue: Promise.resolve(),
@@ -469,11 +476,7 @@ export class SessionEventBroadcaster {
     const disposables: IDisposable[] = [
       eventBus.subscribe((event) => {
         let projected = event;
-        if (
-          handle.id === MAIN_AGENT_ID &&
-          event.type === 'agent.status.updated' &&
-          event.phase === undefined
-        ) {
+        if (handle.id === MAIN_AGENT_ID && event.type === 'agent.status.updated') {
           const snapshot = readLegacyStatus(handle);
           if (snapshot !== undefined) {
             lastLegacyStatus = JSON.stringify(snapshot);
@@ -663,8 +666,11 @@ export class SessionEventBroadcaster {
   }
 
   private async dispatch(state: SessionState, event: Event, volatile: boolean): Promise<void> {
-    const { journal, tracker, tail, targets, sessionId } = state;
+    const { journal, tracker, roster, tail, targets, sessionId } = state;
     const annotation = tracker.apply(sessionId, event);
+    // Same queue-discipline as the in-flight tracker: snapshot rebuilds must
+    // see exactly the roster as of the durable watermark.
+    roster.apply(sessionId, event);
 
     let envelope: EventEnvelope;
     if (volatile) {

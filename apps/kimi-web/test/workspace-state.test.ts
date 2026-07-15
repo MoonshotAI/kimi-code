@@ -1,3 +1,8 @@
+// Scenario: workspace/session actions exposed by useWorkspaceState.
+// Responsibilities: observable state and error reporting across load, paging, and user actions.
+// Wiring: the composable is real; daemon requests and unrelated facade collaborators are stubbed.
+// Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/workspace-state.test.ts
+
 import { computed, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
@@ -89,6 +94,11 @@ function createState(): ExtendedState {
     managedProviderStatus: null,
     workspaces: [],
     activeWorkspaceId: null,
+    sessionsHasMoreByWorkspace: {},
+    sessionsLoadingMoreByWorkspace: {},
+    sessionsCursorByWorkspace: {},
+    sessionsInitialCountByWorkspace: {},
+    sessionsFullyLoaded: false,
     fsHome: null,
     recentRoots: [],
     hiddenWorkspaceRoots: [],
@@ -1209,6 +1219,281 @@ describe('useWorkspaceState — first-load auth gate', () => {
       }
     },
   );
+});
+
+describe('useWorkspaceState — session list loading', () => {
+  beforeEach(() => {
+    apiMock.getAuth.mockReset().mockResolvedValue({
+      ready: true,
+      defaultModel: 'kimi-code',
+      managedProvider: null,
+    });
+    apiMock.getHealth.mockReset().mockResolvedValue({ ok: true });
+    apiMock.getMeta.mockReset().mockResolvedValue({
+      serverVersion: '0.0.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      backend: 'v1',
+    });
+    apiMock.getConfig.mockReset().mockResolvedValue({});
+    apiMock.listWorkspaces.mockReset().mockResolvedValue([]);
+    apiMock.getFsHome.mockReset().mockResolvedValue({ home: '', recentRoots: [] });
+    apiMock.listSessions.mockReset();
+  });
+
+  function createSessionLoadRig(sessions: AppSession[]) {
+    const state = createState();
+    state.sessions = sessions;
+    state.activeSessionId = sessions[0]?.id ?? null;
+    const deps = {
+      ...createDeps(),
+      modelProvider: { loadModels: vi.fn().mockResolvedValue(undefined) },
+      initialized: ref(false),
+      connectIssue: ref<string | null>(null),
+      setSessions: vi.fn((next: AppSession[]) => {
+        state.sessions = next;
+      }),
+      workspaceIdForSession: vi.fn(
+        (session: { workspaceId?: string; cwd: string }) =>
+          state.workspaces.find((item) => item.root === session.cwd)?.id ??
+          session.workspaceId ??
+          session.cwd,
+      ),
+    } as unknown as UseWorkspaceStateDeps;
+    return { state, deps, workspaceState: useWorkspaceState(state, deps) };
+  }
+
+  it('reports one load failure when the no-workspace session fallback rejects', async () => {
+    const error = new Error('session index unavailable');
+    apiMock.listSessions.mockRejectedValue(error);
+    const { deps, workspaceState } = createSessionLoadRig([]);
+
+    await workspaceState.load();
+
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+  });
+
+  it('keeps failed workspace sessions while replacing a successful shared-root workspace', async () => {
+    const error = new Error('legacy workspace unavailable');
+    const cached = {
+      ...createSession(),
+      id: 'sess_cached',
+      title: 'Cached legacy',
+      workspaceId: 'wd_legacy',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const fresh = {
+      ...createSession(),
+      id: 'sess_fresh',
+      title: 'Fresh current',
+      workspaceId: 'wd_current',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    };
+    const staleCurrent = {
+      ...createSession(),
+      id: 'sess_stale',
+      title: 'Stale current',
+      workspaceId: 'wd_current',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([
+      workspace('wd_current', '/workspace', 'Workspace'),
+      workspace('wd_legacy', '/workspace', 'Workspace'),
+    ]);
+    apiMock.listSessions.mockImplementation(
+      async ({ workspaceId }: { workspaceId?: string }) => {
+        if (workspaceId === 'wd_current') return { items: [fresh], hasMore: false };
+        throw error;
+      },
+    );
+    const { state, deps, workspaceState } = createSessionLoadRig([cached, staleCurrent]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_fresh', 'sess_cached']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+  });
+
+  it('keeps root-matched sessions when their stored workspace id is no longer registered', async () => {
+    const error = new Error('current workspace unavailable');
+    const cached = {
+      ...createSession(),
+      id: 'sess_cached',
+      title: 'Cached old workspace id',
+      workspaceId: 'wd_removed',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const fresh = {
+      ...createSession(),
+      id: 'sess_fresh',
+      title: 'Fresh other workspace',
+      cwd: '/other-workspace',
+      workspaceId: 'wd_other',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([
+      workspace('wd_current', '/workspace', 'Workspace'),
+      workspace('wd_other', '/other-workspace', 'Other'),
+    ]);
+    apiMock.listSessions.mockImplementation(
+      async ({ workspaceId }: { workspaceId?: string }) => {
+        if (workspaceId === 'wd_current') throw error;
+        return { items: [fresh], hasMore: false };
+      },
+    );
+    const { state, deps, workspaceState } = createSessionLoadRig([cached]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_fresh', 'sess_cached']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+  });
+
+  it('loads the next page when a retry follows an automatic continuation failure', async () => {
+    const error = new Error('automatic continuation unavailable');
+    const cached = {
+      ...createSession(),
+      title: 'Cached first page',
+      workspaceId: 'wd_1',
+      updatedAt: '2099-01-01T00:00:00.000Z',
+    };
+    const fresh = { ...cached, title: 'Fresh first page' };
+    const older = {
+      ...createSession(),
+      id: 'sess_older',
+      workspaceId: 'wd_1',
+      updatedAt: '2025-12-31T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_1', '/workspace', 'Workspace')]);
+    apiMock.listSessions
+      .mockResolvedValueOnce({ items: [fresh], hasMore: true })
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue({ items: [older], hasMore: false });
+    const { state, deps, workspaceState } = createSessionLoadRig([cached]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.title)).toEqual(['Fresh first page']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+
+    await workspaceState.loadMoreSessions('wd_1');
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+  });
+
+  it('recovers the global session list when a retry follows a second-page failure', async () => {
+    const error = new Error('global continuation unavailable');
+    const cached = { ...createSession(), title: 'Cached first page' };
+    const fresh = {
+      ...cached,
+      title: 'Fresh first page',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    const older = {
+      ...createSession(),
+      id: 'sess_older',
+      updatedAt: '2025-12-31T00:00:00.000Z',
+    };
+    const cachedOlder = { ...older, title: 'Cached older page' };
+    apiMock.listSessions
+      .mockResolvedValueOnce({ items: [fresh], hasMore: true })
+      .mockRejectedValueOnce(error)
+      .mockResolvedValue({ items: [fresh, older], hasMore: false });
+    const { state, deps, workspaceState } = createSessionLoadRig([cached, cachedOlder]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.title)).toEqual([
+      'Fresh first page',
+      'Cached older page',
+    ]);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
+  });
+
+  it('preserves cached sessions when every workspace initial page rejects', async () => {
+    const firstError = new Error('workspace A unavailable');
+    const cachedA = {
+      ...createSession(),
+      id: 'sess_a',
+      cwd: '/workspace-a',
+      workspaceId: 'wd_a',
+    };
+    const cachedB = {
+      ...createSession(),
+      id: 'sess_b',
+      cwd: '/workspace-b',
+      workspaceId: 'wd_b',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([
+      workspace('wd_a', '/workspace-a', 'A'),
+      workspace('wd_b', '/workspace-b', 'B'),
+    ]);
+    apiMock.listSessions.mockImplementation(
+      async ({ workspaceId }: { workspaceId?: string }) => {
+        if (workspaceId === 'wd_a') throw firstError;
+        throw new Error('workspace B unavailable');
+      },
+    );
+    const { state, deps, workspaceState } = createSessionLoadRig([cachedA, cachedB]);
+
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_a', 'sess_b']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', firstError);
+  });
+
+  it('loads workspace sessions when a retry follows an initial failure', async () => {
+    const cached = {
+      ...createSession(),
+      title: 'Cached',
+      workspaceId: 'wd_1',
+    };
+    const recovered = { ...cached, title: 'Recovered' };
+    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_1', '/workspace', 'Workspace')]);
+    apiMock.listSessions
+      .mockRejectedValueOnce(new Error('session index unavailable'))
+      .mockResolvedValue({ items: [recovered], hasMore: false });
+    const { state, workspaceState } = createSessionLoadRig([cached]);
+
+    await workspaceState.load();
+    await workspaceState.load();
+
+    expect(state.sessions.map((session) => session.title)).toEqual(['Recovered']);
+  });
+
+  it('loads the next workspace page when a retry follows a rejection', async () => {
+    const loaded = { ...createSession(), workspaceId: 'wd_1' };
+    const older = {
+      ...createSession(),
+      id: 'sess_older',
+      workspaceId: 'wd_1',
+      updatedAt: '2025-12-31T00:00:00.000Z',
+    };
+    const { state, deps, workspaceState } = createSessionLoadRig([loaded]);
+    state.workspaces = [workspace('wd_1', '/workspace', 'Workspace')];
+    state.sessionsHasMoreByWorkspace = { wd_1: true };
+    state.sessionsCursorByWorkspace = { wd_1: 'sess_1' };
+    state.sessionsLoadingMoreByWorkspace = { wd_1: false };
+    apiMock.listSessions
+      .mockRejectedValueOnce(new Error('next page unavailable'))
+      .mockResolvedValue({ items: [older], hasMore: false });
+
+    await workspaceState.loadMoreSessions('wd_1');
+    await workspaceState.loadMoreSessions('wd_1');
+
+    expect(state.sessions.map((session) => session.id)).toEqual(['sess_1', 'sess_older']);
+    expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
+  });
 });
 
 // /meta re-read on every WS (re)connect — keeps version / backend truthful

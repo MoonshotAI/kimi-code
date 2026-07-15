@@ -201,7 +201,6 @@ export class CronCreateTool implements BuiltinTool<CronCreateInput> {
         return {
           output: formatOutput(output),
           isError: false,
-          message: `Scheduled cron ${task.id}`,
         };
       },
     };

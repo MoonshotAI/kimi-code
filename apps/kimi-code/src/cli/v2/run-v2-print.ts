@@ -159,9 +159,11 @@ export async function runV2Print(
   removeTerminationCleanup = installPromptTerminationCleanup(promptProcess, cleanup);
 
   try {
-    const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
-    restorePermission = resolved.restorePermission;
-
+    // Install the appender BEFORE resolving the session: `session_started` and
+    // `session_load_failed` fire inside create()/resume(), so an appender wired
+    // up only after resolveNativeSession() would drop them to the null appender.
+    // The model below is the best known up front; a resumed session's real
+    // model is reconciled via setContext once resolved.
     telemetryService = app.accessor.get(ITelemetryService);
     if (telemetryEnabled) {
       telemetryService.setAppender(
@@ -169,12 +171,16 @@ export async function runV2Print(
           deviceId,
           appName: CLI_USER_AGENT_PRODUCT,
           uiMode: PROMPT_UI_MODE,
-          model: resolved.telemetryModel,
+          model: opts.model ?? defaultModel,
           getAccessToken: async () => (await auth.getCachedAccessToken()) ?? null,
         }),
       );
     }
-    telemetryService.setContext({ sessionId: resolved.session.id });
+
+    const resolved = await resolveNativeSession(app, opts, workDir, defaultModel, stderr);
+    restorePermission = resolved.restorePermission;
+
+    telemetryService.setContext({ sessionId: resolved.session.id, model: resolved.telemetryModel });
     if (firstLaunch) {
       telemetryService.track2('first_launch');
     }

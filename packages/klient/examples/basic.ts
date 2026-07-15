@@ -11,7 +11,7 @@ import { HttpChannel, Klient, SessionIndexClient } from '@moonshot-ai/klient';
 import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 
-const BASE = process.env.KIMI_SERVER_URL ?? 'http://127.0.0.1:58627';
+const BASE = process.env['KIMI_SERVER_URL'] ?? 'http://127.0.0.1:58627';
 
 async function createSessionViaV1(cwd: string): Promise<string> {
   const res = await fetch(`${BASE}/api/v1/sessions`, {

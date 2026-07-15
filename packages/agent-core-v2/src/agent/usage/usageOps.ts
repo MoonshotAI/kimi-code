@@ -15,7 +15,6 @@
  */
 
 import { z } from 'zod';
-import type { AgentPhase } from '@moonshot-ai/protocol';
 
 import { addUsage, type TokenUsage } from '#/app/llmProtocol/usage';
 import { defineModel } from '#/wire/model';
@@ -34,7 +33,6 @@ declare module '#/app/event/eventBus' {
       thinkingEffort?: string;
       maxContextTokens?: number;
       contextTokens?: number;
-      phase?: AgentPhase;
     };
   }
 }

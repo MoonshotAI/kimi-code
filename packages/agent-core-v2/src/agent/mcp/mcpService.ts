@@ -5,12 +5,8 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
 
 import { Disposable, type IDisposable } from "#/_base/di/lifecycle";
+import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import { ErrorCodes, makeErrorPayload } from "#/errors";
-import type {
-  ErrorEvent,
-  McpServerStatusEvent,
-  ToolListUpdatedEvent,
-} from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { sessionMediaOriginalsDir } from '#/agent/media/image-originals';
@@ -30,6 +26,31 @@ import {
   mcpToolsDiscovered,
   type McpToolCollision,
 } from './mcpDiscoveryOps';
+
+export interface ErrorEvent extends KimiErrorPayload {
+  readonly type: 'error';
+}
+
+export interface McpServerStatusPayload {
+  readonly name: string;
+  readonly transport: 'stdio' | 'http' | 'sse';
+  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+  readonly toolCount: number;
+  readonly error?: string;
+}
+
+export interface McpServerStatusEvent {
+  readonly type: 'mcp.server.status';
+  readonly server: McpServerStatusPayload;
+}
+
+export type ToolListUpdatedReason = 'mcp.connected' | 'mcp.disconnected' | 'mcp.failed';
+
+export interface ToolListUpdatedEvent {
+  readonly type: 'tool.list.updated';
+  readonly reason: ToolListUpdatedReason;
+  readonly serverName: string;
+}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {

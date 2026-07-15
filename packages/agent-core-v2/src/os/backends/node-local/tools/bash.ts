@@ -453,9 +453,7 @@ export class BashTool implements BuiltinTool<BashInput> {
 
     const foregroundResult = builder.ok('');
     const foregroundOutput = foregroundResult.output.length > 0 ? foregroundResult.output : '';
-    const message = backgroundResultMessage(labels.title, foregroundResult.message);
     const result: ExecutableToolResult & {
-      readonly message: string;
       readonly brief: string;
       readonly truncated: boolean;
     } = {
@@ -464,7 +462,6 @@ export class BashTool implements BuiltinTool<BashInput> {
         foregroundOutput.length === 0
           ? metadata
           : `${metadata}\n\nforeground_output:\n${foregroundOutput}`,
-      message,
       brief: labels.brief,
       truncated: foregroundResult.truncated,
     };
@@ -495,12 +492,6 @@ export class BashTool implements BuiltinTool<BashInput> {
 }
 
 registerTool(BashTool);
-
-function backgroundResultMessage(title: string, suffix: string): string {
-  const normalized = title.endsWith('.') ? title : `${title}.`;
-  if (suffix.length === 0) return normalized;
-  return suffix.endsWith('.') ? `${normalized} ${suffix}` : `${normalized} ${suffix}.`;
-}
 
 function formatTimeoutLabel(timeoutMs: number): string {
   return timeoutMs % 1000 === 0 ? `${String(timeoutMs / 1000)}s` : `${String(timeoutMs)}ms`;

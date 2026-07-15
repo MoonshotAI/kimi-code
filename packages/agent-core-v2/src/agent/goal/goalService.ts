@@ -29,7 +29,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { TurnEndedEvent, TurnStartedEvent } from '@moonshot-ai/protocol';
+import type { TurnEndedEvent, TurnStartedEvent } from '#/agent/loop/turnEvents';
 import { Disposable, MutableDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -324,13 +324,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.assertSupportedAgent();
     const state = this.goalState;
     return { goal: state === null ? null : this.toSnapshot(state) };
-  }
-
-  getActiveGoal(): GoalSnapshot | null {
-    this.assertSupportedAgent();
-    const state = this.goalState;
-    if (state === null || state.status !== 'active') return null;
-    return this.toSnapshot(state);
   }
 
   isGoalToolTarget(turnId: number, goalId: string): boolean {

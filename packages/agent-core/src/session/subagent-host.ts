@@ -37,18 +37,18 @@ const SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
 
 /**
  * Resolve the effective subagent per-task timeout. Precedence:
- * `KIMI_SUBAGENT_TIMEOUT_MS` (positive integer ms) → `configMs` →
- * `DEFAULT_SUBAGENT_TIMEOUT_MS` (30 min). Set a large value to effectively
- * disable the cap. The value feeds the background-task manager's per-task
- * timeout, so it governs foreground and background subagents (and AgentSwarm).
+ * `KIMI_SUBAGENT_TIMEOUT_MS` (integer ms) → `configMs` →
+ * `DEFAULT_SUBAGENT_TIMEOUT_MS` (2 hours). `0` means no timeout: the value
+ * feeds the background-task manager's per-task timeout (where `0` arms no
+ * timer), so it governs foreground and background subagents (and AgentSwarm).
  */
 export function resolveSubagentTimeoutMs(configMs?: number): number {
   const raw = process.env[SUBAGENT_TIMEOUT_ENV];
   if (raw !== undefined && raw.trim().length > 0) {
     const parsed = Number(raw);
-    if (Number.isInteger(parsed) && parsed >= 1) return parsed;
+    if (Number.isInteger(parsed) && parsed >= 0) return parsed;
   }
-  if (configMs !== undefined && Number.isInteger(configMs) && configMs >= 1) {
+  if (configMs !== undefined && Number.isInteger(configMs) && configMs >= 0) {
     return configMs;
   }
   return DEFAULT_SUBAGENT_TIMEOUT_MS;

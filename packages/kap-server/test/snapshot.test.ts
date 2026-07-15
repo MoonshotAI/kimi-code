@@ -92,6 +92,20 @@ describe('server-v2 snapshot route enrichment', () => {
           thinking_text: '',
           running_tools: [],
         },
+        subagents: [
+          {
+            id: 'agent-1',
+            session_id: sessionId,
+            kind: 'subagent',
+            description: 'task agent-1',
+            status: 'running',
+            subagent_phase: 'working',
+            parent_tool_call_id: 'tc_swarm_1',
+            swarm_index: 0,
+            run_in_background: false,
+            created_at: new Date(now).toISOString(),
+          },
+        ],
       }),
     };
 
@@ -142,6 +156,16 @@ describe('server-v2 snapshot route enrichment', () => {
       assistant_text: 'Hello',
       current_prompt_id: promptId,
     });
+    expect(snap.subagents).toEqual([
+      expect.objectContaining({
+        id: 'agent-1',
+        kind: 'subagent',
+        subagent_phase: 'working',
+        parent_tool_call_id: 'tc_swarm_1',
+        swarm_index: 0,
+        run_in_background: false,
+      }),
+    ]);
   });
 });
 

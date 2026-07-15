@@ -15,7 +15,7 @@
  * so REST consumers can still render the media after reload/resume.
  */
 
-import type { Message, MessageContent, MessageRole, ToolUseContent } from '@moonshot-ai/protocol';
+import type { Message, MessageContent, MessageRole, ToolUseContent } from './wireMessage';
 
 import type { ContextMessage } from './types';
 

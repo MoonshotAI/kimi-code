@@ -508,9 +508,6 @@ importers:
       '@moonshot-ai/minidb':
         specifier: workspace:^
         version: link:../minidb
-      '@moonshot-ai/protocol':
-        specifier: workspace:^
-        version: link:../protocol
       '@mozilla/readability':
         specifier: ^0.6.0
         version: 0.6.0

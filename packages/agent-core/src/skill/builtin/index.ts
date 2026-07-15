@@ -1,4 +1,5 @@
 import type { SessionSkillRegistry } from '../registry';
+import { CHECK_KIMI_CODE_DOCS_SKILL } from './check-kimi-code-docs';
 import { CUSTOM_THEME_SKILL } from './custom-theme';
 import { IMPORT_FROM_CC_CODEX_SKILL } from './import-from-cc-codex';
 import { MCP_CONFIG_SKILL } from './mcp-config';
@@ -16,12 +17,14 @@ export function registerBuiltinSkills(registry: SessionSkillRegistry): void {
   registry.registerBuiltinSkill(UPDATE_CONFIG_SKILL);
   registry.registerBuiltinSkill(CUSTOM_THEME_SKILL);
   registry.registerBuiltinSkill(WRITE_GOAL_SKILL);
+  registry.registerBuiltinSkill(CHECK_KIMI_CODE_DOCS_SKILL);
   registry.registerBuiltinSkill(SUB_SKILL_PARENT);
   registry.registerBuiltinSkill(SUB_SKILL_REVIEW);
   registry.registerBuiltinSkill(SUB_SKILL_CONSOLIDATE);
 }
 
 export {
+  CHECK_KIMI_CODE_DOCS_SKILL,
   CUSTOM_THEME_SKILL,
   IMPORT_FROM_CC_CODEX_SKILL,
   MCP_CONFIG_SKILL,

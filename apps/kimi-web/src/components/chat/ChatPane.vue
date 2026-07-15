@@ -1133,7 +1133,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   .chat {
     box-sizing: border-box;
     width: 100%;
-    padding: 14px max(12px, env(safe-area-inset-right)) 18px max(12px, env(safe-area-inset-left));
+    padding: 14px max(12px, var(--safe-right)) 18px max(12px, var(--safe-left));
   }
   .u-bub {
     max-width: min(88%, calc(100vw - 52px));

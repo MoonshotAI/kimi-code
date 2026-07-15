@@ -8,7 +8,7 @@ import type { PermissionData, PermissionMode } from '#/agent/permissionPolicy/ty
 import type { PlanData } from '#/agent/plan/plan';
 import type { ToolInfo } from '#/tool/toolContract';
 import type { SessionSummary } from '#/agent/rpc/core-api';
-import type { UsageStatus } from '@moonshot-ai/protocol';
+import type { UsageStatus } from '#/agent/usage/usage';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 
 type AgentType = 'main' | 'sub';

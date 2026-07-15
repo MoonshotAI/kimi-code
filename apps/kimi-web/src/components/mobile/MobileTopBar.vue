@@ -90,9 +90,11 @@ const statusText = computed<string>(() =>
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 50px;
+  /* Grow the bar by the top inset so the 50px content row stays below the
+     status bar / notch in standalone PWA mode and landscape. */
+  height: calc(50px + var(--safe-top));
   flex: none;
-  padding: 0 12px;
+  padding: var(--safe-top) max(12px, var(--safe-right)) 0 max(12px, var(--safe-left));
   border-bottom: 1px solid var(--color-line);
   background: var(--color-bg);
   font-family: var(--font-ui);

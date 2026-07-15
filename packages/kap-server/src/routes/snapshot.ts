@@ -201,6 +201,7 @@ async function readViaLegacyAssembly(
     session,
     messages: { items, has_more: hasMore },
     in_flight_turn: inFlightTurn,
+    subagents: snapState.subagents,
     pending_approvals: pendingApprovals,
     pending_questions: pendingQuestions,
   };

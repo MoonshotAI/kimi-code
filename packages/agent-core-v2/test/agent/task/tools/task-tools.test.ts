@@ -441,7 +441,7 @@ describe('TaskOutputTool', () => {
     );
     const output = outputString(result);
 
-    expect(result).toMatchObject({ isError: false, message: 'Task snapshot retrieved.' });
+    expect(result).toMatchObject({ isError: false });
     expect(output).toContain('retrieval_status: success');
     expect(output).toContain('status: completed');
     expect(output).toContain('[output]\nDETACHED-PAYLOAD-LINE');

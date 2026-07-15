@@ -29,7 +29,13 @@ import {
   saveWorkspaceSort,
   STORAGE_KEYS,
 } from '../lib/storage';
-import { createEventBatcher, isRenderEvent } from './client/eventBatcher';
+import {
+  coalesceAppRenderEvents,
+  createEventBatcher,
+  isRenderEvent,
+  splitOversizedAppRenderEvent,
+  type PendingAppEvent,
+} from './client/eventBatcher';
 import { useAppearance } from './client/useAppearance';
 import { useNotification, shouldNotifyCompletion } from './client/useNotification';
 import { useSoundNotification } from './client/useSoundNotification';
@@ -64,6 +70,7 @@ import type {
   AppWorkspace,
   ApprovalDecision,
   KimiEventConnection,
+  KimiEventMeta,
   ThinkingLevel,
 } from '../api/types';
 import { createInitialState, reduceAppEvent, type CompactionStatus, type KimiClientState } from '../api/daemon/eventReducer';
@@ -573,13 +580,11 @@ function forgetSession(sessionId: string): void {
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
   dropWsSubscription(sessionId);
-  // Drain the streaming-event batcher too. unsubscribe() stops future server
-  // frames, but events already queued for the next animation frame would
-  // otherwise survive and be reduced AFTER the maps below are cleared —
-  // recreating entries like messagesBySession[id] and lastSeqBySession[id].
-  // That would make hasLoadedMessages() treat the stale empty cache as
-  // authoritative and skip the next snapshot fetch for this id.
-  enqueueEvent.flush();
+  // Drop this session's queued render AND control events. Flushing them here is
+  // unsafe: a delayed idle event can drain a queued prompt into the session
+  // after the archive request succeeded. Other sessions keep their own ordered
+  // backlog and scheduled continuation.
+  enqueueEvent.discard(({ meta }) => meta.sessionId === sessionId);
   removeSession(sessionId);
   removeSessionMessages(sessionId);
   delete rawState.approvalsBySession[sessionId];
@@ -857,17 +862,13 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
 // synchronously triggers a full Vue re-render per event, which saturates the
 // main thread and makes the stream look janky (see messagesToTurns / Markdown).
 //
-// We coalesce those render-only events onto the next animation frame so Vue
-// commits a single render per frame. Lifecycle / control-flow events
-// (sessionStatusChanged, messageCreated, approval*, question*, ...) are applied
-// immediately: they are infrequent, and some (e.g. sessionStatusChanged idle)
-// drive turn-end cleanup that must not be delayed by a throttled rAF in a
-// background tab. Ordering is preserved by draining any pending render events
-// before applying an immediate event.
+// Adjacent, offset-contiguous assistant/thinking deltas are merged before they
+// reach the reducer. The remaining ordered groups are processed with a fixed
+// per-frame budget and a task fallback, so a hidden tab cannot turn the entire
+// backlog into one unbounded rAF drain. Lifecycle / control-flow events remain
+// strict ordering barriers and are never dropped or merged.
 
-type PendingEvent = { appEvent: AppEvent; meta: { sessionId: string; seq: number } };
-
-function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number }): void {
+function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   // Capture BEFORE applyEvent advances lastSeqBySession: turn-end side
   // effects below only run when this event actually moves the durable cursor
   // forward. A late duplicate idle (e.g. replayed after a snapshot already
@@ -947,9 +948,10 @@ function processEvent(appEvent: AppEvent, meta: { sessionId: string; seq: number
   }
 }
 
-const enqueueEvent = createEventBatcher<PendingEvent>(
+const enqueueEvent = createEventBatcher<PendingAppEvent>(
   ({ appEvent, meta }) => processEvent(appEvent, meta),
   ({ appEvent }) => isRenderEvent(appEvent),
+  { coalesce: coalesceAppRenderEvents },
 );
 
 // ---------------------------------------------------------------------------
@@ -980,10 +982,11 @@ function connectEventsIfNeeded(): void {
         return;
       }
 
-      // Coalesce high-frequency render events onto the next animation frame;
-      // everything else is applied immediately. See createEventBatcher /
-      // processEvent above.
-      enqueueEvent({ appEvent, meta });
+      // Merge safe streaming chunks, then process the ordered queue in bounded
+      // slices. See createEventBatcher / processEvent above.
+      for (const pendingEvent of splitOversizedAppRenderEvent({ appEvent, meta })) {
+        enqueueEvent(pendingEvent);
+      }
     },
 
     onResync(sessionId: string, currentSeq: number, epoch?: string) {
@@ -1589,7 +1592,10 @@ function stopSessionTimeClock(): void {
 }
 
 if (import.meta.hot) {
-  import.meta.hot.dispose(stopSessionTimeClock);
+  import.meta.hot.dispose(() => {
+    stopSessionTimeClock();
+    enqueueEvent.dispose();
+  });
 }
 
 /** Build DiffLine[] from old_text/new_text strings */

@@ -1,12 +1,42 @@
 // apps/kimi-web/test/daemon-client.test.ts
-// DaemonKimiWebApi public REST adapter: session export binary/error contracts
-// and getSessionGoal wire → app mapping.
+// DaemonKimiWebApi public REST adapter: session export binary/error contracts,
+// getSessionGoal wire → app mapping, and raw stream-coordinate delivery.
+// Wiring: real client/projector; fetch or WebSocket is stubbed at the network boundary.
+// Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/daemon-client.test.ts
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DaemonKimiWebApi } from '../src/api/daemon/client';
 import { DaemonApiError, DaemonNetworkError } from '../src/api/errors';
 import { clearTrace, traceToJsonl } from '../src/debug/trace';
+import type { AppEvent, KimiEventConnection, KimiEventMeta } from '../src/api/types';
+
+class FakeWebSocket {
+  static readonly OPEN = 1;
+  static instances: FakeWebSocket[] = [];
+
+  readonly OPEN = FakeWebSocket.OPEN;
+  readyState = FakeWebSocket.OPEN;
+  onopen: (() => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: ((event?: CloseEvent) => void) | null = null;
+
+  constructor(_url: string, _protocols?: string | string[]) {
+    FakeWebSocket.instances.push(this);
+  }
+
+  send(_data: string): void {}
+
+  close(): void {
+    this.readyState = 3;
+    this.onclose?.();
+  }
+
+  emit(frame: unknown): void {
+    this.onmessage?.({ data: JSON.stringify(frame) } as MessageEvent);
+  }
+}
 
 function envelope(data: unknown): Response {
   return new Response(JSON.stringify({ code: 0, msg: '', data }), {
@@ -175,5 +205,94 @@ describe('DaemonKimiWebApi.getSessionGoal', () => {
     expect(vi.mocked(fetch).mock.calls[0]?.[0]).toBe(
       'http://daemon.test/api/v1/sessions/sess_42/goal',
     );
+  });
+});
+
+describe('DaemonKimiWebApi.connectEvents', () => {
+  let connection: KimiEventConnection | undefined;
+
+  afterEach(() => {
+    connection?.close();
+    connection = undefined;
+    vi.unstubAllGlobals();
+  });
+
+  it('delivers raw assistant stream coordinates with the projected delta', () => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+    const received: Array<{ event: AppEvent; meta: KimiEventMeta }> = [];
+    connection = createApi().connectEvents({
+      onEvent(event, meta) {
+        received.push({ event, meta });
+      },
+      onResync() {},
+      onError() {},
+      onConnectionChange() {},
+    });
+    const socket = FakeWebSocket.instances[0]!;
+
+    socket.emit({ type: 'server_hello', payload: { protocol_version: 2 } });
+    socket.emit({
+      type: 'turn.started',
+      seq: 1,
+      session_id: 'session-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: { agentId: 'main', turnId: 7 },
+    });
+    socket.emit({
+      type: 'turn.step.started',
+      seq: 2,
+      session_id: 'session-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: { agentId: 'main', turnId: 7, step: 1 },
+    });
+    socket.emit({
+      type: 'assistant.delta',
+      seq: 2,
+      session_id: 'session-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      volatile: true,
+      offset: 0,
+      payload: { agentId: 'main', turnId: 7, delta: 'hello' },
+    });
+    socket.emit({
+      type: 'thinking.delta',
+      seq: 2,
+      session_id: 'session-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      volatile: true,
+      offset: 0,
+      payload: { agentId: 'main', turnId: 7, delta: 'thought' },
+    });
+
+    const delta = received.find(({ event }) => event.type === 'assistantDelta');
+    expect(delta).toMatchObject({
+      event: {
+        type: 'assistantDelta',
+        sessionId: 'session-1',
+        delta: { text: 'hello' },
+      },
+      meta: {
+        sessionId: 'session-1',
+        seq: 2,
+        stream: { turnId: 7, offset: 0, kind: 'text' },
+      },
+    });
+
+    const thinking = received.find(
+      ({ event }) => event.type === 'assistantDelta' && event.delta.thinking !== undefined,
+    );
+    expect(thinking).toMatchObject({
+      event: {
+        type: 'assistantDelta',
+        sessionId: 'session-1',
+        delta: { thinking: 'thought' },
+      },
+      meta: {
+        sessionId: 'session-1',
+        seq: 2,
+        stream: { turnId: 7, offset: 0, kind: 'thinking' },
+      },
+    });
   });
 });
