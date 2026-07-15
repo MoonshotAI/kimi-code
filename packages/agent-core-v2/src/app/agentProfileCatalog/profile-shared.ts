@@ -18,10 +18,15 @@ export const TASK_AGENT_ROLE_PREFIX =
   'You must treat the parent agent as your caller. Do not directly ask the end user questions. ' +
   'If something is unclear, explain the ambiguity in your final summary to the parent agent.';
 
+/** Whether the Skill tool survives a profile's tool list — drives KIMI_SKILLS injection. */
+export function skillActiveFor(tools: readonly string[]): boolean {
+  return tools.includes('Skill');
+}
+
 export function renderSystemPrompt(
   roleAdditional: string,
   context: AgentProfileContext,
-  tools: readonly string[],
+  options: { readonly skillActive: boolean },
 ): string {
   const shellName = context.shellName ?? '';
   const shellPath = context.shellPath ?? '';
@@ -34,6 +39,6 @@ export function renderSystemPrompt(
     KIMI_WORK_DIR_LS: context.cwdListing ?? '',
     KIMI_AGENTS_MD: context.agentsMd ?? '',
     KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
-    KIMI_SKILLS: tools.includes('Skill') ? (context.skills ?? '') : '',
+    KIMI_SKILLS: options.skillActive ? (context.skills ?? '') : '',
   });
 }

@@ -16,11 +16,6 @@ import { renderSystemPrompt } from '#/app/agentProfileCatalog/profile-shared';
 
 import type { AgentFileDefinition } from './types';
 
-// renderSystemPrompt only consults the list for `includes('Skill')`; probe with
-// a list that answers true iff the Skill tool survives the allow/deny rules.
-const SKILL_PROBE_ON = ['Skill'] as const;
-const SKILL_PROBE_OFF = [] as const;
-
 export function agentProfileFromFile(definition: AgentFileDefinition): AgentProfile {
   const skillActive =
     (definition.tools === undefined || definition.tools.includes('Skill')) &&
@@ -34,12 +29,7 @@ export function agentProfileFromFile(definition: AgentFileDefinition): AgentProf
     disallowedTools: definition.disallowedTools,
     systemPrompt:
       definition.mode === 'append'
-        ? (context) =>
-            renderSystemPrompt(
-              definition.prompt,
-              context,
-              skillActive ? SKILL_PROBE_ON : SKILL_PROBE_OFF,
-            )
+        ? (context) => renderSystemPrompt(definition.prompt, context, { skillActive })
         : () => definition.prompt,
   };
 }
