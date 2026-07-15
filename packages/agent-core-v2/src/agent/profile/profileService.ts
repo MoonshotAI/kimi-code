@@ -168,7 +168,24 @@ export class AgentProfileService implements IAgentProfileService {
         { profile: input.profile, available },
       );
     }
-    const model = this.modelFactory.resolve(input.model);
+    const alias = input.model ?? this.config.get<string>('defaultModel');
+    if (alias === undefined || alias === '') {
+      throw new ProfileError(
+        ProfileErrors.codes.MODEL_NOT_CONFIGURED,
+        `model is required to bind profile "${input.profile}" (no default model configured)`,
+      );
+    }
+    const model = this.modelFactory.resolve(alias);
+
+    // An explicitly user-requested thinking effort (strictThinking) must be
+    // supported by the model: reject before any await or state mutation so a
+    // bad edge request cannot wedge the session's identity after first-bind.
+    // Inherited thinking (subagent spawn, fork) deliberately skips this and
+    // clamps below instead — a persisted effort that drifted out of the
+    // model's support list must not break spawning.
+    if (input.strictThinking === true && input.thinking !== undefined) {
+      this.assertThinkingEffortSupported(input.thinking, model, alias);
+    }
 
     const context = await this.buildSystemPromptContext(input.cwd);
     this.assertBindable(profile.name);

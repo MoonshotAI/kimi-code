@@ -85,7 +85,12 @@ export interface ProfileSetModelResult {
 
 export interface BindAgentInput {
   readonly profile: string;
-  readonly model: string;
+  /**
+   * Model alias to bind with. Optional: the engine falls back to the
+   * configured `defaultModel` so edges don't each re-implement the fallback;
+   * a missing model everywhere throws `model.not_configured`.
+   */
+  readonly model?: string;
   readonly thinking?: string;
   readonly cwd?: string;
 }
