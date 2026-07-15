@@ -13,6 +13,7 @@
 - **依赖方向 `code-app → kimi-code` 单向**：desktop 只经 `@moonshot-ai/*` 包名 import kimi-code 的 packages 源码，禁止跨包相对路径 import；`kimi-code` 不得 import `code-app`。
 - `apps/web` 只依赖 `@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` 共享包，不直接 import kimi-code 的包。
 - **不改包名**：`@moonshot-ai/kimi-web`、`@moonshot-ai/kimi-desktop`。
+- **开发顺序**：两端共有的 UI 改动优先在 `apps/desktop` 开发，开发完成后再同步到 `apps/web`。
 - **不在本仓直接改 `kimi-code/` submodule 的内容**；kimi-code 侧改动在你的工作克隆里做（见"双仓工作流"），本仓只 bump submodule 指针。
 - **提交规范**：Conventional Commits；禁止任何 `Co-Authored-By` 署名；commit message、PR、代码、文档不得出现 agent / AI 工具的名称或身份信息。PR 描述用英文。
 - **stage 用显式路径，不用 `git add -A` / `git add .`**：本仓有构建产物目录（如 desktop 的 `desktop-dist`、已清理的 `web-dist`），gitignore 变动会让它们突然"显形"，`git add -A` 会误扫进 commit（2026-07 实际出过一次）。
