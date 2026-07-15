@@ -796,7 +796,11 @@ describe('keepLiveSubagents', () => {
   });
 
   it('lets REST complete a live row whose finish event was missed', () => {
-    const live = subagent('agent-1', { runInBackground: true, backgroundTaskId: 'task-9' });
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      subagentPhase: 'working',
+    });
     const rest = [
       subagent('task-9', {
         runInBackground: true,
@@ -807,8 +811,22 @@ describe('keepLiveSubagents', () => {
     ];
     const [merged] = keepLiveSubagents(rest, [live]);
     expect(merged?.status).toBe('completed');
+    // The detail panel prefers subagentPhase over status — it must follow too.
+    expect(merged?.subagentPhase).toBe('completed');
     expect(merged?.completedAt).toBe('2026-01-01T00:01:00.000Z');
     expect(merged?.outputPreview).toBe('done');
+  });
+
+  it('maps a REST-cancelled row to the failed phase (the enum has no cancelled)', () => {
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      subagentPhase: 'working',
+    });
+    const rest = [subagent('task-9', { runInBackground: true, status: 'cancelled' })];
+    const [merged] = keepLiveSubagents(rest, [live]);
+    expect(merged?.status).toBe('cancelled');
+    expect(merged?.subagentPhase).toBe('failed');
   });
 
   it('never lets a lagging poll flip a finished row back to running', () => {
