@@ -66,8 +66,17 @@ function mediaPathTag(text: string): { kind: 'image' | 'video' | 'audio'; path: 
  *  recover the fileId from the cache filename to build a playable URL. Returns
  *  undefined when the basename isn't shaped like a file-store id (`f_…`) — e.g.
  *  TUI cache names (`<uuid>-<label>`) or legacy `/tmp/foo.mp4` paths — so the
- *  caller leaves the raw tag as text instead of fabricating a broken /files url. */
-const FILE_STORE_ID_RE = /^f_[A-Za-z0-9]{10,}$/;
+ *  caller leaves the raw tag as text instead of fabricating a broken /files url.
+ *
+ *  File-store ids come in two shapes: v1 `f_`<26-char ULID> (no hyphens) and
+ *  v2 `f_`<randomUUID> (32 hex chars + 4 hyphens). */
+const FILE_STORE_ID_RE =
+  /^f_(?:[0-9A-Za-z]{26}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$/;
+/** Same two id shapes, anchored at the start of a `<fileId>-<name>` basename.
+    Splitting on the first '-' instead would truncate v2 UUID ids at their
+    first inner hyphen. */
+const FILE_STORE_ID_AT_START_RE =
+  /^f_(?:[0-9A-Za-z]{26}|[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})(?=-)/;
 function fileIdFromCachePath(p: string): string | undefined {
   const base = p.split(/[\\/]/).at(-1) ?? '';
   const dot = base.lastIndexOf('.');
@@ -79,8 +88,8 @@ function fileIdFromCachePath(p: string): string | undefined {
  *  resolvePromptMediaFiles in the kap-server prompts route):
  *    Attached file "<name>" (<mime>, <n> bytes): <dir>/<fileId>-<name> — open it with the Read tool
  *  Recover the chip from the notice instead of dumping it — absolute server
- *  path and all — into the bubble. The fileId is the basename prefix before
- *  the first `-`, validated against the file-store id shape. Inline-base64
+ *  path and all — into the bubble. The fileId is matched by shape at the start
+ *  of the basename (ULID or UUID, see FILE_STORE_ID_AT_START_RE). Inline-base64
  *  attachments are content-hash named (no fileId): they still become a chip so
  *  the notice stays hidden, just without bytes to open. */
 const ATTACHED_FILE_NOTICE_RE =
@@ -92,12 +101,12 @@ function attachedFileNotice(
   const m = ATTACHED_FILE_NOTICE_RE.exec(text.trim());
   if (!m) return null;
   const base = (m[4] ?? '').split(/[\\/]/).at(-1) ?? '';
-  const id = base.slice(0, base.indexOf('-'));
+  const id = FILE_STORE_ID_AT_START_RE.exec(base)?.[0];
   return {
     name: m[1]!,
     mediaType: m[2]!,
     size: Number(m[3]),
-    fileId: FILE_STORE_ID_RE.test(id) ? id : undefined,
+    fileId: id !== undefined && FILE_STORE_ID_RE.test(id) ? id : undefined,
   };
 }
 

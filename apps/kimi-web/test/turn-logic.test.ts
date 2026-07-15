@@ -323,6 +323,53 @@ describe('messagesToTurns', () => {
     ]);
   });
 
+  it('recovers the full UUID file id from a v2 "Attached file" notice', () => {
+    // v2 file ids are `f_`<randomUUID> and contain hyphens themselves — a naive
+    // first-hyphen split would truncate the id and lose the clickable URL.
+    const fileId = 'f_550e8400-e29b-41d4-a716-446655440000';
+    const notice =
+      `Attached file "api-spec-v2.yaml" (application/yaml, 18 bytes): ` +
+      `/home/u/.kimi-code/sessions/s_1/attachments/${fileId}-api-spec-v2.yaml — open it with the Read tool`;
+    const turns = messagesToTurns(
+      [message('u1', 'user', [{ type: 'text', text: notice }])],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      {
+        kind: 'file',
+        url: `/api/v1/files/${fileId}`,
+        fileId,
+        name: 'api-spec-v2.yaml',
+        mediaType: 'application/yaml',
+        size: 18,
+      },
+    ]);
+  });
+
+  it('renders a `<video path>` tag with a v2 UUID file id as a video attachment', () => {
+    const fileId = 'f_550e8400-e29b-41d4-a716-446655440000';
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          {
+            type: 'text',
+            text: `<video path="/Users/me/.kimi-code/cache/${fileId}.mp4"></video>`,
+          },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      { url: `/api/v1/files/${fileId}`, kind: 'video', fileId },
+    ]);
+  });
+
   it('keeps lookalike text that is not an attachment notice as text', () => {
     const text = 'Attached file "a.pdf" (application/pdf, 3 bytes): /tmp/x - open it with the Read tool';
     const turns = messagesToTurns(
