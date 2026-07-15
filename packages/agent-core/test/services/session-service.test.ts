@@ -1094,6 +1094,22 @@ describe('SessionService busy lifecycle', () => {
     }));
   });
 
+  it('clears the last turn reason when a new turn starts', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/fresh-turn' } });
+    eventBus.eventService.publish({ type: 'turn.started', sessionId: session.id } as unknown as Event);
+    eventBus.eventService.publish({ type: 'turn.ended', sessionId: session.id, reason: 'cancelled' } as unknown as Event);
+    expect((await svc.get(session.id)).last_turn_reason).toBe('cancelled');
+
+    eventBus.eventService.publish({ type: 'turn.started', sessionId: session.id } as unknown as Event);
+    expect((await svc.get(session.id)).last_turn_reason).toBeUndefined();
+    expect(eventBus.events).toContainEqual(expect.objectContaining({
+      type: 'event.session.work_changed',
+      sessionId: session.id,
+      busy: true,
+      last_turn_reason: undefined,
+    }));
+  });
+
   it('prompt.submitted marks the session busy when a current prompt exists', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/prompt' } });
     promptStub.activePromptIds.set(session.id, 'p1');

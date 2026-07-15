@@ -365,7 +365,10 @@ export function reduceAppEvent(
           busy: event.busy,
           mainTurnActive: event.mainTurnActive ?? (event.busy ? s.mainTurnActive : false),
           pendingInteraction: event.pendingInteraction ?? s.pendingInteraction,
-          lastTurnReason: event.lastTurnReason ?? s.lastTurnReason,
+          // Authoritative, not nullish-merge: an omitted last_turn_reason is
+          // how the server says "no current outcome" (a fresh turn cleared
+          // the previous one), so the stale value must not survive.
+          lastTurnReason: event.lastTurnReason,
         };
       });
       if (event.mainTurnActive === true) {

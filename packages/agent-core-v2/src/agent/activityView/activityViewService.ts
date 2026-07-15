@@ -189,6 +189,11 @@ export class AgentActivityView extends Disposable implements IAgentActivityView 
 
   private onTurnStarted(turnId: number, origin?: PromptOrigin): void {
     this.turn = new MutableTurn(turnId, origin ?? USER_PROMPT_ORIGIN);
+    // A fresh turn means there is no current outcome: drop the previous
+    // turn's terminal reason so consumers (the work_changed fold, REST
+    // session facts) stop reporting it while this turn runs. turn.ended
+    // publishes the new outcome when the turn finishes.
+    this.lastTurn = undefined;
     this.publish();
   }
 

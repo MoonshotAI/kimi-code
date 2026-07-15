@@ -199,6 +199,9 @@ export class SessionService extends Disposable implements ISessionService {
     switch (type) {
       case 'turn.started': {
         this._activeTurns.add(sessionId);
+        // A fresh turn means no current outcome — drop the previous turn's
+        // terminal reason so the running turn doesn't keep reporting it.
+        this._lastTurnReasonBySession.delete(sessionId);
         this._emitStatusChanged(sessionId);
         break;
       }

@@ -182,6 +182,35 @@ describe('reduceAppEvent sessionWorkChanged', () => {
     expect(next.sessions[0]).toMatchObject({ busy: false, mainTurnActive: false });
     expect(next.turnActiveBySession['s1']).toBeUndefined();
   });
+
+  it('clears a stale turn outcome when the update omits lastTurnReason', () => {
+    // An omitted last_turn_reason is authoritative ("no current outcome" —
+    // e.g. a fresh turn cleared the previous one), not "keep the old value".
+    const state = {
+      ...createInitialState(),
+      sessions: [
+        {
+          ...makeSession('s1', '2026-01-01T00:00:00.000Z'),
+          busy: false,
+          lastTurnReason: 'cancelled' as const,
+        },
+      ],
+    };
+
+    const cleared = reduceAppEvent(
+      state,
+      { type: 'sessionWorkChanged', sessionId: 's1', busy: true },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(cleared.sessions[0]?.lastTurnReason).toBeUndefined();
+
+    const set = reduceAppEvent(
+      state,
+      { type: 'sessionWorkChanged', sessionId: 's1', busy: false, lastTurnReason: 'failed' },
+      { sessionId: 's1', seq: 2 },
+    );
+    expect(set.sessions[0]?.lastTurnReason).toBe('failed');
+  });
 });
 
 describe('reduceAppEvent messageCreated', () => {

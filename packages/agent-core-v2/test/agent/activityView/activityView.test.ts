@@ -153,4 +153,20 @@ describe('AgentActivityView', () => {
     expect(view.state().turn).toBeUndefined();
     expect(view.state().lastTurn).toMatchObject({ turnId: 1, reason: 'completed' });
   });
+
+  it('clears the previous outcome when a new turn starts', () => {
+    const { bus, view } = harness();
+
+    bus.publish({ type: 'turn.started', turnId: 1, origin: { kind: 'user' } });
+    bus.publish({ type: 'turn.ended', turnId: 1, reason: 'cancelled' });
+    expect(view.state().lastTurn).toMatchObject({ turnId: 1, reason: 'cancelled' });
+
+    // While the next turn runs there is no current outcome; turn.ended
+    // publishes the fresh one.
+    bus.publish({ type: 'turn.started', turnId: 2, origin: { kind: 'user' } });
+    expect(view.state().lastTurn).toBeUndefined();
+
+    bus.publish({ type: 'turn.ended', turnId: 2, reason: 'completed' });
+    expect(view.state().lastTurn).toMatchObject({ turnId: 2, reason: 'completed' });
+  });
 });
