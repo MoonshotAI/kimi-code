@@ -19,16 +19,20 @@ export default defineConfig({
   dts: false,
   fixedExtension: true,
   plugins: [rawTextPlugin()],
-  // Bundle every @moonshot-ai/* package (server / agent-core / sdk / oauth /
-  // kaos / kosong / protocol …) and transpile their TypeScript sources into the
-  // CJS main process. They are `workspace:^` packages whose `exports` point at
-  // `src/*.ts`; Electron (Node 20) cannot `require()` raw `.ts`, so leaving them
-  // external makes the main process throw on load at runtime.
-  noExternal: [/^@moonshot-ai\//],
   deps: {
+    // Bundle every @moonshot-ai/* package (server / agent-core / sdk / oauth /
+    // kaos / kosong / protocol …) and transpile their TypeScript sources into the
+    // CJS main process. They are `workspace:^` packages whose `exports` point at
+    // `src/*.ts`; Electron (Node 20) cannot `require()` raw `.ts`, so leaving them
+    // external makes the main process throw on load at runtime.
+    alwaysBundle: [/^@moonshot-ai\//],
     neverBundle: [
       'electron',
       'node-pty',
     ],
+    // This is an app bundle (private package, not published): inlining the
+    // transitive deps of the workspace packages is intended, so acknowledge the
+    // `deps.onlyBundle` hint instead of maintaining a second allowlist.
+    onlyBundle: false,
   },
 });

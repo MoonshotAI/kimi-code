@@ -4,12 +4,20 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const source = resolve(repoRoot, 'apps/web/dist');
-// Dev default: sibling checkout `../kimi-code-2` (the kimi-code repo where the
-// split branch lives). Override with KIMI_CODE_REPO to point at any checkout.
+// Target kimi-code checkout is REQUIRED via KIMI_CODE_REPO — there is no
+// default, so a sync never lands in the wrong clone.
 const kimiCodeRepo = process.env.KIMI_CODE_REPO
   ? resolve(process.env.KIMI_CODE_REPO)
-  : resolve(repoRoot, '..', 'kimi-code-2');
-const target = resolve(kimiCodeRepo, 'apps/kimi-code/dist-web');
+  : undefined;
+
+if (kimiCodeRepo === undefined) {
+  throw new Error(
+    '请设置 KIMI_CODE_REPO 指向你的 kimi-code 仓 checkout，例如：KIMI_CODE_REPO=~/code/kimi-code-5 pnpm sync:web',
+  );
+}
+
+const appRoot = resolve(kimiCodeRepo, 'apps/kimi-code');
+const target = resolve(appRoot, 'dist-web');
 
 async function assertBuiltWeb() {
   try {
@@ -19,14 +27,28 @@ async function assertBuiltWeb() {
     }
   } catch {
     throw new Error(
-      `Web build output was not found at ${source}. Run \`pnpm --filter @moonshot-ai/kimi-web run build\` first.`,
+      `未找到 web 构建产物 ${source}/index.html，请先运行 \`pnpm --filter @moonshot-ai/kimi-web run build\`。`,
+    );
+  }
+}
+
+async function assertKimiCodeRepo() {
+  try {
+    const info = await stat(appRoot);
+    if (!info.isDirectory()) {
+      throw new Error('apps/kimi-code is not a directory');
+    }
+  } catch {
+    throw new Error(
+      `KIMI_CODE_REPO 不像一个 kimi-code 仓 checkout：未找到 ${appRoot}。`,
     );
   }
 }
 
 await assertBuiltWeb();
+await assertKimiCodeRepo();
 await rm(target, { recursive: true, force: true });
 await cp(source, target, { recursive: true });
 
-console.log(`Synced web assets to kimi-code SEA bundle: ${target}`);
-console.log('Next: commit the dist-web snapshot inside the kimi-code repo and open a PR.');
+console.log(`已同步 web 产物到：${target}`);
+console.log('提醒：完成后在 kimi-code 仓提交 dist-web 变更并创建 PR（该仓 gitignore dist-web，需 `git add -f`）。');
