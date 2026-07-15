@@ -297,4 +297,20 @@ describe('useAttachmentUpload', () => {
     expect(preventDefault).not.toHaveBeenCalled();
     expect(att.isDragOver.value).toBe(false);
   });
+
+  it('skips a file attachment with no fileId and an empty URL instead of fetching it', async () => {
+    // The non-clickable chip rebuilt from an inline-base64 notice has neither —
+    // fetch('') would resolve to the current page and upload the web app HTML.
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const att = setup(uploadImage);
+
+    att.loadAttachments([{ kind: 'file', url: '', name: 'image.avif' }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(att.attachments.value).toHaveLength(0);
+    // No fetch with the empty URL (a same-document fetch would upload the page).
+    expect(fetchSpy.mock.calls.every((call) => call[0] !== '')).toBe(true);
+    fetchSpy.mockRestore();
+  });
 });

@@ -340,6 +340,10 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
         // actually resendable — otherwise handleSubmit silently drops it. If the
         // URL can't be fetched (CORS / non-2xx) or upload is unavailable, skip
         // the chip rather than show a misleading ready attachment.
+        // No URL at all (the non-clickable chip rebuilt from an inline-base64
+        // notice): skip too — fetch('') would resolve to the current page and
+        // upload the web app's HTML as the attachment.
+        if (!att.url) continue;
         const upload = uploadImage();
         if (!upload) continue;
         const entry: Attachment = {
