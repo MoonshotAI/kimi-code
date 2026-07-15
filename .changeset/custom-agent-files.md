@@ -5,4 +5,4 @@
 "@moonshot-ai/kimi-code": minor
 ---
 
-Add custom agents defined as Markdown files with frontmatter (custom or appended system prompt, tool allow/deny lists), discovered from user and project `agents/` directories, with `--agent` / `--agent-file` to select the main agent. Requires the v2 engine: `KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent <name>`.
+Support custom agents defined as Markdown files with frontmatter — replace or append the system prompt, allow/deny tools — with `--agent` / `--agent-file` selecting the main agent (v2 engine only).
