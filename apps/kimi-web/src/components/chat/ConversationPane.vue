@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
+import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
 import type { PromptAttachment } from '../../composables/useKimiWebClient';
@@ -123,7 +123,7 @@ const emit = defineEmits<{
   openChanges: [];
   refreshGitStatus: [];
   /** Edit + resend the last user message (App undoes, then refills composer). */
-  editMessage: [payload: { text: string; images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] }];
+  editMessage: [payload: { text: string; attachments?: TurnAttachment[] }];
   /** Empty-composer workspace picker: start a new conversation elsewhere. */
   selectWorkspace: [workspaceId: string];
   /** Empty-composer workspace picker: create a new workspace. */
@@ -190,7 +190,7 @@ let copyConversationCopiedTimer: ReturnType<typeof setTimeout> | null = null;
     so the caller can avoid dropping the prompt. */
 function loadComposerForEdit(
   value: string,
-  attachments?: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[],
+  attachments?: TurnAttachment[],
 ): boolean {
   const composer = dockedComposerRef.value ?? emptyComposerRef.value;
   if (!composer) return false;
@@ -927,7 +927,7 @@ function handleComposerSubmit(payload: { text: string; attachments: PromptAttach
 // smooth-scrolls once the truncated turns actually land.
 function handleEditMessage(payload: {
   text: string;
-  images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[];
+  attachments?: TurnAttachment[];
 }): void {
   following.value = true;
   showPill.value = false;

@@ -29,6 +29,7 @@ import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
 import { useConfirmDialog } from './composables/useConfirmDialog';
 import type { PromptAttachment } from './composables/useKimiWebClient';
+import type { TurnAttachment } from './types';
 import { useAuthGate } from './composables/useAuthGate';
 import { usePageTitle } from './composables/usePageTitle';
 import { useSidebarLayout } from './composables/useSidebarLayout';
@@ -487,11 +488,11 @@ async function handleLoginSuccess(): Promise<void> {
 // then drop that message's text back into the composer for editing.
 async function handleEditMessage(payload: {
   text: string;
-  images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[];
+  attachments?: TurnAttachment[];
 }): Promise<void> {
   await client.undo(1);
   await nextTick();
-  conversationPaneRef.value?.loadComposerForEdit(payload.text, payload.images);
+  conversationPaneRef.value?.loadComposerForEdit(payload.text, payload.attachments);
 }
 
 // Handler for slash commands emitted by Composer (via ConversationPane)

@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedPromptView } from '../../types';
+import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedPromptView, TurnAttachment } from '../../types';
 import ToolCall from './ToolCall.vue';
 import ToolGroup from './ToolGroup.vue';
 import Markdown from './Markdown.vue';
@@ -17,6 +17,8 @@ import Icon from '../ui/Icon.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import { getKimiWebApi } from '../../api';
+import type { IconName } from '../../lib/icons';
 import {
   assistantRenderBlocks,
   formatDuration,
@@ -200,7 +202,7 @@ const emit = defineEmits<{
   /** Show an Edit/Write tool call's diff in the right-side panel. */
   openToolDiff: [id: string];
   /** Edit + resend the last user message (parent undoes, then refills composer). */
-  editMessage: [payload: { text: string; images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] }];
+  editMessage: [payload: { text: string; attachments?: TurnAttachment[] }];
   /** Fetch the next older page of messages (triggered by top sentinel visibility or click). */
   loadOlderMessages: [];
   /** Remove a queued message by index. */
@@ -333,7 +335,7 @@ async function onUndo(turn: ChatTurn): Promise<void> {
 function confirmEditMessage(turn: ChatTurn): void {
   if (undoingTurnId.value !== null) return;
   undoingTurnId.value = turn.id;
-  emit('editMessage', { text: turn.text, images: turn.images });
+  emit('editMessage', { text: turn.text, attachments: turn.attachments });
   // Fallback: if the server rewind never removes the turn (e.g. it failed),
   // release the guard so the user can retry.
   undoFallbackTimer = setTimeout(() => {
@@ -468,12 +470,89 @@ function copyUserMessage(turn: ChatTurn): void {
   }).catch(() => {/* ignore */});
 }
 
-function userImageMedia(img: { url: string; alt?: string; fileId?: string }): ToolMedia {
-  // User-uploaded images carry no path/mime metadata; the preview panel falls
+function userAttachmentMedia(att: TurnAttachment): ToolMedia {
+  // User-uploaded media carries no path/mime metadata; the preview panel falls
   // back to a generic label and sniffs the mime from the URL when needed. When
   // a fileId is present the preview fetches the bytes with auth (a bare
   // getFileUrl src 401s under daemon auth).
-  return { kind: 'image', url: img.url, path: img.alt, fileId: img.fileId };
+  return { kind: att.kind === 'video' ? 'video' : 'image', url: att.url, path: att.name, fileId: att.fileId };
+}
+
+// ---------------------------------------------------------------------------
+// Attachment chips (unified file / image / video rendering in user bubbles)
+// ---------------------------------------------------------------------------
+
+/** Semantic hue per file family (PDF/docs/sheets/archives/code/images). The
+    generic file icon and unknown types use the neutral default. */
+const ATT_TILE_CLASS: [RegExp, string][] = [
+  [/^pdf$/i, 'ft-pdf'],
+  [/^(doc|docx|md|txt|rtf)$/i, 'ft-doc'],
+  [/^(xls|xlsx|csv|tsv)$/i, 'ft-sheet'],
+  [/^(zip|tar|gz|tgz|bz2|xz|7z|rar)$/i, 'ft-zip'],
+  [/^(png|jpe?g|gif|webp|avif|svg|heic|bmp)$/i, 'ft-img'],
+  [/^(m[km]ov|mp4|webm|avi)$/i, 'ft-img'],
+];
+
+function attExt(att: TurnAttachment): string | undefined {
+  const fromName = att.name?.match(/\.([A-Za-z0-9]{1,8})$/)?.[1];
+  const ext = fromName ?? att.mediaType?.split('/')[1]?.split('+')[0];
+  return ext ? ext.toUpperCase() : undefined;
+}
+
+function attTileClass(att: TurnAttachment): string {
+  if (att.kind !== 'file') return att.kind === 'video' ? 'ft ft-img' : 'ft';
+  const ext = attExt(att) ?? '';
+  for (const [re, cls] of ATT_TILE_CLASS) {
+    if (re.test(ext)) return `ft ${cls}`;
+  }
+  return 'ft';
+}
+
+function fileIcon(att: TurnAttachment): IconName {
+  const ext = attExt(att) ?? '';
+  if (/^(txt|md|doc|docx|rtf|log)$/i.test(ext)) return 'file-text';
+  return 'file';
+}
+
+function attName(att: TurnAttachment): string {
+  if (att.name) return att.name;
+  if (att.kind === 'image') return t('composer.attachmentImage');
+  if (att.kind === 'video') return t('composer.attachmentVideo');
+  return t('composer.attachmentFile');
+}
+
+function formatAttSize(size: number): string {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function attChipTitle(att: TurnAttachment): string {
+  const parts = [attName(att)];
+  if (att.size !== undefined) parts.push(formatAttSize(att.size));
+  return parts.join(' · ');
+}
+
+function onAttachmentClick(att: TurnAttachment): void {
+  if (att.kind === 'image' || att.kind === 'video') {
+    emit('openMedia', userAttachmentMedia(att));
+    return;
+  }
+  // Files open via an auth-aware blob download — a bare getFileUrl src 401s
+  // under daemon auth, so route the bytes through the API client.
+  void downloadAttachment(att);
+}
+
+async function downloadAttachment(att: TurnAttachment): Promise<void> {
+  if (!att.fileId) return;
+  const blob = await getKimiWebApi().getFileBlob(att.fileId).catch(() => null);
+  if (blob === null) return;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = att.name ?? att.fileId;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
 function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }): boolean {
@@ -523,30 +602,31 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
       <template v-if="turn.role === 'user'">
         <div class="u-turn">
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
-            <!-- Image / video attachments -->
-            <div v-if="turn.images && turn.images.length > 0" class="u-imgs">
-              <template v-for="(img, ii) in turn.images" :key="ii">
-                <AuthMedia
-                  v-if="img.kind === 'video'"
-                  :url="img.url"
-                  kind="video"
-                  :file-id="img.fileId"
-                  media-class="u-img"
-                />
+            <!-- Unified attachment chips: files, images and videos -->
+            <div v-if="turn.attachments && turn.attachments.length > 0" class="u-atts">
+              <template v-for="(att, ai) in turn.attachments" :key="ai">
                 <button
-                  v-else
                   type="button"
-                  class="u-img-btn"
-                  :aria-label="t('filePreview.enlargeImage')"
-                  @click="emit('openMedia', userImageMedia(img))"
+                  class="att-chip"
+                  :class="attTileClass(att)"
+                  :title="attChipTitle(att)"
+                  :aria-label="attChipTitle(att)"
+                  @click="onAttachmentClick(att)"
                 >
-                  <AuthMedia
-                    :url="img.url"
-                    kind="image"
-                    :alt="img.alt"
-                    :file-id="img.fileId"
-                    media-class="u-img"
-                  />
+                  <span class="att-tile">
+                    <AuthMedia
+                      v-if="att.kind === 'image'"
+                      :url="att.url"
+                      kind="image"
+                      :alt="att.name"
+                      :file-id="att.fileId"
+                      media-class="att-thumb"
+                    />
+                    <Icon v-else-if="att.kind === 'video'" name="play" size="sm" />
+                    <Icon v-else :name="fileIcon(att)" size="sm" />
+                  </span>
+                  <span class="att-name">{{ attName(att) }}</span>
+                  <span v-if="attExt(att)" class="att-ext">{{ attExt(att) }}</span>
                 </button>
               </template>
             </div>
@@ -1064,36 +1144,79 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   }
 }
 
-.u-imgs {
+/* Unified attachment chips (files / images / videos) above the bubble text.
+   Tile hue comes from the --ft-* family tokens (neutral --ft-file default). */
+.u-atts {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 8px;
 }
-.u-img {
-  max-width: 100%;
-  max-height: 200px;
-  border-radius: 8px;
-  object-fit: cover;
-}
-/* Clickable image thumbnail — reset button chrome so it looks like the plain
-   image it replaced, while still opening the preview on click. */
-.u-img-btn {
-  display: block;
-  flex: none;
-  align-self: flex-start;
-  max-width: 100%;
-  padding: 0;
-  border: none;
-  background: transparent;
+.att-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 4px 9px 4px 5px;
+  background: var(--color-bg);
+  border: 1px solid var(--color-line);
+  border-radius: 999px;
   cursor: pointer;
-  border-radius: 8px;
-  overflow: hidden;
+  font-size: var(--ui-font-size-sm);
+  transition: border-color var(--duration-fast, .12s) ease;
 }
-.u-img-btn .u-img {
+.att-chip:hover {
+  border-color: var(--color-line-strong);
+}
+.att-tile {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  color: var(--ft-file);
+  background: var(--ft-file-soft);
+}
+.att-tile :deep(.att-thumb) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
   display: block;
 }
-.u-img-btn:focus-visible {
+.att-chip.ft-pdf .att-tile { color: var(--ft-pdf); background: var(--ft-pdf-soft); }
+.att-chip.ft-doc .att-tile { color: var(--ft-doc); background: var(--ft-doc-soft); }
+.att-chip.ft-sheet .att-tile { color: var(--ft-sheet); background: var(--ft-sheet-soft); }
+.att-chip.ft-zip .att-tile { color: var(--ft-zip); background: var(--ft-zip-soft); }
+.att-chip.ft-code .att-tile { color: var(--ft-code); background: var(--ft-code-soft); }
+.att-chip.ft-img .att-tile { color: var(--ft-img); background: var(--ft-img-soft); }
+.att-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text);
+  font-weight: var(--weight-medium, 500);
+}
+.att-ext {
+  flex: none;
+  font-size: calc(var(--ui-font-size-sm) - 2px);
+  font-weight: var(--weight-semibold, 600);
+  letter-spacing: .02em;
+  color: var(--ft-file);
+  background: var(--ft-file-soft);
+  border-radius: var(--radius-xs);
+  padding: 1px 4px;
+}
+.att-chip.ft-pdf .att-ext { color: var(--ft-pdf); background: var(--ft-pdf-soft); }
+.att-chip.ft-doc .att-ext { color: var(--ft-doc); background: var(--ft-doc-soft); }
+.att-chip.ft-sheet .att-ext { color: var(--ft-sheet); background: var(--ft-sheet-soft); }
+.att-chip.ft-zip .att-ext { color: var(--ft-zip); background: var(--ft-zip-soft); }
+.att-chip.ft-code .att-ext { color: var(--ft-code); background: var(--ft-code-soft); }
+.att-chip.ft-img .att-ext { color: var(--ft-img); background: var(--ft-img-soft); }
+.att-chip:focus-visible {
   outline: none;
   box-shadow: var(--p-focus-ring);
 }

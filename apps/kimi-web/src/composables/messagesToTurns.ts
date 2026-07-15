@@ -11,7 +11,7 @@
 
 import type { AppMessage, AppApprovalRequest, AppTask, CompactionMarkerMetadata } from '../api/types';
 import { COMPACTION_MARKER_METADATA_KEY } from '../api/types';
-import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnBlock } from '../types';
+import type { AgentMember, ApprovalBlock, ChatTurn, CronTurnData, DiffLine, ToolCall, ToolMedia, TurnAttachment, TurnBlock } from '../types';
 
 const READ_MEDIA_TOOL_RE = /^read[_-]?media(?:file)?$/i;
 const DATA_URL_RE = /^data:([^;]+);base64,(.*)$/s;
@@ -765,7 +765,7 @@ export function messagesToTurns(
         origin?.kind === 'plugin_command' && origin?.trigger === 'user-slash';
 
       const textParts: string[] = [];
-      const images: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] = [];
+      const attachments: TurnAttachment[] = [];
       for (const c of msg.content) {
         if (c.type === 'text') {
           if (isSkillActivation) {
@@ -786,7 +786,7 @@ export function messagesToTurns(
             if (tag && (tag.kind === 'video' || tag.kind === 'image') && getFileUrl) {
               const fileId = fileIdFromCachePath(tag.path);
               if (fileId) {
-                images.push({ url: getFileUrl(fileId), kind: tag.kind, alt: fileId, fileId });
+                attachments.push({ url: getFileUrl(fileId), kind: tag.kind, fileId });
                 continue;
               }
             }
@@ -796,14 +796,34 @@ export function messagesToTurns(
           }
         }
         const media = resolveMediaUrl(c);
-        if (media) images.push({ url: media.url, kind: media.kind, alt: c.type === 'file' ? c.name : undefined, fileId: media.fileId });
+        if (media) {
+          attachments.push({
+            url: media.url,
+            kind: media.kind,
+            name: c.type === 'file' ? c.name : undefined,
+            fileId: media.fileId,
+          });
+          continue;
+        }
+        // Non-media files (pdf/zip/yaml/…) carry no playable URL, but the chip
+        // still renders them with name/size and a download action.
+        if (c.type === 'file' && getFileUrl) {
+          attachments.push({
+            kind: 'file',
+            url: getFileUrl(c.fileId),
+            fileId: c.fileId,
+            name: c.name,
+            mediaType: c.mediaType || undefined,
+            size: c.size,
+          });
+        }
       }
       turns.push({
         id: msg.id,
         role: 'user',
         no: no++,
         text: textParts.join('\n'),
-        images: images.length > 0 ? images : undefined,
+        attachments: attachments.length > 0 ? attachments : undefined,
         skillActivation: isSkillActivation
           ? { name: origin.skillName!, args: origin.skillArgs }
           : undefined,

@@ -212,8 +212,60 @@ describe('messagesToTurns', () => {
 
     expect(turns).toHaveLength(1);
     expect(turns[0]).toMatchObject({ role: 'user', text: 'look at this' });
-    expect(turns[0]?.images).toEqual([
-      { url: `/api/v1/files/${fileId}`, kind: 'video', alt: fileId, fileId },
+    expect(turns[0]?.attachments).toEqual([
+      { url: `/api/v1/files/${fileId}`, kind: 'video', fileId },
+    ]);
+  });
+
+  it('renders a non-media file part as a file attachment with name and size', () => {
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'text', text: 'check these' },
+          { type: 'file', fileId: 'f_yaml', name: 'api-spec.yaml', mediaType: 'application/yaml', size: 18432 },
+          { type: 'file', fileId: 'f_pdf', name: '设计文档.pdf', mediaType: 'application/pdf', size: 2516582 },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0]?.attachments).toEqual([
+      {
+        kind: 'file',
+        url: '/api/v1/files/f_yaml',
+        fileId: 'f_yaml',
+        name: 'api-spec.yaml',
+        mediaType: 'application/yaml',
+        size: 18432,
+      },
+      {
+        kind: 'file',
+        url: '/api/v1/files/f_pdf',
+        fileId: 'f_pdf',
+        name: '设计文档.pdf',
+        mediaType: 'application/pdf',
+        size: 2516582,
+      },
+    ]);
+  });
+
+  it('renders an extensionless file part with no mediaType as a file attachment', () => {
+    const turns = messagesToTurns(
+      [
+        message('u1', 'user', [
+          { type: 'file', fileId: 'f_make', name: 'Makefile', mediaType: '', size: 512 },
+        ]),
+      ],
+      [],
+      (id) => `/api/v1/files/${id}`,
+      false,
+    );
+
+    expect(turns[0]?.attachments).toEqual([
+      { kind: 'file', url: '/api/v1/files/f_make', fileId: 'f_make', name: 'Makefile', mediaType: undefined, size: 512 },
     ]);
   });
 
@@ -228,7 +280,7 @@ describe('messagesToTurns', () => {
     );
 
     expect(turns[0]).toMatchObject({ role: 'user', text: tag });
-    expect(turns[0]?.images).toBeUndefined();
+    expect(turns[0]?.attachments).toBeUndefined();
   });
 
   it('leaves non-file-store media paths as text instead of fabricating a url', () => {
@@ -244,7 +296,7 @@ describe('messagesToTurns', () => {
     );
 
     expect(turns[0]).toMatchObject({ role: 'user', text: tag });
-    expect(turns[0]?.images).toBeUndefined();
+    expect(turns[0]?.attachments).toBeUndefined();
   });
 
   it('strips the hidden image-compression caption from a user bubble', () => {
