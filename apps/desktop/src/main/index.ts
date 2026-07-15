@@ -17,6 +17,7 @@ import { serverTokenPath } from '@moonshot-ai/kap-server';
 
 import { startDesktopServer, type DesktopServerHandle } from './server';
 import { registerRendererScheme, registerRendererProtocol, rendererUrl } from './protocol';
+import { DESKTOP_PRODUCT_NAME } from '../shared/identity';
 
 let mainWindow: BrowserWindow | null = null;
 let serverHandle: DesktopServerHandle | null = null;
@@ -136,7 +137,7 @@ async function connect(win: BrowserWindow): Promise<void> {
     serverHandle?.close().catch(() => {});
     serverHandle = await startDesktopServer({
       webAssetsDir: rendererDistRoot(),
-      identity: { userAgentProduct: 'kimi-desktop', version: app.getVersion() },
+      identity: { userAgentProduct: DESKTOP_PRODUCT_NAME, version: app.getVersion() },
     });
     const { origin, token } = serverHandle;
     process.stdout.write(`[kimi-desktop] connected to ${origin}\n`);

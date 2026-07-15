@@ -6,10 +6,9 @@
 // / storage) that the package deliberately does not own.
 
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../lib/storage';
+import { DESKTOP_PRODUCT_NAME, DESKTOP_UI_MODE } from '../../shared/identity';
 
 const CLIENT_ID_KEY = STORAGE_KEYS.clientId;
-const WEB_CLIENT_NAME = 'kimi-code-web';
-const WEB_CLIENT_UI_MODE = 'web';
 
 export interface KimiApiConfig {
   serverHttpUrl: string;
@@ -23,9 +22,9 @@ export function readKimiApiConfig(): KimiApiConfig {
   return {
     serverHttpUrl: resolveServerOrigin(),
     clientId: getClientId(),
-    clientName: WEB_CLIENT_NAME,
-    clientVersion: webClientVersion(),
-    clientUiMode: WEB_CLIENT_UI_MODE,
+    clientName: DESKTOP_PRODUCT_NAME,
+    clientVersion: readClientVersion(),
+    clientUiMode: DESKTOP_UI_MODE,
   };
 }
 
@@ -111,8 +110,8 @@ function getClientId(): string {
   return generated;
 }
 
-function webClientVersion(): string {
-  return typeof __KIMI_WEB_VERSION__ === 'string' && __KIMI_WEB_VERSION__.trim()
-    ? __KIMI_WEB_VERSION__
+function readClientVersion(): string {
+  return typeof __KIMI_CLIENT_VERSION__ === 'string' && __KIMI_CLIENT_VERSION__.trim()
+    ? __KIMI_CLIENT_VERSION__
     : '0.0.0-dev';
 }

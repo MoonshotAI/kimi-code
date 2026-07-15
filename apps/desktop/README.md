@@ -20,7 +20,7 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `@moonshot-ai
 
 渲染进程：`src/renderer/` 是 `apps/web/src` 的**完整副本**，由 `vite.renderer.config.ts`
 构建到 `desktop-dist/`（root = `src/renderer`，outDir = `desktop-dist`，`iconsDir` 指向副本内
-的 `icons/kimi`，并注入 `__KIMI_WEB_DESKTOP__` / `__KIMI_WEB_VERSION__` / 空的 dev-proxy target）。
+的 `icons/kimi`，并注入 `__KIMI_WEB_DESKTOP__` / `__KIMI_CLIENT_VERSION__` / 空的 dev-proxy target）。
 
 关键文件：
 
@@ -72,13 +72,11 @@ pnpm --filter @moonshot-ai/kimi-desktop run test
 1. **副本同步机制**：加一个一键脚本（例如 `scripts/sync-web-to-desktop.mjs`）把 `apps/web/src`
    re-copy 到 `apps/desktop/src/renderer`，并校验 `index.html` 入口与 `icons/kimi` 一致；在 CI
    或 pre-commit 里提示副本是否落后于 web。
-2. **defines 治理**：`__KIMI_WEB_VERSION__` 现在硬编码为 `'0.1.1-internal.0'`，应改为读
-   `apps/desktop/package.json` 的 `version`（与 web 自身一致）。
-3. **依赖清理**：`katex` / `shiki` / `mermaid` / `markstream-vue` / `stream-markdown` 等是
+2. **依赖清理**：`katex` / `shiki` / `mermaid` / `markstream-vue` / `stream-markdown` 等是
    `web-markdown` 的传递依赖，确认是否需要在 `apps/desktop/package.json` 直接列出，可减则减。
-4. **临时诊断日志收口**：主进程的 `zoom factor/level/devicePixelRatio` 等 `[kimi-desktop diag]`
+3. **临时诊断日志收口**：主进程的 `zoom factor/level/devicePixelRatio` 等 `[kimi-desktop diag]`
    日志在稳定后评估保留或移除。
-5. **长期原生化方向**：当前是「web 副本给 desktop 用」的反向过渡。目标是 desktop-first 抽出
+4. **长期原生化方向**：当前是「web 副本给 desktop 用」的反向过渡。目标是 desktop-first 抽出
    共享组件与逻辑、让 web 复用；前置条件是解开 web 侧 `createAgentProjector` / `toolMeta` 等
    与 UI 的硬耦合。在副本路线跑稳之前不强行抽取。
 

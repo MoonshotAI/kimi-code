@@ -24,7 +24,7 @@ export function readKimiApiConfig(): KimiApiConfig {
     serverHttpUrl: resolveServerOrigin(),
     clientId: getClientId(),
     clientName: WEB_CLIENT_NAME,
-    clientVersion: webClientVersion(),
+    clientVersion: readClientVersion(),
     clientUiMode: WEB_CLIENT_UI_MODE,
   };
 }
@@ -111,8 +111,8 @@ function getClientId(): string {
   return generated;
 }
 
-function webClientVersion(): string {
-  return typeof __KIMI_WEB_VERSION__ === 'string' && __KIMI_WEB_VERSION__.trim()
-    ? __KIMI_WEB_VERSION__
+function readClientVersion(): string {
+  return typeof __KIMI_CLIENT_VERSION__ === 'string' && __KIMI_CLIENT_VERSION__.trim()
+    ? __KIMI_CLIENT_VERSION__
     : '0.0.0-dev';
 }

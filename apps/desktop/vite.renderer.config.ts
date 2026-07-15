@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vite';
 import { kimiRendererViteConfig } from '@moonshot-ai/vite-preset';
@@ -22,6 +23,13 @@ const outDir = fileURLToPath(new URL('./desktop-dist', import.meta.url));
 // build time, so the packaged app does not depend on apps/web's filesystem.
 const iconsDir = fileURLToPath(new URL('./src/renderer/icons/kimi', import.meta.url));
 
+// The renderer reports this version to the server as its clientVersion. Read
+// it from the desktop package.json (same idiom as apps/web/vite.config.ts) so
+// it can never drift from the main process's app.getVersion().
+const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf-8')) as {
+  version: string;
+};
+
 const preset = kimiRendererViteConfig({
   root,
   iconsDir,
@@ -31,11 +39,12 @@ const preset = kimiRendererViteConfig({
     // three so the copy builds unchanged:
     //   __KIMI_DEV_PROXY_TARGET__ — desktop talks to the loopback server
     //     directly, never through the web dev proxy, so leave it empty.
-    //   __KIMI_WEB_VERSION__ — shown in the web UI; mirror the desktop version.
+    //   __KIMI_CLIENT_VERSION__ — reported to the server as the renderer's
+    //     clientVersion; sourced from the desktop package.json (see above).
     //   __KIMI_WEB_DESKTOP__ — enables desktop-only behaviour in the web copy
     //     (theme IPC, openExternal, desktop flag), so force it true here.
     __KIMI_DEV_PROXY_TARGET__: JSON.stringify(''),
-    __KIMI_WEB_VERSION__: JSON.stringify('0.1.1-internal.0'),
+    __KIMI_CLIENT_VERSION__: JSON.stringify(pkg.version),
     __KIMI_WEB_DESKTOP__: JSON.stringify(true),
   },
 });
