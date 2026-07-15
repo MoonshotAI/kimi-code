@@ -304,11 +304,12 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     if (handle === undefined) return;
     this.handles.delete(agentId);
     await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
-    // Drain: cancel the active turn and wait for the loop to settle before
-    // releasing the scope; scope disposal then tears down the agent's
-    // services (e.g. an in-flight compaction aborts itself).
     const loop = handle.accessor.get(IAgentLoopService);
-    loop.cancel(undefined, abortError('Agent removed'));
+    const reason = abortError('Agent removed');
+    for (const turnId of loop.status().pendingTurnIds) {
+      loop.cancel(turnId, reason);
+    }
+    loop.cancel(undefined, reason);
     await loop.settled();
     handle.dispose();
     this.onDidDisposeEmitter.fire(agentId);

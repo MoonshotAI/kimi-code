@@ -141,6 +141,10 @@ describe('AgentLifecycleService', () => {
   let atomicDocs: Map<string, unknown>;
   let permissionModeSetMode: ReturnType<typeof vi.fn>;
   let stopAllOnExit: ReturnType<typeof vi.fn>;
+  let loopActiveTurnId: number | undefined;
+  let loopPendingTurnIds: number[];
+  let loopCancel: ReturnType<typeof vi.fn<IAgentLoopService['cancel']>>;
+  let loopSettled: ReturnType<typeof vi.fn<IAgentLoopService['settled']>>;
   let beforeExecuteHookIds: string[];
   let didExecuteHookIds: string[];
 
@@ -238,6 +242,21 @@ describe('AgentLifecycleService', () => {
         },
       },
     } as unknown as IAgentToolExecutorService);
+    loopActiveTurnId = undefined;
+    loopPendingTurnIds = [];
+    loopCancel = vi.fn<IAgentLoopService['cancel']>((turnId) => {
+      if (turnId === undefined) {
+        loopActiveTurnId = undefined;
+      } else {
+        loopPendingTurnIds = loopPendingTurnIds.filter((id) => id !== turnId);
+      }
+      return true;
+    });
+    loopSettled = vi.fn<IAgentLoopService['settled']>(async () => {
+      if (loopActiveTurnId !== undefined || loopPendingTurnIds.length > 0) {
+        throw new Error('Agent loop did not settle');
+      }
+    });
     ix.stub(IAgentLoopService, {
       _serviceBrand: undefined,
       hooks: {
@@ -245,8 +264,14 @@ describe('AgentLifecycleService', () => {
         onDidFinishStep: { register: () => ({ dispose: () => {} }) },
       },
       registerLoopErrorHandler: () => ({ dispose: () => {} }),
-      cancel: () => true,
-      settled: () => Promise.resolve(),
+      status: () => ({
+        state: loopActiveTurnId === undefined ? 'idle' : 'running',
+        activeTurnId: loopActiveTurnId,
+        pendingTurnIds: loopPendingTurnIds,
+        hasPendingRequests: loopActiveTurnId !== undefined || loopPendingTurnIds.length > 0,
+      }),
+      cancel: loopCancel,
+      settled: loopSettled,
     } as unknown as IAgentLoopService);
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
@@ -289,6 +314,18 @@ describe('AgentLifecycleService', () => {
     await svc.remove('main');
 
     expect(stopAllOnExit).toHaveBeenCalledWith('Session closed');
+  });
+
+  it('remove cancels queued turns before waiting for the active turn to settle', async () => {
+    loopActiveTurnId = 1;
+    loopPendingTurnIds = [2, 3];
+    const svc = ix.get(IAgentLifecycleService);
+    await svc.create({ agentId: 'main' });
+
+    await svc.remove('main');
+
+    expect(loopCancel.mock.calls.map(([turnId]) => turnId)).toEqual([2, 3, undefined]);
+    expect(loopSettled).toHaveBeenCalledOnce();
   });
 
   it('ignites the self-wiring toolDedupe plugin so its hooks exist before the first turn', async () => {
