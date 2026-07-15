@@ -52,7 +52,7 @@ effort = "high"
 keep = "all"
 
 [loop_control]
-max_retries_per_step = 3
+max_retries_per_step = 10
 reserved_context_size = 50000
 
 [background]
@@ -198,7 +198,7 @@ display_name = "Kimi for Coding (custom)"
 | 字段 | 类型 | 默认值 | 说明 |
 | --- | --- | --- | --- |
 | `max_steps_per_turn` | `integer` | — | 单轮最大步数；不设或设为 `0` 则无上限 |
-| `max_retries_per_step` | `integer` | `3` | 单步失败后的最大重试次数 |
+| `max_retries_per_step` | `integer` | `10` | 单步失败后的最大重试次数 |
 | `reserved_context_size` | `integer` | — | 预留给模型输出的 token 数；上下文窗口剩余量低于此值时触发自动压缩 |
 
 ## `background`

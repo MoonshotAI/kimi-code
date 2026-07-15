@@ -52,7 +52,7 @@ effort = "high"
 keep = "all"
 
 [loop_control]
-max_retries_per_step = 3
+max_retries_per_step = 10
 reserved_context_size = 50000
 
 [background]
@@ -198,7 +198,7 @@ You can also switch models temporarily without touching the config file — by s
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `max_steps_per_turn` | `integer` | — | Maximum steps per turn; unset or `0` means unlimited |
-| `max_retries_per_step` | `integer` | `3` | Maximum retries after a step failure |
+| `max_retries_per_step` | `integer` | `10` | Maximum retries after a step failure |
 | `reserved_context_size` | `integer` | — | Number of tokens reserved for model output; automatic compaction is triggered when the remaining context window falls below this value |
 
 ## `background`

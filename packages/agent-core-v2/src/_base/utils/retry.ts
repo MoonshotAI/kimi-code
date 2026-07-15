@@ -6,7 +6,11 @@
 
 import { abortable } from '#/_base/utils/abort';
 
-export const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
+// Default retry budget per step: 10 attempts (9 retries). Kept in sync with
+// v1 (`agent-core/loop/retry.ts`): the exponential ramp below climbs 0.5s,
+// 1s, 2s … up to the 32s cap, giving roughly 2–3 minutes of total wait to
+// ride out a typical provider overload window (sustained 429s).
+export const DEFAULT_MAX_RETRY_ATTEMPTS = 10;
 
 const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 32_000;

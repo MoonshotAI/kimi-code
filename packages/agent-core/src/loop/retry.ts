@@ -7,14 +7,17 @@ import type { LoopEventDispatcher } from './events';
 import { isAbortError } from './errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 
-export const DEFAULT_MAX_RETRY_ATTEMPTS = 3;
+// Default retry budget per step: 10 attempts (9 retries). With the
+// exponential ramp below the backoff climbs 0.5s, 1s, 2s … up to the 32s
+// cap, giving roughly 2–3 minutes of total wait — enough to ride out a
+// typical provider overload window (sustained 429s) instead of surfacing
+// the error after a couple of quick retries.
+export const DEFAULT_MAX_RETRY_ATTEMPTS = 10;
 
 const BASE_DELAY_MS = 500;
-// Per-attempt backoff cap (32s). With the default 3 attempts the ramp
-// (0.5s, 1s) never reaches the cap, so interactive runs are unaffected; it
-// only matters for high-attempt configs (e.g. eval harnesses with
-// `max_retries_per_step = 10`), where it lets retries ride out multi-minute
-// provider overload instead of giving up after a few seconds of backoff.
+// Per-attempt backoff cap (32s). The default 10-attempt ramp reaches the
+// cap on the 7th retry, so most of the budget is spent at the cap waiting
+// out multi-minute provider overload.
 const MAX_DELAY_MS = 32_000;
 const RETRY_FACTOR = 2;
 // Up to 25% jitter on top of the exponential base to avoid herd retries.
