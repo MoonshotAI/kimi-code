@@ -212,6 +212,8 @@ function convertMessage(
       result.content = nonThinkParts
         .map((p) => convertContentPart(p))
         .filter((p): p is OpenAIContentPart => p !== null);
+    } else if (message.role === 'assistant' && message.toolCalls.length === 0) {
+      result.content = '';
     }
   }
 
