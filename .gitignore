@@ -8,3 +8,4 @@ web-dist
 *.log
 coverage
 .vite
+.kimi-code/local.toml
