@@ -247,6 +247,21 @@ describe('AgentProfileService tool denylist', () => {
     expect(record).toMatchObject({ profileName: 'deny-builtin', disallowedTools: ['Bash'] });
   });
 
+  it('writes no tools.set_active_tools record when the profile has no allowlist', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+
+    await svc.bind({ profile: 'deny-builtin', model: MOCK_MODEL });
+    await ctx.get(IWireService).flush();
+
+    // The all-tools default must be represented by the ABSENCE of the record:
+    // a `tools.set_active_tools` record without `names` crashes v1 replay.
+    expect(persistence.records.some((r) => r.type === 'tools.set_active_tools')).toBe(false);
+    expect(svc.isToolActive('Read')).toBe(true);
+    expect(svc.isToolActive('Bash')).toBe(false);
+  });
+
   it('restores the denylist from persisted records on resume without catalog resolution', async () => {
     const persistence = new InMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));

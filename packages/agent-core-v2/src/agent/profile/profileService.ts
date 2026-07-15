@@ -454,9 +454,19 @@ export class AgentProfileService implements IAgentProfileService {
 
   private setActiveTools(names: readonly string[] | undefined): void {
     this.activeToolNamesOverlay = undefined;
-    this.wire.dispatch(
-      setActiveTools({ names: names === undefined ? undefined : [...names] }),
-    );
+    if (names === undefined) {
+      // A `tools.set_active_tools` record without `names` crashes v1 replay
+      // (v1 clients discover v2 sessions through the shared session index).
+      // At first bind the persisted base is already `undefined` (= every tool
+      // active), so skipping the write changes nothing. Known gap: resetting
+      // an allowlist back to "all tools" on a same-name rebind has no v1-safe
+      // encoding (`[]` means *no* tools active) and no production caller
+      // today (edges no-op same-name reselects) — if it ever needs one, add a
+      // `tools.reset_active_tools` Op; v1's restoreAgentRecord silently
+      // no-ops unknown record types, so that shape is safe.
+      return;
+    }
+    this.wire.dispatch(setActiveTools({ names: [...names] }));
   }
 
   private emitStatusUpdated(includeThinkingEffort = false): void {
