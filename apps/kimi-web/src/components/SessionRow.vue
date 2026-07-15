@@ -8,7 +8,6 @@ import type { Session } from '../types';
 import { copyTextToClipboard } from '../lib/clipboard';
 import Spinner from './ui/Spinner.vue';
 import Badge from './ui/Badge.vue';
-import { useConfirmDialog } from '../composables/useConfirmDialog';
 import IconButton from './ui/IconButton.vue';
 import Menu from './ui/Menu.vue';
 import MenuItem from './ui/MenuItem.vue';
@@ -16,7 +15,6 @@ import Icon from './ui/Icon.vue';
 import Tooltip from './ui/Tooltip.vue';
 
 const { t } = useI18n();
-const { confirm } = useConfirmDialog();
 
 const props = withDefaults(
   defineProps<{
@@ -168,18 +166,11 @@ function exportRow(): void {
   emit('export', props.session.id);
 }
 
-// Archive confirm — modal, consistent with remove-workspace.
-async function startArchive(): Promise<void> {
+// Archive — the modal confirm and the async work live in App.vue
+// (confirmArchiveSession); the row only emits the intent.
+function startArchive(): void {
   closeMenu();
-  if (
-    await confirm({
-      title: t('sidebar.archive'),
-      message: t('sidebar.archiveConfirm'),
-      variant: 'danger',
-    })
-  ) {
-    emit('archive', props.session.id);
-  }
+  emit('archive', props.session.id);
 }
 
 // Expose closeMenu so the parent can close on outside-click.
