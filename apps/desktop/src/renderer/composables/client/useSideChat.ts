@@ -9,11 +9,9 @@
 
 import { computed, ref } from 'vue';
 import { getKimiWebApi } from '../../api';
-import type { AppMessage, AppModel } from '../../api/types';
-import type { KimiEventConnection } from '../../api/types';
+import type { AppMessage, KimiEventConnection } from '../../api/types';
 import { messagesToTurns } from '../messagesToTurns';
 import type { ChatTurn } from '../../types';
-import { coerceThinkingForModel } from '../../lib/modelThinking';
 import type { ExtendedState } from '../useKimiWebClient';
 
 export interface UseSideChatDeps {
@@ -25,10 +23,6 @@ export interface UseSideChatDeps {
   nextOptimisticMsgId: () => string;
   connectEventsIfNeeded: () => void;
   getEventConn: () => KimiEventConnection | null;
-  /** Provider model catalog — used to coerce thinking against the parent
-   *  session's model the same way normal prompts do (so a value carried over
-   *  from another model isn't submitted raw). */
-  models: () => AppModel[];
 }
 
 export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
@@ -207,27 +201,18 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
       // Carry the parent's current thinking level, model, and permission so a
       // BTW first-turn reflects the same draft/runtime controls the UI shows —
       // the parent session profile mirrors them, but the prompt itself is the
-      // only thing the daemon reads for this turn.
+      // only thing the daemon reads for this turn. Thinking goes verbatim
+      // (same as normal prompts and the TUI).
       const promptSession = rawState.sessions.find((s) => s.id === sid);
       const model =
         (promptSession?.model && promptSession.model.length > 0
           ? promptSession.model
           : rawState.defaultModel) ?? undefined;
-      // Coerce thinking against the parent model the same way a normal prompt
-      // does (coercePromptThinking in useWorkspaceState): a level carried over
-      // from another/default model would otherwise be submitted raw and run
-      // differently from what the UI shows.
-      const promptModel =
-        model === undefined
-          ? undefined
-          : deps.models().find(
-              (m) => m.model === model || m.id === model || m.displayName === model,
-            );
       const result = await getKimiWebApi().submitPrompt(sid, {
         content: [{ type: 'text', text: trimmed }],
         agentId,
         model,
-        thinking: coerceThinkingForModel(promptModel, rawState.thinking),
+        thinking: rawState.thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,

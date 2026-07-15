@@ -1,11 +1,12 @@
 // apps/kimi-web/src/debug/trace.ts
-// KAP/daemon debug trace — a side-channel recording of REST calls and WS
-// frames, kept in a bounded ring buffer for the opt-in debug panel.
+// KAP/daemon trace — a side-channel recording of low-frequency client
+// lifecycle events plus opt-in REST/WS/console diagnostics.
 //
-// Opt-in: `?debug=1` in the URL or `localStorage["kimi-web.debug"]="1"`.
-// When not enabled every record call is a single boolean check, and nothing
-// is stored — normal use pays (almost) nothing. Recording NEVER changes the
-// request/WS behavior: callers pass data in, errors here must not propagate.
+// Full diagnostics are opt-in via `?debug=1` or
+// `localStorage["kimi-web.debug"]="1"`; key lifecycle metadata is always on.
+// Recording NEVER changes request/WS behavior: callers pass data in, errors
+// here must not propagate. Session exports use a separate metadata-only ring;
+// full REST/WS/console diagnostics never enter the archive.
 
 import { ref, shallowRef } from 'vue';
 import { safeGetString, STORAGE_KEYS } from '../lib/storage';
@@ -42,12 +43,67 @@ export interface TraceEntry {
   detail?: unknown;
 }
 
-const MAX_ENTRIES = 1000;
+const EXPORT_TRACE_EVENTS = [
+  'app:load:start',
+  'app:load:complete',
+  'export:start',
+  'export:accepted',
+  'export:failed',
+  'prompt:start',
+  'prompt:accepted',
+  'prompt:failed',
+  'session:snapshot:start',
+  'session:snapshot:accepted',
+  'session:snapshot:failed',
+  'operation:failed',
+  'window:error',
+  'window:unhandled-rejection',
+  'ws:connection',
+  'ws:error',
+  'ws:resync',
+  'ws:stale-reconnect',
+] as const;
+
+type ExportTraceEvent = (typeof EXPORT_TRACE_EVENTS)[number];
+
+export interface ExportTraceMetadata {
+  sessionId?: string;
+  status?: string;
+  /** Client operation name (e.g. 'archiveSession') for operation:failed. */
+  operation?: string;
+  seq?: number;
+  durationMs?: number;
+  messageCount?: number;
+  contentCount?: number;
+  mediaCount?: number;
+  sessionCount?: number;
+  workspaceCount?: number;
+  promptId?: string;
+  zipBytes?: number;
+  errorName?: string;
+  errorCode?: number;
+  requestId?: string;
+  phase?: string;
+  httpStatus?: number;
+  fatal?: boolean;
+  line?: number;
+  col?: number;
+}
+
+interface ExportTraceEntry extends ExportTraceMetadata {
+  ts: number;
+  event: ExportTraceEvent;
+}
+
+const MAX_ENTRIES = 500;
+const MAX_TOTAL_UTF8_BYTES = 256 * 1024;
+const MAX_EXPORT_STRING = 200;
 /** A single entry's detail JSON is capped so one giant frame (e.g. a snapshot
     with full scrollback) can't dominate the buffer's memory. */
 const MAX_DETAIL_JSON_CHARS = 16_384;
 const MAX_STRING = 500;
 const MAX_ARRAY_ITEMS = 50;
+const MAX_OBJECT_KEYS = 50;
 const MAX_DEPTH = 6;
 
 const SENSITIVE_KEY_RE = /api[_-]?key|authorization|token|secret|password|cookie|credential/i;
@@ -84,7 +140,13 @@ export function isTraceEnabled(): boolean {
 // ---------------------------------------------------------------------------
 
 const entries: TraceEntry[] = [];
+const entryJson: string[] = [];
+let totalUtf8Bytes = 0;
+const exportEntryJson: string[] = [];
+let exportTotalUtf8Bytes = 0;
 let nextId = 1;
+const utf8 = new TextEncoder();
+const exportTraceEvents = new Set<string>(EXPORT_TRACE_EVENTS);
 
 /** Bumped on every push; the panel re-reads the buffer when it changes. */
 export const traceVersion = ref(0);
@@ -97,14 +159,113 @@ export function traceEntries(): readonly TraceEntry[] {
 
 export function clearTrace(): void {
   entries.length = 0;
+  entryJson.length = 0;
+  totalUtf8Bytes = 0;
+  exportEntryJson.length = 0;
+  exportTotalUtf8Bytes = 0;
   traceVersion.value++;
 }
 
 function push(entry: Omit<TraceEntry, 'id' | 'ts'>): void {
   if (tracePaused.value) return;
-  entries.push({ id: nextId++, ts: Date.now(), ...entry });
-  if (entries.length > MAX_ENTRIES) entries.splice(0, entries.length - MAX_ENTRIES);
+  try {
+    const safeEntry: TraceEntry = {
+      id: nextId++,
+      ts: Date.now(),
+      source: entry.source,
+      kind: String(sanitizeForTrace(entry.kind)),
+      label: String(sanitizeForTrace(entry.label)),
+      sessionId:
+        entry.sessionId === undefined ? undefined : String(sanitizeForTrace(entry.sessionId)),
+      method: entry.method,
+      path: entry.path,
+      eventType: entry.eventType,
+      seq: entry.seq,
+      offset: entry.offset,
+      status: entry.status,
+      code: entry.code,
+      requestId: entry.requestId,
+      durationMs: entry.durationMs,
+      detail: detailOf(entry.detail),
+    };
+    const json = JSON.stringify(safeEntry);
+    const bytes = utf8.encode(json).byteLength;
+    // A single impossible-to-fit entry carries no useful debug signal and
+    // must not crowd the bounded panel buffer.
+    if (bytes > MAX_TOTAL_UTF8_BYTES) return;
+    entries.push(safeEntry);
+    entryJson.push(json);
+    totalUtf8Bytes += bytes + (entryJson.length > 1 ? 1 : 0);
+    while (entries.length > MAX_ENTRIES || totalUtf8Bytes > MAX_TOTAL_UTF8_BYTES) {
+      const removedJson = entryJson.shift();
+      entries.shift();
+      if (removedJson !== undefined) {
+        totalUtf8Bytes -= utf8.encode(removedJson).byteLength;
+        // Removing a non-empty buffer's first line also removes the newline
+        // that used to precede the new first line.
+        if (entryJson.length > 0) totalUtf8Bytes -= 1;
+      }
+    }
+  } catch {
+    return;
+  }
   traceVersion.value++;
+}
+
+function exportString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  return value.length <= MAX_EXPORT_STRING ? value : value.slice(0, MAX_EXPORT_STRING);
+}
+
+function exportNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+function pushExportTrace(event: string, info?: ExportTraceMetadata): void {
+  if (!exportTraceEvents.has(event)) return;
+  try {
+    const entry: ExportTraceEntry = {
+      ts: Date.now(),
+      event: event as ExportTraceEvent,
+      sessionId: exportString(info?.sessionId),
+      status: exportString(info?.status),
+      operation: exportString(info?.operation),
+      seq: exportNumber(info?.seq),
+      durationMs: exportNumber(info?.durationMs),
+      messageCount: exportNumber(info?.messageCount),
+      contentCount: exportNumber(info?.contentCount),
+      mediaCount: exportNumber(info?.mediaCount),
+      sessionCount: exportNumber(info?.sessionCount),
+      workspaceCount: exportNumber(info?.workspaceCount),
+      promptId: exportString(info?.promptId),
+      zipBytes: exportNumber(info?.zipBytes),
+      errorName: exportString(info?.errorName),
+      errorCode: exportNumber(info?.errorCode),
+      requestId: exportString(info?.requestId),
+      phase: exportString(info?.phase),
+      httpStatus: exportNumber(info?.httpStatus),
+      fatal: typeof info?.fatal === 'boolean' ? info.fatal : undefined,
+      line: exportNumber(info?.line),
+      col: exportNumber(info?.col),
+    };
+    const json = JSON.stringify(entry);
+    const bytes = utf8.encode(json).byteLength;
+    if (bytes > MAX_TOTAL_UTF8_BYTES) return;
+    exportEntryJson.push(json);
+    exportTotalUtf8Bytes += bytes + (exportEntryJson.length > 1 ? 1 : 0);
+    while (
+      exportEntryJson.length > MAX_ENTRIES ||
+      exportTotalUtf8Bytes > MAX_TOTAL_UTF8_BYTES
+    ) {
+      const removed = exportEntryJson.shift();
+      if (removed !== undefined) {
+        exportTotalUtf8Bytes -= utf8.encode(removed).byteLength;
+        if (exportEntryJson.length > 0) exportTotalUtf8Bytes -= 1;
+      }
+    }
+  } catch {
+    return;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -131,8 +292,12 @@ export function sanitizeForTrace(value: unknown, depth = 0): unknown {
     return out;
   }
   const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+  const objectEntries = Object.entries(value as Record<string, unknown>);
+  for (const [k, v] of objectEntries.slice(0, MAX_OBJECT_KEYS)) {
     out[k] = SENSITIVE_KEY_RE.test(k) ? '[redacted]' : sanitizeForTrace(v, depth + 1);
+  }
+  if (objectEntries.length > MAX_OBJECT_KEYS) {
+    out['_truncatedKeys'] = objectEntries.length - MAX_OBJECT_KEYS;
   }
   return out;
 }
@@ -296,12 +461,10 @@ export function traceWsIn(frame: unknown): void {
 }
 
 // ---------------------------------------------------------------------------
-// Client-side log capture — so the exported troubleshooting log includes the
-// front-end console (uncaught exceptions, rejected promises, and every console
-// level: error/warn/log/info/debug) that explains a broken page, not just
-// network traffic. Install-once, opt-in (only when tracing is enabled), and
-// never alters runtime behavior: the original console methods and default error
-// handling still run.
+// Client-side log capture for the opt-in debug panel. Console arguments may
+// contain user content, so these entries intentionally stay out of session
+// exports. Install-once and never alter runtime behavior: original console
+// methods and default error handling still run.
 // ---------------------------------------------------------------------------
 
 type ClientLogLevel = 'error' | 'warn' | 'log' | 'info' | 'debug';
@@ -328,7 +491,7 @@ function traceClientLog(level: ClientLogLevel, label: string, detail?: unknown):
     as audio playback) into the troubleshooting log. No-op unless tracing is
     enabled (?debug=1 or the debug localStorage flag), so production use pays
     only a boolean check. Prefer this over raw console.* for diagnostics that
-    should surface in the exported log. */
+    should surface in the debug panel. */
 export function traceClientEvent(label: string, detail?: unknown): void {
   if (!isTraceEnabled()) return;
   push({
@@ -339,47 +502,92 @@ export function traceClientEvent(label: string, detail?: unknown): void {
   });
 }
 
-let clientCaptureInstalled = false;
+/** Always-on, low-frequency product-path event. Only the explicitly selected
+ * fields are copied into the independent session-export ring. */
+export function traceKeyEvent(event: ExportTraceEvent, info?: ExportTraceMetadata): void {
+  pushExportTrace(event, info);
+  push({
+    source: 'client',
+    kind: 'client:key',
+    label: event,
+    sessionId: typeof info?.['sessionId'] === 'string' ? info['sessionId'] : undefined,
+    seq: typeof info?.['seq'] === 'number' ? info['seq'] : undefined,
+    durationMs: typeof info?.['durationMs'] === 'number' ? info['durationMs'] : undefined,
+    detail: info,
+  });
+}
 
-/** Wire up window error + console.error/warn capture into the trace buffer. */
-export function installClientErrorCapture(): void {
-  if (clientCaptureInstalled || !isTraceEnabled()) return;
+let clientCaptureInstalled = false;
+let uninstallClientCapture: (() => void) | null = null;
+
+/** Wire up always-on window failures and debug-only console capture. */
+export function installClientErrorCapture(): () => void {
+  if (clientCaptureInstalled) return () => uninstallClientCapture?.();
   clientCaptureInstalled = true;
+
+  const cleanup: Array<() => void> = [];
 
   try {
     if (typeof window !== 'undefined') {
-      window.addEventListener('error', (e: ErrorEvent) => {
-        traceClientLog('error', e.message || 'window error', {
-          source: e.filename,
+      const onError = (e: ErrorEvent): void => {
+        traceKeyEvent('window:error', {
+          status: 'failed',
+          errorName: e.error instanceof Error ? e.error.name : 'Error',
           line: e.lineno,
           col: e.colno,
-          stack: e.error instanceof Error ? e.error.stack : undefined,
         });
-      });
-      window.addEventListener('unhandledrejection', (e: PromiseRejectionEvent) => {
+      };
+      const onUnhandledRejection = (e: PromiseRejectionEvent): void => {
         const reason = e.reason;
-        traceClientLog('error', 'unhandled promise rejection', {
-          reason: reason instanceof Error ? `${reason.name}: ${reason.message}` : reason,
-          stack: reason instanceof Error ? reason.stack : undefined,
+        traceKeyEvent('window:unhandled-rejection', {
+          status: 'failed',
+          errorName: reason instanceof Error ? reason.name : typeof reason,
         });
+      };
+      window.addEventListener('error', onError);
+      window.addEventListener('unhandledrejection', onUnhandledRejection);
+      cleanup.push(() => {
+        window.removeEventListener('error', onError);
+      });
+      cleanup.push(() => {
+        window.removeEventListener('unhandledrejection', onUnhandledRejection);
       });
     }
   } catch {
     // window unavailable
   }
 
-  for (const level of ['error', 'warn', 'log', 'info', 'debug'] as const) {
-    const original = console[level];
-    if (typeof original !== 'function') continue;
-    console[level] = (...args: unknown[]): void => {
-      try {
-        traceClientLog(level, args.map(stringifyArg).join(' '), args.length > 1 ? args : args[0]);
-      } catch {
-        // never let tracing break logging
-      }
-      original.apply(console, args);
-    };
+  if (isTraceEnabled()) {
+    for (const level of ['error', 'warn', 'log', 'info', 'debug'] as const) {
+      const original = console[level];
+      if (typeof original !== 'function') continue;
+      const wrapped = (...args: unknown[]): void => {
+        try {
+          traceClientLog(level, args.map(stringifyArg).join(' '), args.length > 1 ? args : args[0]);
+        } catch {
+          // never let tracing break logging
+        }
+        original.apply(console, args);
+      };
+      console[level] = wrapped;
+      cleanup.push(() => {
+        if (console[level] === wrapped) console[level] = original;
+      });
+    }
   }
+
+  const dispose = (): void => {
+    if (uninstallClientCapture !== dispose) return;
+    for (const cleanupFunction of cleanup.toReversed()) cleanupFunction();
+    uninstallClientCapture = null;
+    clientCaptureInstalled = false;
+  };
+  uninstallClientCapture = dispose;
+  return dispose;
+}
+
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => uninstallClientCapture?.());
 }
 
 function stringifyArg(a: unknown): string {
@@ -396,22 +604,37 @@ function stringifyArg(a: unknown): string {
 // Export
 // ---------------------------------------------------------------------------
 
-/** Download the captured trace as a JSONL file. Reusable so the debug panel and
-    any "Export log" UI action share one implementation. */
+/** Download the opt-in debug-panel trace as a JSONL file. */
 export function downloadTraceLog(list: readonly TraceEntry[] = entries): void {
   if (typeof document === 'undefined') return;
   const blob = new Blob([traceToJsonl(list)], { type: 'application/x-ndjson' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `kimi-web-log-${new Date().toISOString().replace(/[:.]/g, '-')}.jsonl`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+  let anchor: HTMLAnchorElement | undefined;
+  try {
+    anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `kimi-web-log-${new Date().toISOString().replaceAll(/[:.]/g, '-')}.jsonl`;
+    document.body.append(anchor);
+    anchor.click();
+  } finally {
+    anchor?.remove();
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // Object URL cleanup is best-effort in restricted browser contexts.
+      }
+    }, 0);
+  }
 }
 
 /** Serialize the given entries (default: all) as JSONL for download. */
 export function traceToJsonl(list: readonly TraceEntry[] = entries): string {
+  if (list === entries) return entryJson.join('\n');
   return list.map((e) => JSON.stringify(e)).join('\n');
+}
+
+/** Serialize only the metadata-only ring accepted by session exports. */
+export function sessionExportTraceToJsonl(): string {
+  return exportEntryJson.join('\n');
 }

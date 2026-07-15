@@ -110,6 +110,31 @@ export interface WireSessionRuntimeStatus {
   context_usage: number;
 }
 
+// GET /sessions/{id}/goal — camelCase, same shape as the `goal.updated` event
+// payload. The endpoint returns null when no goal is active.
+export interface WireGoalSnapshot {
+  goalId: string;
+  objective: string;
+  completionCriterion?: string;
+  status: 'active' | 'paused' | 'blocked' | 'complete';
+  turnsUsed: number;
+  tokensUsed: number;
+  wallClockMs: number;
+  terminalReason?: string;
+  budget: {
+    tokenBudget: number | null;
+    turnBudget: number | null;
+    wallClockBudgetMs: number | null;
+    remainingTokens: number | null;
+    remainingTurns: number | null;
+    remainingWallClockMs: number | null;
+    tokenBudgetReached: boolean;
+    turnBudgetReached: boolean;
+    wallClockBudgetReached: boolean;
+    overBudget: boolean;
+  };
+}
+
 // GET /sessions/{id}/warnings — session-level warnings (e.g. oversized AGENTS.md).
 export interface WireSessionWarning {
   code: string;
@@ -287,12 +312,12 @@ export interface WireQuestionResponse {
 }
 
 // ---------------------------------------------------------------------------
-// Background Task
+// Task
 // ---------------------------------------------------------------------------
 
 export type WireTaskStatus = 'running' | 'completed' | 'failed' | 'cancelled';
 
-export interface WireBackgroundTask {
+export interface WireTask {
   id: string;
   session_id: string;
   kind: 'subagent' | 'bash' | 'tool';
@@ -309,6 +334,7 @@ export interface WireBackgroundTask {
   parent_tool_call_id?: string;
   suspended_reason?: string;
   swarm_index?: number;
+  run_in_background?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -413,17 +439,34 @@ export interface WireAuthResult {
   managed_provider: WireManagedProvider | null;
 }
 
-export interface WireOAuthLoginStartResult {
+// `POST /oauth/login` returns one of two shapes, discriminated by `status`:
+//   - `pending`: a real device-code flow was started; all device fields are
+//     populated so the client can render the device-code step and poll.
+//   - `authenticated`: the toolkit already had a usable token and short-
+//     circuited via its `ensureFresh` fast path, so no device code was
+//     issued; the client can skip the device-code step and treat the login
+//     as already complete.
+interface WireOAuthLoginStartPending {
   flow_id: string;
   provider: string;
+  status: 'pending';
   verification_uri: string;
   verification_uri_complete: string;
   user_code: string;
   expires_in: number;
   interval: number;
-  status: 'pending';
   expires_at: string;
 }
+
+interface WireOAuthLoginStartAuthenticated {
+  flow_id: string;
+  provider: string;
+  status: 'authenticated';
+}
+
+export type WireOAuthLoginStartResult =
+  | WireOAuthLoginStartPending
+  | WireOAuthLoginStartAuthenticated;
 
 export interface WireOAuthLoginPollResult {
   flow_id: string;
@@ -471,7 +514,8 @@ export interface WireServerHello {
   timestamp: string;
   payload: {
     server_id: string;
-    heartbeat_ms: number;
+    /** Advisory only — kap-server omits this since it sends no heartbeat. */
+    heartbeat_ms?: number;
     max_event_buffer_size: number;
     capabilities: {
       event_batching: boolean;
@@ -544,6 +588,8 @@ export interface WireSessionSnapshot {
   session: WireSession;
   messages: { items: WireMessage[]; has_more: boolean };
   in_flight_turn: WireInFlightTurn | null;
+  /** Live subagent roster at the watermark (absent on older servers). */
+  subagents?: WireTask[];
   pending_approvals: WireApprovalRequest[];
   pending_questions: WireQuestionRequest[];
 }
@@ -739,8 +785,8 @@ type WireEventQuestionDismissed = WireEventBase<'event.question.dismissed', {
   dismissed_by: string;
   dismissed_at: string;
 }>;
-// Background tasks
-type WireEventTaskCreated = WireEventBase<'event.task.created', { task: WireBackgroundTask }>;
+// Tasks
+type WireEventTaskCreated = WireEventBase<'event.task.created', { task: WireTask }>;
 type WireEventTaskProgress = WireEventBase<'event.task.progress', {
   task_id: string;
   output_chunk: string;
@@ -811,7 +857,7 @@ export type WireEvent =
   | WireEventQuestionRequested
   | WireEventQuestionAnswered
   | WireEventQuestionDismissed
-  // Background tasks
+  // Tasks
   | WireEventTaskCreated
   | WireEventTaskProgress
   | WireEventTaskCompleted

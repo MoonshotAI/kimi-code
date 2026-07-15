@@ -22,12 +22,9 @@ export interface SlashCommand {
 }
 
 export const SLASH_COMMANDS: SlashCommand[] = [
-  { name: '/help',       desc: 'commands.help.desc' },
   { name: '/new',        desc: 'commands.new.desc' },
   { name: '/clear',      desc: 'commands.clear.desc' },
-  { name: '/model',      desc: 'commands.model.desc' },
   { name: '/login',      desc: 'commands.login.desc' },
-  { name: '/permission', desc: 'commands.permission.desc' },
   { name: '/plan',       desc: 'commands.plan.desc' },
   { name: '/swarm',      desc: 'commands.swarm.desc', acceptsInput: true },
   { name: '/goal',       desc: 'commands.goal.desc', acceptsInput: true },
@@ -38,6 +35,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: '/compact',    desc: 'commands.compact.desc', acceptsInput: true },
   { name: '/undo',       desc: 'commands.undo.desc' },
   { name: '/fork',       desc: 'commands.fork.desc' },
+  { name: '/export',     desc: 'commands.export.desc' },
   { name: '/status',     desc: 'commands.status.desc' },
 ];
 

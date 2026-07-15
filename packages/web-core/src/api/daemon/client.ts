@@ -6,6 +6,7 @@ import { noopTracer } from '../../contracts';
 import type { ClientIdentity, CredentialStore, Tracer } from '../../contracts';
 import type {
   AppConfig,
+  AppGoal,
   AppMessage,
   AppMessageRole,
   AppModel,
@@ -27,6 +28,7 @@ import type {
   KimiEventConnection,
   KimiEventHandlers,
   KimiWebApi,
+  OAuthLoginStartResult,
   Page,
   PageRequest,
   PromptSubmission,
@@ -40,6 +42,7 @@ import {
   toAppConfig,
   toAppEvent,
   toAppFsEntry,
+  toAppGoal,
   toAppMessage,
   toAppModel,
   toAppProvider,
@@ -56,13 +59,14 @@ import {
 } from './mappers';
 import type {
   WireAuthResult,
-  WireBackgroundTask,
+  WireTask,
   WireConfig,
   WireEvent,
   WireFileMeta,
   WireFsBrowseResult,
   WireFsEntry,
   WireFsHomeResult,
+  WireGoalSnapshot,
   WireMessage,
   WireModel,
   WireOAuthCancelResult,
@@ -84,6 +88,53 @@ import type {
 } from './wire';
 import { DaemonEventSocket } from './ws';
 
+function safeExportFileName(contentDisposition: string | undefined, fallback: string): string {
+  if (contentDisposition === undefined) return fallback;
+  let candidate: string | undefined;
+  const encoded = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(contentDisposition)?.[1]?.trim();
+  if (encoded !== undefined) {
+    try {
+      candidate = decodeURIComponent(encoded.replaceAll(/^"|"$/g, ''));
+    } catch {
+      return fallback;
+    }
+  } else {
+    candidate =
+      /filename\s*=\s*"([^"]*)"/i.exec(contentDisposition)?.[1] ??
+      /filename\s*=\s*([^;]+)/i.exec(contentDisposition)?.[1]?.trim();
+  }
+  if (
+    candidate === undefined ||
+    candidate.length === 0 ||
+    candidate.length > 200 ||
+    candidate === '.' ||
+    candidate === '..' ||
+    /[\u0000-\u001F\u007F/\\]/.test(candidate) ||
+    !candidate.toLowerCase().endsWith('.zip')
+  ) {
+    return fallback;
+  }
+  return candidate;
+}
+
+function errorTraceMetadata(err: unknown): Record<string, string | number | undefined> {
+  if (typeof err !== 'object' || err === null) return { errorName: typeof err };
+  const value = err as {
+    name?: unknown;
+    code?: unknown;
+    requestId?: unknown;
+    phase?: unknown;
+    status?: unknown;
+  };
+  return {
+    errorName: typeof value.name === 'string' ? value.name : 'Error',
+    errorCode: typeof value.code === 'number' ? value.code : undefined,
+    requestId: typeof value.requestId === 'string' ? value.requestId : undefined,
+    phase: typeof value.phase === 'string' ? value.phase : undefined,
+    httpStatus: typeof value.status === 'number' ? value.status : undefined,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Wire response shapes for endpoints not in shared wire.ts
 // ---------------------------------------------------------------------------
@@ -100,6 +151,8 @@ interface WireMeta {
   capabilities: Record<string, boolean>;
   open_in_apps?: string[];
   dangerous_bypass_auth?: boolean;
+  /** Engine generation serving the API; older (v1) servers omit the field. */
+  backend?: 'v1' | 'v2';
 }
 
 interface WireAbortResult {
@@ -284,6 +337,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
     capabilities: Record<string, boolean>;
     openInApps: string[];
     dangerousBypassAuth: boolean;
+    /** Engine generation: 'v2' = kap-server / agent-core-v2; absent ⇒ 'v1'. */
+    backend: 'v1' | 'v2';
   }> {
     const data = await this.http.get<WireMeta>('/meta');
     return {
@@ -293,6 +348,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       capabilities: data.capabilities,
       openInApps: Array.isArray(data.open_in_apps) ? data.open_in_apps : [],
       dangerousBypassAuth: data.dangerous_bypass_auth === true,
+      backend: data.backend === 'v2' ? 'v2' : 'v1',
     };
   }
 
@@ -419,6 +475,17 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
   }
 
+  /**
+   * GET /sessions/{id}/goal — the session's current goal, or null when no goal
+   * is active.
+   */
+  async getSessionGoal(sessionId: string): Promise<AppGoal | null> {
+    const data = await this.http.get<WireGoalSnapshot | null>(
+      `/sessions/${encodeURIComponent(sessionId)}/goal`,
+    );
+    return toAppGoal(data);
+  }
+
   async getSessionWarnings(sessionId: string): Promise<WireSessionWarning[]> {
     const data = await this.http.get<WireSessionWarningsResponse>(
       `/sessions/${encodeURIComponent(sessionId)}/warnings`,
@@ -473,34 +540,74 @@ export class DaemonKimiWebApi implements KimiWebApi {
    * Rebuild flow: getSessionSnapshot() → seedSnapshot() → subscribe(cursor).
    */
   async getSessionSnapshot(sessionId: string): Promise<AppSessionSnapshot> {
-    const data = await this.http.get<WireSessionSnapshot>(
-      `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+    const startedAt = Date.now();
+    this.tracer.traceKeyEvent?.('session:snapshot:start', { sessionId });
+    try {
+      const data = await this.http.get<WireSessionSnapshot>(
+        `/sessions/${encodeURIComponent(sessionId)}/snapshot`,
+      );
+      const snapshot: AppSessionSnapshot = {
+        asOfSeq: data.as_of_seq,
+        epoch: data.epoch,
+        session: toAppSession(data.session),
+        // Snapshot messages are already chronological ascending.
+        messages: data.messages.items.map(toAppMessage),
+        hasMoreMessages: data.messages.has_more,
+        inFlightTurn:
+          data.in_flight_turn === null
+            ? null
+            : {
+                turnId: data.in_flight_turn.turn_id,
+                assistantText: data.in_flight_turn.assistant_text,
+                thinkingText: data.in_flight_turn.thinking_text,
+                runningTools: data.in_flight_turn.running_tools.map((t) => ({
+                  toolCallId: t.tool_call_id,
+                  name: t.name,
+                  args: t.args,
+                  description: t.description,
+                  lastProgress: t.last_progress,
+                })),
+                promptId: data.in_flight_turn.current_prompt_id,
+              },
+        pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
+        pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
+        // Older servers omit the roster entirely; treat as an empty roster.
+        subagents: (data.subagents ?? []).map(toAppTask),
+      };
+      this.tracer.traceKeyEvent?.('session:snapshot:accepted', {
+        sessionId,
+        status: snapshot.session.status,
+        seq: snapshot.asOfSeq,
+        messageCount: snapshot.messages.length,
+        durationMs: Date.now() - startedAt,
+      });
+      return snapshot;
+    } catch (error) {
+      this.tracer.traceKeyEvent?.('session:snapshot:failed', {
+        sessionId,
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        ...errorTraceMetadata(error),
+      });
+      throw error;
+    }
+  }
+
+  async exportSession(
+    sessionId: string,
+    webLog?: string,
+  ): Promise<{ blob: Blob; fileName: string }> {
+    const webLogBytes = webLog === undefined ? 0 : new TextEncoder().encode(webLog).byteLength;
+    const webLogEntries = webLog === undefined || webLog.length === 0 ? 0 : webLog.split('\n').length;
+    const result = await this.http.postZip(
+      `/sessions/${encodeURIComponent(sessionId)}/export`,
+      { web_log: webLog },
+      { web_log_bytes: webLogBytes, web_log_entries: webLogEntries },
     );
+    const fallback = `${sessionId}.zip`;
     return {
-      asOfSeq: data.as_of_seq,
-      epoch: data.epoch,
-      session: toAppSession(data.session),
-      // Snapshot messages are already chronological ascending.
-      messages: data.messages.items.map(toAppMessage),
-      hasMoreMessages: data.messages.has_more,
-      inFlightTurn:
-        data.in_flight_turn === null
-          ? null
-          : {
-              turnId: data.in_flight_turn.turn_id,
-              assistantText: data.in_flight_turn.assistant_text,
-              thinkingText: data.in_flight_turn.thinking_text,
-              runningTools: data.in_flight_turn.running_tools.map((t) => ({
-                toolCallId: t.tool_call_id,
-                name: t.name,
-                args: t.args,
-                description: t.description,
-                lastProgress: t.last_progress,
-              })),
-              promptId: data.in_flight_turn.current_prompt_id,
-            },
-      pendingApprovals: data.pending_approvals.map(toAppApprovalRequest),
-      pendingQuestions: data.pending_questions.map(toAppQuestionRequest),
+      blob: result.blob,
+      fileName: safeExportFileName(result.contentDisposition, fallback),
     };
   }
 
@@ -512,15 +619,39 @@ export class DaemonKimiWebApi implements KimiWebApi {
     sessionId: string,
     input: PromptSubmission,
   ): Promise<PromptSubmitResult> {
-    const data = await this.http.post<WirePromptSubmitResult>(
-      `/sessions/${encodeURIComponent(sessionId)}/prompts`,
-      toWirePromptSubmission(input),
-    );
-    return {
-      promptId: data.prompt_id,
-      userMessageId: data.user_message_id,
-      status: data.status,
-    };
+    const startedAt = Date.now();
+    this.tracer.traceKeyEvent?.('prompt:start', {
+      sessionId,
+      contentCount: input.content.length,
+      mediaCount: input.content.filter((part) =>
+        part.type === 'image' || part.type === 'video' || part.type === 'file'
+      ).length,
+    });
+    try {
+      const data = await this.http.post<WirePromptSubmitResult>(
+        `/sessions/${encodeURIComponent(sessionId)}/prompts`,
+        toWirePromptSubmission(input),
+      );
+      this.tracer.traceKeyEvent?.('prompt:accepted', {
+        sessionId,
+        promptId: data.prompt_id,
+        status: data.status,
+        durationMs: Date.now() - startedAt,
+      });
+      return {
+        promptId: data.prompt_id,
+        userMessageId: data.user_message_id,
+        status: data.status,
+      };
+    } catch (error) {
+      this.tracer.traceKeyEvent?.('prompt:failed', {
+        sessionId,
+        status: 'failed',
+        durationMs: Date.now() - startedAt,
+        ...errorTraceMetadata(error),
+      });
+      throw error;
+    }
   }
 
   // POST /sessions/{id}/prompts:steer — steer daemon-queued prompts into the
@@ -673,7 +804,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     const query: Record<string, string | undefined> = {
       status: status,
     };
-    const data = await this.http.get<{ items: WireBackgroundTask[] }>(
+    const data = await this.http.get<{ items: WireTask[] }>(
       `/sessions/${encodeURIComponent(sessionId)}/tasks`,
       query,
     );
@@ -689,7 +820,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
       with_output: input?.withOutput,
       output_bytes: input?.outputBytes,
     };
-    const data = await this.http.get<WireBackgroundTask>(
+    const data = await this.http.get<WireTask>(
       `/sessions/${encodeURIComponent(sessionId)}/tasks/${encodeURIComponent(taskId)}`,
       query,
     );
@@ -1196,27 +1327,24 @@ export class DaemonKimiWebApi implements KimiWebApi {
     };
   }
 
-  async startOAuthLogin(): Promise<{
-    flowId: string;
-    provider: string;
-    verificationUri: string;
-    verificationUriComplete: string;
-    userCode: string;
-    expiresIn: number;
-    interval: number;
-    status: 'pending';
-    expiresAt: string;
-  }> {
+  async startOAuthLogin(): Promise<OAuthLoginStartResult> {
     const data = await this.http.post<WireOAuthLoginStartResult>('/oauth/login', {});
+    if (data.status === 'authenticated') {
+      return {
+        flowId: data.flow_id,
+        provider: data.provider,
+        status: 'authenticated',
+      };
+    }
     return {
       flowId: data.flow_id,
       provider: data.provider,
+      status: 'pending',
       verificationUri: data.verification_uri,
       verificationUriComplete: data.verification_uri_complete,
       userCode: data.user_code,
       expiresIn: data.expires_in,
       interval: data.interval,
-      status: data.status,
       expiresAt: data.expires_at,
     };
   }
@@ -1373,11 +1501,12 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
       seedSnapshot(sessionId: string, snapshot: AppSessionSnapshot): void {
         // Rebuild the projector's mid-turn state from the snapshot. The
-        // resulting AppEvents (running status + partially-streamed assistant
-        // message) flow through the SAME onEvent path as live events, so the
-        // rendering layer needs no special handling. When there is no
-        // in-flight turn we only reset, so stale turn state can't leak into
-        // the freshly-loaded message list.
+        // resulting AppEvent (the partially-streamed assistant message) flows
+        // through the SAME onEvent path as live events, so the rendering layer
+        // needs no special handling; session status comes from the snapshot's
+        // authoritative session record. When there is no in-flight turn we
+        // only reset, so stale turn state can't leak into the freshly-loaded
+        // message list.
         if (snapshot.inFlightTurn === null) {
           projector.reset(sessionId);
           return;

@@ -7,14 +7,14 @@
 
 export { DaemonKimiWebApi } from './daemon/client';
 export type { DaemonKimiWebApiOptions } from './daemon/client';
-export { DaemonHttpClient } from './daemon/http';
+export { DaemonHttpClient, SERVER_AUTH_UNAUTHORIZED_CODE } from './daemon/http';
 export type { DaemonHttpClientOptions } from './daemon/http';
 export { DaemonEventSocket } from './daemon/ws';
 export type { DaemonEventSocketHandlers, DaemonEventSocketOptions } from './daemon/ws';
 export { classifyFrame } from './daemon/frameClassifier';
 export type { FrameRoute } from './daemon/frameClassifier';
 export type { AgentProjector, ProjectMeta } from './daemon/projector';
-export { toAppEvent, toAppMessageContent } from './daemon/mappers';
+export { toAppEvent, toAppMessageContent, isPlaceholderSessionUsage } from './daemon/mappers';
 export type { WireMessageContent } from './daemon/wire';
 export {
   createInitialState,

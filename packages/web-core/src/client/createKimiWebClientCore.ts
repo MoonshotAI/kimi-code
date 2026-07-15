@@ -62,6 +62,7 @@ export function createKimiWebClientCore(deps: CreateCoreDeps): KimiWebClientCore
     state.questionsBySession = next.questionsBySession;
     state.tasksBySession = next.tasksBySession;
     state.goalBySession = next.goalBySession;
+    state.goalVersionBySession = next.goalVersionBySession;
     state.lastSeqBySession = next.lastSeqBySession;
     state.compactionBySession = next.compactionBySession;
     state.config = next.config;

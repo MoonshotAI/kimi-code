@@ -1,4 +1,4 @@
-import { computed, ref } from 'vue';
+import { computed, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
 import { DaemonApiError } from '../src/api/errors';
@@ -7,6 +7,7 @@ import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
 import { useWorkspaceState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
+import { clearTrace, traceKeyEvent } from '../src/debug/trace';
 
 const apiMock = vi.hoisted(() => ({
   abortPrompt: vi.fn(),
@@ -14,12 +15,20 @@ const apiMock = vi.hoisted(() => ({
   addWorkspace: vi.fn(),
   updateWorkspace: vi.fn(),
   createSession: vi.fn(),
+  exportSession: vi.fn(),
   updateSession: vi.fn(),
   submitPrompt: vi.fn(),
   respondQuestion: vi.fn(),
   respondApproval: vi.fn(),
   dismissQuestion: vi.fn(),
   cancelTask: vi.fn(),
+  getAuth: vi.fn(),
+  getConfig: vi.fn(),
+  getFsHome: vi.fn(),
+  getHealth: vi.fn(),
+  getMeta: vi.fn(),
+  listSessions: vi.fn(),
+  listWorkspaces: vi.fn(),
 }));
 
 vi.mock('../src/api', () => ({
@@ -59,6 +68,8 @@ function createState(): ExtendedState {
     activeSessionId: 'sess_1',
     connected: true,
     serverVersion: '',
+    dangerousBypassAuth: false,
+    backend: 'v1',
     workspaceName: 'kimi-web',
     connection: 'connected',
     permission: 'manual',
@@ -114,6 +125,7 @@ function createDeps(): UseWorkspaceStateDeps {
     subscribeToSessionEvents: vi.fn(),
     hasLoadedMessages: vi.fn(),
     refreshSessionStatus: vi.fn(),
+    refreshSessionGoal: vi.fn(),
     persistSessionProfile: vi.fn(),
     mergedWorkspaces: computed(() => []),
     workspacesView: computed(() => []),
@@ -238,6 +250,154 @@ describe('useWorkspaceState — abortCurrentPrompt', () => {
 
     expect(apiMock.abortPrompt).toHaveBeenCalledWith('sess_1', 'prompt_stale');
     expect(apiMock.abortSession).not.toHaveBeenCalled();
+  });
+
+  it('uses a server-v2 msg prompt id recovered from session state', async () => {
+    apiMock.abortPrompt.mockResolvedValue({ aborted: true });
+    const state = createState();
+    state.promptIdBySession = {};
+    state.sessions = [{ ...state.sessions[0]!, currentPromptId: 'msg_live' }];
+    const workspace = useWorkspaceState(state, createDeps());
+
+    await workspace.abortCurrentPrompt();
+
+    expect(apiMock.abortPrompt).toHaveBeenCalledWith('sess_1', 'msg_live');
+    expect(apiMock.abortSession).not.toHaveBeenCalled();
+  });
+
+  it('does not send synthetic projector prompt ids to per-prompt abort', async () => {
+    apiMock.abortSession.mockResolvedValue({ aborted: true });
+    const state = createState();
+    state.promptIdBySession = {};
+    state.sessions = [{ ...state.sessions[0]!, currentPromptId: 'pr_synthetic' }];
+    const workspace = useWorkspaceState(state, createDeps());
+
+    await workspace.abortCurrentPrompt();
+
+    expect(apiMock.abortPrompt).not.toHaveBeenCalled();
+    expect(apiMock.abortSession).toHaveBeenCalledWith('sess_1');
+  });
+});
+
+describe('useWorkspaceState — exportSession', () => {
+  let anchor: {
+    href: string;
+    download: string;
+    click: ReturnType<typeof vi.fn>;
+    remove: ReturnType<typeof vi.fn>;
+  };
+  let append: ReturnType<typeof vi.fn>;
+  let createObjectURL: ReturnType<typeof vi.fn>;
+  let revokeObjectURL: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    apiMock.exportSession.mockReset();
+    clearTrace();
+    anchor = { href: '', download: '', click: vi.fn(), remove: vi.fn() };
+    append = vi.fn();
+    createObjectURL = vi.fn(() => 'blob:session-export');
+    revokeObjectURL = vi.fn();
+    vi.stubGlobal('document', {
+      createElement: vi.fn(() => anchor),
+      body: { append },
+    });
+    vi.stubGlobal('URL', { createObjectURL, revokeObjectURL });
+  });
+
+  afterEach(() => {
+    clearTrace();
+    vi.unstubAllGlobals();
+  });
+
+  it('downloads the returned ZIP and reclaims its temporary browser resources', async () => {
+    const secret = 'PROMPT_TEXT_MUST_NOT_ENTER_EXPORT_REQUEST';
+    const metadata = {
+      sessionId: 'sess_1',
+      contentCount: 1,
+      mediaCount: 0,
+      text: secret,
+    };
+    traceKeyEvent('prompt:start', metadata);
+    const blob = new Blob(['zip']);
+    apiMock.exportSession.mockResolvedValue({ blob, fileName: 'sess_1.zip' });
+    const workspace = useWorkspaceState(createState(), createDeps());
+
+    await workspace.exportSession();
+
+    const webLog = apiMock.exportSession.mock.calls[0]?.[1] as string;
+    expect(webLog).toContain('prompt:start');
+    expect(webLog).toContain('contentCount');
+    expect(webLog).not.toContain(secret);
+    expect(createObjectURL).toHaveBeenCalledWith(blob);
+    expect(anchor).toMatchObject({ href: 'blob:session-export', download: 'sess_1.zip' });
+    expect(append).toHaveBeenCalledWith(anchor);
+    expect(anchor.click).toHaveBeenCalledOnce();
+    expect(anchor.remove).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledOnce();
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
+  });
+
+  it('keeps one request targeted at the session selected when export started', async () => {
+    let resolveExport!: (value: { blob: Blob; fileName: string }) => void;
+    apiMock.exportSession.mockReturnValue(
+      new Promise((resolve) => {
+        resolveExport = resolve;
+      }),
+    );
+    const state = createState();
+    const workspace = useWorkspaceState(state, createDeps());
+
+    const first = workspace.exportSession();
+    state.activeSessionId = 'sess_2';
+    const second = workspace.exportSession();
+    resolveExport({ blob: new Blob(['zip']), fileName: 'sess_1.zip' });
+    await Promise.all([first, second]);
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
+
+    expect(apiMock.exportSession).toHaveBeenCalledTimes(1);
+    expect(apiMock.exportSession).toHaveBeenCalledWith('sess_1', expect.any(String));
+  });
+
+  it('reclaims the object URL when the browser rejects the download click', async () => {
+    apiMock.exportSession.mockResolvedValue({ blob: new Blob(['zip']), fileName: 'sess_1.zip' });
+    anchor.click.mockImplementation(() => {
+      throw new Error('download blocked');
+    });
+    const deps = createDeps();
+    const workspace = useWorkspaceState(createState(), deps);
+
+    await workspace.exportSession();
+
+    expect(anchor.remove).toHaveBeenCalledOnce();
+    await vi.waitFor(() => {
+      expect(revokeObjectURL).toHaveBeenCalledOnce();
+      expect(revokeObjectURL).toHaveBeenCalledWith('blob:session-export');
+    });
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'exportSession',
+      expect.any(Error),
+      { sessionId: 'sess_1' },
+    );
+  });
+
+  it('surfaces an error instead of silently exporting without an active session', async () => {
+    const state = createState();
+    state.activeSessionId = undefined;
+    const deps = createDeps();
+    const workspace = useWorkspaceState(state, deps);
+
+    await workspace.exportSession();
+
+    expect(apiMock.exportSession).not.toHaveBeenCalled();
+    expect(deps.pushOperationFailure).toHaveBeenCalledWith(
+      'exportSession',
+      expect.any(Error),
+      expect.objectContaining({ message: expect.any(String) }),
+    );
   });
 });
 
@@ -649,12 +809,10 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
   });
 
-  it('coerces a stale thinking level against the new session model before persisting', async () => {
-    // Regression for: rawState.thinking can be stale relative to the new
-    // session's model (e.g. 'max' carried over from an effort model). Persisting
-    // the raw value would make the first skill turn run at a level the UI
-    // wouldn't send for this model; we must coerce it like the first-prompt
-    // path does.
+  it('persists the stored thinking level verbatim, even when the new session model does not declare it', async () => {
+    // Thinking levels are never coerced onto the session model (same as the
+    // first-prompt path and the TUI): a carried-over effort like 'max' is
+    // persisted and sent as-is.
     const activateSkill2 = vi.fn().mockResolvedValue(undefined);
     const persistSessionProfile2 = vi.fn().mockResolvedValue(undefined);
     const state2 = createState();
@@ -669,8 +827,8 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
       }),
       draftModes: { planMode: true, swarmMode: false, goalMode: false },
     };
-    // 'kimi-code' declares efforts ['low','medium','high']; 'max' isn't in the
-    // list so coercion picks the default (middle) level → 'medium'.
+    // 'kimi-code' declares efforts ['low','medium','high'] — 'max' isn't in the
+    // list, and must still be persisted verbatim.
     (deps2.modelProvider as unknown as { models: unknown }).models = ref([
       {
         id: 'kimi-code',
@@ -685,10 +843,8 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 
     await ws2.startSessionAndActivateSkill('wd_1', 'pre-changelog');
 
-    // Effort model default level = middle of supportEfforts: 'medium'.
-    // Confirms the raw carry-over 'max' was coerced, not persisted verbatim.
     expect(persistSessionProfile2).toHaveBeenCalledWith(
-      expect.objectContaining({ thinking: 'medium' }),
+      expect.objectContaining({ thinking: 'max' }),
       'sess_new',
     );
     expect(activateSkill2).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
@@ -940,5 +1096,297 @@ describe('useWorkspaceState — startSessionAndOpenSideChat', () => {
     expect(apiMock.createSession).not.toHaveBeenCalled();
     expect(openSideChatOn).not.toHaveBeenCalled();
     expect(deps.pushOperationFailure).not.toHaveBeenCalled();
+  });
+});
+
+describe('useWorkspaceState — first-load auth gate', () => {
+  beforeEach(() => {
+    apiMock.getAuth.mockReset();
+    apiMock.getHealth.mockReset().mockResolvedValue({ ok: true });
+    apiMock.getMeta.mockReset().mockResolvedValue({
+      serverVersion: '0.0.0',
+      openInApps: [],
+      dangerousBypassAuth: false,
+      backend: 'v1',
+    });
+    apiMock.getConfig.mockReset().mockResolvedValue({});
+    apiMock.listWorkspaces.mockReset().mockResolvedValue([]);
+    apiMock.getFsHome.mockReset().mockResolvedValue({ home: '', recentRoots: [] });
+    apiMock.listSessions.mockReset().mockResolvedValue({ items: [], hasMore: false });
+  });
+
+  function createLoadDeps(
+    initialized: Ref<boolean>,
+    connectIssue: Ref<string | null>,
+  ): UseWorkspaceStateDeps {
+    return {
+      ...createDeps(),
+      modelProvider: { loadModels: vi.fn().mockResolvedValue(undefined) },
+      initialized,
+      connectIssue,
+    } as unknown as UseWorkspaceStateDeps;
+  }
+
+  it('keeps the splash up and retries /auth when the first check fails transiently', async () => {
+    vi.useFakeTimers();
+    try {
+      const initialized = ref(false);
+      const connectIssue = ref<string | null>(null);
+      const state = createState();
+      state.authReady = false;
+      apiMock.getAuth
+        .mockRejectedValueOnce(new Error('connection refused'))
+        .mockRejectedValueOnce(new Error('connection refused'))
+        .mockResolvedValue({ ready: true, defaultModel: 'kimi-code', managedProvider: null });
+      const ws = useWorkspaceState(state, createLoadDeps(initialized, connectIssue));
+
+      const pending = ws.load();
+      await vi.advanceTimersByTimeAsync(0);
+      // First /auth failed: NOT treated as "not signed in" — no initialization.
+      // The first failure stays silent so a single blip flashes no error.
+      expect(initialized.value).toBe(false);
+      expect(apiMock.getAuth).toHaveBeenCalledTimes(1);
+      expect(connectIssue.value).toBeNull();
+
+      // From the 2nd failed attempt the reason is surfaced for the splash.
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(apiMock.getAuth).toHaveBeenCalledTimes(2);
+      expect(initialized.value).toBe(false);
+      expect(connectIssue.value).toBe('connection refused');
+
+      // The retry re-checks /auth; once it answers, load completes.
+      await vi.advanceTimersByTimeAsync(2000);
+      await pending;
+      expect(apiMock.getAuth).toHaveBeenCalledTimes(3);
+      expect(initialized.value).toBe(true);
+      expect(state.authReady).toBe(true);
+      expect(connectIssue.value).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('initializes normally (into the login gate) when /auth answers ready:false', async () => {
+    const initialized = ref(false);
+    const state = createState();
+    state.authReady = false;
+    apiMock.getAuth.mockResolvedValue({ ready: false, defaultModel: null, managedProvider: null });
+    const ws = useWorkspaceState(state, createLoadDeps(initialized, ref(null)));
+
+    await ws.load();
+
+    // A definitive "not ready" answer behaves exactly as before: initialize and
+    // let the auth gate show /login.
+    expect(apiMock.getAuth).toHaveBeenCalledTimes(1);
+    expect(initialized.value).toBe(true);
+    expect(state.authReady).toBe(false);
+  });
+
+  it.each([40101, 401])(
+    'stops without retrying when /auth rejects with %i (server token required)',
+    async (code) => {
+      vi.useFakeTimers();
+      try {
+        const initialized = ref(false);
+        const state = createState();
+        state.authReady = false;
+        apiMock.getAuth.mockRejectedValue(
+          new DaemonApiError({ code, msg: 'Unauthorized', requestId: 'req_1' }),
+        );
+        const ws = useWorkspaceState(state, createLoadDeps(initialized, ref(null)));
+
+        await ws.load();
+        expect(apiMock.getAuth).toHaveBeenCalledTimes(1);
+        expect(initialized.value).toBe(false);
+
+        // No retry loop is running — recovery belongs to the ServerAuthDialog,
+        // which reloads the page once the user enters the token.
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect(apiMock.getAuth).toHaveBeenCalledTimes(1);
+        expect(initialized.value).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
+// /meta re-read on every WS (re)connect — keeps version / backend truthful
+// across backend restarts and dev-proxy backend switches.
+describe('useWorkspaceState — refreshServerMeta', () => {
+  beforeEach(() => {
+    apiMock.getMeta.mockReset();
+  });
+
+  it('applies the meta payload including the v2 backend marker', async () => {
+    apiMock.getMeta.mockResolvedValue({
+      serverVersion: '9.9.9',
+      openInApps: ['finder'],
+      dangerousBypassAuth: true,
+      backend: 'v2',
+    });
+    const state = createState();
+    const ws = useWorkspaceState(state, createDeps());
+
+    await ws.refreshServerMeta();
+
+    expect(state.serverVersion).toBe('9.9.9');
+    expect(state.availableOpenInApps).toEqual(['finder']);
+    expect(state.dangerousBypassAuth).toBe(true);
+    expect(state.backend).toBe('v2');
+  });
+
+  it('keeps the previous meta when /meta fails', async () => {
+    apiMock.getMeta.mockRejectedValue(new Error('connection refused'));
+    const state = createState();
+    state.backend = 'v2';
+    const ws = useWorkspaceState(state, createDeps());
+
+    await ws.refreshServerMeta();
+
+    expect(state.backend).toBe('v2');
+    expect(state.serverVersion).toBe('');
+  });
+});
+
+// Regression coverage for wake/reconnect snapshot recovery.
+describe('useWorkspaceState — snapshot prompt recovery', () => {
+  function promptDeps(overrides: Partial<UseWorkspaceStateDeps> = {}): UseWorkspaceStateDeps {
+    return {
+      ...createDeps(),
+      modelProvider: { models: ref([]) } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    apiMock.submitPrompt.mockReset();
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'prompt_new' });
+  });
+
+  it('clears a finished prompt from a terminal snapshot so the next send is immediate', async () => {
+    const state = createState();
+    const inFlight = new Set(['sess_1']);
+    state.sendingBySession = { sess_1: true };
+    const ws = useWorkspaceState(
+      state,
+      promptDeps({ inFlightPromptSessions: inFlight, activity: computed(() => 'idle') }),
+    );
+
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, status: 'idle' });
+
+    expect(inFlight.has('sess_1')).toBe(false);
+    expect(state.sendingBySession.sess_1).toBe(false);
+    expect(state.promptIdBySession.sess_1).toBeUndefined();
+
+    await ws.sendPrompt('next');
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toBeUndefined();
+  });
+
+  it('keeps a genuinely running prompt in flight and queues the next send', async () => {
+    const state = createState();
+    const inFlight = new Set(['sess_1']);
+    state.sendingBySession = { sess_1: true };
+    const ws = useWorkspaceState(state, promptDeps({ inFlightPromptSessions: inFlight }));
+
+    ws.handleSessionSnapshot('sess_1', {
+      inFlightTurn: { turnId: 1, assistantText: '', thinkingText: '', runningTools: [] },
+      status: 'running',
+    });
+    await ws.sendPrompt('next');
+
+    expect(inFlight.has('sess_1')).toBe(true);
+    expect(state.sendingBySession.sess_1).toBe(true);
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(state.queuedBySession.sess_1).toEqual([{ text: 'next', attachments: undefined }]);
+  });
+
+  it('rejects a snapshot when a new local prompt started during the request', async () => {
+    const state = createState();
+    const inFlight = new Set<string>();
+    const ws = useWorkspaceState(state, promptDeps({ inFlightPromptSessions: inFlight }));
+    const atRequest = ws.localTurnStartState('sess_1');
+
+    await ws.submitPromptInternal('sess_1', 'fresh prompt');
+
+    expect(ws.isLocalTurnSnapshotCurrent('sess_1', atRequest)).toBe(false);
+    expect(inFlight.has('sess_1')).toBe(true);
+    expect(state.sendingBySession.sess_1).toBe(true);
+  });
+
+  it('rejects a snapshot requested while the local submit is still pending', async () => {
+    let resolveSubmit!: (value: { promptId: string }) => void;
+    apiMock.submitPrompt.mockImplementation(
+      () =>
+        new Promise<{ promptId: string }>((resolve) => {
+          resolveSubmit = resolve;
+        }),
+    );
+    const ws = useWorkspaceState(createState(), promptDeps());
+    const pendingSubmit = ws.submitPromptInternal('sess_1', 'fresh prompt');
+    const atRequest = ws.localTurnStartState('sess_1');
+    const retrySnapshot = vi.fn();
+
+    expect(atRequest.pending).toBe(true);
+    expect(ws.isLocalTurnSnapshotCurrent('sess_1', atRequest)).toBe(false);
+    ws.afterLocalTurnStartsSettle('sess_1', retrySnapshot);
+    expect(retrySnapshot).not.toHaveBeenCalled();
+
+    resolveSubmit({ promptId: 'prompt_new' });
+    await pendingSubmit;
+    expect(ws.localTurnStartState('sess_1').pending).toBe(false);
+    expect(retrySnapshot).toHaveBeenCalledOnce();
+  });
+});
+
+// Regression: a search-triggered full session-list reload must not clobber the
+// live usage (context ring) with the list endpoint's all-zero placeholder.
+describe('useWorkspaceState — loadAllSessions usage preservation', () => {
+  beforeEach(() => {
+    apiMock.listSessions.mockReset();
+  });
+
+  function liveUsage() {
+    return {
+      inputTokens: 100,
+      outputTokens: 50,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      totalCostUsd: 0,
+      contextTokens: 28772,
+      contextLimit: 1048576,
+      turnCount: 3,
+    };
+  }
+
+  it('keeps the cached live usage when the reloaded row carries the placeholder', async () => {
+    const state = createState();
+    state.sessions = [{ ...createSession(), usage: liveUsage() }];
+    apiMock.listSessions.mockResolvedValue({
+      items: [{ ...createSession(), title: 'Fresh from server' }],
+      hasMore: false,
+    });
+    const setSessions = vi.fn();
+    const ws = useWorkspaceState(state, { ...createDeps(), setSessions });
+
+    await ws.loadAllSessions();
+
+    expect(setSessions).toHaveBeenCalledOnce();
+    const next = setSessions.mock.calls[0][0];
+    expect(next[0].title).toBe('Fresh from server');
+    expect(next[0].usage).toEqual(liveUsage());
+  });
+
+  it('takes the server row as-is when there is no live usage to preserve', async () => {
+    const state = createState();
+    apiMock.listSessions.mockResolvedValue({ items: [createSession()], hasMore: false });
+    const setSessions = vi.fn();
+    const ws = useWorkspaceState(state, { ...createDeps(), setSessions });
+
+    await ws.loadAllSessions();
+
+    const next = setSessions.mock.calls[0][0];
+    expect(next[0].usage.contextTokens).toBe(0);
   });
 });

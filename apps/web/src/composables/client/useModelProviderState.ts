@@ -7,9 +7,14 @@
 
 import { ref, type ComputedRef } from 'vue';
 import { getKimiWebApi } from '../../api';
-import type { AppMessage, AppModel, AppProvider, AppSession, AppSkill, ThinkingLevel } from '../../api/types';
+import type { AppMessage, AppModel, AppProvider, AppSession, AppSkill, OAuthLoginStartResult, ThinkingLevel } from '../../api/types';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
-import { coerceThinkingForModel } from '../../lib/modelThinking';
+import {
+  defaultThinkingLevelFor,
+  thinkingLevelForModelSwitch,
+  thinkingLevelToConfig,
+} from '../../lib/modelThinking';
+import { beginLocalTurn, settleLocalTurn } from './useWorkspaceState';
 import type { ActivityState } from '../../types';
 import type { ExtendedState } from '../useKimiWebClient';
 
@@ -102,21 +107,42 @@ export function useModelProviderState(
 
   function modelById(modelId: string | null | undefined): AppModel | undefined {
     if (modelId === undefined || modelId === null || modelId.length === 0) return undefined;
-    return models.value.find((m) => m.id === modelId || m.model === modelId);
+    // Prefer the exact id — model names can collide across providers.
+    return (
+      models.value.find((m) => m.id === modelId) ??
+      models.value.find((m) => m.model === modelId)
+    );
   }
 
-  function activeThinkingModel(): AppModel | undefined {
+  function currentModelId(): string | undefined {
     const activeSession = rawState.activeSessionId
       ? rawState.sessions.find((s) => s.id === rawState.activeSessionId)
       : undefined;
-    return modelById(activeSession?.model ?? draftModel.value ?? rawState.defaultModel);
+    const rawModel =
+      activeSession === undefined
+        ? draftModel.value ?? rawState.defaultModel
+        : activeSession.model || rawState.defaultModel;
+    return modelById(rawModel)?.id ?? rawModel ?? undefined;
   }
 
-  function applyThinkingLevel(level: ThinkingLevel): ThinkingLevel {
-    const next = coerceThinkingForModel(activeThinkingModel(), level);
-    rawState.thinking = next;
-    saveThinkingToStorage(next);
-    return next;
+  function applyThinkingLevel(level: ThinkingLevel | undefined): ThinkingLevel | undefined {
+    // Stored verbatim — whatever the user picked is what gets submitted to the
+    // daemon (same as the TUI); no coercion against the active model. Only
+    // concrete levels are persisted; "no preference" stays in-memory.
+    rawState.thinking = level;
+    if (level !== undefined) saveThinkingToStorage(level);
+    return level;
+  }
+
+  /** Persist an explicit thinking pick as the daemon-wide default ([thinking]
+   *  in config.toml), mirroring the TUI's persistModelSelection, so sessions
+   *  created by other clients inherit it. Fire-and-forget: the session-level
+   *  and local values have already been applied. Never called for derived
+   *  values (e.g. the loadModels default pin) — only for user actions. */
+  function persistGlobalThinking(level: ThinkingLevel): void {
+    void getKimiWebApi()
+      .setConfig({ thinking: thinkingLevelToConfig(level) })
+      .catch((error: unknown) => pushOperationFailure('setConfig', error));
   }
 
   async function loadSkillsForSession(sessionId: string): Promise<void> {
@@ -146,7 +172,15 @@ export function useModelProviderState(
     try {
       const api = getKimiWebApi();
       models.value = await api.listModels();
-      applyThinkingLevel(rawState.thinking);
+      // No explicit preference: pin the active model's default level (from the
+      // server catalog) as a concrete value, so what the UI shows, what gets
+      // submitted, and what the session runs are always the same. In-memory
+      // only — localStorage stays reserved for levels the user actually
+      // picked, and a reload re-derives from the then-current model.
+      if (rawState.thinking === undefined) {
+        const active = modelById(currentModelId());
+        if (active !== undefined) rawState.thinking = defaultThinkingLevelFor(active);
+      }
     } catch (err) {
       pushOperationFailure('loadModels', err);
     }
@@ -188,22 +222,28 @@ export function useModelProviderState(
    */
   async function setModel(modelId: string): Promise<boolean> {
     const sid = rawState.activeSessionId;
-    const nextThinking = coerceThinkingForModel(modelById(modelId), rawState.thinking);
+    const targetModel = modelById(modelId);
     const prevThinking = rawState.thinking;
+    const prevSessionModel = sid
+      ? rawState.sessions.find((s) => s.id === sid)?.model
+      : undefined;
+    const isSwitch = currentModelId() !== (targetModel?.id ?? modelId);
+    const nextThinking = thinkingLevelForModelSwitch(targetModel, prevThinking, isSwitch);
     if (!sid) {
       // New-session draft (onboarding composer): no backend session to update.
       // Remember the pick — startSessionAndSendPrompt applies it at create time.
       draftModel.value = modelId;
       applyThinkingLevel(nextThinking);
+      if (nextThinking !== prevThinking && nextThinking !== undefined) {
+        persistGlobalThinking(nextThinking);
+      }
       return true;
     }
     // Optimistic: show the chosen model immediately, but remember the previous
     // one so we can roll back if the switch never reaches the daemon.
-    const prevModel = rawState.sessions.find((s) => s.id === sid)?.model;
     updateSession(sid, (s) => ({ ...s, model: modelId }));
     if (nextThinking !== prevThinking) {
-      rawState.thinking = nextThinking;
-      saveThinkingToStorage(nextThinking);
+      applyThinkingLevel(nextThinking);
     }
     try {
       await getKimiWebApi().updateSession(sid, {
@@ -215,13 +255,17 @@ export function useModelProviderState(
       // not fail it — but when the daemon is unreachable the request throws here.
       // Roll the picker back to the real model so the UI can't keep showing the
       // new one as if the switch succeeded, then surface the failure.
-      updateSession(sid, (s) => ({ ...s, model: prevModel ?? s.model }));
+      updateSession(sid, (s) => ({ ...s, model: prevSessionModel ?? s.model }));
       if (nextThinking !== prevThinking) {
-        rawState.thinking = prevThinking;
-        saveThinkingToStorage(prevThinking);
+        applyThinkingLevel(prevThinking);
       }
       pushOperationFailure('setModel', err, { sessionId: sid });
       return false;
+    }
+    // The switch reached the daemon: also persist the thinking pick as the
+    // daemon-wide default (mirrors the TUI). Skipped on rollback above.
+    if (nextThinking !== prevThinking && nextThinking !== undefined) {
+      persistGlobalThinking(nextThinking);
     }
     // refreshSessionStatus folds the authoritative current model from /status
     // back into the session (the profile echo can return ''). Best-effort: a
@@ -257,7 +301,10 @@ export function useModelProviderState(
     const guarded = activity.value === 'idle' && !inFlightPromptSessions.has(sid);
     const tempId = `msg_skill_opt_${Date.now().toString(36)}`;
 
+    const localTurnToken = guarded ? beginLocalTurn(sid) : undefined;
     if (guarded) {
+      // Share the local-turn-start lifecycle with prompt submits: a racing
+      // terminal snapshot must not clear this skill's turn either.
       inFlightPromptSessions.add(sid);
       rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: true };
       const optimisticMsg: AppMessage = {
@@ -288,6 +335,10 @@ export function useModelProviderState(
         updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
       }
       pushOperationFailure('activateSkill', err, { sessionId: sid });
+    } finally {
+      // The daemon answered the activation (accepted or rejected) — the
+      // pending window in which a snapshot can't reflect this turn is over.
+      if (localTurnToken !== undefined) settleLocalTurn(sid, localTurnToken);
     }
   }
 
@@ -349,17 +400,7 @@ export function useModelProviderState(
   }
 
   /** Start managed Kimi OAuth device flow. Returns flow data or null on error. */
-  async function startOAuthLogin(): Promise<{
-    flowId: string;
-    provider: string;
-    verificationUri: string;
-    verificationUriComplete: string;
-    userCode: string;
-    expiresIn: number;
-    interval: number;
-    status: 'pending';
-    expiresAt: string;
-  } | null> {
+  async function startOAuthLogin(): Promise<OAuthLoginStartResult | null> {
     try {
       const api = getKimiWebApi();
       return await api.startOAuthLogin();
@@ -377,7 +418,10 @@ export function useModelProviderState(
     try {
       const api = getKimiWebApi();
       return await api.pollOAuthLogin();
-    } catch {
+    } catch (err) {
+      // The dialog counts consecutive nulls and gives up after a few; keep the
+      // cause in the log so a dead daemon is diagnosable.
+      console.warn('[kimi-web] pollOAuthLogin failed', err);
       return null;
     }
   }
@@ -397,6 +441,7 @@ export function useModelProviderState(
   function setThinking(level: ThinkingLevel): void {
     const next = applyThinkingLevel(level);
     void persistSessionProfile({ thinking: next });
+    if (next !== undefined) persistGlobalThinking(next);
   }
 
   return {

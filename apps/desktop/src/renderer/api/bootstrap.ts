@@ -15,6 +15,7 @@ import {
   traceWsIn,
   traceWsLifecycle,
   traceWsOut,
+  traceKeyEvent as recordKeyEvent,
 } from '../debug/trace';
 import { getCredential, markAuthRequired } from '../lib/serverAuth';
 import { readKimiApiConfig } from './config';
@@ -38,6 +39,7 @@ const webTracer: Tracer = {
         break;
     }
   },
+  traceKeyEvent: (event, info) => recordKeyEvent(event as never, info),
 };
 
 const webCredentialStore: CredentialStore = {

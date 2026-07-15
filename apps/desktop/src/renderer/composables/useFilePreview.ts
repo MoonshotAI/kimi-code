@@ -134,14 +134,10 @@ export function useFilePreview({ client, detailTarget }: UseFilePreviewOptions) 
       if (result) {
         previewFile.value = { ...result, path: result.path || normalized.path };
       } else {
-        previewFile.value = {
-          path: normalized.path,
-          content: '',
-          encoding: 'utf-8',
-          mime: 'text/plain',
-          isBinary: false,
-          size: 0,
-        };
+        // readFileContent swallows daemon failures into null — show the error
+        // state instead of a misleading 0-byte "empty file" (the cause is
+        // already console.warn'd in readFileContent).
+        previewError.value = t('filePreview.errors.loadFailed');
       }
     } catch (err) {
       if (requestSeq !== previewRequestSeq) return;

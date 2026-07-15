@@ -10,8 +10,8 @@ import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, ThinkingLevel } from '../../api/types';
 import {
-  coerceThinkingForModel,
   commitLevel,
+  effectiveThinkingLevel,
   effortLabel,
   isThinkingOn,
   modelThinkingAvailability,
@@ -601,38 +601,23 @@ const ctxTooltip = computed(() => {
 const showCompact = computed(() => pct.value >= 80);
 
 // Thinking toggle
-const currentModel = computed(() => {
-  const raw = props.status?.modelId ?? props.status?.model ?? '';
-  return props.models?.find((m) =>
-    m.id === raw ||
-    m.model === raw ||
-    m.displayName === props.status?.model,
-  );
-});
+// Identity is the model id — display/model names can collide across providers.
+const currentModel = computed(() =>
+  props.models?.find((m) => m.id === props.status?.modelId),
+);
 const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const thinkingSegments = computed(() => segmentsFor(currentModel.value));
-// The persisted level can be stale relative to the active model (e.g. a
-// boolean 'on'/'off' carried over when selecting another session). Coerce it
-// against the current model before deriving display state so an always-on
-// model never shows "thinking: off" and an effort model shows its concrete
-// level instead of the bare "thinking" tag.
-const coercedThinkingLevel = computed(() =>
-  coerceThinkingForModel(currentModel.value, props.thinking ?? 'off'),
-);
-// Runtime level clamped to the segments this model actually offers, so a
-// carried-over value never highlights a segment that doesn't exist here.
+// The stored level is shown and submitted verbatim (same as the TUI footer) —
+// no coercion against the active model. No stored preference (undefined) shows
+// the model default, which is what the daemon will resolve for the prompt. A
+// level the model doesn't declare highlights no segment but still shows in the
+// suffix.
+const thinkingLevel = computed(() => effectiveThinkingLevel(currentModel.value, props.thinking));
 const activeThinkingSegment = computed(() => {
   const segs = thinkingSegments.value;
-  const level = coercedThinkingLevel.value;
-  if (segs.includes(level)) return level;
-  if (segs.includes('on')) return 'on';
-  return segs[0] ?? 'off';
+  return segs.includes(thinkingLevel.value) ? thinkingLevel.value : '';
 });
-const thinkingOn = computed(() => {
-  if (thinkingAvailability.value === 'always-on') return true;
-  if (thinkingAvailability.value === 'unsupported') return false;
-  return isThinkingOn(coercedThinkingLevel.value);
-});
+const thinkingOn = computed(() => isThinkingOn(thinkingLevel.value));
 // Single-segment (always-on boolean) or unsupported models can't be changed.
 const thinkingReadonly = computed(
   () => thinkingAvailability.value === 'unsupported' || thinkingSegments.value.length <= 1,
@@ -642,7 +627,7 @@ const thinkingReadonly = computed(
 const thinkingSuffix = computed(() => {
   if (!thinkingOn.value) return '';
   const hasEfforts = (currentModel.value?.supportEfforts?.length ?? 0) > 0;
-  const level = coercedThinkingLevel.value;
+  const level = thinkingLevel.value;
   if (hasEfforts && level !== 'on') return t('composer.thinkingSuffixEffort', { level });
   return t('composer.thinkingSuffix');
 });
@@ -1155,7 +1140,7 @@ function selectModel(modelId: string): void {
             role="menuitem"
             @click="selectModel(m.id)"
           >
-            <span class="md-check"><Icon v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" name="check" size="sm" /></span>
+            <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" /></span>
             <span class="md-name">{{ m.displayName ?? m.model }}</span>
             <span class="md-provider">{{ m.provider }}</span>
             <Icon class="md-star" name="star" size="sm" />
@@ -1173,7 +1158,7 @@ function selectModel(modelId: string): void {
             role="menuitem"
             @click="selectModel(m.id)"
           >
-            <span class="md-check"><Icon v-if="m.id === status.model || m.model === status.model || m.displayName === status.model" name="check" size="sm" /></span>
+            <span class="md-check"><Icon v-if="m.id === status.modelId" name="check" size="sm" /></span>
             <span class="md-name">{{ m.displayName ?? m.model }}</span>
             <Icon v-if="isStarred(m.id)" class="md-star" name="star" size="sm" />
           </button>
@@ -1235,7 +1220,8 @@ function selectModel(modelId: string): void {
   --composer-send-inset: var(--space-2);
   position: relative;
   border: 1px solid var(--line);
-  border-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset));
+  border-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset) + var(--space-3));
+  corner-shape: superellipse(1.5);
   background: var(--bg);
   box-shadow: var(--shadow-md);
   transition: border-color 0.15s, box-shadow 0.15s;

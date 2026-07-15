@@ -53,6 +53,8 @@ export interface Tracer {
   restResponse?(info: RestResponseInfo): void;
   restFailure?(info: RestFailureInfo): void;
   wsEvent?(info: WsTraceEvent): void;
+  /** Low-frequency product-path lifecycle event (e.g. `session:snapshot:start`). */
+  traceKeyEvent?(event: string, info?: Record<string, unknown>): void;
 }
 
 export const noopTracer: Tracer = {};
