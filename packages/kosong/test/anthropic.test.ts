@@ -2199,7 +2199,26 @@ describe('AnthropicChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], thinkHistory);
 
       expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
-      expect(body['output_config']).toEqual({ effort: 'high' });
+      expect(body['output_config']).toBeUndefined();
+    });
+
+    it('adaptiveThinking=false omits the effort param for an unversioned model name', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'coding-model-okapi-0527-vibe',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        adaptiveThinking: false,
+      });
+      for (const [effort, budget] of [
+        ['low', 1024],
+        ['medium', 4096],
+        ['high', 32_000],
+      ] as const) {
+        const body = await captureRequestBody(provider.withThinking(effort), '', [], thinkHistory);
+        expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: budget });
+        expect(body['output_config']).toBeUndefined();
+      }
     });
 
     it('pre-4.6 budget model passes xhigh and max through unchanged', async () => {

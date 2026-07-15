@@ -52,6 +52,22 @@ describe('effectiveModelConfig', () => {
     });
   });
 
+  it('limits an adaptive_thinking=false model to budget efforts', () => {
+    expect(
+      effectiveModelConfig({
+        provider: 'custom',
+        model: 'custom-anthropic-model',
+        maxContextSize: 200000,
+        protocol: 'anthropic',
+        adaptiveThinking: false,
+      }),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high'],
+      defaultEffort: 'high',
+    });
+  });
+
   it('does not infer Anthropic effort metadata for an unknown model without an Anthropic protocol', () => {
     const model = {
       provider: 'custom',

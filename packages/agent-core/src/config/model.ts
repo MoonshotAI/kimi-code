@@ -1,4 +1,5 @@
 import {
+  BUDGET_THINKING_EFFORTS,
   inferAnthropicModelProfile,
   matchKnownAnthropicModelProfile,
 } from '@moonshot-ai/kosong/providers/anthropic-profile';
@@ -38,7 +39,12 @@ function withAnthropicProfile(model: ModelAlias, anthropicCompatible: boolean): 
   const hasCapability = capabilities.some(
     (candidate) => candidate.trim().toLowerCase() === capability,
   );
-  const supportEfforts = model.supportEfforts ?? [...profile.efforts];
+  // `adaptive_thinking = false` opts the endpoint out of the adaptive API, so
+  // the catalog must not advertise adaptive-only efforts (xhigh/max) — this
+  // mirrors the budget branch of kosong's resolveThinkingProfile.
+  const supportEfforts =
+    model.supportEfforts ??
+    (model.adaptiveThinking === false ? [...BUDGET_THINKING_EFFORTS] : [...profile.efforts]);
 
   return {
     ...model,

@@ -75,6 +75,39 @@ describe('effectiveModelAlias', () => {
     });
   });
 
+  it('limits an adaptive_thinking=false model to budget efforts', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+      adaptiveThinking: false,
+    };
+
+    expect(effectiveModelAlias(model)).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('keeps a declared supportEfforts list authoritative when adaptive_thinking=false', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+      adaptiveThinking: false,
+      supportEfforts: ['low', 'high'],
+    };
+
+    expect(effectiveModelAlias(model)).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'high',
+    });
+  });
+
   it('does not infer Anthropic effort metadata for an unknown model without an Anthropic protocol', () => {
     const model: ModelAlias = {
       provider: 'custom',

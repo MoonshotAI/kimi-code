@@ -209,6 +209,7 @@ function resolveThinkingProfile(
       ...inferred,
       mode: 'budget',
       efforts: supportEfforts ?? BUDGET_THINKING_EFFORTS,
+      supportsEffortParam: false,
     };
   }
 

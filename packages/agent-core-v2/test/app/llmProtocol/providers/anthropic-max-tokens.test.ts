@@ -226,6 +226,19 @@ describe('AnthropicChatProvider thinking profiles', () => {
     expect(body['output_config']).toEqual({ effort: 'max' });
   });
 
+  it('adaptiveThinking=false omits the effort param for an unversioned model name', async () => {
+    const provider = new AnthropicChatProvider({
+      model: 'compatible-model',
+      apiKey: 'test-key',
+      stream: false,
+      adaptiveThinking: false,
+    }).withThinking('high');
+    const body = await captureRequestBody(provider);
+
+    expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
+    expect(body['output_config']).toBeUndefined();
+  });
+
   it('infers the budget profile for a pre-4.6 Claude model', async () => {
     const provider = new AnthropicChatProvider({
       model: 'claude-opus-4-5',

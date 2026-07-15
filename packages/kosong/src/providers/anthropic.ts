@@ -279,6 +279,10 @@ function resolveThinkingProfile(
       ...inferred,
       mode: 'budget',
       efforts: supportEfforts ?? BUDGET_THINKING_EFFORTS,
+      // Opting out of adaptive also opts out of the effort param: budget
+      // efforts must go out as pure `budget_tokens` payloads instead of
+      // inheriting `supportsEffortParam` from an adaptive inferred profile.
+      supportsEffortParam: false,
     };
   }
 

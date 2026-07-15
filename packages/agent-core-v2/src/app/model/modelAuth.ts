@@ -8,6 +8,7 @@
 
 import { ErrorCodes, Error2 } from '#/errors';
 import {
+  BUDGET_THINKING_EFFORTS,
   inferAnthropicModelProfile,
   matchKnownAnthropicModelProfile,
 } from '#/app/llmProtocol/providers/anthropic-profile';
@@ -108,7 +109,9 @@ function withAnthropicProfile(model: ModelConfig, anthropicCompatible: boolean):
   const hasCapability = capabilities.some(
     (candidate) => candidate.trim().toLowerCase() === capability,
   );
-  const supportEfforts = model.supportEfforts ?? [...profile.efforts];
+  const supportEfforts =
+    model.supportEfforts ??
+    (model.adaptiveThinking === false ? [...BUDGET_THINKING_EFFORTS] : [...profile.efforts]);
   return {
     ...model,
     capabilities: hasCapability ? capabilities : [...capabilities, capability],
