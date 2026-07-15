@@ -24,6 +24,7 @@ interface Frame {
   type: string;
   id?: string;
   seq?: number;
+  epoch?: string;
   session_id?: string;
   payload?: Record<string, unknown>;
   volatile?: boolean;
@@ -233,6 +234,60 @@ describe('server-v2 /api/v1/ws resync', () => {
 
     c2.ws.close();
     await c2.closed;
+  });
+
+  it('keeps the cursor epoch when archive and restore replace the live session owner', async () => {
+    const sid = await createSession();
+    await ensureMainAgent(sid);
+    const first = await openConn(wsUrl, server!.authTokenService.getToken());
+    await first.next((frame) => frame.type === 'server_hello');
+    first.send({
+      type: 'client_hello',
+      id: 'h1',
+      payload: withToken({ client_id: 'cli', subscriptions: [sid] }),
+    });
+    await first.next((frame) => frame.type === 'ack' && frame.id === 'h1');
+    emitAgentEvent(sid, { type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
+    const beforeArchive = await first.next((frame) => frame.type === 'turn.started');
+    expect(beforeArchive.epoch).toMatch(/^ep_/);
+    first.ws.close();
+    await first.closed;
+
+    const archiveResponse = await fetch(`${base}/api/v1/sessions/${sid}:archive`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    expect(((await archiveResponse.json()) as { code: number }).code).toBe(0);
+    const restoreResponse = await fetch(`${base}/api/v1/sessions/${sid}:restore`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    expect(((await restoreResponse.json()) as { code: number }).code).toBe(0);
+    await ensureMainAgent(sid);
+
+    const second = await openConn(wsUrl, server!.authTokenService.getToken());
+    await second.next((frame) => frame.type === 'server_hello');
+    second.send({
+      type: 'client_hello',
+      id: 'h2',
+      payload: withToken({
+        client_id: 'cli',
+        subscriptions: [sid],
+        cursors: {
+          [sid]: { seq: beforeArchive.seq, epoch: beforeArchive.epoch },
+        },
+      }),
+    });
+    await second.next((frame) => frame.type === 'ack' && frame.id === 'h2');
+    expect(second.frames.some((frame) => frame.type === 'resync_required')).toBe(false);
+
+    emitAgentEvent(sid, { type: 'turn.ended', turnId: 2 } as unknown as DomainEvent);
+    const afterRestore = await second.next((frame) => frame.type === 'turn.ended');
+    expect(afterRestore.epoch).toBe(beforeArchive.epoch);
+    expect(afterRestore.seq).toBeGreaterThan(beforeArchive.seq!);
+
+    second.ws.close();
+    await second.closed;
   });
 
   it('sends resync_required on epoch mismatch', async () => {

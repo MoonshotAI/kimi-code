@@ -16,6 +16,7 @@ import {
   IEventBus,
   IEventService,
   ISessionActivity,
+  ISessionIndex,
   ISessionInteractionService,
   ISessionLifecycleService,
   IWireService,
@@ -28,7 +29,10 @@ import {
   type BroadcastTarget,
   SessionEventBroadcaster,
 } from '../src/transport/ws/v1/sessionEventBroadcaster';
-import type { EventEnvelope } from '../src/transport/ws/v1/sessionEventJournal';
+import {
+  type EventEnvelope,
+  SessionEventJournal,
+} from '../src/transport/ws/v1/sessionEventJournal';
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -36,10 +40,15 @@ import type { EventEnvelope } from '../src/transport/ws/v1/sessionEventJournal';
 
 class FakeAgentBus {
   private handlers: Array<(e: AgentEvent) => void> = [];
+  disposeCount = 0;
+  get subscriberCount(): number {
+    return this.handlers.length;
+  }
   subscribe(handler: (e: AgentEvent) => void) {
     this.handlers.push(handler);
     return {
       dispose: () => {
+        this.disposeCount += 1;
         const i = this.handlers.indexOf(handler);
         if (i >= 0) this.handlers.splice(i, 1);
       },
@@ -71,10 +80,17 @@ class FakeAgentHandle {
   readonly bus = new FakeAgentBus();
   readonly accessor;
   private readonly services = new Map<unknown, unknown>();
+  failNextAccess = false;
   constructor(readonly id: string) {
     this.services.set(IEventBus, this.bus);
     this.accessor = {
-      get: (token: unknown) => this.services.get(token),
+      get: (token: unknown) => {
+        if (this.failNextAccess) {
+          this.failNextAccess = false;
+          throw new Error('agent bus unavailable');
+        }
+        return this.services.get(token);
+      },
     };
   }
   set(token: unknown, service: unknown): void {
@@ -88,8 +104,12 @@ class FakeLifecycle {
   /** Real interaction kernel — served at the session accessor. */
   readonly interactions = new SessionInteractionService();
   baseStatus: 'idle' | 'running' = 'idle';
+  onStatus: (() => void) | undefined;
   readonly activity = {
     status: () => {
+      const onStatus = this.onStatus;
+      this.onStatus = undefined;
+      onStatus?.();
       if (this.interactions.listPending('approval').length > 0) return 'awaiting_approval';
       if (this.interactions.listPending('question').length > 0) return 'awaiting_question';
       return this.baseStatus;
@@ -106,11 +126,21 @@ class FakeLifecycle {
   }
   onDidCreate(h: (h: IScopeHandle) => void) {
     this.createHandlers.push(h);
-    return { dispose: () => {} };
+    return {
+      dispose: () => {
+        const index = this.createHandlers.indexOf(h);
+        if (index >= 0) this.createHandlers.splice(index, 1);
+      },
+    };
   }
   onDidDispose(h: (id: string) => void) {
     this.disposeHandlers.push(h);
-    return { dispose: () => {} };
+    return {
+      dispose: () => {
+        const index = this.disposeHandlers.indexOf(h);
+        if (index >= 0) this.disposeHandlers.splice(index, 1);
+      },
+    };
   }
   addAgent(id: string): FakeAgentHandle {
     const handle = new FakeAgentHandle(id);
@@ -125,27 +155,84 @@ class FakeLifecycle {
   }
 }
 
-function makeCore(sessions: Map<string, FakeLifecycle>, eventBus = new FakeEventBus()): Scope {
+class FakeSessionLifecycleEvents {
+  private readonly closeHandlers: Array<(event: { sessionId: string }) => void> = [];
+  private readonly archiveHandlers: Array<(event: { sessionId: string }) => void> = [];
+  failGet = false;
+
+  readonly onDidCloseSession = (handler: (event: { sessionId: string }) => void) => {
+    this.closeHandlers.push(handler);
+    return {
+      dispose: () => {
+        const index = this.closeHandlers.indexOf(handler);
+        if (index >= 0) this.closeHandlers.splice(index, 1);
+      },
+    };
+  };
+
+  readonly onDidArchiveSession = (handler: (event: { sessionId: string }) => void) => {
+    this.archiveHandlers.push(handler);
+    return {
+      dispose: () => {
+        const index = this.archiveHandlers.indexOf(handler);
+        if (index >= 0) this.archiveHandlers.splice(index, 1);
+      },
+    };
+  };
+
+  close(sessionId: string): void {
+    for (const handler of [...this.closeHandlers]) handler({ sessionId });
+  }
+
+  archive(sessionId: string): void {
+    for (const handler of [...this.archiveHandlers]) handler({ sessionId });
+  }
+}
+
+function makeCore(
+  sessions: Map<string, FakeLifecycle>,
+  eventBus = new FakeEventBus(),
+  lifecycleEvents = new FakeSessionLifecycleEvents(),
+): Scope {
+  const scopeHandles = new Map<
+    string,
+    { lifecycle: FakeLifecycle; handle: IScopeHandle }
+  >();
+  const sessionLifecycle = {
+    get: (sid: string) => {
+      if (lifecycleEvents.failGet) throw new Error('InstantiationService has been disposed');
+      const lifecycle = sessions.get(sid);
+      if (lifecycle === undefined) {
+        scopeHandles.delete(sid);
+        return undefined;
+      }
+      const cached = scopeHandles.get(sid);
+      if (cached?.lifecycle === lifecycle) return cached.handle;
+      const sessionAccessor = {
+        get: (t: unknown) => {
+          if (t === IAgentLifecycleService) return lifecycle;
+          if (t === ISessionActivity) return lifecycle.activity;
+          if (t === ISessionInteractionService) return lifecycle.interactions;
+          return undefined;
+        },
+      };
+      const handle = {
+        id: sid,
+        kind: 1,
+        accessor: sessionAccessor,
+        dispose: () => {},
+      } as unknown as IScopeHandle;
+      scopeHandles.set(sid, { lifecycle, handle });
+      return handle;
+    },
+    onDidCloseSession: lifecycleEvents.onDidCloseSession,
+    onDidArchiveSession: lifecycleEvents.onDidArchiveSession,
+  };
   const accessor = {
     get(token: unknown): unknown {
       if (token === IEventService) return eventBus;
-      if (token === ISessionLifecycleService) {
-        return {
-          get: (sid: string) => {
-            const lifecycle = sessions.get(sid);
-            if (lifecycle === undefined) return undefined;
-            const sessionAccessor = {
-              get: (t: unknown) => {
-                if (t === IAgentLifecycleService) return lifecycle;
-                if (t === ISessionActivity) return lifecycle.activity;
-                if (t === ISessionInteractionService) return lifecycle.interactions;
-                return undefined;
-              },
-            };
-            return { id: sid, kind: 1, accessor: sessionAccessor, dispose: () => {} };
-          },
-        };
-      }
+      if (token === ISessionLifecycleService) return sessionLifecycle;
+      if (token === ISessionIndex) return { get: async () => undefined };
       return undefined;
     },
   };
@@ -169,15 +256,17 @@ describe('SessionEventBroadcaster', () => {
   let dir: string;
   let sessions: Map<string, FakeLifecycle>;
   let eventBus: FakeEventBus;
+  let lifecycleEvents: FakeSessionLifecycleEvents;
   let bc: SessionEventBroadcaster;
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), 'kimi-broadcaster-test-'));
     sessions = new Map();
     eventBus = new FakeEventBus();
+    lifecycleEvents = new FakeSessionLifecycleEvents();
     bc = new SessionEventBroadcaster({
       eventsDir: dir,
-      core: makeCore(sessions, eventBus),
+      core: makeCore(sessions, eventBus, lifecycleEvents),
       maxBufferSize: 3,
     });
   });
@@ -206,6 +295,309 @@ describe('SessionEventBroadcaster', () => {
     expect(envelopes.map((e) => e.seq)).toEqual([1, 2, 3, 4]);
     expect(envelopes.every((e) => e.epoch === envelopes[0]!.epoch)).toBe(true);
     expect(envelopes[0]!.volatile).toBeUndefined();
+  });
+
+  it('shares one owner when concurrent subscribers first activate a session', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const first = collectingTarget();
+    const second = collectingTarget();
+
+    expect(
+      await Promise.all([bc.subscribe('s1', first.target), bc.subscribe('s1', second.target)]),
+    ).toEqual([true, true]);
+    expect(main.bus.subscriberCount).toBe(1);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    expect((await bc.getCursor('s1')).seq).toBe(2);
+    expect(first.envelopes.map((envelope) => envelope.type)).toEqual([
+      'event.session.status_changed',
+      'turn.started',
+    ]);
+    expect(second.envelopes.map((envelope) => envelope.type)).toEqual([
+      'event.session.status_changed',
+      'turn.started',
+    ]);
+  });
+
+  it('allows activation to retry after a shared concurrent initialization fails', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    main.failNextAccess = true;
+    sessions.set('s1', lc);
+
+    const failed = await Promise.allSettled([
+      bc.subscribe('s1', collectingTarget().target),
+      bc.subscribe('s1', collectingTarget().target),
+    ]);
+    expect(
+      failed.map((result) =>
+        result.status === 'rejected' ? (result.reason as Error).message : result.status,
+      ),
+    ).toEqual(['agent bus unavailable', 'agent bus unavailable']);
+    expect(main.bus.subscriberCount).toBe(0);
+
+    await expect(bc.subscribe('s1', collectingTarget().target)).resolves.toBe(true);
+    expect(main.bus.subscriberCount).toBe(1);
+  });
+
+  it('releases partial agent subscriptions when activation fails before publish', async () => {
+    const lc = new FakeLifecycle();
+    const first = lc.addAgent('agent-a');
+    const second = lc.addAgent('agent-b');
+    second.failNextAccess = true;
+    sessions.set('s1', lc);
+
+    await expect(bc.subscribe('s1', collectingTarget().target)).rejects.toThrow(
+      'agent bus unavailable',
+    );
+    expect([first.bus.subscriberCount, second.bus.subscriberCount]).toEqual([0, 0]);
+
+    await expect(bc.subscribe('s1', collectingTarget().target)).resolves.toBe(true);
+    expect([first.bus.subscriberCount, second.bus.subscriberCount]).toEqual([1, 1]);
+  });
+
+  it('retires an initializing owner once when close and archive fire together', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    lc.onStatus = () => {
+      sessions.delete('s1');
+      lifecycleEvents.close('s1');
+      lifecycleEvents.archive('s1');
+    };
+    const closeJournal = vi.spyOn(SessionEventJournal.prototype, 'close');
+
+    try {
+      await expect(bc.subscribe('s1', collectingTarget().target)).resolves.toBe(false);
+      expect(main.bus.subscriberCount).toBe(0);
+      expect(main.bus.disposeCount).toBe(1);
+      expect(closeJournal).toHaveBeenCalledTimes(1);
+    } finally {
+      closeJournal.mockRestore();
+    }
+  });
+
+  it.each(['close', 'archive'] as const)(
+    'returns cold results when lifecycle %s happens during journal activation',
+    async (transition) => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      const originalOpen = SessionEventJournal.open;
+      let signalOpenStarted!: () => void;
+      let releaseOpen!: () => void;
+      const openStarted = new Promise<void>((resolve) => {
+        signalOpenStarted = resolve;
+      });
+      const openGate = new Promise<void>((resolve) => {
+        releaseOpen = resolve;
+      });
+      const openJournal = vi
+        .spyOn(SessionEventJournal, 'open')
+        .mockImplementation(async (filePath, logger) => {
+          if (filePath.endsWith('s1.jsonl')) {
+            signalOpenStarted();
+            await openGate;
+          }
+          return originalOpen(filePath, logger);
+        });
+      let subscribing: Promise<boolean> | undefined;
+
+      try {
+        subscribing = bc.subscribe('s1', collectingTarget().target);
+        await openStarted;
+        sessions.delete('s1');
+        lifecycleEvents[transition]('s1');
+        releaseOpen();
+
+        await expect(subscribing).resolves.toBe(false);
+        expect(main.bus.subscriberCount).toBe(0);
+        await expect(bc.getCursor('s1')).resolves.toEqual({ seq: 0, epoch: '' });
+        await expect(bc.getSnapshotState('s1')).resolves.toEqual({
+          seq: 0,
+          epoch: '',
+          inFlightTurn: null,
+          subagents: [],
+        });
+      } finally {
+        releaseOpen();
+        if (subscribing !== undefined) await Promise.allSettled([subscribing]);
+        openJournal.mockRestore();
+      }
+    },
+  );
+
+  it.each(['close', 'archive'] as const)(
+    'moves ownership to a fresh session after lifecycle %s',
+    async (transition) => {
+      const firstLifecycle = new FakeLifecycle();
+      const firstMain = firstLifecycle.addAgent('main');
+      sessions.set('s1', firstLifecycle);
+      await bc.subscribe('s1', collectingTarget().target);
+      expect(firstMain.bus.subscriberCount).toBe(1);
+
+      sessions.delete('s1');
+      lifecycleEvents[transition]('s1');
+      expect(firstMain.bus.subscriberCount).toBe(0);
+
+      const secondLifecycle = new FakeLifecycle();
+      const secondMain = secondLifecycle.addAgent('main');
+      sessions.set('s1', secondLifecycle);
+      const secondView = collectingTarget();
+      await bc.subscribe('s1', secondView.target);
+      expect(secondMain.bus.subscriberCount).toBe(1);
+
+      secondMain.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+      await bc.getCursor('s1');
+      expect(secondView.envelopes.map((envelope) => envelope.type)).toEqual([
+        'event.session.status_changed',
+        'turn.started',
+      ]);
+    },
+  );
+
+  it('delivers durable events already queued when lifecycle close retires the owner', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const view = collectingTarget();
+    await bc.subscribe('s1', view.target);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    sessions.delete('s1');
+    lifecycleEvents.close('s1');
+    await expect(bc.subscribe('s1', collectingTarget().target)).resolves.toBe(false);
+
+    expect(view.envelopes.map((envelope) => envelope.type)).toEqual([
+      'event.session.status_changed',
+      'turn.started',
+    ]);
+  });
+
+  it('returns false when subscribe waits on retirement during broadcaster close', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    await bc.subscribe('s1', collectingTarget().target);
+    const originalClose = SessionEventJournal.prototype.close;
+    let signalCloseStarted!: () => void;
+    let releaseClose!: () => void;
+    const closeStarted = new Promise<void>((resolve) => {
+      signalCloseStarted = resolve;
+    });
+    const closeGate = new Promise<void>((resolve) => {
+      releaseClose = resolve;
+    });
+    const closeJournal = vi
+      .spyOn(SessionEventJournal.prototype, 'close')
+      .mockImplementation(async function (this: SessionEventJournal) {
+        signalCloseStarted();
+        await closeGate;
+        return originalClose.call(this);
+      });
+    let subscribing: Promise<boolean> | undefined;
+    let closing: Promise<void> | undefined;
+
+    try {
+      sessions.delete('s1');
+      lifecycleEvents.close('s1');
+      await closeStarted;
+      subscribing = bc.subscribe('s1', collectingTarget().target);
+      closing = bc.close();
+      lifecycleEvents.failGet = true;
+      releaseClose();
+
+      await expect(subscribing).resolves.toBe(false);
+      await closing;
+      expect(closeJournal).toHaveBeenCalledTimes(1);
+    } finally {
+      lifecycleEvents.failGet = false;
+      releaseClose();
+      await Promise.allSettled([subscribing, closing].filter((value) => value !== undefined));
+      closeJournal.mockRestore();
+    }
+  });
+
+  it('does not append a core session event after lifecycle release wins the enqueue race', async () => {
+    const firstLifecycle = new FakeLifecycle();
+    const firstMain = firstLifecycle.addAgent('main');
+    sessions.set('s1', firstLifecycle);
+    const firstView = collectingTarget();
+    await bc.subscribe('s1', firstView.target);
+    firstMain.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    const beforeRelease = await bc.getCursor('s1');
+
+    eventBus.emit({
+      type: 'session.meta.updated',
+      payload: { sessionId: 's1', title: 'stale' },
+    });
+    sessions.delete('s1');
+    lifecycleEvents.close('s1');
+    await expect(bc.subscribe('s1', collectingTarget().target)).resolves.toBe(false);
+    expect(firstView.envelopes.map((envelope) => envelope.type)).not.toContain(
+      'session.meta.updated',
+    );
+
+    const secondLifecycle = new FakeLifecycle();
+    const secondMain = secondLifecycle.addAgent('main');
+    sessions.set('s1', secondLifecycle);
+    await bc.subscribe('s1', collectingTarget().target);
+    await expect(bc.getCursor('s1')).resolves.toEqual(beforeRelease);
+    secondMain.bus.emit(agentEvent('turn.ended', { turnId: 2 }));
+    expect((await bc.getCursor('s1')).seq).toBe(beforeRelease.seq + 1);
+    const replay = await bc.getBufferedSince('s1', beforeRelease);
+    expect(replay.events.map(({ envelope }) => envelope.type)).toEqual(['turn.ended']);
+  });
+
+  it('returns session-owned subscriptions to baseline across a 3 by 8 lifecycle soak', async () => {
+    const sessionIds = Array.from({ length: 8 }, (_, index) => `soak-${index}`);
+    const allLifecycles: FakeLifecycle[] = [];
+    const resourceSamples: Array<{
+      round: number;
+      activeOwners: number;
+      heapUsed: number;
+      rss: number;
+    }> = [];
+
+    for (let round = 1; round <= 3; round += 1) {
+      const lifecycles = sessionIds.map(() => {
+        const lifecycle = new FakeLifecycle();
+        lifecycle.addAgent('main');
+        return lifecycle;
+      });
+      allLifecycles.push(...lifecycles);
+      for (const [index, sessionId] of sessionIds.entries()) {
+        sessions.set(sessionId, lifecycles[index]!);
+        expect(await bc.subscribe(sessionId, collectingTarget().target)).toBe(true);
+      }
+      expect(
+        lifecycles.reduce(
+          (total, lifecycle) => total + lifecycle.handles[0]!.bus.subscriberCount,
+          0,
+        ),
+      ).toBe(8);
+
+      for (const [index, sessionId] of sessionIds.entries()) {
+        sessions.delete(sessionId);
+        if (index % 2 === 0) lifecycleEvents.close(sessionId);
+        else lifecycleEvents.archive(sessionId);
+      }
+      for (const sessionId of sessionIds) {
+        expect(await bc.subscribe(sessionId, collectingTarget().target)).toBe(false);
+      }
+      const activeOwners = allLifecycles.reduce(
+        (total, lifecycle) => total + lifecycle.handles[0]!.bus.subscriberCount,
+        0,
+      );
+      const memory = process.memoryUsage();
+      resourceSamples.push({ round, activeOwners, heapUsed: memory.heapUsed, rss: memory.rss });
+      expect(activeOwners).toBe(0);
+    }
+
+    console.info('SessionEventBroadcaster 3x8 resource samples', resourceSamples);
+    expect(resourceSamples.map((sample) => sample.activeOwners)).toEqual([0, 0, 0]);
   });
 
   it('fans out volatile events with the current watermark + offset, not journaled', async () => {
@@ -468,6 +860,93 @@ describe('SessionEventBroadcaster', () => {
         sessionId: '__global__',
       },
     });
+  });
+
+  it('shares one global journal owner when concurrent core events first activate it', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+    const openJournal = vi.spyOn(SessionEventJournal, 'open');
+
+    try {
+      const event = {
+        type: 'event.model_catalog.changed',
+        payload: {
+          changed: [{ provider_id: 'provider:test', provider_name: 'Example', added: 1, removed: 0 }],
+          unchanged: [],
+          failed: [],
+        },
+      };
+      eventBus.emit(event);
+      eventBus.emit(event);
+
+      await vi.waitFor(() => {
+        expect(envelopes).toHaveLength(2);
+      });
+      expect(openJournal).toHaveBeenCalledTimes(1);
+      expect(envelopes.map((envelope) => envelope.seq)).toEqual([1, 2]);
+    } finally {
+      openJournal.mockRestore();
+    }
+  });
+
+  it('shares the in-flight global activation barrier across concurrent close calls', async () => {
+    const originalOpen = SessionEventJournal.open;
+    let signalOpenStarted!: () => void;
+    let releaseOpen!: () => void;
+    const openStarted = new Promise<void>((resolve) => {
+      signalOpenStarted = resolve;
+    });
+    const openGate = new Promise<void>((resolve) => {
+      releaseOpen = resolve;
+    });
+    const openJournal = vi
+      .spyOn(SessionEventJournal, 'open')
+      .mockImplementation(async (filePath, logger) => {
+        if (filePath.endsWith('__global__.jsonl')) {
+          signalOpenStarted();
+          await openGate;
+        }
+        return originalOpen(filePath, logger);
+      });
+    let closing: Promise<void> | undefined;
+    let observedClosing: Promise<void> | undefined;
+
+    try {
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [], unchanged: [], failed: [] },
+      });
+      await openStarted;
+      let closeSettled = false;
+      closing = bc.close();
+      const duplicateClosing = bc.close();
+      expect(duplicateClosing).toBe(closing);
+      observedClosing = duplicateClosing.then(() => {
+        closeSettled = true;
+      });
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      expect(closeSettled).toBe(false);
+
+      releaseOpen();
+      await observedClosing;
+      eventBus.emit({
+        type: 'event.model_catalog.changed',
+        payload: { changed: [], unchanged: [], failed: [] },
+      });
+      await Promise.resolve();
+      expect(openJournal).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseOpen();
+      await Promise.allSettled(
+        [closing, observedClosing].filter((value) => value !== undefined),
+      );
+      openJournal.mockRestore();
+    }
   });
 
   it('subscribe returns false for an unknown session', async () => {
