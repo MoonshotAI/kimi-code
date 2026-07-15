@@ -75,6 +75,15 @@ fi
 security default-keychain > "$SIGN_DIR/default-keychain.txt" 2>/dev/null || true
 security list-keychains -d user > "$SIGN_DIR/keychain-list.txt" 2>/dev/null || true
 
+# State file for the cleanup script (runs in a separate shell in after_script).
+# Written BEFORE any keychain mutation so a failure in a later step (import,
+# partition list, identity discovery) still leaves cleanup able to restore the
+# original default keychain + search list.
+{
+  echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
+  echo "SIGN_DIR=$SIGN_DIR"
+} > "$SIGN_DIR/env"
+
 # 3. Create a temporary keychain (don't pollute the runner's default one).
 security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
@@ -105,12 +114,6 @@ if [ -z "$IDENTITY" ]; then
   exit 1
 fi
 echo "Found signing identity: $IDENTITY"
-
-# State file for the cleanup script (runs in a separate shell in after_script).
-{
-  echo "KEYCHAIN_PATH=$KEYCHAIN_PATH"
-  echo "SIGN_DIR=$SIGN_DIR"
-} > "$SIGN_DIR/env"
 
 rm -f "$cert_path"
 

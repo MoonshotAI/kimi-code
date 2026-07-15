@@ -118,6 +118,38 @@ artifacts（保留 7 天），未做 Release / OSS 分发与自动更新。
 > 签名 + 公证链路从原仓 GitHub Actions workflow 逐行翻译，待 GitLab macOS runner
 > 首跑验证。
 
+### 本地签名打包（CI 不可用时）
+
+```bash
+pnpm package:macos   # = bash apps/desktop/scripts/package-local-macos.sh
+```
+
+`scripts/package-local-macos.sh` 复用 CI 的 `scripts/ci/macos-sign-setup.sh` /
+`macos-sign-cleanup.sh`（同一套临时 keychain + 身份发现 + 公证逻辑），只出 arm64 的
+dmg + zip；本地没有 GitLab 的 `after_script`，脚本用 `trap` 保证任何退出路径都执行
+cleanup 恢复钥匙串。出包后自动做 `codesign --verify --deep --strict`、`spctl -a -vv`、
+`xcrun stapler validate` 三项验证。
+
+凭证与 CI 的 5 个变量同名，三种给法（都支持文件形式转 base64，详见脚本头注释）：
+
+```bash
+# 方式一：仓库根 .env（脚本自动加载；复制 .env.example 为 .env 填值即可，
+# .env 已被 .gitignore 忽略，不会进 git）
+cp .env.example .env && $EDITOR .env
+
+# 方式二：与 CI 相同的 base64 环境变量
+export APPLE_CERTIFICATE_P12=...        # base64 的 Developer ID Application .p12
+export APPLE_CERTIFICATE_PASSWORD=...   # .p12 密码（缺省时脚本交互式询问）
+export APPLE_NOTARIZATION_KEY_P8=...    # base64 的 App Store Connect API Key
+export APPLE_NOTARIZATION_KEY_ID=...
+export APPLE_NOTARIZATION_ISSUER_ID=...
+
+# 方式三：直接给文件路径，脚本内部转 base64
+export APPLE_CERTIFICATE_P12_FILE=/path/to/developer-id.p12
+export APPLE_NOTARIZATION_KEY_P8_FILE=/path/to/AuthKey_XXXXXXXX.p8
+# KEY_ID / ISSUER_ID 仍需 env 提供
+```
+
 ## v1 范围 / 尚未做
 
 - **自动更新**：未实现（v2）。
