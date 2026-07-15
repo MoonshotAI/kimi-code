@@ -5,7 +5,17 @@
  * Bound at App scope.
  */
 
-import { appendFile, lstat, open, readFile, readdir, mkdir, rm, writeFile } from 'node:fs/promises';
+import {
+  appendFile,
+  lstat,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -174,6 +184,14 @@ export class HostFileSystem implements IHostFileSystem {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false;
       throw toHostFsError(error, { path, op: 'create' });
+    }
+  }
+
+  async realpath(path: string): Promise<string> {
+    try {
+      return await realpath(path);
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'realpath' });
     }
   }
 

@@ -1,16 +1,14 @@
 /**
  * `agentFileCatalog` domain (L3) — filesystem agent-file discovery.
  *
- * Walks caller-supplied roots recursively for `*.md` files and parses each
- * through `agentFile`. Invalid files are skipped with a warning and collected
- * into the result's `skipped` list, so one bad file never breaks the scan.
- * Name collisions resolve first-wins in root order; priority across sources is
- * the caller's (catalog's) concern. Dot-prefixed entries and `node_modules`
- * are never scanned. Mirrors `skillCatalog/fileSkillDiscovery`.
+ * Discovers and parses agent files through the `hostFs` filesystem boundary.
+ * Invalid files are isolated from the rest of the discovery pass. No scoped
+ * state.
  */
 
-import { promises as fs } from 'node:fs';
-import path from 'pathe';
+import { join } from 'pathe';
+
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import { AgentFileParseError, parseAgentFileText } from './agentFile';
 import type {
@@ -27,6 +25,7 @@ export interface DiscoverAgentFilesWarn {
 }
 
 export async function discoverAgentFiles(
+  fs: IHostFileSystem,
   roots: readonly AgentFileRoot[],
   warn?: DiscoverAgentFilesWarn,
 ): Promise<AgentFileDiscoveryResult> {
@@ -35,7 +34,7 @@ export async function discoverAgentFiles(
 
   async function parseAndRegister(filePath: string, root: AgentFileRoot): Promise<void> {
     try {
-      const text = await fs.readFile(filePath, 'utf8');
+      const text = await fs.readText(filePath);
       const agent = parseAgentFileText({ path: filePath, source: root.source, text });
       if (!byName.has(agent.name)) {
         byName.set(agent.name, agent);
@@ -55,19 +54,19 @@ export async function discoverAgentFiles(
 
     let entries: readonly string[];
     try {
-      entries = [...(await fs.readdir(dirPath))].toSorted();
+      entries = (await fs.readdir(dirPath)).map((entry) => entry.name).toSorted();
     } catch {
       return;
     }
 
     for (const entry of entries) {
       if (entry.startsWith('.') || entry === 'node_modules') continue;
-      const entryPath = path.join(dirPath, entry);
-      if (await isDir(entryPath)) {
+      const entryPath = join(dirPath, entry);
+      if (await isDir(fs, entryPath)) {
         await walk(entryPath, root, depth + 1);
         continue;
       }
-      if (!entry.endsWith('.md') || !(await isFile(entryPath))) continue;
+      if (!entry.endsWith('.md') || !(await isFile(fs, entryPath))) continue;
       await parseAndRegister(entryPath, root);
     }
   }
@@ -83,17 +82,19 @@ export async function discoverAgentFiles(
   };
 }
 
-async function isDir(p: string): Promise<boolean> {
+async function isDir(fs: IHostFileSystem, p: string): Promise<boolean> {
   try {
-    return (await fs.stat(p)).isDirectory();
+    const resolved = await fs.realpath(p);
+    return (await fs.stat(resolved)).isDirectory;
   } catch {
     return false;
   }
 }
 
-async function isFile(p: string): Promise<boolean> {
+async function isFile(fs: IHostFileSystem, p: string): Promise<boolean> {
   try {
-    return (await fs.stat(p)).isFile();
+    const resolved = await fs.realpath(p);
+    return (await fs.stat(resolved)).isFile;
   } catch {
     return false;
   }

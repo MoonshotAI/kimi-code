@@ -61,9 +61,7 @@ Kimi 专属的用户 Agent 目录随 `KIMI_CODE_HOME` 移动，通用的 `~/.age
 extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
 ```
 
-**内置 Agent** 随 CLI 分发，优先级最低。通过 `--agent-file` 加载的文件优先级高于所有目录作用域，且仅对本次启动生效。
-
-由于默认 profile 名为 `agent`，声明 `name: agent` 的文件会覆盖内置默认 Agent：项目级的 `agent.md` 实际上会为所有在该仓库工作的人替换主 Agent 的提示词。命名需谨慎。
+**内置 Agent** 随 CLI 分发，优先级最低。目录中发现的文件不会仅凭同名覆盖内置 Agent；如确需替换，必须在 Frontmatter 中声明 `override: true`。通过 `--agent-file` 加载的文件视为显式启动意图，可以覆盖同名内置 Agent，优先级高于所有目录作用域，且仅对本次启动生效。
 
 ### Agent 文件格式
 
@@ -74,6 +72,7 @@ Agent 文件是带 Frontmatter 的普通 Markdown：
 name: reviewer
 description: 严格的代码审查 Agent，按严重度分级报告问题
 whenToUse: 代码评审与 PR 检查
+override: false
 mode: replace
 tools:
   - Read
@@ -92,6 +91,7 @@ disallowedTools:
 | `name` | 是 | kebab-case 唯一标识。缺少合法 `name` 的文件会被跳过并告警 |
 | `description` | 是 | Agent 的用途。主 Agent 挑选子 Agent 时会看到，请围绕委派决策来写 |
 | `whenToUse` | 否 | 补充说明何时应使用该 Agent |
+| `override` | 否 | 是否允许覆盖同名内置 Agent，默认 `false`。`--agent-file` 属于显式启动意图，无需设置此字段 |
 | `mode` | 否 | `replace`（默认）：正文即 Agent 的完整系统提示词。`append`：正文追加到默认系统提示词之上，工作区指令和 Skill 注入保持生效 |
 | `tools` | 否 | 工具名允许列表，如 `Read`、`Bash`；MCP 工具用 glob 匹配，如 `mcp__github__*`。缺省表示允许全部工具；空列表（`tools: []`）表示禁用全部工具 |
 | `disallowedTools` | 否 | 禁止列表，匹配规则相同，在 `tools` 之后应用 |

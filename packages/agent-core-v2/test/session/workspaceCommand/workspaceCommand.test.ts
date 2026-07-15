@@ -111,6 +111,10 @@ class MemoryHostFs implements IHostFileSystem {
     throw new Error('not implemented');
   }
 
+  async realpath(path: string): Promise<string> {
+    return path;
+  }
+
   async stat(path: string): Promise<HostFileStat> {
     const error = this.statErrors.get(path);
     if (error !== undefined) throw error;
@@ -317,7 +321,7 @@ describe('SessionWorkspaceCommandService', () => {
 
     const written = fs.files.get(`${WORK_DIR}/.kimi-code/local.toml`);
     expect(written).toBeDefined();
-    const matches = written?.match(new RegExp(EXTRA_DIR.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'));
+    const matches = written?.match(new RegExp(EXTRA_DIR.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'));
     expect(matches).toHaveLength(1);
   });
 

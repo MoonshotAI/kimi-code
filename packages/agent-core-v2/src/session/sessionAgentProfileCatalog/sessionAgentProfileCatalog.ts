@@ -4,7 +4,8 @@
  *
  * Defines the merged read view over the builtin (code-contribution) profiles
  * and the file-backed sources (user / extra / project / explicit), merged by
- * priority — higher-priority sources win name collisions. Consumers
+ * priority — higher-priority file sources win name collisions, while builtin
+ * names require an explicit override opt-in. Consumers
  * (`IAgentProfileService.bind`, the `Agent` tool, the swarm scheduler) resolve
  * profiles through this view instead of the App-scope catalog so file-defined
  * agents are spawnable and bindable. Bound at Session scope.

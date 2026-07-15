@@ -9,6 +9,9 @@ import {
   projectAgentRoots,
   userAgentRoots,
 } from '#/app/agentFileCatalog/agentRoots';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+
+const hostFs = new HostFileSystem();
 
 describe('agentRoots', () => {
   let root: string;
@@ -30,7 +33,7 @@ describe('agentRoots', () => {
       await markGitRoot();
       await mkdir(join(root, '.kimi-code/agents'), { recursive: true });
 
-      const roots = await projectAgentRoots(root);
+      const roots = await projectAgentRoots(hostFs, root);
 
       expect(
         roots.some((r) => r.path.endsWith('.kimi-code/agents') && r.source === 'project'),
@@ -41,7 +44,7 @@ describe('agentRoots', () => {
       await markGitRoot();
       await mkdir(join(root, '.agents/agents'), { recursive: true });
 
-      const roots = await projectAgentRoots(root);
+      const roots = await projectAgentRoots(hostFs, root);
 
       expect(roots.some((r) => r.path.endsWith('.agents/agents') && r.source === 'project')).toBe(
         true,
@@ -55,7 +58,7 @@ describe('agentRoots', () => {
       const child = join(root, 'src/pkg');
       await mkdir(child, { recursive: true });
 
-      const roots = await projectAgentRoots(child);
+      const roots = await projectAgentRoots(hostFs, child);
 
       expect(roots.some((r) => r.path.endsWith('.kimi-code/agents'))).toBe(true);
     });
@@ -65,7 +68,7 @@ describe('agentRoots', () => {
       await mkdir(join(root, '.kimi-code/agents'), { recursive: true });
       await mkdir(join(root, '.agents/agents'), { recursive: true });
 
-      const roots = await projectAgentRoots(root);
+      const roots = await projectAgentRoots(hostFs, root);
       const brandIdx = roots.findIndex((r) => r.path.endsWith('.kimi-code/agents'));
       const genericIdx = roots.findIndex((r) => r.path.endsWith('.agents/agents'));
 
@@ -78,7 +81,7 @@ describe('agentRoots', () => {
     it('resolves the brand agents directory under homeDir', async () => {
       await mkdir(join(root, 'agents'), { recursive: true });
 
-      const roots = await userAgentRoots(root, root);
+      const roots = await userAgentRoots(hostFs, root, root);
 
       expect(roots.some((r) => r.path.endsWith('/agents') && r.source === 'user')).toBe(true);
     });
@@ -89,7 +92,7 @@ describe('agentRoots', () => {
       await mkdir(homeDir, { recursive: true });
       await mkdir(join(osHomeDir, '.agents/agents'), { recursive: true });
 
-      const roots = await userAgentRoots(homeDir, osHomeDir);
+      const roots = await userAgentRoots(hostFs, homeDir, osHomeDir);
 
       expect(roots.some((r) => r.path.endsWith('.agents/agents') && r.source === 'user')).toBe(
         true,
@@ -108,6 +111,7 @@ describe('agentRoots', () => {
       await mkdir(join(root, 'relative'), { recursive: true });
 
       const roots = await configuredAgentRoots(
+        hostFs,
         ['~', '~/team', absDir, 'relative'],
         root,
         homeDir,

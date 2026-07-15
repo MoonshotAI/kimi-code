@@ -17,7 +17,7 @@
 import { z } from 'zod';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { isUserCancellation } from '#/_base/utils/abort';
+import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -25,11 +25,11 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { resolveActiveToolNames } from '#/agent/profile/toolActive';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import { isAbortError } from '#/_base/utils/abort';
 import {
   ToolAccesses,
   type BuiltinTool,
@@ -454,13 +454,17 @@ function buildProfileDescriptions(
         (part): part is string => part !== undefined && part.length > 0,
       );
       const header = details.length === 0 ? `- ${profile.name}` : `- ${profile.name}: ${details.join(' ')}`;
-      if (profile.tools === undefined) {
+      const activeTools = resolveActiveToolNames(profile);
+      if (activeTools === undefined) {
+        if ((profile.disallowedTools?.length ?? 0) > 0) {
+          return `${header}\n  Tools: all except ${profile.disallowedTools!.join(', ')}`;
+        }
         return `${header}\n  Tools: all`;
       }
-      if (profile.tools.length === 0) {
-        return header;
+      if (activeTools.length === 0) {
+        return `${header}\n  Tools: none`;
       }
-      return `${header}\n  Tools: ${profile.tools.join(', ')}`;
+      return `${header}\n  Tools: ${activeTools.join(', ')}`;
     })
     .join('\n');
 }

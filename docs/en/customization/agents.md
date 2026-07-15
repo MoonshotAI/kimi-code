@@ -61,9 +61,7 @@ The Kimi-specific user agent directory moves with `KIMI_CODE_HOME`, while the ge
 extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
 ```
 
-**Built-in agents** are distributed with the CLI and have the lowest priority. A file loaded through `--agent-file` outranks every directory scope and applies to the current launch only.
-
-Because the default profile is named `agent`, a file that declares `name: agent` overrides the built-in default agent: a project-level `agent.md` effectively re-prompts the main Agent for everyone working in that repository. Choose names deliberately.
+**Built-in agents** are distributed with the CLI and have the lowest priority. A directory-discovered file does not override a same-name built-in Agent unless its frontmatter declares `override: true`. A file loaded through `--agent-file` is treated as explicit launch intent, may override a same-name built-in Agent, outranks every directory scope, and applies to the current launch only.
 
 ### Agent File Format
 
@@ -74,6 +72,7 @@ An agent file is plain Markdown with a frontmatter block:
 name: reviewer
 description: Strict code reviewer that reports severity-ranked findings
 whenToUse: Code reviews and PR checks
+override: false
 mode: replace
 tools:
   - Read
@@ -92,6 +91,7 @@ You are a strict code reviewer. Read the diff, then report findings grouped by s
 | `name` | yes | Unique identifier in kebab-case. Files without a valid `name` are skipped with a warning |
 | `description` | yes | What the agent does. Shown to the main Agent when it picks a sub-agent, so write it to guide delegation decisions |
 | `whenToUse` | no | Extra hint describing when the agent should be used |
+| `override` | no | Whether this file may replace a same-name built-in Agent. Defaults to `false`; `--agent-file` is already explicit and does not require this field |
 | `mode` | no | `replace` (default): the body is the agent's entire system prompt. `append`: the body is added to the default system prompt, keeping workspace instructions and Skill injections in effect |
 | `tools` | no | Allowlist of tool names such as `Read` or `Bash`; MCP tools are matched with globs such as `mcp__github__*`. Omit to allow all tools; an empty list (`tools: []`) disables all tools |
 | `disallowedTools` | no | Denylist with the same matching rules, applied after `tools` |

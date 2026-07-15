@@ -1,11 +1,8 @@
 /**
  * `agentFileCatalog` domain (L3) — user `IAgentProfileSource` producer.
  *
- * Discovers agent files from the bootstrap home directories
- * (`$KIMI_CODE_HOME/agents`, `~/.agents/agents`), contributing them at priority
- * 10 (above builtin code contributions, below extra / project / explicit).
- * Bound at App scope: home paths are process-global. Mirrors
- * `skillCatalog/userFileSkillSource`.
+ * Discovers user agent profiles through `bootstrap` home paths and `hostFs`,
+ * and reports skipped files through `log`. Bound at App scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -13,6 +10,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { ILogService } from '#/_base/log/log';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
 import { discoverAgentFiles } from './agentFileDiscovery';
 import {
@@ -38,13 +36,18 @@ export class UserFileAgentSource implements IUserFileAgentSource {
 
   constructor(
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService private readonly log: ILogService,
   ) {}
 
   async load(): Promise<AgentProfileContribution> {
-    const roots = await userAgentRoots(this.bootstrap.homeDir, this.bootstrap.osHomeDir);
+    const roots = await userAgentRoots(
+      this.fs,
+      this.bootstrap.homeDir,
+      this.bootstrap.osHomeDir,
+    );
     return profilesFromDiscovery(
-      await discoverAgentFiles(roots, (message) => this.log.warn(message)),
+      await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),
     );
   }
 }

@@ -8,6 +8,7 @@ const FULL_FILE = `---
 name: code-reviewer
 description: 严格的代码审查 agent
 whenToUse: 代码评审、PR 检查
+override: true
 mode: append
 tools:
   - Read
@@ -32,6 +33,7 @@ describe('parseAgentFileText', () => {
     expect(def.name).toBe('code-reviewer');
     expect(def.description).toBe('严格的代码审查 agent');
     expect(def.whenToUse).toBe('代码评审、PR 检查');
+    expect(def.override).toBe(true);
     expect(def.mode).toBe('append');
     expect(def.tools).toEqual(['Read', 'Grep', 'mcp__github__*']);
     expect(def.disallowedTools).toEqual(['Bash']);
@@ -43,6 +45,7 @@ describe('parseAgentFileText', () => {
     const def = parse('---\nname: solo\ndescription: d\n---\n\nbody\n');
 
     expect(def.mode).toBe('replace');
+    expect(def.override).toBe(false);
     expect(def.tools).toBeUndefined();
     expect(def.disallowedTools).toBeUndefined();
     expect(def.whenToUse).toBeUndefined();
@@ -90,6 +93,12 @@ describe('parseAgentFileText', () => {
     );
   });
 
+  it('rejects a non-boolean override field', () => {
+    expect(() => parse('---\nname: solo\ndescription: d\noverride: yes\n---\n\nbody\n')).toThrow(
+      /"override"/,
+    );
+  });
+
   it('rejects a non-list tools field', () => {
     expect(() => parse('---\nname: solo\ndescription: d\ntools: Read\n---\n\nbody\n')).toThrow(
       /"tools"/,
@@ -112,6 +121,7 @@ describe('agentProfileFromFile', () => {
     name: 'reviewer',
     description: 'd',
     whenToUse: 'reviews',
+    override: false,
     mode: 'replace',
     prompt: 'PROMPT_BODY',
     path: '/tmp/agents/reviewer.md',
@@ -125,6 +135,7 @@ describe('agentProfileFromFile', () => {
     expect(prompt).toBe('PROMPT_BODY');
     expect(profile.tools).toBeUndefined();
     expect(profile.whenToUse).toBe('reviews');
+    expect(profile.override).toBe(false);
   });
 
   it('append mode injects the body and keeps context injection', () => {
@@ -161,5 +172,11 @@ describe('agentProfileFromFile', () => {
 
     expect(profile.tools).toEqual(['Read']);
     expect(profile.disallowedTools).toEqual(['Bash']);
+  });
+
+  it('treats an explicit file as an override intent', () => {
+    const profile = agentProfileFromFile({ ...base, source: 'explicit' });
+
+    expect(profile.override).toBe(true);
   });
 });

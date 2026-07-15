@@ -58,6 +58,7 @@ export interface AgentProfile {
   readonly name: string;
   readonly description?: string;
   readonly whenToUse?: string;
+  readonly override?: boolean;
   // Allowlist of exact builtin names + mcp__ globs; undefined = every tool active.
   readonly tools?: readonly string[];
   // Denylist with the same matching semantics, applied on top of the allowlist result.

@@ -1,10 +1,8 @@
 /**
  * `hostFs` domain (L1) — local real-filesystem primitives.
  *
- * Defines the `IHostFileSystem` used by the program side (persistence, skill
- * loading, workspace registry) and the os file tools to read and write files on
- * the real local disk, plus the stat/entry models. App-scoped — one shared
- * instance.
+ * Defines the App-scoped local filesystem contract, including canonical path,
+ * metadata, directory, and file operations.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -42,6 +40,7 @@ export interface IHostFileSystem {
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): AsyncGenerator<string>;
   createExclusive(path: string, data: Uint8Array): Promise<boolean>;
+  realpath(path: string): Promise<string>;
   stat(path: string): Promise<HostFileStat>;
   readdir(path: string): Promise<readonly HostDirEntry[]>;
   mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void>;

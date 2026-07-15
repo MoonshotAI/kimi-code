@@ -416,6 +416,7 @@ function isFullHostFs(input: unknown): boolean {
     'writeBytes',
     'readLines',
     'createExclusive',
+    'realpath',
     'stat',
     'readdir',
     'mkdir',

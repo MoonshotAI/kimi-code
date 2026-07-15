@@ -6,6 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { discoverAgentFiles } from '#/app/agentFileCatalog/agentFileDiscovery';
 import type { AgentFileRoot } from '#/app/agentFileCatalog/types';
+import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+
+const hostFs = new HostFileSystem();
 
 function agentMd(name: string): string {
   return `---\nname: ${name}\ndescription: ${name} agent\n---\n\n${name} prompt\n`;
@@ -31,7 +34,7 @@ describe('discoverAgentFiles', () => {
     await mkdir(join(root, 'team'), { recursive: true });
     await writeFile(join(root, 'team/reviewer.md'), agentMd('reviewer'));
 
-    const result = await discoverAgentFiles([fileRoot(root)]);
+    const result = await discoverAgentFiles(hostFs, [fileRoot(root)]);
 
     expect(result.agents.map((a) => a.name)).toEqual(['reviewer', 'solo']);
     expect(result.skipped).toEqual([]);
@@ -46,7 +49,7 @@ describe('discoverAgentFiles', () => {
     await writeFile(join(root, '.dotfile.md'), agentMd('dotfile'));
     await writeFile(join(root, 'solo.md'), agentMd('solo'));
 
-    const result = await discoverAgentFiles([fileRoot(root)]);
+    const result = await discoverAgentFiles(hostFs, [fileRoot(root)]);
 
     expect(result.agents.map((a) => a.name)).toEqual(['solo']);
   });
@@ -56,7 +59,7 @@ describe('discoverAgentFiles', () => {
     await writeFile(join(root, 'bad.md'), 'not an agent file');
 
     const warnings: string[] = [];
-    const result = await discoverAgentFiles([fileRoot(root)], (message) =>
+    const result = await discoverAgentFiles(hostFs, [fileRoot(root)], (message) =>
       warnings.push(message),
     );
 
@@ -76,7 +79,10 @@ describe('discoverAgentFiles', () => {
         '---\nname: reviewer\ndescription: other reviewer\n---\n\nother prompt\n',
       );
 
-      const result = await discoverAgentFiles([fileRoot(root, 'user'), fileRoot(other, 'project')]);
+      const result = await discoverAgentFiles(hostFs, [
+        fileRoot(root, 'user'),
+        fileRoot(other, 'project'),
+      ]);
 
       expect(result.agents).toHaveLength(1);
       expect(result.agents[0]?.description).toBe('reviewer agent');
@@ -89,7 +95,7 @@ describe('discoverAgentFiles', () => {
   it('ignores non-markdown files', async () => {
     await writeFile(join(root, 'notes.txt'), agentMd('notes'));
 
-    const result = await discoverAgentFiles([fileRoot(root)]);
+    const result = await discoverAgentFiles(hostFs, [fileRoot(root)]);
 
     expect(result.agents).toEqual([]);
   });

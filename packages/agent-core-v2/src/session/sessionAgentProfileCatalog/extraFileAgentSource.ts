@@ -2,12 +2,9 @@
  * `sessionAgentProfileCatalog` domain (L3) — extra `IAgentProfileSource`
  * producer.
  *
- * Discovers agent files from the user-configured extra directories
- * (`extraAgentDirs` config), contributing them at priority 20 (above user /
- * builtin, below project / explicit). Relative paths resolve against the
- * session project root; `~` resolves against the OS home dir. Reloads when the
- * config section changes. Bound at Session scope so each session resolves
- * against its own workDir. Mirrors `sessionSkillCatalog/extraFileSkillSource`.
+ * Discovers configured agent profiles through `config`, `workspace`,
+ * `bootstrap`, and `hostFs`, and reports skipped files through `log`. Bound at
+ * Session scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -30,6 +27,7 @@ import {
 } from '#/app/agentFileCatalog/configSection';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 export interface IExtraFileAgentSource extends IAgentProfileSource {
@@ -51,6 +49,7 @@ export class ExtraFileAgentSource extends Disposable implements IExtraFileAgentS
     @IConfigService private readonly config: IConfigService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService private readonly log: ILogService,
   ) {
     super();
@@ -66,7 +65,9 @@ export class ExtraFileAgentSource extends Disposable implements IExtraFileAgentS
     const dirs = this.config.get<ExtraAgentDirsConfig>(EXTRA_AGENT_DIRS_SECTION) ?? [];
     return profilesFromDiscovery(
       await discoverAgentFiles(
+        this.fs,
         await configuredAgentRoots(
+          this.fs,
           dirs,
           this.workspace.workDir,
           this.bootstrap.osHomeDir,

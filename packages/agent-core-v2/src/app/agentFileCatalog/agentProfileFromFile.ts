@@ -5,7 +5,8 @@
  * prompt — no agentsMd / skills context injection, the user owns the whole
  * prompt. `mode: append` profiles reuse the builtin render pipeline and inject
  * the body into the shared template's `ROLE_ADDITIONAL` slot, keeping the
- * context injection intact. `tools` passes through as the allowlist
+ * context injection intact. Explicit files are marked as builtin overrides;
+ * directory files must opt in through frontmatter. `tools` passes through as the allowlist
  * (`undefined` = every tool active); `disallowedTools` passes through as the
  * denylist evaluated by `IAgentProfileService.isToolActive`.
  */
@@ -28,6 +29,7 @@ export function agentProfileFromFile(definition: AgentFileDefinition): AgentProf
     name: definition.name,
     description: definition.description,
     whenToUse: definition.whenToUse,
+    override: definition.override || definition.source === 'explicit',
     tools: definition.tools,
     disallowedTools: definition.disallowedTools,
     systemPrompt:

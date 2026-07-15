@@ -73,6 +73,7 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     );
   }
 
+  const override = parseBoolean(frontmatter['override'], 'override', options.path);
   const mode = parseMode(frontmatter['mode'], options.path);
   const tools = parseStringList(frontmatter['tools'], 'tools', options.path);
   const disallowedTools = parseStringList(
@@ -90,6 +91,7 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     name,
     description,
     whenToUse: nonEmptyString(frontmatter['whenToUse']),
+    override,
     mode,
     tools,
     disallowedTools,
@@ -97,6 +99,14 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     path: options.path,
     source: options.source,
   };
+}
+
+function parseBoolean(value: unknown, field: string, filePath: string): boolean {
+  if (value === undefined || value === null) return false;
+  if (typeof value === 'boolean') return value;
+  throw new AgentFileParseError(
+    `Frontmatter field "${field}" in ${filePath} must be a boolean`,
+  );
 }
 
 function parseMode(value: unknown, filePath: string): AgentPromptMode {

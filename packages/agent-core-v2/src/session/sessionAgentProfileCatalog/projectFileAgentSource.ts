@@ -2,11 +2,8 @@
  * `sessionAgentProfileCatalog` domain (L3) — project `IAgentProfileSource`
  * producer.
  *
- * Discovers agent files from the session's current `workDir`
- * (`.kimi-code/agents`, `.agents/agents`, walking up to `.git`), contributing
- * them at priority 30 (above user / extra / builtin, below explicit). Bound at
- * Session scope so each session reads its own workspace root. Mirrors
- * `sessionSkillCatalog/workspaceFileSkillSource`.
+ * Discovers project agent profiles through `workspace` and `hostFs`, and
+ * reports skipped files through `log`. Bound at Session scope.
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -21,6 +18,7 @@ import {
   type IAgentProfileSource,
 } from '#/app/agentFileCatalog/agentProfileSource';
 import { projectAgentRoots } from '#/app/agentFileCatalog/agentRoots';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 export interface IProjectFileAgentSource extends IAgentProfileSource {
@@ -38,13 +36,14 @@ export class ProjectFileAgentSource implements IProjectFileAgentSource {
 
   constructor(
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
     @ILogService private readonly log: ILogService,
   ) {}
 
   async load(): Promise<AgentProfileContribution> {
-    const roots = await projectAgentRoots(this.workspace.workDir);
+    const roots = await projectAgentRoots(this.fs, this.workspace.workDir);
     return profilesFromDiscovery(
-      await discoverAgentFiles(roots, (message) => this.log.warn(message)),
+      await discoverAgentFiles(this.fs, roots, (message) => this.log.warn(message)),
     );
   }
 }

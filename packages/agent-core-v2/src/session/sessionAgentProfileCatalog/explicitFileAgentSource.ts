@@ -2,17 +2,11 @@
  * `sessionAgentProfileCatalog` domain (L3) — explicit `IAgentProfileSource`
  * producer.
  *
- * Loads the individual agent Markdown files named by runtime options
- * (`--agent-file`), contributing them at priority 40 — the highest source, so
- * an explicitly named file always wins name collisions. Unlike directory
- * sources (which skip invalid files with a warning), a missing or invalid
- * explicit file is fatal: the user named it on the command line, so silently
- * dropping it would mask intent. Bound at Session scope so relative paths
- * resolve against the session workDir.
+ * Loads runtime-selected agent files through `hostFs`, resolving paths through
+ * `workspace` and `bootstrap`. Bound at Session scope.
  */
 
-import { promises as fs } from 'node:fs';
-import path from 'pathe';
+import { isAbsolute, join, resolve } from 'pathe';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { InstantiationType } from '#/_base/di/extensions';
@@ -27,6 +21,7 @@ import {
   type IAgentProfileSource,
 } from '#/app/agentFileCatalog/agentProfileSource';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
+import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 
 export interface IExplicitFileAgentSource extends IAgentProfileSource {
@@ -47,6 +42,7 @@ export class ExplicitFileAgentSource implements IExplicitFileAgentSource {
     @IAgentCatalogRuntimeOptions private readonly runtimeOptions: IAgentCatalogRuntimeOptions,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IBootstrapService private readonly bootstrap: IBootstrapService,
+    @IHostFileSystem private readonly fs: IHostFileSystem,
   ) {}
 
   async load(): Promise<AgentProfileContribution> {
@@ -54,7 +50,7 @@ export class ExplicitFileAgentSource implements IExplicitFileAgentSource {
     const profiles: AgentProfile[] = [];
     for (const file of files) {
       const filePath = resolveExplicitFile(file, this.workspace.workDir, this.bootstrap.osHomeDir);
-      const text = await fs.readFile(filePath, 'utf8');
+      const text = await this.fs.readText(filePath);
       profiles.push(
         agentProfileFromFile(parseAgentFileText({ path: filePath, source: 'explicit', text })),
       );
@@ -65,9 +61,9 @@ export class ExplicitFileAgentSource implements IExplicitFileAgentSource {
 
 export function resolveExplicitFile(file: string, workDir: string, osHomeDir: string): string {
   if (file === '~') return osHomeDir;
-  if (file.startsWith('~/')) return path.join(osHomeDir, file.slice(2));
-  if (path.isAbsolute(file)) return file;
-  return path.resolve(workDir, file);
+  if (file.startsWith('~/')) return join(osHomeDir, file.slice(2));
+  if (isAbsolute(file)) return file;
+  return resolve(workDir, file);
 }
 
 registerScopedService(

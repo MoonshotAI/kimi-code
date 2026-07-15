@@ -3,7 +3,8 @@
  * implementation.
  *
  * Merges the builtin (code-contribution) App catalog with the file-backed
- * sources (user / extra / project / explicit) by priority, serializing
+ * sources (user / extra / project / explicit) by priority, requiring an
+ * explicit opt-in before a file replaces a same-name builtin, and serializing
  * refreshes per source the same way `sessionSkillCatalog` does. The merged
  * view always contains the builtin profiles (seeded at construction); file
  * profiles appear once `ready` resolves. A rejecting `fatal` source (an
@@ -174,12 +175,21 @@ export class SessionAgentProfileCatalogService
 
   private remerge(): void {
     const m = new Map<string, AgentProfile>();
-    for (const profile of this.builtin.list()) m.set(profile.name, profile);
+    for (const profile of this.builtin.list()) {
+      m.set(profile.name, profile);
+    }
+    const fileProfiles = new Map<string, AgentProfile>();
     const ordered = [...this.contributions.values()].toSorted(
       (a, b) => a.priority - b.priority,
     );
     for (const { c } of ordered) {
-      for (const profile of c.profiles) m.set(profile.name, profile);
+      for (const profile of c.profiles) {
+        fileProfiles.set(profile.name, profile);
+      }
+    }
+    for (const profile of fileProfiles.values()) {
+      if (m.has(profile.name) && profile.override !== true) continue;
+      m.set(profile.name, profile);
     }
     this.merged = m;
   }

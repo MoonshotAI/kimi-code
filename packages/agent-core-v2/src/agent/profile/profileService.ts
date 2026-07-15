@@ -37,8 +37,6 @@ import {
   normalizeRequestedThinkingEffort,
   resolveKimiThinkingEffortOverride,
 } from '#/app/model/thinking';
-import picomatch from 'picomatch';
-
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -47,7 +45,7 @@ import type { LoopControl } from '#/agent/loop/configSection';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { isMcpToolName, type ToolSource } from '#/tool/toolContract';
+import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -74,6 +72,7 @@ import {
   THINKING_SECTION,
   type ThinkingConfig,
 } from './configSection';
+import { isToolActive as evaluateToolActive } from './toolActive';
 import {
   ActiveToolsModel,
   configUpdate,
@@ -392,22 +391,14 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   isToolActive(name: string, source: ToolSource = 'builtin'): boolean {
-    const activeToolNames = this.activeToolNames;
-    if (activeToolNames !== undefined) {
-      const allowed =
-        source !== 'mcp'
-          ? activeToolNames.includes(name)
-          : activeToolNames
-              .filter((pattern) => isMcpToolName(pattern))
-              .some((pattern) => picomatch.isMatch(name, pattern));
-      if (!allowed) return false;
-    }
-    const disallowed = this.profileState.disallowedTools;
-    if (disallowed === undefined) return true;
-    if (source !== 'mcp') return !disallowed.includes(name);
-    return !disallowed
-      .filter((pattern) => isMcpToolName(pattern))
-      .some((pattern) => picomatch.isMatch(name, pattern));
+    return evaluateToolActive(
+      {
+        tools: this.activeToolNames,
+        disallowedTools: this.profileState.disallowedTools,
+      },
+      name,
+      source,
+    );
   }
 
   addActiveTool(name: string): void {

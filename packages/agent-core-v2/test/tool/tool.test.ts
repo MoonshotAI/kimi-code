@@ -44,9 +44,11 @@ import {
   type RunAgentOptions,
 } from '#/session/subagent/subagent';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
+import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import type {
   ISessionSwarmService,
   SessionSwarmRunArgs,
@@ -464,6 +466,40 @@ describe('Agent tool description', () => {
 
     expect(description).toContain('Tools: Bash, Read, ReadMediaFile, Glob, Grep, WebSearch, FetchURL');
     expect(description).toContain('Tools: Agent, AgentSwarm, Bash');
+  });
+
+  it('renders effective tools after applying disallowedTools', () => {
+    const restricted: AgentProfile = {
+      name: 'restricted',
+      description: 'Restricted agent',
+      tools: ['Bash', 'Read', 'mcp__github__*'],
+      disallowedTools: ['Bash', 'mcp__github__*'],
+      systemPrompt: () => 'restricted',
+    };
+    const allowAllExcept: AgentProfile = {
+      name: 'allow-all-except',
+      description: 'Allow all except one',
+      disallowedTools: ['Bash'],
+      systemPrompt: () => 'allow all except',
+    };
+    const profiles = [restricted, allowAllExcept];
+    const catalog: ISessionAgentProfileCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      onDidChange: Event.None as ISessionAgentProfileCatalog['onDidChange'],
+      get: (name) => profiles.find((profile) => profile.name === name),
+      getDefault: () => restricted,
+      list: () => profiles,
+      load: async () => {},
+      reload: async () => {},
+    };
+    ctx = createTestAgent(sessionService(ISessionAgentProfileCatalog, catalog));
+
+    const description = agentDescription();
+
+    expect(description).toContain('- restricted: Restricted agent\n  Tools: Read');
+    expect(description).toContain('- allow-all-except: Allow all except one\n  Tools: all except Bash');
+    expect(description).not.toContain('Tools: Bash, Read, mcp__github__*');
   });
 
   it('mentions resume preference and result visibility', () => {

@@ -85,8 +85,9 @@ function workspaceStub(workDir: string): ISessionWorkspaceContext {
   };
 }
 
-function agentMd(name: string, description: string): string {
-  return `---\nname: ${name}\ndescription: ${description}\n---\n\nYou are ${name}.\n`;
+function agentMd(name: string, description: string, override = false): string {
+  const overrideLine = override ? 'override: true\n' : '';
+  return `---\nname: ${name}\ndescription: ${description}\n${overrideLine}---\n\nYou are ${name}.\n`;
 }
 
 interface Fixture {
@@ -264,7 +265,7 @@ describe('SessionAgentProfileCatalogService', () => {
       });
       const catalog = session.accessor.get(ISessionAgentProfileCatalog);
 
-      await expect(catalog.load()).rejects.toThrow(/missing\.md|ENOENT/i);
+      await expect(catalog.load()).rejects.toMatchObject({ code: 'os.fs.not_found' });
       host.dispose();
     });
   });
@@ -340,7 +341,7 @@ describe('SessionAgentProfileCatalogService', () => {
     });
   });
 
-  it('lets a file profile named "agent" override the builtin default', async () => {
+  it('keeps the builtin default when a same-name file does not opt in to override', async () => {
     await withFixture(async (fixture) => {
       await writeAgent(
         join(fixture.workDir, '.kimi-code', 'agents'),
@@ -351,7 +352,45 @@ describe('SessionAgentProfileCatalogService', () => {
       const catalog = session.accessor.get(ISessionAgentProfileCatalog);
       await catalog.load();
 
+      expect(catalog.getDefault().description).not.toBe('project default override');
+      host.dispose();
+    });
+  });
+
+  it('lets a file profile explicitly override the builtin default', async () => {
+    await withFixture(async (fixture) => {
+      await writeAgent(
+        join(fixture.workDir, '.kimi-code', 'agents'),
+        'agent.md',
+        agentMd('agent', 'project default override', true),
+      );
+      const { host, session } = makeSession(fixture);
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+
       expect(catalog.getDefault().description).toBe('project default override');
+      host.dispose();
+    });
+  });
+
+  it('gates the highest-priority same-name file against the builtin default', async () => {
+    await withFixture(async (fixture) => {
+      await writeAgent(
+        join(fixture.homeDir, 'agents'),
+        'agent.md',
+        agentMd('agent', 'user default override', true),
+      );
+      await writeAgent(
+        join(fixture.workDir, '.kimi-code', 'agents'),
+        'agent.md',
+        agentMd('agent', 'project default without override'),
+      );
+      const { host, session } = makeSession(fixture);
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+
+      expect(catalog.getDefault().description).not.toBe('user default override');
+      expect(catalog.getDefault().description).not.toBe('project default without override');
       host.dispose();
     });
   });
