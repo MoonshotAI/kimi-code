@@ -509,8 +509,14 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
           const fc = (p['functionCall'] ?? p['function_call']) as Record<string, unknown>;
           const name = fc['name'] as string;
           if (!name) continue;
+          // The upstream function-call id is only unique within its own
+          // response (some backends re-issue small ids like "0" every turn),
+          // so `${name}_${id}` collided across turns — two AgentSwarm calls in
+          // different turns both became `AgentSwarm_0` and the web client
+          // merged their member lists into one card. Append entropy so ids
+          // stay unique across the whole session.
           const id_ = (fc['id'] as string) ?? crypto.randomUUID();
-          const toolCallId = `${name}_${id_}`;
+          const toolCallId = `${name}_${id_}_${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}`;
           const thoughtSigB64 = p['thoughtSignature'] ?? p['thought_signature'];
           const toolCall: ToolCall = {
             type: 'function',

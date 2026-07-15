@@ -1224,7 +1224,7 @@ describe('GoogleGenAIChatProvider', () => {
       expect(parts).toEqual([
         {
           type: 'function',
-          id: 'add_call_1',
+          id: expect.stringMatching(/^add_call_1_[0-9a-f]{8}$/),
           name: 'add', arguments: '{"a":2,"b":3}',
         },
       ]);
@@ -1254,7 +1254,7 @@ describe('GoogleGenAIChatProvider', () => {
       expect(parts).toEqual([
         {
           type: 'function',
-          id: 'search_fc_1',
+          id: expect.stringMatching(/^search_fc_1_[0-9a-f]{8}$/),
           name: 'search', arguments: '{"q":"test"}',
           extras: { thought_signature_b64: 'sig_abc123' },
         },
