@@ -22,6 +22,17 @@ export type AgentTelemetryContext = {
   /**
    * Trace id of the most recent LLM request in this agent (Kimi `x-trace-id`
    * response header); cleared at turn start and on requests without one.
+   *
+   * Ambient distribution assumes LLM requests are serialized within one
+   * agent — true by default (turns are mutually exclusive and compaction
+   * blocks the turn). Two supported paths break that assumption: after-step
+   * (non-blocking) compaction when `loopControl.compactionTriggerRatio` is
+   * set below the block ratio, and turns launched through inject paths
+   * (cron/shell inject, task/externalHooks/continuation enqueue) while a
+   * manual compaction is running. During such overlaps this value is
+   * last-writer-wins, so events reading it may attribute to the concurrent
+   * request; per-request channels (`api_error`'s requestTraceId,
+   * `compaction_finished`'s attempt trace) are unaffected.
    */
   trace_id?: string;
 };

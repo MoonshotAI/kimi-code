@@ -139,6 +139,19 @@ export class TurnFlow {
    * them.
    */
   private readonly traceIdByTurn = new Map<number, string>();
+  /**
+   * Trace id of the turn's in-flight request whose response headers have
+   * arrived. Unlike traceIdByTurn (the turn's latest request), this is
+   * cleared at step begin and step end, so it only ever names the current
+   * step's request: api_error can then attribute a post-headers failure
+   * (mid-stream decode error, empty response — the error itself carries no
+   * trace) to the request that actually failed, while a failure before any
+   * response headers (network error, local abort) still reports no trace
+   * rather than a previous request's. After exhausted retries it may name
+   * an earlier attempt of the same step — still a request that genuinely
+   * failed in this step.
+   */
+  private readonly requestTraceIdByTurn = new Map<number, string>();
   private currentStep = 0;
 
   constructor(protected readonly agent: Agent) {}
@@ -609,11 +622,16 @@ export class TurnFlow {
           if (inputTokens !== undefined) {
             properties['input_tokens'] = inputTokens;
           }
-          // The failed request's own trace id, from its error response
-          // headers. Network errors and local aborts carry no response, so
-          // the property stays absent for those.
-          const traceId = error instanceof APIStatusError ? error.traceId : null;
-          if (traceId !== null) {
+          // The failed request's own trace id: from the error response
+          // headers when it is a status error; otherwise from the in-flight
+          // capture — a failure after response headers arrived (mid-stream
+          // decode error, empty response) carries no trace on the error
+          // itself, but the request's headers were captured. Failures before
+          // any response (network errors, local aborts) leave the per-step
+          // capture empty, so those still report no trace.
+          const errorTraceId = error instanceof APIStatusError ? error.traceId : null;
+          const traceId = errorTraceId ?? this.requestTraceIdByTurn.get(turnId);
+          if (traceId !== undefined) {
             properties['trace_id'] = traceId;
           }
           this.agent.telemetry.track('api_error', properties);
@@ -691,6 +709,7 @@ export class TurnFlow {
     this.interruptedTelemetryTurnIds.delete(turnId);
     this.stepFailureByTurn.delete(turnId);
     this.traceIdByTurn.delete(turnId);
+    this.requestTraceIdByTurn.delete(turnId);
     return { event: ended, stopReason: completedStopReason, blockedByUserPromptHook };
   }
 
@@ -805,7 +824,10 @@ export class TurnFlow {
           // in-flight request's trace id is available even if the stream is
           // cancelled mid-flight. step.end makes the final write.
           onTraceId: (traceId) => {
-            if (traceId !== null) this.traceIdByTurn.set(turnId, traceId);
+            if (traceId !== null) {
+              this.traceIdByTurn.set(turnId, traceId);
+              this.requestTraceIdByTurn.set(turnId, traceId);
+            }
           },
           hooks: {
             beforeStep: async ({ signal: stepSignal }) => {
@@ -1056,6 +1078,9 @@ export class TurnFlow {
       // Final write: the completed step's last attempt wins over any earlier
       // mid-stream capture (e.g. from a retried attempt).
       if (event.traceId !== undefined) this.traceIdByTurn.set(turnId, event.traceId);
+      // The step completed, so its request is no longer in flight: a later
+      // inter-step failure (e.g. a beforeStep hook) must not attribute to it.
+      this.requestTraceIdByTurn.delete(turnId);
       return;
     }
     if (event.type === 'turn.interrupted') {
@@ -1075,6 +1100,10 @@ export class TurnFlow {
   private beginTrackedStep(turnId: number, step: number): void {
     this.currentStepByTurn.set(turnId, step);
     this.currentStep = step;
+    // A new step's first request has no response headers yet: drop any stale
+    // in-flight capture so api_error cannot attribute a pre-headers failure
+    // to an earlier request.
+    this.requestTraceIdByTurn.delete(turnId);
     if (!this.stepToolCallKeys.has(step)) {
       this.stepToolCallKeys.set(step, new Set());
     }

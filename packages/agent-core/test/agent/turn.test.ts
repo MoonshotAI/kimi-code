@@ -2144,6 +2144,78 @@ describe('Agent turn flow', () => {
     expect(record?.properties?.['trace_id']).toBeUndefined();
   });
 
+  it('attributes api_error to the in-flight request trace on post-headers failures', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, _callbacks, options) => {
+      // Mirror kosong generate(): the trace id callback fires as soon as the
+      // response headers arrive, before the stream body is drained — so a
+      // mid-stream failure has a captured trace but none on the error itself.
+      options?.onTraceId?.('trace-mid-stream');
+      throw new APIEmptyResponseError('empty response');
+    };
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'trigger provider error' }] });
+    await ctx.untilTurnEnd();
+
+    const record = records.find((candidate) => candidate.event === 'api_error');
+    expect(record?.properties?.['trace_id']).toBe('trace-mid-stream');
+  });
+
+  it('omits trace_id from api_error when a later step fails before response headers', async () => {
+    const records: TelemetryRecord[] = [];
+    let calls = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, _callbacks, options) => {
+      calls += 1;
+      if (calls === 1) {
+        options?.onTraceId?.('trace-step-1');
+        return {
+          id: 'mock-step-1',
+          message: {
+            role: 'assistant' as const,
+            content: [{ type: 'text' as const, text: 'running' }],
+            toolCalls: [
+              {
+                type: 'function' as const,
+                id: 'call_traced',
+                name: 'Bash',
+                arguments: '{"command":"printf traced"}',
+              },
+            ],
+          },
+          usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+          finishReason: 'tool_calls' as const,
+          rawFinishReason: 'tool_calls',
+          traceId: 'trace-step-1',
+        };
+      }
+      // Step 2's request fails before any response headers arrive: neither
+      // the error nor the in-flight capture has a trace, and step 1's trace
+      // must not leak into api_error.
+      throw new APIConnectionError('socket hang up');
+    };
+    const ctx = testAgent({
+      generate,
+      kaos: createCommandKaos('traced'),
+      ...singleAttemptAgentOptions(),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run' }] });
+    await ctx.untilTurnEnd();
+
+    const record = records.find((candidate) => candidate.event === 'api_error');
+    expect(record).toBeDefined();
+    expect(record?.properties?.['trace_id']).toBeUndefined();
+  });
+
   it('attributes turn-level telemetry to the failed request trace on error turns', async () => {
     const records: TelemetryRecord[] = [];
     let calls = 0;
