@@ -15,7 +15,7 @@ import { WebSocketServer } from 'ws';
 
 import type { CredentialValidator } from '../../services/auth/credentials';
 import { type IConnectionRegistry } from './connectionRegistry';
-import { WsConnection } from './wsConnection';
+import { WsConnection, type WsConnectionLogger } from './wsConnection';
 import { selectWsBearerProtocol } from './bearerProtocol';
 
 export interface RegisterWsOptions {
@@ -24,6 +24,8 @@ export interface RegisterWsOptions {
   readonly callTimeoutMs?: number;
   /** Registry that tracks live connections; populated by this module. */
   readonly registry: IConnectionRegistry;
+  /** Per-connection logger forwarded to {@link WsConnection}. */
+  readonly logger?: WsConnectionLogger;
 }
 
 export const WS_PATH = '/api/v2/ws';
@@ -40,6 +42,7 @@ export function registerWs(core: Scope, opts: RegisterWsOptions): WebSocketServe
       callTimeoutMs: opts.callTimeoutMs,
       remoteAddress: req.socket.remoteAddress ?? null,
       userAgent: req.headers['user-agent'] ?? null,
+      logger: opts.logger,
     });
     registry.add(conn);
     socket.on('close', () => registry.remove(conn.id));

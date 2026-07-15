@@ -1,6 +1,6 @@
 /**
  * `contextMemory` test stubs — shared doubles for `IAgentContextMemoryService` and its
- * collaborator (`IAgentWireRecordService`).
+ * collaborator (`IWireService`).
  *
  * Lives under `test/` (not `src/`) so test-support code stays out of the
  * production tree. Import from a relative path (`./stubs` or
@@ -19,17 +19,9 @@ import type { LoopRecordedEvent } from '#/agent/contextMemory/loopEventFold';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
+import { IWireService } from '#/wire/wire';
 
-export function stubWireRecord(): IAgentWireRecordService {
-  return {
-    _serviceBrand: undefined,
-    restore: () => Promise.resolve({}),
-    flush: () => Promise.resolve(),
-    close: () => Promise.resolve(),
-    getRecords: () => [],
-  };
-}
+import { stubAgentWire } from '../../wire/stubs';
 
 export interface StubContextMemory extends IAgentContextMemoryService {
   readonly messages: readonly ContextMessage[];
@@ -123,7 +115,7 @@ class StubContextMemoryService implements IAgentContextMemoryService {
 }
 
 export function registerContextMemoryServices(reg: ServiceRegistration): void {
-  reg.defineInstance(IAgentWireRecordService, stubWireRecord());
+  reg.defineInstance(IWireService, stubAgentWire());
   reg.define(IEventBus, EventBusService);
   reg.define(IAgentContextMemoryService, StubContextMemoryService);
 }

@@ -19,4 +19,6 @@ export default {
   closeBtn: 'Close',
   errorTitle: 'The current daemon does not support login yet',
   errorHint: 'Please upgrade kimi-code and try again',
+  pollErrorTitle: 'Lost connection to the daemon',
+  pollErrorHint: 'Authorization polling failed repeatedly. Check the kimi-code process and try again.',
 } as const;

@@ -29,11 +29,10 @@
  * cast happens once inside `WireService`.
  *
  * A primary Model may register cross-model reducers keyed by foreign op types:
- * `WireService.execute` runs them on both dispatch and replay, so v1-derived
+ * `WireService` runs them on both dispatch and restore, so v1-derived
  * restore effects can stay replayable without persisting extra records.
- *
  * `DeepReadonly<T>` recursively maps a state type to its deeply-readonly view
- * for the references returned by `getModel` / `subscribe`: functions pass
+ * for the references returned by `getModel`: functions pass
  * through, `Map` / `Set` widen to `ReadonlyMap` / `ReadonlySet`, arrays and
  * tuples widen to `ReadonlyArray`, plain objects become a readonly mapped type,
  * and primitives are unchanged. It pairs with the runtime `Object.freeze`
@@ -42,12 +41,12 @@
 
 import { bindDefineOp, type DefineOpFn } from '#/wire/op';
 import type { ModelReducers } from '#/wire/types';
-import type { PersistedRecord } from '#/wire/wireService';
+import type { WireRecord } from '#/wire/record';
 
 export type PartsTransformer = (parts: readonly unknown[]) => Promise<readonly unknown[]>;
 
 export interface ModelBlobCodec<S> {
-  dehydrate(record: PersistedRecord, transform: PartsTransformer): PersistedRecord | Promise<PersistedRecord>;
+  dehydrate(record: WireRecord, transform: PartsTransformer): WireRecord | Promise<WireRecord>;
   rehydrate(state: S, transform: PartsTransformer): S | Promise<S>;
 }
 
@@ -93,22 +92,6 @@ export function defineModel<S>(
     }
   }
   return def;
-}
-
-export interface DerivedModelDef<S> {
-  readonly name: string;
-  readonly initial: () => S;
-  readonly reducers: Readonly<ModelReducers<S>>;
-  readonly blobs?: ModelBlobCodec<S>;
-}
-
-export function defineDerivedModel<S>(
-  name: string,
-  initial: () => S,
-  reducers: ModelReducers<S>,
-  opts?: { blobs?: ModelBlobCodec<S> },
-): DerivedModelDef<S> {
-  return { name, initial, reducers, blobs: opts?.blobs };
 }
 
 export type DeepReadonly<T> = T extends (...args: infer A) => infer R

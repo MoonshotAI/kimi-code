@@ -48,6 +48,7 @@ import {
 } from '../session/provider-manager';
 import { SessionAPIImpl } from '../session/rpc';
 import { normalizeWorkDir, SessionStore } from '../session/store/index';
+import { touchWorkspaceRegistry } from '../session/store/workspace-registry-file';
 import {
   noopTelemetryClient,
   withTelemetryContext,
@@ -267,6 +268,12 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     const summary = await this.sessionStore.create({
       id,
       workDir,
+    });
+    // Register the cwd in the shared workspaces catalog (`<homeDir>/workspaces.json`,
+    // also read by the agent-core-v2 server) so TUI-created sessions surface as
+    // workspaces. Best-effort: the catalog is a hint, never session state.
+    await touchWorkspaceRegistry(this.homeDir, workDir).catch((error: unknown) => {
+      log.warn('workspace registry touch failed', { workDir, error: String(error) });
     });
     const result: SessionSummary = {
       ...summary,

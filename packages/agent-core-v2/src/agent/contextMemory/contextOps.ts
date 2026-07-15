@@ -36,7 +36,7 @@ import { z } from 'zod';
 
 import type { ContentPart } from '#/app/llmProtocol/message';
 import { defineModel, type PartsTransformer } from '#/wire/model';
-import type { PersistedRecord } from '#/wire/wireService';
+import type { WireRecord } from '#/wire/record';
 
 import {
   buildContextCompactionShape,
@@ -70,9 +70,9 @@ async function dehydrateMessages(
 }
 
 async function dehydrateRecord(
-  record: PersistedRecord,
+  record: WireRecord,
   transform: PartsTransformer,
-): Promise<PersistedRecord> {
+): Promise<WireRecord> {
   if (record.type === 'context.append_message') {
     const message = record['message'] as ContextMessage | undefined;
     if (message === undefined) return record;

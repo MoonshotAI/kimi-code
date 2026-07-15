@@ -696,10 +696,12 @@ async function refreshSessionGoal(sessionId: string): Promise<void> {
  *  session and immediately persisting its draft modes, so a concurrent session
  *  switch can't write the patch to the wrong session.
  *
- *  Returns the update promise (errors swallowed — the UI already updated
- *  optimistically). Most callers fire-and-forget via `void persistSessionProfile(...)`;
- *  call sites that must order strictly after the profile (e.g. a skill
- *  activation that can't carry its own modes) await it. */
+ *  Returns the update promise. Failures are surfaced via pushOperationFailure
+ *  (the UI already updated optimistically, so the user must be told when the
+ *  daemon did not apply the change); the promise itself never rejects. Most
+ *  callers fire-and-forget via `void persistSessionProfile(...)`; call sites
+ *  that must order strictly after the profile (e.g. a skill activation that
+ *  can't carry its own modes) await it. */
 function persistSessionProfile(patch: {
   model?: string;
   permissionMode?: string;
@@ -714,8 +716,10 @@ function persistSessionProfile(patch: {
   // Promise.resolve wrap: tolerate a sync/undefined return (e.g. test mocks).
   return Promise.resolve(getKimiWebApi().updateSession(sid, patch))
     .then(() => refreshSessionStatus(sid))
-    .catch(() => {
-      /* ignore — local state already reflects the change */
+    .catch((err) => {
+      // Local state already reflects the change; tell the user (and the log)
+      // that the daemon did not persist it.
+      pushOperationFailure('persistSessionProfile', err, { sessionId: sid });
     });
 }
 
@@ -1228,6 +1232,21 @@ function pushOperationFailure(
   err: unknown,
   opts?: { title?: string; message?: string; sessionId?: string },
 ): void {
+  // Always-on logging: a surfaced failure must be diagnosable from the console
+  // and from the exported web log (session export), not just from the toast.
+  console.error(`[kimi-web] operation failed: ${operation}`, err);
+  const api = isDaemonApiError(err);
+  const network = isDaemonNetworkError(err);
+  traceKeyEvent('operation:failed', {
+    sessionId: opts?.sessionId,
+    status: 'failed',
+    operation,
+    errorName: err instanceof Error ? err.name : typeof err,
+    errorCode: api ? err.code : undefined,
+    requestId: api || network ? err.requestId : undefined,
+    phase: network ? err.phase : undefined,
+    httpStatus: network ? err.status : undefined,
+  });
   pushWarning(operationFailureNotice(operation, err, opts));
 }
 

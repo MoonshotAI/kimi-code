@@ -9,10 +9,10 @@
  * session-level task root without writing back to it, reads
  * limits through `config`, records lifecycle and broadcasts through `wire`
  * (`task.started` / `task.terminated` Ops into `TaskModel`, plus the matching
- * signals), restores ghosts through a single `wire.onRestored` handler (wire
- * replay -> disk load -> reconcile, in that order), delivers live terminal
- * notifications by enqueueing `TaskNotificationStepRequest`s onto `loop` with
- * `activeOrNewTurn` admission (mid-turn ones fold into the active turn's
+ * signals), restores ghosts through a single `wire.hooks.onDidRestore` hook
+ * (wire replay -> disk load -> reconcile, in that order), delivers live
+ * terminal notifications by enqueueing `TaskNotificationStepRequest`s onto
+ * `loop` with `activeOrNewTurn` admission (mid-turn ones fold into the active turn's
  * following step; idle ones launch a fresh turn themselves, matching v1's
  * `turn.steer`, so the model consumes the notification without waiting for
  * the user), silently appends restored notifications through `contextMemory`,
@@ -58,12 +58,8 @@ import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import {
-  IAgentWireRecordService,
-  type PersistedWireRecord,
-} from '#/agent/wireRecord/wireRecord';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { defineModel } from '#/wire/model';
+import { IWireService } from '#/wire/wire';
 import {
   IAgentTaskService,
   type AgentTaskNotificationContext,
@@ -107,6 +103,21 @@ interface AgentTaskNotificationBuildContext {
   readonly origin: TaskOrigin;
   readonly notification: AgentTaskNotification;
 }
+
+const TaskNotificationDeliveryModel = defineModel<readonly string[]>(
+  'task.notificationDelivery',
+  () => [],
+  {
+    reducers: {
+      'context.append_message': (state, payload: { message?: unknown }) => {
+        const origin = taskOriginFromMessage(payload.message);
+        if (origin === undefined) return state;
+        const key = notificationKey(origin);
+        return state.includes(key) ? state : [...state, key];
+      },
+    },
+  },
+);
 
 interface ManagedTask {
   readonly taskId: string;
@@ -215,8 +226,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     @ISessionContext session: ISessionContext,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @ITaskService private readonly taskService: ITaskService,
-    @IAgentWireRecordService wireRecord: IAgentWireRecordService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentContextInjectorService injector: IAgentContextInjectorService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
@@ -234,11 +244,12 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       fallbackRoot,
     );
     this._register(
-      this.wire.onRestored(async () => {
-        for (const record of wireRecord.getRecords()) {
-          this.markDeliveredNotificationsFromRecord(record);
+      this.wire.hooks.onDidRestore.register('task', async (_ctx, next) => {
+        for (const key of this.wire.getModel(TaskNotificationDeliveryModel)) {
+          this.deliveredNotificationKeys.add(key);
         }
         await this.restoreAfterReplay();
+        await next();
       }),
     );
     this._register(
@@ -278,12 +289,6 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     for (const [taskId, info] of this.wire.getModel(TaskModel)) {
       if (this.tasks.has(taskId)) continue;
       this.ghosts.set(taskId, info);
-    }
-  }
-
-  private markDeliveredNotificationsFromRecord(record: PersistedWireRecord): void {
-    for (const origin of taskOriginsFromRecord(record)) {
-      this.markDeliveredNotification(origin);
     }
   }
 
@@ -1214,21 +1219,10 @@ function notificationKey(origin: TaskNotificationOrigin): string {
   return `${origin.taskId}\0${origin.status}\0${origin.notificationId}`;
 }
 
-function taskOriginsFromRecord(record: PersistedWireRecord): readonly TaskNotificationOrigin[] {
-  const raw = record as {
-    readonly type: string;
-    readonly message?: unknown;
-  };
-  if (raw.type === 'context.append_message') {
-    return taskOriginFromMessage(raw.message);
-  }
-  return [];
-}
-
-function taskOriginFromMessage(message: unknown): readonly TaskNotificationOrigin[] {
-  if (typeof message !== 'object' || message === null) return [];
+function taskOriginFromMessage(message: unknown): TaskNotificationOrigin | undefined {
+  if (typeof message !== 'object' || message === null) return undefined;
   const origin = (message as { readonly origin?: unknown }).origin;
-  return isTaskOrigin(origin) ? [origin] : [];
+  return isTaskOrigin(origin) ? origin : undefined;
 }
 
 function buildAgentTaskNotificationBody(info: AgentTaskInfo): string {

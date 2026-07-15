@@ -13,8 +13,9 @@
  * reference-equality gate stays quiet. The side effects — `registry.register`
  * and `profile.addActiveTool` (and the matching dispose / `removeActiveTool`) —
  * are NOT part of `apply`: they run after `wire.dispatch` on the live path and
- * are re-derived from the rebuilt Model by `wire.onRestored` after replay, so a
- * resumed agent re-registers exactly the tools the persisted ops describe.
+ * are re-derived from the rebuilt Model by `wire.hooks.onDidRestore` after
+ * restore, so a resumed agent re-registers exactly the tools the persisted ops
+ * describe.
  * Consumed by the Agent-scope `userToolService`.
  */
 

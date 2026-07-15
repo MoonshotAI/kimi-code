@@ -911,17 +911,14 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('reads swarm items from caller-owned v2 labels and legacy v1 metadata', async () => {
     agents['v2-child'] = {
-      homedir: '/tmp/kimi/s1/agents/v2-child',
       labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
     };
     agents['legacy-child'] = {
-      homedir: '/tmp/kimi/s1/agents/legacy-child',
       type: 'sub',
       parentAgentId: 'main',
       swarmItem: 'src/legacy.ts',
     };
     agents['other-child'] = {
-      homedir: '/tmp/kimi/s1/agents/other-child',
       labels: { parentAgentId: 'other', swarmItem: 'src/other.ts' },
     };
 
@@ -943,7 +940,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('prefers labels over legacy metadata fields when both are present', async () => {
     agents['mixed-child'] = {
-      homedir: '/tmp/kimi/s1/agents/mixed-child',
       labels: { parentAgentId: 'main', swarmItem: 'src/labels.ts' },
       type: 'sub',
       parentAgentId: 'other',
@@ -963,7 +959,6 @@ describe('SessionSwarmService metadata compatibility', () => {
   it('normalizes legacy subagent metadata into labels for new writes', () => {
     expect(
       labelsFromAgentMeta({
-        homedir: '/tmp/kimi/s1/agents/legacy-child',
         type: 'sub',
         parentAgentId: 'main',
         swarmItem: 'src/legacy.ts',
@@ -971,7 +966,6 @@ describe('SessionSwarmService metadata compatibility', () => {
     ).toEqual({ parentAgentId: 'main', swarmItem: 'src/legacy.ts' });
     expect(
       labelsFromAgentMeta({
-        homedir: '/tmp/kimi/s1/agents/mixed-child',
         labels: { parentAgentId: 'main', swarmItem: 'src/labels.ts', custom: 'kept' },
         type: 'sub',
         parentAgentId: 'other',
@@ -1047,7 +1041,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('keeps v1 resume ownership errors inside the per-subagent result', async () => {
     agents['other-child'] = {
-      homedir: '/tmp/kimi/s1/agents/other-child',
       labels: { parentAgentId: 'other', swarmItem: 'src/other.ts' },
     };
     handles.set('other-child', agentHandle('other-child', lifecycle, eventBusStub()));
@@ -1070,7 +1063,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('realigns resumed children to the caller current model', async () => {
     agents['agent-existing'] = {
-      homedir: '/tmp/kimi/s1/agents/agent-existing',
       labels: { parentAgentId: 'main' },
     };
     const child = agentHandle('agent-existing', lifecycle, eventBus, {
@@ -1099,11 +1091,9 @@ describe('SessionSwarmService metadata compatibility', () => {
     vi.useFakeTimers();
     try {
       agents['agent-retry'] = {
-        homedir: '/tmp/kimi/s1/agents/agent-retry',
         labels: { parentAgentId: 'main' },
       };
       agents['agent-blocker'] = {
-        homedir: '/tmp/kimi/s1/agents/agent-blocker',
         labels: { parentAgentId: 'main' },
       };
       handles.set('agent-retry', agentHandle('agent-retry', lifecycle, eventBus));
@@ -1160,7 +1150,6 @@ describe('SessionSwarmService metadata compatibility', () => {
 
   it('rejects resume of an already running child before launching or emitting spawned', async () => {
     agents['agent-existing'] = {
-      homedir: '/tmp/kimi/s1/agents/agent-existing',
       labels: { parentAgentId: 'main' },
     };
     handles.set(

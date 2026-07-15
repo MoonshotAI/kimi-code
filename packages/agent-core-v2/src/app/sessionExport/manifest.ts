@@ -6,15 +6,13 @@
  * version facts, and wire-log activity timestamps discovered during export.
  */
 
-import { AGENT_WIRE_PROTOCOL_VERSION } from '#/agent/wireRecord/wireRecord';
+import { WIRE_PROTOCOL_VERSION } from '#/wire/migration/migration';
 
 import type {
   ExportSessionManifest,
   ShellEnvironment,
 } from './sessionExport';
 import type { SessionWireScan } from './wire-scan';
-
-export const WIRE_PROTOCOL_VERSION = AGENT_WIRE_PROTOCOL_VERSION;
 
 export interface ExportSessionManifestSummary {
   readonly id: string;

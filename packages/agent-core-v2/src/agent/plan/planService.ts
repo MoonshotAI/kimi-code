@@ -21,8 +21,7 @@ import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import {
   IAgentPlanService,
   type PlanData,
@@ -43,13 +42,18 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
     @IHostFileSystem private readonly hostFs: IHostFileSystem,
     @IAgentContextInjectorService dynamicInjector: IAgentContextInjectorService,
     @IAgentTelemetryContextService private readonly telemetryContext: IAgentTelemetryContextService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @ISessionContext private readonly sessionCtx: ISessionContext,
     @IAgentScopeContext private readonly agentCtx: IAgentScopeContext,
   ) {
     super();
 
-    this._register(this.wire.onRestored(() => this.restoreTelemetryMode()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('plan', async (_ctx, next) => {
+        this.restoreTelemetryMode();
+        await next();
+      }),
+    );
 
     this._register(new PlanModeInjection(dynamicInjector, this, this.context));
   }

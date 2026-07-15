@@ -103,6 +103,7 @@ export interface IAgentProfileService {
   refreshSystemPrompt(): Promise<void>;
   getAgentsMdWarning(): string | undefined;
   data(): ProfileData;
+  getEffectiveThinkingLevel(): ThinkingEffort;
   resolveModelContext(): ProfileModelContext;
   getProvider(): Model;
   resolveModel(): Model | undefined;

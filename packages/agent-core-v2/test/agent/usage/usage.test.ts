@@ -14,11 +14,12 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService, PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'usage-test';
@@ -33,18 +34,22 @@ beforeEach(() => {
   ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: KEY }]));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
   ix.set(IAgentUsageService, new SyncDescriptor(AgentUsageService));
   log = ix.get(IAppendLogStore);
+  registerTestAgentWire(ix, testWireScope(SCOPE, KEY), {
+    log,
+    eventBus: ix.get(IEventBus),
+  });
   svc = ix.get(IAgentUsageService);
 });
 
 afterEach(() => disposables.dispose());
 
-async function readRecords(): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of log.read<PersistedRecord>(SCOPE, KEY)) {
+async function readRecords(): Promise<WireRecord[]> {
+  await ix.get(IWireService).flush();
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, KEY), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -54,10 +59,13 @@ function createFreshWire(logKey: string): { readonly fresh: IWireService; readon
   const freshIx = disposables.add(new TestInstantiationService());
   freshIx.stub(IFileSystemStorageService, new InMemoryStorageService());
   freshIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  freshIx.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey }]));
+  const freshLog = freshIx.get(IAppendLogStore);
+  const fresh = registerTestAgentWire(freshIx, testWireScope(SCOPE, logKey), {
+    log: freshLog,
+  });
   return {
-    fresh: freshIx.get(IAgentWireService),
-    freshLog: freshIx.get(IAppendLogStore),
+    fresh,
+    freshLog,
   };
 }
 
@@ -192,30 +200,41 @@ describe('AgentUsageService (wire-backed)', () => {
 
     const { fresh, freshLog } = createFreshWire('usage-replay');
 
-    await fresh.replay(...records);
+    await restoreTestAgentWire(
+      fresh,
+      freshLog,
+      testWireScope(SCOPE, 'usage-replay'),
+      records,
+    );
 
     expect(fresh.getModel(UsageModel).byModel).toEqual({
       'model-a': { inputOther: 11, output: 22, inputCacheRead: 33, inputCacheCreation: 44 },
     });
 
-    const written: PersistedRecord[] = [];
-    for await (const record of freshLog.read<PersistedRecord>(SCOPE, 'usage-replay')) {
+    const written: WireRecord[] = [];
+    for await (const record of freshLog.read<WireRecord>(testWireScope(SCOPE, 'usage-replay'), AGENT_WIRE_RECORD_KEY)) {
       written.push(record);
     }
-    expect(written).toEqual([]);
+    expect(written[0]).toMatchObject({ type: 'metadata' });
+    expect(written.slice(1)).toEqual(records);
   });
 
   it('replays legacy turn context records into byModel totals only (currentTurn is not rebuilt)', async () => {
-    const { fresh } = createFreshWire('usage-legacy-context-replay');
+    const { fresh, freshLog } = createFreshWire('usage-legacy-context-replay');
 
-    await fresh.replay({
-      type: 'usage.record',
-      model: 'model-a',
-      usage: a1,
-      usageScope: 'turn',
-      turnId: 1,
-      context: { type: 'turn', turnId: 9, step: 3 },
-    });
+    await restoreTestAgentWire(
+      fresh,
+      freshLog,
+      testWireScope(SCOPE, 'usage-legacy-context-replay'),
+      [{
+        type: 'usage.record',
+        model: 'model-a',
+        usage: a1,
+        usageScope: 'turn',
+        turnId: 1,
+        context: { type: 'turn', turnId: 9, step: 3 },
+      }],
+    );
 
     expect(fresh.getModel(UsageModel)).toEqual({
       byModel: { 'model-a': a1 },

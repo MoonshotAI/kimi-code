@@ -26,8 +26,7 @@ import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCat
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { Turn } from '#/agent/loop/loop';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import { IAgentSkillService, type SkillActivationInput } from './skill';
 import { skillActivate } from './skillOps';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
@@ -38,7 +37,7 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
   constructor(
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
     @IAgentPromptService private readonly prompt: IAgentPromptService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @ISessionContext private readonly sessionContext: ISessionContext,
   ) {

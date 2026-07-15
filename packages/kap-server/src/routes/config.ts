@@ -35,6 +35,7 @@ import {
 import type { ConfigResponse } from '@moonshot-ai/protocol';
 
 import { errEnvelope, okEnvelope } from '../envelope';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 
 type ProviderResponse = ConfigResponse['providers'][string];
@@ -103,16 +104,20 @@ export function registerConfigRoutes(app: ConfigRouteHost, core: Scope): void {
           await config.set(domain, camelPatch[domain]);
         }
         const response = toConfigResponse(config.getAll());
+        const changedFields = Object.keys(req.body as Record<string, unknown>);
         core.accessor.get(IEventService).publish({
           type: 'event.config.changed',
           payload: {
-            changedFields: Object.keys(req.body as Record<string, unknown>),
+            changedFields,
             config: response,
           },
         });
+        // Only the changed field *names* — values may carry secrets.
+        requestLog(req)?.info({ changedFields }, 'config updated');
         reply.send(okEnvelope(response, req.id));
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        requestLog(req)?.error({ err: error }, 'config update failed');
         reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
       }
     },

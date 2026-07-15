@@ -1585,12 +1585,12 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toEqual({ effort: 'high' });
     });
 
-    it('future 4.6+ model uses adaptive thinking and clamps xhigh to high', async () => {
+    it('future 4.6+ model uses adaptive thinking and passes xhigh through', async () => {
       const provider = createProvider('claude-sonnet-4-8').withThinking('xhigh');
       const body = await captureRequestBody(provider, '', [], thinkHistory);
 
       expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
-      expect(body['output_config']).toEqual({ effort: 'high' });
+      expect(body['output_config']).toEqual({ effort: 'xhigh' });
     });
 
     it('opus-4-6 supports max effort', async () => {
@@ -1615,7 +1615,7 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toEqual({ effort: 'high' });
     });
 
-    it('forced adaptive allows max effort without clamping to high', async () => {
+    it('forced adaptive passes max effort through', async () => {
       const provider = new AnthropicChatProvider({
         model: 'coding-model-okapi-0527-vibe',
         apiKey: 'test-key',
@@ -1642,6 +1642,64 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toBeUndefined();
     });
 
+    it('Kimi thinking mode sends concrete effort without budget conversion', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'kimi-for-coding',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        kimiThinking: true,
+      }).withThinking('max');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'enabled' });
+      expect(body['output_config']).toEqual({ effort: 'max' });
+    });
+
+    it('Kimi thinking mode passes concrete efforts through and omits only on', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'kimi-for-coding',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        kimiThinking: true,
+      });
+      for (const requested of ['xhigh', 'medium', 'on'] as const) {
+        const body = await captureRequestBody(provider.withThinking(requested), '', [], thinkHistory);
+        expect(body['thinking']).toEqual({ type: 'enabled' });
+        expect(body['output_config']).toEqual(
+          requested === 'on' ? undefined : { effort: requested },
+        );
+      }
+    });
+
+    it('Kimi thinking mode keeps thinking off clean', async () => {
+      const provider = new AnthropicChatProvider({
+        model: 'kimi-for-coding',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        kimiThinking: true,
+      }).withThinking('off');
+      const body = await captureRequestBody(provider, '', [], thinkHistory);
+
+      expect(body['thinking']).toEqual({ type: 'disabled' });
+      expect(body['output_config']).toBeUndefined();
+    });
+
+    it('thinkingEffort reads back Kimi concrete efforts and boolean on', () => {
+      const provider = new AnthropicChatProvider({
+        model: 'kimi-for-coding',
+        apiKey: 'test-key',
+        defaultMaxTokens: 1024,
+        stream: false,
+        kimiThinking: true,
+      });
+      expect(provider.withThinking('max').thinkingEffort).toBe('max');
+      expect(provider.withThinking('xhigh').thinkingEffort).toBe('xhigh');
+      expect(provider.withThinking('off').thinkingEffort).toBe('off');
+    });
+
     it('adaptiveThinking=false forces budget on a 4.6 model name', async () => {
       const provider = new AnthropicChatProvider({
         model: 'claude-opus-4-6',
@@ -1656,22 +1714,18 @@ describe('AnthropicChatProvider', () => {
       expect(body['output_config']).toBeUndefined();
     });
 
-    it('pre-4.6 model clamps xhigh and max to high without output_config', async () => {
+    it('pre-4.6 budget model rejects xhigh and max', () => {
       for (const effort of ['xhigh', 'max'] as const) {
-        const provider = createProvider('claude-sonnet-4-5').withThinking(effort);
-        const body = await captureRequestBody(provider, '', [], thinkHistory);
-
-        expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
-        expect(body['output_config']).toBeUndefined();
+        expect(() => createProvider('claude-sonnet-4-5').withThinking(effort)).toThrow(
+          /budget-based thinking cannot express effort/,
+        );
       }
     });
 
-    it('opus-4-5 sends legacy budget thinking with clamped effort output_config', async () => {
-      const provider = createProvider('claude-opus-4-5').withThinking('xhigh');
-      const body = await captureRequestBody(provider, '', [], thinkHistory);
-
-      expect(body['thinking']).toEqual({ type: 'enabled', budget_tokens: 32000 });
-      expect(body['output_config']).toEqual({ effort: 'high' });
+    it('opus-4-5 rejects xhigh', () => {
+      expect(() => createProvider('claude-opus-4-5').withThinking('xhigh')).toThrow(
+        /budget-based thinking cannot express effort/,
+      );
     });
 
     it('opus-4-6 with thinking off -> disabled', async () => {
@@ -1733,11 +1787,10 @@ describe('AnthropicChatProvider', () => {
       const body = await captureRequestBody(provider, '', [], thinkHistory);
 
       expect(body['thinking']).toEqual({ type: 'adaptive', display: 'summarized' });
-      // xhigh is opus-4-7-only; clamps to high on future 4.8 until proven otherwise
-      expect(body['output_config']).toEqual({ effort: 'high' });
+      expect(body['output_config']).toEqual({ effort: 'xhigh' });
     });
 
-    it('opus-4-7 + high stays high without clamping', async () => {
+    it('opus-4-7 + high stays high', async () => {
       const provider = createProvider('claude-opus-4-7').withThinking('high');
       const body = await captureRequestBody(provider, '', [], thinkHistory);
 
@@ -1767,11 +1820,10 @@ describe('AnthropicChatProvider', () => {
       ['claude-opus-4-7', 'high', 'high'],
       ['claude-opus-4-7', 'xhigh', 'xhigh'],
       ['claude-opus-4-7', 'max', 'max'],
-      // pre-4.7 opus: xhigh and max clamp to high/max respectively (xhigh -> high, max passes since adaptive)
-      ['claude-opus-4-6', 'xhigh', 'high'],
+      ['claude-opus-4-6', 'xhigh', 'xhigh'],
       ['claude-opus-4-6', 'max', 'max'],
     ] as const)(
-      'clampEffort wire body: %s + %s -> output_config.effort=%s',
+      'adaptive wire body: %s + %s -> output_config.effort=%s',
       async (model, effort, expected) => {
         const provider = createProvider(model).withThinking(effort);
         const body = await captureRequestBody(provider, '', [], thinkHistory);
@@ -1780,7 +1832,7 @@ describe('AnthropicChatProvider', () => {
       },
     );
 
-    it('clampEffort wire body: sonnet-4-5 (non-adaptive) has no output_config', async () => {
+    it('legacy wire body: sonnet-4-5 (non-adaptive) has no output_config', async () => {
       const provider = createProvider('claude-sonnet-4-5').withThinking('high');
       const body = await captureRequestBody(provider, '', [], thinkHistory);
 
@@ -1903,36 +1955,31 @@ describe('AnthropicChatProvider', () => {
       });
     });
 
-    // Effort clamping per model capability: adaptive-capable models
-    // pass max effort through, others cap at high.
-    describe('clamp effort matrix', () => {
+    // Effort handling per model capability: adaptive-capable models pass
+    // concrete efforts through; legacy budget models can only express
+    // low/medium/high.
+    describe('effort matrix', () => {
       it.each([
-        // Opus 4.7: full range including xhigh and max
         ['claude-opus-4-7', 'low', 'low'],
         ['claude-opus-4-7', 'medium', 'medium'],
         ['claude-opus-4-7', 'high', 'high'],
         ['claude-opus-4-7', 'xhigh', 'xhigh'],
         ['claude-opus-4-7', 'max', 'max'],
         ['claude-opus-4-7-20260301', 'xhigh', 'xhigh'],
-        // Opus 4.6: max supported, xhigh clamps to high
         ['claude-opus-4-6', 'max', 'max'],
-        ['claude-opus-4-6', 'xhigh', 'high'],
+        ['claude-opus-4-6', 'xhigh', 'xhigh'],
         ['claude-opus-4-6-20260205', 'max', 'max'],
-        // Sonnet 4.6
         ['claude-sonnet-4-6', 'max', 'max'],
-        ['claude-sonnet-4-6', 'xhigh', 'high'],
-        // low/medium/high passthrough
+        ['claude-sonnet-4-6', 'xhigh', 'xhigh'],
         ['claude-opus-4-6', 'medium', 'medium'],
-        // Fable 5: full range including xhigh and max
         ['claude-fable-5', 'xhigh', 'xhigh'],
         ['claude-fable-5', 'max', 'max'],
-        // Future 4.8+: inherits max but xhigh clamps to high
-        ['claude-opus-4-8', 'xhigh', 'high'],
+        ['claude-opus-4-8', 'xhigh', 'xhigh'],
         ['claude-opus-4-8', 'max', 'max'],
         ['claude-opus-5-0', 'max', 'max'],
-        ['claude-opus-5-0', 'xhigh', 'high'],
+        ['claude-opus-5-0', 'xhigh', 'xhigh'],
       ] as const)(
-        'clamp adaptive: %s + %s -> effort=%s',
+        'adaptive pass-through: %s + %s -> effort=%s',
         async (model, effort, expected) => {
           const provider = createProvider(model).withThinking(effort);
           const body = await captureRequestBody(provider, '', [], thinkHistory);
@@ -1941,26 +1988,33 @@ describe('AnthropicChatProvider', () => {
         },
       );
 
-      // Pre-4.6 non-adaptive models: effort clamps in legacy budget mode.
-      // output_config presence depends on _supports_effort_param; opus-4-5
-      // supports effort, sonnet/haiku-4 do not.
       it.each([
-        ['claude-opus-4-5', 'max', 'high', true],
-        ['claude-opus-4-5', 'xhigh', 'high', true],
-        ['claude-opus-4-5', 'high', 'high', true],
-        ['claude-sonnet-4-20250514', 'max', 'high', false],
-        ['claude-sonnet-4-20250514', 'xhigh', 'high', false],
-        ['claude-sonnet-4-20250514', 'low', 'low', false],
-        ['claude-sonnet-4-5', 'xhigh', 'high', false],
-        ['claude-haiku-4-5', 'max', 'high', false],
+        ['claude-opus-4-5', 'max'],
+        ['claude-opus-4-5', 'xhigh'],
+        ['claude-sonnet-4-20250514', 'max'],
+        ['claude-sonnet-4-20250514', 'xhigh'],
+        ['claude-sonnet-4-5', 'xhigh'],
+        ['claude-haiku-4-5', 'max'],
       ] as const)(
-        'clamp legacy: %s + %s -> effort=%s (supports=%s)',
-        async (model, effort, expected, supports) => {
+        'legacy budget rejects unsupported effort: %s + %s',
+        (model, effort) => {
+          expect(() => createProvider(model).withThinking(effort)).toThrow(
+            /budget-based thinking cannot express effort/,
+          );
+        },
+      );
+
+      it.each([
+        ['claude-opus-4-5', 'high', true],
+        ['claude-sonnet-4-20250514', 'low', false],
+      ] as const)(
+        'legacy budget accepts supported effort: %s + %s (supports=%s)',
+        async (model, effort, supports) => {
           const provider = createProvider(model).withThinking(effort);
           const body = await captureRequestBody(provider, '', [], thinkHistory);
 
           if (supports) {
-            expect(body['output_config']).toEqual({ effort: expected });
+            expect(body['output_config']).toEqual({ effort });
           } else {
             expect(body['output_config']).toBeUndefined();
           }
@@ -2071,9 +2125,9 @@ describe('AnthropicChatProvider', () => {
       expect(max.thinkingEffort).toBe('max');
     });
 
-    it('reports clamped adaptive effort', () => {
+    it('reports adaptive effort verbatim', () => {
       const provider = createProvider('claude-sonnet-4-6').withThinking('xhigh');
-      expect(provider.thinkingEffort).toBe('high');
+      expect(provider.thinkingEffort).toBe('xhigh');
     });
 
     it('pre-4.6 budget-based efforts', () => {

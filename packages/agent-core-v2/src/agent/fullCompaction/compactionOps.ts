@@ -24,15 +24,15 @@
  * the in-flight worker promise — stays OUT of the Model (live-only service
  * members): none of it can be resumed, and a session never restores mid-flight.
  * A `running` phase stranded by a crash is reset to `idle` by the service's
- * `wire.onRestored` handler (mirroring `goal`'s post-replay normalization).
+ * `wire.hooks.onDidRestore` hook (mirroring `goal`'s post-replay normalization).
  *
  * The `compaction.*` events publish to `IEventBus` (`compaction.started` via the
  * `begin` Op's `toEvent`; the rest directly from the service); they are
  * declared here via interface-merge (`error` is already declared by `mcp`, so
  * it is not re-declared). The `full_compaction.*` record shapes are registered in
  * `PersistedOpMap` (`#/wire/types`, below) because the records still
- * ride the per-agent `wire.jsonl` log read by `wireRecord.restore()` /
- * `getRecords()`. Consumed by the Agent-scope `fullCompactionService`.
+ * ride the per-agent `wire.jsonl` journal restored by `IWireService`.
+ * Consumed by the Agent-scope `fullCompactionService`.
  */
 
 import { z } from 'zod';

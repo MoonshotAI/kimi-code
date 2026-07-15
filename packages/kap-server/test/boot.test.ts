@@ -80,6 +80,35 @@ describe('server-v2 boot', () => {
     expect(oauthBody.data).toBeNull();
   });
 
+  it('reports opts.version as server_version instead of the package version', async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-version-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      version: '9.9.9-host',
+    });
+
+    const base = `http://127.0.0.1:${server.port}`;
+    const meta = await authedFetch(server, base, '/api/v1/meta');
+    const metaBody = await meta.json() as {
+      code: number;
+      data: { server_version: string };
+    };
+    expect(metaBody.data.server_version).toBe('9.9.9-host');
+
+    // The host version is also what the lock advertises to status/ps clients.
+    const stored = JSON.parse(
+      await readFile(join(home, 'server', 'lock'), 'utf8'),
+    ) as LockContents;
+    expect(stored.host_version).toBe('9.9.9-host');
+
+    // ... and it backs the default product User-Agent.
+    const defaults = server.core.accessor.get(IHostRequestHeaders);
+    expect(defaults.headers['User-Agent']).toBe('kimi-code-cli/9.9.9-host');
+  });
+
   it('seeds a default product User-Agent that opts.seeds can override', async () => {
     home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-ua-'));
     server = await startServer({

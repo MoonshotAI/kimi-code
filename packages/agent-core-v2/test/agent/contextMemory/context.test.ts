@@ -3,8 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { estimateTokensForMessages } from '#/_base/utils/tokens';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import {
   IAgentContextMemoryService,
   IAgentContextSizeService,
@@ -25,7 +24,7 @@ describe('Agent context', () => {
     context = ctx.get(IAgentContextMemoryService);
     contextSize = ctx.get(IAgentContextSizeService);
     profile = ctx.get(IAgentProfileService);
-    wire = ctx.get(IAgentWireService);
+    wire = ctx.get(IWireService);
   });
 
   afterEach(async () => {

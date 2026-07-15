@@ -24,8 +24,7 @@ import type { McpServerEntry } from './connection-manager';
 import { IAgentMcpService } from './mcp';
 import { qualifyMcpToolName } from './tool-naming';
 import type { MCPClient, MCPToolDefinition } from './types';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { IWireService } from '#/wire/wire';
 import {
   McpDiscoveryModel,
   mcpToolsDiscovered,
@@ -58,7 +57,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     @IAgentToolRegistryService private readonly registry: IAgentToolRegistryService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService toolExecutor: IAgentToolExecutorService,
-    @IAgentWireService private readonly wire: IWireService,
+    @IWireService private readonly wire: IWireService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
@@ -72,8 +71,12 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
         },
       ),
     );
-    this._register(this.wire.onRestored(() => this.flushPendingDiscoveries()));
-    this._register(this.wire.onEmission(() => this.flushPendingDiscoveries()));
+    this._register(
+      this.wire.hooks.onDidRestore.register('mcp', async (_ctx, next) => {
+        this.flushPendingDiscoveries();
+        await next();
+      }),
+    );
   }
 
   get oauthService() {

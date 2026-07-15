@@ -1040,7 +1040,7 @@ describe('per-model protocol routing', () => {
 });
 
 describe('resolveRuntimeProvider model overrides', () => {
-  it('passes overridden supportEfforts to the kimi provider config', () => {
+  it('keeps supportEfforts out of the kimi provider config', () => {
     const resolved = resolveRuntimeProvider({
       config: {
         ...BASE_CONFIG,
@@ -1054,9 +1054,7 @@ describe('resolveRuntimeProvider model overrides', () => {
       },
     });
 
-    expect(resolved.provider).toMatchObject({
-      type: 'kimi',
-      supportEfforts: ['low', 'high'],
-    });
+    expect(resolved.provider).toMatchObject({ type: 'kimi' });
+    expect(resolved.provider).not.toHaveProperty('supportEfforts');
   });
 });

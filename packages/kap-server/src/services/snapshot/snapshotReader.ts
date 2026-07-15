@@ -76,6 +76,7 @@ interface TranscriptCacheEntry {
   readonly size: number;
   readonly mtimeMs: number;
   readonly messages: ContextMessage[];
+  readonly times: readonly (number | undefined)[];
 }
 
 interface LocatedSession {
@@ -106,9 +107,18 @@ export class SnapshotReader implements ISnapshotReader {
     const offset = hasMore ? full.length - SNAPSHOT_MESSAGE_PAGE_SIZE : 0;
     const page = hasMore ? full.slice(offset) : full;
     await this.rehydrateBlobRefs(page, join(located.sessionDir, AGENTS_DIR, MAIN_AGENT_ID, BLOBS_DIR));
-    const items = page.map((msg, i) =>
-      toProtocolMessage(sid, offset + i, msg, located.meta.createdAt),
-    );
+    // `created_at` prefers the real per-record time stamped onto wire.jsonl at
+    // dispatch; records predating the stamp (or the `metadata` envelope) fall
+    // back to the synthesized `session.createdAt + index`, clamped so the
+    // page stays strictly increasing (mirrors `MessageLegacyService.list`).
+    let previousMs = Number.NEGATIVE_INFINITY;
+    const items = page.map((msg, i) => {
+      const index = offset + i;
+      const baseMs = transcript.times[index] ?? located.meta.createdAt + index;
+      const createdAtMs = Math.max(previousMs + 1, baseMs);
+      previousMs = createdAtMs;
+      return toProtocolMessage(sid, index, msg, located.meta.createdAt, createdAtMs);
+    });
 
     const live = core.accessor.get(ISessionLifecycleService).get(sid);
     const status = this.resolveStatus(live);
@@ -180,6 +190,7 @@ export class SnapshotReader implements ISnapshotReader {
     sessionDir: string,
   ): Promise<{
     messages: ContextMessage[];
+    times: readonly (number | undefined)[];
     tag: 'hit' | 'miss' | 'shrink_invalidate' | 'enoent';
     wireBytes: number;
   }> {
@@ -192,7 +203,7 @@ export class SnapshotReader implements ISnapshotReader {
     }
     if (info === undefined) {
       this.transcriptCache.delete(sid);
-      return { messages: [], tag: 'enoent', wireBytes: 0 };
+      return { messages: [], times: [], tag: 'enoent', wireBytes: 0 };
     }
 
     const cached = this.transcriptCache.get(sid);
@@ -200,7 +211,7 @@ export class SnapshotReader implements ISnapshotReader {
       // LRU touch.
       this.transcriptCache.delete(sid);
       this.transcriptCache.set(sid, cached);
-      return { messages: cached.messages, tag: 'hit', wireBytes: info.size };
+      return { messages: cached.messages, times: cached.times, tag: 'hit', wireBytes: info.size };
     }
 
     const tag: 'miss' | 'shrink_invalidate' =
@@ -208,14 +219,15 @@ export class SnapshotReader implements ISnapshotReader {
     if (cached !== undefined) this.transcriptCache.delete(sid);
 
     const records = await readWireRecords(wirePath);
-    const messages = [...reduceContextTranscript(records).entries];
-    this.transcriptCache.set(sid, { size: info.size, mtimeMs: info.mtimeMs, messages });
+    const { entries, times } = reduceContextTranscript(records);
+    const messages = [...entries];
+    this.transcriptCache.set(sid, { size: info.size, mtimeMs: info.mtimeMs, messages, times });
     while (this.transcriptCache.size > this.deps.config.cacheLimit) {
       const oldest = this.transcriptCache.keys().next().value;
       if (oldest === undefined) break;
       this.transcriptCache.delete(oldest);
     }
-    return { messages, tag, wireBytes: info.size };
+    return { messages, times, tag, wireBytes: info.size };
   }
 
   private resolveStatus(

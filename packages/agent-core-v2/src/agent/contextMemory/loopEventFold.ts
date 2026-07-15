@@ -9,7 +9,7 @@
  * the v2 live loop emits the same records (`LoopService` →
  * `ContextMemory.appendLoopEvent`), keeping the on-disk shape byte-compatible.
  * This fold turns them into assistant / tool messages — at live dispatch time
- * and again when `WireService.replay` restores a session. Without it, replay
+ * and again when `WireService.restore` restores an Agent. Without it, restore
  * would skip those records (no Op is registered for the type) and the restored
  * `ContextModel` — and every consumer built on it (`/messages`, `/snapshot`,
  * live resume) — would show only the user prompts.

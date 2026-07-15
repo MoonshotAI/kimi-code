@@ -43,6 +43,7 @@ import {
   openInAppCommandFor,
   revealFileCommandFor,
 } from '../lib/fileLaunch';
+import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 
 interface FsRouteHost {
@@ -200,7 +201,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
             return;
         }
       } catch (err) {
-        sendMappedError(reply, req.id, err);
+        sendMappedError(reply, req, err);
       }
     },
   );
@@ -258,7 +259,7 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
       try {
         resolved = await resolveFs(core, session_id).resolveDownload(relPath);
       } catch (err) {
-        sendMappedError(reply, req.id, err);
+        sendMappedError(reply, req, err);
         return;
       }
 
@@ -289,7 +290,11 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
           start: range.start,
           end: range.end,
         });
-        stream.on('error', () => {
+        stream.on('error', (error: unknown) => {
+          requestLog(req)?.warn(
+            { session_id, path: relPath, err: error },
+            'fs download stream error',
+          );
           try {
             stream.destroy();
           } catch {
@@ -301,7 +306,11 @@ export function registerFsRoutes(app: FsRouteHost, core: Scope): void {
 
       r.code(200).header('content-length', String(resolved.size));
       const stream = createReadStream(resolved.absolute);
-      stream.on('error', () => {
+      stream.on('error', (error: unknown) => {
+        requestLog(req)?.warn(
+          { session_id, path: relPath, err: error },
+          'fs download stream error',
+        );
         try {
           stream.destroy();
         } catch {
@@ -463,6 +472,10 @@ async function handleOpenIn(core: Scope, sessionId: string, req: Req, reply: Rep
       }),
     );
   } catch (err) {
+    requestLog(req)?.warn(
+      { session_id: sessionId, app_id: body.app_id, err },
+      'fs open-in launch failed',
+    );
     reply.send(
       errEnvelope(
         ErrorCode.INTERNAL_ERROR,
@@ -479,7 +492,9 @@ async function handleOpenIn(core: Scope, sessionId: string, req: Req, reply: Rep
 // Error mapping — domain Error2 codes → protocol wire codes.
 // ---------------------------------------------------------------------------
 
-function sendMappedError(reply: Reply, requestId: string, err: unknown): void {
+function sendMappedError(reply: Reply, req: { id: string }, err: unknown): void {
+  const requestId = req.id;
+  const log = requestLog(req);
   if (isError2(err)) {
     switch (err.code) {
       case ErrorCodes.FS_PATH_ESCAPES:
@@ -530,6 +545,7 @@ function sendMappedError(reply: Reply, requestId: string, err: unknown): void {
         return;
     }
   }
+  log?.error({ err }, 'fs request failed');
   reply.send(
     errEnvelope(
       ErrorCode.INTERNAL_ERROR,

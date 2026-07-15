@@ -8,12 +8,17 @@ import { join } from 'node:path';
 
 import type { IScopeHandle, Scope } from '@moonshot-ai/agent-core-v2';
 import {
+  ContextSizeModel,
+  IAgentContextSizeService,
   IAgentLifecycleService,
+  IAgentProfileService,
+  IAgentUsageService,
   IEventBus,
   IEventService,
   ISessionActivity,
   ISessionInteractionService,
   ISessionLifecycleService,
+  IWireService,
   SessionInteractionService,
 } from '@moonshot-ai/agent-core-v2';
 import type { AgentEvent } from '@moonshot-ai/protocol';
@@ -65,10 +70,15 @@ class FakeAgentHandle {
   readonly kind = 2;
   readonly bus = new FakeAgentBus();
   readonly accessor;
+  private readonly services = new Map<unknown, unknown>();
   constructor(readonly id: string) {
+    this.services.set(IEventBus, this.bus);
     this.accessor = {
-      get: (t: unknown) => (t === IEventBus ? this.bus : undefined),
+      get: (token: unknown) => this.services.get(token),
     };
+  }
+  set(token: unknown, service: unknown): void {
+    this.services.set(token, service);
   }
   dispose(): void {}
 }
@@ -217,6 +227,94 @@ describe('SessionEventBroadcaster', () => {
     expect(vol.every((e) => e.seq === 2)).toBe(true); // rides the durable watermark
     expect(vol.map((e) => e.offset)).toEqual([0, 2]);
     expect((await bc.getCursor('s1')).seq).toBe(2); // seq did not advance
+  });
+
+  it('projects main-agent status and context changes into complete v1 status events', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    let contextSize = 10;
+    const usage = {
+      total: { inputOther: 1, output: 2, inputCacheRead: 0, inputCacheCreation: 0 },
+    };
+    main.set(IAgentContextSizeService, { get: () => ({ size: contextSize }) });
+    main.set(IAgentProfileService, {
+      getModel: () => 'example-model',
+      getModelCapabilities: () => ({ max_context_tokens: 128_000 }),
+    });
+    main.set(IAgentUsageService, { status: () => usage });
+    main.set(IWireService, {
+      getModel: (model: unknown) => {
+        expect(model).toBe(ContextSizeModel);
+        return { length: 0, tokens: 8 };
+      },
+    });
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('agent.status.updated', { usage }));
+    contextSize = 20;
+    main.bus.emit(agentEvent('context.spliced', { start: 0, deleteCount: 0, messages: [] }));
+    main.bus.emit(agentEvent('context.spliced', { start: 0, deleteCount: 0, messages: [] }));
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses).toHaveLength(2);
+    expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
+      {
+        type: 'agent.status.updated',
+        usage,
+        contextTokens: 10,
+        maxContextTokens: 128_000,
+        model: 'example-model',
+      },
+      {
+        type: 'agent.status.updated',
+        usage,
+        contextTokens: 20,
+        maxContextTokens: 128_000,
+        model: 'example-model',
+      },
+    ]);
+  });
+
+  it('projects agent activity state into legacy running and ended phases', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(
+      agentEvent('agent.activity.updated', {
+        lifecycle: 'ready',
+        turn: {
+          turnId: 1,
+          origin: { kind: 'user' },
+          phase: 'running',
+          step: 1,
+          ending: false,
+          pendingApprovals: [],
+          activeToolCalls: [],
+          since: 100,
+        },
+        background: [],
+      }),
+    );
+    main.bus.emit(
+      agentEvent('agent.activity.updated', {
+        lifecycle: 'ready',
+        lastTurn: { turnId: 1, reason: 'completed', at: 200 },
+        background: [],
+      }),
+    );
+    await bc.getCursor('s1');
+
+    const statuses = envelopes.filter((envelope) => envelope.type === 'agent.status.updated');
+    expect(statuses.map((envelope) => envelope.payload)).toMatchObject([
+      { phase: { kind: 'running', turnId: 1, step: 1 } },
+      { phase: { kind: 'ended', turnId: 1, reason: 'completed' } },
+    ]);
   });
 
   it('replays durable events since a cursor from the journal', async () => {
@@ -501,6 +599,44 @@ describe('SessionEventBroadcaster', () => {
       { status: 'running', previous_status: 'idle' },
       { status: 'aborted', previous_status: 'running' },
     ]);
+  });
+
+  it('does not synthesize session status from sub-agent turn boundaries', async () => {
+    // Regression: a sub-agent's turn.started/turn.ended stream over the same
+    // session channel with their own agentId. Synthesizing status transitions
+    // from them emitted a bogus `status_changed(idle)` the moment a foreground
+    // sub-agent finished — mid main turn — which kimi-web reads as "the turn
+    // finished" (browser notification, completion sound, unread dot, queued
+    // message drain), while the real main-agent turn end was then swallowed by
+    // dedup and never notified.
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    const sub = lc.addAgent('agent-0');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    // A foreground sub-agent runs and completes while the main turn is in flight.
+    sub.bus.emit(agentEvent('turn.started', { turnId: 10 }));
+    sub.bus.emit(agentEvent('turn.ended', { turnId: 10, reason: 'completed' }));
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+    await bc.getCursor('s1');
+
+    // The sub-agent's turn events are still fanned out (clients render them in
+    // the task view), but they produce no status transitions.
+    expect(
+      envelopes
+        .filter((e) => e.type === 'turn.started' || e.type === 'turn.ended')
+        .map((e) => (e.payload as { agentId: string }).agentId),
+    ).toEqual(['main', 'agent-0', 'agent-0', 'main']);
+    const statusEnvs = envelopes.filter((e) => e.type === 'event.session.status_changed');
+    expect(statusEnvs.map((e) => e.payload)).toMatchObject([
+      { status: 'running', previous_status: 'idle' },
+      { status: 'idle', previous_status: 'running' },
+    ]);
+    // The idle transition fires exactly once, after the main agent's turn end.
+    expect(envelopes.at(-1)!.type).toBe('event.session.status_changed');
   });
 
   it('broadcasts question requested / answered as durable v1 events', async () => {
@@ -795,7 +931,10 @@ describe('SessionEventBroadcaster', () => {
       agentEnvs.every((e) => (e.payload as { agentId: string }).agentId === 'main'),
     ).toBe(true);
     // `event.session.status_changed` is global (`event.session.*`) and bypasses
-    // the agent filter. The redundant idle transition from the sub-agent is deduped.
+    // the agent filter. The sub-agent's turn.ended synthesizes no status change
+    // at all (main-only rule — see the "does not synthesize session status from
+    // sub-agent turn boundaries" test), so only the main agent's two transitions
+    // are delivered.
     const statusEnvs = envelopes.filter((e) => e.type === 'event.session.status_changed');
     expect(statusEnvs).toHaveLength(2);
   });
@@ -870,9 +1009,10 @@ describe('SessionEventBroadcaster', () => {
 
       const result = await bc2.getBufferedSince('s1', { seq: 0 }, new Set(['main']));
       expect(result.resyncRequired).toBe(false);
-      // The sub-agent's turn events are cropped, while global status transitions
-      // retain their original positions in the session sequence.
-      expect(result.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 5, 8, 9, 10, 11, 12]);
+      // The sub-agent's turn events are cropped (seq 5/6 — they synthesize no
+      // status change), while the main agent's turns and the global status
+      // transitions retain their original positions in the session sequence.
+      expect(result.events.map((e) => e.seq)).toEqual([1, 2, 3, 4, 7, 8, 9, 10]);
       expect(
         result.events.every((e) => (e.envelope.payload as { agentId: string }).agentId === 'main'),
       ).toBe(true);

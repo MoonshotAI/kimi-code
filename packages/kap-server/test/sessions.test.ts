@@ -219,7 +219,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.details?.[0]?.path).toBe('web_log');
   });
 
-  async function createBlockedGoalRig() {
+  async function createStoppedGoalRig(status: 'paused' | 'blocked') {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
@@ -237,10 +237,11 @@ describe('server-v2 /api/v1/sessions', () => {
     const events: DomainEvent[] = [];
     const subscription = eventBus.subscribe((event) => events.push(event));
 
-    const blocked = await postJson<{ status: string }>(agentRpc(IAgentGoalService, 'markBlocked', id), {
-      reason: 'need credentials',
-    });
-    if (blocked.body.data.status !== 'blocked') throw new Error('expected a blocked goal');
+    const stopped = await postJson<{ status: string }>(
+      agentRpc(IAgentGoalService, status === 'blocked' ? 'markBlocked' : 'pauseGoal', id),
+      status === 'blocked' ? { reason: 'need credentials' } : {},
+    );
+    if (stopped.body.data.status !== status) throw new Error(`expected a ${status} goal`);
 
     return {
       id,
@@ -253,6 +254,10 @@ describe('server-v2 /api/v1/sessions', () => {
         });
       },
     };
+  }
+
+  async function createBlockedGoalRig() {
+    return createStoppedGoalRig('blocked');
   }
 
   it('creates a session from metadata.cwd', async () => {
@@ -507,6 +512,20 @@ describe('server-v2 /api/v1/sessions', () => {
 
   it('starts one continuation when the Web profile resumes a blocked goal', async () => {
     const rig = await createBlockedGoalRig();
+    try {
+      const resumed = await postJson<SessionWire>(`/api/v1/sessions/${rig.id}/profile`, {
+        agent_config: { goal_control: 'resume' },
+      });
+
+      expect(resumed.body.code).toBe(0);
+      expect(goalContinuationStarts(rig.events)).toHaveLength(1);
+    } finally {
+      await rig.cancel();
+    }
+  });
+
+  it('starts one continuation when the Web profile resumes a paused goal', async () => {
+    const rig = await createStoppedGoalRig('paused');
     try {
       const resumed = await postJson<SessionWire>(`/api/v1/sessions/${rig.id}/profile`, {
         agent_config: { goal_control: 'resume' },

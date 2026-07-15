@@ -7,8 +7,7 @@
  * `publish(event)` and consumers `subscribe(handler)` (all events) or
  * `subscribe(type, handler)` (one type). It is bound at Agent scope — one
  * instance per agent — so a subscription sees only that agent's events (the
- * server fans out per agent and tags `agentId` / `sessionId`, exactly like the
- * former `IAgentWireService.onEmission`). Process-global events (model catalog,
+ * server fans out per agent and tags `agentId` / `sessionId`). Process-global events (model catalog,
  * session lifecycle, auth) stay on the legacy `IEventService` (`./event`),
  * which is retained as the global channel; its payload type is re-exported from
  * the barrel as `GlobalEvent`. Domains declare their agent-event shapes by

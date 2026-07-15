@@ -1,9 +1,10 @@
 /**
  * `model` domain (L2) — model-aware thinking effort resolution.
  *
- * Resolves the effective thinking effort from request/config defaults plus the
- * model's declared thinking metadata. Shared by `modelResolver` and the
- * Agent-scope `profile` domain so both paths keep v1-compatible defaults.
+ * Resolves the effective thinking effort from request/config defaults, Kimi's
+ * operational wire override, and the model's declared thinking metadata.
+ * Shared by `modelResolver` and the Agent-scope `profile` domain so both paths
+ * keep v1-compatible defaults.
  */
 
 import type { ModelCapability } from '#/app/llmProtocol/capability';
@@ -25,6 +26,21 @@ export interface ModelThinkingMetadata {
 function nonEmpty(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
+export function normalizeRequestedThinkingEffort(
+  requested: string | undefined,
+): ThinkingEffort | undefined {
+  return nonEmpty(requested)?.toLowerCase() as ThinkingEffort | undefined;
+}
+
+export function resolveKimiThinkingEffortOverride(
+  forced: string | undefined,
+  effective: ThinkingEffort,
+  kimiProvider: boolean,
+): ThinkingEffort | undefined {
+  if (!kimiProvider || effective === 'off') return undefined;
+  return nonEmpty(forced) as ThinkingEffort | undefined;
 }
 
 function hasCapability(
@@ -55,6 +71,10 @@ function middleOf(values: readonly string[]): string {
   return values[Math.floor(values.length / 2)]!;
 }
 
+function effortsFor(model: ModelThinkingMetadata | undefined): readonly string[] {
+  return model?.supportEfforts?.map(nonEmpty).filter((v): v is string => v !== undefined) ?? [];
+}
+
 export function modelSupportsThinking(model: ModelThinkingMetadata | undefined): boolean {
   if (model === undefined) return false;
   return (
@@ -69,23 +89,58 @@ export function defaultThinkingEffortForModel(
   model: ModelThinkingMetadata | undefined,
 ): ThinkingEffort {
   if (model === undefined || !modelSupportsThinking(model)) return 'off';
-  const efforts = model.supportEfforts?.map(nonEmpty).filter((v): v is string => v !== undefined);
-  if (efforts !== undefined && efforts.length > 0) {
-    return (nonEmpty(model.defaultEffort) ?? middleOf(efforts)) as ThinkingEffort;
+  const efforts = effortsFor(model);
+  if (efforts.length > 0) {
+    const declaredDefault = nonEmpty(model.defaultEffort);
+    return (declaredDefault !== undefined && efforts.includes(declaredDefault)
+      ? declaredDefault
+      : middleOf(efforts)) as ThinkingEffort;
   }
   return 'on';
+}
+
+export function modelSupportsThinkingEffort(
+  effort: ThinkingEffort,
+  model: ModelThinkingMetadata | undefined,
+  kimiProvider: boolean,
+): boolean {
+  if (!kimiProvider || effort === 'off') return true;
+  if (!modelSupportsThinking(model)) return false;
+  const efforts = effortsFor(model);
+  return efforts.length === 0 || effort === 'on' || efforts.includes(effort);
+}
+
+function normalizeThinkingEffortForModel(
+  effort: ThinkingEffort,
+  model: ModelThinkingMetadata | undefined,
+  kimiProvider: boolean,
+): ThinkingEffort {
+  if (effort === 'off' && model?.alwaysThinking !== true) return 'off';
+  const efforts = effortsFor(model);
+  if (!kimiProvider) {
+    return effort === 'on' && efforts.length > 0
+      ? defaultThinkingEffortForModel(model)
+      : effort;
+  }
+  if (!modelSupportsThinking(model)) return 'off';
+  if (efforts.length === 0) return 'on';
+  if (effort === 'on' || !efforts.includes(effort)) {
+    return defaultThinkingEffortForModel(model);
+  }
+  return effort;
 }
 
 export function resolveThinkingEffortForModel(
   requested: string | undefined,
   defaults: ThinkingDefaults | undefined,
   model: ModelThinkingMetadata | undefined,
+  kimiProvider = false,
 ): ThinkingEffort {
   const configured = nonEmpty(defaults?.effort) as ThinkingEffort | undefined;
-  const normalized = nonEmpty(requested)?.toLowerCase();
+  const normalized = normalizeRequestedThinkingEffort(requested);
   let effort: ThinkingEffort;
   if (normalized !== undefined) {
-    effort = normalized as ThinkingEffort;
+    effort = normalized;
   } else if (defaults?.enabled === false) {
     effort = 'off';
   } else {
@@ -93,7 +148,7 @@ export function resolveThinkingEffortForModel(
   }
 
   if (effort === 'off' && model?.alwaysThinking === true) {
-    return configured ?? defaultThinkingEffortForModel(model);
+    effort = configured ?? defaultThinkingEffortForModel(model);
   }
-  return effort;
+  return normalizeThinkingEffortForModel(effort, model, kimiProvider);
 }

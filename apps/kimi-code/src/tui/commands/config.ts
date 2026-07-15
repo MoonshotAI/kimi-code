@@ -403,7 +403,8 @@ async function performModelSwitch(
   const modelChanged = alias !== prevModel;
   const effortChanged = effort !== prevEffort;
   const runtimeChanged = modelChanged || effortChanged;
-  const displayName = modelDisplayName(alias, host.state.appState.availableModels[alias]);
+  let effectiveAlias = alias;
+  let effectiveEffort = effort;
 
   const session = host.session;
   try {
@@ -416,6 +417,9 @@ async function performModelSwitch(
       if (effort !== prevEffort) {
         await session.setThinking(effort);
       }
+      const status = await session.getStatus();
+      effectiveAlias = status.model ?? alias;
+      effectiveEffort = status.thinkingEffort;
     }
   } catch (error) {
     const msg = formatErrorMessage(error);
@@ -423,15 +427,25 @@ async function performModelSwitch(
     return;
   }
 
-  host.setAppState({ model: alias, thinkingEffort: effort });
+  if (session === undefined) {
+    effectiveAlias = host.state.appState.model;
+    effectiveEffort = host.state.appState.thinkingEffort;
+  }
+  const effectiveModelChanged = effectiveAlias !== prevModel;
+  const effectiveEffortChanged = effectiveEffort !== prevEffort;
+  const displayName = modelDisplayName(
+    effectiveAlias,
+    host.state.appState.availableModels[effectiveAlias],
+  );
+  host.setAppState({ model: effectiveAlias, thinkingEffort: effectiveEffort });
   if (session === undefined && runtimeChanged) {
-    if (alias !== prevModel) {
-      host.track('model_switch', { model: alias });
+    if (effectiveModelChanged) {
+      host.track('model_switch', { model: effectiveAlias });
     }
-    if (effort !== prevEffort) {
+    if (effectiveEffortChanged) {
       host.track('thinking_toggle', {
-        enabled: effort !== 'off',
-        effort,
+        enabled: effectiveEffort !== 'off',
+        effort: effectiveEffort,
         from: prevEffort,
       });
     }
@@ -440,7 +454,7 @@ async function performModelSwitch(
   let persisted = false;
   if (persist) {
     try {
-      persisted = await persistModelSelection(host, alias, effort);
+      persisted = await persistModelSelection(host, effectiveAlias, effectiveEffort);
     } catch (error) {
       const msg = formatErrorMessage(error);
       host.showError(`Switched to ${displayName}, but failed to save default: ${msg}`);
@@ -449,18 +463,18 @@ async function performModelSwitch(
   }
 
   let status: string;
-  if (modelChanged) {
+  if (effectiveModelChanged) {
     status = persist
-      ? `Switched to ${displayName} with thinking ${effort}.`
-      : `Switched to ${displayName} with thinking ${effort} for this session only.`;
-  } else if (effortChanged) {
+      ? `Switched to ${displayName} with thinking ${effectiveEffort}.`
+      : `Switched to ${displayName} with thinking ${effectiveEffort} for this session only.`;
+  } else if (effectiveEffortChanged) {
     status = persist
-      ? `Thinking set to ${effort}.`
-      : `Thinking set to ${effort} for this session only.`;
+      ? `Thinking set to ${effectiveEffort}.`
+      : `Thinking set to ${effectiveEffort} for this session only.`;
   } else if (persist && persisted) {
-    status = `Saved ${displayName} with thinking ${effort} as default.`;
+    status = `Saved ${displayName} with thinking ${effectiveEffort} as default.`;
   } else {
-    status = `Already using ${displayName} with thinking ${effort}.`;
+    status = `Already using ${displayName} with thinking ${effectiveEffort}.`;
   }
   host.showStatus(status, 'success');
 }

@@ -245,6 +245,7 @@ export type KimiErrorCode =
   | 'goal.status_invalid'
   | 'goal.metadata_reserved'
   | 'goal.not_resumable'
+  | 'goal.unsupported_agent'
   | 'model.not_configured'
   | 'model.config_invalid'
   | 'profile.thinking_alias_conflict'
@@ -480,6 +481,7 @@ export type AgentPhase =
 export interface AgentStatusUpdatedEvent {
   readonly type: 'agent.status.updated';
   readonly model?: string;
+  readonly thinkingEffort?: string;
   readonly contextTokens?: number;
   readonly maxContextTokens?: number;
   readonly contextUsage?: number;
@@ -1147,6 +1149,7 @@ export const kimiErrorCodeSchema = z.enum([
   'goal.status_invalid',
   'goal.metadata_reserved',
   'goal.not_resumable',
+  'goal.unsupported_agent',
   'model.not_configured',
   'model.config_invalid',
   'profile.thinking_alias_conflict',
@@ -1348,6 +1351,7 @@ export const agentPhaseSchema = z.discriminatedUnion('kind', [
 export const agentStatusUpdatedEventSchema = z.object({
   type: z.literal('agent.status.updated'),
   model: z.string().optional(),
+  thinkingEffort: z.string().optional(),
   contextTokens: z.number().optional(),
   maxContextTokens: z.number().optional(),
   contextUsage: z.number().optional(),

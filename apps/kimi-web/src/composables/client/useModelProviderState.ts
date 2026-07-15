@@ -426,7 +426,10 @@ export function useModelProviderState(
     try {
       const api = getKimiWebApi();
       return await api.pollOAuthLogin();
-    } catch {
+    } catch (err) {
+      // The dialog counts consecutive nulls and gives up after a few; keep the
+      // cause in the log so a dead daemon is diagnosable.
+      console.warn('[kimi-web] pollOAuthLogin failed', err);
       return null;
     }
   }

@@ -6,7 +6,7 @@
  * (tick / coalesce / jitter / cursor), persists mutations through the
  * App-scoped `ICronTaskPersistence`, mirrors mutations as `cron.add` /
  * `cron.delete` / `cron.cursor` Ops on the main agent's `wire` (cross-scope
- * borrow) so `wire.replay` can rebuild the `CronModel`, publishes `cron.fired`
+ * borrow) so wire restore can rebuild the `CronModel`, publishes `cron.fired`
  * to the main agent's `IEventBus`, steers the main agent
  * through `IAgentPromptService` when a task fires, and registers the cron
  * tools (`CronCreate` / `CronList` / `CronDelete`) into the main agent's
@@ -39,7 +39,7 @@ import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle'
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import type { Op } from '#/wire/op';
-import { IAgentWireService } from '#/wire/tokens';
+import { IWireService } from '#/wire/wire';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
@@ -91,13 +91,13 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     this._register(
       this.agentLifecycle.onDidCreate((handle) => {
         if (handle.id !== 'main') return;
-        void this.bindMainAgent(handle);
+        this.bindMainAgent(handle);
       }),
     );
 
     const existingMain = this.agentLifecycle.get('main');
     if (existingMain) {
-      void this.bindMainAgent(existingMain);
+      this.bindMainAgent(existingMain);
     }
 
     this._register(
@@ -107,24 +107,23 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
     );
   }
 
-  private async bindMainAgent(handle: IAgentScopeHandle): Promise<void> {
-    await this.config.ready;
-    this.resolveClocks();
-    const wire = handle.accessor.get(IAgentWireService);
+  private bindMainAgent(handle: IAgentScopeHandle): void {
+    const wire = handle.accessor.get(IWireService);
     this._register(
-      wire.onRestored(() => {
+      wire.hooks.onDidRestore.register('cron', async (_ctx, next) => {
+        await this.config.ready;
+        this.resolveClocks();
         this.tasks.clear();
         for (const [id, task] of wire.getModel(CronModel)) {
           this.tasks.set(id, task as CronTask);
         }
-        void this.loadFromStore({ replace: false }).then(() => this.start());
+        await this.loadFromStore({ replace: false });
+        await this.start();
+        await next();
       }),
     );
 
     this.registerCronTools(handle);
-
-    await this.loadFromStore();
-    await this.start();
   }
 
   private registerCronTools(handle: IAgentScopeHandle): void {
@@ -485,7 +484,7 @@ export class SessionCronServiceImpl extends Disposable implements ISessionCronSe
   private dispatchCron(op: Op): void {
     const mainHandle = this.agentLifecycle.get('main');
     if (!mainHandle) return;
-    mainHandle.accessor.get(IAgentWireService).dispatch(op);
+    mainHandle.accessor.get(IWireService).dispatch(op);
   }
 
   private signalCron(event: DomainEvent): void {

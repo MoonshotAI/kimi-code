@@ -10,6 +10,13 @@ import { parse as parseToml, stringify as stringifyToml } from 'smol-toml';
 
 import { IGuiStoreService } from './guiStore';
 
+/** Minimal logger surface — keeps the store decoupled from the server logger. */
+export interface GuiStoreLogger {
+  warn(obj: unknown, msg: string): void;
+}
+
+const noopLogger: GuiStoreLogger = { warn: () => {} };
+
 function emptyStore(): Record<string, string> {
   return Object.create(null) as Record<string, string>;
 }
@@ -18,10 +25,12 @@ export class GuiStoreService implements IGuiStoreService {
   readonly _serviceBrand: undefined;
 
   private readonly filePath: string;
+  private readonly logger: GuiStoreLogger;
   private queue: Promise<void> = Promise.resolve();
 
-  constructor(homeDir: string) {
+  constructor(homeDir: string, logger?: GuiStoreLogger) {
     this.filePath = join(homeDir, 'gui.toml');
+    this.logger = logger ?? noopLogger;
   }
 
   async getItem(key: string): Promise<string | null> {
@@ -82,7 +91,11 @@ export class GuiStoreService implements IGuiStoreService {
         if (typeof v === 'string') out[k] = v;
       }
       return out;
-    } catch {
+    } catch (error) {
+      this.logger.warn(
+        { filePath: this.filePath, err: error },
+        'gui.toml parse failed; using an empty store',
+      );
       return emptyStore();
     }
   }

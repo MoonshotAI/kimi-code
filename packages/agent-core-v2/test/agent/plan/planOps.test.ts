@@ -15,9 +15,10 @@ import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService, PersistedRecord } from '#/wire/wireService';
-import { WireService } from '#/wire/wireServiceImpl';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
+
+import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 
 const SCOPE = 'wire';
 const KEY = 'plan-test';
@@ -30,9 +31,12 @@ function buildHost(key: string): { wire: IWireService; log: IAppendLogStore; eve
   const ix = disposables.add(new TestInstantiationService());
   ix.stub(IFileSystemStorageService, new InMemoryStorageService());
   ix.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
-  ix.set(IAgentWireService, new SyncDescriptor(WireService, [{ logScope: SCOPE, logKey: key }]));
   ix.set(IEventBus, new SyncDescriptor(EventBusService));
-  return { wire: ix.get(IAgentWireService), log: ix.get(IAppendLogStore), eventBus: ix.get(IEventBus) };
+  const wire = registerTestAgentWire(ix, testWireScope(SCOPE, key), {
+    log: ix.get(IAppendLogStore),
+    eventBus: ix.get(IEventBus),
+  });
+  return { wire, log: ix.get(IAppendLogStore), eventBus: ix.get(IEventBus) };
 }
 
 beforeEach(() => {
@@ -44,9 +48,10 @@ beforeEach(() => {
 
 afterEach(() => disposables.dispose());
 
-async function readRecords(key = KEY): Promise<PersistedRecord[]> {
-  const out: PersistedRecord[] = [];
-  for await (const record of log.read<PersistedRecord>(SCOPE, key)) {
+async function readRecords(key = KEY): Promise<WireRecord[]> {
+  await wire.flush();
+  const out: WireRecord[] = [];
+  for await (const record of log.read<WireRecord>(testWireScope(SCOPE, key), AGENT_WIRE_RECORD_KEY)) {
     out.push(record);
   }
   return out;
@@ -116,7 +121,7 @@ describe('plan ops (wire-backed)', () => {
     expect(wire.getModel(PlanModel)).toBe(active);
   });
 
-  it('replay rebuilds active state silently (no emissions, no subscriber notifications)', async () => {
+  it('replay rebuilds active state silently', async () => {
     wire.dispatch(planModeEnter({ id: 'p1' }));
     const records = await readRecords();
 
@@ -125,23 +130,27 @@ describe('plan ops (wire-backed)', () => {
     host.eventBus.subscribe((e) => {
       emissions.push(e.type);
     });
-    let modelChanges = 0;
-    host.wire.subscribe(PlanModel, () => {
-      modelChanges += 1;
-    });
-
-    await host.wire.replay(...records);
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'plan-replay'),
+      records,
+    );
     expect(host.wire.getModel(PlanModel)).toEqual({
       active: true,
       id: 'p1',
     });
     expect(emissions).toEqual([]);
-    expect(modelChanges).toBe(0);
 
     const cancelled = buildHost('plan-replay-cancel');
-    await cancelled.wire.replay(
+    await restoreTestAgentWire(
+      cancelled.wire,
+      cancelled.log,
+      testWireScope(SCOPE, 'plan-replay-cancel'),
+      [
       { type: 'plan_mode.enter', id: 'p1', planFilePath: '/w/plan/p1.md' },
       { type: 'plan_mode.cancel', id: 'p1' },
+      ],
     );
     expect(cancelled.wire.getModel(PlanModel).active).toBe(false);
   });

@@ -38,15 +38,14 @@ import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStor
 import { IFileSystemStorageService } from '#/persistence/interface/storage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
-import { IAgentWireService } from '#/wire/tokens';
-import type { IWireService } from '#/wire/wireService';
+import { createHooks } from '#/hooks';
+import { IWireService, type WireHooks } from '#/wire/wire';
 import { IEventBus } from '#/app/event/eventBus';
 import { EventBusService } from '#/app/event/eventBusService';
 import { ITaskService } from '#/app/task/task';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 
-import { stubContextMemory, stubWireRecord } from '../contextMemory/stubs';
+import { stubContextMemory } from '../contextMemory/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
 import type { TaskServiceTestManager } from './stubs';
 
@@ -60,24 +59,21 @@ function fakeProcessTask(): AgentTask {
   };
 }
 
-type RestoreHandler = Parameters<IWireService['onRestored']>[0];
+type RestoreHook = IWireService['hooks']['onDidRestore'];
 
-function stubWireService(captureRestored?: (handler: RestoreHandler) => void): IWireService {
+function stubWireService(captureRestoreHook?: (hook: RestoreHook) => void): IWireService {
+  const hooks = createHooks<WireHooks, keyof WireHooks>(['onDidRestore']);
+  captureRestoreHook?.(hooks.onDidRestore);
   return {
     _serviceBrand: undefined,
+    hooks,
     dispatch: () => {},
-    replay: async () => {},
-    signal: () => {},
+    seal: async () => {},
+    restore: async () => {},
     flush: async () => {},
-    attach: () => toDisposable(() => {}),
-    getModel: () => new Map(),
+    getModel: (model) => model.initial() as never,
     subscribe: () => toDisposable(() => {}),
-    onEmission: () => toDisposable(() => {}),
-    onRestored: (handler: RestoreHandler) => {
-      captureRestored?.(handler);
-      return toDisposable(() => {});
-    },
-  } as unknown as IWireService;
+  } as IWireService;
 }
 
 describe('AgentTaskService', () => {
@@ -91,8 +87,7 @@ describe('AgentTaskService', () => {
     ix = disposables.add(new TestInstantiationService());
     eventBus = disposables.add(new EventBusService());
     injectionProviders = new Map();
-    ix.stub(IAgentWireRecordService, stubWireRecord());
-    ix.stub(IAgentWireService, stubWireService());
+    ix.stub(IWireService, stubWireService());
     ix.stub(IEventBus, eventBus);
     ix.stub(IAgentContextInjectorService, {
       register: (name, provider) => {
@@ -395,11 +390,10 @@ describe('AgentTaskService', () => {
     agentId: string,
     docs: IAtomicDocumentStore,
     bytes: IFileSystemStorageService,
-    captureRestored?: (handler: RestoreHandler) => void,
+    captureRestoreHook?: (hook: RestoreHook) => void,
   ): TestInstantiationService {
     const ix = disposables.add(new TestInstantiationService());
-    ix.stub(IAgentWireRecordService, stubWireRecord());
-    ix.stub(IAgentWireService, stubWireService(captureRestored));
+    ix.stub(IWireService, stubWireService(captureRestoreHook));
     ix.stub(IEventBus, disposables.add(new EventBusService()));
     ix.stub(IAgentContextInjectorService, {
       register: () => toDisposable(() => {}),
@@ -503,12 +497,12 @@ describe('AgentTaskService', () => {
       'output.log',
       new TextEncoder().encode('legacy output'),
     );
-    let restore!: RestoreHandler;
-    const main = buildAgentIx('main', docs, bytes, (handler) => {
-      restore = handler;
+    let restoreHook!: RestoreHook;
+    const main = buildAgentIx('main', docs, bytes, (hook) => {
+      restoreHook = hook;
     }).get(IAgentTaskService);
 
-    await restore();
+    await restoreHook.run({});
 
     expect(main.list(false)).toEqual([
       expect.objectContaining({ taskId, description: 'legacy task', status: 'completed' }),
@@ -540,12 +534,12 @@ describe('AgentTaskService', () => {
       status: 'completed',
       detached: true,
     });
-    let restore!: RestoreHandler;
-    const subagent = buildAgentIx('agent-1', docs, bytes, (handler) => {
-      restore = handler;
+    let restoreHook!: RestoreHook;
+    const subagent = buildAgentIx('agent-1', docs, bytes, (hook) => {
+      restoreHook = hook;
     }).get(IAgentTaskService);
 
-    await restore();
+    await restoreHook.run({});
 
     expect(subagent.list(false)).toEqual([]);
   });

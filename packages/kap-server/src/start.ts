@@ -12,6 +12,7 @@ import {
   hostRequestHeadersSeed,
   IConfigService,
   IModelCatalogService,
+  IWorkspaceRegistry,
   logSeed,
   MULTI_SERVER_FLAG_ENV,
   resolveConfigPath,
@@ -115,6 +116,13 @@ export interface ServerStartOptions {
    * the API server without the web UI.
    */
   readonly webAssetsDir?: string;
+  /**
+   * Host product version, reported as `server_version` (GET /api/v1/meta), in
+   * the OpenAPI document, session exports, the lock / instance registry, and
+   * the default User-Agent. Defaults to kap-server's own package version;
+   * embedding hosts (the CLI) should pass their own version.
+   */
+  readonly version?: string;
 }
 
 export interface RunningServer {
@@ -161,7 +169,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   //     multiple servers can share the homeDir; port conflicts are resolved by
   //     the `port + 1` retry below instead of the lock.
   // Either handle is released on close and on any boot refusal below.
-  const hostVersion = getServerVersion();
+  const hostVersion = opts.version ?? getServerVersion();
   let lockHandle: AcquireLockResult | undefined;
   let registration: InstanceRegistration | undefined;
   if (isMultiServerEnabled(process.env)) {
@@ -195,10 +203,12 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   const enableShutdown = exposureClass === 'loopback' || opts.allowRemoteShutdown === true;
   const enableTerminals = exposureClass === 'loopback' || opts.allowRemoteTerminals === true;
   const debugEndpoints = exposureClass === 'loopback' && opts.debugEndpoints === true;
-  const authFailureLimiter = exposureClass === 'loopback' ? undefined : createAuthFailureLimiter();
+  const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
+  const authFailureLimiter =
+    exposureClass === 'loopback' ? undefined : createAuthFailureLimiter({ logger });
 
   const configPath = resolveConfigPath({ homeDir, configPath: opts.configPath });
-  const guiStore = new GuiStoreService(homeDir);
+  const guiStore = new GuiStoreService(homeDir, logger);
   let authTokenService: IAuthTokenService;
   // Whether a password credential is configured (only meaningful for the real,
   // non-injected auth impl). Drives the token-only warning on a public bind.
@@ -236,7 +246,6 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     ...(opts.seeds ?? []),
   ]);
 
-  const logger = opts.logger ?? createServerLogger({ level: opts.logLevel ?? 'info' });
   if (exposureClass !== 'loopback') {
     logger.warn(
       { host, exposureClass },
@@ -254,6 +263,20 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     core.accessor.get(IConfigService),
     logger,
   );
+
+  // Sync the workspace catalog from the legacy session index once at startup,
+  // so sessions created by the v1 TUI surface as workspaces on the very first
+  // /workspaces request. Awaited so the write completes before the server
+  // starts accepting traffic (and before embedding hosts tear the homeDir
+  // down); best-effort: a failure re-surfaces on first access.
+  try {
+    await core.accessor.get(IWorkspaceRegistry).list();
+  } catch (error) {
+    logger.warn(
+      { err: error instanceof Error ? error.message : String(error) },
+      'workspace registry startup sync failed',
+    );
+  }
 
   const app = Fastify({
     loggerInstance: logger,
@@ -323,7 +346,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     config: loadSnapshotConfig(),
   });
 
-  const serverVersion = getServerVersion();
+  const serverVersion = hostVersion;
 
   async function registerOpenApi(): Promise<void> {
     const { default: swagger } = await import('@fastify/swagger');
@@ -373,7 +396,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     enableTerminals,
     guiStore,
     onShutdown: () => {
-      void close();
+      void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
     },
     connectionRegistry,
     broadcaster,
@@ -382,7 +405,7 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
   });
 
   registerRpcRoutes(app, core, { token: opts.rpcToken });
-  const wssV2 = registerWs(core, { validateCredential, registry: connectionRegistry });
+  const wssV2 = registerWs(core, { validateCredential, registry: connectionRegistry, logger });
   const wssV1 = registerWsV1(core, {
     validateCredential,
     registry: connectionRegistry,
@@ -410,11 +433,19 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     // Origin is present-only: a missing Origin is treated as a non-browser
     // client and allowed.
     if (!hostCheck.isAllowed(req.headers.host)) {
+      logger.warn(
+        { remoteAddress: req.socket.remoteAddress, path: url, reason: 'host_not_allowed' },
+        'ws upgrade rejected',
+      );
       (socket as Socket).write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       (socket as Socket).destroy();
       return;
     }
     if (!isOriginAllowed(req.headers.origin, req.headers.host, allowedOrigins)) {
+      logger.warn(
+        { remoteAddress: req.socket.remoteAddress, path: url, reason: 'origin_not_allowed' },
+        'ws upgrade rejected',
+      );
       (socket as Socket).write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
       (socket as Socket).destroy();
       return;
@@ -431,11 +462,28 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
       if (candidate !== null) {
         try {
           ok = await validateCredential(candidate);
-        } catch {
+        } catch (error) {
+          logger.warn(
+            {
+              err: error,
+              remoteAddress: req.socket.remoteAddress,
+              path: url,
+              reason: 'credential_validation_error',
+            },
+            'ws upgrade rejected',
+          );
           ok = false;
         }
       }
       if (!ok) {
+        logger.warn(
+          {
+            remoteAddress: req.socket.remoteAddress,
+            path: url,
+            reason: candidate === null ? 'missing_credential' : 'invalid_credential',
+          },
+          'ws upgrade rejected',
+        );
         (socket as Socket).write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
         (socket as Socket).destroy();
         return;
@@ -450,7 +498,9 @@ export async function startServer(opts: ServerStartOptions = {}): Promise<Runnin
     }
   };
   app.server.on('upgrade', (req, socket, head) => {
-    void handleUpgrade(req, socket, head);
+    void handleUpgrade(req, socket, head).catch((error: unknown) =>
+      logger.error({ err: error }, 'ws upgrade handler failed'),
+    );
   });
 
   app.addHook('onClose', async () => {

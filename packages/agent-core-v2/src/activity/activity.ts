@@ -2,15 +2,16 @@
  * `activity` domain (L4) — Agent / Session activity kernel contracts.
  *
  * Defines the authoritative activity state machines shared by the Agent and
- * Session scopes. `IAgentActivityService` is the Agent-scope lane machine: it
+ * Session scopes. `IAgentActivityService` is the Agent-scope activity machine: it
  * owns turn admission (`begin`/`tryBegin`), cancellation, background-activity
- * registration and disposal settlement, and is the sole dispatcher of the
- * `activityLane` wire Model (`activityOps`). `ISessionActivityKernel` is the
+ * registration, disposal settlement, and the live activity projection emitted
+ * as `agent.activity.updated`. `ISessionActivityKernel` is the
  * Session-scope lifecycle lane + admission table that the Agent kernel consults
  * synchronously on every `begin` (child-injects-parent), so admission stays
  * atomic inside a single event-loop turn. The `ActivityLease` returned by
- * `begin` carries the turn's `AbortSignal` and is the only path back to `idle`
- * (`lease.end`). Multi-scope domain: `IAgentActivityService` bound at Agent
+ * `begin` carries the turn's `AbortSignal`; `lease.end` releases the active
+ * turn independently of the Agent lifecycle. Multi-scope domain:
+ * `IAgentActivityService` bound at Agent
  * scope, `ISessionActivityKernel` bound at Session scope.
  */
 
@@ -19,7 +20,7 @@ import type { IDisposable } from '#/_base/di/lifecycle';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { TurnEndReason } from '@moonshot-ai/protocol';
 
-export type AgentLane = 'initializing' | 'idle' | 'turn' | 'disposing' | 'disposed';
+export type AgentLifecycleState = 'initializing' | 'ready' | 'disposing' | 'disposed';
 
 export interface BeginOptions {
   readonly origin?: PromptOrigin;
@@ -45,7 +46,7 @@ export interface BackgroundActivityRef {
 export interface IAgentActivityService {
   readonly _serviceBrand: undefined;
 
-  lane(): AgentLane;
+  isIdle(): boolean;
 
   begin(kind: 'turn', opts?: BeginOptions): ActivityLease;
 
@@ -144,9 +145,15 @@ export interface ActivityLastTurnState {
   readonly at: number;
 }
 
-export interface AgentActivitySnapshot {
-  readonly lane: AgentLane;
+export interface AgentActivityState {
+  readonly lifecycle: AgentLifecycleState;
   readonly turn?: ActivityTurnState;
   readonly lastTurn?: ActivityLastTurnState;
   readonly background: readonly BackgroundActivityRef[];
+}
+
+declare module '#/app/event/eventBus' {
+  interface DomainEventMap {
+    'agent.activity.updated': AgentActivityState & { readonly type: 'agent.activity.updated' };
+  }
 }

@@ -29,7 +29,7 @@
  */
 
 import { type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
-import type { PersistedRecord } from '#/wire/wireService';
+import type { WireRecord } from '#/wire/record';
 
 import {
   COMPACT_USER_MESSAGE_MAX_TOKENS,
@@ -49,6 +49,11 @@ export interface ContextTranscript {
   readonly foldedLength: number;
 }
 
+export interface ContextTranscriptReducer {
+  add(record: WireRecord): void;
+  result(): ContextTranscript;
+}
+
 interface MutableMessage {
   id?: string;
   role: ContextMessage['role'];
@@ -64,7 +69,13 @@ interface MutableEntry {
   time?: number;
 }
 
-export function reduceContextTranscript(records: Iterable<PersistedRecord>): ContextTranscript {
+export function reduceContextTranscript(records: Iterable<WireRecord>): ContextTranscript {
+  const reducer = createContextTranscriptReducer();
+  for (const record of records) reducer.add(record);
+  return reducer.result();
+}
+
+export function createContextTranscriptReducer(): ContextTranscriptReducer {
   const transcript: MutableEntry[] = [];
   let foldedLength = 0;
   let clearFloor = 0;
@@ -176,7 +187,7 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
     resetOpenState();
   };
 
-  for (const record of records) {
+  const add = (record: WireRecord): void => {
     switch (record.type) {
       case 'context.append_message': {
         const entry = toMutableEntry(record['message'] as ContextMessage, record.time);
@@ -212,12 +223,15 @@ export function reduceContextTranscript(records: Iterable<PersistedRecord>): Con
       default:
         break;
     }
-  }
+  };
 
   return {
-    entries: transcript.map((e) => e.message),
-    times: transcript.map((e) => e.time),
-    foldedLength,
+    add,
+    result: () => ({
+      entries: transcript.map((e) => e.message),
+      times: transcript.map((e) => e.time),
+      foldedLength,
+    }),
   };
 }
 
@@ -237,7 +251,7 @@ function toMutableEntry(message: ContextMessage, time: number | undefined): Muta
 }
 
 function recoverFoldedLength(
-  record: PersistedRecord,
+  record: WireRecord,
   transcript: readonly MutableEntry[],
   clearFloor: number,
   foldedLength: number,
@@ -258,7 +272,7 @@ function recoverFoldedLength(
   return keptUserMessages.length + 1;
 }
 
-function readCompactionSummaryText(record: PersistedRecord): string {
+function readCompactionSummaryText(record: WireRecord): string {
   const summary = record['summary'];
   if (typeof summary === 'string') return summary;
   const contextSummary = record['contextSummary'];
@@ -281,7 +295,7 @@ function textOfParts(content: readonly ContentPart[]): string {
   return text;
 }
 
-function readNumber(record: PersistedRecord, key: string): number | undefined {
+function readNumber(record: WireRecord, key: string): number | undefined {
   const value = record[key];
   return typeof value === 'number' ? value : undefined;
 }

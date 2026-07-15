@@ -128,7 +128,7 @@ export class SessionLegacyService implements ISessionLegacyService {
           await goal.pauseGoal({});
           break;
         case 'resume':
-          await goal.resumeGoal({ continueIfBlocked: true });
+          await goal.resumeGoal({ continueIfPaused: true, continueIfBlocked: true });
           break;
         case 'cancel':
           await goal.cancelGoal({});
@@ -161,7 +161,6 @@ export class SessionLegacyService implements ISessionLegacyService {
     const plan = agent.accessor.get(IAgentPlanService);
     const swarm = agent.accessor.get(IAgentSwarmService);
 
-    const profileData = profile.data();
     const model = profile.getModel();
     const caps = profile.getModelCapabilities() as { max_context_tokens?: number };
     const maxTokens =
@@ -172,7 +171,7 @@ export class SessionLegacyService implements ISessionLegacyService {
     return {
       status: session?.accessor.get(ISessionActivity).status() ?? 'idle',
       model: model === '' ? undefined : model,
-      thinking_level: profileData.thinkingLevel,
+      thinking_level: profile.getEffectiveThinkingLevel(),
       permission: permission.mode,
       plan_mode: planData !== null,
       swarm_mode: swarm.isActive,

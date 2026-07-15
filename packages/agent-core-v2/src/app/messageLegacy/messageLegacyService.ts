@@ -5,13 +5,10 @@
  * its main agent), sources the transcript, and projects it into the v1 wire
  * shape.
  *
- * History source is the main agent's in-memory record journal
- * (`IAgentWireRecordService.getRecords()`), seeded from `wire.jsonl` by
- * `ISessionLifecycleService.resume` and then kept current as live dispatch
- * appends each record — so a transcript read never re-reads the file. The
- * journal is reduced by `reduceContextTranscript` (the same reducer v1's
- * `MessageService` uses), which keeps the full history across compactions
- * (inserting a summary marker instead of folding) — unlike the live
+ * History is streamed from the main agent's append log after its pending wire
+ * writes are flushed. The journal is folded incrementally by the same
+ * transcript reducer v1's `MessageService` uses, keeping full history across
+ * compactions (inserting a summary marker instead of folding) — unlike the live
  * `IAgentContextMemoryService.get()`, whose folded context collapses into
  * `[...keptUserMessages, compaction_summary]` and would lose the prefix.
  * `foldedLength` is what the live history length WOULD be from the journal's
@@ -28,17 +25,19 @@ import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#
 import { IAgentBlobService } from '#/agent/blob/agentBlobService';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import {
-  reduceContextTranscript,
+  createContextTranscriptReducer,
   type ContextTranscript,
 } from '#/agent/contextMemory/contextTranscript';
 import { toProtocolMessage } from '#/agent/contextMemory/messageProjection';
 import type { ContextMessage } from '#/agent/contextMemory/types';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
+import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
+import { IWireService } from '#/wire/wire';
+import { AGENT_WIRE_RECORD_KEY, type WireRecord } from '#/wire/record';
 import { ISessionIndex } from '#/app/sessionIndex/sessionIndex';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { ErrorCodes, Error2 } from '#/errors';
 import { ensureMainAgent } from '#/session/agentLifecycle/mainAgent';
-import type { PersistedRecord } from '#/wire/wireService';
 
 import { IMessageLegacyService, type MessageListQuery } from './messageLegacy';
 
@@ -51,6 +50,7 @@ export class MessageLegacyService implements IMessageLegacyService {
   constructor(
     @ISessionLifecycleService private readonly lifecycle: ISessionLifecycleService,
     @ISessionIndex private readonly index: ISessionIndex,
+    @IAppendLogStore private readonly appendLog: IAppendLogStore,
   ) {}
 
   async list(sessionId: string, query: MessageListQuery): Promise<PageResponse<Message>> {
@@ -105,7 +105,7 @@ export class MessageLegacyService implements IMessageLegacyService {
     if (session === undefined) return [];
     const agent = await ensureMainAgent(session);
 
-    const transcript = this.readTranscript(agent);
+    const transcript = await this.readTranscript(agent);
     const contextMessages = agent.accessor.get(IAgentContextMemoryService).get();
     const merged = mergeLiveTail(transcript, contextMessages);
     const entries = await this.rehydrate(agent, merged.messages);
@@ -143,11 +143,14 @@ export class MessageLegacyService implements IMessageLegacyService {
     return changed ? out : messages;
   }
 
-  private readTranscript(agent: IAgentScopeHandle): ContextTranscript {
-    const records = agent
-      .accessor.get(IAgentWireRecordService)
-      .getRecords() as readonly PersistedRecord[];
-    return reduceContextTranscript(records);
+  private async readTranscript(agent: IAgentScopeHandle): Promise<ContextTranscript> {
+    await agent.accessor.get(IWireService).flush();
+    const scope = agent.accessor.get(IAgentScopeContext).scope();
+    const reducer = createContextTranscriptReducer();
+    for await (const record of this.appendLog.read<WireRecord>(scope, AGENT_WIRE_RECORD_KEY)) {
+      reducer.add(record);
+    }
+    return reducer.result();
   }
 }
 

@@ -29,7 +29,7 @@ import {
 import { LifecycleScope, type IAgentScopeHandle, type ISessionScopeHandle } from '#/_base/di/scope';
 import type { ServiceIdentifier, ServicesAccessor } from '#/_base/di/instantiation';
 import { ILogService, type ILogService as LogService } from '#/_base/log/log';
-import { IAgentWireRecordService } from '#/agent/wireRecord/wireRecord';
+import { IWireService } from '#/wire/wire';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { openZipSource, type ZipSource } from '#/app/sessionExport/file-source';
 import {
@@ -54,6 +54,7 @@ import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/se
 
 import { stubBootstrap } from '../bootstrap/stubs';
 import { stubLog } from '../../_base/log/stubs';
+import { stubAgentWire } from '../../wire/stubs';
 
 const fsOpenHook = vi.hoisted(() => ({
   afterOpen: undefined as ((path: string, handle: FileHandle) => Promise<void>) | undefined,
@@ -868,7 +869,7 @@ function testAgentHandle(agentWire: Pick<ReturnType<typeof stubAgentWire>, 'flus
   return {
     id: 'main',
     kind: LifecycleScope.Agent,
-    accessor: accessorFrom([[IAgentWireRecordService, stubAgentWire(agentWire.flush)]]),
+    accessor: accessorFrom([[IWireService, stubAgentWire(agentWire.flush)]]),
     dispose: () => {},
   };
 }
@@ -912,17 +913,6 @@ function stubAgentLifecycle(agents: readonly IAgentScopeHandle[]): IAgentLifecyc
     remove: async () => {},
   };
 }
-
-function stubAgentWire(flush: () => Promise<void> = async () => {}): IAgentWireRecordService {
-  return {
-    _serviceBrand: undefined,
-    getRecords: () => [],
-    restore: async () => ({}),
-    flush,
-    close: async () => {},
-  };
-}
-
 function testManifest(sessionId: string): ExportSessionManifest {
   return {
     sessionId,
