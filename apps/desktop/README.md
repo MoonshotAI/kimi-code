@@ -76,7 +76,10 @@ pnpm --filter @moonshot-ai/kimi-desktop run test
 - 改 `apps/web/src` **不会**自动反映到 desktop；改 `apps/desktop/src/renderer` 也不会回写 web。
 - 同步目前是手动的：把 `apps/web/src/.` 重新复制到 `apps/desktop/src/renderer/`，并带上
   `apps/web/index.html`。
-- 请勿在副本里做 desktop 专属的大改而不回填 web，否则两边会快速分叉。
+- **两端逐步分叉是既定方向**：desktop 的原生功能（`window.kimiDesktop` 桥接）只在副本侧
+  实现，web 刻意保留旧 daemon 接口实现、不回填；原生路径要带无桥降级。分叉点记录在
+  [`docs/native-todos.md`](docs/native-todos.md)，re-copy 同步前先查它，保留 desktop 侧的
+  分叉块。两端共有的改动仍按根 AGENTS.md 的顺序回填 web。
 
 ## 后续计划
 
@@ -92,6 +95,8 @@ pnpm --filter @moonshot-ai/kimi-desktop run test
 4. **长期原生化方向**：当前是「web 副本给 desktop 用」的反向过渡。目标是 desktop-first 抽出
    共享组件与逻辑、让 web 复用；前置条件是解开 web 侧 `createAgentProjector` / `toolMeta` 等
    与 UI 的硬耦合。在副本路线跑稳之前不强行抽取。
+5. **原生能力接线**：preload 已暴露的桥接方法大部分闲置，new workspace 目录选择、外链打开、
+   系统通知等一批功能可原生化，逐项 TODO 见 [`docs/native-todos.md`](docs/native-todos.md)。
 
 ## 打包
 
