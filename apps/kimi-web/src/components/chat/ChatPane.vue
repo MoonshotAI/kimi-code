@@ -11,6 +11,7 @@ import ActivityNotice from './ActivityNotice.vue';
 import CronNotice from './CronNotice.vue';
 import MessageTime from './MessageTime.vue';
 import AuthMedia from './AuthMedia.vue';
+import AttachmentChip from './AttachmentChip.vue';
 import MoonSpinner from '../ui/MoonSpinner.vue';
 import Spinner from '../ui/Spinner.vue';
 import Icon from '../ui/Icon.vue';
@@ -18,7 +19,6 @@ import Tooltip from '../ui/Tooltip.vue';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
 import { getKimiWebApi } from '../../api';
-import type { IconName } from '../../lib/icons';
 import {
   assistantRenderBlocks,
   formatDuration,
@@ -478,61 +478,6 @@ function userAttachmentMedia(att: TurnAttachment): ToolMedia {
   return { kind: att.kind === 'video' ? 'video' : 'image', url: att.url, path: att.name, fileId: att.fileId };
 }
 
-// ---------------------------------------------------------------------------
-// Attachment chips (unified file / image / video rendering in user bubbles)
-// ---------------------------------------------------------------------------
-
-/** Semantic hue per file family (PDF/docs/sheets/archives/code/images). The
-    generic file icon and unknown types use the neutral default. */
-const ATT_TILE_CLASS: [RegExp, string][] = [
-  [/^pdf$/i, 'ft-pdf'],
-  [/^(doc|docx|md|txt|rtf)$/i, 'ft-doc'],
-  [/^(xls|xlsx|csv|tsv)$/i, 'ft-sheet'],
-  [/^(zip|tar|gz|tgz|bz2|xz|7z|rar)$/i, 'ft-zip'],
-  [/^(png|jpe?g|gif|webp|avif|svg|heic|bmp)$/i, 'ft-img'],
-  [/^(m[km]ov|mp4|webm|avi)$/i, 'ft-img'],
-];
-
-function attExt(att: TurnAttachment): string | undefined {
-  const fromName = att.name?.match(/\.([A-Za-z0-9]{1,8})$/)?.[1];
-  const ext = fromName ?? att.mediaType?.split('/')[1]?.split('+')[0];
-  return ext ? ext.toUpperCase() : undefined;
-}
-
-function attTileClass(att: TurnAttachment): string {
-  if (att.kind !== 'file') return att.kind === 'video' ? 'ft ft-img' : 'ft';
-  const ext = attExt(att) ?? '';
-  for (const [re, cls] of ATT_TILE_CLASS) {
-    if (re.test(ext)) return `ft ${cls}`;
-  }
-  return 'ft';
-}
-
-function fileIcon(att: TurnAttachment): IconName {
-  const ext = attExt(att) ?? '';
-  if (/^(txt|md|doc|docx|rtf|log)$/i.test(ext)) return 'file-text';
-  return 'file';
-}
-
-function attName(att: TurnAttachment): string {
-  if (att.name) return att.name;
-  if (att.kind === 'image') return t('composer.attachmentImage');
-  if (att.kind === 'video') return t('composer.attachmentVideo');
-  return t('composer.attachmentFile');
-}
-
-function formatAttSize(size: number): string {
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
-  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function attChipTitle(att: TurnAttachment): string {
-  const parts = [attName(att)];
-  if (att.size !== undefined) parts.push(formatAttSize(att.size));
-  return parts.join(' · ');
-}
-
 function onAttachmentClick(att: TurnAttachment): void {
   if (att.kind === 'image' || att.kind === 'video') {
     emit('openMedia', userAttachmentMedia(att));
@@ -604,31 +549,17 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
             <!-- Unified attachment chips: files, images and videos -->
             <div v-if="turn.attachments && turn.attachments.length > 0" class="u-atts">
-              <template v-for="(att, ai) in turn.attachments" :key="ai">
-                <button
-                  type="button"
-                  class="att-chip"
-                  :class="attTileClass(att)"
-                  :title="attChipTitle(att)"
-                  :aria-label="attChipTitle(att)"
-                  @click="onAttachmentClick(att)"
-                >
-                  <span class="att-tile">
-                    <AuthMedia
-                      v-if="att.kind === 'image'"
-                      :url="att.url"
-                      kind="image"
-                      :alt="att.name"
-                      :file-id="att.fileId"
-                      media-class="att-thumb"
-                    />
-                    <Icon v-else-if="att.kind === 'video'" name="play" size="sm" />
-                    <Icon v-else :name="fileIcon(att)" size="sm" />
-                  </span>
-                  <span class="att-name">{{ attName(att) }}</span>
-                  <span v-if="attExt(att)" class="att-ext">{{ attExt(att) }}</span>
-                </button>
-              </template>
+              <AttachmentChip
+                v-for="(att, ai) in turn.attachments"
+                :key="ai"
+                :kind="att.kind"
+                :name="att.name"
+                :url="att.url"
+                :file-id="att.fileId"
+                :media-type="att.mediaType"
+                :size="att.size"
+                @activate="onAttachmentClick(att)"
+              />
             </div>
             <!-- Skill activation card (replaces raw XML) -->
             <div v-if="turn.skillActivation" class="skill-act">
@@ -1144,81 +1075,13 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   }
 }
 
-/* Unified attachment chips (files / images / videos) above the bubble text.
-   Tile hue comes from the --ft-* family tokens (neutral --ft-file default). */
+/* Unified attachment chips (files / images / videos) above the bubble text —
+   the chip itself is AttachmentChip; this is only the row layout. */
 .u-atts {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 8px;
-}
-.att-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 220px;
-  padding: 4px 9px 4px 5px;
-  background: var(--color-bg);
-  border: 1px solid var(--color-line);
-  border-radius: 999px;
-  cursor: pointer;
-  font-size: var(--ui-font-size-sm);
-  transition: border-color var(--duration-fast, .12s) ease;
-}
-.att-chip:hover {
-  border-color: var(--color-line-strong);
-}
-.att-tile {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
-  color: var(--ft-file);
-  background: var(--ft-file-soft);
-}
-.att-tile :deep(.att-thumb) {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.att-chip.ft-pdf .att-tile { color: var(--ft-pdf); background: var(--ft-pdf-soft); }
-.att-chip.ft-doc .att-tile { color: var(--ft-doc); background: var(--ft-doc-soft); }
-.att-chip.ft-sheet .att-tile { color: var(--ft-sheet); background: var(--ft-sheet-soft); }
-.att-chip.ft-zip .att-tile { color: var(--ft-zip); background: var(--ft-zip-soft); }
-.att-chip.ft-code .att-tile { color: var(--ft-code); background: var(--ft-code-soft); }
-.att-chip.ft-img .att-tile { color: var(--ft-img); background: var(--ft-img-soft); }
-.att-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--color-text);
-  font-weight: var(--weight-medium, 500);
-}
-.att-ext {
-  flex: none;
-  font-size: calc(var(--ui-font-size-sm) - 2px);
-  font-weight: var(--weight-semibold, 600);
-  letter-spacing: .02em;
-  color: var(--ft-file);
-  background: var(--ft-file-soft);
-  border-radius: var(--radius-xs);
-  padding: 1px 4px;
-}
-.att-chip.ft-pdf .att-ext { color: var(--ft-pdf); background: var(--ft-pdf-soft); }
-.att-chip.ft-doc .att-ext { color: var(--ft-doc); background: var(--ft-doc-soft); }
-.att-chip.ft-sheet .att-ext { color: var(--ft-sheet); background: var(--ft-sheet-soft); }
-.att-chip.ft-zip .att-ext { color: var(--ft-zip); background: var(--ft-zip-soft); }
-.att-chip.ft-code .att-ext { color: var(--ft-code); background: var(--ft-code-soft); }
-.att-chip.ft-img .att-ext { color: var(--ft-img); background: var(--ft-img-soft); }
-.att-chip:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
 }
 
 /* NOTE: Chat/bubble styles live in src/style.css (global). Scoped `.u-bub`

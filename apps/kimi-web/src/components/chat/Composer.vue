@@ -29,6 +29,7 @@ import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
 import ContextRing from '../ui/ContextRing.vue';
 import Tooltip from '../ui/Tooltip.vue';
+import AttachmentChip from './AttachmentChip.vue';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -297,6 +298,13 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
 // while file parts also carry name/mediaType/size for the daemon's file shape.
 function toPromptAttachment(a: Attachment): PromptAttachment {
   return { fileId: a.fileId!, kind: a.kind, name: a.name, mediaType: a.mediaType, size: a.size };
+}
+
+// Chip primary action: media opens the lightbox preview; generic files carry
+// no local preview, so their chips stay informational (title only).
+function onAttachmentActivate(att: Attachment): void {
+  if (att.kind === 'file') return;
+  openAttachmentPreview(att);
 }
 
 function handleSubmit(): void {
@@ -835,38 +843,22 @@ function selectModel(modelId: string): void {
   >
     <!-- Attachment chips (above the input row) -->
     <div v-if="attachments.length > 0" class="att-strip">
-      <div v-for="att in attachments" :key="att.localId" class="att-chip" :class="{ 'att-error': att.error }">
-        <!-- Generic file: icon chip, nothing to preview -->
-        <span v-if="att.kind === 'file'" class="att-file-icon" aria-hidden="true">
-          <Icon name="file" size="md" />
-        </span>
-        <!-- Thumbnail (video shows its first frame; an icon overlays it) -->
-        <Tooltip v-else :text="t('composer.previewAttachment', { name: att.name })">
-          <button type="button" class="att-preview" @click="openAttachmentPreview(att)">
-            <video v-if="att.kind === 'video'" class="att-thumb" :src="att.previewUrl" muted playsinline preload="metadata" />
-            <img v-else class="att-thumb" :src="att.previewUrl" :alt="att.name" />
-            <span v-if="att.kind === 'video'" class="att-video-badge" aria-hidden="true">
-              <Icon name="play" size="sm" />
-            </span>
-          </button>
-        </Tooltip>
-        <!-- Name + status -->
-        <span class="att-name">{{ att.name }}</span>
-        <!-- Spinner while uploading -->
-        <Spinner v-if="att.uploading" size="sm" :label="t('composer.uploading')" />
-        <!-- Error indicator -->
-        <Tooltip v-else-if="att.error" :text="t('composer.uploadFailed')">
-          <span class="att-err-icon">
-            <Icon name="info" size="sm" />
-          </span>
-        </Tooltip>
-        <!-- Remove button -->
-        <Tooltip :text="t('composer.removeNamed', { name: att.name })">
-          <button class="att-rm" @click="removeAttachment(att.localId)">
-            <Icon name="close" size="sm" />
-          </button>
-        </Tooltip>
-      </div>
+      <AttachmentChip
+        v-for="att in attachments"
+        :key="att.localId"
+        :kind="att.kind"
+        :name="att.name"
+        :url="att.previewUrl"
+        :file-id="att.fileId"
+        :media-type="att.mediaType"
+        :size="att.size"
+        :uploading="att.uploading"
+        :error="att.error"
+        removable
+        :remove-label="t('composer.removeNamed', { name: att.name })"
+        @activate="onAttachmentActivate(att)"
+        @remove="removeAttachment(att.localId)"
+      />
     </div>
 
     <div v-if="previewAttachment" class="att-lightbox" @click.self="closeAttachmentPreview">
@@ -1293,119 +1285,13 @@ function selectModel(modelId: string): void {
 
 
 
-/* Attachment strip */
+/* Attachment strip — the chip itself is the shared AttachmentChip; this is
+   only the row layout above the input. */
 .att-strip {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   padding: 4px 0 6px;
-}
-
-.att-chip {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  background: var(--panel2);
-  border: 1px solid var(--color-accent-bd);
-  border-radius: 4px;
-  padding: 3px 6px 3px 4px;
-  font-family: var(--mono);
-  font-size: calc(var(--ui-font-size) - 3px);
-  color: var(--color-text);
-  max-width: 220px;
-}
-
-.att-preview {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: none;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  padding: 0;
-  cursor: zoom-in;
-  flex: none;
-}
-.att-preview:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
-}
-
-/* Play glyph over a video thumbnail so it reads as a video, not a still. */
-.att-video-badge {
-  position: absolute;
-  left: 4px;
-  top: 50%;
-  transform: translateY(-50%);
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.55);
-  color: var(--color-text-on-accent);
-  pointer-events: none;
-}
-
-.att-chip.att-error {
-  border-color: var(--color-danger);
-  color: var(--color-danger);
-}
-
-.att-thumb {
-  width: 28px;
-  height: 28px;
-  object-fit: cover;
-  border-radius: var(--radius-xs);
-  flex-shrink: 0;
-  background: var(--line2);
-}
-
-/* Icon stand-in for a generic file chip (no thumbnail to preview). */
-.att-file-icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  border-radius: var(--radius-xs);
-  flex-shrink: 0;
-  background: var(--line2);
-  color: var(--muted);
-}
-
-.att-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  flex: 1;
-  min-width: 0;
-}
-
-.att-err-icon {
-  display: flex;
-  align-items: center;
-  color: var(--color-danger);
-  flex-shrink: 0;
-}
-
-.att-rm {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: none;
-  border: none;
-  padding: 1px;
-  cursor: pointer;
-  color: var(--muted);
-  flex-shrink: 0;
-}
-
-.att-rm:hover {
-  color: var(--color-danger);
 }
 
 .att-lightbox {
