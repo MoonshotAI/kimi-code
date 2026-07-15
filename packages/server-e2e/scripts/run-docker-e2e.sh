@@ -46,7 +46,6 @@ NM_ROOT="${STATE_ROOT}/docker-e2e/${RUN_ID}/nm"
 workspace_node_modules=(
   "root:/workspace/kimi-code/node_modules"
   "apps_kimi-code:/workspace/kimi-code/apps/kimi-code/node_modules"
-  "apps_kimi-web:/workspace/kimi-code/apps/kimi-web/node_modules"
   "apps_vis:/workspace/kimi-code/apps/vis/node_modules"
   "apps_vis_server:/workspace/kimi-code/apps/vis/server/node_modules"
   "apps_vis_web:/workspace/kimi-code/apps/vis/web/node_modules"
