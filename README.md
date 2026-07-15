@@ -15,8 +15,36 @@ Kimi Code 客户端仓库：桌面端（`apps/desktop`）+ Web UI（`apps/web`�
 pnpm run sync      # 初始化/更新 submodule
 pnpm install
 pnpm dev:desktop   # 桌面端（renderer HMR + 默认启动内嵌 server）
+pnpm dev:desktop:debug  # 桌面端，并开启 Electron remote debugging（端口 9222，供 agent-browser 连接）
 pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:58627）
 ```
+
+## 用 agent-browser 自动化桌面端
+
+桌面端支持通过 Chrome DevTools Protocol 被外部工具控制，方便做自动化测试或 UI 操作。
+
+1. 安装 `agent-browser`：
+
+   ```bash
+   npm i -g agent-browser && agent-browser install
+   ```
+
+2. 用 debug 模式启动桌面端（默认开启 `127.0.0.1:9222`）：
+
+   ```bash
+   pnpm dev:desktop:debug
+   ```
+
+3. 在另一个终端连接并操作：
+
+   ```bash
+   agent-browser connect 9222
+   agent-browser snapshot -i     # 查看可交互元素
+   agent-browser click @e2       # 例如点击 New Chat
+   agent-browser screenshot app.png
+   ```
+
+更多用法见 `agent-browser skills get electron`。
 
 ## 开发
 

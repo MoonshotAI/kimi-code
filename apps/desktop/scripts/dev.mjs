@@ -57,8 +57,13 @@ try {
   await shutdown(1);
 }
 
-// 3. Electron, pointed at the dev server.
-const electronChild = spawn(electron, ['.'], {
+// 3. Electron, pointed at the dev server. Forward any extra CLI args
+//    (e.g. --remote-debugging-port=9222) to Electron. Drop the pnpm `--`
+//    separator if the caller used it.
+const extraArgs = process.argv.slice(2);
+if (extraArgs[0] === '--') extraArgs.shift();
+const electronArgs = [...extraArgs, '.'];
+const electronChild = spawn(electron, electronArgs, {
   cwd: desktopDir,
   stdio: 'inherit',
   env: { ...process.env, KIMI_RENDERER_DEV_URL: devUrl },

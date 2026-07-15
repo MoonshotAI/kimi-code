@@ -8,6 +8,7 @@
     "sync": "git submodule update --init --recursive",
     "build": "pnpm -r run build",
     "dev:desktop": "pnpm --filter @moonshot-ai/kimi-desktop run dev",
+    "dev:desktop:debug": "pnpm --filter @moonshot-ai/kimi-desktop run dev -- --remote-debugging-port=9222",
     "dev:web": "pnpm --filter @moonshot-ai/kimi-web run dev",
     "sync:web": "node scripts/sync-web-to-kimi-code.mjs",
     "package:macos": "bash apps/desktop/scripts/package-local-macos.sh",

@@ -34,6 +34,7 @@
 pnpm run sync      # git submodule update --init --recursive
 pnpm install       # 装依赖（首次或 workspace 变动后）
 pnpm dev:desktop   # 桌面端（renderer HMR + 默认启动内嵌 server）
+pnpm dev:desktop:debug  # 桌面端，并开启 Electron remote debugging（端口 9222，供 agent-browser 连接）
 pnpm dev:web       # Web UI（Vite，代理到 127.0.0.1:58627）
 KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm dev:desktop  # 外部 server 模式（不起内嵌 server）
 pnpm run sync:web  # 同步 web dist 到 kimi-code checkout（先 build web）
