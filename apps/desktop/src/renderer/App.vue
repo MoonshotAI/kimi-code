@@ -37,6 +37,11 @@ import { openDialogCount } from '@moonshot-ai/web-ui';
 import type { SwarmMember } from './composables/swarmGroups';
 import ServerAuthDialog from './components/ServerAuthDialog.vue';
 import { initServerAuth, onAuthRequired } from './lib/serverAuth';
+import {
+  canPickWorkspaceDirectory,
+  createAddWorkspaceEntry,
+  pickWorkspaceDirectory,
+} from './lib/nativeWorkspacePicker';
 import type { AppConfig, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
@@ -544,29 +549,59 @@ async function handleSubmit(payload: SubmitPayload): Promise<void> {
   }
   if (!client.activeSessionId.value && !wsId) {
     pendingWorkspaceSubmit.value = payload;
-    showAddWorkspace.value = true;
+    void requestAddWorkspace();
     return;
   }
   void client.sendPrompt(payload.text, payload.attachments);
 }
 
-async function handleAddWorkspace(root: string): Promise<void> {
+// Entry point for every "add workspace" affordance. On desktop the OS-native
+// folder picker is the primary path; the daemon-driven in-app browser is the
+// fallback for missing bridge, bridge errors, and daemon rejections. Only an
+// explicit cancel drops a queued first message. Flow logic lives (tested) in
+// lib/nativeWorkspacePicker.ts — App.vue is desktop-only from here on, so
+// future web→desktop re-copies must keep this block (docs/native-todos.md).
+const requestAddWorkspace = createAddWorkspaceEntry({
+  canPick: canPickWorkspaceDirectory,
+  pick: () => pickWorkspaceDirectory({ title: t('workspace.addTitle') }),
+  add: addWorkspace,
+  openFallbackDialog: () => {
+    showAddWorkspace.value = true;
+  },
+  dropPending: () => {
+    pendingWorkspaceSubmit.value = null;
+  },
+  reportError: () => {
+    addWorkspaceError.value = t('workspace.addFailed');
+  },
+});
+
+// Adds a workspace by path and, when a first message was queued while no
+// workspace existed, continues it in the new workspace. Resolves false when
+// the daemon rejects the path (caller surfaces the error).
+async function addWorkspace(root: string): Promise<boolean> {
   addWorkspaceError.value = null;
   const added = await client.addWorkspaceByPath(root);
-  // Keep the picker open (and the pending submission intact) when the daemon
-  // rejects the path so the user can retry with a valid one. The error is shown
-  // inline in the picker. Closing via Escape goes through handleCloseAddWorkspace,
-  // which drops the pending prompt.
-  if (!added) {
-    addWorkspaceError.value = t('workspace.addFailed');
-    return;
-  }
+  if (!added) return false;
   showAddWorkspace.value = false;
   const pending = pendingWorkspaceSubmit.value;
   pendingWorkspaceSubmit.value = null;
   const wsId = client.activeWorkspaceId.value;
   if (pending && wsId) {
     await client.startSessionAndSendPrompt(wsId, pending.text, pending.attachments);
+  }
+  return true;
+}
+
+// @add handler of the in-app browser dialog. Keeps the dialog open (and the
+// pending submission intact) on daemon rejection so the user can retry; the
+// error shows inline. Closing via Escape goes through handleCloseAddWorkspace,
+// which drops the pending prompt.
+async function handleAddWorkspace(root: string): Promise<void> {
+  const added = await addWorkspace(root);
+  if (!added) {
+    addWorkspaceError.value = t('workspace.addFailed');
+    showAddWorkspace.value = true;
   }
 }
 
@@ -666,7 +701,7 @@ function openPr(url: string): void {
         @create="handleCreateSession"
         @create-in-workspace="handleCreateSessionInWorkspace($event)"
         @select-workspace="client.openWorkspace($event)"
-        @add-workspace="showAddWorkspace = true"
+        @add-workspace="requestAddWorkspace()"
         @rename="(id, title) => client.renameSession(id, title)"
         @archive="(id) => client.archiveSession(id)"
         @fork="(id) => client.forkSession(id)"
@@ -751,7 +786,7 @@ function openPr(url: string): void {
       :conversation-toc="client.conversationToc.value"
       @open-changes="openDiffDetail()"
       @select-workspace="handleCreateSessionInWorkspace($event)"
-      @add-workspace="showAddWorkspace = true"
+      @add-workspace="requestAddWorkspace()"
       @open-pr="openPr"
       @submit="handleSubmit($event)"
       @steer="client.steerPrompt($event.text, $event.attachments)"
@@ -1011,7 +1046,7 @@ function openPr(url: string): void {
       @select="client.selectSession($event)"
       @create="handleCreateSession"
       @create-in-workspace="handleCreateSessionInWorkspace($event)"
-      @add-workspace="showAddWorkspace = true"
+      @add-workspace="requestAddWorkspace()"
       @rename="(id, title) => client.renameSession(id, title)"
       @archive="(id) => client.archiveSession(id)"
       @delete-workspace="(id) => client.deleteWorkspace(id)"
