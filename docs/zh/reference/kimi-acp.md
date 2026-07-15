@@ -30,9 +30,9 @@ kimi acp
 
 规范把方法分为**稳定**面和仍在演化的**不稳定**面（`@agentclientprotocol/sdk@0.23.0` 中以 `unstable_*` 前缀挂载的 handler）。两部分稳定性保证完全不同——稳定面是任何生产 ACP 客户端都会用到的方法，不稳定面覆盖实验性扩展（inline-edit 预测、document 缓冲区同步、provider 管理、elicitation 等），因此分开追踪。
 
-**概览：稳定面 agent-side 实现 10/12（83%）+ client reverse-RPC 实现 4/9（44%）；不稳定面只接入了 `session/set_model`（1/19）。** 任何正常 agent 流程所需的方法（initialize → auth → new/load/resume → prompt → cancel + 文件 I/O + 工具审批）都已实现。
+**概览：稳定面 agent-side 实现 12/12（100%）+ client reverse-RPC 实现 4/9（44%）；不稳定面只接入了 `session/set_model`（1/19）。** 任何正常 agent 流程所需的方法（initialize → auth → new/load/resume → prompt → cancel + 文件 I/O + 工具审批）都已实现。
 
-### 稳定面 agent-side — IDE → agent（10 / 12）
+### 稳定面 agent-side — IDE → agent（12 / 12）
 
 | 方法 | 状态 | 说明 |
 | --- | --- | --- |
@@ -46,8 +46,8 @@ kimi acp
 | `session/list` | 是 | 枚举磁盘会话（通过 `sessionCapabilities.list = {}` 公告） |
 | `session/set_mode` | 是 | 兼容路径，与 `set_config_option({configId:'mode'})` 走同一 dispatcher |
 | `session/set_config_option` | 是 | 统一的 model / thinking / mode picker 分发 |
-| `session/close` | 否 | |
-| `logout` | 否 | |
+| `session/close` | 是 | 关闭指定会话并从服务器内存映射中移除 |
+| `logout` | 是 | 调用 `harness.auth.logout` 清除当前认证状态 |
 
 ### 稳定面 client-side reverse-RPC — agent → IDE（4 / 9）
 
