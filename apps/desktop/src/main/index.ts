@@ -103,23 +103,11 @@ const SCREEN_STYLE = `
       gap: 18px; background: #0b0b0c; color: #e7e7ea; font: 14px/1.5 system-ui, sans-serif;
       -webkit-user-select: none; user-select: none; text-align: center; padding: 0 32px;
     }
-    .spinner {
-      width: 34px; height: 34px; border-radius: 50%;
-      border: 3px solid #2a2a2e; border-top-color: #7c8cff; animation: spin 0.9s linear infinite;
-    }
-    @keyframes spin { to { transform: rotate(360deg); } }
     h1 { font-size: 15px; font-weight: 600; margin: 0; }
     p { margin: 0; color: #9a9aa2; max-width: 560px; }
     code { color: #c8c8d0; word-break: break-all; }
   </style>
 `;
-
-function loadingHtml(): string {
-  return `<!doctype html><meta charset="utf-8">${SCREEN_STYLE}
-    <div class="spinner"></div>
-    <h1>正在启动 Kimi 本地服务…</h1>
-    <p>首次启动可能需要几秒。</p>`;
-}
 
 function errorHtml(message: string): string {
   const safe = message.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
@@ -133,7 +121,6 @@ function errorHtml(message: string): string {
 // --- connect flow -------------------------------------------------------------
 
 async function connect(win: BrowserWindow): Promise<void> {
-  await win.loadURL(dataUrl(loadingHtml()));
   try {
     serverHandle?.close().catch(() => {});
     serverHandle = null;
