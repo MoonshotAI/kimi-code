@@ -13,6 +13,7 @@ export default {
   attachmentImage: 'Image',
   attachmentVideo: 'Video',
   attachmentFile: 'File',
+  dropToAttach: 'Drop files to attach',
   remove: 'Remove',
   removeNamed: 'Remove {name}',
   uploading: 'Uploading',

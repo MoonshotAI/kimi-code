@@ -1215,6 +1215,16 @@ function selectModel(modelId: string): void {
         </div>
       </div>
   </div>
+  <!-- Full-window drop target affordance: shown while files are dragged anywhere
+       over the app (document-level listeners in useAttachmentUpload). Pure CSS
+       show/hide — a Vue <Transition> can strand an invisible node when the drag
+       ends before the enter transition starts. -->
+  <div class="drop-overlay" :class="{ show: isDragOver }" aria-hidden="true">
+    <div class="drop-card">
+      <Icon name="file-plus" size="lg" />
+      <span>{{ t('composer.dropToAttach') }}</span>
+    </div>
+  </div>
 </div>
 </template>
 
@@ -1227,6 +1237,41 @@ function selectModel(modelId: string): void {
 
 .composer.drag-over {
   background: var(--color-accent-soft);
+}
+
+/* Full-window drop overlay: pointer-events none — the document-level handlers
+   in useAttachmentUpload receive the drop, the overlay is purely visual. */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--color-bg) 72%, transparent);
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--duration-base) ease,
+    visibility var(--duration-base);
+}
+.drop-overlay.show {
+  opacity: 1;
+  visibility: visible;
+}
+.drop-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-6);
+  border-radius: var(--radius-lg);
+  border: 1.5px dashed var(--color-accent);
+  background: var(--color-bg);
+  color: var(--color-accent);
+  font-size: var(--ui-font-size-lg);
+  font-weight: var(--weight-medium);
+  box-shadow: var(--shadow-md);
 }
 
 /* Main composer card */

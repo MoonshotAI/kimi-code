@@ -201,12 +201,18 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
     void addFiles(files);
   }
 
-  // Drag-drop handlers.
+  // Drag-drop handlers. WindowDragDepth tracks nested dragenter/dragleave pairs
+  // for the document-level listeners below (declared here so the composer
+  // handlers can reset it on their own drop).
+  let windowDragDepth = 0;
+
   function handleDragOver(e: DragEvent): void {
     if (!uploadImage()) return;
     const hasFiles = Array.from(e.dataTransfer?.items ?? []).some((item) => item.kind === 'file');
     if (!hasFiles) return;
+    // Stop the document-level handler from double-counting this as a new enter.
     e.preventDefault();
+    e.stopPropagation();
     isDragOver.value = true;
   }
 
@@ -215,6 +221,45 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
   }
 
   function handleDrop(e: DragEvent): void {
+    windowDragDepth = 0;
+    isDragOver.value = false;
+    if (!uploadImage()) return;
+    // Stop the document-level drop handler from adding the same files twice.
+    e.preventDefault();
+    e.stopPropagation();
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    void addFiles(files);
+  }
+
+  // Window-level drag & drop. Without a document-wide handler, dropping a file
+  // anywhere outside the small composer box makes the browser navigate away to
+  // the file. Nested dragenter/dragleave pairs fire while moving across child
+  // elements, so the overlay is driven by a counter, not by single events.
+  function windowDragHasFiles(e: DragEvent): boolean {
+    return Array.from(e.dataTransfer?.items ?? []).some((item) => item.kind === 'file');
+  }
+
+  function handleWindowDragEnter(e: DragEvent): void {
+    if (!uploadImage() || !windowDragHasFiles(e)) return;
+    e.preventDefault();
+    windowDragDepth += 1;
+    isDragOver.value = true;
+  }
+
+  function handleWindowDragOver(e: DragEvent): void {
+    if (!uploadImage() || !windowDragHasFiles(e)) return;
+    // Keep the browser from navigating away when the drop lands outside the composer.
+    e.preventDefault();
+  }
+
+  function handleWindowDragLeave(e: DragEvent): void {
+    if (!uploadImage() || !windowDragHasFiles(e)) return;
+    windowDragDepth = Math.max(0, windowDragDepth - 1);
+    if (windowDragDepth === 0) isDragOver.value = false;
+  }
+
+  function handleWindowDrop(e: DragEvent): void {
+    windowDragDepth = 0;
     isDragOver.value = false;
     if (!uploadImage()) return;
     e.preventDefault();
@@ -334,11 +379,19 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
 
   onMounted(() => {
     document.addEventListener('paste', handleDocumentPaste);
+    document.addEventListener('dragenter', handleWindowDragEnter);
+    document.addEventListener('dragover', handleWindowDragOver);
+    document.addEventListener('dragleave', handleWindowDragLeave);
+    document.addEventListener('drop', handleWindowDrop);
   });
 
   // Revoke all object URLs (every session) and remove the global listener on unmount.
   onUnmounted(() => {
     document.removeEventListener('paste', handleDocumentPaste);
+    document.removeEventListener('dragenter', handleWindowDragEnter);
+    document.removeEventListener('dragover', handleWindowDragOver);
+    document.removeEventListener('dragleave', handleWindowDragLeave);
+    document.removeEventListener('drop', handleWindowDrop);
     for (const atts of Object.values(attachmentsBySession.value)) {
       for (const att of atts) revokeAttachment(att);
     }

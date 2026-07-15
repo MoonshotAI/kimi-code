@@ -261,4 +261,40 @@ describe('useAttachmentUpload', () => {
     // B's attachment is gone from A's view.
     expect(att.attachments.value.map((a) => a.name)).not.toContain('b.png');
   });
+
+  it('adds dropped files once and stops the drop from bubbling to document handlers', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const att = setup(uploadImage);
+    const file = { name: 'd.txt', type: 'text/plain' } as unknown as File;
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+
+    att.handleDrop({
+      dataTransfer: { files: [file] },
+      preventDefault,
+      stopPropagation,
+    } as unknown as DragEvent);
+
+    // The document-level drop listener must not see the same drop again —
+    // otherwise the file would be attached twice.
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0]).toMatchObject({ name: 'd.txt', kind: 'file' });
+  });
+
+  it('ignores a dragover that carries no files (e.g. text drag)', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const att = setup(uploadImage);
+    const preventDefault = vi.fn();
+
+    att.handleDragOver({
+      dataTransfer: { items: [{ kind: 'string' }] },
+      preventDefault,
+      stopPropagation: vi.fn(),
+    } as unknown as DragEvent);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(att.isDragOver.value).toBe(false);
+  });
 });
