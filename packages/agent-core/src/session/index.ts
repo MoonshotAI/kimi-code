@@ -286,6 +286,7 @@ export class Session {
       projectRoot: workspace.projectRoot,
       configPath: workspace.configPath,
       additionalDirs: nextAdditionalDirs,
+      pluginDirs: [],
       persisted: false,
     };
   }
