@@ -651,6 +651,19 @@ function withPluginMcpRuntime(
     KIMI_PLUGIN_ROOT: pluginRoot,
   };
 
+  if (config.command === 'node' && isElectron()) {
+    // Electron host: run the entry with the bundled Node (`ELECTRON_RUN_AS_NODE`)
+    // instead of the CLI's `__plugin_run_node` subcommand, which only the CLI
+    // binary implements (Electron would try to open it as an app and fail).
+    return {
+      ...config,
+      command: process.execPath,
+      args: config.args ?? [],
+      cwd: config.cwd ?? pluginRoot,
+      env: { ...env, ELECTRON_RUN_AS_NODE: '1' },
+    };
+  }
+
   if (config.command === 'node' && isKimiNativeBinary()) {
     return {
       ...config,
@@ -662,6 +675,10 @@ function withPluginMcpRuntime(
   }
 
   return { ...config, cwd: config.cwd ?? pluginRoot, env };
+}
+
+function isElectron(): boolean {
+  return typeof process.versions['electron'] === 'string';
 }
 
 function isKimiNativeBinary(): boolean {
