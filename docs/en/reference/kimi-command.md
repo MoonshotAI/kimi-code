@@ -24,8 +24,8 @@ All flags are optional — run `kimi` directly to enter an interactive session:
 | `--auto` | | Start with auto permission mode; tool approvals are handled automatically and the Agent will not ask the user questions |
 | `--plan` | | Start a new session in Plan mode — the AI will prioritize read-only tools for exploration and planning |
 | `--skills-dir <dir>` | | Load Skills from the specified directory, replacing the automatically discovered user and project directories. Can be repeated |
-| `--agent <name>` | | Start the session with the specified agent as the main Agent. Requires the v2 engine |
-| `--agent-file <path>` | | Load a custom agent from a Markdown file for this launch and select it. Can be repeated. Requires the v2 engine |
+| `--agent <name>` | | Start the session with the specified agent as the main Agent |
+| `--agent-file <path>` | | Load a custom agent from a Markdown file for this launch and select it. Can be repeated |
 | `--add-dir <dir>` | | Add an extra workspace directory for this session. Relative paths resolve against the current working directory. Can be repeated |
 
 `-r` / `--resume` is a hidden alias for `--session`; `--yes` and `--auto-approve` are hidden aliases for `--yolo` and are not shown in help output.
@@ -98,10 +98,10 @@ There are two ways to specify Skills directories, with different semantics:
 
 ### Custom Agents
 
-`--agent` and `--agent-file` select which agent drives the session. Both require the v2 engine — run print mode with `KIMI_CODE_EXPERIMENTAL_FLAG=1`; passing them to the interactive TUI fails with an explanatory error:
+`--agent` and `--agent-file` select which agent drives the session, for example in print mode:
 
 ```sh
-KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "Review the changes on this branch"
+kimi -p --agent reviewer "Review the changes on this branch"
 ```
 
 `--agent-file` registers a single agent file at the highest priority for this launch only and selects it; repeat the flag to register several files, and add `--agent` to choose among them by name. See [Agents and Sub-Agents](../customization/agents.md#custom-agents) for the agent file format and discovery directories.

@@ -41,10 +41,6 @@ If you need a particular type of tool to be permanently unavailable inside sub-a
 
 Beyond the three built-in sub-agents, you can define your own agents as Markdown files. Each file describes one agent: the frontmatter (YAML metadata at the top of the file) declares its name, description, and tool access, and the file body is its system prompt. Custom agents can be delegated to as sub-agents — the main Agent discovers them automatically alongside the built-in ones — or selected as the main Agent at startup.
 
-::: warning Note
-Custom agents currently require the v2 engine: run print mode with `KIMI_CODE_EXPERIMENTAL_FLAG=1`, for example `KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p "…"`. The interactive TUI does not load agent files yet.
-:::
-
 ### Agent Locations
 
 Kimi Code CLI discovers agent files by scope; more specific scopes take higher priority: **Project > Extra > User > Built-in**. When two files define the same `name`, the higher-priority scope wins. Each directory is scanned recursively for `.md` files.
@@ -109,13 +105,11 @@ Two CLI flags select which agent drives the session:
 - **`--agent <name>`**: Start the session with the named agent as the main Agent. The name can refer to a built-in agent or to any discovered file; an unknown name fails with an error listing the available agents.
 - **`--agent-file <path>`**: Load one agent file at the highest priority for this launch and start with it. Repeat the flag to register several files, and combine it with `--agent <name>` to choose among them by name.
 
-Both flags currently work only in v2 print mode:
+For example, in print mode:
 
 ```sh
-KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "Review the changes on this branch"
+kimi -p --agent reviewer "Review the changes on this branch"
 ```
-
-Passing them to the interactive TUI fails with an explanatory error.
 
 ## Instruction Files
 

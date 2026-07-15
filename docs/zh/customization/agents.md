@@ -41,10 +41,6 @@ Kimi Code CLI 内置三种子 Agent，开箱即用，分别面向不同任务形
 
 除了三个内置子 Agent，你还可以用 Markdown 文件定义自己的 Agent。每个文件描述一个 Agent：文件顶部的 Frontmatter（YAML 元数据）声明名称、描述和工具权限，文件正文是它的系统提示词。自定义 Agent 可以作为子 Agent 被委派 —— 主 Agent 会自动发现它们，与内置子 Agent 并列 —— 也可以在启动时选为主 Agent。
 
-::: warning 注意
-自定义 Agent 目前需要 v2 引擎：以 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 运行 print 模式，例如 `KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p "…"`。交互式 TUI 暂时不会加载 Agent 文件。
-:::
-
 ### Agent 目录
 
 Kimi Code CLI 按作用域发现 Agent 文件，作用域越具体，优先级越高：**项目 > 额外 > 用户 > 内置**。两个文件定义了相同的 `name` 时，高优先级作用域胜出。每个目录都会递归扫描 `.md` 文件。
@@ -109,13 +105,11 @@ disallowedTools:
 - **`--agent <name>`**：以指定 Agent 作为主 Agent 启动会话。名称可以指向内置 Agent 或任何已发现的文件；名称不存在时会报错，并列出可用的 Agent。
 - **`--agent-file <path>`**：以最高优先级加载一个 Agent 文件（仅本次启动）并以其启动。重复传入可注册多个文件，配合 `--agent <name>` 按名称选择。
 
-两个 flag 目前只在 v2 print 模式下可用：
+例如在 print 模式下：
 
 ```sh
-KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "审查这个分支上的改动"
+kimi -p --agent reviewer "审查这个分支上的改动"
 ```
-
-传入交互式 TUI 会报错并说明原因。
 
 ## 指令文件
 
