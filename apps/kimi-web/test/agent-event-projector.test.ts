@@ -296,3 +296,101 @@ describe('step-boundary delta alignment', () => {
     );
   });
 });
+
+
+describe('background subagent task registration', () => {
+  it('folds task.started (kind agent) into the spawned row instead of adding a second row', () => {
+    const projector = createAgentProjector();
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true },
+      's1',
+    );
+
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    // A single patch of the WS-owned row — never a second (bash) task row.
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          kind: 'subagent',
+          description: 'Explore repo',
+          runInBackground: true,
+          backgroundTaskId: 'task-9',
+        }),
+      },
+    ]);
+  });
+
+  it('keys the row by the background task id when the spawn event was missed', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'task-9',
+          kind: 'subagent',
+          description: 'Explore repo',
+          runInBackground: true,
+        }),
+      },
+    ]);
+  });
+
+  it('keeps projecting process tasks as bash rows', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-1',
+          kind: 'process',
+          description: 'npm test',
+          command: 'npm test',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({ id: 'task-1', kind: 'bash', command: 'npm test' }),
+      },
+    ]);
+  });
+});

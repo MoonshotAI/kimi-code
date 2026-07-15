@@ -582,6 +582,7 @@ export function reduceAppEvent(
           parentToolCallId: event.task.parentToolCallId ?? previous.parentToolCallId,
           subagentType: event.task.subagentType ?? previous.subagentType,
           runInBackground: event.task.runInBackground ?? previous.runInBackground,
+          backgroundTaskId: event.task.backgroundTaskId ?? previous.backgroundTaskId,
         };
         next.tasksBySession[sid] = patched;
       }

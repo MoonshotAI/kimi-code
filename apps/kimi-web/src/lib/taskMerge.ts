@@ -14,11 +14,37 @@ import type { AppTask } from '../api/types';
  *
  * Keep WS-owned subagent tasks that REST omits, so the REST refresh only governs
  * background tasks. REST stays authoritative for anything it does return.
+ *
+ * One exception: REST DOES return background subagents — keyed by their
+ * background-task id, while the WS stream keys the same agent by agent id
+ * (`backgroundTaskId` links the two, set from the `task.started`
+ * registration). Fold the REST copy into the WS-owned row so one agent does
+ * not surface as two rows; REST still corrects a terminal status the WS row
+ * may have missed while disconnected.
  */
 export function keepLiveSubagents(restBased: AppTask[], existing: AppTask[]): AppTask[] {
   const restIds = new Set(restBased.map((t) => t.id));
   const liveSubagents = existing.filter((t) => t.kind === 'subagent' && !restIds.has(t.id));
-  return liveSubagents.length === 0 ? restBased : [...restBased, ...liveSubagents];
+  if (liveSubagents.length === 0) return restBased;
+  const restById = new Map(restBased.map((t) => [t.id, t] as const));
+  const foldedRestIds = new Set<string>();
+  const merged = liveSubagents.map((live) => {
+    const rest =
+      live.backgroundTaskId !== undefined ? restById.get(live.backgroundTaskId) : undefined;
+    if (rest === undefined) return live;
+    foldedRestIds.add(rest.id);
+    return {
+      ...live,
+      // Terminal-stickiness: never let a lagging poll flip a finished row back
+      // to running, but let REST complete a row whose finish event was missed.
+      status: live.status === 'running' ? rest.status : live.status,
+      completedAt: live.completedAt ?? rest.completedAt,
+      outputPreview: live.outputPreview ?? rest.outputPreview,
+      outputBytes: live.outputBytes ?? rest.outputBytes,
+    };
+  });
+  const rest = restBased.filter((t) => !foldedRestIds.has(t.id));
+  return [...rest, ...merged];
 }
 
 /**

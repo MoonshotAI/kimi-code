@@ -1120,6 +1120,44 @@ export function createAgentProjector(): AgentProjector {
             : typeof info.command === 'string'
               ? info.command
               : i18n.global.t('tasks.defaultDescription');
+        // A background subagent registers into the background-task store under
+        // a fresh task id that differs from its agent id. Record the task id on
+        // the existing WS-owned row (keyed by agent id) instead of adding a
+        // second row — REST `/tasks` returns the same agent keyed by task id,
+        // and keepLiveSubagents folds that copy into this row.
+        if (info.kind === 'agent') {
+          const agentId = typeof info.agentId === 'string' ? info.agentId : undefined;
+          const existing =
+            agentId !== undefined && agentId.length > 0
+              ? s.subagentMeta.get(agentId)
+              : undefined;
+          if (agentId !== undefined && existing !== undefined) {
+            const task = patchSubagent(s, sessionId, agentId, {
+              backgroundTaskId: taskId,
+              runInBackground: true,
+            });
+            if (task) out.push({ type: 'taskCreated', sessionId, task });
+          } else {
+            // The spawn event never reached this client (subscribed late) — key
+            // the row by the background task id so the REST poll dedupes it.
+            out.push({
+              type: 'taskCreated',
+              sessionId,
+              task: {
+                id: taskId,
+                sessionId,
+                kind: 'subagent',
+                description,
+                status: 'running',
+                createdAt: startedAt ?? new Date().toISOString(),
+                startedAt,
+                subagentPhase: 'queued',
+                runInBackground: true,
+              },
+            });
+          }
+          break;
+        }
         const command = typeof info.command === 'string' ? info.command : undefined;
         out.push({
           type: 'taskCreated',
