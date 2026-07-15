@@ -54,13 +54,36 @@ function defaultServerOrigin(): string {
  * to `normalizeServerOrigin` — do NOT `decodeURIComponent` again (double-decode).
  */
 function resolveServerOrigin(): string {
-  if (typeof window !== 'undefined') {
-    const injected = new URLSearchParams(window.location.search).get('kimi_origin');
-    if (injected) {
-      return normalizeServerOrigin(injected);
-    }
+  const injected = injectedServerOrigin();
+  if (injected) {
+    return normalizeServerOrigin(injected);
   }
   return normalizeServerOrigin(import.meta.env.VITE_KIMI_SERVER_HTTP_URL);
+}
+
+// The SPA router drops the launch query string after boot, so `kimi_origin`
+// would vanish from window.location on any full page reload (HMR-triggered or
+// manual) — the renderer then falls back to same-origin, which for the desktop
+// is the static app://renderer / Vite dev origin, not the API server, and the
+// app stalls on the connecting splash. Persist the injected origin in
+// sessionStorage (same pattern as lib/desktopFlag.ts); the main process
+// re-injects it via the URL on every fresh launch, overwriting the stored copy.
+const INJECTED_ORIGIN_KEY = 'kimi-desktop-server-origin';
+
+function injectedServerOrigin(): string | undefined {
+  if (typeof window === 'undefined') return undefined;
+  const fromQuery = new URLSearchParams(window.location.search).get('kimi_origin');
+  try {
+    if (fromQuery) {
+      window.sessionStorage.setItem(INJECTED_ORIGIN_KEY, fromQuery);
+      return fromQuery;
+    }
+    return window.sessionStorage.getItem(INJECTED_ORIGIN_KEY) ?? undefined;
+  } catch {
+    // sessionStorage unavailable (stubbed window in tests, private mode) —
+    // the live query value still works for this boot.
+    return fromQuery ?? undefined;
+  }
 }
 
 export function normalizeServerOrigin(value: string | undefined): string {
@@ -94,7 +117,7 @@ export function serverEndpointLabel(): string {
   if (import.meta.env.DEV && proxy) return shortOrigin(proxy);
 
   if (typeof window !== 'undefined') {
-    const injected = new URLSearchParams(window.location.search).get('kimi_origin');
+    const injected = injectedServerOrigin();
     if (injected) return shortOrigin(normalizeServerOrigin(injected));
   }
   const origin =

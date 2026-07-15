@@ -6,6 +6,21 @@ function setWindowLocation(search: string, origin = 'app://renderer'): void {
   vi.stubGlobal('window', { location: { search, origin } });
 }
 
+function setWindowLocationWithSession(search: string, session: Record<string, string>): void {
+  vi.stubGlobal('window', {
+    location: { search, origin: 'app://renderer' },
+    sessionStorage: {
+      getItem: (k: string) => session[k] ?? null,
+      setItem: (k: string, v: string) => {
+        session[k] = v;
+      },
+      removeItem: (k: string) => {
+        delete session[k];
+      },
+    },
+  });
+}
+
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
@@ -44,5 +59,25 @@ describe('kimi_origin query injection (desktop app:// renderer)', () => {
 
     expect(readKimiApiConfig().serverHttpUrl).toBe('http://10.0.0.5:9999');
     expect(serverEndpointLabel()).toBe('10.0.0.5:9999');
+  });
+
+  it('survives a reload that dropped the query string (sessionStorage cache)', () => {
+    const session: Record<string, string> = {};
+    // First boot: query present → persisted.
+    setWindowLocationWithSession('?kimi_origin=http%3A%2F%2F127.0.0.1%3A4242', session);
+    expect(readKimiApiConfig().serverHttpUrl).toBe('http://127.0.0.1:4242');
+    expect(session['kimi-desktop-server-origin']).toBe('http://127.0.0.1:4242');
+    // Reload (router dropped the query): stored value is used.
+    setWindowLocationWithSession('', session);
+    expect(readKimiApiConfig().serverHttpUrl).toBe('http://127.0.0.1:4242');
+  });
+
+  it('a fresh launch query overwrites the stored origin', () => {
+    const session: Record<string, string> = {
+      'kimi-desktop-server-origin': 'http://127.0.0.1:1111',
+    };
+    setWindowLocationWithSession('?kimi_origin=http%3A%2F%2F127.0.0.1%3A2222', session);
+    expect(readKimiApiConfig().serverHttpUrl).toBe('http://127.0.0.1:2222');
+    expect(session['kimi-desktop-server-origin']).toBe('http://127.0.0.1:2222');
   });
 });
