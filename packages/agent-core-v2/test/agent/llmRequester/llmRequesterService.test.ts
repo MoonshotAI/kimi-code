@@ -33,14 +33,17 @@ import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import { APIEmptyResponseError, APIRequestTooLargeError, APIStatusError } from '#/app/llmProtocol/errors';
+import {
+  APIConnectionError,
+  APIEmptyResponseError,
+  APIRequestTooLargeError,
+  APIStatusError,
+} from '#/app/llmProtocol/errors';
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import type { Message } from '#/app/llmProtocol/message';
 import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { LLMEvent, LLMRequestInput, Model } from '#/app/model/modelInstance';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
-import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
@@ -173,7 +176,6 @@ function createService(
   const log = { info: () => undefined, warn: () => undefined };
   const telemetryRecords: TelemetryRecord[] = [];
   const telemetry = recordingTelemetry(telemetryRecords);
-  const telemetryContext = new AgentTelemetryContextService();
   const toolSelect: Partial<IAgentToolSelectService> = {
     enabled: () => false,
     shapeTools: (entries) => entries,
@@ -211,7 +213,6 @@ function createService(
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
-  ix.stub(IAgentTelemetryContextService, telemetryContext);
   const records: WireRecord[] = [];
   registerTestAgentWire(ix, 'wire/llm-requester', {
     log: recordingWireLog(records),
@@ -227,7 +228,6 @@ function createService(
     records,
     events,
     telemetryRecords,
-    telemetryContext,
   };
 }
 
@@ -716,28 +716,26 @@ describe('AgentLLMRequesterService trace id', () => {
   }
 
   it('captures the trace id early via onTraceId and returns it on finish', async () => {
-    const { service, telemetryContext } = createService(
-      createTracedModel('trace-req-1'),
-      passthroughProjector,
-    );
+    const { service } = createService(createTracedModel('trace-req-1'), passthroughProjector);
+    const captured: Array<string | undefined> = [];
 
-    const finish = await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+    const finish = await service.request({
+      source: { type: 'turn', turnId: 1, step: 1 },
+      onTraceId: (traceId) => captured.push(traceId),
+    });
 
     expect(finish.traceId).toBe('trace-req-1');
-    expect(telemetryContext.get().trace_id).toBe('trace-req-1');
+    expect(captured).toEqual([undefined, 'trace-req-1']);
   });
 
-  it('clears the ambient trace id when the next request has none', async () => {
-    const { service, telemetryContext } = createService(
-      createTracedModel(null),
-      passthroughProjector,
-    );
-    telemetryContext.set({ trace_id: 'stale' });
+  it('reports an absent trace before a request that returns none', async () => {
+    const { service } = createService(createTracedModel(null), passthroughProjector);
+    const captured: Array<string | undefined> = [];
 
-    const finish = await service.request();
+    const finish = await service.request({ onTraceId: (traceId) => captured.push(traceId) });
 
     expect(finish.traceId).toBeUndefined();
-    expect(telemetryContext.get().trace_id).toBeUndefined();
+    expect(captured).toEqual([undefined]);
   });
 
   it('attaches trace_id, turn_id and step_no to api_error from the failed request', async () => {
@@ -752,13 +750,14 @@ describe('AgentLLMRequesterService trace id', () => {
     Object.defineProperty(model, 'withMaxCompletionTokens', {
       value: () => model,
     });
-    const { service, telemetryRecords, telemetryContext } = createService(
-      model,
-      passthroughProjector,
-    );
+    const { service, telemetryRecords } = createService(model, passthroughProjector);
+    const captured: Array<string | undefined> = [];
 
     await expect(
-      service.request({ source: { type: 'turn', turnId: 3, step: 2 } }),
+      service.request({
+        source: { type: 'turn', turnId: 3, step: 2 },
+        onTraceId: (traceId) => captured.push(traceId),
+      }),
     ).rejects.toMatchObject({ statusCode: 500 });
 
     expect(telemetryRecords).toContainEqual({
@@ -770,7 +769,7 @@ describe('AgentLLMRequesterService trace id', () => {
         step_no: 2,
       }),
     });
-    expect(telemetryContext.get().trace_id).toBe('trace-fail-1');
+    expect(captured).toEqual([undefined, 'trace-fail-1']);
   });
 
   it('keeps the header-captured trace when the request fails after headers arrived', async () => {
@@ -792,17 +791,51 @@ describe('AgentLLMRequesterService trace id', () => {
     Object.defineProperty(model, 'withMaxCompletionTokens', {
       value: () => model,
     });
-    const { service, telemetryRecords, telemetryContext } = createService(
-      model,
-      passthroughProjector,
-    );
+    const { service, telemetryRecords } = createService(model, passthroughProjector);
+    const captured: Array<string | undefined> = [];
 
     await expect(
-      service.request({ source: { type: 'turn', turnId: 4, step: 1 } }),
+      service.request({
+        source: { type: 'turn', turnId: 4, step: 1 },
+        onTraceId: (traceId) => captured.push(traceId),
+      }),
     ).rejects.toThrow();
 
     const apiError = telemetryRecords.find((record) => record.event === 'api_error');
     expect(apiError?.properties?.['trace_id']).toBe('trace-mid-stream');
-    expect(telemetryContext.get().trace_id).toBe('trace-mid-stream');
+    expect(captured).toEqual([undefined, 'trace-mid-stream']);
+  });
+
+  it('clears the previous physical request trace before a projection retry', async () => {
+    const model = createTracedModel(null);
+    let attempts = 0;
+    Object.defineProperty(model, 'request', {
+      value: async function* (...args: unknown[]) {
+        attempts += 1;
+        const requestOptions = args[2] as
+          | { onTraceId?: (traceId: string | null) => void }
+          | undefined;
+        if (attempts === 1) {
+          requestOptions?.onTraceId?.('trace-first-projection');
+          throw new APIRequestTooLargeError(413, 'retry with degraded media');
+        }
+        throw new APIConnectionError('socket hang up');
+      },
+    });
+    Object.defineProperty(model, 'withMaxCompletionTokens', {
+      value: () => model,
+    });
+    const { service, telemetryRecords } = createService(model, passthroughProjector);
+    const captured: Array<string | undefined> = [];
+
+    await expect(
+      service.request({ onTraceId: (traceId) => captured.push(traceId) }),
+    ).rejects.toThrow('socket hang up');
+
+    expect(attempts).toBe(2);
+    expect(captured).toEqual([undefined, 'trace-first-projection', undefined]);
+    expect(
+      telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['trace_id'],
+    ).toBeUndefined();
   });
 });

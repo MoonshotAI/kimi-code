@@ -685,7 +685,10 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     await this.hooks.onWillBeginStep.run({ turnId, step: currentStep, signal });
     const markStepStarted = this.beginStep(turnId, signal, currentStep, stepUuid, onStarted);
     const response = await this.llmRequester.request(
-      { source: { type: 'turn', turnId, step: currentStep } },
+      {
+        source: { type: 'turn', turnId, step: currentStep },
+        onTraceId: (traceId) => this.telemetryContext.set({ trace_id: traceId }),
+      },
       this.createStreamPartHandler(turnId, markStepStarted),
       signal,
     );

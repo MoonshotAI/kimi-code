@@ -40,6 +40,7 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
 
   if (input.llm.isRetryableError === undefined || maxAttempts <= 1) {
     const effectiveMaxAttempts = Math.max(maxAttempts, 1);
+    input.params.onTraceId?.(null);
     try {
       return await input.llm.chat(paramsForAttempt(input, 1, effectiveMaxAttempts));
     } catch (error) {
@@ -52,6 +53,7 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
   const delays = retryBackoffDelays(maxAttempts);
 
   for (let attempt = 1; ; attempt += 1) {
+    input.params.onTraceId?.(null);
     try {
       return await input.llm.chat(paramsForAttempt(input, attempt, maxAttempts));
     } catch (error) {
@@ -105,8 +107,7 @@ function logRequestFailure(
  * dispatch) lets turn-level telemetry attribute the turn to the failed
  * request rather than the previous successful one. Mid-stream failures were
  * already captured by the attempt's own `onTraceId`; failures before any
- * response (network errors, local aborts) carry no trace and leave the
- * earlier capture untouched.
+ * response (network errors, local aborts) keep the attempt-start reset.
  */
 function captureAttemptTraceId(input: ChatWithRetryInput, error: unknown): void {
   if (error instanceof APIStatusError && error.traceId !== null) {

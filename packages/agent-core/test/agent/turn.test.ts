@@ -2295,6 +2295,35 @@ describe('Agent turn flow', () => {
     expect(apiError?.properties?.['trace_id']).toBe('trace-fail-2');
   });
 
+  it('omits the previous attempt trace when the final retry fails before headers', async () => {
+    const records: TelemetryRecord[] = [];
+    let calls = 0;
+    const generate: GenerateFn = async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw new APIStatusError(429, 'rate limited', 'req-1', null, 'trace-fail-1');
+      }
+      throw new APIConnectionError('socket hang up');
+    };
+    const ctx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        loopControl: { maxRetriesPerStep: 2 },
+      },
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'trigger mixed retry failures' }] });
+    await ctx.untilTurnEnd();
+
+    expect(calls).toBe(2);
+    expect(records.find((record) => record.event === 'api_error')?.properties?.['trace_id']).toBeUndefined();
+    expect(records.find((record) => record.event === 'turn_interrupted')?.properties?.['trace_id']).toBeUndefined();
+    expect(records.find((record) => record.event === 'turn_ended')?.properties?.['trace_id']).toBeUndefined();
+  });
+
   it('keeps transient retry handling with request-scoped OAuth auth', async () => {
     const { logger, entries } = captureLogs();
     const authKeys: string[] = [];

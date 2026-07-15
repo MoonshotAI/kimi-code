@@ -15,9 +15,8 @@
  * (config deduplicated by content, request/response/failure lines, plus
  * per-request fields) through `log`, publishes advisory model-capability
  * warnings through `eventBus`, records durable request-trace Ops
- * through `wire`, keeps the ambient telemetry `trace_id` context at the
- * latest request's `x-trace-id`, and reports provider failures through
- * `telemetry`. Bound at Agent scope.
+ * through `wire`, reports each request's `x-trace-id` to its caller, and
+ * reports provider failures through `telemetry`. Bound at Agent scope.
  */
 
 import { createHash } from 'node:crypto';
@@ -62,7 +61,6 @@ import type { KimiModelOverrides } from '#/app/model/modelOverrides';
 import { MODELS_SECTION, type ModelsSection } from '#/app/model/model';
 import { applyCompletionBudget, resolveCompletionBudget } from '#/app/model/completionBudget';
 import type { Protocol } from '#/app/protocol/protocol';
-import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IWireService } from '#/wire/wire';
@@ -147,8 +145,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IConfigService private readonly config: IConfigService,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
-    @IAgentTelemetryContextService
-    private readonly telemetryContext: IAgentTelemetryContextService,
     @IWireService private readonly wire: IWireService,
     @IFaultInjectionService private readonly faultInjection: IFaultInjectionService,
     @IEventBus private readonly eventBus: IEventBus,
@@ -161,18 +157,20 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   ): Promise<LLMRequestFinish> {
     signal?.throwIfAborted();
     const startedAt = Date.now();
-    // The in-flight request's own trace id, captured from its response
-    // headers via onTraceId. A failure after headers arrived (empty response,
-    // mid-stream decode error) carries no trace on the error itself, so the
-    // failure path falls back to this value instead of reporting none.
     let requestTraceId: string | undefined;
+    let traceInitialized = false;
+    const setTraceId = (traceId: string | undefined): void => {
+      if (traceInitialized && requestTraceId === traceId) return;
+      traceInitialized = true;
+      requestTraceId = traceId;
+      overrides.onTraceId?.(traceId);
+    };
+    setTraceId(undefined);
     try {
-      return await this.runRequest(this.resolveRequest(overrides), onPart, signal, (traceId) => {
-        requestTraceId = traceId;
-      });
+      return await this.runRequest(this.resolveRequest(overrides), onPart, signal, setTraceId);
     } catch (error) {
       this.logRequestFailure(error, overrides, signal);
-      this.trackApiError(error, startedAt, signal, overrides.source, requestTraceId);
+      setTraceId(this.trackApiError(error, startedAt, signal, overrides.source, requestTraceId));
       throw error;
     }
   }
@@ -197,17 +195,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     signal: AbortSignal | undefined,
     source?: LLMRequestSource,
     requestTraceId?: string,
-  ): void {
-    if (isAbortError(error) || signal?.aborted === true) return;
+  ): string | undefined {
+    if (isAbortError(error) || signal?.aborted === true) return requestTraceId;
     const modelAlias = this.profile.data().modelAlias;
     const model = this.tryGetProvider();
-    // Prefer the trace captured from the failed request's own response
-    // headers — a failure after headers arrived (empty response, mid-stream
-    // decode error) carries none on the error. Fall back to the trace the
-    // error response itself carried (status-error failures, where no
-    // onTraceId ever fired). Undefined when neither exists (network errors).
     const traceId = requestTraceId ?? apiTraceId(error);
-    this.telemetryContext.set({ trace_id: traceId });
     const properties: ApiErrorEvent = {
       error_type: apiErrorType(error),
       model: model?.id ?? modelAlias ?? 'unknown',
@@ -227,6 +219,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const currentTurn = this.usage.status().currentTurn;
     if (currentTurn !== undefined) properties['input_tokens'] = inputTotal(currentTurn);
     this.telemetry.track2('api_error', properties);
+    return traceId;
   }
 
   private tryGetProvider(): Model | undefined {
@@ -265,6 +258,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     };
 
     const run = async (projection: RequestProjection): Promise<LLMRequestFinish> => {
+      onRequestTrace(undefined);
       const input = requestInput(projection);
       const fields =
         projection === 'normal'
@@ -297,10 +291,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
 
       const setTraceId = (traceId: string | null | undefined): void => {
         const normalized = traceId ?? undefined;
-        // Per-request capture for the failure path (trackApiError), plus the
-        // ambient context everything else reads.
         onRequestTrace(normalized);
-        this.telemetryContext.set({ trace_id: normalized });
       };
 
       for await (const event of request.model.request(input, signal, { onTraceId: setTraceId })) {

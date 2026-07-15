@@ -51,6 +51,7 @@ import {
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentContextSizeService } from '#/agent/contextSize/contextSize';
 import { IAgentGoalService } from '#/agent/goal/goal';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
@@ -926,8 +927,9 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
-  it('cancels retry backoff without issuing another compaction request', async () => {
+  it('cancels retry backoff with the failed compaction request trace', async () => {
     vi.useFakeTimers();
+    const records: TelemetryRecord[] = [];
     const firstAttemptFailed = deferred<void>();
     let attempts = 0;
     const generate: GenerateFn = async () => {
@@ -935,9 +937,9 @@ describe('FullCompaction', () => {
       if (attempts === 1) {
         firstAttemptFailed.resolve();
       }
-      throw new APIConnectionError('socket hang up');
+      throw new APIStatusError(429, 'rate limited', null, null, 'trace-compact-retry');
     };
-    const ctx = testAgent({ generate });
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
       provider: CATALOGUED_PROVIDER,
       modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
@@ -948,12 +950,24 @@ describe('FullCompaction', () => {
 
     await ctx.rpc.beginCompaction({});
     await firstAttemptFailed.promise;
+    const fullCompaction = ctx.get(IAgentFullCompactionService);
+    for (let i = 0; i < 10 && fullCompaction.compacting?.traceId === undefined; i += 1) {
+      await Promise.resolve();
+    }
+    expect(fullCompaction.compacting?.traceId).toBe('trace-compact-retry');
 
     void ctx.rpc.cancelCompaction({});
     await cancelled;
     await vi.advanceTimersByTimeAsync(10_000);
 
     expect(attempts).toBe(1);
+    expect(records).toContainEqual({
+      event: 'cancel',
+      properties: {
+        from: 'compacting',
+        trace_id: 'trace-compact-retry',
+      },
+    });
     vi.useRealTimers();
     await ctx.expectResumeMatches();
   });
@@ -1057,6 +1071,7 @@ describe('FullCompaction', () => {
     });
     ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
     ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    ctx.get(IAgentTelemetryContextService).set({ trace_id: 'trace-turn-1' });
     const failed = ctx.once('error');
 
     await ctx.rpc.beginCompaction({});
@@ -1071,6 +1086,7 @@ describe('FullCompaction', () => {
         trace_id: 'trace-mid-stream',
       }),
     });
+    expect(ctx.get(IAgentTelemetryContextService).get().trace_id).toBe('trace-turn-1');
     await ctx.expectResumeMatches();
   });
 

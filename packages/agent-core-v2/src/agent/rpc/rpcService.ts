@@ -225,7 +225,7 @@ export class AgentRPCService implements IAgentRPCService {
     if (active !== null) {
       this.telemetry.track2('cancel', {
         from: 'compacting',
-        trace_id: this.telemetryContext.get().trace_id,
+        trace_id: active.traceId,
       });
     }
     active?.abortController.abort();

@@ -824,7 +824,10 @@ export class TurnFlow {
           // in-flight request's trace id is available even if the stream is
           // cancelled mid-flight. step.end makes the final write.
           onTraceId: (traceId) => {
-            if (traceId !== null) {
+            if (traceId === null) {
+              this.traceIdByTurn.delete(turnId);
+              this.requestTraceIdByTurn.delete(turnId);
+            } else {
               this.traceIdByTurn.set(turnId, traceId);
               this.requestTraceIdByTurn.set(turnId, traceId);
             }

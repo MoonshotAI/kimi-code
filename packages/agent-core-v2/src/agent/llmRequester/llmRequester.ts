@@ -56,6 +56,7 @@ export interface LLMRequestOverrides {
   systemPrompt?: string;
   source?: LLMRequestSource;
   maxOutputSize?: number;
+  onTraceId?: (traceId: string | undefined) => void;
 }
 
 export interface IAgentLLMRequesterService {
