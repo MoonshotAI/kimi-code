@@ -3,7 +3,6 @@ dist
 out
 dist-app
 resources-stage
-web-dist
 .DS_Store
 *.log
 coverage
