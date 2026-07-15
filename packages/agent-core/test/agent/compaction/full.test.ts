@@ -136,6 +136,53 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('attaches the summarizer request trace id to compaction_finished', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+
+    ctx.mockNextProviderResponse({
+      parts: [{ type: 'text', text: 'Compacted summary.' }],
+      traceId: 'trace-compact-1',
+    });
+    await ctx.rpc.beginCompaction({});
+    await ctx.once('compaction.completed');
+
+    expect(records).toContainEqual({
+      event: 'compaction_finished',
+      properties: expect.objectContaining({ source: 'manual', trace_id: 'trace-compact-1' }),
+    });
+    expect(ctx.agent.fullCompaction.lastTraceId).toBe('trace-compact-1');
+  });
+
+  it('attaches the failed summarizer request trace id to compaction_failed', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async () => {
+      // 401 is not retryable: the round fails on the first attempt without
+      // backoff timers.
+      throw new APIStatusError(401, 'Unauthorized', 'req-1', null, 'trace-compact-err');
+    };
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    expect(records).toContainEqual({
+      event: 'compaction_failed',
+      properties: expect.objectContaining({ source: 'manual', trace_id: 'trace-compact-err' }),
+    });
+  });
+
   it('emits the raw summary while keeping the prefixed summary in model context', async () => {
     const ctx = testAgent();
     ctx.configure({
@@ -1005,6 +1052,7 @@ describe('FullCompaction', () => {
         ...textResult('Partial summary.'),
         finishReason: 'truncated',
         rawFinishReason: 'length',
+        traceId: null,
       };
     };
     const ctx = testAgent({ generate, compactionStrategy: alwaysCompactOnce });
@@ -2456,6 +2504,7 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     },
     finishReason: 'completed',
     rawFinishReason: 'stop',
+    traceId: null,
   };
 }
 
@@ -2469,6 +2518,7 @@ function mockStreamedMessage(parts: readonly StreamedMessagePart[]): StreamedMes
     },
     finishReason: null,
     rawFinishReason: null,
+    traceId: null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;

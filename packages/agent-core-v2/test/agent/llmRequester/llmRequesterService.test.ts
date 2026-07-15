@@ -39,11 +39,14 @@ import type { Message } from '#/app/llmProtocol/message';
 import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
 import type { ModelCapability } from '#/app/llmProtocol/capability';
 import type { LLMEvent, LLMRequestInput, Model } from '#/app/model/modelInstance';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
+import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ILogService } from '#/_base/log/log';
 import { Error2, ErrorCodes } from '#/errors';
 import { IWireService } from '#/wire/wire';
 import type { WireRecord } from '#/wire/record';
+import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { recordingWireLog, registerTestAgentWire } from '../../wire/stubs';
@@ -168,7 +171,9 @@ function createService(
     get: (() => undefined) as IConfigService['get'],
   };
   const log = { info: () => undefined, warn: () => undefined };
-  const telemetry = { track: () => undefined, track2: () => undefined };
+  const telemetryRecords: TelemetryRecord[] = [];
+  const telemetry = recordingTelemetry(telemetryRecords);
+  const telemetryContext = new AgentTelemetryContextService();
   const toolSelect: Partial<IAgentToolSelectService> = {
     enabled: () => false,
     shapeTools: (entries) => entries,
@@ -206,6 +211,7 @@ function createService(
   ix.stub(IConfigService, config);
   ix.stub(ILogService, log);
   ix.stub(ITelemetryService, telemetry);
+  ix.stub(IAgentTelemetryContextService, telemetryContext);
   const records: WireRecord[] = [];
   registerTestAgentWire(ix, 'wire/llm-requester', {
     log: recordingWireLog(records),
@@ -220,6 +226,8 @@ function createService(
     wire: ix.get(IWireService),
     records,
     events,
+    telemetryRecords,
+    telemetryContext,
   };
 }
 
@@ -664,5 +672,104 @@ describe('AgentLLMRequesterService fault injection (experimental)', () => {
 
     expect(() => faultInjection.arm('request-too-large')).toThrow(/disabled/);
     expect(faultInjection.status()).toEqual({ armed: undefined, fired: [] });
+  });
+});
+
+describe('AgentLLMRequesterService trace id', () => {
+  const passthroughProjector = {
+    project: (messages: readonly ContextMessage[]) => messages,
+    projectStrict: (messages: readonly ContextMessage[]) => messages,
+  };
+
+  function createTracedModel(traceId: string | null): Model {
+    const build = (): Model => ({
+      id: 'm',
+      name: 'wire-model',
+      aliases: [],
+      protocol: 'kimi',
+      baseUrl: 'https://example.test',
+      headers: {},
+      capabilities,
+      maxContextSize: 1000,
+      thinkingEffort: null,
+      alwaysThinking: false,
+      providerName: 'p',
+      authProvider: { getAuth: async () => undefined },
+      withThinking: () => build(),
+      withMaxCompletionTokens: () => build(),
+      withGenerationKwargs: () => build(),
+      withProviderOptions: () => build(),
+      withThinkingKeep: () => build(),
+      request: async function* (_input, _signal, requestOptions) {
+        requestOptions?.onTraceId?.(traceId);
+        yield {
+          type: 'finish',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }], toolCalls: [] },
+          providerFinishReason: 'completed',
+          rawFinishReason: 'stop',
+          id: 'resp-1',
+          traceId: traceId ?? undefined,
+        };
+      },
+    });
+    return build();
+  }
+
+  it('captures the trace id early via onTraceId and returns it on finish', async () => {
+    const { service, telemetryContext } = createService(
+      createTracedModel('trace-req-1'),
+      passthroughProjector,
+    );
+
+    const finish = await service.request({ source: { type: 'turn', turnId: 1, step: 1 } });
+
+    expect(finish.traceId).toBe('trace-req-1');
+    expect(telemetryContext.get().trace_id).toBe('trace-req-1');
+  });
+
+  it('clears the ambient trace id when the next request has none', async () => {
+    const { service, telemetryContext } = createService(
+      createTracedModel(null),
+      passthroughProjector,
+    );
+    telemetryContext.set({ trace_id: 'stale' });
+
+    const finish = await service.request();
+
+    expect(finish.traceId).toBeUndefined();
+    expect(telemetryContext.get().trace_id).toBeUndefined();
+  });
+
+  it('attaches trace_id, turn_id and step_no to api_error from the failed request', async () => {
+    const model = createTracedModel(null);
+    Object.defineProperty(model, 'request', {
+      value: async function* () {
+        const events: LLMEvent[] = [];
+        for (const event of events) yield event;
+        throw new APIStatusError(500, 'boom', 'req-1', null, 'trace-fail-1');
+      },
+    });
+    Object.defineProperty(model, 'withMaxCompletionTokens', {
+      value: () => model,
+    });
+    const { service, telemetryRecords, telemetryContext } = createService(
+      model,
+      passthroughProjector,
+    );
+
+    await expect(
+      service.request({ source: { type: 'turn', turnId: 3, step: 2 } }),
+    ).rejects.toMatchObject({ statusCode: 500 });
+
+    expect(telemetryRecords).toContainEqual({
+      event: 'api_error',
+      properties: expect.objectContaining({
+        error_type: '5xx_server',
+        trace_id: 'trace-fail-1',
+        turn_id: 3,
+        step_no: 2,
+      }),
+    });
+    expect(telemetryContext.get().trace_id).toBe('trace-fail-1');
   });
 });

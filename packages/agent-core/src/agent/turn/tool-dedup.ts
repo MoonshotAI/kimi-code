@@ -129,9 +129,15 @@ export class ToolCallDeduplicator {
   private consecutiveKey: string | null = null;
   private consecutiveCount = 0;
   private readonly telemetry: TelemetryClient | undefined;
+  private readonly getTraceId: (() => string | undefined) | undefined;
 
-  constructor(options?: { readonly telemetry?: TelemetryClient | undefined }) {
+  constructor(options?: {
+    readonly telemetry?: TelemetryClient | undefined;
+    /** Latest trace id (`x-trace-id`) of the turn's provider request, attached to repeat telemetry. */
+    readonly getTraceId?: () => string | undefined;
+  }) {
     this.telemetry = options?.telemetry;
+    this.getTraceId = options?.getTraceId;
   }
 
   beginStep(): void {
@@ -247,6 +253,7 @@ export class ToolCallDeduplicator {
         tool_name: toolName,
         repeat_count: streak,
         action,
+        trace_id: this.getTraceId?.(),
       });
     }
 

@@ -43,6 +43,12 @@ export interface LoopStepEndEvent {
   readonly providerFinishReason?: FinishReason | undefined;
   readonly rawFinishReason?: string | undefined;
   readonly messageId?: string | undefined;
+  /**
+   * Provider trace identifier from the `x-trace-id` response header of this
+   * step's final request attempt (Kimi/KFC only). Telemetry-only; must not
+   * drive loop control.
+   */
+  readonly traceId?: string;
 }
 
 export interface LoopStepRetryingEvent {

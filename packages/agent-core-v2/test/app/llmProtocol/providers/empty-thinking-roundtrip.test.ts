@@ -65,7 +65,14 @@ async function captureKimiMessages(
   let captured: Record<string, unknown> | undefined;
   const create = vi.fn().mockImplementation((params: unknown) => {
     captured = params as Record<string, unknown>;
-    return Promise.resolve(chatCompletionResponse({ role: 'assistant', content: 'done' }));
+    return {
+      withResponse: () =>
+        Promise.resolve({
+          data: chatCompletionResponse({ role: 'assistant', content: 'done' }),
+          response: new Response(null),
+          request_id: null,
+        }),
+    };
   });
   let provider = new KimiChatProvider({
     model: 'kimi-k2',
@@ -286,13 +293,18 @@ describe('empty thinking round-trip', () => {
   });
 
   it('Kimi keeps an explicitly empty response reasoning_content as a ThinkPart', async () => {
-    const create = vi.fn().mockResolvedValue(
-      chatCompletionResponse({
-        role: 'assistant',
-        content: null,
-        reasoning_content: '',
-      }),
-    );
+    const create = vi.fn().mockImplementation(() => ({
+      withResponse: () =>
+        Promise.resolve({
+          data: chatCompletionResponse({
+            role: 'assistant',
+            content: null,
+            reasoning_content: '',
+          }),
+          response: new Response(null),
+          request_id: null,
+        }),
+    }));
     const provider = new KimiChatProvider({
       model: 'kimi-k2',
       apiKey: '',

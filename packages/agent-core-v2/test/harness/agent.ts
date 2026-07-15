@@ -2402,6 +2402,7 @@ async function generateBackedResponse(
       usage: result.usage,
       finishReason: result.finishReason,
       rawFinishReason: result.rawFinishReason,
+      traceId: result.traceId,
     },
   );
 }
@@ -2470,13 +2471,17 @@ function normalizeProviderStreamParts(
 
 function createStreamedMessage(
   parts: readonly StreamedMessagePart[],
-  meta: Pick<Awaited<ReturnType<GenerateFn>>, 'id' | 'usage' | 'finishReason' | 'rawFinishReason'>,
+  meta: Pick<
+    Awaited<ReturnType<GenerateFn>>,
+    'id' | 'usage' | 'finishReason' | 'rawFinishReason' | 'traceId'
+  >,
 ): StreamedMessage {
   return {
     id: meta.id,
     usage: meta.usage,
     finishReason: meta.finishReason ?? null,
     rawFinishReason: meta.rawFinishReason ?? null,
+    traceId: meta.traceId ?? null,
     async *[Symbol.asyncIterator]() {
       for (const part of parts) {
         yield structuredClone(part);

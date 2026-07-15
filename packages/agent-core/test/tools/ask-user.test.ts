@@ -36,6 +36,7 @@ function input(
 function makeTool(
   options: {
     readonly mode?: PermissionMode;
+    readonly traceId?: string;
     readonly requestQuestion?: (
       request: QuestionRequest,
       options: { readonly signal?: AbortSignal },
@@ -57,6 +58,7 @@ function makeTool(
     permission: { mode: options.mode ?? 'manual' },
     rpc: { requestQuestion },
     telemetry: { track: telemetryTrack },
+    turn: { traceIdForTurn: () => options.traceId },
   } as unknown as Agent;
   return { tool: new AskUserQuestionTool(agent), requestQuestion, telemetryTrack };
 }
@@ -298,6 +300,7 @@ describe('AskUserQuestionTool', () => {
     const agent = {
       rpc: { requestQuestion },
       telemetry: { track: telemetryTrack },
+      turn: { traceIdForTurn: () => undefined },
       background: manager,
     } as unknown as Agent;
     const tool = new AskUserQuestionTool(agent);
@@ -345,6 +348,7 @@ describe('AskUserQuestionTool', () => {
     const agent = {
       rpc: { requestQuestion },
       telemetry: { track: vi.fn() },
+      turn: { traceIdForTurn: () => undefined },
       background: manager,
     } as unknown as Agent;
     const tool = new AskUserQuestionTool(agent);
@@ -383,7 +387,23 @@ describe('AskUserQuestionTool', () => {
     expect(result).toMatchObject({ isError: false });
     expect(result.output).toContain('dismissed');
     expect(result.output).toContain('answers');
-    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed');
+    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', { trace_id: undefined });
+  });
+
+  it('attaches the turn trace id to question telemetry', async () => {
+    const { tool, telemetryTrack } = makeTool({ traceId: 'trace-question-1' });
+
+    await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_question',
+      args: input(),
+      signal,
+    });
+
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'question_answered',
+      expect.objectContaining({ answered: 1, trace_id: 'trace-question-1' }),
+    );
   });
 
   it('resolves question rpc error responses as dismissed answers', async () => {

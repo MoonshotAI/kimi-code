@@ -20,6 +20,7 @@ function createMockStream(
     },
     finishReason: null,
     rawFinishReason: null,
+    traceId: null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;
@@ -231,6 +232,7 @@ describe('step()', () => {
       },
       finishReason: null,
       rawFinishReason: null,
+      traceId: null,
       async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
         yield tc1;
         yield tc2;
@@ -289,6 +291,7 @@ describe('step()', () => {
       },
       finishReason: null,
       rawFinishReason: null,
+      traceId: null,
       async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
         yield tc1;
         yield tc2;
@@ -470,6 +473,7 @@ describe('step()', () => {
         usage: null,
         finishReason,
         rawFinishReason,
+        traceId: null,
         async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
           for (const part of parts) {
             yield part;

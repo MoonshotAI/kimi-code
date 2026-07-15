@@ -90,6 +90,14 @@ export interface LLMChatParams {
    * order. Durable transcript writes receive completed blocks only.
    */
   onThinkPart?: ((part: ThinkPart) => Promise<void> | void) | undefined;
+  /**
+   * Fires as soon as the provider response headers arrive (before the stream
+   * body is drained), carrying the provider trace identifier from the
+   * `x-trace-id` header (Kimi/KFC only), or `null` when the provider does not
+   * report one. Firing early lets hosts attribute a stream that is cancelled
+   * mid-flight to its server-side request.
+   */
+  onTraceId?: (traceId: string | null) => void;
 }
 
 export interface LLMChatResponse {
@@ -99,6 +107,8 @@ export interface LLMChatResponse {
   messageId?: string;
   usage: TokenUsage;
   streamTiming?: LLMStreamTiming;
+  /** Provider trace identifier from the `x-trace-id` response header (Kimi/KFC only). */
+  traceId?: string;
 }
 
 export interface LLM {

@@ -205,12 +205,15 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
 
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
-        this.agent.telemetry.track('question_dismissed');
+        this.agent.telemetry.track('question_dismissed', {
+          trace_id: this.traceIdForTurn(turnId),
+        });
         return dismissedQuestionResult();
       }
 
       const properties: Record<string, TelemetryPropertyValue> = {
         answered: Object.keys(normalized.answers).length,
+        trace_id: this.traceIdForTurn(turnId),
       };
       if (normalized.method !== undefined) properties['method'] = normalized.method;
       this.agent.telemetry.track('question_answered', properties);
@@ -230,6 +233,11 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
 
       return dismissedQuestionResult();
     }
+  }
+
+  private traceIdForTurn(turnId: string): string | undefined {
+    const numeric = numericTurnId(turnId);
+    return numeric === undefined ? undefined : this.agent.turn.traceIdForTurn(numeric);
   }
 
   private executeInBackground(

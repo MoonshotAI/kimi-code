@@ -15,8 +15,9 @@
  * (config deduplicated by content, request/response/failure lines, plus
  * per-request fields) through `log`, publishes advisory model-capability
  * warnings through `eventBus`, records durable request-trace Ops
- * through `wire`, and reports provider failures through `telemetry`. Bound
- * at Agent scope.
+ * through `wire`, keeps the ambient telemetry `trace_id` context at the
+ * latest request's `x-trace-id`, and reports provider failures through
+ * `telemetry`. Bound at Agent scope.
  */
 
 import { createHash } from 'node:crypto';
@@ -61,6 +62,7 @@ import type { KimiModelOverrides } from '#/app/model/modelOverrides';
 import { MODELS_SECTION, type ModelsSection } from '#/app/model/model';
 import { applyCompletionBudget, resolveCompletionBudget } from '#/app/model/completionBudget';
 import type { Protocol } from '#/app/protocol/protocol';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type { ApiErrorEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IWireService } from '#/wire/wire';
@@ -145,6 +147,8 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @IConfigService private readonly config: IConfigService,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IAgentTelemetryContextService
+    private readonly telemetryContext: IAgentTelemetryContextService,
     @IWireService private readonly wire: IWireService,
     @IFaultInjectionService private readonly faultInjection: IFaultInjectionService,
     @IEventBus private readonly eventBus: IEventBus,
@@ -161,7 +165,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       return await this.runRequest(this.resolveRequest(overrides), onPart, signal);
     } catch (error) {
       this.logRequestFailure(error, overrides, signal);
-      this.trackApiError(error, startedAt, signal);
+      this.trackApiError(error, startedAt, signal, overrides.source);
       throw error;
     }
   }
@@ -184,10 +188,13 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     error: unknown,
     startedAt: number,
     signal: AbortSignal | undefined,
+    source?: LLMRequestSource,
   ): void {
     if (isAbortError(error) || signal?.aborted === true) return;
     const modelAlias = this.profile.data().modelAlias;
     const model = this.tryGetProvider();
+    const traceId = apiTraceId(error);
+    this.telemetryContext.set({ trace_id: traceId });
     const properties: ApiErrorEvent = {
       error_type: apiErrorType(error),
       model: model?.id ?? modelAlias ?? 'unknown',
@@ -196,7 +203,12 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       protocol: model?.protocol,
       retryable: isRetryableGenerateError(error),
       duration_ms: Math.max(0, Date.now() - startedAt),
+      trace_id: traceId,
     };
+    if (source?.type === 'turn') {
+      properties['turn_id'] = source.turnId;
+      if (source.step !== undefined) properties['step_no'] = source.step;
+    }
     const statusCode = apiStatusCode(error);
     if (statusCode !== undefined) properties['status_code'] = statusCode;
     const currentTurn = this.usage.status().currentTurn;
@@ -269,7 +281,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       let timing: LLMStreamTiming | undefined;
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
 
-      for await (const event of request.model.request(input, signal)) {
+      const setTraceId = (traceId: string | null | undefined): void => {
+        this.telemetryContext.set({ trace_id: traceId ?? undefined });
+      };
+
+      for await (const event of request.model.request(input, signal, { onTraceId: setTraceId })) {
         switch (event.type) {
           case 'part':
             await onPart(event.part);
@@ -280,6 +296,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
           case 'finish':
             finish = event;
             message = event.message;
+            setTraceId(event.traceId);
             break;
           case 'timing': {
             const { type: _type, ...streamTiming } = event;
@@ -305,6 +322,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
         rawFinishReason: finish.rawFinishReason,
         providerMessageId: finish.id,
         timing,
+        traceId: finish.traceId,
       };
     };
 
@@ -699,6 +717,19 @@ function apiStatusCode(error: unknown): number | undefined {
     if (typeof details === 'object' && details !== null) {
       const statusCode = (details as Record<string, unknown>)['statusCode'];
       if (typeof statusCode === 'number') return statusCode;
+    }
+  }
+  return undefined;
+}
+
+function apiTraceId(error: unknown): string | undefined {
+  const raw = unwrapErrorCause(error);
+  if (raw instanceof APIStatusError && raw.traceId !== null) return raw.traceId;
+  if (typeof error === 'object' && error !== null) {
+    const details = (error as Record<string, unknown>)['details'];
+    if (typeof details === 'object' && details !== null) {
+      const traceId = (details as Record<string, unknown>)['traceId'];
+      if (typeof traceId === 'string') return traceId;
     }
   }
   return undefined;

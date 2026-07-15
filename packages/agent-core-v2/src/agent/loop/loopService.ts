@@ -365,6 +365,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     ready: ReturnType<typeof createControlledPromise<void>>,
   ): Promise<TurnResult> {
     const startedAt = Date.now();
+    this.telemetryContext.set({ turn_id: turn.id, trace_id: undefined });
     const telemetryContext = this.telemetryContext.get();
     const turnTelemetry = this.telemetry.withContext(telemetryContext);
     const { mode, provider_type, protocol } = telemetryContext;
@@ -384,6 +385,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     } finally {
       this.settleTurnReady(ready, result);
       this.releaseActiveTurn(turn, result);
+      const traceId = this.telemetryContext.get().trace_id;
       if (result !== undefined) {
         const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
         this.eventBus.publish({
@@ -402,6 +404,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
             interrupt_reason: interruptReasonFor(result),
             provider_type,
             protocol,
+            trace_id: traceId,
           };
           turnTelemetry.track2('turn_interrupted', interrupted);
         }
@@ -413,6 +416,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         mode,
         provider_type,
         protocol,
+        trace_id: traceId,
       };
       turnTelemetry.track2('turn_ended', ended);
       this.pumpTurns();

@@ -486,6 +486,21 @@ describe('ToolCallDeduplicator', () => {
       expect(events.filter((e) => e.event === 'tool_call_repeat')).toHaveLength(0);
     });
 
+    it('attaches the injected trace id to tool_call_repeat', async () => {
+      const { client, events } = makeRecordingTelemetry();
+      const dedup = new ToolCallDeduplicator({
+        telemetry: client,
+        getTraceId: () => 'trace-repeat-1',
+      });
+      for (let i = 0; i < 2; i += 1) {
+        dedup.beginStep();
+        await runOriginal(dedup, `c${String(i)}`, 'Read', { p: 1 }, okResult('R'));
+        dedup.endStep();
+      }
+      const repeat = events.find((e) => e.event === 'tool_call_repeat');
+      expect(repeat?.properties?.['trace_id']).toBe('trace-repeat-1');
+    });
+
     it('labels the action as r1/r2/r3 according to the reminder tier from streak 3 through 11', async () => {
       const { client, events } = makeRecordingTelemetry();
       const dedup = new ToolCallDeduplicator({ telemetry: client });

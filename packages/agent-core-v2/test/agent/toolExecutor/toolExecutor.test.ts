@@ -22,6 +22,8 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IEventBus } from '#/app/event/eventBus';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
+import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
 import { registerLogServices } from '../../_base/log/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 import { registerTestAgentWireServices } from '../../wire/stubs';
@@ -50,6 +52,7 @@ beforeEach(() => {
       reg.define(IAgentToolRegistryService, AgentToolRegistryService);
       reg.define(IAgentToolExecutorService, AgentToolExecutorService);
       reg.defineInstance(ITelemetryService, recordingTelemetry(telemetryEvents));
+      reg.defineInstance(IAgentTelemetryContextService, new AgentTelemetryContextService());
       reg.defineInstance(IAgentToolResultTruncationService, {
         _serviceBrand: undefined,
         truncateForModel: (input) => truncateForModel(input),
@@ -136,6 +139,22 @@ describe('AgentToolExecutorService', () => {
     expect(telemetryEvents).toContainEqual({
       event: 'tool_call',
       properties: expect.objectContaining({ tool_call_id: 'call_dup', dup_type: 'normal' }),
+    });
+  });
+
+  it('merges the ambient trace id into tool_call telemetry', async () => {
+    const tool = new TestTool('echo');
+    registry.register(tool);
+    ix.get(IAgentTelemetryContextService).set({ trace_id: 'trace-tool-1' });
+
+    await execute([toolCall('call_traced', 'echo', { text: 'hi' })]);
+
+    expect(telemetryEvents).toContainEqual({
+      event: 'tool_call',
+      properties: expect.objectContaining({
+        tool_call_id: 'call_traced',
+        trace_id: 'trace-tool-1',
+      }),
     });
   });
 

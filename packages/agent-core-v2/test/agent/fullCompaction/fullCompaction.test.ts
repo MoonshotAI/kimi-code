@@ -605,7 +605,7 @@ describe('FullCompaction', () => {
       if (attempts === 1) {
         throw new APIConnectionError('socket hang up');
       }
-      return textResult('Recovered compacted summary.');
+      return textResult('Recovered compacted summary.', 'trace-compact-1');
     };
     const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
     ctx.configure({
@@ -628,6 +628,7 @@ describe('FullCompaction', () => {
         source: 'manual',
         tokens_before: 25,
         retry_count: 1,
+        trace_id: 'trace-compact-1',
       }),
     });
     await ctx.expectResumeMatches();
@@ -1003,6 +1004,34 @@ describe('FullCompaction', () => {
     expect(
       records.find((record) => record.event === 'compaction_failed')?.properties,
     ).not.toHaveProperty('tokens_after');
+    await ctx.expectResumeMatches();
+  });
+
+  it('attaches the failed request trace id to compaction_failed', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async () => {
+      throw new APIStatusError(400, 'Bad request', null, null, 'trace-compact-fail');
+    };
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    expect(records).toContainEqual({
+      event: 'compaction_failed',
+      properties: expect.objectContaining({
+        source: 'manual',
+        error_type: 'APIStatusError',
+        trace_id: 'trace-compact-fail',
+      }),
+    });
     await ctx.expectResumeMatches();
   });
 
@@ -2715,7 +2744,7 @@ function providerMaxCompletionTokens(provider: Parameters<GenerateFn>[0]): unkno
   ).modelParameters?.['max_completion_tokens'];
 }
 
-function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
+function textResult(text: string, traceId: string | null = null): Awaited<ReturnType<GenerateFn>> {
   return {
     id: 'mock-compaction-oauth-retry',
     message: {
@@ -2731,10 +2760,14 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     },
     finishReason: 'completed',
     rawFinishReason: 'stop',
+    traceId,
   };
 }
 
-function mockStreamedMessage(parts: readonly StreamedMessagePart[]): StreamedMessage {
+function mockStreamedMessage(
+  parts: readonly StreamedMessagePart[],
+  traceId: string | null = null,
+): StreamedMessage {
   return {
     get id(): string | null {
       return 'mock-stream';
@@ -2744,6 +2777,7 @@ function mockStreamedMessage(parts: readonly StreamedMessagePart[]): StreamedMes
     },
     finishReason: null,
     rawFinishReason: null,
+    traceId,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;

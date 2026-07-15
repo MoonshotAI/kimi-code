@@ -74,7 +74,15 @@ async function captureRequestBody(
     .fn()
     .mockImplementation((params: unknown) => {
       capturedBody = params as Record<string, unknown>;
-      return Promise.resolve(makeChatCompletionResponse());
+      // The Kimi provider consumes `APIPromise.withResponse()` to read the
+      // `x-trace-id` header, so the mock must expose that method.
+      return {
+        withResponse: () =>
+          Promise.resolve({
+            data: makeChatCompletionResponse(),
+            response: new Response(null),
+          }),
+      };
     });
   const stream = await provider.generate('system prompt', tools, history);
   for await (const part of stream) {
@@ -170,6 +178,7 @@ describe('generate() deferred tool stripping', () => {
       usage: null,
       finishReason: 'completed',
       rawFinishReason: 'stop',
+      traceId: null,
       async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
         yield { type: 'text', text: 'ok' };
       },

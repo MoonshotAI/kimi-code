@@ -86,6 +86,10 @@ export class FullCompaction {
   // stop an overflow -> compact -> overflow loop when compaction can no
   // longer shrink the request below the model window.
   private consecutiveOverflowCompactions = 0;
+  // Trace id (`x-trace-id`, Kimi/KFC only) of the latest summarizer request,
+  // updated on every attempt — success or failure — so a compaction cancelled
+  // mid-request can still be attributed to its server-side request.
+  private lastSummarizerTraceId: string | undefined;
   protected readonly strategy: CompactionStrategy;
 
   constructor(
@@ -107,6 +111,11 @@ export class FullCompaction {
 
   get isCompacting(): boolean {
     return this.compacting !== null;
+  }
+
+  /** Trace id (`x-trace-id`, Kimi/KFC only) of the latest summarizer request. */
+  get lastTraceId(): string | undefined {
+    return this.lastSummarizerTraceId;
   }
 
   getEffectiveMaxContextTokens(): number {
@@ -390,6 +399,9 @@ export class FullCompaction {
     const originalHistory = [...this.agent.context.history];
     const tokensBefore = estimateTokensForMessages(originalHistory);
     let retryCount = 0;
+    // Reset per round: a failure before any response headers arrive (network
+    // error / local abort) must report no trace id, not a previous round's.
+    this.lastSummarizerTraceId = undefined;
     try {
       await this.triggerPreCompactHook(data, tokensBefore, signal);
 
@@ -453,6 +465,12 @@ export class FullCompaction {
           const generateOptions: GenerateOptionsWithRequestLogFields = {
             signal,
             requestLogFields: { kind: 'compaction', droppedCount },
+            // Early capture: the trace id arrives with the response headers,
+            // so a compaction cancelled mid-stream can still be attributed
+            // to its in-flight summarizer request.
+            onTraceId: (traceId) => {
+              if (traceId !== null) this.lastSummarizerTraceId = traceId;
+            },
           };
           const response = await this.agent.generate(
             provider,
@@ -462,6 +480,8 @@ export class FullCompaction {
             undefined,
             generateOptions,
           );
+          // Multi-round compaction keeps the latest round's request trace id.
+          this.lastSummarizerTraceId = response.traceId ?? undefined;
           if (response.finishReason === 'truncated') {
             throw new CompactionTruncatedError();
           }
@@ -469,6 +489,11 @@ export class FullCompaction {
           summary = extractCompactionSummary(response);
           break;
         } catch (error) {
+          // A failed request usually still returns response headers, so its
+          // trace id rides along on the converted status error.
+          if (error instanceof APIStatusError && error.traceId !== null) {
+            this.lastSummarizerTraceId = error.traceId;
+          }
           // A request-body-size rejection (HTTP 413) or an image-format
           // rejection is first retried with media parts replaced by text
           // markers: accumulated base64 payloads are the usual 413 culprit,
@@ -601,6 +626,7 @@ export class FullCompaction {
         retry_count: retryCount,
         round: 1,
         thinking_effort: this.agent.config.thinkingEffort,
+        trace_id: this.lastSummarizerTraceId,
         ...(usage === null
           ? {}
           : { input_tokens: inputTotal(usage), output_tokens: usage.output }),
@@ -622,6 +648,7 @@ export class FullCompaction {
         retry_count: retryCount,
         thinking_effort: this.agent.config.thinkingEffort,
         error_type: error instanceof Error ? error.name : 'Unknown',
+        trace_id: this.lastSummarizerTraceId,
       });
       if (
         isKimiError(error) &&

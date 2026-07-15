@@ -38,6 +38,7 @@ import type { ToolCall } from '#/app/llmProtocol/message';
 import { ILogService } from '#/_base/log/log';
 import type { ToolCallEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { OrderedHookSlot } from '#/hooks';
 import { IAgentToolResultTruncationService } from '#/agent/toolResultTruncation/toolResultTruncation';
 import {
@@ -126,6 +127,8 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentToolResultTruncationService
     private readonly resultTruncation: IAgentToolResultTruncationService,
+    @IAgentTelemetryContextService
+    private readonly telemetryContext: IAgentTelemetryContextService,
     @ILogService private readonly log?: ILogService,
   ) {}
 
@@ -271,6 +274,7 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
       outcome,
       duration_ms: durationMs,
       dup_type: dupType,
+      trace_id: this.telemetryContext.get().trace_id,
     };
     if (result.isError === true) properties['error_type'] = toolTelemetryErrorType(outcome);
     this.telemetry.track2('tool_call', properties);

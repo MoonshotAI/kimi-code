@@ -83,6 +83,12 @@ export interface RunTurnInput {
   readonly recordStepUsage?:
     | ((usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>)
     | undefined;
+  /**
+   * See LLMChatParams.onTraceId. Fires per request attempt as soon as the
+   * response headers arrive, so the host captures the trace id of an
+   * in-flight request even when the stream is later cancelled.
+   */
+  readonly onTraceId?: (traceId: string | null) => void;
 }
 
 export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
@@ -103,6 +109,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
     maxSteps,
     maxRetryAttempts,
     recordStepUsage: hostRecordStepUsage,
+    onTraceId,
   } = input;
   let usage: TokenUsage = emptyUsage();
   let steps = 0;
@@ -166,6 +173,7 @@ export async function runTurn(input: RunTurnInput): Promise<TurnResult> {
         currentStep: steps,
         maxRetryAttempts,
         recordUsage: recordStepUsage,
+        onTraceId,
       });
       activeStep = undefined;
       mediaDegradedActive = mediaDegradedActive || stepResult.mediaDegradedResendUsed === true;

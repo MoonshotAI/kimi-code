@@ -2197,6 +2197,20 @@ describe('ExitPlanMode permission policy', () => {
       }),
     );
   });
+
+  it('attaches the turn trace id to permission_approval_result', async () => {
+    const { manager, telemetryTrack } = makePermissionManager(
+      async () => ({ decision: 'approved' }),
+      { traceId: 'trace-perm-1' },
+    );
+
+    await expect(manager.beforeToolCall(hookContext({ id: 'call_traced' }))).resolves.toBeUndefined();
+
+    expect(telemetryTrack).toHaveBeenCalledWith(
+      'permission_approval_result',
+      expect.objectContaining({ result: 'approved', trace_id: 'trace-perm-1' }),
+    );
+  });
 });
 
 describe('Agent-local approve for session', () => {
@@ -3879,6 +3893,7 @@ function makePermissionManager(
     readonly hooks?: Agent['hooks'];
     readonly approvalRpc?: boolean;
     readonly swarmModeActive?: boolean;
+    readonly traceId?: string;
   } = {},
 ): {
   manager: PermissionManager;
@@ -3901,6 +3916,7 @@ function makePermissionManager(
     rpc: options.approvalRpc === false ? undefined : { requestApproval },
     hooks: options.hooks,
     telemetry: { track: telemetryTrack },
+    turn: { traceIdForTurn: () => options.traceId },
     planMode: {
       get isActive() {
         return options.planModeActive ?? false;
@@ -3953,6 +3969,7 @@ function makePlanPermissionManager(input: {
     rpc: { requestApproval },
     log: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
     telemetry: { track: telemetryTrack },
+    turn: { traceIdForTurn: () => undefined },
     planMode: {
       get isActive() {
         return true;

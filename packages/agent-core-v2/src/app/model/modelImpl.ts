@@ -37,7 +37,7 @@ import { sanitizeStatusErrorMessage, translateProviderError } from '#/app/protoc
 import { type ProtocolAdapterRegistry } from '#/app/protocol/protocolAdapterRegistry';
 import { ErrorCodes, Error2 } from '#/errors';
 
-import type { AuthProvider, LLMEvent, LLMRequestInput, Model } from './modelInstance';
+import type { AuthProvider, LLMEvent, LLMRequestInput, Model, ModelRequestOptions } from './modelInstance';
 
 export interface ModelImplInit {
   readonly id: string;
@@ -198,9 +198,13 @@ export class ModelImpl implements Model {
     return provider;
   }
 
-  request(input: LLMRequestInput, signal?: AbortSignal): AsyncIterable<LLMEvent> {
+  request(
+    input: LLMRequestInput,
+    signal?: AbortSignal,
+    options?: ModelRequestOptions,
+  ): AsyncIterable<LLMEvent> {
     const queue = new AsyncEventQueue<LLMEvent>();
-    void this.runRequest(input, signal, queue).then(
+    void this.runRequest(input, signal, queue, options).then(
       () => queue.end(),
       (error) => queue.fail(error),
     );
@@ -227,6 +231,7 @@ export class ModelImpl implements Model {
     input: LLMRequestInput,
     signal: AbortSignal | undefined,
     queue: AsyncEventQueue<LLMEvent>,
+    options?: ModelRequestOptions,
   ): Promise<void> {
     signal?.throwIfAborted();
     const provider = this.resolveChatProvider();
@@ -269,6 +274,7 @@ export class ModelImpl implements Model {
               streamEndedAt = Date.now();
               decodeStats = stats;
             },
+            onTraceId: options?.onTraceId,
             responseFormat: input.responseFormat,
           },
         );
@@ -298,6 +304,7 @@ export class ModelImpl implements Model {
       providerFinishReason: result.finishReason ?? undefined,
       rawFinishReason: result.rawFinishReason ?? undefined,
       id: result.id ?? undefined,
+      traceId: result.traceId ?? undefined,
     });
     if (firstChunkAt !== undefined) {
       queue.push({

@@ -22,6 +22,7 @@ function createMockStream(
     },
     finishReason: null,
     rawFinishReason: null,
+    traceId: null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;

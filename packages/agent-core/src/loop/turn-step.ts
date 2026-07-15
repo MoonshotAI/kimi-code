@@ -67,6 +67,12 @@ export interface ExecuteLoopStepDeps {
   readonly currentStep: number;
   readonly maxRetryAttempts?: number;
   readonly recordUsage: (usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>;
+  /**
+   * See LLMChatParams.onTraceId. Fires per request attempt as soon as the
+   * response headers arrive, so the host captures the trace id of an
+   * in-flight request even when the stream is later cancelled.
+   */
+  readonly onTraceId?: (traceId: string | null) => void;
 }
 
 export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
@@ -105,6 +111,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     currentStep,
     maxRetryAttempts,
     recordUsage,
+    onTraceId,
   } = deps;
 
   if (hooks?.beforeStep !== undefined) {
@@ -159,6 +166,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
       initialMediaProjection === 'normal'
         ? undefined
         : { projection: initialMediaProjection },
+    onTraceId,
     ...createChatStreamingCallbacks({
       dispatchEvent,
       turnId,
@@ -411,6 +419,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     llmServerDecodeMs: response.streamTiming?.serverDecodeMs,
     llmClientConsumeMs: response.streamTiming?.clientConsumeMs,
     messageId: response.messageId,
+    traceId: response.traceId,
     ...stepEndProviderDiagnostics(response, effectiveStopReason),
   });
 

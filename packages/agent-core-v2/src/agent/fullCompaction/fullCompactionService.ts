@@ -35,7 +35,7 @@ import { createUserMessage, type Message } from '#/app/llmProtocol/message';
 import type { Tool } from '#/app/llmProtocol/tool';
 import { inputTotal, type TokenUsage } from '#/app/llmProtocol/usage';
 import { IEventBus } from '#/app/event/eventBus';
-import type { CompactionFinishedEvent } from '#/app/telemetry/events';
+import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { IWireService } from '#/wire/wire';
@@ -85,6 +85,7 @@ interface ActiveCompaction extends FullCompactionTask {
 interface CompactionAttemptResult {
   readonly summary: string;
   readonly usage: TokenUsage | null;
+  readonly traceId?: string;
 }
 
 class CompactionTruncatedError extends Error {
@@ -632,13 +633,14 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         retry_count: retryCount,
         round: 1,
         thinking_effort: thinkingEffort,
+        trace_id: attempt.traceId,
         ...usageTelemetry(attempt.usage),
       };
       this.telemetry.track2('compaction_finished', properties);
       return result;
     } catch (error) {
       if (isAbortError(error)) throw error;
-      this.telemetry.track2('compaction_failed', {
+      const properties: CompactionFailedEvent = {
         source: data.source,
         tokens_before: tokensBefore,
         duration_ms: Date.now() - startedAt,
@@ -646,7 +648,9 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         retry_count: retryCount,
         thinking_effort: thinkingEffort,
         error_type: error instanceof Error ? error.name : 'Unknown',
-      });
+        trace_id: findAPIStatusError(error)?.traceId ?? undefined,
+      };
+      this.telemetry.track2('compaction_failed', properties);
       if (
         isError2(error) &&
         (error.code === ErrorCodes.AUTH_LOGIN_REQUIRED ||
@@ -711,7 +715,7 @@ function collectSummary(finish: LLMRequestFinish): CompactionAttemptResult {
     );
   }
 
-  return { summary, usage: finish.usage };
+  return { summary, usage: finish.usage, traceId: finish.traceId };
 }
 
 function historySafeToCompact(

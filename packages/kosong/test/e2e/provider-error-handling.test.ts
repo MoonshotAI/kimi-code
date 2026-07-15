@@ -32,6 +32,7 @@ function createStream(
     },
     finishReason: null,
     rawFinishReason: null,
+    traceId: null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;
@@ -86,6 +87,7 @@ function createMidStreamThrowingProvider(
         },
         finishReason: null,
         rawFinishReason: null,
+        traceId: null,
         async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
           for (const part of partsBefore) {
             yield part;

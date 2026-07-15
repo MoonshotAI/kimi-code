@@ -14,7 +14,9 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
+import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/app/llmProtocol/message';
@@ -117,6 +119,8 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
 
   constructor(
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IAgentTelemetryContextService
+    private readonly telemetryContext: IAgentTelemetryContextService,
     @IAgentLoopService loop: IAgentLoopService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
   ) {
@@ -213,14 +217,16 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     dupType: ToolCallDupType,
   ): void {
     this.toolExecutor.recordDupType(toolCallId, dupType);
-    this.telemetry.track2('tool_call_dedup_detected', {
+    const properties: ToolCallDedupDetectedEvent = {
       turn_id: this.activeTurnId ?? 0,
       step_no: this.activeStep,
       tool_call_id: toolCallId,
       tool_name: toolName,
       dup_type: dupType,
       args_hash: argsHash(args),
-    });
+      trace_id: this.telemetryContext.get().trace_id,
+    };
+    this.telemetry.track2('tool_call_dedup_detected', properties);
   }
 
   private async finalizeResult(
@@ -271,11 +277,13 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     }
 
     if (streak >= 2) {
-      this.telemetry.track2('tool_call_repeat', {
+      const properties: ToolCallRepeatEvent = {
         tool_name: toolName,
         repeat_count: streak,
         action,
-      });
+        trace_id: this.telemetryContext.get().trace_id,
+      };
+      this.telemetry.track2('tool_call_repeat', properties);
     }
 
     this.stepDeferreds.get(key)?.resolve(finalResult);

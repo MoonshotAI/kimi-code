@@ -47,6 +47,7 @@ class ConfigurableMockProvider implements ChatProvider {
       },
       finishReason: null,
       rawFinishReason: null,
+      traceId: null,
       async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
         if (effort !== null && effort !== 'off') {
           yield { type: 'think', think: `thinking at ${effort} effort` };
@@ -206,6 +207,7 @@ describe('e2e: provider switching', () => {
             },
             finishReason: null,
             rawFinishReason: null,
+            traceId: null,
             async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
               yield { type: 'text', text: `response-${myCount}` };
             },
@@ -334,6 +336,7 @@ describe('e2e: provider switching', () => {
             },
             finishReason: null,
             rawFinishReason: null,
+            traceId: null,
             async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
               yield { type: 'text', text: 'part1' };
               await new Promise<void>((r) => setTimeout(r, 5));

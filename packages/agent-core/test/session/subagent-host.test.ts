@@ -748,6 +748,7 @@ describe('SessionSubagentHost', () => {
       ],
       finishReason: 'truncated',
       rawFinishReason: 'length',
+      traceId: null,
     });
     const session = fakeSession(parent.agent, child.agent);
     const host = new SessionSubagentHost(session, 'main');
@@ -1707,6 +1708,7 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     },
     finishReason: 'completed',
     rawFinishReason: 'stop',
+    traceId: null,
   };
 }
 

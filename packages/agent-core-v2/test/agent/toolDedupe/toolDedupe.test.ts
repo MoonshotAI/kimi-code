@@ -7,6 +7,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { type ToolCall } from '#/app/llmProtocol/message';
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
+import { AgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContextService';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -56,6 +58,7 @@ function createHarness(telemetry: ITelemetryService = recordingTelemetry(telemet
     additionalServices: (reg) => {
       registerTestAgentWireServices(reg, 'wire/tool-dedupe');
       reg.defineInstance(ITelemetryService, telemetry);
+      reg.defineInstance(IAgentTelemetryContextService, new AgentTelemetryContextService());
       reg.defineInstance(IEventBus, noopEventBus);
       const homedir = '/tmp/tool-dedupe-homedir';
       reg.defineInstance(ISessionContext, {
@@ -674,6 +677,35 @@ describe('AgentToolDedupeService', () => {
       expect(telemetryEvents).toContainEqual({
         event: 'tool_call',
         properties: expect.objectContaining({ tool_call_id: 'c2', dup_type: 'cross_step' }),
+      });
+    });
+
+    it('merges the ambient trace id into dedupe and repeat telemetry', async () => {
+      const h = createHarness();
+      h.registry.register(new EchoTool('Read'));
+      h.ix.get(IAgentTelemetryContextService).set({ trace_id: 'trace-dedupe-1' });
+      await runStep(h, 7, 1, [toolCall('c1', 'Read', { path: '/a' })]);
+      telemetryEvents.length = 0;
+
+      const signal = new AbortController().signal;
+      await beforeStep(h, 7, 2, signal);
+      await executeAll(h, [toolCall('c2', 'Read', { path: '/a' })], 7, signal);
+
+      expect(telemetryEvents).toContainEqual({
+        event: 'tool_call_dedup_detected',
+        properties: expect.objectContaining({
+          tool_call_id: 'c2',
+          dup_type: 'cross_step',
+          trace_id: 'trace-dedupe-1',
+        }),
+      });
+      expect(telemetryEvents).toContainEqual({
+        event: 'tool_call_repeat',
+        properties: expect.objectContaining({
+          tool_name: 'Read',
+          repeat_count: 2,
+          trace_id: 'trace-dedupe-1',
+        }),
       });
     });
 

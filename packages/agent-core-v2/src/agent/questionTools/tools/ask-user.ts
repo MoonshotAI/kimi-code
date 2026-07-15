@@ -15,7 +15,8 @@ import { toInputJsonSchema } from '#/tool/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentTaskService } from '#/agent/task/task';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
-import type { QuestionAnsweredEvent } from '#/app/telemetry/events';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
+import type { QuestionAnsweredEvent, QuestionDismissedEvent } from '#/app/telemetry/events';
 import type {
   BuiltinTool,
   ExecutableToolContext,
@@ -135,6 +136,8 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     @ISessionQuestionService private readonly question: ISessionQuestionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentTelemetryContextService
+    private readonly telemetryContext: IAgentTelemetryContextService,
   ) {
     this.description = `${DESCRIPTION}- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.`;
     this.parameters = toInputJsonSchema(this.inputSchema());
@@ -244,11 +247,17 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
 
       const normalized = normalizeQuestionResult(result);
       if (normalized === null || Object.keys(normalized.answers).length === 0) {
-        this.telemetry.track2('question_dismissed');
+        const properties: QuestionDismissedEvent = {
+          trace_id: this.telemetryContext.get().trace_id,
+        };
+        this.telemetry.track2('question_dismissed', properties);
         return dismissedQuestionResult();
       }
 
-      const properties: QuestionAnsweredEvent = { answered: Object.keys(normalized.answers).length };
+      const properties: QuestionAnsweredEvent = {
+        answered: Object.keys(normalized.answers).length,
+        trace_id: this.telemetryContext.get().trace_id,
+      };
       if (normalized.method !== undefined) properties.method = normalized.method;
       this.telemetry.track2('question_answered', properties);
       return {

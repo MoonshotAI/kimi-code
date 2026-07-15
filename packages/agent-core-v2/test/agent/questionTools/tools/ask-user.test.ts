@@ -15,6 +15,7 @@ import {
   type AskUserQuestionInput,
 } from '#/agent/questionTools/tools/ask-user';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IAgentTaskService } from '#/agent/task/task';
 import type {
   ISessionQuestionService,
@@ -51,6 +52,7 @@ function makeTool(
       req: QuestionRequest,
       requestOptions?: { readonly signal?: AbortSignal },
     ) => Promise<QuestionResult>;
+    readonly traceId?: string;
   } = {},
 ): {
   readonly tool: AskUserQuestionTool;
@@ -64,6 +66,11 @@ function makeTool(
   const telemetryTrack = vi.fn();
   const question = { request } as unknown as ISessionQuestionService;
   const telemetry = { track2: telemetryTrack } as unknown as ITelemetryService;
+  const telemetryContext = {
+    _serviceBrand: undefined,
+    get: () => ({ mode: 'agent' as const, trace_id: options.traceId }),
+    set: () => {},
+  } satisfies IAgentTelemetryContextService;
   let lastTask: QuestionBackgroundTask | undefined;
   const registerTask = vi.fn((task: QuestionBackgroundTask) => {
     lastTask = task;
@@ -73,7 +80,7 @@ function makeTool(
     id === 'q_test_task_id' ? { status: 'running' } : undefined,
   );
   const tasks = { registerTask, getTask } as unknown as IAgentTaskService;
-  const tool = new AskUserQuestionTool(question, telemetry, tasks);
+  const tool = new AskUserQuestionTool(question, telemetry, tasks, telemetryContext);
   return { tool, request, telemetryTrack, registerTask, getTask, lastRegisteredTask: () => lastTask };
 }
 
@@ -259,6 +266,7 @@ describe('AskUserQuestionTool', () => {
     );
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
+      trace_id: undefined,
     });
   });
 
@@ -314,6 +322,24 @@ describe('AskUserQuestionTool', () => {
     expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
       answered: 1,
       method: 'number_key',
+      trace_id: undefined,
+    });
+  });
+
+  it('merges the ambient trace id into question telemetry', async () => {
+    const { tool, telemetryTrack } = makeTool({ traceId: 'trace-q-1' });
+
+    const result = await executeTool(tool, {
+      turnId: 0,
+      toolCallId: 'call_question',
+      args: input(),
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
+      answered: 1,
+      trace_id: 'trace-q-1',
     });
   });
 
@@ -332,7 +358,7 @@ describe('AskUserQuestionTool', () => {
     expect(result).toMatchObject({ isError: false });
     expect(result.output).toContain('dismissed');
     expect(result.output).toContain('answers');
-    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed');
+    expect(telemetryTrack).toHaveBeenCalledWith('question_dismissed', { trace_id: undefined });
   });
 
   it('resolves question service error responses as dismissed answers', async () => {

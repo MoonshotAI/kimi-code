@@ -685,6 +685,11 @@ export class OpenAIResponsesStreamedMessage implements StreamedMessage {
     return this._rawFinishReason;
   }
 
+  // `x-trace-id` is a Kimi/KFC response header; other providers do not report one.
+  get traceId(): string | null {
+    return null;
+  }
+
   async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
     yield* this._iter;
   }

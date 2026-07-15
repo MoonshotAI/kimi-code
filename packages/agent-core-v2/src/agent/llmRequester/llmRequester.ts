@@ -44,6 +44,8 @@ export interface LLMRequestFinish {
   rawFinishReason?: string;
   providerMessageId?: string;
   timing?: LLMStreamTiming;
+  /** Trace id of the request that produced this finish (Kimi `x-trace-id`). */
+  traceId?: string;
 }
 
 export type LLMRequestPartHandler = (part: StreamedMessagePart) => void | Promise<void>;

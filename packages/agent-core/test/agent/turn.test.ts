@@ -89,6 +89,7 @@ describe('Agent turn flow', () => {
         usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
         finishReason: 'completed',
         rawFinishReason: 'stop',
+        traceId: null,
       };
     };
     const ctx = testAgent({ generate });
@@ -154,6 +155,7 @@ describe('Agent turn flow', () => {
         usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
         finishReason: 'completed',
         rawFinishReason: 'stop',
+        traceId: null,
       };
     };
     const ctx = testAgent({ generate });
@@ -290,6 +292,7 @@ describe('Agent turn flow', () => {
         usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
         finishReason: 'completed' as const,
         rawFinishReason: 'stop',
+        traceId: null,
       };
     }
 
@@ -327,6 +330,7 @@ describe('Agent turn flow', () => {
             usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
             finishReason: 'tool_calls',
             rawFinishReason: 'tool_calls',
+            traceId: null,
           };
         }
         return okResponse();
@@ -664,6 +668,49 @@ describe('Agent turn flow', () => {
         duration_ms: expect.any(Number),
       }),
     });
+  });
+
+  it('attaches the provider trace id to turn and tool telemetry', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({
+      kaos: createCommandKaos('traced'),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    records.length = 0;
+
+    ctx.mockNextProviderResponse({
+      parts: [{ type: 'text', text: 'running' }, bashCallWithId('call_traced', 'printf traced')],
+      traceId: 'trace-turn-1',
+    });
+    ctx.mockNextProviderResponse({
+      parts: [{ type: 'text', text: 'done' }],
+      traceId: 'trace-turn-2',
+    });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run' }] });
+    await ctx.untilTurnEnd();
+
+    // tool_call attributes to the request that produced the call.
+    const toolCall = records.find((candidate) => candidate.event === 'tool_call');
+    expect(toolCall?.properties?.['trace_id']).toBe('trace-turn-1');
+    // turn_ended attributes to the turn's most recent request.
+    const ended = records.find((candidate) => candidate.event === 'turn_ended');
+    expect(ended?.properties?.['trace_id']).toBe('trace-turn-2');
+  });
+
+  it('omits trace_id from turn telemetry when the provider reports none', async () => {
+    const records: TelemetryRecord[] = [];
+    const ctx = testAgent({ telemetry: recordingTelemetry(records) });
+    ctx.configure();
+    ctx.mockNextResponse({ type: 'text', text: 'done' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'hi' }] });
+    await ctx.untilTurnEnd();
+
+    const ended = records.find((candidate) => candidate.event === 'turn_ended');
+    expect(ended?.properties?.['trace_id']).toBeUndefined();
   });
 
   it('tracks duplicate tool-call detection telemetry', async () => {
@@ -1039,6 +1086,7 @@ describe('Agent turn flow', () => {
       },
       finishReason: 'filtered',
       rawFinishReason: 'content_filter',
+      traceId: null,
     });
     const ctx = testAgent({
       generate,
@@ -2057,6 +2105,45 @@ describe('Agent turn flow', () => {
     }
   });
 
+  it('tracks api_error with the failed request trace id from the error response', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async () => {
+      throw new APIStatusError(500, 'server exploded', 'req-1', null, 'trace-err-1');
+    };
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'trigger provider error' }] });
+    await ctx.untilTurnEnd();
+
+    const record = records.find((candidate) => candidate.event === 'api_error');
+    expect(record?.properties?.['trace_id']).toBe('trace-err-1');
+  });
+
+  it('omits trace_id from api_error when the failure carried no response', async () => {
+    const records: TelemetryRecord[] = [];
+    const generate: GenerateFn = async () => {
+      throw new APIConnectionError('socket hang up');
+    };
+    const ctx = testAgent({
+      generate,
+      ...singleAttemptAgentOptions(),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'trigger provider error' }] });
+    await ctx.untilTurnEnd();
+
+    const record = records.find((candidate) => candidate.event === 'api_error');
+    expect(record).toBeDefined();
+    expect(record?.properties?.['trace_id']).toBeUndefined();
+  });
+
   it('keeps transient retry handling with request-scoped OAuth auth', async () => {
     const { logger, entries } = captureLogs();
     const authKeys: string[] = [];
@@ -2518,6 +2605,7 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     },
     finishReason: 'completed',
     rawFinishReason: 'stop',
+    traceId: null,
   };
 }
 

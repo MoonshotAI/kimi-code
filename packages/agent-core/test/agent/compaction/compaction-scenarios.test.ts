@@ -45,6 +45,7 @@ function textResult(text: string): Awaited<ReturnType<GenerateFn>> {
     usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
     finishReason: 'completed',
     rawFinishReason: 'stop',
+    traceId: null,
   };
 }
 

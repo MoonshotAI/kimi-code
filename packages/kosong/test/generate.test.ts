@@ -23,6 +23,7 @@ function createMockStream(
     },
     finishReason: opts?.finishReason ?? null,
     rawFinishReason: opts?.rawFinishReason ?? null,
+    traceId: null,
     async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
       for (const part of parts) {
         yield part;
@@ -758,6 +759,7 @@ describe('generate()', () => {
       },
       finishReason: null,
       rawFinishReason: null,
+      traceId: null,
       async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
         observedParts += 1;
         yield { type: 'text', text: 'leaked' };
@@ -841,6 +843,7 @@ describe('generate()', () => {
       },
       finishReason: null,
       rawFinishReason: null,
+      traceId: null,
       async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
         yield { type: 'text', text: 'leaked' };
       },
@@ -913,6 +916,7 @@ describe('generate()', () => {
         usage: null,
         finishReason,
         rawFinishReason,
+        traceId: null,
         async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
           for (const part of parts) {
             yield part;
@@ -966,6 +970,7 @@ describe('generate()', () => {
         },
         finishReason: 'completed',
         rawFinishReason: 'stop',
+        traceId: null,
         async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
           let first = true;
           for (const part of parts) {
