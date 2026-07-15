@@ -82,6 +82,10 @@ import {
 } from './stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from './stepRequestQueue';
 import { cancelTurn, promptTurn, TurnModel } from './turnOps';
+// Loads the `DomainEventMap` augmentation for the `turn.*` / delta events this
+// service publishes (the augmentation lives with the event definitions;
+// without an import it would not enter every consumer's program).
+import './turnEvents';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
