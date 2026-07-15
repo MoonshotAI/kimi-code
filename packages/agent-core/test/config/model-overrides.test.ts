@@ -45,4 +45,47 @@ describe('effectiveModelAlias', () => {
 
     expect(effectiveModelAlias(model).defaultEffort).toBe('high');
   });
+
+  it('derives the official effort list and thinking capability from a Claude model name', () => {
+    const model: ModelAlias = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-6',
+      maxContextSize: 200000,
+    };
+
+    expect(effectiveModelAlias(model)).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('marks official always-on models and does not surface off', () => {
+    const model: ModelAlias = {
+      provider: 'anthropic',
+      model: 'claude-fable-5',
+      maxContextSize: 200000,
+    };
+
+    expect(effectiveModelAlias(model)).toMatchObject({
+      capabilities: ['always_thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('keeps an explicit supportEfforts list authoritative over the official profile', () => {
+    const model: ModelAlias = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      maxContextSize: 200000,
+      supportEfforts: ['low', 'max'],
+      defaultEffort: 'max',
+    };
+
+    expect(effectiveModelAlias(model)).toMatchObject({
+      supportEfforts: ['low', 'max'],
+      defaultEffort: 'max',
+    });
+  });
 });

@@ -173,6 +173,22 @@ describe('ModelCatalogService', () => {
     });
   });
 
+  it('projects official Anthropic effort metadata inferred from the model name', async () => {
+    backing.providers['anthropic'] = { type: 'anthropic' };
+    backing.models['opus'] = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-6',
+      maxContextSize: 200000,
+    };
+
+    const opus = (await catalog().listModels()).find((model) => model.model === 'opus');
+    expect(opus).toMatchObject({
+      capabilities: ['thinking'],
+      support_efforts: ['low', 'medium', 'high', 'max'],
+      default_effort: 'high',
+    });
+  });
+
   it('projects effort fields from overrides when present', async () => {
     backing.models['k2'] = {
       ...backing.models['k2'],

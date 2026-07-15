@@ -129,6 +129,7 @@ export class ProviderManager implements ModelProvider {
       effectiveAlias.maxOutputSize,
       effectiveAlias.reasoningKey,
       this.options.promptCacheKey,
+      effectiveAlias.supportEfforts,
       effectiveAlias.adaptiveThinking,
       alias.betaApi,
     );
@@ -254,6 +255,7 @@ function toKosongProviderConfig(
   maxOutputSize: number | undefined,
   reasoningKey: string | undefined,
   promptCacheKey: string | undefined,
+  supportEfforts: readonly string[] | undefined,
   adaptiveThinking: boolean | undefined,
   betaApi: boolean | undefined,
 ): KosongProviderConfig {
@@ -271,6 +273,7 @@ function toKosongProviderConfig(
             : baseUrl,
         apiKey: providerApiKey(provider),
         ...(maxOutputSize !== undefined ? { defaultMaxTokens: maxOutputSize } : {}),
+        supportEfforts,
         ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
         ...(provider.type === 'kimi' ? { kimiThinking: true } : {}),
         ...(betaApi !== undefined ? { betaApi } : {}),

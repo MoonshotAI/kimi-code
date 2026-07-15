@@ -20,6 +20,39 @@ import {
 import { modelsFromToml, modelsToToml } from '#/app/model/configSection';
 import { ModelService } from '#/app/model/modelService';
 import { ENV_MODEL_PROVIDER_KEY } from '#/app/provider/provider';
+import { effectiveModelConfig } from '#/app/model/modelAuth';
+
+describe('effectiveModelConfig', () => {
+  it('derives the official effort metadata from a Claude model name', () => {
+    expect(
+      effectiveModelConfig({
+        provider: 'anthropic',
+        model: 'claude-opus-4-6',
+        maxContextSize: 200000,
+      }),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('marks official always-on models while preserving explicit effort metadata', () => {
+    expect(
+      effectiveModelConfig({
+        provider: 'anthropic',
+        model: 'claude-fable-5',
+        maxContextSize: 200000,
+        supportEfforts: ['high', 'max'],
+        defaultEffort: 'max',
+      }),
+    ).toMatchObject({
+      capabilities: ['always_thinking'],
+      supportEfforts: ['high', 'max'],
+      defaultEffort: 'max',
+    });
+  });
+});
 
 describe('ModelService', () => {
   let disposables: DisposableStore;

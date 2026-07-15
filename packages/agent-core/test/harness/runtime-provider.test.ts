@@ -338,6 +338,34 @@ describe('resolveRuntimeProvider maxOutputSize forwarding', () => {
     });
   });
 
+  it('forwards alias.supportEfforts to the anthropic provider config', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          ...BASE_CONFIG.providers,
+          anthropic: { type: 'anthropic', apiKey: 'sk-anthropic' },
+        },
+        models: {
+          ...BASE_CONFIG.models!,
+          'compatible-alias': {
+            provider: 'anthropic',
+            model: 'compatible-model',
+            maxContextSize: 200000,
+            supportEfforts: ['low', 'high', 'max'],
+          },
+        },
+      },
+      model: 'compatible-alias',
+    });
+
+    expect(resolved.provider).toMatchObject({
+      type: 'anthropic',
+      model: 'compatible-model',
+      supportEfforts: ['low', 'high', 'max'],
+    });
+  });
+
   it('forwards alias.betaApi to the anthropic provider config', () => {
     const resolved = resolveRuntimeProvider({
       config: {

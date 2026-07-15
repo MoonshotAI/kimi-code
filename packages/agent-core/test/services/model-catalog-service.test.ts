@@ -165,6 +165,20 @@ describe('model catalog adapters', () => {
     expect(toProtocolModel('turbo', alias).display_name).toBe('kimi-turbo');
   });
 
+  it('projects official Anthropic effort metadata inferred from the model name', () => {
+    expect(
+      toProtocolModel('opus', {
+        provider: 'anthropic',
+        model: 'claude-opus-4-6',
+        maxContextSize: 200000,
+      }),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      support_efforts: ['low', 'medium', 'high', 'max'],
+      default_effort: 'high',
+    });
+  });
+
   it('maps provider model ids and global default', () => {
     const config = catalogConfig();
     expect(

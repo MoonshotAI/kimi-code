@@ -162,7 +162,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       alwaysThinking,
       providerType === 'kimi',
     );
-    return effort === 'off' ? impl : impl.withThinking(effort);
+    return effort === 'off' && protocol !== 'anthropic' ? impl : impl.withThinking(effort);
   }
 
   private resolveDefaultThinking(
@@ -336,6 +336,7 @@ function buildProtocolProviderOptions(
   switch (protocol) {
     case 'anthropic':
       if (model.maxOutputSize !== undefined) options.defaultMaxTokens = model.maxOutputSize;
+      if (model.supportEfforts !== undefined) options.supportEfforts = model.supportEfforts;
       if (model.adaptiveThinking !== undefined) options.adaptiveThinking = model.adaptiveThinking;
       if (provider?.type === 'kimi') options.kimiThinking = true;
       if (model.betaApi !== undefined) options.betaApi = model.betaApi;

@@ -1,16 +1,13 @@
+import { matchKnownAnthropicModelProfile } from '@moonshot-ai/kosong/providers/anthropic-profile';
+
 import type { ModelAlias } from './schema';
 
 export function effectiveModelAlias(alias: ModelAlias): ModelAlias {
   const { overrides, ...base } = alias;
-  if (overrides === undefined) return alias;
-
-  const effective: ModelAlias = {
-    ...base,
-    ...overrides,
-  };
+  const effective: ModelAlias = overrides === undefined ? alias : { ...base, ...overrides };
 
   if (
-    overrides.supportEfforts !== undefined &&
+    overrides?.supportEfforts !== undefined &&
     overrides.defaultEffort === undefined &&
     effective.defaultEffort !== undefined &&
     !overrides.supportEfforts.includes(effective.defaultEffort)
@@ -18,7 +15,27 @@ export function effectiveModelAlias(alias: ModelAlias): ModelAlias {
     delete effective.defaultEffort;
   }
 
-  return effective;
+  return withKnownAnthropicProfile(effective);
+}
+
+function withKnownAnthropicProfile(model: ModelAlias): ModelAlias {
+  const profile = matchKnownAnthropicModelProfile(model.model);
+  if (profile === undefined) return model;
+
+  const capability = profile.canDisableThinking ? 'thinking' : 'always_thinking';
+  const capabilities = model.capabilities ?? [];
+  const hasCapability = capabilities.some(
+    (candidate) => candidate.trim().toLowerCase() === capability,
+  );
+  const supportEfforts = model.supportEfforts ?? [...profile.efforts];
+
+  return {
+    ...model,
+    capabilities: hasCapability ? capabilities : [...capabilities, capability],
+    supportEfforts,
+    defaultEffort:
+      model.defaultEffort ?? (supportEfforts.includes('high') ? 'high' : undefined),
+  };
 }
 
 export function effectiveModelAliases(
