@@ -614,6 +614,7 @@ function forgetSession(sessionId: string): void {
   delete rawState.queuedBySession[sessionId];
   delete rawState.promptIdBySession[sessionId];
   delete rawState.inFlightBySession[sessionId];
+  delete rawState.turnActiveBySession[sessionId];
   // Drop per-session mode toggles and re-persist so a deleted session's entry
   // doesn't linger in localStorage.
   delete rawState.planModeBySession[sessionId];
