@@ -194,7 +194,12 @@ export class SessionAgentProfileCatalogService
       }
     }
     for (const profile of fileProfiles.values()) {
-      if (m.has(profile.name) && profile.override !== true) continue;
+      if (m.has(profile.name) && profile.override !== true) {
+        this.log.warn(
+          `agent file profile "${profile.name}" ignored: a same-name builtin profile exists; set "override: true" in the frontmatter to replace it`,
+        );
+        continue;
+      }
       m.set(profile.name, profile);
     }
     this.merged = m;
