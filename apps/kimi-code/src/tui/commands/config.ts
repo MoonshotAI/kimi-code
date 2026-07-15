@@ -7,6 +7,8 @@ import {
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
+import { t } from '#/i18n';
+
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
 import {
@@ -60,7 +62,7 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
   const subcmd = args.trim().toLowerCase();
   if (subcmd === 'clear') {
     await session.clearPlan();
-    host.showNotice('Plan cleared');
+    host.showNotice(t('tui.commands.planCleared'));
     return;
   }
 
@@ -69,7 +71,7 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
   else if (subcmd === 'on') enabled = true;
   else if (subcmd === 'off') enabled = false;
   else {
-    host.showError(`Unknown plan subcommand: ${subcmd}`);
+    host.showError(t('tui.commands.unknownPlanSubcommand', { subcmd }));
     return;
   }
 
@@ -83,15 +85,15 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
     if (enabled) {
       const plan = await session.getPlan().catch(() => null);
       host.showNotice(
-        'Plan mode: ON',
+        t('tui.commands.planModeOn'),
         plan?.path !== undefined ? `Plan will be created here: ${plan.path}` : undefined,
       );
       return;
     }
-    host.showNotice('Plan mode: OFF');
+    host.showNotice(t('tui.commands.planModeOff'));
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to set plan mode: ${msg}`);
+    host.showError(t('tui.commands.failedToSetPlanMode', { msg }));
   }
 }
 
@@ -107,23 +109,23 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
 
   if (subcmd === 'on') {
     if (currentMode === 'yolo') {
-      host.showNotice('YOLO mode is already on');
+      host.showNotice(t('tui.commands.yoloModeAlreadyOn'));
       return;
     }
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
+    host.showNotice(t('tui.commands.yoloModeOn'), t('tui.commands.yoloModeOnSub'));
     return;
   }
 
   if (subcmd === 'off') {
     if (currentMode !== 'yolo') {
-      host.showNotice('YOLO mode is already off');
+      host.showNotice(t('tui.commands.yoloModeAlreadyOff'));
       return;
     }
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('YOLO mode: OFF');
+    host.showNotice(t('tui.commands.yoloModeOff'));
     return;
   }
 
@@ -131,11 +133,11 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
   if (currentMode === 'yolo') {
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('YOLO mode: OFF');
+    host.showNotice(t('tui.commands.yoloModeOff'));
   } else {
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice('YOLO mode: ON', 'AI auto-approves safe actions, asks for approval on risky ones.');
+    host.showNotice(t('tui.commands.yoloModeOn'), t('tui.commands.yoloModeOnSub'));
   }
 }
 
@@ -151,23 +153,23 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
 
   if (subcmd === 'on') {
     if (currentMode === 'auto') {
-      host.showNotice('Auto mode is already on');
+      host.showNotice(t('tui.commands.autoModeAlreadyOn'));
       return;
     }
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
+    host.showNotice(t('tui.commands.autoModeOn'), t('tui.commands.autoModeOnSub'));
     return;
   }
 
   if (subcmd === 'off') {
     if (currentMode !== 'auto') {
-      host.showNotice('Auto mode is already off');
+      host.showNotice(t('tui.commands.autoModeAlreadyOff'));
       return;
     }
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('Auto mode: OFF');
+    host.showNotice(t('tui.commands.autoModeOff'));
     return;
   }
 
@@ -175,11 +177,11 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
   if (currentMode === 'auto') {
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice('Auto mode: OFF');
+    host.showNotice(t('tui.commands.autoModeOff'));
   } else {
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice('Auto mode: ON', 'Run all actions automatically, including risky ones.');
+    host.showNotice(t('tui.commands.autoModeOn'), t('tui.commands.autoModeOnSub'));
   }
 }
 
@@ -211,7 +213,7 @@ export async function handleThemeCommand(host: SlashCommandHost, args: string): 
   if (!isBuiltInTheme(theme)) {
     const custom = await loadCustomThemeMerged(theme);
     if (custom === null) {
-      host.showError(`Unknown theme: ${theme}`);
+      host.showError(t('tui.commands.unknownTheme', { theme }));
       return;
     }
   }
@@ -226,7 +228,7 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
     return;
   }
   if (host.state.appState.availableModels[alias] === undefined) {
-    host.showError(`Unknown model alias: ${alias}`);
+    host.showError(t('tui.commands.unknownModelAlias', { alias }));
     return;
   }
   showModelPicker(host, alias);
@@ -236,7 +238,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
   const alias = host.state.appState.model;
   const model = host.state.appState.availableModels[alias];
   if (model === undefined) {
-    host.showError('No model selected. Run /model to select one first.');
+    host.showError(t('tui.commands.noModelSelected'));
     return;
   }
   const effective = effectiveModelForHost(host, model);
@@ -381,8 +383,8 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
   const entries = Object.entries(models);
   if (entries.length === 0) {
     host.showNotice(
-      'No models configured',
-      'Run /login to sign in to Kimi, or /provider to add another provider from a model catalog.',
+      t('tui.commands.noModelsConfigured'),
+      t('tui.commands.noModelsConfiguredSub'),
     );
     return;
   }
@@ -414,7 +416,7 @@ async function performModelSwitch(
   persist: boolean,
 ): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
-    host.showError('Cannot switch models while streaming — press Esc or Ctrl-C first.');
+    host.showError(t('tui.commands.cannotSwitchModelsWhileStreaming'));
     return;
   }
 
@@ -443,7 +445,7 @@ async function performModelSwitch(
     }
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to switch model: ${msg}`);
+    host.showError(t('tui.commands.switchModelFailed', { msg }));
     return;
   }
 
@@ -477,7 +479,7 @@ async function performModelSwitch(
       persisted = await persistModelSelection(host, effectiveAlias, effectiveEffort);
     } catch (error) {
       const msg = formatErrorMessage(error);
-      host.showError(`Switched to ${displayName}, but failed to save default: ${msg}`);
+      host.showError(t('tui.commands.switchSavedButDefaultFailed', { name: displayName, msg }));
       return;
     }
   }
@@ -611,7 +613,7 @@ export async function showExperimentsPanel(host: SlashCommandHost): Promise<void
   try {
     features = await host.harness.getExperimentalFeatures();
   } catch (error) {
-    host.showError(`Failed to load experimental features: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.commands.loadExperimentsFailed', { error: formatErrorMessage(error) }));
     return;
   }
   mountExperimentsPanel(host, features);
@@ -651,7 +653,7 @@ export async function applyExperimentalFeatureChanges(
     }
     host.track('experimental_features_apply', { changed: changes.length });
   } catch (error) {
-    host.showError(`Failed to update experimental features: ${formatErrorMessage(error)}`);
+    host.showError(t('tui.commands.updateExperimentsFailed', { error: formatErrorMessage(error) }));
   }
 }
 
@@ -722,12 +724,12 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
     await host.requireSession().setPermission(mode);
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(`Failed to set permission mode: ${msg}`);
+    host.showError(t('tui.commands.failedToSetPermission', { error: msg }));
     return;
   }
 
   host.setAppState({ permissionMode: mode });
-  host.showNotice(`Permission mode: ${mode}`);
+  host.showNotice(t('tui.commands.configPermissionMode', { mode }));
 }
 
 export function showSettingsSelector(host: SlashCommandHost): void {
