@@ -67,6 +67,8 @@ export interface WireSession {
   created_at: string;
   updated_at: string;
   busy: boolean;
+  main_turn_active?: boolean;
+  pending_interaction?: 'none' | 'approval' | 'question';
   last_turn_reason?: 'completed' | 'cancelled' | 'failed';
   archived: boolean;
   current_prompt_id?: string;
@@ -680,6 +682,8 @@ type WireEventSessionUpdated = WireEventBase<'event.session.updated', { session:
 type WireEventSessionDeleted = WireEventBase<'event.session.deleted', { session_id: string }>;
 type WireEventSessionWorkChanged = WireEventBase<'event.session.work_changed', {
   busy: boolean;
+  main_turn_active?: boolean;
+  pending_interaction?: 'none' | 'approval' | 'question';
   last_turn_reason?: 'completed' | 'cancelled' | 'failed';
 }>;
 /** @deprecated Old journals may still carry this; mapped onto busy for replay. */

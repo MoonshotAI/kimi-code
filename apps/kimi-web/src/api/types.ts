@@ -57,9 +57,15 @@ export interface AppSession {
   title: string;
   createdAt: string;
   updatedAt: string;
-  /** Any agent in the session holds an active turn. Awaiting states ride the
-   *  approval/question channels; turn outcomes ride turn.ended. */
+  /** Any agent in the session holds an active turn or background lease.
+   *  Awaiting states ride the approval/question channels; turn outcomes ride
+   *  turn.ended. */
   busy: boolean;
+  /** Whether the main agent has an active turn. Unlike busy, this excludes
+   *  background tasks and sub-agent work. */
+  mainTurnActive?: boolean;
+  /** List-level fallback for the action-required badge. */
+  pendingInteraction?: 'none' | 'approval' | 'question';
   /** Outcome of the main agent's most recent turn (when the server reports
    *  one). Presentation rule for the "aborted" tag:
    *  `!busy && (cancelled | failed)`. */
@@ -411,7 +417,14 @@ export type AppEvent =
   | { type: 'workspaceDeleted'; workspaceId: string; root: string }
   | { type: 'sessionUpdated'; session: AppSession; changedFields: string[] }
   | { type: 'sessionDeleted'; sessionId: string }
-  | { type: 'sessionWorkChanged'; sessionId: string; busy: boolean; lastTurnReason?: 'completed' | 'cancelled' | 'failed' }
+  | {
+      type: 'sessionWorkChanged';
+      sessionId: string;
+      busy: boolean;
+      mainTurnActive?: boolean;
+      pendingInteraction?: 'none' | 'approval' | 'question';
+      lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+    }
   | { type: 'sessionMetaUpdated'; sessionId: string; title?: string; lastPrompt?: string }
   | { type: 'sessionUsageUpdated'; sessionId: string; usage: AppSessionUsage; model?: string; swarmMode?: boolean; planMode?: boolean }
   | { type: 'historyCompacted'; sessionId: string; beforeSeq: number; reason: string; summaryMessageId?: string }

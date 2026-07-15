@@ -232,6 +232,23 @@ describe('events / display re-exports', () => {
     expect((parsed as { current_prompt_id: string }).current_prompt_id).toBe('prompt_1');
   });
 
+  it('validates orthogonal session work facts for unsubscribed clients', () => {
+    const parsed = eventSchema.parse({
+      type: 'event.session.work_changed',
+      agentId: 'main',
+      sessionId: 'sess_1',
+      busy: true,
+      main_turn_active: false,
+      pending_interaction: 'question',
+      last_turn_reason: 'completed',
+    });
+
+    expect(parsed).toMatchObject({
+      main_turn_active: false,
+      pending_interaction: 'question',
+    });
+  });
+
   it('rejects event.session.status_changed with invalid status', () => {
     expect(
       eventSchema.safeParse({

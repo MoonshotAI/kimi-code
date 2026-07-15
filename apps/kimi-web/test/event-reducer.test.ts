@@ -50,19 +50,24 @@ function makeSubagentTask(id: string, sessionId: string): AppTask {
 
 describe('reduceAppEvent turnActiveChanged', () => {
   it('sets and clears the per-session main-turn liveness flag', () => {
-    const state = createInitialState();
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+    };
     const started = reduceAppEvent(
       state,
       { type: 'turnActiveChanged', sessionId: 's1', active: true },
       { sessionId: 's1', seq: 1 },
     );
     expect(started.turnActiveBySession['s1']).toBe(true);
+    expect(started.sessions[0]?.mainTurnActive).toBe(true);
     const ended = reduceAppEvent(
       started,
       { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'completed' },
       { sessionId: 's1', seq: 2 },
     );
     expect(ended.turnActiveBySession['s1']).toBeUndefined();
+    expect(ended.sessions[0]?.mainTurnActive).toBe(false);
   });
 
   it('drops the flag with the rest of a deleted session', () => {
@@ -72,6 +77,81 @@ describe('reduceAppEvent turnActiveChanged', () => {
       turnActiveBySession: { s1: true },
     };
     const next = reduceAppEvent(state, { type: 'sessionDeleted', sessionId: 's1' }, { sessionId: 's1', seq: 1 });
+    expect(next.turnActiveBySession['s1']).toBeUndefined();
+  });
+});
+
+describe('reduceAppEvent sessionWorkChanged', () => {
+  it('updates list-level main-turn liveness for an unopened session', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+    };
+
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'sessionWorkChanged',
+        sessionId: 's1',
+        busy: true,
+        mainTurnActive: true,
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.sessions[0]).toMatchObject({
+      busy: true,
+      mainTurnActive: true,
+    });
+    expect(next.turnActiveBySession['s1']).toBe(true);
+  });
+
+  it('updates the listed action-required fallback for an unopened session', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+    };
+
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'sessionWorkChanged',
+        sessionId: 's1',
+        busy: true,
+        pendingInteraction: 'question',
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.sessions[0]?.pendingInteraction).toBe('question');
+  });
+
+  it('clears streamed main-turn liveness while aggregate work remains busy', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [
+        {
+          ...makeSession('s1', '2026-01-01T00:00:00.000Z'),
+          busy: true,
+          mainTurnActive: true,
+        },
+      ],
+      turnActiveBySession: { s1: true },
+    };
+
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'sessionWorkChanged',
+        sessionId: 's1',
+        busy: true,
+        mainTurnActive: false,
+        pendingInteraction: 'none',
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+
+    expect(next.sessions[0]).toMatchObject({ busy: true, mainTurnActive: false });
     expect(next.turnActiveBySession['s1']).toBeUndefined();
   });
 });

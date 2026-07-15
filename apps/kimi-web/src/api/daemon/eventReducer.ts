@@ -300,8 +300,19 @@ export function reduceAppEvent(
     case 'sessionWorkChanged': {
       next.sessions = next.sessions.map((s) => {
         if (s.id !== event.sessionId) return s;
-        return { ...s, busy: event.busy, lastTurnReason: event.lastTurnReason ?? s.lastTurnReason };
+        return {
+          ...s,
+          busy: event.busy,
+          mainTurnActive: event.mainTurnActive ?? s.mainTurnActive,
+          pendingInteraction: event.pendingInteraction ?? s.pendingInteraction,
+          lastTurnReason: event.lastTurnReason ?? s.lastTurnReason,
+        };
       });
+      if (event.mainTurnActive === true) {
+        next.turnActiveBySession[event.sessionId] = true;
+      } else if (event.mainTurnActive === false) {
+        delete next.turnActiveBySession[event.sessionId];
+      }
       break;
     }
 
@@ -678,6 +689,11 @@ export function reduceAppEvent(
 
     // -------------------------------------------------------------------------
     case 'turnActiveChanged': {
+      next.sessions = next.sessions.map((session) =>
+        session.id === event.sessionId
+          ? { ...session, mainTurnActive: event.active }
+          : session,
+      );
       if (event.active) {
         next.turnActiveBySession[event.sessionId] = true;
       } else {

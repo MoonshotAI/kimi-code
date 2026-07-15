@@ -44,6 +44,8 @@ interface SessionWire {
   created_at: string;
   updated_at: string;
   busy: boolean;
+  main_turn_active: boolean;
+  pending_interaction: 'none' | 'approval' | 'question';
   last_turn_reason?: 'completed' | 'cancelled' | 'failed';
   archived?: boolean;
   metadata: { cwd: string } & Record<string, unknown>;
@@ -274,6 +276,8 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.data.title).toBe('hello');
     expect(body.data.metadata.cwd).toBe(cwd);
     expect(body.data.busy).toBe(false);
+    expect(body.data.main_turn_active).toBe(false);
+    expect(body.data.pending_interaction).toBe('none');
     expect(body.data.agent_config).toEqual({ model: '' });
     expect(body.data.permission_rules).toEqual([]);
     expect(body.data.message_count).toBe(0);

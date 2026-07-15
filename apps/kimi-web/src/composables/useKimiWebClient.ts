@@ -874,6 +874,7 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   // forward. A late duplicate idle (e.g. replayed after a snapshot already
   // advanced past it) must not drain a second queued message.
   const prevSeq = rawState.lastSeqBySession[meta.sessionId] ?? 0;
+  const wasMainTurnActive = rawState.turnActiveBySession[meta.sessionId] ?? false;
   // meta carries wire-level seq/sessionId so the reducer can advance
   // lastSeqBySession[sessionId] = seq. Compaction completion appends a
   // persistent divider marker in the reducer (TUI parity: the scrollback
@@ -941,7 +942,8 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
 
   if (
     appEvent.type === 'sessionWorkChanged' &&
-    !appEvent.busy &&
+    ((appEvent.mainTurnActive === false && wasMainTurnActive) ||
+      (appEvent.mainTurnActive === undefined && !appEvent.busy)) &&
     meta.seq > prevSeq
   ) {
     clearWorkingFlags(appEvent.sessionId);
@@ -1451,7 +1453,9 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
     // busy read is the reconciler, so a dead turn never relights the moon.
     {
       const next = { ...rawState.turnActiveBySession };
-      if (snap.inFlightTurn !== null && snap.session.busy) next[sessionId] = true;
+      const mainTurnActive =
+        snap.session.mainTurnActive ?? (snap.inFlightTurn !== null && snap.session.busy);
+      if (mainTurnActive) next[sessionId] = true;
       else delete next[sessionId];
       rawState.turnActiveBySession = next;
     }
@@ -1578,10 +1582,13 @@ async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
     flight (`turnActiveBySession`). Background tasks and subagent turns do NOT
     light it; an approval/question pause does NOT dim it (the turn is still
     open). */
-function isMainTurnActive(sessionId: string): boolean {
+function isMainTurnActive(sessionId: string, listed?: boolean): boolean {
   return (
     (rawState.inFlightBySession[sessionId] ?? false) ||
-    (rawState.turnActiveBySession[sessionId] ?? false)
+    (rawState.turnActiveBySession[sessionId] ?? false) ||
+    (listed ??
+      rawState.sessions.find((session) => session.id === sessionId)?.mainTurnActive ??
+      false)
   );
 }
 
@@ -1884,7 +1891,8 @@ const sessions = computed<Session[]>(() => {
       id: s.id,
       title: s.title,
       time: formatTime(s.updatedAt),
-      busy: isMainTurnActive(s.id),
+      busy: isMainTurnActive(s.id, s.mainTurnActive),
+      pendingInteraction: s.pendingInteraction,
       lastTurnReason: s.lastTurnReason,
     }));
 });
@@ -1948,7 +1956,11 @@ const turns = computed<ChatTurn[]>(() => {
  *  do NOT set this; the session-busy status lives on `activity`. */
 const turnActive = computed<boolean>(() => {
   const sid = rawState.activeSessionId;
-  return sid ? (rawState.turnActiveBySession[sid] ?? false) : false;
+  if (!sid) return false;
+  return (
+    (rawState.turnActiveBySession[sid] ?? false) ||
+    (rawState.sessions.find((session) => session.id === sid)?.mainTurnActive ?? false)
+  );
 });
 
 /** The working moon: the main conversation has an unfinished prompt — either
@@ -2392,7 +2404,8 @@ const sessionsForView = computed<Session[]>(() => {
         id: s.id,
         title: s.title,
         time: formatTime(s.updatedAt),
-        busy: isMainTurnActive(s.id),
+        busy: isMainTurnActive(s.id, s.mainTurnActive),
+        pendingInteraction: s.pendingInteraction,
         lastTurnReason: s.lastTurnReason,
         lastPrompt: s.lastPrompt,
         workspaceId,
@@ -2414,7 +2427,8 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
       id: s.id,
       title: s.title,
       time: formatTime(s.updatedAt),
-      busy: isMainTurnActive(s.id),
+      busy: isMainTurnActive(s.id, s.mainTurnActive),
+      pendingInteraction: s.pendingInteraction,
       lastTurnReason: s.lastTurnReason,
       updatedAt: s.updatedAt,
     };
@@ -2457,8 +2471,8 @@ function setWorkspaceSortMode(mode: WorkspaceSortMode): void {
 /**
  * Per-session pending-attention count = pending approvals + pending questions.
  * For the active session this is live (driven by WS events). Other sessions
- * light up once the daemon ships Session.pending_attention; until then their
- * counts are derived from whatever approvals/questions we've already seen.
+ * are derived from whatever approvals/questions we've already seen; the row's
+ * list-level pendingInteraction fact supplies the pre-status badge fallback.
  */
 const attentionBySession = computed<Record<string, number>>(() => {
   const out: Record<string, number> = {};

@@ -84,6 +84,7 @@ import {
   ISessionBtwService,
   ISessionContext,
   ISessionIndex,
+  ISessionInteractionService,
   ISessionLifecycleService,
   ISessionMetadata,
   ISessionLegacyService,
@@ -118,7 +119,7 @@ import {
   updateSessionProfileRequestSchema,
   workspaceIdSchema,
 } from '@moonshot-ai/protocol';
-import type { Session } from '@moonshot-ai/protocol';
+import type { Session, SessionPendingInteraction } from '@moonshot-ai/protocol';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -316,7 +317,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const session = toWireSession(
           { ...meta, workspaceId: touched.id },
           touched.root,
-          { busy: false },
+          { busy: false, mainTurnActive: false, pendingInteraction: 'none' },
         );
         core.accessor.get(IEventService).publish({
           type: 'event.session.created',
@@ -1044,6 +1045,8 @@ export function toWireSession(
     created_at: new Date(fields.createdAt).toISOString(),
     updated_at: new Date(fields.updatedAt).toISOString(),
     busy: facts.busy,
+    main_turn_active: facts.mainTurnActive,
+    pending_interaction: facts.pendingInteraction,
     last_turn_reason: facts.lastTurnReason,
     archived: fields.archived,
     last_prompt: fields.lastPrompt,
@@ -1056,9 +1059,11 @@ export function toWireSession(
   };
 }
 
-/** Live session facts projected onto the wire `Session` (`busy`, `last_turn_reason`). */
+/** Live activity and interaction facts projected onto the wire `Session`. */
 export interface SessionFacts {
   readonly busy: boolean;
+  readonly mainTurnActive: boolean;
+  readonly pendingInteraction: SessionPendingInteraction;
   readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
 }
 
@@ -1071,8 +1076,16 @@ export interface SessionFacts {
  */
 export function resolveSessionFacts(core: Scope, sessionId: string): SessionFacts {
   const handle = core.accessor.get(ISessionLifecycleService).get(sessionId);
-  if (handle === undefined) return { busy: false };
+  if (handle === undefined) {
+    return {
+      busy: false,
+      mainTurnActive: false,
+      pendingInteraction: 'none',
+    };
+  }
   const agents = handle.accessor.get(IAgentLifecycleService);
+  const mainActivity = agents.get(MAIN_AGENT_ID)?.accessor.get(IAgentActivityView).state();
+  const interactions = handle.accessor.get(ISessionInteractionService);
   let busy = false;
   for (const agent of agents.list()) {
     const state = agent.accessor.get(IAgentActivityView).state();
@@ -1081,11 +1094,22 @@ export function resolveSessionFacts(core: Scope, sessionId: string): SessionFact
       break;
     }
   }
-  const reason = agents
-    .get(MAIN_AGENT_ID)
-    ?.accessor.get(IAgentActivityView)
-    .state().lastTurn?.reason;
-  return { busy, lastTurnReason: reason === 'blocked' ? 'failed' : reason };
+  const reason = mainActivity?.lastTurn?.reason;
+  const pendingInteraction = resolvePendingInteraction(interactions);
+  return {
+    busy,
+    mainTurnActive: mainActivity?.turn !== undefined,
+    pendingInteraction,
+    lastTurnReason: reason === 'blocked' ? 'failed' : reason,
+  };
+}
+
+function resolvePendingInteraction(
+  interactions: ISessionInteractionService,
+): SessionPendingInteraction {
+  if (interactions.listPending('approval').length > 0) return 'approval';
+  if (interactions.listPending('question').length > 0) return 'question';
+  return 'none';
 }
 
 /**

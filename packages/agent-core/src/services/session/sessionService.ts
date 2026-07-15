@@ -12,6 +12,7 @@ import {
   type Message,
   type PageResponse,
   type Session,
+  type SessionPendingInteraction,
   type SessionChildCreate,
   type SessionCreate,
   type SessionFork,
@@ -42,6 +43,13 @@ const MAX_PAGE_SIZE = 100;
 const DEFAULT_UNDO_MESSAGE_PAGE_SIZE = 50;
 const MAX_UNDO_MESSAGE_PAGE_SIZE = 100;
 const CHILD_SESSION_KIND = 'child';
+
+interface SessionWorkFacts {
+  readonly busy: boolean;
+  readonly mainTurnActive: boolean;
+  readonly pendingInteraction: SessionPendingInteraction;
+  readonly lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+}
 
 function asJsonObject(value: Record<string, unknown>): JsonObject {
   return value as unknown as JsonObject;
@@ -95,7 +103,7 @@ export class SessionService extends Disposable implements ISessionService {
   private readonly _onDidClose = this._register(new Emitter<{ sessionId: string }>());
   readonly onDidClose = this._onDidClose.event;
 
-  private readonly _busyBySession = new Map<string, boolean>();
+  private readonly _workFactsBySession = new Map<string, SessionWorkFacts>();
   private readonly _activeTurns = new Set<string>();
   /** MAIN-agent latest turn outcome per session — an orthogonal wire fact
    *  clients may present as an "aborted" tag (busy=false + cancelled/failed). */
@@ -122,49 +130,64 @@ export class SessionService extends Disposable implements ISessionService {
   }
 
   /**
-   * Compute whether the session has live work: an active prompt/turn, or a
-   * pending interaction blocking one (the turn is still alive underneath).
-   * Replaces the derived five-value status enum for the wire — awaiting
-   * states ride the approval/question channels and outcomes ride turn.ended.
+   * Compute the orthogonal work and interaction facts projected onto the wire.
    */
-  private _computeBusy(sessionId: string): boolean {
-    if (this.approvalService.listPending(sessionId).length > 0) return true;
-    if (this.questionService.listPending(sessionId).length > 0) return true;
-    return (
+  private _computeWorkFacts(sessionId: string): SessionWorkFacts {
+    const hasPendingApproval = this.approvalService.listPending(sessionId).length > 0;
+    const hasPendingQuestion = this.questionService.listPending(sessionId).length > 0;
+    const mainTurnActive =
       this.promptService.getCurrentPromptId(sessionId) !== undefined ||
-      this._activeTurns.has(sessionId)
-    );
+      this._activeTurns.has(sessionId);
+    return {
+      busy: mainTurnActive || hasPendingApproval || hasPendingQuestion,
+      mainTurnActive,
+      pendingInteraction: hasPendingApproval
+        ? 'approval'
+        : hasPendingQuestion
+          ? 'question'
+          : 'none',
+      lastTurnReason: this._lastTurnReasonBySession.get(sessionId),
+    };
   }
 
   /**
-   * Overwrite the placeholder on a protocol Session with the live busy flag,
-   * and remember it so work-change events fire only on real transitions.
+   * Overwrite the placeholders on a protocol Session with live facts and
+   * remember them so work-change events fire only on real transitions.
    */
   private _patchSessionStatus(session: Session): Session {
-    const busy = this._computeBusy(session.id);
-    session.busy = busy;
-    session.last_turn_reason = this._lastTurnReasonBySession.get(session.id);
-    this._busyBySession.set(session.id, busy);
+    const facts = this._computeWorkFacts(session.id);
+    session.busy = facts.busy;
+    session.main_turn_active = facts.mainTurnActive;
+    session.pending_interaction = facts.pendingInteraction;
+    session.last_turn_reason = facts.lastTurnReason;
+    this._workFactsBySession.set(session.id, facts);
     return session;
   }
 
   /**
-   * Publish `event.session.work_changed` when the computed busy flag for a
-   * session flips. Called after every relevant lifecycle event so the session
-   * list stays in sync.
+   * Publish `event.session.work_changed` when any projected fact changes.
    */
   private _emitStatusChanged(sessionId: string): void {
-    const previous = this._busyBySession.get(sessionId) ?? false;
-    const next = this._computeBusy(sessionId);
-    if (previous === next) return;
+    const previous = this._workFactsBySession.get(sessionId);
+    const next = this._computeWorkFacts(sessionId);
+    if (
+      previous?.busy === next.busy &&
+      previous.mainTurnActive === next.mainTurnActive &&
+      previous.pendingInteraction === next.pendingInteraction &&
+      previous.lastTurnReason === next.lastTurnReason
+    ) {
+      return;
+    }
 
-    this._busyBySession.set(sessionId, next);
+    this._workFactsBySession.set(sessionId, next);
     this.eventService.publish({
       type: 'event.session.work_changed',
       agentId: 'main',
       sessionId,
-      busy: next,
-      last_turn_reason: this._lastTurnReasonBySession.get(sessionId),
+      busy: next.busy,
+      main_turn_active: next.mainTurnActive,
+      pending_interaction: next.pendingInteraction,
+      last_turn_reason: next.lastTurnReason,
     } as unknown as Event);
   }
 
@@ -440,7 +463,7 @@ export class SessionService extends Disposable implements ISessionService {
     const agentState = this.promptService.getAgentStateSnapshot(id);
 
     return {
-      busy: this._computeBusy(id),
+      busy: this._computeWorkFacts(id).busy,
       model: config.modelAlias ?? config.provider?.model,
       thinking_level: config.thinkingEffort,
       permission: permission.mode,
@@ -526,7 +549,7 @@ export class SessionService extends Disposable implements ISessionService {
     }
     await this.core.rpc.archiveSession({ sessionId: id });
     this._onDidClose.fire({ sessionId: id });
-    this._busyBySession.delete(id);
+    this._workFactsBySession.delete(id);
     this._activeTurns.delete(id);
     this._lastTurnReasonBySession.delete(id);
     return { archived: true };

@@ -58,6 +58,7 @@ import type {
   SessionCreatedEvent,
   SessionCursor,
   SessionMetaUpdatedEvent,
+  SessionPendingInteraction,
   SnapshotSubagent,
   TurnEndReason,
 } from '@moonshot-ai/protocol';
@@ -119,9 +120,12 @@ interface SessionState {
    * once from the live views at activation.
    */
   readonly activityByAgent: Map<string, AgentWorkFold>;
-  /** Last emitted `(busy, reason)` pair, for dedup. */
+  /** Last emitted work-fact tuple, for dedup. */
   emittedBusy: boolean;
+  emittedMainTurnActive: boolean;
+  emittedPendingInteraction: SessionPendingInteraction;
   emittedTurnOutcome?: 'completed' | 'cancelled' | 'failed';
+  pendingInteraction: SessionPendingInteraction;
   /** Recent durable envelopes for in-memory replay. */
   readonly tail: Array<{ seq: number; envelope: EventEnvelope }>;
   /** Connections subscribed to this session, each with its optional agent allowlist. */
@@ -341,6 +345,9 @@ export class SessionEventBroadcaster {
     for (const handle of session.accessor.get(IAgentLifecycleService).list()) {
       activityByAgent.set(handle.id, readAgentWorkFold(handle));
     }
+    const pendingInteraction = resolvePendingInteraction(
+      session.accessor.get(ISessionInteractionService).listPending(),
+    );
     const state: SessionState = {
       sessionId,
       journal,
@@ -348,7 +355,10 @@ export class SessionEventBroadcaster {
       roster: new SubagentRosterTracker(),
       activityByAgent,
       emittedBusy: aggregateBusy(activityByAgent),
+      emittedMainTurnActive: activityByAgent.get(MAIN_AGENT_ID)?.turnActive ?? false,
+      emittedPendingInteraction: pendingInteraction,
       emittedTurnOutcome: activityByAgent.get(MAIN_AGENT_ID)?.lastTurnReason,
+      pendingInteraction,
       tail: [],
       targets: new Map(),
       queue: Promise.resolve(),
@@ -396,6 +406,9 @@ export class SessionEventBroadcaster {
       roster: new SubagentRosterTracker(),
       activityByAgent: new Map(),
       emittedBusy: false,
+      emittedMainTurnActive: false,
+      emittedPendingInteraction: 'none',
+      pendingInteraction: 'none',
       tail: [],
       targets: new Map(),
       queue: Promise.resolve(),
@@ -667,7 +680,10 @@ export class SessionEventBroadcaster {
     }
     state.lifecycleDisposables.push(
       interactions.onDidChangePending(() => {
-        for (const i of interactions.listPending()) {
+        const pending = interactions.listPending();
+        state.pendingInteraction = resolvePendingInteraction(pending);
+        this.enqueueWorkChanged(state);
+        for (const i of pending) {
           if (state.knownInteractions.has(i.id)) continue;
           state.knownInteractions.set(i.id, i.kind);
           const event = interactionRequestedEvent(i, sessionId);
@@ -695,24 +711,35 @@ export class SessionEventBroadcaster {
   }
 
   /**
-   * Emit `event.session.work_changed` when the `(busy, last_turn_reason)` pair
-   * actually changed. Both facts are computed from the per-agent fold (the
-   * queue serializes the read against the boundary that scheduled it) — no
-   * session-level state is consulted.
+   * Emit `event.session.work_changed` when its orthogonal work-fact tuple
+   * actually changed. Activity facts come from the per-agent fold and pending
+   * interaction facts come from the session interaction kernel.
    */
   private enqueueWorkChanged(state: SessionState): void {
     state.queue = state.queue
       .then(async () => {
         const busy = aggregateBusy(state.activityByAgent);
+        const mainTurnActive = state.activityByAgent.get(MAIN_AGENT_ID)?.turnActive ?? false;
         const outcome = state.activityByAgent.get(MAIN_AGENT_ID)?.lastTurnReason;
-        if (busy === state.emittedBusy && outcome === state.emittedTurnOutcome) return;
+        if (
+          busy === state.emittedBusy &&
+          mainTurnActive === state.emittedMainTurnActive &&
+          state.pendingInteraction === state.emittedPendingInteraction &&
+          outcome === state.emittedTurnOutcome
+        ) {
+          return;
+        }
         state.emittedBusy = busy;
+        state.emittedMainTurnActive = mainTurnActive;
+        state.emittedPendingInteraction = state.pendingInteraction;
         state.emittedTurnOutcome = outcome;
         await this.dispatch(
           state,
           {
             type: 'event.session.work_changed',
             busy,
+            main_turn_active: mainTurnActive,
+            pending_interaction: state.pendingInteraction,
             last_turn_reason: outcome,
             agentId: 'main',
             sessionId: state.sessionId,
@@ -868,6 +895,14 @@ function aggregateBusy(map: ReadonlyMap<string, AgentWorkFold>): boolean {
     if (fold.turnActive || fold.background > 0) return true;
   }
   return false;
+}
+
+function resolvePendingInteraction(
+  pending: readonly Interaction[],
+): SessionPendingInteraction {
+  if (pending.some((interaction) => interaction.kind === 'approval')) return 'approval';
+  if (pending.some((interaction) => interaction.kind === 'question')) return 'question';
+  return 'none';
 }
 
 /**

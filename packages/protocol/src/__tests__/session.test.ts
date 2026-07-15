@@ -52,6 +52,8 @@ describe('sessionSchema', () => {
     created_at: '2026-06-04T10:30:00.000Z',
     updated_at: '2026-06-04T10:35:00.000Z',
     busy: true,
+    main_turn_active: true,
+    pending_interaction: 'approval',
     archived: false,
     metadata: { cwd: '/tmp/test' },
     agent_config: { model: 'moonshot-v1-128k' },

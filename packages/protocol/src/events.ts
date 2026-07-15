@@ -2,7 +2,12 @@ import { z } from 'zod';
 
 import { ToolInputDisplaySchema, type ToolInputDisplay } from './display';
 import { messageContentSchema, type MessageContent } from './message';
-import { sessionSchema, type Session } from './session';
+import {
+  sessionPendingInteractionSchema,
+  sessionSchema,
+  type Session,
+  type SessionPendingInteraction,
+} from './session';
 import { isoDateTimeSchema } from './time';
 import { configResponseSchema, type ConfigResponse } from './rest/config';
 import {
@@ -516,6 +521,10 @@ export interface WorkspaceDeletedEvent {
 export interface SessionWorkChangedEvent {
   readonly type: 'event.session.work_changed';
   readonly busy: boolean;
+  /** Main-agent turn liveness, excluding background and sub-agent work. */
+  readonly main_turn_active?: boolean;
+  /** Highest-priority pending interaction for clients without a session subscription. */
+  readonly pending_interaction?: SessionPendingInteraction;
   /** Outcome of the MAIN agent's most recent turn, when one has ended since
    *  activation (see `Session.last_turn_reason`). */
   readonly last_turn_reason?: 'completed' | 'cancelled' | 'failed';
@@ -1394,6 +1403,8 @@ export const workspaceDeletedEventSchema = z.object({
 export const sessionWorkChangedEventSchema = z.object({
   type: z.literal('event.session.work_changed'),
   busy: z.boolean(),
+  main_turn_active: z.boolean().optional(),
+  pending_interaction: sessionPendingInteractionSchema.optional(),
   last_turn_reason: z.enum(['completed', 'cancelled', 'failed']).optional(),
 }) satisfies z.ZodType<SessionWorkChangedEvent>;
 

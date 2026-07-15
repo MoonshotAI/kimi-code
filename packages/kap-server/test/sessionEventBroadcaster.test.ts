@@ -750,6 +750,34 @@ describe('SessionEventBroadcaster', () => {
       .toMatchObject([{ phase: { kind: 'idle' } }, { phase: { kind: 'idle' } }]);
   });
 
+  it('reports the main turn ending while sub-agent background work keeps busy true', async () => {
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    const sub = lc.addAgent('agent-0');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    sub.bus.emit(
+      agentEvent('agent.activity.updated', {
+        lifecycle: 'ready',
+        background: [{ kind: 'process', id: 'bash-1', since: 100 }],
+      }),
+    );
+    await bc.getCursor('s1');
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    await bc.getCursor('s1');
+    main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+    await bc.getCursor('s1');
+
+    const workChanged = envelopes.filter((event) => event.type === 'event.session.work_changed');
+    expect(workChanged.map((event) => event.payload)).toMatchObject([
+      { busy: true, main_turn_active: false },
+      { busy: true, main_turn_active: true },
+      { busy: true, main_turn_active: false, last_turn_reason: 'completed' },
+    ]);
+  });
+
   it('flips busy but never touches last_turn_reason from sub-agent turn boundaries', async () => {
     // A sub-agent's turn.started/turn.ended stream over the same session
     // channel with their own agentId. They DO drive `busy` (the drain registry
@@ -823,10 +851,15 @@ describe('SessionEventBroadcaster', () => {
     });
     await bc.getCursor('s1');
 
-    expect(envelopes).toHaveLength(1);
+    expect(envelopes).toHaveLength(2);
     expect(envelopes[0]).toMatchObject({
-      type: 'event.question.requested',
+      type: 'event.session.work_changed',
       seq: 1,
+      payload: { pending_interaction: 'question' },
+    });
+    expect(envelopes[1]).toMatchObject({
+      type: 'event.question.requested',
+      seq: 2,
       session_id: 's1',
       payload: {
         type: 'event.question.requested',
@@ -838,22 +871,27 @@ describe('SessionEventBroadcaster', () => {
         questions: [{ id: 'q_0', question: 'Pick one', options: [{ id: 'opt_0_0', label: 'A' }, { id: 'opt_0_1', label: 'B' }] }],
       },
     });
-    expect(envelopes[0]!.volatile).toBeUndefined();
+    expect(envelopes[1]!.volatile).toBeUndefined();
 
     lc.interactions.respond('q1', { answers: { q_0: 'opt_0_0' }, method: 'enter' });
     await bc.getCursor('s1');
 
-    expect(envelopes).toHaveLength(2);
-    expect(envelopes[1]).toMatchObject({
+    expect(envelopes).toHaveLength(4);
+    expect(envelopes[2]).toMatchObject({
+      type: 'event.session.work_changed',
+      seq: 3,
+      payload: { pending_interaction: 'none' },
+    });
+    expect(envelopes[3]).toMatchObject({
       type: 'event.question.answered',
-      seq: 2,
+      seq: 4,
       session_id: 's1',
       payload: {
         question_id: 'q1',
         answers: { q_0: 'opt_0_0' },
       },
     });
-    expect((envelopes[1]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
+    expect((envelopes[3]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
   });
 
   it('broadcasts question dismissed when resolved with null', async () => {
@@ -899,10 +937,15 @@ describe('SessionEventBroadcaster', () => {
     });
     await bc.getCursor('s1');
 
-    expect(envelopes).toHaveLength(1);
+    expect(envelopes).toHaveLength(2);
     expect(envelopes[0]).toMatchObject({
-      type: 'event.approval.requested',
+      type: 'event.session.work_changed',
       seq: 1,
+      payload: { pending_interaction: 'approval' },
+    });
+    expect(envelopes[1]).toMatchObject({
+      type: 'event.approval.requested',
+      seq: 2,
       session_id: 's1',
       payload: {
         approval_id: 'a1',
@@ -914,15 +957,20 @@ describe('SessionEventBroadcaster', () => {
         tool_input_display: { kind: 'command', command: 'ls' },
       },
     });
-    expect(envelopes[0]!.volatile).toBeUndefined();
+    expect(envelopes[1]!.volatile).toBeUndefined();
 
     lc.interactions.respond('a1', { decision: 'approved', scope: 'session' });
     await bc.getCursor('s1');
 
-    expect(envelopes).toHaveLength(2);
-    expect(envelopes[1]).toMatchObject({
+    expect(envelopes).toHaveLength(4);
+    expect(envelopes[2]).toMatchObject({
+      type: 'event.session.work_changed',
+      seq: 3,
+      payload: { pending_interaction: 'none' },
+    });
+    expect(envelopes[3]).toMatchObject({
       type: 'event.approval.resolved',
-      seq: 2,
+      seq: 4,
       session_id: 's1',
       payload: {
         approval_id: 'a1',
@@ -930,7 +978,7 @@ describe('SessionEventBroadcaster', () => {
         scope: 'session',
       },
     });
-    expect((envelopes[1]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
+    expect((envelopes[3]!.payload as { resolved_at?: string }).resolved_at).toBeTypeOf('string');
   });
 
   it('fans event.session.work_changed out to every connection, bypassing agent filters', async () => {
@@ -986,8 +1034,12 @@ describe('SessionEventBroadcaster', () => {
 
     lc.interactions.respond('q0', { answers: { q_0: 'opt_0_0' } });
     await bc.getCursor('s1');
-    expect(envelopes.map((e) => e.type)).toEqual(['event.question.answered']);
-    expect(envelopes[0]!.payload).toMatchObject({ question_id: 'q0' });
+    expect(envelopes.map((e) => e.type)).toEqual([
+      'event.session.work_changed',
+      'event.question.answered',
+    ]);
+    expect(envelopes[0]!.payload).toMatchObject({ pending_interaction: 'none' });
+    expect(envelopes[1]!.payload).toMatchObject({ question_id: 'q0' });
   });
 
   it('fans out the legacy background.task.* alias alongside native task.* for v1 clients', async () => {

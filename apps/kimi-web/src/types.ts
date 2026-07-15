@@ -28,6 +28,8 @@ export interface Session {
       button: a prompt submitted but not yet terminated, or a main turn in
       flight. Background tasks and subagent turns do NOT set it. */
   busy: boolean;
+  /** List-level fallback for action-required badges on unopened sessions. */
+  pendingInteraction?: 'none' | 'approval' | 'question';
   /** Main agent's latest turn outcome — drives the "aborted" tag when the
       session is quiet and the last turn was cancelled/failed. */
   lastTurnReason?: 'completed' | 'cancelled' | 'failed';

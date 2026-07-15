@@ -75,17 +75,27 @@ export const sessionMetadataSchema = z
 
 export type SessionMetadata = z.infer<typeof sessionMetadataSchema>;
 
+export const sessionPendingInteractionSchema = z.enum(['none', 'approval', 'question']);
+export type SessionPendingInteraction = z.infer<typeof sessionPendingInteractionSchema>;
+
 export const sessionSchema = z.object({
   id: z.string().min(1),
   workspace_id: workspaceIdSchema,
   title: z.string(),
   created_at: isoDateTimeSchema,
   updated_at: isoDateTimeSchema,
-  /** Any agent in the session holds an active turn (the activity kernel's
-   *  lease books). Replaces the derived five-value `status` enum: awaiting
+  /** Any agent in the session holds an active turn or background lease.
+   *  Replaces the derived five-value `status` enum: awaiting
    *  states ride the approval/question channels, and turn outcomes ride
    *  turn.ended — clients compose their own presentation from the facts. */
   busy: z.boolean(),
+  /** Whether the MAIN agent currently owns an active turn. Unlike `busy`,
+   *  this excludes background tasks and sub-agent turns. Optional for wire
+   *  compatibility with older servers. */
+  main_turn_active: z.boolean().optional(),
+  /** Highest-priority pending human interaction, so list clients can restore
+   *  the pre-status attention badge without subscribing to every session. */
+  pending_interaction: sessionPendingInteractionSchema.optional(),
   /** Outcome of the MAIN agent's most recent turn, when the session is live
    *  and a turn has ended since activation. A fact, not a state: clients
    *  decide how to present it (e.g. an "aborted" tag when `!busy` and the

@@ -295,4 +295,42 @@ describe('DaemonKimiWebApi.connectEvents', () => {
       },
     });
   });
+
+  it('projects list-level work facts from the global session event', () => {
+    FakeWebSocket.instances = [];
+    vi.stubGlobal('WebSocket', FakeWebSocket as unknown as typeof WebSocket);
+    const received: AppEvent[] = [];
+    connection = createApi().connectEvents({
+      onEvent(event) {
+        received.push(event);
+      },
+      onResync() {},
+      onError() {},
+      onConnectionChange() {},
+    });
+    const [socket] = FakeWebSocket.instances;
+    if (socket === undefined) throw new Error('WebSocket was not created');
+
+    socket.emit({ type: 'server_hello', payload: { protocol_version: 2 } });
+    socket.emit({
+      type: 'event.session.work_changed',
+      seq: 1,
+      session_id: 'session-1',
+      timestamp: '2026-01-01T00:00:00.000Z',
+      payload: {
+        busy: true,
+        main_turn_active: false,
+        pending_interaction: 'question',
+      },
+    });
+
+    expect(received).toContainEqual({
+      type: 'sessionWorkChanged',
+      sessionId: 'session-1',
+      busy: true,
+      mainTurnActive: false,
+      pendingInteraction: 'question',
+      lastTurnReason: undefined,
+    });
+  });
 });

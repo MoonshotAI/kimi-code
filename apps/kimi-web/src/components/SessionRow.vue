@@ -205,10 +205,11 @@ defineExpose({ closeMenu });
 
       <!-- Pending tags — coloured per kind, shown even when the row isn't
            active. "Answer" = an askUserQuestion is waiting; "Approve" = a
-           permission request is waiting. -->
+           permission request is waiting. The list-level interaction fact is
+           the fallback for sessions whose detailed pending lists aren't loaded. -->
       <Tooltip :text="t('workspace.awaitingAnswerTitle')">
         <Badge
-          v-if="!renaming && questionCount > 0"
+          v-if="!renaming && (questionCount > 0 || session.pendingInteraction === 'question')"
           variant="info"
           size="sm"
         >
@@ -217,7 +218,7 @@ defineExpose({ closeMenu });
       </Tooltip>
       <Tooltip :text="t('workspace.awaitingPermissionTitle')">
         <Badge
-          v-if="!renaming && approvalCount > 0"
+          v-if="!renaming && (approvalCount > 0 || session.pendingInteraction === 'approval')"
           variant="warning"
           size="sm"
         >
@@ -230,7 +231,7 @@ defineExpose({ closeMenu });
            retired awaiting_* lifecycle status superseded `aborted`). -->
       <Tooltip :text="t('workspace.abortedTitle')">
         <Badge
-          v-if="!renaming && !session.busy && questionCount === 0 && approvalCount === 0 && (session.lastTurnReason === 'cancelled' || session.lastTurnReason === 'failed')"
+          v-if="!renaming && !session.busy && session.pendingInteraction !== 'question' && session.pendingInteraction !== 'approval' && questionCount === 0 && approvalCount === 0 && (session.lastTurnReason === 'cancelled' || session.lastTurnReason === 'failed')"
           variant="danger"
           size="sm"
         >

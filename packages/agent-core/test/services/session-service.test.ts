@@ -1042,7 +1042,11 @@ describe('SessionService busy lifecycle', () => {
 
   it('patches created session to not busy', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/status2' } });
-    expect(session.busy).toBe(false);
+    expect(session).toMatchObject({
+      busy: false,
+      main_turn_active: false,
+      pending_interaction: 'none',
+    });
   });
 
   it('turn.started marks the session busy and emits work_changed', async () => {
@@ -1051,11 +1055,15 @@ describe('SessionService busy lifecycle', () => {
       type: 'turn.started',
       sessionId: session.id,
     } as unknown as Event);
-    expect((await svc.get(session.id)).busy).toBe(true);
+    expect(await svc.get(session.id)).toMatchObject({
+      busy: true,
+      main_turn_active: true,
+    });
     expect(eventBus.events).toContainEqual(expect.objectContaining({
       type: 'event.session.work_changed',
       sessionId: session.id,
       busy: true,
+      main_turn_active: true,
     }));
   });
 
@@ -1107,7 +1115,33 @@ describe('SessionService busy lifecycle', () => {
     expect((await svc.get(session.id)).busy).toBe(true);
   });
 
-  it('does not emit work_changed when busy is unchanged', async () => {
+  it('publishes the pending interaction when busy remains true', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/approval-count' } });
+    eventBus.eventService.publish({
+      type: 'turn.started',
+      sessionId: session.id,
+    } as unknown as Event);
+    approvalStub.pending.set(session.id, [{ id: 'a1' }]);
+
+    eventBus.eventService.publish({
+      type: 'event.approval.requested',
+      sessionId: session.id,
+    } as unknown as Event);
+
+    expect(await svc.get(session.id)).toMatchObject({
+      busy: true,
+      main_turn_active: true,
+      pending_interaction: 'approval',
+    });
+    expect(eventBus.events.at(-1)).toMatchObject({
+      type: 'event.session.work_changed',
+      busy: true,
+      main_turn_active: true,
+      pending_interaction: 'approval',
+    });
+  });
+
+  it('does not emit work_changed when all work facts are unchanged', async () => {
     const session = await svc.create({ metadata: { cwd: '/tmp/nochange' } });
     const workChangedCount = (e: unknown) =>
       (e as { type?: string }).type === 'event.session.work_changed';

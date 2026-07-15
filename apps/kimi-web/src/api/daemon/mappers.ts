@@ -93,6 +93,8 @@ export function toAppSession(wire: WireSession): AppSession {
     createdAt: wire.created_at,
     updatedAt: wire.updated_at,
     busy: wire.busy,
+    mainTurnActive: wire.main_turn_active,
+    pendingInteraction: wire.pending_interaction,
     lastTurnReason: wire.last_turn_reason,
     archived: wire.archived ?? false,
     currentPromptId: wire.current_prompt_id,
@@ -514,6 +516,8 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         type: 'sessionWorkChanged',
         sessionId: w.session_id,
         busy: w.payload.busy,
+        mainTurnActive: w.payload.main_turn_active,
+        pendingInteraction: w.payload.pending_interaction,
         lastTurnReason: w.payload.last_turn_reason,
       };
 
@@ -524,6 +528,13 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         type: 'sessionWorkChanged',
         sessionId: w.session_id,
         busy: w.payload.status !== 'idle' && w.payload.status !== 'aborted',
+        mainTurnActive: w.payload.status !== 'idle' && w.payload.status !== 'aborted',
+        pendingInteraction:
+          w.payload.status === 'awaiting_approval'
+            ? 'approval'
+            : w.payload.status === 'awaiting_question'
+              ? 'question'
+              : 'none',
         lastTurnReason: w.payload.status === 'aborted' ? 'cancelled' : undefined,
       };
 
