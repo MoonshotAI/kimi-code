@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import type { KimiConfig } from '#/config';
 import { ErrorCodes, KimiError } from '#/errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from '#/loop/llm';
-import { chatWithRetry, retryBackoffDelays } from '#/loop/retry';
+import { chatWithRetry, DEFAULT_MAX_RETRY_ATTEMPTS, retryBackoffDelays } from '#/loop/retry';
 import { ProviderManager } from '#/session/provider-manager';
 
 function okResponse(): LLMChatResponse {
@@ -57,7 +57,7 @@ describe('chatWithRetry: terminated stream drops', () => {
 
     expect(seenFields).toEqual([
       { projection: 'strict', turnStep: 't.1' },
-      { projection: 'strict', turnStep: 't.1', attempt: '2/3' },
+      { projection: 'strict', turnStep: 't.1', attempt: '2/10' },
     ]);
   });
 
@@ -168,12 +168,45 @@ describe('retryBackoffDelays', () => {
     expect(maxSeen).toBeGreaterThan(30_000);
   });
 
-  it('keeps default-attempt retries quick so interactive runs are not slowed', () => {
+  it('keeps low-attempt configs quick so latency-sensitive runs are not slowed', () => {
     // 3 attempts -> 2 delays at the bottom of the ramp (~0.5s / ~1s before
     // jitter); their sum stays small.
     const delays = retryBackoffDelays(3);
     expect(delays).toHaveLength(2);
     expect(delays.reduce((a, b) => a + b, 0)).toBeLessThan(3_000);
+  });
+});
+
+describe('chatWithRetry: default retry budget', () => {
+  it('retries up to DEFAULT_MAX_RETRY_ATTEMPTS before giving up', async () => {
+    // A sustained 429 carries a 1ms server retry-after so the test exercises
+    // the full default budget without sleeping through the real backoff.
+    let calls = 0;
+    const captured: Array<{ type: string }> = [];
+    const llm: LLM = {
+      systemPrompt: '',
+      modelName: 'mock',
+      isRetryableError: (e) => isRetryableGenerateError(e),
+      async chat(): Promise<LLMChatResponse> {
+        calls += 1;
+        throw new APIProviderRateLimitError('rate limited', null, 1);
+      },
+    };
+    const input = makeInput(llm, new AbortController().signal);
+
+    await expect(
+      chatWithRetry({
+        ...input,
+        dispatchEvent: async (event) => {
+          captured.push(event as { type: string });
+        },
+      }),
+    ).rejects.toMatchObject({ name: 'APIProviderRateLimitError' });
+
+    expect(calls).toBe(DEFAULT_MAX_RETRY_ATTEMPTS);
+    expect(captured.filter((e) => e.type === 'step.retrying')).toHaveLength(
+      DEFAULT_MAX_RETRY_ATTEMPTS - 1,
+    );
   });
 });
 

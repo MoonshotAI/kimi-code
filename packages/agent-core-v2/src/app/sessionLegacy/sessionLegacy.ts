@@ -22,13 +22,11 @@
  * it is a stateless dispatcher that resolves the target session/agent per call.
  */
 
-import type {
-  GoalSnapshot,
-  SessionStatusResponse,
-  UpdateSessionProfileRequest,
-} from '@moonshot-ai/protocol';
+import type { GoalSnapshot } from '#/agent/goal/types';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+
+import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessionWire';
 
 export interface SessionWireFields {
   readonly id: string;

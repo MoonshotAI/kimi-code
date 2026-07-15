@@ -17,7 +17,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentTaskService } from '#/agent/task/task';
 import { USER_PROMPT_ORIGIN } from '#/agent/contextMemory/types';
-import type { PromptOrigin, TurnEndReason } from '@moonshot-ai/protocol';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
+import type { TurnEndReason } from '#/agent/loop/turnEvents';
 
 import type {
   ActivityLastTurnState,

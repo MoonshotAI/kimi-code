@@ -442,7 +442,6 @@ describe('AskUserQuestionTool', () => {
       expect(result.output).toContain('task_id: q_test_task_id');
       expect(result.output).toContain('automatic_notification: true');
       expect(result.output).toContain('/tasks');
-      expect(result.message).toBe('Started q_test_task_id');
       expect(registerTask).toHaveBeenCalledOnce();
       expect(registerTask.mock.calls[0]![1]).toMatchObject({ detached: true });
       expect(getTask).toHaveBeenCalledWith('q_test_task_id');

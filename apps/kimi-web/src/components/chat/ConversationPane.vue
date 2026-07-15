@@ -1180,6 +1180,14 @@ function onKeyDown(event: KeyboardEvent): void {
   }
 }
 
+// When the on-screen keyboard opens, browsers without interactive-widget support
+// fire a visualViewport resize instead of shrinking the layout viewport. Re-follow
+// the tail so the latest turn stays visible above the keyboard. No-op while the
+// user has manually scrolled away (following === false).
+function onVisualViewportResize(): void {
+  if (following.value) scheduleFollow();
+}
+
 onMounted(() => {
   nextTick(() => {
     if (typeof MutationObserver === 'function') {
@@ -1211,6 +1219,7 @@ onMounted(() => {
       document.addEventListener('visibilitychange', onVisibilityChange);
       document.addEventListener('keydown', onKeyDown);
     }
+    window.visualViewport?.addEventListener('resize', onVisualViewportResize);
   });
 });
 
@@ -1230,6 +1239,7 @@ onUnmounted(() => {
     document.removeEventListener('visibilitychange', onVisibilityChange);
     document.removeEventListener('keydown', onKeyDown);
   }
+  window.visualViewport?.removeEventListener('resize', onVisualViewportResize);
 });
 
 function focusComposer(): void {

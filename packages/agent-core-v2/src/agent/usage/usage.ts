@@ -11,7 +11,7 @@ import type { TokenUsage } from '#/app/llmProtocol/usage';
 
 import { createDecorator } from '#/_base/di/instantiation';
 import type { Event } from '#/_base/event';
-import type { ErrorCode } from '#/_base/errors/codes';
+import type { ErrorCode } from '#/errors';
 import { Error2 } from '#/_base/errors/errors';
 
 import { UsageErrors } from './errors';

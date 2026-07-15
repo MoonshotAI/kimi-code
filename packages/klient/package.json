@@ -24,8 +24,11 @@
   },
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck": "tsc -p tsconfig.json --noEmit && pnpm typecheck:examples",
+    "typecheck:examples": "tsc -p tsconfig.examples.json --noEmit",
     "test": "vitest run",
+    "smoke": "tsx examples/smoke.ts",
+    "smoke:history": "tsx examples/session-history-smoke.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {

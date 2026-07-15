@@ -19,14 +19,21 @@
  *   - `message.not_found`  → 40403
  */
 
-import type {
-  CursorQuery,
-  Message,
-  MessageRole,
-  PageResponse,
-} from '@moonshot-ai/protocol';
+import type { Message, MessageRole } from '#/agent/contextMemory/wireMessage';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
+
+/** Cursor pagination query shared by the v1 history/list endpoints. */
+export interface CursorQuery {
+  before_id?: string | undefined;
+  after_id?: string | undefined;
+  page_size?: number | undefined;
+}
+
+export interface PageResponse<T> {
+  items: T[];
+  has_more: boolean;
+}
 
 export interface MessageListQuery extends CursorQuery {
   readonly role?: MessageRole;

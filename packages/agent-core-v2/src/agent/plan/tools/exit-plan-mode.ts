@@ -15,7 +15,7 @@
  * keeps the user-approved output and the `approved` outcome.
  */
 
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { z } from 'zod';
 
 import type { BuiltinTool, ExecutableToolResult, ToolExecution } from '#/tool/toolContract';

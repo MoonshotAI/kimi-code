@@ -38,7 +38,7 @@ import {
   IAgentPromptService,
   type PromptSubmitContext,
 } from '#/agent/prompt/prompt';
-import type { HookResultEvent, TurnEndedEvent } from '@moonshot-ai/protocol';
+import type { TurnEndedEvent } from '#/agent/loop/turnEvents';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ExecutableToolResult } from '#/tool/toolContract';
 import type { ToolDidExecuteContext, ToolBeforeExecuteContext } from '#/agent/toolExecutor/toolHooks';
@@ -52,6 +52,14 @@ import {
   renderUserPromptHookBlockResult,
   renderUserPromptHookResult,
 } from './user-prompt';
+
+export interface HookResultEvent {
+  readonly type: 'hook.result';
+  readonly turnId?: number;
+  readonly hookEvent: string;
+  readonly content: string;
+  readonly blocked?: boolean;
+}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {

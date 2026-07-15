@@ -2173,9 +2173,9 @@ function selectModel(modelId: string): void {
   .composer {
     padding:
       9px
-      var(--dock-inline-right, max(12px, env(safe-area-inset-right)))
-      max(24px, env(safe-area-inset-bottom))
-      var(--dock-inline-left, max(12px, env(safe-area-inset-left)));
+      var(--dock-inline-right, max(12px, var(--safe-right)))
+      max(24px, var(--safe-bottom))
+      var(--dock-inline-left, max(12px, var(--safe-left)));
   }
   .composer-card {
     --composer-send-size: 36px;

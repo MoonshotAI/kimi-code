@@ -15,7 +15,8 @@
  */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
-import type { PromptOrigin, TurnEndReason } from '@moonshot-ai/protocol';
+import type { PromptOrigin } from '#/agent/contextMemory/types';
+import type { TurnEndReason } from '#/agent/loop/turnEvents';
 
 export type TurnPhase = 'running' | 'streaming' | 'tool_call' | 'retrying';
 

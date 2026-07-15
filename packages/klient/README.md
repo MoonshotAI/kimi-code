@@ -52,3 +52,38 @@ automatically after an unexpected close (active `listen`s are re-subscribed;
 in-flight calls reject). The bearer token rides the
 `kimi-code.bearer.<token>` subprotocol, so the transport works unchanged in
 browsers.
+
+## Real-server smoke checks
+
+Run the transport smoke against a real server (the model phase is opt-in). It
+creates and archives a fixture session, and therefore touches the selected
+workspace's persisted metadata:
+
+```sh
+KIMI_SERVER_URL=http://127.0.0.1:58627 \
+KIMI_SERVER_TOKEN=YOUR_SERVER_TOKEN \
+pnpm smoke
+
+KIMI_SMOKE_MODEL=YOUR_MODEL pnpm smoke
+```
+
+The history smoke checks persisted sessions before warming one, including the
+cold-session regression where an indexed session is unavailable through the v2
+session scope. It sends no explicit mutation request. When `KIMI_SMOKE_MARKER`
+is set, the v1 message read resumes the session and may persist server-side
+legacy metadata migrations:
+
+```sh
+KIMI_SERVER_URL=http://127.0.0.1:58627 \
+KIMI_SERVER_TOKEN=YOUR_SERVER_TOKEN \
+KIMI_SMOKE_EXPECT_SESSION_ID=YOUR_SESSION_ID \
+KIMI_SMOKE_MARKER=YOUR_MARKER \
+KIMI_SMOKE_REQUIRE_HISTORY=1 \
+pnpm smoke:history
+```
+
+`KIMI_SMOKE_EXPECT_CWD` can select a session by working directory instead of
+`KIMI_SMOKE_EXPECT_SESSION_ID`. The transport smoke creates its fixture in the
+first registered workspace; set `KIMI_SMOKE_CWD` when a different server-local
+folder is required. Omit `KIMI_SERVER_TOKEN` only for a server started with
+authentication bypassed.

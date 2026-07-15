@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { TurnEndedEvent } from '@moonshot-ai/protocol';
+import type { TurnEndedEvent } from '#/agent/loop/turnEvents';
 
 import type { IDisposable } from '#/_base/di/lifecycle';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
@@ -1505,7 +1505,7 @@ describe('goal error catalog metadata', () => {
       title: 'Invalid goal status transition',
       retryable: false,
       public: true,
-      action: 'Use a status allowed for this actor (complete, blocked, or impossible).',
+      action: 'Only an active goal can be paused; resume a blocked goal with `/goal resume`.',
     });
     expect(errorInfo('goal.metadata_reserved')).toEqual({
       title: 'Goal metadata is reserved',
@@ -1517,7 +1517,7 @@ describe('goal error catalog metadata', () => {
       title: 'Goal is not resumable',
       retryable: false,
       public: true,
-      action: 'Only paused goals can be resumed.',
+      action: 'Only paused or blocked goals can be resumed.',
     });
     expect(errorInfo('goal.unsupported_agent')).toEqual({
       title: 'Goals are unavailable for subagents',

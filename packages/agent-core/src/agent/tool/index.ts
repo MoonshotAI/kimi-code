@@ -703,6 +703,7 @@ export class ToolManager {
           allowBackground,
           autoBackgroundOnTimeout:
             this.agent.kimiConfig?.background?.bashAutoBackgroundOnTimeout ?? true,
+          backgroundTimeoutS: this.agent.kimiConfig?.background?.bashTaskTimeoutS,
         }),
         (modelCapabilities.image_in || modelCapabilities.video_in) &&
           new b.ReadMediaFileTool(
