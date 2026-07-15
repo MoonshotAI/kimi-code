@@ -2114,6 +2114,13 @@ const pendingApprovals = computed<
 /**
  * Activity state for the active session.
  * Priority: awaiting-approval > awaiting-question > running > idle
+ *
+ * `running` is main-conversation liveness — the same condition as the working
+ * moon (the optimistic submit window or an in-flight main turn). The wire
+ * `busy` fact deliberately includes background tasks, but everything driven
+ * by `activity` (Stop button, composer/page-title spinners, send-vs-queue
+ * gating) follows the main conversation only: a session left with only
+ * background tasks is idle here, exactly like the retired turn-scoped status.
  */
 const activity = computed<ActivityState>(() => {
   const sid = rawState.activeSessionId;
@@ -2125,8 +2132,7 @@ const activity = computed<ActivityState>(() => {
   const questionList = rawState.questionsBySession[sid] ?? [];
   if (questionList.length > 0) return 'awaiting-question';
 
-  const activeSession = rawState.sessions.find((s) => s.id === sid);
-  if (isSessionEffectivelyRunning(activeSession)) {
+  if (inFlight.value || turnActive.value) {
     return 'running';
   }
 
