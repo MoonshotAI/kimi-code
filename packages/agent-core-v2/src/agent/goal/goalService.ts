@@ -326,13 +326,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return { goal: state === null ? null : this.toSnapshot(state) };
   }
 
-  getActiveGoal(): GoalSnapshot | null {
-    this.assertSupportedAgent();
-    const state = this.goalState;
-    if (state === null || state.status !== 'active') return null;
-    return this.toSnapshot(state);
-  }
-
   isGoalToolTarget(turnId: number, goalId: string): boolean {
     this.assertSupportedAgent();
     return this.goalTurnTargets.get(turnId) === goalId;
