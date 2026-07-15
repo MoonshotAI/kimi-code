@@ -60,6 +60,10 @@ async function runAction(): Promise<void> {
 }
 
 function confirm(options: ConfirmOptions): Promise<boolean> {
+  // A confirmed action is still in flight: a second dialog can't supersede the
+  // busy one (it would inherit the global busy state and open inert), so the
+  // new request resolves unconfirmed instead.
+  if (busy.value) return Promise.resolve(false);
   // If a confirm is already open, treat it as cancelled before showing the new
   // one so its caller isn't left hanging.
   if (current.value) settle(false);

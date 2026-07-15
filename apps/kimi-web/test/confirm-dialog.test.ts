@@ -115,4 +115,27 @@ describe('useConfirmDialog', () => {
     await runAction();
     expect(busy.value).toBe(false);
   });
+
+  it('resolves a new confirm false instead of superseding while an action runs', async () => {
+    const action = deferred();
+    const first = confirm({
+      title: 'First',
+      action: () => action.promise,
+    });
+    void runAction();
+    expect(busy.value).toBe(true);
+
+    // The second confirm can't replace the busy dialog (it would open inert
+    // under the global busy state) — it resolves unconfirmed immediately and
+    // leaves the in-flight request untouched.
+    const second = confirm({ title: 'Second' });
+    await expect(second).resolves.toBe(false);
+    expect(current.value?.title).toBe('First');
+    expect(busy.value).toBe(true);
+
+    action.resolve();
+    await expect(first).resolves.toBe(true);
+    expect(busy.value).toBe(false);
+    expect(current.value).toBeNull();
+  });
 });
