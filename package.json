@@ -63,5 +63,28 @@
   "engines": {
     "node": ">=24.15.0"
   },
-  "packageManager": "pnpm@10.33.0"
+  "packageManager": "pnpm@10.33.0",
+  "workspaces": {
+    "packages": [
+      "packages/*",
+      "apps/*",
+      "apps/vis/server",
+      "apps/vis/web",
+      "docs"
+    ],
+    "catalog": {
+      "zod": "4.3.6",
+      "pathe": "^2.0.3",
+      "smol-toml": "^1.6.1",
+      "jimp": "^1.6.1",
+      "yazl": "^3.3.1",
+      "ulid": "^3.0.1",
+      "ws": "^8.18.0",
+      "tsx": "^4.21.0"
+    }
+  },
+  "overrides": {
+    "ssh2@1.17.0>cpu-features": "-",
+    "ssh2@1.17.0>nan": "-"
+  }
 }

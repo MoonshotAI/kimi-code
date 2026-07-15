@@ -11,7 +11,10 @@ import type { Command } from 'commander';
 
 import { t } from '#/i18n';
 
-import { getLiveLock } from '@moonshot-ai/server';
+async function getLiveLock() {
+  const { getLiveLock: fn } = await import('@moonshot-ai/server');
+  return fn();
+}
 
 import { getDataDir } from '#/utils/paths';
 
@@ -54,7 +57,7 @@ export function registerPsCommand(server: Command): void {
 }
 
 async function handlePsCommand(opts: { json?: boolean }): Promise<void> {
-  const lock = getLiveLock();
+  const lock = await getLiveLock();
   if (!lock) {
     throw new Error(
       'No running Kimi server. Start one with `kimi server run` or `kimi web`.',

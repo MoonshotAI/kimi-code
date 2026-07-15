@@ -376,7 +376,7 @@ use crate::file_type::{self, ImageDimensions};
 /// @param data - Raw file bytes (at least the first few hundred bytes).
 /// @returns ImageDimensions { width: number, height: number } or null if unknown.
 #[napi]
-pub fn native_sniff_image_dimensions(data: Vec<u8>) -> Option<ImageDimensions> {
+pub fn native_sniff_image_dimensions(data: Uint8Array) -> Option<ImageDimensions> {
     file_type::sniff_image_dimensions(&data)
 }
 
@@ -413,7 +413,7 @@ pub struct FileTypeResult {
 /// @param path - File path (used for extension-based detection).
 /// @param header - First bytes of the file content (up to 512 bytes).
 #[napi]
-pub fn native_detect_file_type(path: String, header: Vec<u8>) -> FileTypeResult {
+pub fn native_detect_file_type(path: String, header: Uint8Array) -> FileTypeResult {
     let kind = file_type::detect_file_type(std::path::Path::new(&path), &header);
     let kind_str = match kind {
         file_type::FileKind::Text => "text",
