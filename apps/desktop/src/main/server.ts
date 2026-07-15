@@ -40,10 +40,17 @@ export interface StartDesktopServerOptions {
    * origin (`http://127.0.0.1:<port>`) when running with renderer HMR.
    */
   readonly extraCorsOrigins?: readonly string[];
+  /**
+   * Local dev: lock under `server-desktop-dev.lock` instead so a running
+   * packaged app (which holds `server-desktop.lock` on the same
+   * KIMI_CODE_HOME) doesn't block `pnpm dev:desktop`, and vice versa.
+   */
+  readonly dev?: boolean;
   readonly logger?: ReturnType<typeof createServerLogger>;
 }
 
 const DESKTOP_LOCK_FILE = 'server-desktop.lock';
+const DESKTOP_DEV_LOCK_FILE = 'server-desktop-dev.lock';
 
 // The desktop host identifies itself to the upstream model API as its own
 // platform. `createKimiDefaultHeaders` hardcodes X-Msh-Platform to the CLI's
@@ -55,8 +62,8 @@ function desktopHostHeaders(identity: KimiHostIdentity): Record<string, string> 
   return headers;
 }
 
-function desktopLockPath(): string {
-  return join(resolveKimiHome(), DESKTOP_LOCK_FILE);
+function desktopLockPath(dev: boolean): string {
+  return join(resolveKimiHome(), dev ? DESKTOP_DEV_LOCK_FILE : DESKTOP_LOCK_FILE);
 }
 
 function readServerToken(): string | undefined {
@@ -86,7 +93,7 @@ export async function startDesktopServer(
     host: '127.0.0.1',
     port: 0,
     logger: opts.logger,
-    lockPath: desktopLockPath(),
+    lockPath: desktopLockPath(opts.dev === true),
     webAssetsDir: opts.webAssetsDir,
     // Allow the local `app://renderer` origin so the renderer (served from
     // app://renderer) can call the loopback HTTP API. The v2 server takes the

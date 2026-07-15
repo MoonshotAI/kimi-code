@@ -59,6 +59,9 @@ export async function connect(win: BrowserWindow): Promise<void> {
       process.stdout.write(`[kimi-desktop] connected to external server ${origin}\n`);
     } else {
       serverHandle = await startDesktopServer({
+        // Unpackaged runs are local development: lock separately so they never
+        // fight a running packaged app over `server-desktop.lock`.
+        dev: !app.isPackaged,
         // No static fallback in HMR dev: the renderer comes from the Vite dev
         // server, and desktop-dist may not exist (kap-server would refuse to
         // start without index.html in it).

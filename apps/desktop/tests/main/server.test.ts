@@ -83,4 +83,20 @@ describe('startDesktopServer', () => {
     await handle.close();
     expect(close).toHaveBeenCalledOnce();
   });
+
+  it('locks under server-desktop-dev.lock in dev so a packaged app holding server-desktop.lock does not block it', async () => {
+    startServerMock.mockResolvedValue({
+      host: '127.0.0.1',
+      port: 54322,
+      close: vi.fn().mockResolvedValue(undefined),
+    });
+
+    await startDesktopServer({
+      dev: true,
+      identity: { userAgentProduct: 'kimi-code-desktop', version: '1.2.3' },
+    });
+
+    const args = startServerMock.mock.calls[0]![0];
+    expect(args.lockPath).toMatch(/server-desktop-dev\.lock$/);
+  });
 });
