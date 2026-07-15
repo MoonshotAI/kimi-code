@@ -690,7 +690,7 @@ class AnthropicStreamedMessage implements StreamedMessage {
               yield { type: 'text', text: block.text };
               break;
             case 'thinking':
-              yield { type: 'think', think: block.thinking };
+              yield { type: 'think', think: block.thinking ?? '' };
               break;
             case 'redacted_thinking':
               yield {
@@ -720,7 +720,7 @@ class AnthropicStreamedMessage implements StreamedMessage {
               yield { type: 'text', text: delta.text };
               break;
             case 'thinking_delta':
-              yield { type: 'think', think: delta.thinking };
+              yield { type: 'think', think: delta.thinking ?? '' };
               break;
             case 'input_json_delta':
               yield {

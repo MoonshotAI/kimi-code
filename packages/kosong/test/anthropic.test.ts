@@ -138,7 +138,7 @@ async function captureRequestBody(
 }
 
 /** Create a mock stream that yields the given events as an async iterable. */
-function mockStream(events: unknown[]) {
+function mockStream(events: readonly unknown[]) {
   return {
     async *[Symbol.asyncIterator]() {
       for (const event of events) {
@@ -157,6 +157,26 @@ async function collectParts(
     parts.push(part);
   }
   return parts;
+}
+
+async function collectAnthropicStreamParts(
+  events: readonly Record<string, unknown>[],
+): Promise<StreamedMessagePart[]> {
+  const create = vi.fn().mockResolvedValue(mockStream(events));
+  const provider = new AnthropicChatProvider({
+    model: 'kimi-for-coding',
+    apiKey: '',
+    stream: true,
+    clientFactory: () => ({ messages: { create } }) as never,
+  });
+
+  return collectParts(
+    await provider.generate(
+      '',
+      [],
+      [{ role: 'user', content: [{ type: 'text', text: 'Think' }], toolCalls: [] }],
+    ),
+  );
 }
 
 async function captureAnthropicMessages(
@@ -2669,6 +2689,30 @@ describe('AnthropicChatProvider', () => {
         inputCacheRead: 0,
         inputCacheCreation: 0,
       });
+    });
+
+    it('normalizes a thinking delta with no thinking field to an empty ThinkPart', async () => {
+      const parts = await collectAnthropicStreamParts([
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'thinking_delta' },
+        },
+      ]);
+
+      expect(parts).toEqual([{ type: 'think', think: '' }]);
+    });
+
+    it('normalizes a thinking block start with no thinking field to an empty ThinkPart', async () => {
+      const parts = await collectAnthropicStreamParts([
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'thinking' },
+        },
+      ]);
+
+      expect(parts).toEqual([{ type: 'think', think: '' }]);
     });
 
     it('yields tool_use start and argument deltas from stream events', async () => {

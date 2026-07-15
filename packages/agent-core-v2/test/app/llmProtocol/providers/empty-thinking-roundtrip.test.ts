@@ -5,6 +5,7 @@
  * Run: pnpm exec vitest run packages/agent-core-v2/test/app/llmProtocol/providers/empty-thinking-roundtrip.test.ts
  */
 import type { Message, StreamedMessagePart } from '#/app/llmProtocol/message';
+import { generate } from '#/app/llmProtocol/generate';
 import { AnthropicChatProvider } from '#/app/llmProtocol/providers/anthropic';
 import {
   GoogleGenAIChatProvider,
@@ -113,6 +114,27 @@ async function captureAnthropicMessages(
     throw new Error('Expected Anthropic provider to send a request.');
   }
   return captured['messages'] as Array<{ role: string; content: unknown[] }>;
+}
+
+function createStreamingAnthropicProvider(
+  events: readonly Record<string, unknown>[],
+) {
+  async function* responseStream() {
+    yield* events;
+  }
+  const create = vi.fn().mockResolvedValue(responseStream());
+  return new AnthropicChatProvider({
+    model: 'compatible-model',
+    apiKey: '',
+    defaultMaxTokens: 1024,
+    clientFactory: () => ({ messages: { create } }) as never,
+  });
+}
+
+async function collectAnthropicStreamParts(
+  events: readonly Record<string, unknown>[],
+): Promise<StreamedMessagePart[]> {
+  return collectParts(await createStreamingAnthropicProvider(events).generate('', [], []));
 }
 
 describe('empty thinking round-trip', () => {
@@ -374,6 +396,92 @@ describe('empty thinking round-trip', () => {
       role: 'assistant',
       content: [{ type: 'thinking', thinking: 'Partial reasoning' }],
     });
+  });
+
+  it('Anthropic normalizes a thinking delta with no thinking field to an empty ThinkPart', async () => {
+    const parts = await collectAnthropicStreamParts([
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta' },
+      },
+    ]);
+
+    expect(parts).toEqual([{ type: 'think', think: '' }]);
+  });
+
+  it('Anthropic normalizes a thinking block start with no thinking field to an empty ThinkPart', async () => {
+    const parts = await collectAnthropicStreamParts([
+      {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'thinking' },
+      },
+    ]);
+
+    expect(parts).toEqual([{ type: 'think', think: '' }]);
+  });
+
+  it('Anthropic omits a missing thinking delta from the reduced assistant history', async () => {
+    const result = await generate(
+      createStreamingAnthropicProvider([
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'thinking', thinking: 'Simple request.' },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'thinking_delta' },
+        },
+        {
+          type: 'content_block_start',
+          index: 1,
+          content_block: { type: 'text', text: 'Done' },
+        },
+      ]),
+      '',
+      [],
+      [],
+    );
+
+    expect(result.message.content).toEqual([
+      { type: 'think', think: 'Simple request.' },
+      { type: 'text', text: 'Done' },
+    ]);
+  });
+
+  it('Anthropic preserves a complete thinking delta', async () => {
+    const parts = await collectAnthropicStreamParts([
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'reasoning' },
+      },
+    ]);
+
+    expect(parts).toEqual([{ type: 'think', think: 'reasoning' }]);
+  });
+
+  it('Anthropic preserves the signature delta immediately following a thinking delta', async () => {
+    const parts = await collectAnthropicStreamParts([
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'reasoning' },
+      },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'signature_delta', signature: 'signature' },
+      },
+    ]);
+
+    expect(parts).toEqual([
+      { type: 'think', think: 'reasoning' },
+      { type: 'think', think: '', encrypted: 'signature' },
+    ]);
   });
 
   it.each(['claude-opus-4-9', 'opus-4-9', 'claude-mythos-preview'])(
