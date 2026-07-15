@@ -31,9 +31,12 @@
  * `createOrTouch` is the single choke point every workspace/session creation
  * funnels through, so it owns the root-existence contract: the root must be
  * an existing directory on the host filesystem, otherwise it throws
- * `fs.path_not_found` (mirrors v1's `WorkspaceRootNotFoundError`). The rebuild
- * and merge paths bypass the check on purpose — they catalog where sessions
- * *were*, not where new ones may open. Bound at App scope.
+ * `fs.path_not_found` (mirrors v1's `WorkspaceRootNotFoundError`). The
+ * directory probe follows symlinks (`IHostFileSystem.stat` is lstat-based, so
+ * a symlink-form root is re-checked through `realpath`), while the workspace
+ * identity stays lexical — v1 deliberately never realpaths the root either.
+ * The rebuild and merge paths bypass the check on purpose — they catalog
+ * where sessions *were*, not where new ones may open. Bound at App scope.
  */
 
 import { basename, isAbsolute } from 'pathe';
@@ -100,6 +103,13 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
           throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} does not exist`);
         }
         throw error;
+      }
+      if (!stat.isDirectory) {
+        try {
+          stat = await this.hostFs.stat(await this.hostFs.realpath(root));
+        } catch {
+          // Fall through to the not-a-directory error below.
+        }
       }
       if (!stat.isDirectory) {
         throw new Error2(ErrorCodes.FS_PATH_NOT_FOUND, `workspace root ${root} is not a directory`);

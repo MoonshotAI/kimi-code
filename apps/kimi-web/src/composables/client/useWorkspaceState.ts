@@ -1926,7 +1926,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     pendingTaskCancellations[taskId] = true;
     try {
       const api = getKimiWebApi();
-      await api.cancelTask(sid, taskId);
+      // A background subagent row is keyed by agent id, but REST `/tasks` only
+      // knows its background-task id.
+      const restTaskId = (rawState.tasksBySession[sid] ?? []).find((t) => t.id === taskId)
+        ?.backgroundTaskId;
+      await api.cancelTask(sid, restTaskId ?? taskId);
       // Update task status locally
       const list = rawState.tasksBySession[sid] ?? [];
       rawState.tasksBySession = {

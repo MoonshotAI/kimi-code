@@ -85,7 +85,14 @@ describe('agent error projection', () => {
     expect(
       projector.project(
         'error',
-        { agentId: 'main', code: 'provider.rate_limit', message: 'Rate limited' },
+        {
+          agentId: 'main',
+          code: 'provider.rate_limit',
+          message: 'Rate limited',
+          name: 'RateLimitError',
+          details: { statusCode: 429, requestId: 'req_1' },
+          retryable: true,
+        },
         's1',
       ),
     ).toEqual([
@@ -95,6 +102,9 @@ describe('agent error projection', () => {
           _agentError: true,
           code: 'provider.rate_limit',
           message: 'Rate limited',
+          name: 'RateLimitError',
+          details: { statusCode: 429, requestId: 'req_1' },
+          retryable: true,
         },
       },
     ]);
@@ -391,5 +401,148 @@ describe('turn.step.retrying bubble reuse', () => {
         .filter((id): id is string => typeof id === 'string'),
     );
     expect(messageIds.size).toBe(1);
+  });
+});
+
+describe('background subagent task registration', () => {
+  it('folds task.started (kind agent) into the spawned row instead of adding a second row', () => {
+    const projector = createAgentProjector();
+    projector.project(
+      'subagent.spawned',
+      { subagentId: 'agent-1', description: 'Explore repo', runInBackground: true },
+      's1',
+    );
+
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    // A single patch of the WS-owned row — never a second (bash) task row.
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          kind: 'subagent',
+          description: 'Explore repo',
+          runInBackground: true,
+          backgroundTaskId: 'task-9',
+        }),
+      },
+    ]);
+  });
+
+  it('keys a late registration by agent id so later progress frames stay on one row', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          agentId: 'agent-1',
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'agent-1',
+          kind: 'subagent',
+          description: 'Explore repo',
+          runInBackground: true,
+          backgroundTaskId: 'task-9',
+        }),
+      },
+    ]);
+
+    // A later agent-scoped progress frame must not synthesize a second row.
+    const progress = projector.project(
+      'assistant.delta',
+      { agentId: 'agent-1', delta: 'Hi' },
+      's1',
+    );
+    expect(progress).toContainEqual(
+      expect.objectContaining({ type: 'taskProgress', taskId: 'agent-1' }),
+    );
+    const created = progress.filter((e) => e.type === 'taskCreated');
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      task: { id: 'agent-1', backgroundTaskId: 'task-9' },
+    });
+  });
+
+  it('falls back to the task id when the registration carries no agent id', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-9',
+          kind: 'agent',
+          detached: true,
+          description: 'Explore repo',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({
+          id: 'task-9',
+          kind: 'subagent',
+          description: 'Explore repo',
+          runInBackground: true,
+        }),
+      },
+    ]);
+  });
+
+  it('keeps projecting process tasks as bash rows', () => {
+    const projector = createAgentProjector();
+    const events = projector.project(
+      'task.started',
+      {
+        info: {
+          taskId: 'task-1',
+          kind: 'process',
+          description: 'npm test',
+          command: 'npm test',
+          startedAt: 1767225600000,
+        },
+      },
+      's1',
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'taskCreated',
+        sessionId: 's1',
+        task: expect.objectContaining({ id: 'task-1', kind: 'bash', command: 'npm test' }),
+      },
+    ]);
   });
 });

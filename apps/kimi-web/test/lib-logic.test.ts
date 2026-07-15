@@ -9,7 +9,7 @@ import { buildDiffLines } from '../src/lib/diffLines';
 import { buildEditDiffLines } from '../src/lib/toolDiff';
 import { createCoalescedAsyncRunner } from '../src/lib/snapshotSync';
 import { mergeSnapshotMessages } from '../src/lib/snapshotMessages';
-import { mergeSnapshotSubagents } from '../src/lib/taskMerge';
+import { keepLiveSubagents, mergeSnapshotSubagents } from '../src/lib/taskMerge';
 import { normalizeToolName, toolSummary } from '../src/lib/toolMeta';
 import { collapsePrompt, humanizeCron } from '../src/lib/cronHumanize';
 import {
@@ -750,5 +750,116 @@ describe('mergeSnapshotSubagents', () => {
   it('returns the existing list untouched when the roster is empty', () => {
     const existing = [subagent('a1')];
     expect(mergeSnapshotSubagents([], existing)).toBe(existing);
+  });
+});
+
+
+describe('keepLiveSubagents', () => {
+  function subagent(id: string, overrides: Partial<AppTask> = {}): AppTask {
+    return {
+      id,
+      sessionId: 's1',
+      kind: 'subagent',
+      description: `task ${id}`,
+      status: 'running',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      ...overrides,
+    };
+  }
+
+  it('returns the REST list untouched when no live-only subagent exists', () => {
+    const rest = [subagent('a1')];
+    expect(keepLiveSubagents(rest, [subagent('a1')])).toBe(rest);
+  });
+
+  it('keeps WS-only swarm subagents that REST omits', () => {
+    const rest: AppTask[] = [];
+    const merged = keepLiveSubagents(rest, [subagent('a1')]);
+    expect(merged.map((t) => t.id)).toEqual(['a1']);
+  });
+
+  it('folds a REST background-subagent row into the WS row keyed by agent id', () => {
+    // The same background subagent: WS keys it by agent id, REST by task id.
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      outputLines: ['step 1'],
+      text: 'partial',
+    });
+    const rest = [subagent('task-9', { runInBackground: true })];
+    const merged = keepLiveSubagents(rest, [live]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.id).toBe('agent-1');
+    expect(merged[0]?.outputLines).toEqual(['step 1']);
+    expect(merged[0]?.text).toBe('partial');
+    expect(merged[0]?.backgroundTaskId).toBe('task-9');
+  });
+
+  it('lets REST complete a live row whose finish event was missed', () => {
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      subagentPhase: 'working',
+    });
+    const rest = [
+      subagent('task-9', {
+        runInBackground: true,
+        status: 'completed',
+        completedAt: '2026-01-01T00:01:00.000Z',
+        outputPreview: 'done',
+      }),
+    ];
+    const [merged] = keepLiveSubagents(rest, [live]);
+    expect(merged?.status).toBe('completed');
+    // The detail panel prefers subagentPhase over status — it must follow too.
+    expect(merged?.subagentPhase).toBe('completed');
+    expect(merged?.completedAt).toBe('2026-01-01T00:01:00.000Z');
+    expect(merged?.outputPreview).toBe('done');
+  });
+
+  it('maps a REST-cancelled row to the failed phase (the enum has no cancelled)', () => {
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      subagentPhase: 'working',
+    });
+    const rest = [subagent('task-9', { runInBackground: true, status: 'cancelled' })];
+    const [merged] = keepLiveSubagents(rest, [live]);
+    expect(merged?.status).toBe('cancelled');
+    expect(merged?.subagentPhase).toBe('failed');
+  });
+
+  it('never lets a lagging poll flip a finished row back to running', () => {
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      status: 'completed',
+      completedAt: '2026-01-01T00:01:00.000Z',
+    });
+    const rest = [subagent('task-9', { runInBackground: true, status: 'running' })];
+    const [merged] = keepLiveSubagents(rest, [live]);
+    expect(merged?.status).toBe('completed');
+  });
+
+  it('keeps newer REST output flowing into an already-folded row', () => {
+    // The live row carries a preview folded in by an earlier poll; the fresh
+    // REST row has the final persisted output and must win.
+    const live = subagent('agent-1', {
+      runInBackground: true,
+      backgroundTaskId: 'task-9',
+      outputPreview: 'stale tail',
+      outputBytes: 100,
+    });
+    const rest = [
+      subagent('task-9', {
+        runInBackground: true,
+        status: 'completed',
+        outputPreview: 'final result',
+        outputBytes: 200,
+      }),
+    ];
+    const [merged] = keepLiveSubagents(rest, [live]);
+    expect(merged?.outputPreview).toBe('final result');
+    expect(merged?.outputBytes).toBe(200);
   });
 });

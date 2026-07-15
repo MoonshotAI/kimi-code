@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -223,6 +223,49 @@ describe('server-v2 /api/v1/sessions/{sid}/fs:*', () => {
     const id = await createSession();
     const body = await postFs<null>(id, 'stat', { path: '../etc/passwd' });
     expect(body.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+  });
+
+  it('rejects reads and downloads that escape the workspace through a symlink', async () => {
+    const outside = await mkdtemp(join(tmpdir(), 'kimi-server-v2-fs-outside-'));
+    try {
+      await writeFile(join(outside, 'secret.txt'), 'top-secret');
+      await symlink(outside, join(work!, 'docs'), 'dir');
+      const id = await createSession();
+
+      const body = await postFs<null>(id, 'read', { path: 'docs/secret.txt' });
+      expect(body.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+
+      const res = await fetch(`${base}/api/v1/sessions/${id}/fs/docs/secret.txt:download`, {
+        headers: authHeaders(server as RunningServer),
+      } as never);
+      const downloadBody = (await res.json()) as Envelope<null>;
+      expect(downloadBody.code).toBe(ErrorCode.FS_PATH_ESCAPES_SESSION);
+    } finally {
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it('serves fs actions when the session cwd itself goes through a symlink', async () => {
+    const link = join(tmpdir(), `kimi-server-v2-fs-cwd-link-${process.pid}`);
+    await symlink(work!, link, 'dir');
+    try {
+      const res = await fetch(`${base}/api/v1/sessions`, {
+        method: 'POST',
+        headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+        body: JSON.stringify({ metadata: { cwd: link } }),
+      } as never);
+      const body = (await res.json()) as Envelope<{ id: string }>;
+      expect(body.code).toBe(0);
+
+      await writeFile(join(work!, 'via-link.txt'), 'through-link');
+      const read = await postFs<{ content: string }>(body.data.id, 'read', {
+        path: 'via-link.txt',
+      });
+      expect(read.code).toBe(0);
+      expect(read.data.content).toBe('through-link');
+    } finally {
+      await rm(link, { force: true });
+    }
   });
 
   it('GET fs/{path}:download streams the file and honors If-None-Match', async () => {

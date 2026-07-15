@@ -1163,10 +1163,20 @@ export function createAgentProjector(): AgentProjector {
 
       // -----------------------------------------------------------------------
       case 'error': {
-        // Fold into an unknown event so the reducer pushes a warning string
+        // Fold into an unknown event so the reducer surfaces it as a structured
+        // error notice (semantic title + code/status/requestId details). The
+        // wire payload already carries name/details/retryable — pass them
+        // through untouched; the reducer decides what to display.
         out.push({
           type: 'unknown',
-          raw: { _agentError: true, code: p?.code, message: p?.message },
+          raw: {
+            _agentError: true,
+            code: p?.code,
+            message: p?.message,
+            name: p?.name,
+            details: p?.details,
+            retryable: p?.retryable,
+          },
         });
         break;
       }
@@ -1199,6 +1209,48 @@ export function createAgentProjector(): AgentProjector {
             : typeof info.command === 'string'
               ? info.command
               : i18n.global.t('tasks.defaultDescription');
+        // A background subagent registers into the background-task store under
+        // a fresh task id that differs from its agent id. Record the task id on
+        // the existing WS-owned row (keyed by agent id) instead of adding a
+        // second row — REST `/tasks` returns the same agent keyed by task id,
+        // and keepLiveSubagents folds that copy into this row.
+        if (info.kind === 'agent') {
+          const agentId =
+            typeof info.agentId === 'string' && info.agentId.length > 0
+              ? info.agentId
+              : undefined;
+          if (agentId !== undefined) {
+            // Key by agent id even when the spawn event never reached this
+            // client (subscribed late): later agent-scoped progress frames are
+            // routed by agent id, and seeding subagentMeta here keeps them on
+            // this one row instead of synthesizing a second one.
+            const task = patchSubagent(s, sessionId, agentId, {
+              description,
+              backgroundTaskId: taskId,
+              runInBackground: true,
+            });
+            if (task) out.push({ type: 'taskCreated', sessionId, task });
+          } else {
+            // No agent id — nothing to link; key the row by the background
+            // task id so the REST poll dedupes it.
+            out.push({
+              type: 'taskCreated',
+              sessionId,
+              task: {
+                id: taskId,
+                sessionId,
+                kind: 'subagent',
+                description,
+                status: 'running',
+                createdAt: startedAt ?? new Date().toISOString(),
+                startedAt,
+                subagentPhase: 'queued',
+                runInBackground: true,
+              },
+            });
+          }
+          break;
+        }
         const command = typeof info.command === 'string' ? info.command : undefined;
         out.push({
           type: 'taskCreated',

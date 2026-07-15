@@ -9,11 +9,13 @@
  * `IGitService`; this service only confines paths and computes repo-relative
  * paths before calling it.
  *
- * Path confinement is lexical (`ISessionWorkspaceContext.isWithin`); it does not
- * follow symlinks, matching the rest of v2 (`_base/tools/policies/path-access.ts`).
+ * Path confinement applies the lexical `ISessionWorkspaceContext.isWithin`
+ * check first, then re-verifies the candidate through `IHostFileSystem.realpath`
+ * (resolving the longest existing prefix, so not-yet-created paths still work):
+ * a symlink inside the workspace must not steer fs actions to files outside it.
  */
 
-import { basename, extname, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, sep } from 'node:path';
 
 import {
   type FsDiffRequest,
@@ -60,7 +62,7 @@ import ignore, { type Ignore } from 'ignore';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { ErrorCodes, Error2, unwrapErrorCause } from '#/errors';
+import { ErrorCodes, Error2, isError2, unwrapErrorCause } from '#/errors';
 import { IGitService } from '#/app/git/git';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IHostFileSystem, type HostDirEntry, type HostFileStat } from '#/os/interface/hostFileSystem';
@@ -111,7 +113,7 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async list(req: FsListRequest): Promise<FsListResponse> {
-    const abs = this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path);
     const rel = this.toRel(abs);
 
     let topStat: HostFileStat;
@@ -203,7 +205,7 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async read(req: FsReadRequest): Promise<FsReadResponse> {
-    const abs = this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path);
     const rel = this.toRel(abs);
 
     let st: HostFileStat;
@@ -303,7 +305,7 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async stat(req: FsStatRequest): Promise<FsStatResponse> {
-    const abs = this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path);
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
@@ -316,10 +318,12 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async statMany(req: FsStatManyRequest): Promise<FsStatManyResponse> {
-    const resolved = req.paths.map((p) => {
-      const abs = this.resolveWithin(p);
-      return { raw: p, rel: this.toRel(abs), abs };
-    });
+    const resolved = await Promise.all(
+      req.paths.map(async (p) => {
+        const abs = await this.resolveWithin(p);
+        return { raw: p, rel: this.toRel(abs), abs };
+      }),
+    );
 
     const entries: Record<string, FsEntry | null> = {};
     await Promise.all(
@@ -337,7 +341,7 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async mkdir(req: FsMkdirRequest): Promise<FsMkdirResponse> {
-    const abs = this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path);
     const rel = this.toRel(abs);
     try {
       await this.hostFs.mkdir(abs, { recursive: req.recursive });
@@ -360,7 +364,7 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async resolvePath(relPath: string): Promise<FsPathResolved> {
-    const abs = this.resolveWithin(relPath);
+    const abs = await this.resolveWithin(relPath);
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
@@ -372,7 +376,7 @@ export class SessionFsService implements ISessionFsService {
   }
 
   async resolveDownload(relPath: string): Promise<FsDownloadResolved> {
-    const abs = this.resolveWithin(relPath);
+    const abs = await this.resolveWithin(relPath);
     const rel = this.toRel(abs);
     let st: HostFileStat;
     try {
@@ -456,7 +460,7 @@ export class SessionFsService implements ISessionFsService {
     if (req.paths !== undefined && req.paths.length > 0) {
       filter = new Set();
       for (const p of req.paths) {
-        filter.add(this.toRel(this.resolveWithin(p)));
+        filter.add(this.toRel(await this.resolveWithin(p)));
       }
     }
 
@@ -465,7 +469,7 @@ export class SessionFsService implements ISessionFsService {
 
   async diff(req: FsDiffRequest): Promise<FsDiffResponse> {
     const cwd = this.workspace.workDir;
-    const abs = this.resolveWithin(req.path);
+    const abs = await this.resolveWithin(req.path);
     return this.git.diff(cwd, this.toRel(abs), abs);
   }
 
@@ -683,7 +687,43 @@ export class SessionFsService implements ISessionFsService {
     return this.rgResolution;
   }
 
-  private resolveWithin(inputPath: string): string {
+  private realRootsCache: { readonly key: string; readonly roots: readonly string[] } | undefined;
+
+  private async realRoots(): Promise<readonly string[]> {
+    const dirs = [this.workspace.workDir, ...this.workspace.additionalDirs];
+    const key = dirs.join('\n');
+    if (this.realRootsCache?.key === key) return this.realRootsCache.roots;
+    const roots: string[] = [];
+    for (const dir of dirs) {
+      try {
+        roots.push(await this.hostFs.realpath(dir));
+      } catch {
+        roots.push(dir);
+      }
+    }
+    this.realRootsCache = { key, roots };
+    return roots;
+  }
+
+  private async realpathExistingPrefix(abs: string): Promise<string> {
+    const tail: string[] = [];
+    let current = abs;
+    for (let i = 0; i < 256; i++) {
+      try {
+        const real = await this.hostFs.realpath(current);
+        return tail.length === 0 ? real : join(real, ...tail.reverse());
+      } catch (err) {
+        if (!isMissingPathError(err)) throw err;
+        const parent = dirname(current);
+        if (parent === current) return abs;
+        tail.push(basename(current));
+        current = parent;
+      }
+    }
+    return abs;
+  }
+
+  private async resolveWithin(inputPath: string): Promise<string> {
     if (inputPath === '' || inputPath === '/') {
       throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" rejected (empty)`, {
         details: { path: inputPath, reason: 'empty' },
@@ -705,6 +745,15 @@ export class SessionFsService implements ISessionFsService {
       throw new Error2(ErrorCodes.FS_PATH_ESCAPES, `path "${inputPath}" escapes workspace`, {
         details: { path: inputPath, reason: 'resolved_outside' },
       });
+    }
+    const resolved = await this.realpathExistingPrefix(abs);
+    const roots = await this.realRoots();
+    if (!roots.some((root) => isInsideOrEqual(resolved, root))) {
+      throw new Error2(
+        ErrorCodes.FS_PATH_ESCAPES,
+        `path "${inputPath}" escapes workspace through a symlink`,
+        { details: { path: inputPath, reason: 'symlink_outside' } },
+      );
     }
     return abs;
   }
@@ -917,6 +966,24 @@ function errnoCode(err: unknown): string | undefined {
     return typeof c === 'string' ? c : undefined;
   }
   return undefined;
+}
+
+function isMissingPathError(err: unknown): boolean {
+  if (isError2(err)) {
+    return (
+      err.code === ErrorCodes.OS_FS_NOT_FOUND || err.code === ErrorCodes.OS_FS_NOT_DIRECTORY
+    );
+  }
+  const code = errnoCode(err);
+  return code === 'ENOENT' || code === 'ENOTDIR';
+}
+
+function isInsideOrEqual(child: string, parent: string): boolean {
+  const rel = relative(parent, child);
+  if (rel === '') return true;
+  if (rel.startsWith('..')) return false;
+  if (isAbsolute(rel)) return false;
+  return true;
 }
 
 function mapFsError(err: unknown, inputPath: string): Error {

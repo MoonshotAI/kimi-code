@@ -382,6 +382,16 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     expect(await build().list()).toEqual([]);
   });
 
+  it('accepts createOrTouch when the root is given through a symlink', async () => {
+    const real = join(homeDir, 'real-root');
+    await fsp.mkdir(real, { recursive: true });
+    const link = join(homeDir, 'link-root');
+    await fsp.symlink(real, link, 'dir');
+    const ws = await build().createOrTouch(link);
+    expect(ws.root).toBe(link);
+    expect(ws.id).toBe(encodeWorkDirKey(link));
+  });
+
   it('rejects createOrTouch when a parent of the root is not a directory', async () => {
     const file = join(homeDir, 'a-file.txt');
     await fsp.writeFile(file, 'hi', 'utf8');
