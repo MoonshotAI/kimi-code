@@ -1,3 +1,11 @@
+/**
+ * Scenario: agent-root resolution — user / project / configured roots,
+ * .git walk-up, brand-vs-generic ordering, `~` and relative path expansion,
+ * and canonical dedup. Exercises the path primitives against real temp dirs.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/app/agentFileCatalog/agentRoots.test.ts`.
+ */
+
 import { mkdtemp, mkdir, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 

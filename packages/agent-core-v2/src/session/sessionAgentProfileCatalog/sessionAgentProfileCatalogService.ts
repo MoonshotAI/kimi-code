@@ -26,6 +26,7 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { isError2 } from '#/_base/errors/errors';
 import {
   DEFAULT_AGENT_PROFILE_NAME,
   IAgentProfileCatalogService,
@@ -154,7 +155,12 @@ export class SessionAgentProfileCatalogService
           contribution = await source.load();
         } catch (error) {
           if (source.fatal) throw error;
-          this.log.warn(`agent profile source "${source.id}" load failed: ${String(error)}`);
+          // Surface the offending path when the failure carries one (e.g. an
+          // unreadable root directory) — `String(error)` drops `details`.
+          const at = isError2(error) ? error.details?.['path'] : undefined;
+          this.log.warn(
+            `agent profile source "${source.id}" load failed: ${String(error)}${typeof at === 'string' ? ` [${at}]` : ''}`,
+          );
           return;
         }
         this.contributions.set(source.id, { c: contribution, priority: source.priority });

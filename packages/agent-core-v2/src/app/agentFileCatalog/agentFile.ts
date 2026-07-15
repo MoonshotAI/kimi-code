@@ -54,24 +54,18 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     );
   }
 
-  const name = nonEmptyString(frontmatter['name']);
-  if (name === undefined) {
-    throw new AgentFileParseError(
-      `Missing required frontmatter field "name" in ${options.path}`,
-    );
-  }
+  const name = requiredNonEmptyString(frontmatter['name'], 'name', options.path);
   if (!AGENT_NAME_PATTERN.test(name)) {
     throw new AgentFileParseError(
       `Invalid agent name "${name}" in ${options.path}: expected kebab-case (e.g. "code-reviewer")`,
     );
   }
 
-  const description = nonEmptyString(frontmatter['description']);
-  if (description === undefined) {
-    throw new AgentFileParseError(
-      `Missing required frontmatter field "description" in ${options.path}`,
-    );
-  }
+  const description = requiredNonEmptyString(
+    frontmatter['description'],
+    'description',
+    options.path,
+  );
 
   const override = parseBoolean(frontmatter['override'], 'override', options.path);
   const mode = parseMode(frontmatter['mode'], options.path);
@@ -123,7 +117,7 @@ function parseStringList(
   field: string,
   filePath: string,
 ): readonly string[] | undefined {
-  if (value === undefined) return undefined;
+  if (value === undefined || value === null) return undefined;
   if (!Array.isArray(value)) {
     throw new AgentFileParseError(
       `Frontmatter field "${field}" in ${filePath} must be a list of strings`,
@@ -139,6 +133,19 @@ function parseStringList(
     out.push(item.trim());
   }
   return out;
+}
+
+function requiredNonEmptyString(value: unknown, field: string, filePath: string): string {
+  if (value !== undefined && value !== null && typeof value !== 'string') {
+    throw new AgentFileParseError(
+      `Frontmatter field "${field}" in ${filePath} must be a non-empty string`,
+    );
+  }
+  const parsed = nonEmptyString(value);
+  if (parsed === undefined) {
+    throw new AgentFileParseError(`Missing required frontmatter field "${field}" in ${filePath}`);
+  }
+  return parsed;
 }
 
 function nonEmptyString(value: unknown): string | undefined {

@@ -1,3 +1,11 @@
+/**
+ * Scenario: agent-file parsing primitives — frontmatter validation, defaults,
+ * and the AgentFileDefinition → AgentProfile factory (replace/append modes,
+ * tool pass-through, explicit override intent). Pure-function level, no IO.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/app/agentFileCatalog/agentFile.test.ts`.
+ */
+
 import { describe, expect, it } from 'vitest';
 
 import { AgentFileParseError, parseAgentFileText } from '#/app/agentFileCatalog/agentFile';

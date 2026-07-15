@@ -1,3 +1,12 @@
+/**
+ * Scenario: filesystem agent-file discovery — recursive scanning, dot-entry
+ * pruning, per-file parse isolation, first-wins name collisions, and
+ * directory-failure tolerance (root propagates, subdirectories skip-and-warn).
+ * Exercises discoverAgentFiles against real temp dirs and targeted fake fs.
+ * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run
+ * test/app/agentFileCatalog/agentFileDiscovery.test.ts`.
+ */
+
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 
@@ -130,5 +139,64 @@ describe('discoverAgentFiles', () => {
     const result = await discoverAgentFiles(disappearingFs, [fileRoot(root)]);
 
     expect(result.agents).toEqual([]);
+  });
+
+  it('skips an unreadable subdirectory with a warning and keeps scanning the rest', async () => {
+    const locked = join(root, 'locked');
+    const fakeFs = {
+      realpath: async (p: string) => p,
+      stat: async (p: string) =>
+        p === locked ? { isDirectory: true, isFile: false } : { isDirectory: false, isFile: true },
+      readdir: async (p: string) => {
+        if (p === locked) {
+          throw new HostFsError(
+            OsFsErrors.codes.OS_FS_PERMISSION_DENIED,
+            'readdir failed: permission denied',
+          );
+        }
+        return [{ name: 'locked' }, { name: 'solo.md' }];
+      },
+      readText: async () => agentMd('solo'),
+    } as unknown as IHostFileSystem;
+
+    const warnings: string[] = [];
+    const result = await discoverAgentFiles(fakeFs, [fileRoot(root)], (message) =>
+      warnings.push(message),
+    );
+
+    expect(result.agents.map((a) => a.name)).toEqual(['solo']);
+    expect(warnings.some((w) => w.includes('locked'))).toBe(true);
+  });
+
+  it('isolates a failed root and keeps scanning sibling roots', async () => {
+    const other = await mkdtemp(join(tmpdir(), 'agent-discovery-other-'));
+    try {
+      const fakeFs = {
+        realpath: async (p: string) => p,
+        stat: async () => ({ isDirectory: false, isFile: true }),
+        readdir: async (p: string) => {
+          if (p === root) {
+            throw new HostFsError(
+              OsFsErrors.codes.OS_FS_PERMISSION_DENIED,
+              'readdir failed: permission denied',
+            );
+          }
+          return [{ name: 'solo.md' }];
+        },
+        readText: async () => agentMd('solo'),
+      } as unknown as IHostFileSystem;
+
+      const warnings: string[] = [];
+      const result = await discoverAgentFiles(
+        fakeFs,
+        [fileRoot(root), fileRoot(other)],
+        (message) => warnings.push(message),
+      );
+
+      expect(result.agents.map((a) => a.name)).toEqual(['solo']);
+      expect(warnings.some((w) => w.includes(root))).toBe(true);
+    } finally {
+      await rm(other, { recursive: true, force: true });
+    }
   });
 });

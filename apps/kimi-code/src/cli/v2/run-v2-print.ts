@@ -40,8 +40,8 @@ import {
   hostRequestHeadersSeed,
   logSeed,
   parseAgentFileText,
+  resolveAgentPath,
   resolveAgentTaskConfig,
-  resolveExplicitFile,
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
@@ -253,7 +253,7 @@ async function resolveNativeSession(
   let agentProfileName = opts.agent;
   const lastAgentFile = opts.agentFiles.at(-1);
   if (agentProfileName === undefined && lastAgentFile !== undefined) {
-    const agentFilePath = resolveExplicitFile(
+    const agentFilePath = resolveAgentPath(
       lastAgentFile,
       workDir,
       app.accessor.get(IBootstrapService).osHomeDir,

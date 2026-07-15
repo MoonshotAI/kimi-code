@@ -6,8 +6,6 @@
  * `workspace` and `bootstrap`. Bound at Session scope.
  */
 
-import { isAbsolute, join, resolve } from 'pathe';
-
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -20,6 +18,7 @@ import {
   type AgentProfileContribution,
   type IAgentProfileSource,
 } from '#/app/agentFileCatalog/agentProfileSource';
+import { resolveAgentPath } from '#/app/agentFileCatalog/paths';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IHostFileSystem } from '#/os/interface/hostFileSystem';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
@@ -49,7 +48,7 @@ export class ExplicitFileAgentSource implements IExplicitFileAgentSource {
     const files = this.runtimeOptions.explicitFiles ?? [];
     const profiles: AgentProfile[] = [];
     for (const file of files) {
-      const filePath = resolveExplicitFile(file, this.workspace.workDir, this.bootstrap.osHomeDir);
+      const filePath = resolveAgentPath(file, this.workspace.workDir, this.bootstrap.osHomeDir);
       const text = await this.fs.readText(filePath);
       profiles.push(
         agentProfileFromFile(parseAgentFileText({ path: filePath, source: 'explicit', text })),
@@ -57,13 +56,6 @@ export class ExplicitFileAgentSource implements IExplicitFileAgentSource {
     }
     return { profiles };
   }
-}
-
-export function resolveExplicitFile(file: string, workDir: string, osHomeDir: string): string {
-  if (file === '~') return osHomeDir;
-  if (file.startsWith('~/')) return join(osHomeDir, file.slice(2));
-  if (isAbsolute(file)) return file;
-  return resolve(workDir, file);
 }
 
 registerScopedService(

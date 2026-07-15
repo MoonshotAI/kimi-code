@@ -5,10 +5,11 @@
  * filesystem boundary. Pure path probes; no scoped state.
  */
 
-import { dirname, isAbsolute, join, resolve } from 'pathe';
+import { dirname, join, resolve } from 'pathe';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
 
+import { isDirectoryPath, pathExists, resolveAgentPath } from './paths';
 import type { AgentFileRoot, AgentFileSource } from './types';
 
 const USER_BRAND_DIRS = ['agents'] as const;
@@ -48,12 +49,7 @@ export async function configuredAgentRoots(
   const projectRoot = await findProjectRoot(fs, workDir);
   const roots: AgentFileRoot[] = [];
   for (const dir of dirs) {
-    await pushExistingRoot(
-      fs,
-      roots,
-      resolveConfiguredDir(dir, projectRoot, osHomeDir),
-      source,
-    );
+    await pushExistingRoot(fs, roots, resolveAgentPath(dir, projectRoot, osHomeDir), source);
   }
   return roots;
 }
@@ -62,7 +58,7 @@ async function findProjectRoot(fs: IHostFileSystem, workDir: string): Promise<st
   const start = resolve(workDir);
   let current = start;
   while (true) {
-    if (await exists(fs, join(current, '.git'))) return current;
+    if (await pathExists(fs, join(current, '.git'))) return current;
     const parent = dirname(current);
     if (parent === current) return start;
     current = parent;
@@ -87,33 +83,8 @@ async function pushExistingRoot(
   dir: string,
   source: AgentFileSource,
 ): Promise<boolean> {
-  if (!(await isDir(fs, dir))) return false;
+  if (!(await isDirectoryPath(fs, dir))) return false;
   const resolved = (await fs.realpath(dir)).replaceAll('\\', '/');
   if (!out.some((root) => root.path === resolved)) out.push({ path: resolved, source });
   return true;
-}
-
-function resolveConfiguredDir(dir: string, projectRoot: string, osHomeDir: string): string {
-  if (dir === '~') return osHomeDir;
-  if (dir.startsWith('~/')) return join(osHomeDir, dir.slice(2));
-  if (isAbsolute(dir)) return dir;
-  return resolve(projectRoot, dir);
-}
-
-async function isDir(fs: IHostFileSystem, p: string): Promise<boolean> {
-  try {
-    const resolved = await fs.realpath(p);
-    return (await fs.stat(resolved)).isDirectory;
-  } catch {
-    return false;
-  }
-}
-
-async function exists(fs: IHostFileSystem, p: string): Promise<boolean> {
-  try {
-    await fs.stat(p);
-    return true;
-  } catch {
-    return false;
-  }
 }

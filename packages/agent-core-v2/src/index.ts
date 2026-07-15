@@ -120,6 +120,7 @@ export {
   _clearAgentProfileContributionsForTests,
 } from '#/app/agentProfileCatalog/contribution';
 export * from '#/app/agentFileCatalog/types';
+export * from '#/app/agentFileCatalog/paths';
 export * from '#/app/agentFileCatalog/agentRoots';
 export * from '#/app/agentFileCatalog/agentFile';
 export * from '#/app/agentFileCatalog/agentFileDiscovery';
