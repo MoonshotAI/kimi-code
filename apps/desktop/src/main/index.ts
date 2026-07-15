@@ -17,6 +17,7 @@ import { serverTokenPath } from '@moonshot-ai/kap-server';
 
 import { startDesktopServer, type DesktopServerHandle } from './server';
 import { registerRendererScheme, registerRendererProtocol, rendererUrl } from './protocol';
+import { resolveConnectTarget } from './connect-target';
 
 let mainWindow: BrowserWindow | null = null;
 let serverHandle: DesktopServerHandle | null = null;
@@ -134,12 +135,21 @@ async function connect(win: BrowserWindow): Promise<void> {
   await win.loadURL(dataUrl(loadingHtml()));
   try {
     serverHandle?.close().catch(() => {});
-    serverHandle = await startDesktopServer({
-      webAssetsDir: rendererDistRoot(),
-      identity: { userAgentProduct: 'kimi-desktop', version: app.getVersion() },
-    });
-    const { origin, token } = serverHandle;
-    process.stdout.write(`[kimi-desktop] connected to ${origin}\n`);
+    serverHandle = null;
+    let origin: string;
+    let token: string | undefined;
+    const target = resolveConnectTarget(process.env['KIMI_SERVER_URL'], readServerToken);
+    if (target.external) {
+      ({ origin, token } = target);
+      process.stdout.write(`[kimi-desktop] connected to external server ${origin}\n`);
+    } else {
+      serverHandle = await startDesktopServer({
+        webAssetsDir: rendererDistRoot(),
+        identity: { userAgentProduct: 'kimi-desktop', version: app.getVersion() },
+      });
+      ({ origin, token } = serverHandle);
+      process.stdout.write(`[kimi-desktop] connected to ${origin}\n`);
+    }
     if (!win.isDestroyed()) {
       await win.loadURL(rendererUrl(origin, token));
     }
