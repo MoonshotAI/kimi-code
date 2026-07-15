@@ -496,6 +496,11 @@ function convertMessage(
 
   return { role: role, content: blocks };
 }
+
+function shouldKeepConvertedMessage(message: MessageParam): boolean {
+  return message.role !== 'assistant' || message.content.length > 0;
+}
+
 export function convertAnthropicError(error: unknown): ChatProviderError {
   if (error instanceof AnthropicTimeoutError) {
     return new APITimeoutError(error.message);
@@ -870,7 +875,9 @@ export class AnthropicChatProvider implements ChatProvider {
       normalizeToolCallIdsForProvider(
         history.filter((msg) => !isToolDeclarationOnlyMessage(msg)),
         ANTHROPIC_TOOL_CALL_ID_POLICY,
-      ).map((msg) => convertMessage(msg, this._model, backfillPreservedThinking)),
+      )
+        .map((msg) => convertMessage(msg, this._model, backfillPreservedThinking))
+        .filter(shouldKeepConvertedMessage),
       {
         isUser: (message) => message.role === 'user',
         isToolResultOnly,

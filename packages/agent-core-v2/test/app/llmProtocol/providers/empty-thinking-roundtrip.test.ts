@@ -28,6 +28,16 @@ const EMPTY_THINKING_TOOL_HISTORY: Message[] = [
   },
 ];
 
+const UNSIGNED_THINKING_ONLY_HISTORY: Message[] = [
+  { role: 'user', content: [{ type: 'text', text: 'Start' }], toolCalls: [] },
+  {
+    role: 'assistant',
+    content: [{ type: 'think', think: 'Partial reasoning' }],
+    toolCalls: [],
+  },
+  { role: 'user', content: [{ type: 'text', text: 'Continue' }], toolCalls: [] },
+];
+
 function chatCompletionResponse(message: Record<string, unknown>) {
   return {
     id: 'chatcmpl-test',
@@ -73,6 +83,36 @@ async function captureKimiMessages(
     throw new Error('Expected Kimi provider to send a request.');
   }
   return captured['messages'] as Array<Record<string, unknown>>;
+}
+
+async function captureAnthropicMessages(
+  model: string,
+  history: Message[],
+): Promise<Array<{ role: string; content: unknown[] }>> {
+  let captured: Record<string, unknown> | undefined;
+  const create = vi.fn().mockImplementation((params: unknown) => {
+    captured = params as Record<string, unknown>;
+    return Promise.resolve({
+      id: 'msg_test',
+      content: [{ type: 'text', text: 'done' }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+  });
+  const provider = new AnthropicChatProvider({
+    model,
+    apiKey: '',
+    defaultMaxTokens: 1024,
+    stream: false,
+    clientFactory: () => ({ messages: { create } }) as never,
+  });
+
+  const response = await provider.generate('', [], history);
+  await collectParts(response);
+
+  if (captured === undefined) {
+    throw new Error('Expected Anthropic provider to send a request.');
+  }
+  return captured['messages'] as Array<{ role: string; content: unknown[] }>;
 }
 
 describe('empty thinking round-trip', () => {
@@ -317,54 +357,29 @@ describe('empty thinking round-trip', () => {
   });
 
   it('Anthropic-compatible providers send unsigned empty thinking blocks back', async () => {
-    let captured: Record<string, unknown> | undefined;
-    const create = vi.fn().mockImplementation((params: unknown) => {
-      captured = params as Record<string, unknown>;
-      return Promise.resolve({
-        id: 'msg_test',
-        content: [{ type: 'text', text: 'done' }],
-        usage: { input_tokens: 1, output_tokens: 1 },
-      });
-    });
-    const provider = new AnthropicChatProvider({
-      model: 'compatible-model',
-      apiKey: '',
-      defaultMaxTokens: 1024,
-      stream: false,
-      clientFactory: () => ({ messages: { create } }) as never,
-    });
-
-    const response = await provider.generate('', [], EMPTY_THINKING_TOOL_HISTORY);
-    await collectParts(response);
-
-    const messages = captured?.['messages'] as Array<{ content: unknown[] }>;
+    const messages = await captureAnthropicMessages(
+      'compatible-model',
+      EMPTY_THINKING_TOOL_HISTORY,
+    );
     expect(messages[0]!.content[0]).toEqual({ type: 'thinking', thinking: '' });
+  });
+
+  it('Anthropic-compatible providers preserve an unsigned-only assistant message', async () => {
+    const messages = await captureAnthropicMessages(
+      'compatible-model',
+      UNSIGNED_THINKING_ONLY_HISTORY,
+    );
+
+    expect(messages[1]).toEqual({
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: 'Partial reasoning' }],
+    });
   });
 
   it.each(['claude-opus-4-9', 'opus-4-9', 'claude-mythos-preview'])(
     'Claude model %s drops unsigned thinking blocks',
     async (model) => {
-      let captured: Record<string, unknown> | undefined;
-      const create = vi.fn().mockImplementation((params: unknown) => {
-        captured = params as Record<string, unknown>;
-        return Promise.resolve({
-          id: 'msg_test',
-          content: [{ type: 'text', text: 'done' }],
-          usage: { input_tokens: 1, output_tokens: 1 },
-        });
-      });
-      const provider = new AnthropicChatProvider({
-        model,
-        apiKey: '',
-        defaultMaxTokens: 1024,
-        stream: false,
-        clientFactory: () => ({ messages: { create } }) as never,
-      });
-
-      const response = await provider.generate('', [], EMPTY_THINKING_TOOL_HISTORY);
-      await collectParts(response);
-
-      const messages = captured?.['messages'] as Array<{ content: unknown[] }>;
+      const messages = await captureAnthropicMessages(model, EMPTY_THINKING_TOOL_HISTORY);
       expect(messages[0]!.content).toEqual([
         {
           type: 'tool_use',
@@ -376,6 +391,23 @@ describe('empty thinking round-trip', () => {
       ]);
     },
   );
+
+  it('Claude drops an unsigned-only assistant without leaving an empty wire message', async () => {
+    const messages = await captureAnthropicMessages(
+      'claude-opus-4-9',
+      UNSIGNED_THINKING_ONLY_HISTORY,
+    );
+
+    expect(messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Start' },
+          { type: 'text', text: 'Continue', cache_control: { type: 'ephemeral' } },
+        ],
+      },
+    ]);
+  });
 
   it('OpenAI Responses sends an explicitly empty ThinkPart as a reasoning item', async () => {
     let captured: Record<string, unknown> | undefined;

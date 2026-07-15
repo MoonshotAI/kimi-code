@@ -596,6 +596,11 @@ function convertMessage(
 
   return { role: role, content: blocks };
 }
+
+function shouldKeepConvertedMessage(message: MessageParam): boolean {
+  return message.role !== 'assistant' || message.content.length > 0;
+}
+
 export function convertAnthropicError(error: unknown): ChatProviderError {
   // Check timeout before connection (APIConnectionTimeoutError extends APIConnectionError)
   if (error instanceof AnthropicTimeoutError) {
@@ -1003,7 +1008,9 @@ export class AnthropicChatProvider implements ChatProvider {
         // garbage `<system></system>` user turn). See isToolDeclarationOnlyMessage.
         history.filter((msg) => !isToolDeclarationOnlyMessage(msg)),
         ANTHROPIC_TOOL_CALL_ID_POLICY,
-      ).map((msg) => convertMessage(msg, this._model, backfillPreservedThinking)),
+      )
+        .map((msg) => convertMessage(msg, this._model, backfillPreservedThinking))
+        .filter(shouldKeepConvertedMessage),
       {
         isUser: (message) => message.role === 'user',
         isToolResultOnly,

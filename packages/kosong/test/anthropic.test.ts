@@ -46,6 +46,16 @@ function createStreamProvider(model: string = 'k25'): AnthropicChatProvider {
   });
 }
 
+const UNSIGNED_THINKING_ONLY_HISTORY: Message[] = [
+  { role: 'user', content: [{ type: 'text', text: 'Start' }], toolCalls: [] },
+  {
+    role: 'assistant',
+    content: [{ type: 'think', think: 'Partial reasoning' }],
+    toolCalls: [],
+  },
+  { role: 'user', content: [{ type: 'text', text: 'Continue' }], toolCalls: [] },
+];
+
 describe('Anthropic model profile matching', () => {
   it.each([
     ['claude-opus-4-5', 'budget', ['low', 'medium', 'high'], true, true],
@@ -147,6 +157,32 @@ async function collectParts(
     parts.push(part);
   }
   return parts;
+}
+
+async function captureAnthropicMessages(
+  model: string,
+  history: Message[],
+): Promise<Array<{ role: string; content: unknown[] }>> {
+  let captured: Record<string, unknown> | undefined;
+  const create = vi.fn().mockImplementation((params: unknown) => {
+    captured = params as Record<string, unknown>;
+    return Promise.resolve(makeAnthropicResponse(model));
+  });
+  const provider = new AnthropicChatProvider({
+    model,
+    apiKey: '',
+    defaultMaxTokens: 1024,
+    stream: false,
+    clientFactory: () => ({ messages: { create } }) as never,
+  });
+
+  const response = await provider.generate('', [], history);
+  await collectParts(response);
+
+  if (captured === undefined) {
+    throw new Error('Expected Anthropic provider to send a request.');
+  }
+  return captured['messages'] as Array<{ role: string; content: unknown[] }>;
 }
 
 const ADD_TOOL: Tool = {
@@ -1522,6 +1558,18 @@ describe('AnthropicChatProvider', () => {
       expect(messages[0]!.content[0]).toEqual({ type: 'thinking', thinking: '' });
     });
 
+    it('preserves an unsigned-only assistant message for Anthropic-compatible models', async () => {
+      const messages = await captureAnthropicMessages(
+        'compatible-model',
+        UNSIGNED_THINKING_ONLY_HISTORY,
+      );
+
+      expect(messages[1]).toEqual({
+        role: 'assistant',
+        content: [{ type: 'thinking', thinking: 'Partial reasoning' }],
+      });
+    });
+
     it.each([
       'claude-opus-4-6',
       'opus-4-6',
@@ -1557,6 +1605,23 @@ describe('AnthropicChatProvider', () => {
         ]);
       },
     );
+
+    it('drops an unsigned-only Claude assistant without leaving an empty wire message', async () => {
+      const messages = await captureAnthropicMessages(
+        'claude-opus-4-9',
+        UNSIGNED_THINKING_ONLY_HISTORY,
+      );
+
+      expect(messages).toEqual([
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Start' },
+            { type: 'text', text: 'Continue', cache_control: { type: 'ephemeral' } },
+          ],
+        },
+      ]);
+    });
 
     it('base64 image', async () => {
       const provider = createProvider();
