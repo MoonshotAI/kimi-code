@@ -304,7 +304,7 @@ describe('FetchURLTool', () => {
 
     expect(result.isError).toBe(false);
     expect(Array.isArray(result.output)).toBe(true);
-    const parts = result.output as Array<{ type: string } & Record<string, unknown>>;
+    const parts = result.output as unknown as Array<{ type: string } & Record<string, unknown>>;
     expect(parts.length).toBe(2);
     expect(parts[0]).toMatchObject({ type: 'text', text: 'Fetched image from https://example.com/image.png' });
     expect(parts[1]).toMatchObject({ type: 'image_url', imageUrl: { url: 'data:image/png;base64,fakebase64' } });
