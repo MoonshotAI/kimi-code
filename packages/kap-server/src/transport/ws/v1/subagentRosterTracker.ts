@@ -25,8 +25,11 @@
  * the journal watermark, and the fan-out order mutually consistent.
  *
  * Lifetime: the roster is dropped when the main agent starts its NEXT turn —
- * by then the previous turn's `<agent_swarm_result>` tool output is durable in
- * the wire transcript and takes over as the restore source. If the main turn
+ * the previous turn's result record was queued for the async wire append
+ * before `turn.ended`, so by then it is durable in practice and the
+ * transcript takes over as the restore source (a queued/cron follow-up turn
+ * can still start inside the ms-scale flush gap; that window self-heals on
+ * the next refresh). If the main turn
  * aborts (cancelled / failed / blocked), still-live entries are finalized as
  * failed at `turn.ended` instead: the swarm dies with the turn and the abort
  * path suppresses the members' own `subagent.failed` events. Background
@@ -139,12 +142,14 @@ export class SubagentRosterTracker {
         return;
       }
       case 'turn.started': {
-        // Settle the roster only when the main agent starts a NEW turn: by
-        // then the previous turn's swarm result is durable in the wire
-        // transcript (the restore source). Clearing at the main `turn.ended`
-        // would race the async wire append — a refresh in that window gets
-        // neither the live roster nor the transcript result. A subagent's own
-        // turn boundaries must never drop the roster mid-swarm.
+        // Settle the roster when the main agent starts a NEW turn. The result
+        // record is queued for the async wire append before `turn.ended`, so
+        // by the next turn it is durable in practice; a queued/cron follow-up
+        // can still start inside the flush gap, but that window is ms-scale
+        // and self-heals on the next refresh once the flush lands. (Fully
+        // closing it needs the snapshot reader to read through the agent
+        // append log — deliberately left out of this change.) A subagent's
+        // own turn boundaries must never drop the roster mid-swarm.
         if (event.agentId === MAIN_AGENT_ID) {
           this.bySession.delete(sessionId);
         }
