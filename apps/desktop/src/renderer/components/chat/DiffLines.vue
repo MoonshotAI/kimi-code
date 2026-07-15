@@ -5,9 +5,19 @@
 <script setup lang="ts">
 import type { DiffViewLine } from '../../types';
 
-defineProps<{
-  lines: DiffViewLine[];
-}>();
+withDefaults(
+  defineProps<{
+    lines: DiffViewLine[];
+    /**
+     * Show the old/new line-number gutter columns. Only meaningful when the
+     * numbers are real file line numbers (the git diff panel). Inline Edit-card
+     * diffs number a synthesized old_string/new_string fragment from 1, so the
+     * columns would be misleading — they are turned off there.
+     */
+    lineNumbers?: boolean;
+  }>(),
+  { lineNumbers: true },
+);
 
 function oldGutter(line: DiffViewLine): string {
   return line.oldNo !== undefined ? String(line.oldNo) : '';
@@ -21,14 +31,16 @@ function rowClass(line: DiffViewLine): string {
 </script>
 
 <template>
-  <div class="diff-lines">
+  <div class="diff-lines" :class="{ 'no-gutter': !lineNumbers }">
     <div v-for="(line, i) in lines" :key="i" class="dl" :class="rowClass(line)">
       <template v-if="line.type === 'hunk'">
         <span class="hunk-text">{{ line.text }}</span>
       </template>
       <template v-else>
-        <span class="dl-gutter old">{{ oldGutter(line) }}</span>
-        <span class="dl-gutter new">{{ newGutter(line) }}</span>
+        <template v-if="lineNumbers">
+          <span class="dl-gutter old">{{ oldGutter(line) }}</span>
+          <span class="dl-gutter new">{{ newGutter(line) }}</span>
+        </template>
         <span class="dl-sign">{{ line.type === 'add' ? '+' : line.type === 'del' ? '-' : ' ' }}</span>
         <span class="dl-text">{{ line.text }}</span>
       </template>
@@ -94,7 +106,7 @@ function rowClass(line: DiffViewLine): string {
    line in green/red competed with reading the code itself; the sign (+/-) and
    the accent carry the colour so the content stays legible. */
 .dl-add {
-  background: var(--color-success-soft);
+  background: var(--color-diff-add-bg);
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-success) 55%, transparent);
 }
 .dl-add .dl-sign {
@@ -102,11 +114,27 @@ function rowClass(line: DiffViewLine): string {
 }
 
 .dl-del {
-  background: var(--color-danger-soft);
+  background: var(--color-diff-del-bg);
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--color-danger) 55%, transparent);
 }
 .dl-del .dl-sign {
   color: var(--color-danger);
+}
+
+/* Let the add/del tint run edge-to-edge: an opaque neutral gutter chopped the
+   band into "accent bar | grey corridor | tint", which reads as broken —
+   especially inside the narrow inline tool card. The column borders still
+   separate the two line-number columns. */
+.dl-add .dl-gutter,
+.dl-del .dl-gutter {
+  background: transparent;
+}
+
+/* Without the gutter columns (inline tool card), drop the left accent bar:
+   the edge-to-edge tint plus the coloured sign already carry the change. */
+.diff-lines.no-gutter .dl-add,
+.diff-lines.no-gutter .dl-del {
+  box-shadow: none;
 }
 
 /* Hunk header — muted band spanning the whole row. */

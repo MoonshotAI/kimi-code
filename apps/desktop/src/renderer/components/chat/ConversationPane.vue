@@ -115,7 +115,6 @@ const emit = defineEmits<{
   openThinking: [target: { turnId: string; blockIndex: number }];
   openCompaction: [target: { turnId: string }];
   openAgent: [toolCallId: string];
-  openToolDiff: [id: string];
   /** Chat header / files pane: focus the diff detail layer and refresh git status. */
   openChanges: [];
   refreshGitStatus: [];
@@ -1401,7 +1400,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
               :loading-more="loadingMore"
               :loading-more-error="loadingMoreError"
               :is-following="following"
-              :tool-diff-panel="true"
               :queued="queued"
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
@@ -1409,7 +1407,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @open-thinking="emit('openThinking', $event)"
               @open-compaction="emit('openCompaction', $event)"
               @open-agent="emit('openAgent', $event)"
-              @open-tool-diff="emit('openToolDiff', $event)"
               @edit-message="handleEditMessage"
               @load-older-messages="handleLoadOlderMessages"
               @unqueue="emit('unqueue', $event)"

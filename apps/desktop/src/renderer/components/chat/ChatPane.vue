@@ -90,12 +90,6 @@ const props = withDefaults(
      */
     isFollowing?: boolean;
     /**
-     * When true, clicking an Edit/Write tool card opens the right-side diff
-     * panel. Off in contexts that don't wire the panel (e.g. the side chat), so
-     * cards there expand inline instead.
-     */
-    toolDiffPanel?: boolean;
-    /**
      * Pending user messages queued while the session is busy. Rendered inline
      * at the tail of the transcript (after the running turn) — click to edit,
      * × to remove, drag the grip to reorder.
@@ -115,7 +109,6 @@ const props = withDefaults(
     loadingMore: false,
     loadingMoreError: false,
     isFollowing: false,
-    toolDiffPanel: false,
     queued: () => [],
   },
 );
@@ -194,8 +187,6 @@ const emit = defineEmits<{
   /** Show a subagent's live detail in the right-side panel (keyed by the
    *  spawning `Agent` tool-call id). */
   openAgent: [toolCallId: string];
-  /** Show an Edit/Write tool call's diff in the right-side panel. */
-  openToolDiff: [id: string];
   /** Edit + resend the last user message (parent undoes, then refills composer). */
   editMessage: [payload: { text: string; images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] }];
   /** Fetch the next older page of messages (triggered by top sentinel visibility or click). */
@@ -622,13 +613,11 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
             v-else-if="blk.kind === 'tool-stack'"
             :tools="blk.tools"
             mobile
-            :tool-diff-panel="toolDiffPanel"
             @open-media="emit('openMedia', $event)"
             @open-file="emit('openFile', $event)"
-            @open-tool-diff="emit('openToolDiff', $event)"
             @open-agent="emit('openAgent', $event)"
           />
-          <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile :tool-diff-panel="toolDiffPanel" @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-tool-diff="emit('openToolDiff', $event)" @open-agent="emit('openAgent', $event)" />
+          <ToolCall v-else-if="blk.kind === 'tool'" :tool="blk.tool" mobile @open-media="emit('openMedia', $event)" @open-file="emit('openFile', $event)" @open-agent="emit('openAgent', $event)" />
         </template>
         <div v-if="turn.id !== streamingTurnId && isAssistantRunEnd(ti) && (assistantRunFinalText(ti).trim().length > 0 || turn.durationMs !== undefined)" class="a-msg-ft">
           <Tooltip :text="`${turn.durationMs} ms`">
