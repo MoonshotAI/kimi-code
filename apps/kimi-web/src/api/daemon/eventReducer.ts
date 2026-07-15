@@ -15,6 +15,8 @@ import type {
   AppGoal,
   AppMessage,
   AppMessageContent,
+  AppNotice,
+  AppNoticeDetail,
   AppWarning,
   AppQuestionRequest,
   AppSession,
@@ -228,6 +230,64 @@ function appendToolOutputToMessages(messages: AppMessage[], toolCallId: string, 
 // ---------------------------------------------------------------------------
 // Reducer
 // ---------------------------------------------------------------------------
+
+/** Agent error code → semantic title key under `warnings.agentError`. Codes
+ *  come from the protocol error domain (agent-core-v2 `ProtocolErrors`);
+ *  anything unmapped falls back to the generic `title`. */
+const AGENT_ERROR_TITLE_KEYS: Readonly<Record<string, string>> = {
+  'provider.connection_error': 'connection',
+  'provider.auth_error': 'auth',
+  'provider.rate_limit': 'rateLimit',
+  'provider.overloaded': 'overloaded',
+  'provider.filtered': 'filtered',
+  'provider.api_error': 'api',
+  'context.overflow': 'contextOverflow',
+};
+
+interface AgentErrorRaw {
+  code?: string;
+  message?: string;
+  name?: string;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Build the structured error notice for a failed agent turn (typically a
+ * model-provider failure). The wire payload already carries the coded error —
+ * surface it in full so a rate-limit / auth / endpoint failure is diagnosable
+ * from the toast: semantic title, the provider's raw message as the body, and
+ * a diagnostics list (error code, HTTP status, request id, SDK error name,
+ * plus any extra detail fields such as finishReason).
+ */
+function buildAgentErrorNotice(raw: AgentErrorRaw): AppNotice {
+  const t = i18n.global.t;
+  const details: AppNoticeDetail[] = [];
+  const push = (label: string, value: unknown): void => {
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      details.push({ label, value: String(value) });
+    } else if (typeof value === 'string' && value.length > 0) {
+      details.push({ label, value });
+    }
+  };
+  push(t('warnings.details.code'), raw.code);
+  const rawDetails = raw.details ?? {};
+  push(t('warnings.details.status'), rawDetails['statusCode']);
+  push(t('warnings.details.requestId'), rawDetails['requestId']);
+  push(t('warnings.details.errorName'), raw.name);
+  // Keep any remaining detail fields (finishReason, rawFinishReason, …) so no
+  // diagnostics the daemon sent are hidden.
+  for (const [key, value] of Object.entries(rawDetails)) {
+    if (key === 'statusCode' || key === 'requestId') continue;
+    push(key, value);
+  }
+  const titleKey = (raw.code !== undefined ? AGENT_ERROR_TITLE_KEYS[raw.code] : undefined) ?? 'title';
+  return {
+    severity: 'error',
+    title: t(`warnings.agentError.${titleKey}`),
+    message: raw.message,
+    details: details.length > 0 ? details : undefined,
+  };
+}
 
 /**
  * Apply a single AppEvent to the state, returning a new state object.
@@ -673,18 +733,20 @@ export function reduceAppEvent(
         _agentWarning?: boolean;
         code?: string;
         message?: string;
+        name?: string;
+        details?: Record<string, unknown>;
         type?: string;
       } | null;
       if (raw && raw._noop === true) {
         // No-op streaming/tool event — seq already advanced, nothing else to do
-      } else if (raw && (raw._agentError || raw._agentWarning)) {
-        // Surface the agent's real error/warning message (e.g. a 403 from the
-        // model provider) instead of a useless "Unhandled event".
-        const label = raw._agentError
-          ? i18n.global.t('warnings.errorLabel')
-          : i18n.global.t('warnings.noteLabel');
-        const msg = raw.message ?? raw.code ?? 'agent error';
-        next.warnings = [...next.warnings, `${label}: ${msg}`];
+      } else if (raw && raw._agentError) {
+        // Surface the agent's real error (e.g. a 429 from the model provider)
+        // as a structured notice: semantic title + raw provider message +
+        // diagnostics (code / HTTP status / request id) for troubleshooting.
+        next.warnings = [...next.warnings, buildAgentErrorNotice(raw)];
+      } else if (raw && raw._agentWarning) {
+        const msg = raw.message ?? raw.code ?? 'agent warning';
+        next.warnings = [...next.warnings, `${i18n.global.t('warnings.noteLabel')}: ${msg}`];
       } else {
         // Truly unknown — push a warning
         const wireType = raw?.type ?? '(unknown)';

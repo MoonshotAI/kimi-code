@@ -1084,10 +1084,20 @@ export function createAgentProjector(): AgentProjector {
 
       // -----------------------------------------------------------------------
       case 'error': {
-        // Fold into an unknown event so the reducer pushes a warning string
+        // Fold into an unknown event so the reducer surfaces it as a structured
+        // error notice (semantic title + code/status/requestId details). The
+        // wire payload already carries name/details/retryable — pass them
+        // through untouched; the reducer decides what to display.
         out.push({
           type: 'unknown',
-          raw: { _agentError: true, code: p?.code, message: p?.message },
+          raw: {
+            _agentError: true,
+            code: p?.code,
+            message: p?.message,
+            name: p?.name,
+            details: p?.details,
+            retryable: p?.retryable,
+          },
         });
         break;
       }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { createInitialState, reduceAppEvent } from '../src/api/daemon/eventReducer';
 import type { AppMessage, AppSession, AppTask } from '../src/api/types';
+import { i18n } from '../src/i18n';
 
 function makeSession(id: string, updatedAt: string): AppSession {
   return {
@@ -392,5 +393,79 @@ describe('reduceAppEvent messageCreated cron origin', () => {
     const msgs = next.messagesBySession[sid]!;
     expect(msgs).toHaveLength(2);
     expect(msgs.map((m) => m.id)).toEqual(['opt_1', 'cron_1']);
+  });
+});
+
+describe('reduceAppEvent unknown agent error', () => {
+  function reduceRaw(raw: unknown): ReturnType<typeof reduceAppEvent> {
+    return reduceAppEvent(
+      createInitialState(),
+      { type: 'unknown', raw },
+      { sessionId: 's1', seq: 1 },
+    );
+  }
+
+  it('surfaces a rate-limit failure as a structured notice with full diagnostics', () => {
+    const next = reduceRaw({
+      _agentError: true,
+      code: 'provider.rate_limit',
+      message: 'Rate limit reached for requests. Please try again later.',
+      name: 'RateLimitError',
+      details: { statusCode: 429, requestId: 'req_1' },
+      retryable: true,
+    });
+    const notice = next.warnings[0];
+    expect(typeof notice).toBe('object');
+    if (typeof notice !== 'object' || notice === null) return;
+    expect(notice.severity).toBe('error');
+    expect(notice.title).toBe(i18n.global.t('warnings.agentError.rateLimit'));
+    expect(notice.message).toBe('Rate limit reached for requests. Please try again later.');
+    const byLabel = new Map(notice.details?.map((d) => [d.label, d.value]));
+    expect(byLabel.get(i18n.global.t('warnings.details.code'))).toBe('provider.rate_limit');
+    expect(byLabel.get(i18n.global.t('warnings.details.status'))).toBe('429');
+    expect(byLabel.get(i18n.global.t('warnings.details.requestId'))).toBe('req_1');
+    expect(byLabel.get(i18n.global.t('warnings.details.errorName'))).toBe('RateLimitError');
+  });
+
+  it('keeps extra detail fields such as finishReason visible', () => {
+    const next = reduceRaw({
+      _agentError: true,
+      code: 'provider.filtered',
+      message: 'Provider filtered the response',
+      details: { finishReason: 'filtered', rawFinishReason: 'content_filter' },
+    });
+    const notice = next.warnings[0];
+    if (typeof notice !== 'object' || notice === null) throw new Error('expected notice');
+    const values = notice.details?.map((d) => d.value) ?? [];
+    expect(values).toContain('filtered');
+    expect(values).toContain('content_filter');
+  });
+
+  it('shows a connection failure without status/requestId rows', () => {
+    const next = reduceRaw({
+      _agentError: true,
+      code: 'provider.connection_error',
+      message: 'Connection error.',
+    });
+    const notice = next.warnings[0];
+    if (typeof notice !== 'object' || notice === null) throw new Error('expected notice');
+    expect(notice.title).toBe(i18n.global.t('warnings.agentError.connection'));
+    expect(notice.message).toBe('Connection error.');
+    expect(notice.details?.map((d) => d.value)).toEqual(['provider.connection_error']);
+  });
+
+  it('falls back to the generic title for unmapped or missing codes', () => {
+    for (const code of ['internal', undefined]) {
+      const next = reduceRaw({ _agentError: true, code, message: 'boom' });
+      const notice = next.warnings[0];
+      if (typeof notice !== 'object' || notice === null) throw new Error('expected notice');
+      expect(notice.title).toBe(i18n.global.t('warnings.agentError.title'));
+      expect(notice.message).toBe('boom');
+    }
+  });
+
+  it('still renders agent warnings as plain strings', () => {
+    const next = reduceRaw({ _agentWarning: true, message: 'heads up' });
+    expect(next.warnings[0]).toBe(`${i18n.global.t('warnings.noteLabel')}: heads up`);
   });
 });

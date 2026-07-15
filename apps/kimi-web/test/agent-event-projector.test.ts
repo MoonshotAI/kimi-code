@@ -85,7 +85,14 @@ describe('agent error projection', () => {
     expect(
       projector.project(
         'error',
-        { agentId: 'main', code: 'provider.rate_limit', message: 'Rate limited' },
+        {
+          agentId: 'main',
+          code: 'provider.rate_limit',
+          message: 'Rate limited',
+          name: 'RateLimitError',
+          details: { statusCode: 429, requestId: 'req_1' },
+          retryable: true,
+        },
         's1',
       ),
     ).toEqual([
@@ -95,6 +102,9 @@ describe('agent error projection', () => {
           _agentError: true,
           code: 'provider.rate_limit',
           message: 'Rate limited',
+          name: 'RateLimitError',
+          details: { statusCode: 429, requestId: 'req_1' },
+          retryable: true,
         },
       },
     ]);
