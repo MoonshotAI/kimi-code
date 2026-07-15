@@ -395,11 +395,17 @@ export class Agent {
         this.telemetry.track('input_steer', { parts: payload.input.length });
         this.turn.steer(payload.input);
       },
-      cancel: (payload) => {
+      cancel: async (payload) => {
+        const waitForTurn =
+          this.turn.hasActiveTurn &&
+          (payload.turnId === undefined || payload.turnId === this.turn.currentId)
+            ? this.turn.waitForCurrentTurn()
+            : undefined;
         if (this.turn.hasActiveTurn) {
           this.telemetry.track('cancel', { from: 'streaming' });
         }
         this.turn.cancel(payload.turnId);
+        await waitForTurn;
       },
       undoHistory: (payload) => {
         this.context.undo(payload.count);

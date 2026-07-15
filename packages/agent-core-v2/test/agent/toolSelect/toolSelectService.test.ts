@@ -245,6 +245,10 @@ class FakeContextMemory implements IAgentContextMemoryService {
     throw new Error('unused in this suite');
   }
 
+  closeAbandonedToolExchange(): number {
+    return 0;
+  }
+
   clear(): void {
     this.history.length = 0;
     this.appended.length = 0;

@@ -47,7 +47,7 @@ import {
   isFullyUndoable,
   type UndoCut,
 } from './contextOps';
-import type { LoopRecordedEvent } from './loopEventFold';
+import { openStepUuid, pendingToolCallIds, type LoopRecordedEvent } from './loopEventFold';
 import type { ContextMessage } from './types';
 
 declare module '#/app/event/eventBus' {
@@ -84,6 +84,29 @@ export class AgentContextMemoryService extends Disposable implements IAgentConte
 
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.wire.dispatch(contextAppendLoopEvent({ event }));
+  }
+
+  closeAbandonedToolExchange(output: string): number {
+    const history = this.get();
+    const toolCallIds = pendingToolCallIds(history);
+    if (toolCallIds.length === 0) return 0;
+    const stepUuid = openStepUuid(history);
+    this.wire.dispatch(
+      ...toolCallIds.map((toolCallId) =>
+        contextAppendLoopEvent({
+          event: {
+            type: 'tool.result',
+            parentUuid: toolCallId,
+            toolCallId,
+            result: { output, isError: true },
+          },
+        }),
+      ),
+      ...(stepUuid === undefined
+        ? []
+        : [contextAppendLoopEvent({ event: { type: 'step.end', uuid: stepUuid } })]),
+    );
+    return toolCallIds.length;
   }
 
   clear(): void {

@@ -1113,7 +1113,18 @@ describe('SessionSubagentHost', () => {
 
     await expect(retryHandle.completion).resolves.toMatchObject({ result: summary.trim() });
     expect(generateCalls).toBe(2);
-    expect(userTextMessages(histories[1] ?? [])).toEqual(['Implement the retry-safe change']);
+    expect(userTextMessages(histories[1] ?? [])).toEqual([
+      'Implement the retry-safe change',
+      [
+        '<system-reminder>',
+        'The previous turn ended before producing a final response.',
+        '',
+        'Error: The model provider rate-limited the request.',
+        '',
+        'The preceding user request may still be unfinished. Treat the next user message as a follow-up.',
+        '</system-reminder>',
+      ].join('\n'),
+    ]);
   });
 
   it('realigns a resumed subagent to the parent agent current model', async () => {

@@ -1335,6 +1335,79 @@ describe('Agent context', () => {
     ]);
   });
 
+  it('removes a turn outcome reminder when undo removes its user prompt', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('do the work', { kind: 'user' }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'partial response' }],
+        toolCalls: [],
+      },
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('The previous turn failed', {
+        kind: 'injection',
+        variant: 'turn_outcome',
+      }),
+    });
+
+    await ctx.rpc.undoHistory({ count: 1 });
+
+    expect(ctx.agent.context.history).toEqual([]);
+    expect(ctx.agent.replayBuilder.buildResult()).toEqual([]);
+  });
+
+  it('keeps an earlier turn outcome reminder when undo removes a later user prompt', async () => {
+    const ctx = testAgent();
+    ctx.configure();
+
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('unfinished request', { kind: 'user' }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('The previous turn failed', {
+        kind: 'injection',
+        variant: 'turn_outcome',
+      }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: userMessage('replacement request', { kind: 'user' }),
+    });
+    ctx.dispatch({
+      type: 'context.append_message',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'replacement response' }],
+        toolCalls: [],
+      },
+    });
+
+    await ctx.rpc.undoHistory({ count: 1 });
+
+    expect(ctx.agent.context.history).toEqual([
+      expect.objectContaining({
+        role: 'user',
+        content: [{ type: 'text', text: 'unfinished request' }],
+        origin: { kind: 'user' },
+      }),
+      expect.objectContaining({
+        role: 'user',
+        content: [{ type: 'text', text: 'The previous turn failed' }],
+        origin: { kind: 'injection', variant: 'turn_outcome' },
+      }),
+    ]);
+  });
 });
 
 describe('Agent context notification projection', () => {

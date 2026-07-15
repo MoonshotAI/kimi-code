@@ -839,10 +839,232 @@ describe('Agent turn flow', () => {
       [wire] llm.tools_snapshot          { "hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "tools": [], "time": "<time>" }
       [wire] llm.request                 { "kind": "loop", "provider": "kimi", "model": "mock-model", "modelAlias": "mock-model", "thinkingEffort": "off", "maxTokens": 1000000, "toolSelect": false, "systemPromptHash": "ec9c34379c88babbc468ef2f3e0e08cd2f422c8c4a910664fb8bb394d703a575", "toolsHash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945", "messageCount": 1, "turnStep": "0.1", "time": "<time>" }
       [emit] turn.step.interrupted       { "turnId": 0, "step": 1, "reason": "error", "message": "Unexpected generate call #1" }
+      [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "<system-reminder>\\nThe previous turn ended before producing a final response.\\n\\nError: Unexpected generate call #1\\n\\nThe preceding user request may still be unfinished. Treat the next user message as a follow-up.\\n</system-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "turn_outcome" } }, "time": "<time>" }
       [emit] turn.ended                  { "turnId": 0, "reason": "failed", "error": { "code": "internal", "message": "Unexpected generate call #1", "name": "Error", "retryable": false, "details": { "turnId": 0 } } }
     `);
     expect(ctx.newEvents()).toMatchInlineSnapshot(
       `[emit] error   { "code": "internal", "message": "Unexpected generate call #1", "name": "Error", "retryable": false, "details": { "turnId": 0 } }`,
+    );
+    await ctx.expectResumeMatches();
+  });
+
+  it('preserves the failed-turn boundary when the user follows up after a terminal provider error', async () => {
+    const histories: Message[][] = [];
+    let calls = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      histories.push(structuredClone(history));
+      calls += 1;
+      if (calls === 1) {
+        throw new APIStatusError(
+          500,
+          '500 request req-example failed at http://internal-cache.example.test:26677',
+          'req-example-500',
+        );
+      }
+      return textResult('Continued.');
+    };
+    const ctx = testAgent({ generate, ...singleAttemptAgentOptions() });
+    ctx.configure();
+
+    await ctx.rpc.prompt({
+      input: [{ type: 'text', text: 'Would optimization 2 increase memory usage?' }],
+    });
+    await ctx.untilTurnEnd();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue.' }] });
+    await ctx.untilTurnEnd();
+
+    expect(histories[1]).toEqual([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Would optimization 2 increase memory usage?' }],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: [
+              '<system-reminder>',
+              'The previous turn ended before producing a final response.',
+              '',
+              'Error: API request failed with HTTP 500.',
+              '',
+              'The preceding user request may still be unfinished. Treat the next user message as a follow-up.',
+              '</system-reminder>',
+            ].join('\n'),
+          },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Continue.' }],
+        toolCalls: [],
+      },
+    ]);
+    const followUpContext = JSON.stringify(histories[1]);
+    expect(followUpContext).not.toContain('req-example');
+    expect(followUpContext).not.toContain('internal-cache.example.test');
+    await ctx.expectResumeMatches();
+  });
+
+  it('records a model-visible reminder when the user cancels an active turn', async () => {
+    const ctx = testAgent({ generate: abortableGenerate });
+    ctx.configure();
+    const stepStarted = ctx.once('turn.step.started');
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Wait for cancellation.' }] });
+    await stepStarted;
+    await ctx.rpc.cancel({ turnId: 0 });
+    await ctx.untilTurnEnd();
+
+    expect(ctx.agent.context.history.at(-1)).toMatchObject({
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: [
+            '<system-reminder>',
+            'The user interrupted the previous turn before it finished.',
+            '',
+            'Some operations may already have taken effect. Treat the next user message as a follow-up, and check existing state before repeating operations.',
+            '</system-reminder>',
+          ].join('\n'),
+        },
+      ],
+      origin: { kind: 'injection', variant: 'turn_outcome' },
+    });
+    await ctx.expectResumeMatches();
+  });
+
+  it('keeps cancel pending while the aborted provider request is still settling', async () => {
+    const providerStarted = createControlledPromise<void>();
+    const abortObserved = createControlledPromise<void>();
+    const finishCancellation = createControlledPromise<void>();
+    const generate: GenerateFn = async (
+      _chat,
+      _systemPrompt,
+      _tools,
+      _history,
+      _callbacks,
+      options,
+    ) => {
+      providerStarted.resolve();
+      options?.signal?.addEventListener(
+        'abort',
+        () => {
+          abortObserved.resolve();
+        },
+        { once: true },
+      );
+      await abortObserved;
+      await finishCancellation;
+      throw abortError();
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Wait for cancellation.' }] });
+    await providerStarted;
+    const cancel = ctx.rpc.cancel({ turnId: 0 });
+    await abortObserved;
+
+    expect(
+      await Promise.race([
+        cancel.then(() => 'resolved' as const),
+        Promise.resolve('pending' as const),
+      ]),
+    ).toBe('pending');
+
+    finishCancellation.resolve();
+    await cancel;
+  });
+
+  it('places the cancellation reminder before a follow-up submitted after cancel resolves', async () => {
+    const histories: Message[][] = [];
+    const firstRequestStarted = createControlledPromise<void>();
+    let calls = 0;
+    const generate: GenerateFn = async (
+      _chat,
+      _systemPrompt,
+      _tools,
+      history,
+      _callbacks,
+      options,
+    ) => {
+      histories.push(structuredClone(history));
+      calls += 1;
+      if (calls === 1) {
+        firstRequestStarted.resolve();
+        await new Promise<void>((_resolve, reject) => {
+          options?.signal?.addEventListener(
+            'abort',
+            () => {
+              reject(options.signal?.reason ?? abortError());
+            },
+            { once: true },
+          );
+        });
+      }
+      return textResult('Continued.');
+    };
+    const ctx = testAgent({ generate });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Start work, then wait.' }] });
+    await firstRequestStarted;
+    await ctx.rpc.cancel({});
+    await ctx.untilTurnEnd();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue.' }] });
+    await ctx.untilTurnEnd();
+
+    expect(histories[1]).toEqual([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Start work, then wait.' }],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: [
+              '<system-reminder>',
+              'The user interrupted the previous turn before it finished.',
+              '',
+              'Some operations may already have taken effect. Treat the next user message as a follow-up, and check existing state before repeating operations.',
+              '</system-reminder>',
+            ].join('\n'),
+          },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Continue.' }],
+        toolCalls: [],
+      },
+    ]);
+    await ctx.expectResumeMatches();
+  });
+
+  it('still ends a cancelled turn when its diagnostic cannot be rendered', async () => {
+    const ctx = testAgent({ generate: abortableGenerate });
+    ctx.configure();
+    const stepStarted = ctx.once('turn.step.started');
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Wait for cancellation.' }] });
+    await stepStarted;
+    ctx.agent.turn.cancel(0, cancellationReasonWithHostileMessage());
+
+    expect(await ctx.untilTurnEnd()).toContainEqual(
+      expect.objectContaining({
+        type: '[rpc]',
+        event: 'turn.ended',
+        args: expect.objectContaining({ turnId: 0, reason: 'cancelled' }),
+      }),
     );
     await ctx.expectResumeMatches();
   });
@@ -1084,6 +1306,7 @@ describe('Agent turn flow', () => {
       [wire] turn.prompt              { "input": [ { "type": "text", "text": "Hello without login" } ], "origin": { "kind": "user" }, "time": "<time>" }
       [emit] turn.started             { "turnId": 0, "origin": { "kind": "user" } }
       [wire] context.append_message   { "message": { "role": "user", "content": [ { "type": "text", "text": "Hello without login" } ], "toolCalls": [], "origin": { "kind": "user" } }, "time": "<time>" }
+      [wire] context.append_message   { "message": { "role": "user", "content": [ { "type": "text", "text": "<system-reminder>\\nThe previous turn ended before producing a final response.\\n\\nError: No model is configured.\\n\\nThe preceding user request may still be unfinished. Treat the next user message as a follow-up.\\n</system-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "turn_outcome" } }, "time": "<time>" }
       [emit] turn.ended               { "turnId": 0, "reason": "failed", "error": { "code": "model.not_configured", "message": "LLM not set, send \\"/login\\" to login", "name": "KimiError", "details": { "turnId": 0 }, "retryable": false } }
     `);
     expect(ctx.newEvents()).toMatchInlineSnapshot(
@@ -1316,6 +1539,23 @@ describe('Agent turn flow', () => {
         content: [{ type: 'text', text: 'hook will sleep' }],
         toolCalls: [],
         origin: { kind: 'user' },
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: [
+              '<system-reminder>',
+              'The user interrupted the previous turn before it finished.',
+              '',
+              'Some operations may already have taken effect. Treat the next user message as a follow-up, and check existing state before repeating operations.',
+              '</system-reminder>',
+            ].join('\n'),
+          },
+        ],
+        toolCalls: [],
+        origin: { kind: 'injection', variant: 'turn_outcome' },
       },
     ]);
   });
@@ -2108,6 +2348,11 @@ describe('Agent turn flow', () => {
     expect(payloads[0]).toMatchObject({ turnStep: '0.1' });
     expect(payloads[0]).not.toHaveProperty('attempt');
     expect(payloads[1]).toMatchObject({ turnStep: '0.1', attempt: '2/10' });
+    expect(ctx.agent.context.history).not.toContainEqual(
+      expect.objectContaining({
+        origin: { kind: 'injection', variant: 'turn_outcome' },
+      }),
+    );
   });
 
   it('force-refreshes OAuth credentials on video upload 401 and surfaces the provider auth error when replay 401', async () => {
@@ -2204,6 +2449,7 @@ describe('Agent turn flow', () => {
       [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true } }, "time": "<time>" }
       [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true }
       [emit] turn.step.interrupted       { "turnId": 0, "step": 1, "reason": "aborted" }
+      [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "<system-reminder>\\nThe user interrupted the previous turn before it finished.\\n\\nSome operations may already have taken effect. Treat the next user message as a follow-up, and check existing state before repeating operations.\\n</system-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "turn_outcome" } }, "time": "<time>" }
       [emit] turn.ended                  { "turnId": 0, "reason": "cancelled" }
     `);
     expect(records).toContainEqual({
@@ -2340,6 +2586,7 @@ describe('Agent turn flow', () => {
       [wire] context.append_loop_event   { "event": { "type": "tool.result", "parentUuid": "call_bash", "toolCallId": "call_bash", "result": { "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true } }, "time": "<time>" }
       [emit] tool.result                 { "turnId": 0, "toolCallId": "call_bash", "output": "The user manually interrupted \\"Bash\\" (and anything else running at the same time). This was a deliberate user action, not a system error, timeout, or capacity limit. Do not retry automatically or guess at the cause — wait for the user's next instruction.", "isError": true }
       [emit] turn.step.interrupted       { "turnId": 0, "step": 1, "reason": "aborted" }
+      [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "<system-reminder>\\nThe user interrupted the previous turn before it finished.\\n\\nSome operations may already have taken effect. Treat the next user message as a follow-up, and check existing state before repeating operations.\\n</system-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "turn_outcome" } }, "time": "<time>" }
       [emit] turn.ended                  { "turnId": 0, "reason": "cancelled" }
     `);
     await ctx.expectResumeMatches();
@@ -2368,6 +2615,17 @@ const abortableGenerate: GenerateFn = async (
   });
   throw new Error('abortableGenerate unexpectedly completed');
 };
+
+function cancellationReasonWithHostileMessage(): Error {
+  const reason = new Error('hostile cancellation diagnostic');
+  Object.defineProperty(reason, 'message', {
+    configurable: true,
+    get() {
+      throw new Error('message getter failed');
+    },
+  });
+  return reason;
+}
 
 function eventIndex(
   ctx: Pick<ReturnType<typeof testAgent>, 'allEvents'>,

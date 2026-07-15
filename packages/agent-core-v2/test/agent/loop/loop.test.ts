@@ -1,12 +1,15 @@
-import { type ToolCall } from '#/app/llmProtocol/message';
+import { APIStatusError } from '#/app/llmProtocol/errors';
+import { type Message, type ToolCall } from '#/app/llmProtocol/message';
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { IAgentProfileService } from '#/index';
 import { IAgentLLMRequesterService, type LLMStreamTiming } from '#/agent/llmRequester/llmRequester';
 import { IAgentGoalService } from '#/agent/goal/goal';
+import { IAgentContextProjectorService } from '#/agent/contextProjector/contextProjector';
 import { IAgentLoopService, type Turn } from '#/agent/loop/loop';
 import { ContinuationStepRequest, MessageStepRequest } from '#/agent/loop/stepRequest';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
 import type { ExecutableTool } from '#/tool/toolContract';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentUsageService } from '#/agent/usage/usage';
@@ -21,6 +24,7 @@ import {
   type TestAgentOptions,
 } from '../../harness';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
+import { stubToolExecutor } from './stubs';
 
 type GenerateFn = NonNullable<TestAgentOptions['generate']>;
 
@@ -116,6 +120,7 @@ describe('Agent loop', () => {
       [wire] context.append_loop_event   { "event": { "type": "content.part", "uuid": "<uuid-2>", "turnId": "0", "step": 1, "stepUuid": "<uuid-1>", "part": { "type": "text", "text": "blocked" } }, "time": "<time>" }
       [wire] context.append_loop_event   { "event": { "type": "step.end", "uuid": "<uuid-1>", "turnId": "0", "step": 1, "finishReason": "filtered", "usage": { "inputOther": 3, "output": 5, "inputCacheRead": 0, "inputCacheCreation": 0 }, "messageId": "mock-1", "providerFinishReason": "filtered", "rawFinishReason": "filtered" }, "time": "<time>" }
       [emit] agent.activity.updated      { "lifecycle": "ready", "lastTurn": { "turnId": 0, "reason": "failed", "at": "<time>" }, "background": [] }
+      [emit] context.spliced             { "start": 2, "deleteCount": 0, "messages": [ { "role": "user", "content": [ { "type": "text", "text": "<system-reminder>\\nThe previous turn ended before producing a final response.\\n\\nError: The model provider blocked the response due to its safety policy.\\n\\nThe preceding user request may still be unfinished. Treat the next user message as a follow-up.\\n</system-reminder>" } ], "toolCalls": [], "origin": { "kind": "injection", "variant": "turn_outcome" } } ] }
       [emit] turn.ended                  { "turnId": 0, "reason": "failed", "error": { "code": "provider.filtered", "message": "Provider safety policy blocked the response.", "name": "ProviderFilteredError", "details": { "finishReason": "filtered" }, "retryable": false } }
     `);
 
@@ -224,6 +229,11 @@ describe('Agent loop', () => {
         args: expect.objectContaining({ reason: 'completed' }),
       }),
     );
+    expect(ctx.contextData().history).not.toContainEqual(
+      expect.objectContaining({
+        origin: { kind: 'injection', variant: 'turn_outcome' },
+      }),
+    );
   });
 
   it('reports an untyped LLM error message without an internal-code prefix', async () => {
@@ -241,6 +251,215 @@ describe('Agent loop', () => {
         }),
       }),
     );
+  });
+
+  it('preserves the failed-turn boundary when the user follows up after a terminal provider error', async () => {
+    await ctx.dispose();
+    const histories: Message[][] = [];
+    let calls = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, history) => {
+      histories.push(structuredClone(history));
+      calls += 1;
+      if (calls === 1) {
+        throw new APIStatusError(
+          500,
+          '500 request req-example failed at http://internal-cache.example.test:26677',
+          'req-example-500',
+        );
+      }
+      return {
+        id: 'follow-up-response',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Continued.' }],
+          toolCalls: [],
+        },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    ctx = createTestAgent({
+      generate,
+      initialConfig: { loopControl: { maxRetriesPerStep: 1 } },
+    });
+    loop = ctx.get(IAgentLoopService);
+    profile = ctx.get(IAgentProfileService);
+    profile.update({ activeToolNames: [] });
+
+    await ctx.rpc.prompt({
+      input: [{ type: 'text', text: 'Would optimization 2 increase memory usage?' }],
+    });
+    await ctx.untilTurnEnd();
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'Continue.' }] });
+    await ctx.untilTurnEnd();
+
+    expect(histories[1]).toEqual([
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Would optimization 2 increase memory usage?' }],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: [
+              '<system-reminder>',
+              'The previous turn ended before producing a final response.',
+              '',
+              'Error: API request failed with HTTP 500.',
+              '',
+              'The preceding user request may still be unfinished. Treat the next user message as a follow-up.',
+              '</system-reminder>',
+            ].join('\n'),
+          },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Continue.' }],
+        toolCalls: [],
+      },
+    ]);
+    const followUpContext = JSON.stringify(histories[1]);
+    expect(followUpContext).not.toContain('req-example');
+    expect(followUpContext).not.toContain('internal-cache.example.test');
+  });
+
+  it('records a model-visible reminder when the user cancels an active turn', async () => {
+    let stepStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      stepStarted = resolve;
+    });
+    loop.hooks.onWillBeginStep.register('test-user-cancel-reminder', async (hookCtx, next) => {
+      stepStarted();
+      await new Promise<void>((_, reject) => {
+        hookCtx.signal.addEventListener(
+          'abort',
+          () => {
+            reject(hookCtx.signal.reason);
+          },
+          { once: true },
+        );
+      });
+      await next();
+    });
+
+    const turn = (await loop.enqueue(nextTurnMessage('Wait for cancellation.')).assigned).turn;
+    await started;
+    loop.cancel(turn.id);
+    await expect(turn.result).resolves.toMatchObject({ type: 'cancelled' });
+
+    expect(ctx.contextData().history.at(-1)).toMatchObject({
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: [
+            '<system-reminder>',
+            'The user interrupted the previous turn before it finished.',
+            '',
+            'Some operations may already have taken effect. Treat the next user message as a follow-up, and check existing state before repeating operations.',
+            '</system-reminder>',
+          ].join('\n'),
+        },
+      ],
+      origin: { kind: 'injection', variant: 'turn_outcome' },
+    });
+  });
+
+  it('ends a cancelled turn and pumps the queue when its diagnostic cannot be rendered', async () => {
+    let stepStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      stepStarted = resolve;
+    });
+    loop.hooks.onWillBeginStep.register('test-hostile-cancel-reason', async (hookCtx, next) => {
+      if (hookCtx.turnId === 0) {
+        stepStarted();
+        await new Promise<void>((_, reject) => {
+          hookCtx.signal.addEventListener('abort', () => reject(hookCtx.signal.reason), {
+            once: true,
+          });
+        });
+      }
+      await next();
+    });
+    ctx.mockNextResponse({ type: 'text', text: 'second turn completed' });
+
+    const first = (await loop.enqueue(nextTurnMessage('first')).assigned).turn;
+    const second = (await loop.enqueue(nextTurnMessage('second')).assigned).turn;
+    await started;
+    loop.cancel(first.id, cancellationReasonWithHostileMessage());
+
+    await expect(first.result).resolves.toMatchObject({ type: 'cancelled' });
+    await expect(second.result).resolves.toMatchObject({ type: 'completed' });
+    expect(
+      ctx.allEvents
+        .filter((event) => event.type === '[rpc]' && event.event === 'turn.ended')
+        .map((event) => event.args),
+    ).toMatchObject([
+      { turnId: 0, reason: 'cancelled' },
+      { turnId: 1, reason: 'completed' },
+    ]);
+  });
+
+  it('closes a dangling tool exchange before a failed-turn reminder and follow-up', async () => {
+    const toolExecutor: IAgentToolExecutorService = {
+      ...stubToolExecutor(),
+      async *execute(calls, options) {
+        const call = calls[0];
+        if (call === undefined) return;
+        options.onToolCall?.({ toolCallId: call.id, name: call.name, args: {} });
+        yield await Promise.reject(new Error('tool result dispatch failed'));
+      },
+    };
+    const local = createTestAgent(agentService(IAgentToolExecutorService, toolExecutor));
+    try {
+      local.mockNextResponse({
+        type: 'function',
+        id: 'call_abandoned',
+        name: 'Run',
+        arguments: '{}',
+      });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Run the tool.' }] });
+      await local.untilTurnEnd();
+
+      expect(local.project()).toMatchObject([
+        { role: 'user' },
+        { role: 'assistant', toolCalls: [{ id: 'call_abandoned' }] },
+        { role: 'tool', toolCallId: 'call_abandoned' },
+        { role: 'user' },
+      ]);
+      expect(local.contextData().history.at(-1)?.origin).toEqual({
+        kind: 'injection',
+        variant: 'turn_outcome',
+      });
+      expect(
+        local
+          .get(IAgentContextProjectorService)
+          .projectStrict(local.contextData().history)
+          .map((message) => message.role),
+      ).toEqual(['user', 'assistant', 'tool', 'user']);
+
+      local.mockNextResponse({ type: 'text', text: 'continued safely' });
+      await local.rpc.prompt({ input: [{ type: 'text', text: 'Continue.' }] });
+      await local.untilTurnEnd();
+
+      expect(local.project().map((message) => message.role)).toEqual([
+        'user',
+        'assistant',
+        'tool',
+        'user',
+        'user',
+        'assistant',
+      ]);
+      await local.expectResumeMatches();
+    } finally {
+      await local.dispose();
+    }
   });
 
   it('does not run loop error handlers for aborted turns', async () => {
@@ -952,4 +1171,18 @@ function deferred(): { readonly promise: Promise<void>; readonly resolve: () => 
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+function cancellationReasonWithHostileMessage(): Error {
+  const reason = new Error('hostile cancellation diagnostic');
+  let reads = 0;
+  Object.defineProperty(reason, 'message', {
+    configurable: true,
+    get() {
+      reads += 1;
+      if (reads === 1) return 'deadline reached';
+      throw new Error('message getter failed');
+    },
+  });
+  return reason;
 }

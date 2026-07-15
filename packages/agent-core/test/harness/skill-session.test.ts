@@ -466,6 +466,24 @@ describe('HarnessAPI session skills', () => {
           skillSource: 'project',
         },
       },
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: [
+              '<system-reminder>',
+              'The previous turn ended before producing a final response.',
+              '',
+              'Error: No model is configured.',
+              '',
+              'The preceding user request may still be unfinished. Treat the next user message as a follow-up.',
+              '</system-reminder>',
+            ].join('\n'),
+          },
+        ],
+        origin: { kind: 'injection', variant: 'turn_outcome' },
+      },
     ]);
     const replay = resumed.agents['main']?.replay ?? [];
     expect(replay).toContainEqual(

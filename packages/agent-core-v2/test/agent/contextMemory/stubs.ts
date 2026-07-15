@@ -53,6 +53,7 @@ export function stubContextMemory(eventBus?: IEventBus): StubContextMemory {
       publishSplice(eventBus, { start, deleteCount: 0, messages: [...inserted] });
     },
     appendLoopEvent: () => {},
+    closeAbandonedToolExchange: () => 0,
     clear: () => {
       const deleteCount = messages.length;
       if (deleteCount === 0) return;
@@ -105,6 +106,9 @@ class StubContextMemoryService implements IAgentContextMemoryService {
   }
   appendLoopEvent(event: LoopRecordedEvent): void {
     this.impl.appendLoopEvent(event);
+  }
+  closeAbandonedToolExchange(output: string): number {
+    return this.impl.closeAbandonedToolExchange(output);
   }
   undo(count: number): UndoCut {
     return this.impl.undo(count);

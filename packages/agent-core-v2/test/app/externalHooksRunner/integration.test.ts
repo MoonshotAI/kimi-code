@@ -100,6 +100,7 @@ function stubContextMemory(): IAgentContextMemoryService & {
       messages.push(...inserted);
     },
     appendLoopEvent: () => {},
+    closeAbandonedToolExchange: () => 0,
     clear: () => {
       messages.splice(0);
     },

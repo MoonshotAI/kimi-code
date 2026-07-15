@@ -4,6 +4,7 @@ import type {
   AgentReplayRecord,
   BackgroundTaskInfo,
   ContentPart,
+  Event,
   GoalSnapshot,
   PromptOrigin,
   ResumedAgentState,
@@ -289,6 +290,117 @@ function backgroundTask(
 }
 
 describe('KimiTUI resume message replay', () => {
+  it('does not render turn outcome reminders between visible user messages', async () => {
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'Finish the requested change.' }]),
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text:
+              '<system-reminder>\n' +
+              'The previous turn ended before producing a final response.\n\n' +
+              'Error: API request failed with HTTP 500.\n\n' +
+              'The preceding user request may still be unfinished. Treat the next user message as a follow-up.\n' +
+              '</system-reminder>',
+          },
+        ],
+        { origin: { kind: 'injection', variant: 'turn_outcome' } },
+      ),
+      message('user', [{ type: 'text', text: 'Continue.' }]),
+    ]);
+
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'user')
+        .map((entry) => entry.content),
+    ).toEqual(['Finish the requested change.', 'Continue.']);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).not.toContain('API request failed with HTTP 500');
+    expect(transcript).not.toContain('preceding user request');
+  });
+
+  it('renders one synthetic tool failure without exposing its turn outcome reminder', async () => {
+    const abandonedOutput =
+      'Tool call did not complete: the turn failed before its result was recorded. Do not assume the tool completed successfully.';
+    const driver = await replayIntoDriver([
+      message('user', [{ type: 'text', text: 'Run the operation.' }]),
+      message(
+        'assistant',
+        [{ type: 'text', text: 'Starting the operation.' }],
+        { toolCalls: [toolCall('call_abandoned', 'Run', {})] },
+      ),
+      message('tool', [{ type: 'text', text: abandonedOutput }], {
+        toolCallId: 'call_abandoned',
+        isError: true,
+      }),
+      message(
+        'user',
+        [
+          {
+            type: 'text',
+            text:
+              '<system-reminder>\n' +
+              'The previous turn ended before producing a final response.\n\n' +
+              'Error: tool result dispatch failed\n\n' +
+              'The preceding user request may still be unfinished. Treat the next user message as a follow-up.\n' +
+              '</system-reminder>',
+          },
+        ],
+        { origin: { kind: 'injection', variant: 'turn_outcome' } },
+      ),
+      message('user', [{ type: 'text', text: 'Continue.' }]),
+    ]);
+
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript.split('Tool call did not complete').length - 1).toBe(1);
+    expect(transcript).not.toContain('tool result dispatch failed');
+    expect(transcript).not.toContain('preceding user request');
+    expect(
+      driver.state.transcriptEntries
+        .filter((entry) => entry.kind === 'user')
+        .map((entry) => entry.content),
+    ).toEqual(['Run the operation.', 'Continue.']);
+  });
+
+  it('does not render live context splice events containing turn outcome reminders', async () => {
+    const driver = await replayIntoDriver([]);
+
+    // The v2 server forwards this domain event on the v1 session channel even
+    // though it is intentionally absent from the SDK's public Event union.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'context.spliced',
+        sessionId: 'ses-replay',
+        agentId: 'main',
+        start: 1,
+        deleteCount: 0,
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text:
+                  '<system-reminder>\n' +
+                  'The user interrupted the previous turn before it finished.\n' +
+                  '</system-reminder>',
+              },
+            ],
+            toolCalls: [],
+            origin: { kind: 'injection', variant: 'turn_outcome' },
+          },
+        ],
+      } as unknown as Event,
+      () => {},
+    );
+
+    expect(driver.state.transcriptEntries).toEqual([]);
+    const transcript = stripAnsi(driver.state.transcriptContainer.render(140).join('\n'));
+    expect(transcript).not.toContain('user interrupted the previous turn');
+  });
+
   it('does not render legacy goal completion context reminders as transcript messages', async () => {
     const driver = await replayIntoDriver([
       message(

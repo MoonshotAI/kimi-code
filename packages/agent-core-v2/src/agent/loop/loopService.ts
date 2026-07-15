@@ -23,8 +23,10 @@
  * `stepRetry` re-enqueues the failed driver after backoff, `fullCompaction`
  * compacts and re-enqueues it — so the loop only learns caught-or-not, while
  * an unclaimed or uncaught error fails the turn. Emits `turn.*` / delta
- * events through `event`, persists loop events through `contextMemory`, and
- * reads the step budget from `config`. Bound at Agent scope.
+ * events through `event`, persists loop events through `contextMemory`, appends
+ * abnormal-turn context through `systemReminder`, reads the step budget from
+ * `config`, and reports reminder-persistence failures through `log`. Bound at
+ * Agent scope.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -34,6 +36,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable, toDisposable, type IDisposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { ILogService } from '#/_base/log/log';
 import { abortError, isAbortError, isUserCancellation, userCancellationReason } from '#/_base/utils/abort';
 import { toErrorMessage } from '#/_base/errors/errorMessage';
 import { IAgentLLMRequesterService, type LLMRequestFinish } from '#/agent/llmRequester/llmRequester';
@@ -49,6 +52,7 @@ import { OrderedHookSlot } from '#/hooks';
 import type { ActivityLease } from '#/activity/activity';
 import { IAgentActivityService } from '#/activity/activity';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
+import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import type {
   TurnEndedEvent as TurnEndedTelemetryEvent,
@@ -82,6 +86,11 @@ import {
 } from './stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from './stepRequestQueue';
 import { cancelTurn, promptTurn, TurnModel } from './turnOps';
+import {
+  renderTurnCancellationReminder,
+  renderTurnFailureReminder,
+  TURN_OUTCOME_REMINDER_VARIANT,
+} from './turnOutcomeReminder';
 // Loads the `DomainEventMap` augmentation for the `turn.*` / delta events this
 // service publishes (the augmentation lives with the event definitions;
 // without an import it would not enter every consumer's program).
@@ -107,6 +116,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
 
   constructor(
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
+    @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
+    @ILogService private readonly log: ILogService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
     @IEventBus private readonly eventBus: IEventBus,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
@@ -367,6 +378,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       lease.end(outcome, result?.type === 'failed' ? { error: result.error } : undefined);
       if (result !== undefined) {
         const error = result.type === 'failed' ? toKimiErrorPayload(result.error) : undefined;
+        this.closeAbandonedToolExchange(turn.id, result, error);
+        this.appendTurnOutcomeReminder(turn.id, result, error);
         this.eventBus.publish({
           type: 'turn.ended',
           turnId: turn.id,
@@ -397,6 +410,48 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       };
       turnTelemetry.track2('turn_ended', ended);
       this.pumpTurns();
+    }
+  }
+
+  private appendTurnOutcomeReminder(
+    turnId: number,
+    result: TurnResult,
+    error: ReturnType<typeof toKimiErrorPayload> | undefined,
+  ): void {
+    try {
+      const content =
+        result.type === 'failed'
+          ? renderTurnFailureReminder(error)
+          : result.type === 'cancelled'
+            ? renderTurnCancellationReminder(result.reason, isUserCancellation(result.reason))
+            : undefined;
+      if (content === undefined) return;
+      this.reminders.appendSystemReminder(content, {
+        kind: 'injection',
+        variant: TURN_OUTCOME_REMINDER_VARIANT,
+      });
+    } catch (reminderError) {
+      this.log.warn('failed to append turn outcome reminder', { turnId, error: reminderError });
+    }
+  }
+
+  private closeAbandonedToolExchange(
+    turnId: number,
+    result: TurnResult,
+    error: ReturnType<typeof toKimiErrorPayload> | undefined,
+  ): void {
+    try {
+      const closed = this.context.closeAbandonedToolExchange(
+        abandonedToolResultOutput(result, error),
+      );
+      if (closed === 0) return;
+      this.log.warn('closed abandoned tool exchange at turn end', {
+        turnId,
+        reason: result.type,
+        closed,
+      });
+    } catch (closeError) {
+      this.log.warn('failed to close abandoned tool exchange', { turnId, error: closeError });
     }
   }
 
@@ -989,6 +1044,19 @@ function interruptReasonFor(
     return 'filtered';
   }
   return 'error';
+}
+
+function abandonedToolResultOutput(
+  result: TurnResult,
+  error: ReturnType<typeof toKimiErrorPayload> | undefined,
+): string {
+  const cause =
+    result.type === 'cancelled'
+      ? 'the turn was cancelled'
+      : result.type === 'failed'
+        ? `the turn failed${error !== undefined ? ` (${error.message})` : ''}`
+        : 'the turn ended';
+  return `Tool call did not complete: ${cause} before its result was recorded. Do not assume the tool completed successfully.`;
 }
 
 type StepExecutionResult = {

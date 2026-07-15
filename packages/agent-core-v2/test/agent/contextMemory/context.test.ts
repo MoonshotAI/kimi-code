@@ -116,6 +116,63 @@ describe('Agent context', () => {
     ]);
   });
 
+  it('closes an abandoned tool exchange before releasing deferred reminders', () => {
+    context.appendLoopEvent({ type: 'step.begin', uuid: 'step_abandoned' });
+    context.appendLoopEvent({
+      type: 'tool.call',
+      stepUuid: 'step_abandoned',
+      toolCallId: 'call_abandoned',
+      name: 'Run',
+      args: {},
+    });
+    context.appendLoopEvent({
+      type: 'tool.call',
+      stepUuid: 'step_abandoned',
+      toolCallId: 'call_also_abandoned',
+      name: 'Read',
+      args: {},
+    });
+    ctx.appendSystemReminder('Turn failed.', {
+      kind: 'injection',
+      variant: 'turn_outcome',
+    });
+
+    expect(context.get().map((message) => message.role)).toEqual(['assistant']);
+    expect(
+      context.closeAbandonedToolExchange(
+        'Tool call did not complete because the turn failed.',
+      ),
+    ).toBe(2);
+
+    expect(context.get()).toMatchObject([
+      {
+        role: 'assistant',
+        toolCalls: [
+          { id: 'call_abandoned', name: 'Run' },
+          { id: 'call_also_abandoned', name: 'Read' },
+        ],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'call_abandoned',
+        isError: true,
+        content: [{ type: 'text', text: 'Tool call did not complete because the turn failed.' }],
+      },
+      {
+        role: 'tool',
+        toolCallId: 'call_also_abandoned',
+        isError: true,
+        content: [{ type: 'text', text: 'Tool call did not complete because the turn failed.' }],
+      },
+      {
+        role: 'user',
+        origin: { kind: 'injection', variant: 'turn_outcome' },
+        content: [{ type: 'text', text: '<system-reminder>\nTurn failed.\n</system-reminder>' }],
+      },
+    ]);
+    expect(context.closeAbandonedToolExchange('unused')).toBe(0);
+  });
+
   it('drops empty text parts only in LLM projection', () => {
     const history: ContextMessage[] = [
       {

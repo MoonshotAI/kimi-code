@@ -29,8 +29,9 @@
  *                                     `foldedLength` from the recorded
  *                                     kept-count fields
  *   - `context.undo`                → remove tail messages exactly like
- *                                     `ContextMemory.undo` (skip injections, stop at
- *                                     compaction summaries / `context.clear` floors)
+ *                                     `ContextMemory.undo` (preserve state injections,
+ *                                     remove turn outcomes, and stop at compaction
+ *                                     summaries / `context.clear` floors)
  *   - `context.clear`               → keep prior messages in the transcript (the TUI
  *                                     replay keeps them too) but reset the folded view
  *
@@ -58,6 +59,7 @@ import {
   isRealUserInput,
   selectRecentUserMessages,
 } from '../../agent/compaction';
+import { TURN_OUTCOME_REMINDER_VARIANT } from '../../agent/turn/outcome-reminder';
 
 type ContentPart = ContextMessage['content'][number];
 
@@ -213,7 +215,12 @@ export function reduceWireRecords(records: Iterable<AgentRecord>): {
     let removedUserCount = 0;
     for (let i = transcript.length - 1; i >= clearFloor; i--) {
       const message = transcript[i]!.message;
-      if (message.origin?.kind === 'injection') continue;
+      if (
+        message.origin?.kind === 'injection' &&
+        message.origin.variant !== TURN_OUTCOME_REMINDER_VARIANT
+      ) {
+        continue;
+      }
       if (message.origin?.kind === 'compaction_summary') break;
       transcript.splice(i, 1);
       foldedLength = Math.max(0, foldedLength - 1);

@@ -45,6 +45,11 @@ import {
 } from '../context/projector';
 import { renderUserPromptHookBlockResult, renderUserPromptHookResult } from '../../session/hooks';
 import { canonicalTelemetryArgs, isPlainRecord } from './canonical-args';
+import {
+  renderTurnCancellationReminder,
+  renderTurnFailureReminder,
+  TURN_OUTCOME_REMINDER_VARIANT,
+} from './outcome-reminder';
 import { ToolCallDeduplicator } from './tool-dedup';
 import { budgetToolResultForModel } from './tool-result-budget';
 
@@ -311,15 +316,23 @@ export class TurnFlow {
     return this.ensureActiveTurn().firstRequest;
   }
 
-  private abortTurn(reason: unknown) {
-    if (this.activeTurn !== 'resuming') {
-      // The reason (a user cancellation by default, or the originating signal's
-      // reason when propagated) travels as signal.reason so tools settling on
-      // this signal can report a deliberate user interruption distinctly from a
-      // timeout/system abort. linkAbortSignal forwards it to linked subagents.
-      this.activeTurn?.controller.abort(reason);
+  private abortTurn(reason: unknown): void {
+    if (this.activeTurn === 'resuming') {
+      this.activeTurn = null;
+      return;
     }
-    this.activeTurn = null;
+    if (this.activeTurn === null) return;
+
+    // Keep the turn active until its worker has closed any open tool exchange,
+    // appended the terminal outcome reminder, and emitted turn.ended. This
+    // lets the RPC cancellation wait on a true terminal barrier and prevents a
+    // follow-up turn from overlapping the cancelled turn's asynchronous cleanup.
+    const cancelledTurn = this.activeTurn;
+    // The reason (a user cancellation by default, or the originating signal's
+    // reason when propagated) travels as signal.reason so tools settling on
+    // this signal can report a deliberate user interruption distinctly from a
+    // timeout/system abort. linkAbortSignal forwards it to linked subagents.
+    cancelledTurn.controller.abort(reason);
   }
 
   private flushSteerBuffer(): boolean {
@@ -599,6 +612,7 @@ export class TurnFlow {
     // recorded call gets a result" invariant), close the exchange now so the
     // context state machine cannot strand later messages in deferredMessages.
     this.closeAbandonedToolExchange(ended);
+    this.appendTurnOutcomeReminder(ended, signal.reason);
     // Emit the terminal turn.ended and (for a standalone turn) release the active
     // turn in the SAME synchronous frame, so the session is observably idle the
     // instant turn.ended fires. A goal drive keeps the active turn across its
@@ -664,6 +678,27 @@ export class TurnFlow {
     this.interruptedTelemetryTurnIds.delete(turnId);
     this.stepFailureByTurn.delete(turnId);
     return { event: ended, stopReason: completedStopReason, blockedByUserPromptHook };
+  }
+
+  private appendTurnOutcomeReminder(ended: TurnEndedEvent, cancellationReason: unknown): void {
+    try {
+      const content =
+        ended.reason === 'failed'
+          ? renderTurnFailureReminder(ended.error)
+          : ended.reason === 'cancelled'
+            ? renderTurnCancellationReminder(
+                cancellationReason,
+                isUserCancellation(cancellationReason),
+              )
+            : undefined;
+      if (content === undefined) return;
+      this.agent.context.appendSystemReminder(content, {
+        kind: 'injection',
+        variant: TURN_OUTCOME_REMINDER_VARIANT,
+      });
+    } catch (error) {
+      this.agent.log.warn('failed to append turn outcome reminder', { error });
+    }
   }
 
   private async applyUserPromptHook(

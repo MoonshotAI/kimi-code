@@ -17,6 +17,7 @@ import {
   type CompactionInput,
   type CompactionResult,
 } from '../compaction';
+import { TURN_OUTCOME_REMINDER_VARIANT } from '../turn/outcome-reminder';
 import {
   captureMediaStripSnapshot,
   degradeOlderMediaParts,
@@ -192,7 +193,12 @@ export class ContextMemory {
     for (let i = this._history.length - 1; i >= 0; i--) {
       const message = this._history[i];
       if (message === undefined) continue;
-      if (message.origin?.kind === 'injection') continue;
+      if (
+        message.origin?.kind === 'injection' &&
+        message.origin.variant !== TURN_OUTCOME_REMINDER_VARIANT
+      ) {
+        continue;
+      }
       if (message.origin?.kind === 'compaction_summary') {
         stoppedAtBoundary = true;
         break;

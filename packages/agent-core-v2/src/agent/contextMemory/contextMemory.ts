@@ -35,6 +35,8 @@ export interface IAgentContextMemoryService {
 
   appendLoopEvent(event: LoopRecordedEvent): void;
 
+  closeAbandonedToolExchange(output: string): number;
+
   clear(): void;
 
   undo(count: number): UndoCut;

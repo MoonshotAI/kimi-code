@@ -3,9 +3,10 @@
  *
  * Coverage:
  *   - reduceWireRecords: append + loop events; compaction keeps the prefix and
- *     inserts the summary at the fold point; undo (skip injections, stop at
- *     compaction summaries and clear floors); clear resets the folded view but
- *     keeps the transcript; deferred messages during an open tool exchange;
+ *     inserts the summary at the fold point; undo (preserve state injections,
+ *     remove turn outcomes, stop at compaction summaries and clear floors);
+ *     clear resets the folded view but keeps the transcript; deferred messages
+ *     during an open tool exchange;
  *     tool.result `<system>` status wrapping
  *   - readWireRecords: tolerates a torn final line, throws on mid-file corruption
  *   - readWireTranscript: blobref → data URI rehydration from the blobs dir
@@ -294,6 +295,24 @@ describe('reduceWireRecords', () => {
     // a2 removed, injection skipped (kept), u2 removed → stop.
     expect(entries.map((e) => textOf(e.message))).toEqual(['u1', 'a1', 'note']);
     expect(foldedLength).toBe(3);
+  });
+
+  it('undo removes a turn outcome reminder with its real user prompt', () => {
+    const { entries, foldedLength } = reduceWireRecords([
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('u2')),
+      appendMessage(
+        userMessage('previous turn failed', {
+          kind: 'injection',
+          variant: 'turn_outcome',
+        }),
+      ),
+      { type: 'context.undo', count: 1 } as AgentRecord,
+    ]);
+
+    expect(entries.map((entry) => textOf(entry.message))).toEqual(['u1', 'a1']);
+    expect(foldedLength).toBe(2);
   });
 
   it('undo stops at a compaction summary boundary', () => {

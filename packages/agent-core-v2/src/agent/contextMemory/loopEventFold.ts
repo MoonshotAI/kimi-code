@@ -139,6 +139,14 @@ export function foldAppendMessage(
   return bind([...state, message], ctx);
 }
 
+export function pendingToolCallIds(state: readonly ContextMessage[]): readonly string[] {
+  return [...ctxOf(state).pending];
+}
+
+export function openStepUuid(state: readonly ContextMessage[]): string | undefined {
+  return ctxOf(state).openStepUuid;
+}
+
 export function foldLoopEvent(
   state: readonly ContextMessage[],
   event: LoopRecordedEvent,
