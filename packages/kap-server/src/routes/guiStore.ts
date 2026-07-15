@@ -2,19 +2,19 @@
  * `/api/v1/gui/store/*` routes — server-backed localStorage mirror.
  */
 
-import {
-  ErrorCode,
-  guiStoreGetItemQuerySchema,
-  guiStoreGetItemResponseSchema,
-  guiStoreLengthResponseSchema,
-  guiStoreRemoveItemBodySchema,
-  guiStoreSetItemBodySchema,
-} from '@moonshot-ai/protocol';
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { IGuiStoreService } from '../services/guiStore/guiStore';
+import { ErrorCode } from '../wire/error-codes';
+import {
+  guiStoreGetItemQuerySchema,
+  guiStoreGetItemResponseSchema,
+  guiStoreLengthResponseSchema,
+  guiStoreRemoveItemBodySchema,
+  guiStoreSetItemBodySchema,
+} from '../wire/rest-guiStore';
 
 interface GuiStoreRouteHost {
   get(

@@ -15,7 +15,7 @@
  * down.
  */
 
-import { WS_PROTOCOL_VERSION, type SessionCursor } from '@moonshot-ai/protocol';
+import { WS_PROTOCOL_VERSION, type SessionCursor } from '../../../wire/ws-control';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 

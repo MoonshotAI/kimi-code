@@ -17,7 +17,7 @@ Base classes and serialization are **centralized** in `_base/errors`; error **co
 
 - **Throw a coded error, not a bare string.** `throw new Error2(ErrorCodes.X, …)`. Bare `new Error` only for unreachable guards; `BugIndicatingError` for caller bugs; `NotImplementedError('feature')` for stubs.
 - **Define codes in the owning domain**, in `<domain>/errors.ts` as an `XxxErrors` descriptor (`satisfies ErrorDomain` + `registerErrorDomain`), then wire it into the facade. Never add domain codes to `_base/errors`.
-- **One `code` per failure mode.** Codes read `domain.reason`. The valid code strings are fixed by the protocol (`KimiErrorCode` in `packages/protocol/src/events.ts`): **add new codes to the protocol first**. Renaming/removing a code is a major.
+- **One `code` per failure mode.** Codes read `domain.reason`. The valid code strings are derived from the aggregated domain definitions (`ErrorCode` in `#/errors` is computed from the `ErrorCodes` aggregate): **add new codes to the owning domain's `errors.ts`**; registration throws on cross-domain collisions. Renaming/removing a code is a major.
 - **Translate foreign errors at the boundary.** Provider/HTTP, fs, MCP errors are re-thrown as the owning domain's coded error. `_base/errors` never imports a business domain.
 - **Translation is idempotent and cause-preserving.** Translators (`toHostFsError`, `toStorageIoError`) pass through an already-translated error and always keep the original as `cause`.
 - **`details` is structured and JSON-serializable; `message` is a short human sentence.** Paths/errnos/scope/key go into `details`, not the message.

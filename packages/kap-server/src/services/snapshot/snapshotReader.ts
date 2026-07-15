@@ -36,16 +36,13 @@ import {
   type Scope,
   type SessionMeta,
 } from '@moonshot-ai/agent-core-v2';
-import type {
-  InFlightTurn,
-  SessionSnapshotResponse,
-  SessionStatus,
-} from '@moonshot-ai/protocol';
+import type { SessionStatus } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionWire';
 
 import { toWireApproval } from '../../routes/approvals';
 import { toWireQuestion } from '../../routes/questions';
 import { toWireSession } from '../../routes/sessions';
 import { type SessionEventBroadcaster } from '../../transport/ws/v1/sessionEventBroadcaster';
+import type { InFlightTurn, SessionSnapshotResponse } from '../../wire/rest-snapshot';
 import { SnapshotNotFoundError } from './snapshot';
 import type { ISnapshotReader } from './snapshot';
 import { type SnapshotConfig } from './snapshotConfig';

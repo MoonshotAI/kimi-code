@@ -99,20 +99,20 @@ import {
   type ExtraSkillDirsConfig,
   type MergeAllAvailableSkillsConfig,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  ErrorCode,
-  activateSkillRequestSchema,
-  activateSkillResultSchema,
-  listSkillsResponseSchema,
-  workspaceIdParamSchema,
-  type SkillDescriptor,
-} from '@moonshot-ai/protocol';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
+import { ErrorCode } from '../wire/error-codes';
+import {
+  activateSkillRequestSchema,
+  activateSkillResultSchema,
+  listSkillsResponseSchema,
+} from '../wire/rest-skill';
+import { workspaceIdParamSchema } from '../wire/rest-workspace';
+import type { SkillDescriptor } from '../wire/skill';
 import { parseActionSuffix } from './action-suffix';
 
 interface SkillsRouteHost {

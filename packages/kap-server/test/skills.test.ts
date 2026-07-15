@@ -33,7 +33,7 @@ import {
 import {
   activateSkillResultSchema,
   listSkillsResponseSchema,
-} from '@moonshot-ai/protocol';
+} from '../src/wire/rest-skill';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';

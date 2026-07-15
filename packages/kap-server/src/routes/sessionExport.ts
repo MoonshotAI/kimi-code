@@ -18,15 +18,15 @@ import {
   isError2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  ErrorCode,
-  errEnvelope,
-  exportSessionParamsSchema,
-  exportSessionRequestSchema,
-} from '@moonshot-ai/protocol';
 
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../wire/error-codes';
+import { errEnvelope } from '../wire/envelope';
+import {
+  exportSessionParamsSchema,
+  exportSessionRequestSchema,
+} from '../wire/rest-session';
 
 const MAX_WEB_SESSION_EXPORT_BYTES = 64 * 1024 * 1024;
 

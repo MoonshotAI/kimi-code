@@ -94,20 +94,18 @@ import {
   type IAgentScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { ErrorCode } from '../wire/error-codes';
+import { pageResponseSchema } from '../wire/pagination';
 import {
-  ErrorCode,
   archiveSessionResponseSchema,
   compactSessionRequestSchema,
   compactSessionResponseSchema,
   createSessionChildRequestSchema,
   createSessionRequestSchema,
-  emptySessionUsage,
   forkSessionRequestSchema,
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
-  pageResponseSchema,
   sessionAbortResponseSchema,
-  sessionSchema,
   sessionStatusResponseSchema,
   sessionStatusSchema,
   sessionWarningsResponseSchema,
@@ -115,9 +113,10 @@ import {
   undoSessionRequestSchema,
   undoSessionResponseSchema,
   updateSessionProfileRequestSchema,
-  workspaceIdSchema,
-} from '@moonshot-ai/protocol';
-import type { Session, SessionStatus } from '@moonshot-ai/protocol';
+  type SessionStatus,
+} from '../wire/rest-session';
+import { emptySessionUsage, sessionSchema, type Session } from '../wire/session';
+import { workspaceIdSchema } from '../wire/workspace';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

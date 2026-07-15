@@ -53,16 +53,15 @@ import {
   MAIN_AGENT_ID,
 } from '@moonshot-ai/agent-core-v2';
 import type {
-  Event,
-  InFlightTurn,
   ModelCatalogChangedEvent,
   SessionCreatedEvent,
-  SessionCursor,
   SessionMetaUpdatedEvent,
-  SessionStatus,
-  SnapshotSubagent,
-} from '@moonshot-ai/protocol';
-import { isVolatileEventType } from '@moonshot-ai/protocol';
+  Event,
+} from './events';
+import { isVolatileEventType } from './events';
+import type { SessionCursor } from '../../../wire/ws-control';
+import type { InFlightTurn, SnapshotSubagent } from '../../../wire/rest-snapshot';
+import type { SessionStatus } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionWire';
 
 import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';

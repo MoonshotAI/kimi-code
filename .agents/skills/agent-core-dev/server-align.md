@@ -16,10 +16,10 @@ The two surfaces can point at **different Services** for the same feature. v2's 
 ## Decision: which surface?
 
 ```text
-Is the endpoint part of the established /api/v1 wire contract (protocol schema
+Is the endpoint part of the established /api/v1 wire contract (the established wire schema
 + released-client expectation)?
 ├─ YES → /api/v1 mirror route (this file, §schema-fidelity + §legacy-service).
-│         Reuse the protocol schema; add a LegacyService if v2 semantics diverge.
+│         Reuse the established wire schema; add a LegacyService if v2 semantics diverge.
 └─ NO  → /api/v2 native action (edge-exposure.md).
          Add to actionMap, wrapping in a facade if the method fails §2 there.
 ```
@@ -29,37 +29,56 @@ A feature often needs **both**: the v1 mirror so old clients keep working, and t
 ## The server-align workflow
 
 ```text
-Pick surface → Read the v1 route (if any) → Reuse / add the protocol schema
+Pick surface → Read the v1 route (if any) → Reuse / add the wire schema
 → Choose native Service vs LegacyService → Wire the route / actionMap entry
 → Map errors → Test against the v1 wire shape → Verify
 ```
 
 ### 1. Pick the surface
 
-Apply the decision above. For a v1-matched endpoint, the **spec** is the protocol schema plus the existing mirror routes:
+Apply the decision above. For a v1-matched endpoint, the **spec** is the established wire schema plus the existing mirror routes:
 
-- `packages/protocol/src/rest/<resource>.ts` — the wire schema you must match.
+- The schema in its owning home — the backing `agent-core-v2` domain's contract, or `packages/kap-server/src/wire/` for v1-only shapes.
 - `packages/kap-server/src/routes/<resource>.ts` — the file you are writing (create it if missing); sibling route files show the conventions.
 
-The protocol schema is the source of truth. Do not re-derive the wire shape from memory or from the v2 domain model.
+The shared schema is the source of truth. Do not re-derive the wire shape from memory or from the v2 domain model.
 
-### 2. Reuse (or add) the protocol schema
+### 2. Reuse (or add) the wire schema
 
-The wire schema lives in **`@moonshot-ai/protocol`** under `packages/protocol/src/rest/<resource>.ts` (e.g. `promptSubmissionSchema`, `promptListResponseSchema`, `configResponseSchema`). Every `/api/v1` route in `packages/kap-server` imports from it — that single import is what guarantees the server speaks the same shape released clients expect.
+The v1 wire schemas have two homes, both inside this repo's v2 chain — never
+re-declare them inline in a route:
+
+- **Engine-owned contracts** — DTOs the engine's own services speak live in
+  the `agent-core-v2` domain that backs the endpoint (e.g. the fs DTO schemas
+  in `session/sessionFs/fs.ts`, the session wire DTOs in
+  `app/sessionLegacy/sessionWire.ts`, OAuth DTOs in `app/auth/oauthWire.ts`).
+  Import them into the route via the leaf path
+  (`@moonshot-ai/agent-core-v2/...`).
+- **Server-owned v1-only schemas** — shapes only the v1 transport needs
+  (envelope, numeric `ErrorCode`, pagination, `sessionSchema`, task/tool/
+  skill/question/approval models, the `rest-*` endpoint schemas, the WS
+  `ws-control` catalog) live in `packages/kap-server/src/wire/`.
 
 Actions:
 
-- **Schema already in protocol** → import it in the server-v2 route and use it in `defineRoute` (`body`, `success.data`, error `dataSchema` / `detailsSchema`). Do **not** re-declare the schema inline in server-v2.
-- **Schema missing in protocol** → add it to `packages/protocol/src/rest/<resource>.ts` first, with a `rest-<resource>.test.ts`, then consume it from the route. The protocol package is the source of truth; server-v2 never owns a v1 wire schema locally.
-- **Schema exists but only v1 uses it** → move/keep it in protocol and import it into server-v2; do not fork a copy.
+- **Schema already in one of these homes** → import it in the server-v2 route
+  and use it in `defineRoute` (`body`, `success.data`, error `dataSchema` /
+  `detailsSchema`). Do **not** re-declare the schema inline in server-v2.
+- **Schema missing, and the engine's service speaks the shape** → add it to
+  the owning `agent-core-v2` domain's contract (as a zod schema with an
+  inferred type), then consume it from the route.
+- **Schema missing and only the v1 edge needs it** → add it to the matching
+  `packages/kap-server/src/wire/` module; do not push v1-only shapes into the
+  engine.
 
 #### Schema-fidelity rule (the hard rule)
 
-For a `/api/v1` endpoint, the request and response schemas **must be the established protocol schema** (or a strict superset):
+For a `/api/v1` endpoint, the request and response schemas **must be the
+established wire schema** (or a strict superset):
 
 - ✅ **Adding** an optional field is allowed (`field: z.string().optional()`). Old clients ignore it; new clients may send it.
 - ❌ **Renaming** a field, **changing** its type, **tightening** its validation, or **changing its meaning** is a wire break — do not do it in a mirror route. If the v2 domain genuinely needs a different shape, that shape belongs on `/api/v2`, not on the `/api/v1` mirror.
-- ❌ Re-declaring the schema inline in server-v2 (even if it "looks identical") is forbidden — it drifts. One schema, one home: `packages/protocol`.
+- ❌ Re-declaring the schema inline in server-v2 (even if it "looks identical") is forbidden — it drifts. One schema, one home: the owning v2 domain, or `kap-server/src/wire` for v1-only shapes.
 
 Self-check: "would a released v1 client get a byte-identical envelope from `packages/kap-server` for this request?" If you cannot answer yes from the shared schema, the route is wrong.
 
@@ -82,11 +101,11 @@ Do **not** put v1 quirks into the native v2 Service "to keep the route simple". 
 
 #### LegacyService recipe
 
-A LegacyService is a normal v2 Service (service-authoring.md) with one extra convention: its contract is shaped by the **protocol** types, not by the v2 domain model.
+A LegacyService is a normal v2 Service (service-authoring.md) with one extra convention: its contract is shaped by the **v1 wire** types, not by the v2 domain model.
 
 ```text
 packages/agent-core-v2/src/<domain>Legacy/
-├── <domain>Legacy.ts          ← contract: protocol-typed interface + decorator
+├── <domain>Legacy.ts          ← contract: v1-wire-typed interface + decorator
 ├── <domain>LegacyService.ts   ← impl: delegates to the native v2 Service(s)
 └── errors.ts                  ← v1-compatible error codes (KimiError codes)
 ```
@@ -94,14 +113,14 @@ packages/agent-core-v2/src/<domain>Legacy/
 Skeleton (matches `prompt/`):
 
 ```ts
-// prompt.ts — contract shaped by @moonshot-ai/protocol
-import type { PromptSubmitResult, PromptSubmission } from '@moonshot-ai/protocol';
+// prompt.ts — contract shaped by the v1 wire DTOs (defined in this domain)
+import type { PromptSubmitResult, PromptSubmission } from './promptWire';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
 export interface IAgentPromptService {
   readonly _serviceBrand: undefined;
   submit(body: PromptSubmission): Promise<PromptSubmitResult>;
-  // ...the rest of the v1 contract, typed by protocol
+  // ...the rest of the v1 contract, typed by the v1 wire
 }
 export const IAgentPromptService: ServiceIdentifier<IAgentPromptService> =
   createDecorator<IAgentPromptService>('agentPromptLegacyService');
@@ -111,7 +130,7 @@ export const IAgentPromptService: ServiceIdentifier<IAgentPromptService> =
 // promptService.ts — impl delegates to the native v2 Service
 constructor(@IAgentPromptService private readonly prompt: IAgentPromptService /*, ... */) {}
 // submit() builds v2-native input, calls the native Service, projects the result
-// back into the protocol PromptSubmitResult.
+// back into the wire PromptSubmitResult.
 
 registerScopedService(
   LifecycleScope.Agent,            // scope = the lifetime of the legacy state
@@ -128,7 +147,7 @@ Conventions:
 - **Header comment** must say it is an `L7 edge adapter` and name both the v1 contract it implements and the native v2 Service it leaves untouched (see `prompt.ts`).
 - **Scope** = the lifetime of the *legacy* state it holds (the `prompt` queue is per-agent → `LifecycleScope.Agent`). Apply [orient.md](orient.md) / [design.md](design.md) normally — a LegacyService is not exempt from scope rules.
 - **Delegate, do not duplicate** business logic. The LegacyService translates the v1 contract into native-Service calls and translates results back; the real work stays in the native Service.
-- **Contract types come from `@moonshot-ai/protocol`**, so the interface cannot drift from the wire shape.
+- **Contract types come from the v1 wire schemas the domain owns** (zod in the domain contract, types inferred), so the interface cannot drift from the wire shape.
 
 ### 4. Wire the route / actionMap entry
 
@@ -139,9 +158,9 @@ const route = defineRoute(
   {
     method: 'POST',
     path: '/sessions/{session_id}/prompts',
-    body: promptSubmissionSchema,                 // ← from @moonshot-ai/protocol
+    body: promptSubmissionSchema,                 // ← v1 wire schema (v2 domain or kap-server wire/)
     params: sessionIdParamSchema,
-    success: { data: promptSubmitResultSchema },  // ← from @moonshot-ai/protocol
+    success: { data: promptSubmitResultSchema },  // ← v1 wire schema
     errors: {
       [ErrorCode.SESSION_NOT_FOUND]: {},
       [ErrorCode.SESSION_BUSY]: {},
@@ -166,10 +185,10 @@ app.post(route.path, route.options, route.handler);
 
 ### 5. Map errors
 
-The route translates domain `KimiError` codes into protocol `ErrorCode` numbers. Two registries must stay in sync:
+The route translates domain `KimiError` codes into the numeric wire `ErrorCode` numbers. Two registries must stay in sync:
 
 - **Domain code** — register in `agent-core-v2/src/errors.ts` (`ErrorCodes`) and throw from the Service (errors.md). Co-located domain errors go in `<domain>Legacy/errors.ts` (e.g. `prompt.not_found`, `session.busy`).
-- **Wire code** — register the matching number in `packages/protocol/src/error-codes.ts` and reference it in the route's `errors` map and `sendMappedError`.
+- **Wire code** — register the matching number in `packages/kap-server/src/wire/error-codes.ts` and reference it in the route's `errors` map and `sendMappedError`.
 
 ```ts
 function sendMappedError(reply, requestId, err) {
@@ -191,18 +210,18 @@ Match the v1 route's status codes and idempotent-conflict envelopes (e.g. `promp
 
 ### 6. Test against the v1 wire shape
 
-Add a `packages/kap-server/test/<resource>.test.ts` that boots the server and hits the route. Assert on the **envelope + protocol shape**, not on the v2 domain internals:
+Add a `packages/kap-server/test/<resource>.test.ts` that boots the server and hits the route. Assert on the **envelope + wire shape**, not on the v2 domain internals:
 
-- success envelope `{ code: 0, data: <protocol shape>, request_id }`;
+- success envelope `{ code: 0, data: <wire shape>, request_id }`;
 - each declared error envelope `{ code: <ErrorCode>, msg, data, request_id }`;
 - the fields v1 clients read are present with the same names/types.
 
-Where the route mirrors v1, the test is the regression guard for the schema-fidelity rule: if someone drifts the protocol schema or the projection, this test breaks.
+Where the route mirrors v1, the test is the regression guard for the schema-fidelity rule: if someone drifts the wire schema or the projection, this test breaks.
 
 ### 7. Verify
 
 - `pnpm -C packages/kap-server test` — server routes green.
-- `pnpm -C packages/protocol test` — schema tests green (incl. any new `rest-*.test.ts`).
+- `pnpm -C packages/kap-server test` — server routes green (incl. any new wire-schema tests).
 - `pnpm -C packages/agent-core-v2 test` — native + Legacy Service tests green.
 - `pnpm -C packages/agent-core-v2 run lint:domain` — a LegacyService is still inside the domain layers (edge adapter, L7); it must not pull business code into the edge or invert scope direction.
 - `pnpm -C packages/server-e2e ...` when a v1 parity scenario exists.
@@ -218,33 +237,33 @@ This is the reference alignment (commits `feat(server-v2): port v1 /sessions/:si
 - `/api/v2` keeps the native shape — `prompts:submit` / `steer` / `undo` / `clear` / `cancel` map to `IAgentRPCService` (a wire facade over the v2 turn driver) in `actionMap`. The native `IAgentPromptService` is untouched.
 - `/api/v1` gets an `AgentPromptLegacyService` (`prompt/`, `LifecycleScope.Agent`) that re-implements the v1 scheduler — queue, `prompt_id`, steer/abort, auto-start-next — **on top of** the native `IAgentPromptService`. The `/api/v1` routes consume the LegacyService.
 
-**The schema.** Both surfaces import `promptSubmissionSchema` / `promptSubmitResultSchema` / `promptListResponseSchema` / `promptSteerRequestSchema` / `promptSteerResultSchema` / `promptAbortResponseSchema` from `@moonshot-ai/protocol`. The `/api/v1` and `/api/v2` routes are therefore compatible with released clients by construction; the LegacyService projects v2 turn results back into those protocol shapes.
+**The schema.** Both surfaces import `promptSubmissionSchema` / `promptSubmitResultSchema` / `promptListResponseSchema` / `promptSteerRequestSchema` / `promptSteerResultSchema` / `promptAbortResponseSchema` from the shared v1 wire schemas. The `/api/v1` and `/api/v2` routes are therefore compatible with released clients by construction; the LegacyService projects v2 turn results back into those wire shapes.
 
-**The errors.** v1 codes (`prompt.not_found`, `session.busy`, `prompt.already_completed`) are registered in `agent-core-v2` (`prompt/errors.ts`) and in `packages/protocol` (`error-codes.ts`), then mapped in the route's `sendMappedError` — including the idempotent `prompt.already_completed` → `40903 { data: { aborted: false } }`.
+**The errors.** v1 codes (`prompt.not_found`, `session.busy`, `prompt.already_completed`) are registered in `agent-core-v2` (`prompt/errors.ts`) and in kap-server's `wire/error-codes.ts`, then mapped in the route's `sendMappedError` — including the idempotent `prompt.already_completed` → `40903 { data: { aborted: false } }`.
 
-**The lesson.** When the v1 contract and the v2 domain disagree, add an adapter (LegacyService) at the edge; do not let the wire contract leak into the native domain. The two surfaces share the protocol schema but not the Service.
+**The lesson.** When the v1 contract and the v2 domain disagree, add an adapter (LegacyService) at the edge; do not let the wire contract leak into the native domain. The two surfaces share the wire schema but not the Service.
 
 ## Migration checklist
 
 Before submitting a server-align change:
 
 - [ ] Surface chosen deliberately: `/api/v1` mirror for a v1-matched endpoint, `/api/v2` for a new native capability (both if needed).
-- [ ] For a `/api/v1` mirror, the route matches the established v1 contract (protocol schema + sibling routes) path-for-path, verb-for-verb, action-for-action.
-- [ ] Request and response schemas come from `@moonshot-ai/protocol` (`packages/protocol/src/rest/<resource>.ts`); no inline re-declaration in server-v2.
+- [ ] For a `/api/v1` mirror, the route matches the established v1 contract (the established wire schema + sibling routes) path-for-path, verb-for-verb, action-for-action.
+- [ ] Request and response schemas come from their owning home (the backing `agent-core-v2` domain's contract, or `packages/kap-server/src/wire/` for v1-only shapes); no inline re-declaration in server-v2.
 - [ ] Existing schema fields are unchanged in name, type, and semantics; only optional fields added (if any).
 - [ ] Native v2 Service left clean; v1-only behavior isolated in a `<domain>Legacy` / `I<Domain>LegacyService` edge adapter when the semantics diverge.
 - [ ] LegacyService registered with the correct `LifecycleScope` and a header comment naming it an L7 edge adapter + the native Service it preserves.
-- [ ] Domain error codes registered in `agent-core-v2`; wire codes registered in `packages/protocol`; route maps them in `sendMappedError`, matching v1's status codes and idempotent envelopes.
+- [ ] Domain error codes registered in `agent-core-v2`; wire codes registered in `packages/kap-server/src/wire/error-codes.ts`; route maps them in `sendMappedError`, matching v1's status codes and idempotent envelopes.
 - [ ] Route resolves the scope from the URL by `accessor.get(IX)`; no cached scope; finishes before disposal.
-- [ ] Tests assert the wire envelope + protocol shape; schema tests in `packages/protocol` added/updated.
+- [ ] Tests assert the wire envelope + the established wire shape; schema-level guards added/updated where the route mirrors v1.
 - [ ] `lint:domain` passes; the LegacyService did not invert scope or domain direction.
 
 ## Red lines (this subskill)
 
-- One wire schema, one home: `packages/protocol`. Never re-declare a v1 wire schema inline in server-v2.
+- One wire schema, one home: the owning `agent-core-v2` domain contract, or `packages/kap-server/src/wire/` for v1-only shapes. Never re-declare a v1 wire schema inline in server-v2.
 - A `/api/v1` mirror route must keep every existing schema field's name, type, and semantics; only optional additions are allowed. A different shape belongs on `/api/v2`, not on the mirror.
 - Do not distort the native v2 Service to satisfy a v1 quirk — add a `<domain>Legacy` edge adapter instead. The native Service serves the v2 architecture; the LegacyService serves the wire contract.
 - A LegacyService is still a v2 Service: it follows scope, domain-direction, and DI rules. "Edge adapter" describes its role, not an exemption.
-- The protocol schema (`packages/protocol/src/rest/<resource>.ts`) plus the existing mirror routes are the spec for a `/api/v1` route — match them; do not re-derive the wire shape from the v2 domain model or from memory.
-- Register every new error code in **both** `agent-core-v2` and `packages/protocol`; an unmapped code is a wire break.
+- The established wire schema (in its owning home) plus the existing mirror routes are the spec for a `/api/v1` route — match them; do not re-derive the wire shape from the v2 domain model or from memory.
+- Register every new error code in **both** `agent-core-v2` and `packages/kap-server/src/wire/error-codes.ts`; an unmapped code is a wire break.
 - Events stream over WS (`listen`), never over the REST mirror; do not invent REST polling for something v1 pushed as an event.

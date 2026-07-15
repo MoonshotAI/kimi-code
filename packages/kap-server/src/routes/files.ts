@@ -20,19 +20,18 @@ import {
   Error2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  ErrorCode,
-  deleteFileParamSchema,
-  deleteFileResponseSchema,
-  errEnvelope,
-  getFileParamSchema,
-  okEnvelope,
-  uploadFileResponseSchema,
-} from '@moonshot-ai/protocol';
 import { z } from 'zod';
 
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../wire/error-codes';
+import { errEnvelope, okEnvelope } from '../wire/envelope';
+import {
+  deleteFileParamSchema,
+  deleteFileResponseSchema,
+  getFileParamSchema,
+  uploadFileResponseSchema,
+} from '../wire/rest-file';
 
 interface FilesRouteHost {
   register(plugin: unknown, opts?: unknown): unknown;

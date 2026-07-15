@@ -21,7 +21,7 @@ import {
   IWireService,
   SessionInteractionService,
 } from '@moonshot-ai/agent-core-v2';
-import type { AgentEvent } from '@moonshot-ai/protocol';
+import type { AgentEvent } from '../src/transport/ws/v1/events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {

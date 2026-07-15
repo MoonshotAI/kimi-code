@@ -1,6 +1,6 @@
 /**
- * `/api/v1/ws` wire frame builders — thin wrappers around the
- * `@moonshot-ai/protocol` message shapes, ported from v1
+ * `/api/v1/ws` wire frame builders — thin wrappers around the v1 wire message
+ * shapes (see the local `wire/ws-control` catalog), ported from v1
  * (`packages/server/src/ws/protocol.ts`).
  *
  * Outbound payloads go straight to `JSON.stringify` — no Zod re-validation.
