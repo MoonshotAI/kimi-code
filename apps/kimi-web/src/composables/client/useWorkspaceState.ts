@@ -1430,7 +1430,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
             type: 'file',
             fileId: att.fileId,
             name: att.name ?? '',
-            mediaType: att.mediaType ?? 'application/octet-stream',
+            mediaType: att.mediaType || 'application/octet-stream',
             size: att.size ?? 0,
           });
         } else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
@@ -1610,7 +1610,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           type: 'file',
           fileId: att.fileId,
           name: att.name ?? '',
-          mediaType: att.mediaType ?? 'application/octet-stream',
+          mediaType: att.mediaType || 'application/octet-stream',
           size: att.size ?? 0,
         });
       } else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });

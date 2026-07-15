@@ -76,6 +76,8 @@ describe('useAttachmentUpload', () => {
     att.handleFileInputChange(inputEvent([{ name: 'Makefile', type: '' } as unknown as File]));
     expect(att.attachments.value).toHaveLength(1);
     expect(att.attachments.value[0].kind).toBe('file');
+    // The wire schema requires a non-empty media_type — '' must be normalized.
+    expect(att.attachments.value[0].mediaType).toBe('application/octet-stream');
   });
 
   it('is a no-op when uploadImage is not provided', () => {

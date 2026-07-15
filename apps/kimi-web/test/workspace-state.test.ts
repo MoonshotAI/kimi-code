@@ -1645,6 +1645,24 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       }),
     );
   });
+
+  it('normalizes an empty attachment MIME to application/octet-stream on submit', async () => {
+    const ws = useWorkspaceState(createState(), promptDeps());
+
+    await ws.submitPromptInternal('sess_1', 'look at this', [
+      { fileId: 'f_mk', kind: 'file', name: 'Makefile', mediaType: '', size: 10 },
+    ]);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [
+          { type: 'text', text: 'look at this' },
+          { type: 'file', fileId: 'f_mk', name: 'Makefile', mediaType: 'application/octet-stream', size: 10 },
+        ],
+      }),
+    );
+  });
 });
 
 // Regression: a search-triggered full session-list reload must not clobber the

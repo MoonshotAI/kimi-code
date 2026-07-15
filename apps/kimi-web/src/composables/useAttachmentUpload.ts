@@ -96,7 +96,9 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
         name: file.name,
         kind,
         previewUrl,
-        mediaType: file.type,
+        // Extensionless/unknown files report an empty MIME — normalize now so
+        // the wire file part's required non-empty media_type never sees ''.
+        mediaType: file.type || 'application/octet-stream',
         size: file.size,
         uploading: true,
       };
@@ -109,7 +111,15 @@ export function useAttachmentUpload(deps: AttachmentUploadDeps) {
           sid,
           current.map((a) =>
             a.localId === localId
-              ? { ...a, uploading: false, fileId: result?.fileId, error: result === null }
+              ? {
+                  ...a,
+                  uploading: false,
+                  fileId: result?.fileId,
+                  // Adopt the server-recorded MIME when available — the
+                  // server's file meta is what the prompt route reads.
+                  mediaType: result?.mediaType ?? a.mediaType,
+                  error: result === null,
+                }
               : a,
           ),
         );
