@@ -143,15 +143,19 @@ function openOnboarding(): void {
   showOnboarding.value = true;
 }
 
-// iOS Safari does not shrink `dvh` for the on-screen keyboard, so a 100dvh
-// shell keeps the dock behind it and iOS pans the document instead, leaving a
-// blank band between the composer and the keyboard. `visualViewport.height`
-// DOES shrink — mirror it into --app-height so the shell tracks the visible
-// area. (`interactive-widget=resizes-content` covers Chromium; this covers iOS.)
+// iOS Safari does not shrink `dvh` for the on-screen keyboard. Instead it pans
+// the visual viewport (offsetTop > 0) to reveal the focused field, which a
+// 100dvh in-flow shell cannot follow: the dock ends up behind the keyboard, or
+// the page shows a blank band past the shell's bottom edge. Pin the shell to
+// the VISUAL viewport instead: position:fixed + top/height mirrored from
+// visualViewport (height shrinks with the keyboard, offsetTop tracks the pan).
+// No-ops on desktop, where offsetTop is 0 and height equals innerHeight.
 let appHeightRaf = 0;
 function setAppHeight(): void {
-  const height = window.visualViewport?.height ?? window.innerHeight;
-  document.documentElement.style.setProperty('--app-height', `${height}px`);
+  const vv = window.visualViewport;
+  const root = document.documentElement.style;
+  root.setProperty('--app-height', `${vv?.height ?? window.innerHeight}px`);
+  root.setProperty('--app-top', `${vv?.offsetTop ?? 0}px`);
 }
 function syncAppHeight(): void {
   if (appHeightRaf) return;
@@ -174,6 +178,7 @@ onMounted(() => {
   loadSidebarCollapsed();
   setAppHeight();
   window.visualViewport?.addEventListener('resize', syncAppHeight);
+  window.visualViewport?.addEventListener('scroll', syncAppHeight);
   window.addEventListener('resize', syncAppHeight);
   // Capture-phase so Escape closes the side detail layer BEFORE the
   // conversation pane's bubble-phase handler interrupts a running prompt.
@@ -183,12 +188,14 @@ onMounted(() => {
 onUnmounted(() => {
   document.removeEventListener('keydown', onGlobalKeydown, true);
   window.visualViewport?.removeEventListener('resize', syncAppHeight);
+  window.visualViewport?.removeEventListener('scroll', syncAppHeight);
   window.removeEventListener('resize', syncAppHeight);
   if (appHeightRaf) {
     cancelAnimationFrame(appHeightRaf);
     appHeightRaf = 0;
   }
   document.documentElement.style.removeProperty('--app-height');
+  document.documentElement.style.removeProperty('--app-top');
   if (offAuthRequired !== null) {
     offAuthRequired();
     offAuthRequired = null;
@@ -1098,10 +1105,16 @@ function openPr(url: string): void {
 .gload-fade-leave-to { opacity: 0; }
 
 .app-shell {
+  /* Pinned to the visual viewport (see setAppHeight): --app-top tracks iOS's
+     keyboard pan and --app-height shrinks with the keyboard, so the shell
+     always covers exactly the visible area. Fixed positioning keeps it out of
+     the document flow that iOS pans. */
+  position: fixed;
+  top: var(--app-top, 0px);
+  left: 0;
+  right: 0;
   height: 100vh;
   height: 100dvh;
-  /* Mirrors visualViewport.height once App mounts (see setAppHeight): shrinks
-     with the iOS on-screen keyboard so the dock stays pinned above it. */
   height: var(--app-height, 100dvh);
   display: flex;
   flex-direction: column;
