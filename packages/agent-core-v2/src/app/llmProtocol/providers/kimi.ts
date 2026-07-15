@@ -30,6 +30,7 @@ import {
   type OpenAIToolParam,
   toolToOpenAI,
 } from './openai-common';
+import { parseTraceId } from '../errors';
 import {
   mergeRequestHeaders,
   requireProviderApiKey,
@@ -504,7 +505,7 @@ export class KimiChatProvider implements ChatProvider {
           | OpenAI.Chat.ChatCompletion
           | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
         this._stream,
-        response.headers.get('x-trace-id'),
+        parseTraceId(response.headers),
       );
     } catch (error: unknown) {
       throw convertOpenAIError(error);

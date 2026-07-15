@@ -69,8 +69,9 @@ export interface ExecuteLoopStepDeps {
   readonly recordUsage: (usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>;
   /**
    * See LLMChatParams.onTraceId. Fires per request attempt as soon as the
-   * response headers arrive, so the host captures the trace id of an
-   * in-flight request even when the stream is later cancelled.
+   * response headers arrive (or with the failed attempt's trace when a status
+   * error still carried response headers), so the host captures the trace id
+   * of an in-flight request even when the stream is later cancelled.
    */
   readonly onTraceId?: (traceId: string | null) => void;
 }

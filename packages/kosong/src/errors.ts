@@ -383,10 +383,12 @@ function readResponseHeader(headers: unknown, name: string): string | null {
 
 /**
  * Parse the provider trace identifier from the `x-trace-id` response header
- * (Kimi/KFC only). Returns `null` when the header is absent.
+ * (Kimi/KFC only). Returns `null` when the header is absent or empty.
  */
 export function parseTraceId(headers: unknown): string | null {
-  return readResponseHeader(headers, 'x-trace-id');
+  const raw = readResponseHeader(headers, 'x-trace-id');
+  if (raw === null || raw === undefined || raw.length === 0) return null;
+  return raw;
 }
 
 /**

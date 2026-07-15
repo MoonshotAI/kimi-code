@@ -133,8 +133,10 @@ export class TurnFlow {
   /**
    * Latest provider trace id (`x-trace-id`, Kimi/KFC only) per turn. Written
    * early from the onTraceId callback (response headers, before the stream
-   * body) and finally from each step.end event, so turn/tool-level telemetry
-   * can attribute events to the server-side request that produced them.
+   * body), from a failed attempt's status error (its error response still
+   * carried headers), and finally from each step.end event, so turn/tool-level
+   * telemetry can attribute events to the server-side request that produced
+   * them.
    */
   private readonly traceIdByTurn = new Map<number, string>();
   private currentStep = 0;

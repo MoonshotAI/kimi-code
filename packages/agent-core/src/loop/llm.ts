@@ -95,7 +95,9 @@ export interface LLMChatParams {
    * body is drained), carrying the provider trace identifier from the
    * `x-trace-id` header (Kimi/KFC only), or `null` when the provider does not
    * report one. Firing early lets hosts attribute a stream that is cancelled
-   * mid-flight to its server-side request.
+   * mid-flight to its server-side request. Also fires with a failed attempt's
+   * trace id when the attempt failed with a status error, whose error
+   * response still carried headers (see chatWithRetry).
    */
   onTraceId?: (traceId: string | null) => void;
 }

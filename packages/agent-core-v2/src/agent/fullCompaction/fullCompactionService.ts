@@ -36,6 +36,7 @@ import type { Tool } from '#/app/llmProtocol/tool';
 import { inputTotal, type TokenUsage } from '#/app/llmProtocol/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
+import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { IWireService } from '#/wire/wire';
@@ -121,6 +122,8 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     @IInstantiationService private readonly instantiation: IInstantiationService,
     @ISessionTodoService private readonly todo: ISessionTodoService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IAgentTelemetryContextService
+    private readonly telemetryContext: IAgentTelemetryContextService,
     @IWireService private readonly wire: IWireService,
     @IEventBus private readonly eventBus: IEventBus,
     @ILogService private readonly log: ILogService,
@@ -501,6 +504,11 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     const tokensBefore = estimateTokensForMessages(originalHistory);
     let retryCount = 0;
     let thinkingEffort = this.profile.data().thinkingLevel;
+    // Set once a summarizer request actually hits the wire. On failure the
+    // ambient telemetry trace_id then reflects that request (llmRequester
+    // keeps it at the latest request's trace), so compaction_failed can
+    // attribute even a mid-stream failure whose error carries no trace.
+    let summarizerRequested = false;
 
     try {
       const signal = active.abortController.signal;
@@ -533,6 +541,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         const estimatedCompactionRequestTokens = this.estimateRequestTokens(messages);
 
         try {
+          summarizerRequested = true;
           attempt = collectSummary(
             await this.llmRequester.request(
               {
@@ -648,7 +657,15 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
         retry_count: retryCount,
         thinking_effort: thinkingEffort,
         error_type: error instanceof Error ? error.name : 'Unknown',
-        trace_id: findAPIStatusError(error)?.traceId ?? undefined,
+        // Prefer the trace on the error itself (status-error responses); fall
+        // back to the ambient context, which llmRequester keeps at the failed
+        // request's own trace — covering failures after response headers
+        // arrived whose error carries none (e.g. mid-stream decode errors).
+        // Before any request went out the ambient value is a stale turn
+        // trace, so it is only consulted once a request was sent.
+        trace_id:
+          findAPIStatusError(error)?.traceId ??
+          (summarizerRequested ? this.telemetryContext.get().trace_id : undefined),
       };
       this.telemetry.track2('compaction_failed', properties);
       if (

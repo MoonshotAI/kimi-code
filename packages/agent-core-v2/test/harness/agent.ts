@@ -2391,6 +2391,10 @@ async function generateBackedResponse(
     {
       signal: options?.signal,
       auth: options?.auth,
+      // Forward the early-capture hook so a GenerateFn can fire the trace id
+      // as soon as its (simulated) response headers arrive — e.g. before a
+      // mid-stream failure — mirroring real kosong generate() behavior.
+      onTraceId: options?.onTraceId,
     },
   );
   return createStreamedMessage(

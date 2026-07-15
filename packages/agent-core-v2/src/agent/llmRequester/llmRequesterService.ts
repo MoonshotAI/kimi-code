@@ -161,11 +161,18 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
   ): Promise<LLMRequestFinish> {
     signal?.throwIfAborted();
     const startedAt = Date.now();
+    // The in-flight request's own trace id, captured from its response
+    // headers via onTraceId. A failure after headers arrived (empty response,
+    // mid-stream decode error) carries no trace on the error itself, so the
+    // failure path falls back to this value instead of reporting none.
+    let requestTraceId: string | undefined;
     try {
-      return await this.runRequest(this.resolveRequest(overrides), onPart, signal);
+      return await this.runRequest(this.resolveRequest(overrides), onPart, signal, (traceId) => {
+        requestTraceId = traceId;
+      });
     } catch (error) {
       this.logRequestFailure(error, overrides, signal);
-      this.trackApiError(error, startedAt, signal, overrides.source);
+      this.trackApiError(error, startedAt, signal, overrides.source, requestTraceId);
       throw error;
     }
   }
@@ -189,11 +196,17 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     startedAt: number,
     signal: AbortSignal | undefined,
     source?: LLMRequestSource,
+    requestTraceId?: string,
   ): void {
     if (isAbortError(error) || signal?.aborted === true) return;
     const modelAlias = this.profile.data().modelAlias;
     const model = this.tryGetProvider();
-    const traceId = apiTraceId(error);
+    // Prefer the trace captured from the failed request's own response
+    // headers — a failure after headers arrived (empty response, mid-stream
+    // decode error) carries none on the error. Fall back to the trace the
+    // error response itself carried (status-error failures, where no
+    // onTraceId ever fired). Undefined when neither exists (network errors).
+    const traceId = requestTraceId ?? apiTraceId(error);
     this.telemetryContext.set({ trace_id: traceId });
     const properties: ApiErrorEvent = {
       error_type: apiErrorType(error),
@@ -228,6 +241,7 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     request: ResolvedLLMRequest,
     onPart: LLMRequestPartHandler,
     signal: AbortSignal | undefined,
+    onRequestTrace: (traceId: string | undefined) => void,
   ): Promise<LLMRequestFinish> {
     const shaped = this.toolSelect.shapeHistory(request.messages);
     let mediaStripSnapshot = this.mediaStripSnapshotForTurn(request.source);
@@ -282,7 +296,11 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
       let finish: Extract<ModelRequestEvent, { type: 'finish' }> | undefined;
 
       const setTraceId = (traceId: string | null | undefined): void => {
-        this.telemetryContext.set({ trace_id: traceId ?? undefined });
+        const normalized = traceId ?? undefined;
+        // Per-request capture for the failure path (trackApiError), plus the
+        // ambient context everything else reads.
+        onRequestTrace(normalized);
+        this.telemetryContext.set({ trace_id: normalized });
       };
 
       for await (const event of request.model.request(input, signal, { onTraceId: setTraceId })) {

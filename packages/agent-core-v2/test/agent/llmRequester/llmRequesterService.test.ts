@@ -33,7 +33,7 @@ import { IAgentUsageService } from '#/agent/usage/usage';
 import { IConfigService } from '#/app/config/config';
 import { type DomainEvent, IEventBus } from '#/app/event/eventBus';
 import { IFlagService } from '#/app/flag/flag';
-import { APIRequestTooLargeError, APIStatusError } from '#/app/llmProtocol/errors';
+import { APIEmptyResponseError, APIRequestTooLargeError, APIStatusError } from '#/app/llmProtocol/errors';
 import { emptyUsage } from '#/app/llmProtocol/usage';
 import type { Message } from '#/app/llmProtocol/message';
 import type { ThinkingEffort } from '#/app/llmProtocol/thinkingEffort';
@@ -771,5 +771,38 @@ describe('AgentLLMRequesterService trace id', () => {
       }),
     });
     expect(telemetryContext.get().trace_id).toBe('trace-fail-1');
+  });
+
+  it('keeps the header-captured trace when the request fails after headers arrived', async () => {
+    // A failure after the response headers arrived (empty response, mid-stream
+    // decode error) carries no trace on the error itself; the trace captured
+    // via onTraceId must win over clearing the ambient context.
+    const model = createTracedModel(null);
+    Object.defineProperty(model, 'request', {
+      value: async function* (...args: unknown[]) {
+        const requestOptions = args[2] as
+          | { onTraceId?: (traceId: string | null) => void }
+          | undefined;
+        requestOptions?.onTraceId?.('trace-mid-stream');
+        const events: LLMEvent[] = [];
+        for (const event of events) yield event;
+        throw new APIEmptyResponseError('no content, no tool calls');
+      },
+    });
+    Object.defineProperty(model, 'withMaxCompletionTokens', {
+      value: () => model,
+    });
+    const { service, telemetryRecords, telemetryContext } = createService(
+      model,
+      passthroughProjector,
+    );
+
+    await expect(
+      service.request({ source: { type: 'turn', turnId: 4, step: 1 } }),
+    ).rejects.toThrow();
+
+    const apiError = telemetryRecords.find((record) => record.event === 'api_error');
+    expect(apiError?.properties?.['trace_id']).toBe('trace-mid-stream');
+    expect(telemetryContext.get().trace_id).toBe('trace-mid-stream');
   });
 });

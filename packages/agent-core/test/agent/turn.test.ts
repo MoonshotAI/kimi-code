@@ -2144,6 +2144,85 @@ describe('Agent turn flow', () => {
     expect(record?.properties?.['trace_id']).toBeUndefined();
   });
 
+  it('attributes turn-level telemetry to the failed request trace on error turns', async () => {
+    const records: TelemetryRecord[] = [];
+    let calls = 0;
+    const generate: GenerateFn = async (_provider, _system, _tools, _history, _callbacks, options) => {
+      calls += 1;
+      if (calls === 1) {
+        // Mirror kosong generate(): the trace id callback fires before the
+        // stream is drained, as soon as the response headers arrive.
+        options?.onTraceId?.('trace-step-1');
+        return {
+          id: 'mock-step-1',
+          message: {
+            role: 'assistant' as const,
+            content: [{ type: 'text' as const, text: 'running' }],
+            toolCalls: [
+              {
+                type: 'function' as const,
+                id: 'call_traced',
+                name: 'Bash',
+                arguments: '{"command":"printf traced"}',
+              },
+            ],
+          },
+          usage: { inputOther: 1, output: 1, inputCacheRead: 0, inputCacheCreation: 0 },
+          finishReason: 'tool_calls' as const,
+          rawFinishReason: 'tool_calls',
+          traceId: 'trace-step-1',
+        };
+      }
+      throw new APIStatusError(429, 'rate limited', 'req-2', null, 'trace-fail-2');
+    };
+    const ctx = testAgent({
+      generate,
+      kaos: createCommandKaos('traced'),
+      ...singleAttemptAgentOptions(),
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure({ tools: ['Bash'] });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'run' }] });
+    await ctx.untilTurnEnd();
+
+    // The turn failed on step 2's request: turn-level events attribute to the
+    // failed request's trace, not the previous successful step's.
+    const ended = records.find((candidate) => candidate.event === 'turn_ended');
+    expect(ended?.properties?.['reason']).toBe('failed');
+    expect(ended?.properties?.['trace_id']).toBe('trace-fail-2');
+    const interrupted = records.find((candidate) => candidate.event === 'turn_interrupted');
+    expect(interrupted?.properties?.['trace_id']).toBe('trace-fail-2');
+  });
+
+  it('attributes turn-level telemetry to the last failed attempt after retries', async () => {
+    const records: TelemetryRecord[] = [];
+    let calls = 0;
+    const generate: GenerateFn = async () => {
+      calls += 1;
+      throw new APIStatusError(429, 'rate limited', `req-${String(calls)}`, null, `trace-fail-${String(calls)}`);
+    };
+    const ctx = testAgent({
+      generate,
+      initialConfig: {
+        providers: {},
+        loopControl: { maxRetriesPerStep: 2 },
+      },
+      telemetry: recordingTelemetry(records),
+    });
+    ctx.configure();
+
+    await ctx.rpc.prompt({ input: [{ type: 'text', text: 'trigger provider error' }] });
+    await ctx.untilTurnEnd();
+
+    expect(calls).toBe(2);
+    const ended = records.find((candidate) => candidate.event === 'turn_ended');
+    expect(ended?.properties?.['trace_id']).toBe('trace-fail-2');
+    const apiError = records.find((candidate) => candidate.event === 'api_error');
+    expect(apiError?.properties?.['trace_id']).toBe('trace-fail-2');
+  });
+
   it('keeps transient retry handling with request-scoped OAuth auth', async () => {
     const { logger, entries } = captureLogs();
     const authKeys: string[] = [];

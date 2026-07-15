@@ -1035,6 +1035,45 @@ describe('FullCompaction', () => {
     await ctx.expectResumeMatches();
   });
 
+  it('attributes compaction_failed to the in-flight request trace on a mid-stream failure', async () => {
+    const records: TelemetryRecord[] = [];
+    // The stream delivers response headers (trace id) and one part, then fails
+    // — the error itself carries no trace, so attribution must come from the
+    // trace captured when the headers arrived.
+    const generate = realKosongGenerate(() => {
+      const base = mockStreamedMessage([], 'trace-mid-stream');
+      return {
+        ...base,
+        async *[Symbol.asyncIterator]() {
+          yield { type: 'text', text: 'partial summary' } as StreamedMessagePart;
+          throw new Error('stream reset');
+        },
+      };
+    });
+    const ctx = testAgent({ generate, telemetry: recordingTelemetry(records) });
+    ctx.configure({
+      provider: CATALOGUED_PROVIDER,
+      modelCapabilities: CATALOGUED_MODEL_CAPABILITIES,
+    });
+    ctx.appendExchange(1, 'old user one', 'old assistant one', 20);
+    ctx.appendExchange(2, 'recent user two', 'recent assistant two', 80);
+    const failed = ctx.once('error');
+
+    await ctx.rpc.beginCompaction({});
+    await failed;
+
+    const apiError = records.find((record) => record.event === 'api_error');
+    expect(apiError?.properties?.['trace_id']).toBe('trace-mid-stream');
+    expect(records).toContainEqual({
+      event: 'compaction_failed',
+      properties: expect.objectContaining({
+        source: 'manual',
+        trace_id: 'trace-mid-stream',
+      }),
+    });
+    await ctx.expectResumeMatches();
+  });
+
   it('fails a blocked turn when auto compaction generation fails', async () => {
     let attempts = 0;
     const generate: GenerateFn = async () => {

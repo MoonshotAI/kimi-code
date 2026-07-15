@@ -471,7 +471,7 @@ export const telemetryEventDefinitions = {
       turn_id: 'Turn index within the session, when the request belongs to a turn',
       step_no: 'Step index within the turn, when the request belongs to a turn step',
       trace_id:
-        'Trace id of the failed request; absent on network errors and local aborts, and for non-Kimi protocols',
+        'Trace id of the failed request, from its response headers or its error response; absent when the failure happened before any response headers arrived (network errors, local aborts), and for non-Kimi protocols',
     },
   }),
   skill_invoked: defineTelemetryEvent<SkillInvokedEvent>({
@@ -594,7 +594,7 @@ export const telemetryEventDefinitions = {
       thinking_effort: 'Thinking effort level in effect',
       error_type: 'Error class name',
       trace_id:
-        'Trace id of the failed compaction request, when the failure response carried one; absent on network errors and for non-Kimi protocols',
+        'Trace id of the failed compaction request, from its response headers or its error response; absent when the failure happened before any request or before response headers arrived (network errors), and for non-Kimi protocols',
     },
   }),
   context_projection_repaired: defineTelemetryEvent<ContextProjectionRepairedEvent>({

@@ -1,5 +1,6 @@
 import { sleep } from '@antfu/utils';
 
+import { APIStatusError } from '@moonshot-ai/kosong';
 import type { Logger } from '#/logging/types';
 
 import { abortable } from '../utils/abort';
@@ -42,6 +43,7 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
     try {
       return await input.llm.chat(paramsForAttempt(input, 1, effectiveMaxAttempts));
     } catch (error) {
+      captureAttemptTraceId(input, error);
       logRequestFailure(input, error, 1, effectiveMaxAttempts);
       throw error;
     }
@@ -53,6 +55,7 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
     try {
       return await input.llm.chat(paramsForAttempt(input, attempt, maxAttempts));
     } catch (error) {
+      captureAttemptTraceId(input, error);
       if (attempt >= maxAttempts || !input.llm.isRetryableError(error)) {
         logRequestFailure(input, error, attempt, maxAttempts);
         throw error;
@@ -92,6 +95,23 @@ function logRequestFailure(
     model: input.llm.modelName,
     ...retryErrorFields(error),
   });
+}
+
+/**
+ * Surface a failed attempt's trace id through the same early-capture channel
+ * as a successful attempt. A status-error response still carried response
+ * headers, so its `x-trace-id` is available on the converted error; writing
+ * it here (before the failure propagates to the loop's `turn.interrupted`
+ * dispatch) lets turn-level telemetry attribute the turn to the failed
+ * request rather than the previous successful one. Mid-stream failures were
+ * already captured by the attempt's own `onTraceId`; failures before any
+ * response (network errors, local aborts) carry no trace and leave the
+ * earlier capture untouched.
+ */
+function captureAttemptTraceId(input: ChatWithRetryInput, error: unknown): void {
+  if (error instanceof APIStatusError && error.traceId !== null) {
+    input.params.onTraceId?.(error.traceId);
+  }
 }
 
 function paramsForAttempt(

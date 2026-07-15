@@ -160,6 +160,18 @@ describe('convertOpenAIError: provider rate limit', () => {
     expect(result).toBeInstanceOf(APIStatusError);
     expect((result as APIStatusError).traceId).toBeNull();
   });
+
+  it('leaves traceId null when the x-trace-id header is empty', () => {
+    const err = new OpenAIAPIError(
+      500,
+      undefined,
+      'Internal server error',
+      new Headers({ 'x-trace-id': '' }),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIStatusError);
+    expect((result as APIStatusError).traceId).toBeNull();
+  });
 });
 describe('convertOpenAIError: subclass errors still match first', () => {
   it('APIConnectionError matches its own case', () => {
