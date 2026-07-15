@@ -11,7 +11,6 @@ import type { IAgentPermissionModeService } from '#/agent/permissionMode/permiss
 import type { ToolResult } from '#/tool/toolContract';
 import type { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
-import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
 import { executeTool } from '../../../tools/fixtures/execute-tool';
 import { createFakeHostFs } from '../../../tools/fixtures/fake-exec';
@@ -38,7 +37,6 @@ const options = [
   { label: 'Approach B', description: 'Larger change.' },
 ] satisfies NonNullable<ExitPlanModeInput['options']>;
 
-const scopeContext = makeAgentScopeContext({ agentId: 'main', agentScope: '' });
 
 function recordingTelemetry(): {
   readonly telemetry: ITelemetryService;
@@ -94,7 +92,7 @@ function planService({
 describe('EnterPlanModeTool telemetry', () => {
   it('has name, description, parameters, and a stable execution description', async () => {
     const { telemetry } = recordingTelemetry();
-    const tool = new EnterPlanModeTool(planService({ status: null }), scopeContext, telemetry);
+    const tool = new EnterPlanModeTool(planService({ status: null }), telemetry);
 
     expect(tool.name).toBe('EnterPlanMode');
     expect(tool.description).toContain('EnterPlanMode');
@@ -113,7 +111,7 @@ describe('EnterPlanModeTool telemetry', () => {
   it('returns an error when plan mode is already active', async () => {
     const { telemetry } = recordingTelemetry();
 
-    const result = await executeTool(new EnterPlanModeTool(planService(), scopeContext, telemetry), {
+    const result = await executeTool(new EnterPlanModeTool(planService(), telemetry), {
       turnId: 0,
       toolCallId: 'call_enter_plan',
       args: {},
@@ -134,7 +132,7 @@ describe('EnterPlanModeTool telemetry', () => {
     vi.mocked(planMode.status).mockResolvedValue(null);
     const { telemetry } = recordingTelemetry();
 
-    const result = await executeTool(new EnterPlanModeTool(planMode, scopeContext, telemetry), {
+    const result = await executeTool(new EnterPlanModeTool(planMode, telemetry), {
       turnId: 0,
       toolCallId: 'call_enter_plan',
       args: {},
@@ -157,7 +155,7 @@ describe('EnterPlanModeTool telemetry', () => {
     vi.mocked(planMode.status).mockImplementation(async () => (active ? ACTIVE_PLAN : null));
     const { telemetry } = recordingTelemetry();
 
-    const result = await executeTool(new EnterPlanModeTool(planMode, scopeContext, telemetry), {
+    const result = await executeTool(new EnterPlanModeTool(planMode, telemetry), {
       turnId: 0,
       toolCallId: 'call_enter_plan',
       args: {},
@@ -180,7 +178,6 @@ describe('EnterPlanModeTool telemetry', () => {
             throw new Error('cannot prepare plan directory');
           }),
         }),
-        scopeContext,
         telemetry,
       ),
       {
@@ -208,7 +205,7 @@ describe('EnterPlanModeTool telemetry', () => {
     vi.mocked(planMode.status).mockImplementation(async () => (active ? ACTIVE_PLAN : null));
     const { telemetry, track2 } = recordingTelemetry();
 
-    const result = await executeTool(new EnterPlanModeTool(planMode, scopeContext, telemetry), {
+    const result = await executeTool(new EnterPlanModeTool(planMode, telemetry), {
       turnId: 0,
       toolCallId: 'call_enter_plan',
       args: {},
@@ -217,7 +214,6 @@ describe('EnterPlanModeTool telemetry', () => {
 
     expect(result.isError).toBeFalsy();
     expect(track2).toHaveBeenCalledWith('plan_enter_resolved', {
-      agent_id: 'main',
       outcome: 'auto_approved',
     });
   });
@@ -286,7 +282,7 @@ describe('AgentPlanService EnterPlanMode telemetry', () => {
 describe('ExitPlanModeTool telemetry', () => {
   it('has name, description, parameters, and a stable execution description', async () => {
     const { telemetry } = recordingTelemetry();
-    const tool = new ExitPlanModeTool(planService(), permissionMode(), scopeContext, telemetry);
+    const tool = new ExitPlanModeTool(planService(), permissionMode(), telemetry);
 
     expect(tool.name).toBe('ExitPlanMode');
     expect(tool.description).toContain('ExitPlanMode');
@@ -308,7 +304,7 @@ describe('ExitPlanModeTool telemetry', () => {
     const { telemetry } = recordingTelemetry();
 
     const result = await executeTool(
-      new ExitPlanModeTool(planService({ status: null }), permissionMode(), scopeContext, telemetry),
+      new ExitPlanModeTool(planService({ status: null }), permissionMode(), telemetry),
       {
       turnId: 7,
       toolCallId: 'call_exit_plan',
@@ -332,7 +328,7 @@ describe('ExitPlanModeTool telemetry', () => {
     } as unknown as NonNullable<PlanData>;
 
     const result = await executeTool(
-      new ExitPlanModeTool(planService({ status }), permissionMode(), scopeContext, telemetry),
+      new ExitPlanModeTool(planService({ status }), permissionMode(), telemetry),
       {
         turnId: 7,
         toolCallId: 'call_exit_plan',
@@ -350,7 +346,7 @@ describe('ExitPlanModeTool telemetry', () => {
 
   it('exposes options[].description as optional with a default of empty string', () => {
     const { telemetry } = recordingTelemetry();
-    const parameters = new ExitPlanModeTool(planService(), permissionMode(), scopeContext, telemetry).parameters as {
+    const parameters = new ExitPlanModeTool(planService(), permissionMode(), telemetry).parameters as {
       properties: {
         options: {
           items: {
@@ -371,7 +367,7 @@ describe('ExitPlanModeTool telemetry', () => {
     const exit = vi.fn();
     const { telemetry, track2 } = recordingTelemetry();
 
-    const result = await executeTool(new ExitPlanModeTool(planService({ exit }), permissionMode(), scopeContext, telemetry), {
+    const result = await executeTool(new ExitPlanModeTool(planService({ exit }), permissionMode(), telemetry), {
       turnId: 7,
       toolCallId: 'call_exit_plan',
       args: {},
@@ -381,11 +377,9 @@ describe('ExitPlanModeTool telemetry', () => {
     expect(result.isError).toBe(false);
     expect(exit).toHaveBeenCalledTimes(1);
     expect(track2).toHaveBeenCalledWith('plan_submitted', {
-      agent_id: 'main',
       has_options: false,
     });
     expect(track2).toHaveBeenCalledWith('plan_resolved', {
-      agent_id: 'main',
       outcome: 'auto_approved',
     });
   });
@@ -393,7 +387,7 @@ describe('ExitPlanModeTool telemetry', () => {
   it('tracks submitted with options only when multiple options are present', async () => {
     const { telemetry, track2 } = recordingTelemetry();
 
-    const result = await executeTool(new ExitPlanModeTool(planService(), permissionMode(), scopeContext, telemetry), {
+    const result = await executeTool(new ExitPlanModeTool(planService(), permissionMode(), telemetry), {
       turnId: 7,
       toolCallId: 'call_exit_plan_options',
       args: { options },
@@ -402,11 +396,9 @@ describe('ExitPlanModeTool telemetry', () => {
 
     expect(result.isError).toBe(false);
     expect(track2).toHaveBeenCalledWith('plan_submitted', {
-      agent_id: 'main',
       has_options: true,
     });
     expect(track2).toHaveBeenCalledWith('plan_resolved', {
-      agent_id: 'main',
       outcome: 'auto_approved',
     });
   });
@@ -417,7 +409,7 @@ describe('ExitPlanModeTool telemetry', () => {
     });
     const { telemetry, track2 } = recordingTelemetry();
 
-    const result = await executeTool(new ExitPlanModeTool(planService({ exit }), permissionMode(), scopeContext, telemetry), {
+    const result = await executeTool(new ExitPlanModeTool(planService({ exit }), permissionMode(), telemetry), {
       turnId: 7,
       toolCallId: 'call_exit_plan_fail',
       args: {},
@@ -428,11 +420,9 @@ describe('ExitPlanModeTool telemetry', () => {
     expect(result.output).toContain('Failed to exit plan mode');
     expect(exit).toHaveBeenCalledTimes(1);
     expect(track2).toHaveBeenCalledWith('plan_submitted', {
-      agent_id: 'main',
       has_options: false,
     });
     expect(track2).not.toHaveBeenCalledWith('plan_resolved', {
-      agent_id: 'main',
       outcome: 'auto_approved',
     });
   });

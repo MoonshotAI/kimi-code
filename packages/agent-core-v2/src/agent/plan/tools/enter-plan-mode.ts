@@ -12,7 +12,6 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentPlanService } from '#/agent/plan/plan';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import DESCRIPTION from './enter-plan-mode.md?raw';
 
 
@@ -26,7 +25,6 @@ export class EnterPlanModeTool implements BuiltinTool<EnterPlanModeInput> {
 
   constructor(
     @IAgentPlanService private readonly planMode: IAgentPlanService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {}
 
@@ -51,7 +49,6 @@ export class EnterPlanModeTool implements BuiltinTool<EnterPlanModeInput> {
         }
 
         this.telemetry.track2('plan_enter_resolved', {
-          agent_id: this.scopeContext.agentId,
           outcome: 'auto_approved',
         });
         const after = await this.planMode.status();

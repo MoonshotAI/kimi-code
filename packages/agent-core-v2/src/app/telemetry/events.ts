@@ -9,8 +9,10 @@
  * transport's `kfc_` server prefix. Naming conventions: events and
  * properties are snake_case; durations/counts/sizes carry a unit suffix
  * (`_ms` / `_count` / `_bytes`); never register user content or file paths
- * as properties. App-scoped, self-contained — property unions are declared
- * locally instead of imported from business domains.
+ * as properties. Agent-scoped telemetry binds `agent_id` through the scoped
+ * `ITelemetryService` view, so that property is optional at individual call
+ * sites. App-scoped, self-contained — property unions are declared locally
+ * instead of imported from business domains.
  */
 
 import type { TelemetryPrimitive } from './telemetry';
@@ -44,7 +46,7 @@ export type StrictPropertyCheck<T, E> = string extends keyof T
 
 export interface TurnStartedEvent {
   turn_id: number;
-  agent_id: string;
+  agent_id?: string;
   mode: 'agent' | 'plan';
   provider_type?: string;
   protocol?: string;
@@ -52,7 +54,7 @@ export interface TurnStartedEvent {
 
 export interface TurnInterruptedEvent {
   turn_id: number;
-  agent_id: string;
+  agent_id?: string;
   at_step: number;
   mode: 'agent' | 'plan';
   interrupt_reason: 'user_cancelled' | 'aborted' | 'max_steps' | 'error' | 'filtered' | 'blocked';
@@ -62,7 +64,7 @@ export interface TurnInterruptedEvent {
 
 export interface TurnEndedEvent {
   turn_id: number;
-  agent_id: string;
+  agent_id?: string;
   reason: 'completed' | 'cancelled' | 'failed';
   duration_ms: number;
   mode: 'agent' | 'plan';
@@ -74,7 +76,7 @@ export type ToolCallOutcome = 'success' | 'error' | 'cancelled';
 
 export interface ToolCallEvent {
   turn_id: number;
-  agent_id: string;
+  agent_id?: string;
   tool_call_id: string;
   tool_name: string;
   outcome: ToolCallOutcome;
@@ -85,7 +87,7 @@ export interface ToolCallEvent {
 
 export interface ApiErrorEvent {
   error_type: string;
-  agent_id: string;
+  agent_id?: string;
   model: string;
   alias?: string;
   retryable: boolean;
@@ -99,42 +101,45 @@ export interface ApiErrorEvent {
 }
 
 export interface SkillInvokedEvent {
-  agent_id: string;
+  agent_id?: string;
   skill_name: string;
   trigger: 'user-slash' | 'model-tool' | 'nested-skill';
 }
 
 export interface FlowInvokedEvent {
-  agent_id: string;
+  agent_id?: string;
   flow_name: string;
 }
 
 export interface InputSteerEvent {
+  agent_id?: string;
   parts: number;
 }
 
 export interface CancelEvent {
+  agent_id?: string;
   from: 'streaming' | 'compacting';
 }
 
 export interface ConversationUndoEvent {
+  agent_id?: string;
   count: number;
 }
 
 export interface YoloToggleEvent {
-  agent_id: string;
+  agent_id?: string;
   enabled: boolean;
 }
 
 export interface AfkToggleEvent {
-  agent_id: string;
+  agent_id?: string;
   enabled: boolean;
 }
 
 export type TelemetryPermissionMode = 'manual' | 'yolo' | 'auto';
 
 export interface PermissionPolicyDecisionEvent {
-  agent_id: string;
+  agent_id?: string;
   turn_id: number;
   tool_call_id: string;
   policy_name: string;
@@ -145,7 +150,7 @@ export interface PermissionPolicyDecisionEvent {
 }
 
 export interface PermissionApprovalResultEvent {
-  agent_id: string;
+  agent_id?: string;
   turn_id: number;
   tool_call_id: string;
   policy_name: string | null;
@@ -159,12 +164,12 @@ export interface PermissionApprovalResultEvent {
 }
 
 export interface PlanSubmittedEvent {
-  agent_id: string;
+  agent_id?: string;
   has_options: boolean;
 }
 
 export interface PlanResolvedEvent {
-  agent_id: string;
+  agent_id?: string;
   outcome:
     | 'approved'
     | 'dismissed'
@@ -177,12 +182,12 @@ export interface PlanResolvedEvent {
 }
 
 export interface PlanEnterResolvedEvent {
-  agent_id: string;
+  agent_id?: string;
   outcome: 'auto_approved';
 }
 
 export interface CompactionFinishedEvent {
-  agent_id: string;
+  agent_id?: string;
   turn_id?: number;
   source: 'manual' | 'auto';
   tokens_before: number;
@@ -200,7 +205,7 @@ export interface CompactionFinishedEvent {
 }
 
 export interface CompactionFailedEvent {
-  agent_id: string;
+  agent_id?: string;
   turn_id?: number;
   source: 'manual' | 'auto';
   tokens_before: number;
@@ -212,7 +217,7 @@ export interface CompactionFailedEvent {
 }
 
 export interface ContextProjectionRepairedEvent {
-  agent_id: string;
+  agent_id?: string;
   reordered: number;
   synthesized: number;
   dropped_orphan: number;
@@ -224,11 +229,13 @@ export interface ContextProjectionRepairedEvent {
 }
 
 export interface BackgroundTaskCreatedEvent {
+  agent_id?: string;
   task_id: string;
   kind: 'bash' | 'agent' | 'question';
 }
 
 export interface BackgroundTaskCompletedEvent {
+  agent_id?: string;
   task_id: string;
   kind: 'agent' | 'process' | 'question';
   duration_ms: number | null;
@@ -236,12 +243,12 @@ export interface BackgroundTaskCompletedEvent {
 }
 
 export interface ModelSwitchEvent {
-  agent_id: string;
+  agent_id?: string;
   model: string;
 }
 
 export interface ThinkingToggleEvent {
-  agent_id: string;
+  agent_id?: string;
   enabled: boolean;
   effort: string;
   from: string;
@@ -289,7 +296,7 @@ export interface GoalStatusChangedEvent extends GoalBudgetProperties {
 
 export interface ToolCallDedupDetectedEvent {
   turn_id?: number;
-  agent_id: string;
+  agent_id?: string;
   step_no: number;
   tool_call_id: string;
   tool_name: string;
@@ -298,7 +305,7 @@ export interface ToolCallDedupDetectedEvent {
 }
 
 export interface ToolCallRepeatEvent {
-  agent_id: string;
+  agent_id?: string;
   turn_id?: number;
   tool_name: string;
   repeat_count: number;
@@ -510,17 +517,26 @@ export const telemetryEventDefinitions = {
   input_steer: defineTelemetryEvent<InputSteerEvent>({
     owner: 'kimi-code',
     comment: 'The user steers input while a turn is running.',
-    properties: { parts: 'Number of input parts' },
+    properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
+      parts: 'Number of input parts',
+    },
   }),
   cancel: defineTelemetryEvent<CancelEvent>({
     owner: 'kimi-code',
     comment: 'The user cancels ongoing work.',
-    properties: { from: 'What was running when cancelled' },
+    properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
+      from: 'What was running when cancelled',
+    },
   }),
   conversation_undo: defineTelemetryEvent<ConversationUndoEvent>({
     owner: 'kimi-code',
     comment: 'The user undoes conversation entries.',
-    properties: { count: 'Number of entries undone' },
+    properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
+      count: 'Number of entries undone',
+    },
   }),
   yolo_toggle: defineTelemetryEvent<YoloToggleEvent>({
     owner: 'kimi-code',
@@ -643,6 +659,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A background task is created.',
     properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
       task_id: 'Background task id; joins background_task_created with background_task_completed',
       kind: 'Task kind; process tasks retain the legacy bash value',
     },
@@ -651,6 +668,7 @@ export const telemetryEventDefinitions = {
     owner: 'kimi-code',
     comment: 'A background task reaches a terminal state.',
     properties: {
+      agent_id: 'Agent id (main or subagent scope id)',
       task_id: 'Background task id; joins background_task_created with background_task_completed',
       kind: 'Task kind',
       duration_ms: 'Task wall-clock time in milliseconds, null when unknown',

@@ -20,7 +20,6 @@ import { retryBackoffDelays, sleepForRetry } from '#/_base/utils/retry';
 import { IAgentLoopService, type LoopErrorContext } from '#/agent/loop/loop';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { stripDynamicToolContext } from '#/agent/toolSelect/dynamicTools';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
@@ -120,7 +119,6 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     @IAgentContextSizeService private readonly contextSize: IAgentContextSizeService,
     @IAgentLLMRequesterService private readonly llmRequester: IAgentLLMRequesterService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentToolSelectService private readonly toolSelect: IAgentToolSelectService,
     @IInstantiationService private readonly instantiation: IInstantiationService,
@@ -637,7 +635,6 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
       });
 
       const properties: CompactionFinishedEvent = {
-        agent_id: this.scopeContext.agentId,
         turn_id: active.originTurnId,
         source: data.source,
         tokens_before: result.tokensBefore,
@@ -655,7 +652,6 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     } catch (error) {
       if (isAbortError(error)) throw error;
       const properties: CompactionFailedEvent = {
-        agent_id: this.scopeContext.agentId,
         turn_id: active.originTurnId,
         source: data.source,
         tokens_before: tokensBefore,

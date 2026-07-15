@@ -32,7 +32,6 @@ import {
   type FaultKind,
 } from '#/agent/faultInjection/faultInjection';
 import { IAgentProfileService, type ProfileModelContext } from '#/agent/profile/profile';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentToolSelectService } from '#/agent/toolSelect/toolSelect';
 import { IAgentUsageService } from '#/agent/usage/usage';
@@ -145,7 +144,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IWireService private readonly wire: IWireService,
     @IFaultInjectionService private readonly faultInjection: IFaultInjectionService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {}
 
   async request(
@@ -189,7 +187,6 @@ export class AgentLLMRequesterService implements IAgentLLMRequesterService {
     const model = this.tryGetProvider();
     const properties: ApiErrorEvent = {
       error_type: apiErrorType(error),
-      agent_id: this.scopeContext.agentId,
       model: model?.id ?? modelAlias ?? 'unknown',
       alias: modelAlias,
       provider_type: model?.protocol,

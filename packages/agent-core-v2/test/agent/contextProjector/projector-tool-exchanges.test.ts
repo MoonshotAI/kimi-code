@@ -509,7 +509,6 @@ describe('projector tool-exchange normalization', () => {
         {
           event: 'context_projection_repaired',
           properties: {
-            agent_id: 'main',
             reordered: 2,
             synthesized: 0,
             dropped_orphan: 0,

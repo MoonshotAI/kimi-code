@@ -17,7 +17,6 @@ import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
 import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentLoopService } from '#/agent/loop/loop';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/app/llmProtocol/message';
 import { IAgentToolDedupeService, type ToolDedupeResult } from './toolDedupe';
@@ -121,7 +120,6 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentLoopService loop: IAgentLoopService,
     @IAgentToolExecutorService private readonly toolExecutor: IAgentToolExecutorService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     super();
     loop.hooks.onWillBeginStep.register('toolDedupe', async (ctx, next) => {
@@ -218,7 +216,6 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     this.toolExecutor.recordDupType(toolCallId, dupType);
     const properties: ToolCallDedupDetectedEvent = {
       turn_id: this.activeTurnId,
-      agent_id: this.scopeContext.agentId,
       step_no: this.activeStep,
       tool_call_id: toolCallId,
       tool_name: toolName,
@@ -277,7 +274,6 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
 
     if (streak >= 2) {
       const properties: ToolCallRepeatEvent = {
-        agent_id: this.scopeContext.agentId,
         turn_id: this.activeTurnId,
         tool_name: toolName,
         repeat_count: streak,

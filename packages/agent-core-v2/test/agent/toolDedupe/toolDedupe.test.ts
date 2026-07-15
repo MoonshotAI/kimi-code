@@ -300,7 +300,6 @@ describe('AgentToolDedupeService', () => {
       expect(telemetryEvents).toContainEqual({
         event: 'tool_call_dedup_detected',
         properties: expect.objectContaining({
-          agent_id: 'main',
           turn_id: 3,
           step_no: 1,
           tool_call_id: 'call_2',
@@ -634,7 +633,6 @@ describe('AgentToolDedupeService', () => {
         event: 'tool_call_dedup_detected',
         properties: {
           turn_id: 7,
-          agent_id: 'main',
           step_no: 1,
           tool_call_id: 'c2',
           tool_name: 'Read',
@@ -666,7 +664,6 @@ describe('AgentToolDedupeService', () => {
         event: 'tool_call_dedup_detected',
         properties: {
           turn_id: 7,
-          agent_id: 'main',
           step_no: 2,
           tool_call_id: 'c2',
           tool_name: 'Read',
@@ -703,7 +700,6 @@ describe('AgentToolDedupeService', () => {
       const repeats = telemetryEvents.filter((e) => e.event === 'tool_call_repeat');
       expect(repeats.map((e) => e.properties?.['repeat_count'])).toEqual([2, 3]);
       expect(repeats.every((e) => e.properties?.['tool_name'] === 'Read')).toBe(true);
-      expect(repeats.every((e) => e.properties?.['agent_id'] === 'main')).toBe(true);
       expect(repeats.every((e) => e.properties?.['turn_id'] === 1)).toBe(true);
     });
 

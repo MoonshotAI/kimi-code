@@ -24,7 +24,6 @@ import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionBtwService } from '#/session/btw/btw';
 import { IAgentSkillService } from '#/agent/skill/skill';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
@@ -101,7 +100,6 @@ export class AgentRPCService implements IAgentRPCService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionContext private readonly sessionContext: ISessionContext,
     @ISessionBtwService private readonly btw: ISessionBtwService,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) { }
 
   async prompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
@@ -160,11 +158,11 @@ export class AgentRPCService implements IAgentRPCService {
     this.permissionMode.setMode(payload.mode);
     const enabled = this.permissionMode.mode === 'yolo';
     if (enabled !== wasYolo) {
-      this.telemetry.track2('yolo_toggle', { agent_id: this.scopeContext.agentId, enabled });
+      this.telemetry.track2('yolo_toggle', { enabled });
     }
     const afkEnabled = this.permissionMode.mode === 'auto';
     if (afkEnabled !== wasAuto) {
-      this.telemetry.track2('afk_toggle', { agent_id: this.scopeContext.agentId, enabled: afkEnabled });
+      this.telemetry.track2('afk_toggle', { enabled: afkEnabled });
     }
   }
 

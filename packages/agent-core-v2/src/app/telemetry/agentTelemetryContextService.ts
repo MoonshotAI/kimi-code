@@ -3,7 +3,8 @@
  *
  * Holds the agent's ambient telemetry context (defaults to `mode: 'agent'`);
  * merged into turn telemetry through `ITelemetryService.withContext` at turn
- * launch. Owns no cross-domain collaborators. Bound at Agent scope.
+ * launch. Reads the current agent identity from `scopeContext`. Bound at Agent
+ * scope.
  */
 
 import { InstantiationType } from '#/_base/di/extensions';

@@ -101,7 +101,6 @@ describe('AgentToolExecutorService', () => {
       event: 'tool_call',
       properties: expect.objectContaining({
         turn_id: 0,
-        agent_id: 'main',
         tool_call_id: 'call_echo',
         tool_name: 'echo',
         outcome: 'success',

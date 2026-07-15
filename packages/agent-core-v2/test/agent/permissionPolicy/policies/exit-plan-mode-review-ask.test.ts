@@ -134,7 +134,7 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(result?.kind).toBe('ask');
     expect(records).toContainEqual({
       event: 'plan_submitted',
-      properties: { agent_id: 'main', has_options: false },
+      properties: { has_options: false },
     });
   });
 
@@ -160,12 +160,11 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(exitPlanMode).toHaveBeenCalledTimes(1);
     expect(records).toContainEqual({
       event: 'plan_submitted',
-      properties: { agent_id: 'main', has_options: true },
+      properties: { has_options: true },
     });
     expect(records).toContainEqual({
       event: 'plan_resolved',
       properties: {
-        agent_id: 'main',
         outcome: 'approved',
         chosen_option: 'Approach B',
       },
@@ -194,7 +193,6 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(records).toContainEqual({
       event: 'plan_resolved',
       properties: {
-        agent_id: 'main',
         outcome: 'revise',
         has_feedback: true,
       },
@@ -218,7 +216,7 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(exitPlanMode).not.toHaveBeenCalled();
     expect(records).toContainEqual({
       event: 'plan_resolved',
-      properties: { agent_id: 'main', outcome: 'rejected' },
+      properties: { outcome: 'rejected' },
     });
   });
 
@@ -239,7 +237,7 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(exitPlanMode).not.toHaveBeenCalled();
     expect(records).toContainEqual({
       event: 'plan_resolved',
-      properties: { agent_id: 'main', outcome: 'dismissed' },
+      properties: { outcome: 'dismissed' },
     });
   });
 
@@ -263,7 +261,7 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(exitPlanMode).toHaveBeenCalledTimes(1);
     expect(records).toContainEqual({
       event: 'plan_resolved',
-      properties: { agent_id: 'main', outcome: 'rejected_and_exited' },
+      properties: { outcome: 'rejected_and_exited' },
     });
   });
 
@@ -304,7 +302,6 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     expect(records).toContainEqual({
       event: 'plan_resolved',
       properties: {
-        agent_id: 'main',
         outcome: 'approved',
         chosen_option: 'Approach C',
       },
@@ -323,11 +320,11 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
     );
     expect(records).toContainEqual({
       event: 'plan_submitted',
-      properties: { agent_id: 'main', has_options: false },
+      properties: { has_options: false },
     });
     expect(records).not.toContainEqual({
       event: 'plan_resolved',
-      properties: { agent_id: 'main', outcome: 'approved' },
+      properties: { outcome: 'approved' },
     });
   });
 });

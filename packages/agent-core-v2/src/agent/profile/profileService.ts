@@ -50,7 +50,6 @@ import { isMcpToolName, type ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
-import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
 import type { WarningEvent } from '@moonshot-ai/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -118,7 +117,6 @@ export class AgentProfileService implements IAgentProfileService {
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @IAgentProfileCatalogService private readonly catalog: IAgentProfileCatalogService,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
-    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     this.configure({});
   }
@@ -182,10 +180,10 @@ export class AgentProfileService implements IAgentProfileService {
     const model = this.modelFactory.resolve(alias);
     if (this.profileName === undefined) {
       await this.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: alias });
-      this.telemetry.track2('model_switch', { agent_id: this.scopeContext.agentId, model: alias });
+      this.telemetry.track2('model_switch', { model: alias });
     } else if (this.modelAlias !== alias) {
       this.update({ modelAlias: alias });
-      this.telemetry.track2('model_switch', { agent_id: this.scopeContext.agentId, model: alias });
+      this.telemetry.track2('model_switch', { model: alias });
     }
     return {
       model: alias,
@@ -209,7 +207,6 @@ export class AgentProfileService implements IAgentProfileService {
     const effort = this.thinkingLevel;
     if (effort !== previousEffort) {
       this.telemetry.track2('thinking_toggle', {
-        agent_id: this.scopeContext.agentId,
         enabled: effort !== 'off',
         effort,
         from: previousEffort,

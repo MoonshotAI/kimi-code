@@ -5,7 +5,8 @@
  * serializing same-id bootstrap and dropping incomplete handles after startup
  * failure. Seeds each agent's identity through `agent` scopeContext, wires
  * per-agent wire records and the wire state machine, the blob store, and MCP,
- * and registers the agent in the session registry. New logs receive a metadata
+ * and registers the agent in the session registry. Binds the agent id into the
+ * Agent-scoped telemetry view. New logs receive a metadata
  * envelope while non-empty unversioned logs are rejected. Removal awaits the
  * agent task manager's graceful exit policy before draining activity and
  * disposing the child scope. Bound at Session scope.
@@ -63,6 +64,7 @@ import { IAgentExternalHooksService } from '#/agent/externalHooks/externalHooks'
 import { IAgentPluginService } from '#/agent/plugin/agentPlugin';
 import { ISessionInteractionService } from '#/session/interaction/interaction';
 import { IWireService } from '#/wire/wire';
+import { ITelemetryService } from '#/app/telemetry/telemetry';
 import {
   type AgentListFilter,
   type CreateAgentOptions,
@@ -99,6 +101,7 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     @ISessionMcpService private readonly sessionMcp: ISessionMcpService,
     @ISessionActivityKernel private readonly activityKernel: ISessionActivityKernel,
     @ISessionInteractionService private readonly interaction: ISessionInteractionService,
+    @ITelemetryService private readonly telemetry: ITelemetryService,
   ) {
     super();
     this._register(this.onDidCreate((handle) => this.subscribeInteractionBus(handle)));
@@ -178,11 +181,16 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
       this.instantiation,
       LifecycleScope.Agent,
       agentId,
-      // The only per-agent seed: identity facts. Every other agent-scope
+      // Seed identity facts and the telemetry view. Every other agent-scope
       // service either derives its configuration from `IAgentScopeContext`
       // (wire, blob) or resolves it through the scope tree (the
       // session's shared MCP manager via `ISessionMcpService`).
-      { extra: [[IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })]] },
+      {
+        extra: [
+          [IAgentScopeContext, makeAgentScopeContext({ agentId, agentScope })],
+          [ITelemetryService, this.telemetry.withContext({ agent_id: agentId })],
+        ],
+      },
     ) as IAgentScopeHandle;
     this.handles.set(agentId, handle);
     try {

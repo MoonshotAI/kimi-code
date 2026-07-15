@@ -253,6 +253,10 @@ describe('AgentLifecycleService', () => {
     ix.stub(ITelemetryService, {
       _serviceBrand: undefined,
       track2: () => {},
+      withContext: () => ({
+        _serviceBrand: undefined,
+        track2: () => {},
+      }) as unknown as ITelemetryService,
     } as unknown as ITelemetryService);
     permissionModeSetMode = vi.fn();
     ix.stub(IAgentPermissionModeService, {
