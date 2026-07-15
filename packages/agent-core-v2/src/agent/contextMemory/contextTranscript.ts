@@ -1,6 +1,7 @@
 /**
  * `contextMemory` transcript reducer — rebuilds the FULL message history of an
- * agent from its `context.*` wire records for UI display (snapshot / messages).
+ * agent from its `context.*` and permission-result wire records for UI display
+ * (snapshot / messages).
  *
  * The live `ContextModel` (`ContextMemoryService`) rewrites the model-facing
  * context on `context.apply_compaction` into `[...keptUserMessages,
@@ -26,9 +27,12 @@
  *                                   at compaction summaries / clear floor)
  *   - `context.clear`             → keep prior transcript entries but reset the
  *                                   folded view
+ * Permission outcomes are correlated after the full reduction by turn and
+ * tool-call id, with a unique-id fallback for historical records lacking a
+ * turn id, so their wire ordering does not affect the projected transcript.
  */
 
-import { type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
+import { type ContentPart } from '#/app/llmProtocol/message';
 import type { WireRecord } from '#/wire/record';
 
 import {
@@ -38,7 +42,7 @@ import {
   selectRecentUserMessages,
 } from './compactionHandoff';
 import type { LoopRecordedEvent } from './loopEventFold';
-import type { ContextMessage } from './types';
+import type { ContextApprovalResult, ContextMessage, ContextToolCall } from './types';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
@@ -58,7 +62,7 @@ interface MutableMessage {
   id?: string;
   role: ContextMessage['role'];
   content: ContentPart[];
-  toolCalls: ToolCall[];
+  toolCalls: ContextToolCall[];
   toolCallId?: string;
   isError?: boolean;
   origin?: ContextMessage['origin'];
@@ -69,6 +73,18 @@ interface MutableEntry {
   time?: number;
 }
 
+interface TranscriptToolCallRef {
+  readonly turnId?: string;
+  readonly call: ContextToolCall;
+}
+
+interface TranscriptApprovalResult {
+  readonly turnId?: string;
+  readonly toolCallId: string;
+  readonly result: ContextApprovalResult;
+}
+
+/** Reduce `context.*` wire records into the full transcript. Pure (no I/O). */
 export function reduceContextTranscript(records: Iterable<WireRecord>): ContextTranscript {
   const reducer = createContextTranscriptReducer();
   for (const record of records) reducer.add(record);
@@ -81,6 +97,8 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   let clearFloor = 0;
   const openSteps = new Map<string, MutableEntry>();
   const pendingToolResultIds = new Set<string>();
+  const toolCallsById = new Map<string, TranscriptToolCallRef[]>();
+  const approvalResults: TranscriptApprovalResult[] = [];
   let deferred: MutableEntry[] = [];
 
   const push = (...entries: MutableEntry[]): void => {
@@ -140,14 +158,18 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       case 'tool.call': {
         const openStep = openSteps.get(event.stepUuid);
         if (openStep === undefined) return;
-        const call: ToolCall = {
+        const call: ContextToolCall = {
           type: 'function',
           id: event.toolCallId,
           name: event.name,
           arguments: event.args === undefined ? null : JSON.stringify(event.args),
-          ...(event.extras !== undefined ? { extras: event.extras } : {}),
+          extras: event.extras,
+          display: event.display,
         };
         openStep.message.toolCalls.push(call);
+        const refs = toolCallsById.get(event.toolCallId) ?? [];
+        refs.push({ turnId: normalizeTurnId(event.turnId), call });
+        toolCallsById.set(event.toolCallId, refs);
         pendingToolResultIds.add(event.toolCallId);
         return;
       }
@@ -198,6 +220,23 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       case 'context.append_loop_event':
         applyLoopEvent(record['event'] as LoopRecordedEvent, record.time);
         break;
+      case 'permission.record_approval_result': {
+        const toolCallId = record['toolCallId'];
+        const result = record['result'];
+        if (
+          typeof toolCallId !== 'string' ||
+          result === null ||
+          typeof result !== 'object'
+        ) {
+          break;
+        }
+        approvalResults.push({
+          turnId: normalizeTurnId(record['turnId']),
+          toolCallId,
+          result: result as ContextApprovalResult,
+        });
+        break;
+      }
       case 'context.apply_compaction': {
         transcript.push({
           message: {
@@ -227,12 +266,45 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
 
   return {
     add,
-    result: () => ({
-      entries: transcript.map((e) => e.message),
-      times: transcript.map((e) => e.time),
-      foldedLength,
-    }),
+    result: () => {
+      correlateApprovalResults(toolCallsById, approvalResults);
+      return {
+        entries: transcript.map((e) => e.message),
+        times: transcript.map((e) => e.time),
+        foldedLength,
+      };
+    },
   };
+}
+
+function correlateApprovalResults(
+  toolCallsById: ReadonlyMap<string, readonly TranscriptToolCallRef[]>,
+  approvalResults: readonly TranscriptApprovalResult[],
+): void {
+  for (const approval of approvalResults) {
+    const candidates = toolCallsById.get(approval.toolCallId) ?? [];
+    const exact =
+      approval.turnId === undefined
+        ? []
+        : candidates.filter((candidate) => candidate.turnId === approval.turnId);
+
+    let target: TranscriptToolCallRef | undefined;
+    if (exact.length === 1) {
+      target = exact[0];
+    } else if (
+      exact.length === 0 &&
+      candidates.length === 1 &&
+      (approval.turnId === undefined || candidates[0]!.turnId === undefined)
+    ) {
+      target = candidates[0];
+    }
+
+    if (target !== undefined) target.call.approvalResult = approval.result;
+  }
+}
+
+function normalizeTurnId(value: unknown): string | undefined {
+  return typeof value === 'string' || typeof value === 'number' ? String(value) : undefined;
 }
 
 function toMutableEntry(message: ContextMessage, time: number | undefined): MutableEntry {

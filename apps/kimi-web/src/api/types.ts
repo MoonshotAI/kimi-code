@@ -148,7 +148,21 @@ export type AppMessageRole = 'user' | 'assistant' | 'tool' | 'system';
 
 export type AppMessageContent =
   | { type: 'text'; text: string }
-  | { type: 'toolUse'; toolCallId: string; toolName: string; input: unknown; outputLines?: string[] }
+  | {
+      type: 'toolUse';
+      toolCallId: string;
+      toolName: string;
+      input: unknown;
+      /** Live projector correlation only; not part of the persisted v1 wire shape. */
+      turnId?: number;
+      outputLines?: string[];
+      /** Immutable display captured when the tool call was prepared. */
+      toolInputDisplay?: unknown;
+      /** Structured approval decision projected into durable message history. */
+      approvalResult?: ApprovalResponse;
+      /** Live-only terminal state bridged until the persisted tool_use arrives. */
+      planReviewStatus?: 'interrupted';
+    }
   | { type: 'toolResult'; toolCallId: string; output: unknown; isError?: boolean }
   | { type: 'image'; source: ImageSource }
   | { type: 'video'; source: ImageSource }
@@ -241,6 +255,25 @@ export interface ApprovalResponse {
   scope?: 'session';
   feedback?: string;
   selectedLabel?: string;
+}
+
+/**
+ * Short-lived live-event overlay for a plan review. Durable plan history comes
+ * from AppMessageContent.toolUse; this only bridges the interval before the
+ * corresponding projected message/update arrives. It is isolated per session
+ * by KimiClientState.planReviewOverlayBySession.
+ */
+export interface AppPlanReviewOverlay {
+  approvalId: string;
+  toolCallId: string;
+  turnId?: number;
+  toolInputDisplay: unknown;
+  /** Live race bridges render a card; snapshot correlations stay data-only. */
+  renderSynthetic: boolean;
+  /** Exact client-side card owned by a snapshot correlation. */
+  snapshotTarget?: { messageId: string; contentIndex: number };
+  approvalResult?: ApprovalResponse;
+  status?: 'interrupted';
 }
 
 export interface AppApprovalRequest {
@@ -429,7 +462,16 @@ export type AppEvent =
   | { type: 'agentTurnEnded'; sessionId: string; agentId: string; reason?: string }
   | { type: 'toolOutput'; sessionId: string; toolCallId: string; outputChunk: string; stream: 'stdout' | 'stderr' }
   | { type: 'approvalRequested'; sessionId: string; approval: AppApprovalRequest }
-  | { type: 'approvalResolved'; sessionId: string; approvalId: string; decision: ApprovalDecision; resolvedAt: string }
+  | {
+      type: 'approvalResolved';
+      sessionId: string;
+      approvalId: string;
+      decision: ApprovalDecision;
+      scope?: 'session';
+      feedback?: string;
+      selectedLabel?: string;
+      resolvedAt: string;
+    }
   | { type: 'approvalExpired'; sessionId: string; approvalId: string }
   | { type: 'questionRequested'; sessionId: string; question: AppQuestionRequest }
   | { type: 'questionAnswered'; sessionId: string; questionId: string; resolvedAt: string }
@@ -475,6 +517,7 @@ export interface AppInFlightToolCall {
   name: string;
   args?: unknown;
   description?: string;
+  display?: unknown;
   lastProgress?: { kind: string; text?: string; percent?: number };
 }
 
@@ -552,9 +595,14 @@ export interface KimiEventConnection {
   /**
    * Mark an agent as a side-channel (e.g. BTW side chat). The client-side
    * projector will then emit its text/thinking deltas as agent-scoped events
-   * instead of dropping them like background subagents.
+   * instead of dropping them like background subagents. New callers should
+   * pass the parent session id so routing stays scoped to that session; the
+   * marker is cleared when the side chat is explicitly closed. The optional
+   * form keeps older callers working.
    */
-  markSideChannelAgent(agentId: string): void;
+  markSideChannelAgent(agentId: string, sessionId?: string): void;
+  /** Remove a side-channel marker when the side chat is explicitly closed. */
+  clearSideChannelAgent(agentId: string, sessionId?: string): void;
   /**
    * Report the underlying socket's health. Used to detect a silent-half-open
    * connection after the tab was frozen in the background: the browser still

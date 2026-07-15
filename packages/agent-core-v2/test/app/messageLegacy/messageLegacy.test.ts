@@ -252,6 +252,75 @@ describe('MessageLegacyService', () => {
     });
   });
 
+  it('projects persisted plan review content and its structured approval outcome', async () => {
+    const display = {
+      kind: 'plan_review',
+      plan: '# Plan\n\n- Inspect\n- Change\n- Verify',
+      path: '/plans/review.md',
+    };
+    const svc = buildService({
+      summary,
+      records: [
+        {
+          type: 'context.append_loop_event',
+          event: { type: 'step.begin', uuid: 'st1', turnId: '3' },
+        },
+        {
+          type: 'context.append_loop_event',
+          event: {
+            type: 'tool.call',
+            stepUuid: 'st1',
+            turnId: '3',
+            toolCallId: 'call_plan',
+            name: 'ExitPlanMode',
+            args: {},
+            display,
+          },
+        },
+        {
+          type: 'permission.record_approval_result',
+          turnId: 3,
+          toolCallId: 'call_plan',
+          result: {
+            decision: 'rejected',
+            feedback: 'Please revise the verification step.',
+            selectedLabel: 'Revise',
+          },
+        },
+        {
+          type: 'context.append_loop_event',
+          event: {
+            type: 'tool.result',
+            toolCallId: 'call_plan',
+            result: { output: 'Plan rejected by user.', isError: true },
+          },
+        },
+        {
+          type: 'context.append_loop_event',
+          event: { type: 'step.end', uuid: 'st1', turnId: '3' },
+        },
+      ],
+      contextMessages: [],
+    });
+
+    const page = await svc.list('s1', {});
+
+    const assistant = page.items.find((message) => message.role === 'assistant');
+    expect(assistant?.content[0]).toEqual({
+      type: 'tool_use',
+      tool_call_id: 'call_plan',
+      tool_name: 'ExitPlanMode',
+      input: {},
+      tool_input_display: display,
+      approval_result: {
+        decision: 'rejected',
+        scope: undefined,
+        feedback: 'Please revise the verification step.',
+        selected_label: 'Revise',
+      },
+    });
+  });
+
   it('uses wire record times for created_at, nudged to stay strictly increasing', async () => {
     const svc = buildService({
       summary, // createdAt: 1000

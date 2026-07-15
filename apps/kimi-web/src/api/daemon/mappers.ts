@@ -167,6 +167,11 @@ export function toAppMessageContent(wire: WireMessageContent): AppMessageContent
         toolCallId: wire.tool_call_id,
         toolName: wire.tool_name,
         input: wire.input,
+        toolInputDisplay: wire.tool_input_display,
+        approvalResult:
+          wire.approval_result === undefined
+            ? undefined
+            : toAppApprovalResponse(wire.approval_result),
       };
     case 'tool_result':
       return {
@@ -233,6 +238,11 @@ function toWireMessageContent(app: AppMessageContent): WireMessageContent {
         tool_call_id: app.toolCallId,
         tool_name: app.toolName,
         input: app.input,
+        tool_input_display: app.toolInputDisplay,
+        approval_result:
+          app.approvalResult === undefined
+            ? undefined
+            : toWireApprovalResponse(app.approvalResult),
       };
     case 'toolResult':
       return {
@@ -295,6 +305,15 @@ export function toWireApprovalResponse(input: ApprovalResponse): WireApprovalRes
     scope: input.scope,
     feedback: input.feedback,
     selected_label: input.selectedLabel,
+  };
+}
+
+function toAppApprovalResponse(input: WireApprovalResponse): ApprovalResponse {
+  return {
+    decision: input.decision,
+    scope: input.scope,
+    feedback: input.feedback,
+    selectedLabel: input.selected_label,
   };
 }
 
@@ -633,6 +652,9 @@ export function toAppEvent(wire: WireEvent): AppEvent {
         sessionId: w.session_id,
         approvalId: w.payload.approval_id,
         decision: w.payload.decision,
+        scope: w.payload.scope,
+        feedback: w.payload.feedback,
+        selectedLabel: w.payload.selected_label,
         resolvedAt: w.payload.resolved_at,
       };
 

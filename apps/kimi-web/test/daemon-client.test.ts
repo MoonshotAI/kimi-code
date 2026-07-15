@@ -1,12 +1,14 @@
 // apps/kimi-web/test/daemon-client.test.ts
 // DaemonKimiWebApi public REST adapter: session export binary/error contracts,
-// getSessionGoal wire → app mapping, and raw stream-coordinate delivery.
+// getSessionGoal wire → app mapping, raw stream-coordinate delivery, and
+// projector-state release on session unsubscribe.
 // Wiring: real client/projector; fetch or WebSocket is stubbed at the network boundary.
 // Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/daemon-client.test.ts
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DaemonKimiWebApi } from '../src/api/daemon/client';
+import { createInitialState, reduceAppEvent } from '../src/api/daemon/eventReducer';
 import { DaemonApiError, DaemonNetworkError } from '../src/api/errors';
 import { clearTrace, traceToJsonl } from '../src/debug/trace';
 import type { AppEvent, KimiEventConnection, KimiEventMeta } from '../src/api/types';
@@ -175,7 +177,89 @@ describe('DaemonKimiWebApi.exportSession', () => {
     expect(trace).toContain('web_log_entries');
   });
 });
+function promptFrame(seq: number, userMessageId: string) {
+  return {
+    type: 'prompt.submitted',
+    seq,
+    session_id: 'sess_1',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    payload: {
+      promptId: `prompt_${seq}`,
+      userMessageId,
+      content: [{ type: 'text', text: `message ${seq}` }],
+    },
+  };
+}
 
+function rawFrame(type: string, seq: number, payload: unknown) {
+  return {
+    type,
+    seq,
+    session_id: 'sess_1',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    payload,
+  };
+}
+
+function protocolFrame(
+  type: string,
+  seq: number,
+  payload: unknown,
+  sessionId = 'sess_1',
+) {
+  return {
+    type,
+    seq,
+    session_id: sessionId,
+    timestamp: '2026-01-01T00:00:00.000Z',
+    payload,
+  };
+}
+
+function eventConnectionRig(): {
+  connection: KimiEventConnection;
+  socket: FakeWebSocket;
+  events: AppEvent[];
+} {
+  const events: AppEvent[] = [];
+  const connection = createApi().connectEvents({
+    onEvent: (event) => events.push(event),
+    onResync: () => {},
+    onError: () => {},
+    onConnectionChange: () => {},
+  });
+  return { connection, socket: FakeWebSocket.instances[0]!, events };
+}
+
+function eventConnectionRigWithReducer(): {
+  connection: KimiEventConnection;
+  socket: FakeWebSocket;
+  events: AppEvent[];
+  getState: () => ReturnType<typeof createInitialState>;
+  getResyncCount: () => number;
+} {
+  const events: AppEvent[] = [];
+  let state = createInitialState();
+  let resyncCount = 0;
+  const connection = createApi().connectEvents({
+    onEvent: (event, meta) => {
+      events.push(event);
+      state = reduceAppEvent(state, event, meta);
+    },
+    onResync: () => {
+      resyncCount += 1;
+    },
+    onError: () => {},
+    onConnectionChange: () => {},
+  });
+  return {
+    connection,
+    socket: FakeWebSocket.instances[0]!,
+    events,
+    getState: () => state,
+    getResyncCount: () => resyncCount,
+  };
+}
 describe('DaemonKimiWebApi.getSessionGoal', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn());
@@ -229,6 +313,7 @@ describe('DaemonKimiWebApi.connectEvents', () => {
       onError() {},
       onConnectionChange() {},
     });
+    connection.subscribe('session-1');
     const socket = FakeWebSocket.instances[0]!;
 
     socket.emit({ type: 'server_hello', payload: { protocol_version: 2 } });
@@ -294,5 +379,224 @@ describe('DaemonKimiWebApi.connectEvents', () => {
         stream: { turnId: 7, offset: 0, kind: 'thinking' },
       },
     });
+  });
+});
+
+describe('DaemonKimiWebApi event connection (session ownership)', () => {
+  let originalWebSocket: typeof globalThis.WebSocket;
+  let connection: KimiEventConnection | undefined;
+
+  beforeEach(() => {
+    originalWebSocket = globalThis.WebSocket;
+    FakeWebSocket.instances = [];
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+  });
+
+  afterEach(() => {
+    connection?.close();
+    connection = undefined;
+    globalThis.WebSocket = originalWebSocket;
+  });
+
+  it('drops a raw frame that arrives after its session is unsubscribed', () => {
+    const rig = eventConnectionRig();
+    connection = rig.connection;
+    connection.subscribe('sess_1');
+    rig.socket.emit(promptFrame(1, 'message_1'));
+    expect(rig.events).toHaveLength(1);
+
+    connection.unsubscribe('sess_1');
+    rig.socket.emit(promptFrame(2, 'message_2'));
+
+    expect(rig.events).toHaveLength(1);
+  });
+
+  it('accepts raw frames after a released session is subscribed again', () => {
+    const rig = eventConnectionRig();
+    connection = rig.connection;
+    connection.subscribe('sess_1');
+    connection.unsubscribe('sess_1');
+    connection.subscribe('sess_1');
+
+    rig.socket.emit(promptFrame(1, 'message_1'));
+
+    expect(rig.events).toContainEqual(expect.objectContaining({ type: 'messageCreated' }));
+  });
+
+  it('drops late transcript and interaction frames without rebuilding reducer maps', () => {
+    const rig = eventConnectionRigWithReducer();
+    connection = rig.connection;
+    connection.subscribe('sess_1');
+    connection.unsubscribe('sess_1');
+
+    const frames = [
+      protocolFrame('event.message.updated', 1, {
+        message_id: 'late_message',
+        content: [],
+        status: 'completed',
+      }),
+      protocolFrame('event.task.progress', 2, {
+        task_id: 'late_task',
+        output_chunk: 'late',
+        stream: 'stdout',
+      }),
+      protocolFrame('event.approval.resolved', 3, {
+        approval_id: 'late_approval',
+        decision: 'rejected',
+        resolved_by: 'user',
+        resolved_at: '2026-01-01T00:00:00.000Z',
+      }),
+      protocolFrame('event.question.dismissed', 4, {
+        question_id: 'late_question',
+        dismissed_by: 'user',
+        dismissed_at: '2026-01-01T00:00:00.000Z',
+      }),
+    ];
+    for (const frame of frames) rig.socket.emit(frame);
+
+    expect(rig.events).toEqual([]);
+    expect(rig.getResyncCount()).toBe(0);
+    const state = rig.getState();
+    expect(state.messagesBySession).toEqual({});
+    expect(state.tasksBySession).toEqual({});
+    expect(state.approvalsBySession).toEqual({});
+    expect(state.questionsBySession).toEqual({});
+    expect(state.compactionBySession).toEqual({});
+    expect(state.lastSeqBySession).toEqual({});
+  });
+
+  it('keeps all late session lifecycle fan-out events without resyncing an evicted session', () => {
+    const rig = eventConnectionRigWithReducer();
+    connection = rig.connection;
+    connection.subscribe('sess_1');
+    connection.unsubscribe('sess_1');
+
+    const usage = {
+      input_tokens: 1,
+      output_tokens: 2,
+      cache_read_tokens: 3,
+      cache_creation_tokens: 4,
+      total_cost_usd: 0,
+      context_tokens: 5,
+      context_limit: 6,
+      turn_count: 1,
+    };
+    rig.socket.emit(
+      protocolFrame('event.session.usage_updated', 1, {
+        usage,
+        delta: {
+          input_tokens: 1,
+          output_tokens: 2,
+          cache_read_tokens: 3,
+          cache_creation_tokens: 4,
+          cost_usd: 0,
+        },
+      }),
+    );
+    rig.socket.emit(
+      protocolFrame('event.session.history_compacted', 2, {
+        before_seq: 1,
+        reason: 'history_rewrite',
+      }),
+    );
+
+    expect(rig.events.map((event) => event.type)).toEqual([
+      'sessionUsageUpdated',
+      'historyCompacted',
+    ]);
+    expect(rig.getResyncCount()).toBe(0);
+    expect(rig.getState().lastSeqBySession).toEqual({ sess_1: 2 });
+    expect(rig.getState().messagesBySession).toEqual({});
+    expect(rig.getState().tasksBySession).toEqual({});
+  });
+
+  it('keeps late real-session lifecycle and metadata fan-out events', () => {
+    const rig = eventConnectionRigWithReducer();
+    connection = rig.connection;
+    connection.subscribe('sess_1');
+    connection.unsubscribe('sess_1');
+
+    rig.socket.emit(
+      protocolFrame('event.session.status_changed', 1, {
+        status: 'running',
+        previous_status: 'idle',
+      }),
+    );
+    rig.socket.emit(
+      rawFrame('session.meta.updated', 2, {
+        patch: { title: 'Updated title', lastPrompt: 'hello' },
+      }),
+    );
+
+    expect(rig.events).toEqual([
+      expect.objectContaining({ type: 'sessionStatusChanged', sessionId: 'sess_1' }),
+      expect.objectContaining({ type: 'sessionMetaUpdated', sessionId: 'sess_1' }),
+    ]);
+    expect(rig.getState().lastSeqBySession).toEqual({ sess_1: 2 });
+  });
+
+  it('keeps global workspace protocol frames when no session is subscribed', () => {
+    const rig = eventConnectionRig();
+    connection = rig.connection;
+    connection.subscribe('sess_1');
+    connection.unsubscribe('sess_1');
+
+    rig.socket.emit(
+      protocolFrame(
+        'event.workspace.created',
+        1,
+        {
+          workspace: {
+            id: 'workspace_1',
+            root: '/tmp/workspace',
+            name: 'workspace',
+            is_git_repo: false,
+            branch: null,
+            session_count: 0,
+          },
+        },
+        '__global__',
+      ),
+    );
+
+    expect(rig.events).toContainEqual(
+      expect.objectContaining({ type: 'workspaceCreated' }),
+    );
+  });
+
+  it('does not carry released raw projector state into a reactivated session', () => {
+    const rig = eventConnectionRig();
+    connection = rig.connection;
+    connection.subscribe('sess_1');
+    rig.socket.emit(rawFrame('turn.started', 1, { turnId: 1 }));
+    rig.socket.emit(rawFrame('turn.step.started', 2, { turnId: 1, step: 1 }));
+    rig.socket.emit(rawFrame('assistant.delta', 3, { turnId: 1, delta: 'old' }));
+    const assistantEventsBeforeRelease = rig.events.filter((event) => event.type === 'assistantDelta');
+    expect(assistantEventsBeforeRelease).toHaveLength(1);
+
+    connection.unsubscribe('sess_1');
+    connection.subscribe('sess_1');
+    rig.socket.emit(rawFrame('assistant.delta', 4, { turnId: 1, delta: 'late' }));
+    expect(rig.events.filter((event) => event.type === 'assistantDelta')).toHaveLength(1);
+  });
+
+  it('continues an inactive side-channel stream without reviving main state', () => {
+    const rig = eventConnectionRig();
+    connection = rig.connection;
+    connection.subscribe('sess_1');
+    connection.markSideChannelAgent('agent_btw_1', 'sess_1');
+    connection.unsubscribe('sess_1');
+
+    rig.socket.emit(
+      rawFrame('assistant.delta', 1, {
+        agentId: 'agent_btw_1',
+        delta: 'side chat continues',
+      }),
+    );
+
+    expect(rig.events).toContainEqual(
+      expect.objectContaining({ type: 'agentDelta', agentId: 'agent_btw_1' }),
+    );
+    expect(rig.events).not.toContainEqual(expect.objectContaining({ type: 'assistantDelta' }));
   });
 });

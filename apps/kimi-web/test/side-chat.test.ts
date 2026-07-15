@@ -1,7 +1,16 @@
 // apps/kimi-web/test/side-chat.test.ts
+/**
+ * Scenario: a Web side chat creates and prompts a BTW agent under its parent session.
+ * Responsibilities: carry prompt controls and register session-scoped event routing.
+ * Wiring: real useSideChat composable; daemon API and event connection are external stubs.
+ * Run: pnpm --filter @moonshot-ai/kimi-web test -- side-chat.test.ts
+ */
+
 import { describe, expect, it, vi } from 'vitest';
+import { nextTick, reactive } from 'vue';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { useSideChat } from '../src/composables/client/useSideChat';
+import type { AppModel, KimiEventConnection } from '../src/api/types';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 
 const apiMock = vi.hoisted(() => ({
@@ -53,6 +62,49 @@ function createState(): ExtendedState {
 }
 
 describe('useSideChat — sendSideChatPromptOn', () => {
+  it('registers a new BTW agent under its parent session', async () => {
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    const markSideChannelAgent = vi.fn();
+
+    const sideChat = useSideChat(createState(), {
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => ({ markSideChannelAgent }) as unknown as KimiEventConnection,
+      models: () => [],
+    });
+
+    await sideChat.openSideChatOn('sess_1');
+
+    expect(markSideChannelAgent).toHaveBeenCalledWith('agent_btw_1', 'sess_1');
+  });
+
+  it('registers an existing BTW agent again when its parent session becomes active', async () => {
+    apiMock.startBtw.mockReset();
+    apiMock.submitPrompt.mockReset();
+    apiMock.startBtw.mockResolvedValue({ agentId: 'agent_btw_1' });
+    const markSideChannelAgent = vi.fn();
+    const state = reactive(createState()) as ExtendedState;
+    const sideChat = useSideChat(state, {
+      pushOperationFailure: vi.fn(),
+      nextOptimisticMsgId: () => 'msg_opt_btw',
+      connectEventsIfNeeded: vi.fn(),
+      getEventConn: () => ({ markSideChannelAgent }) as unknown as KimiEventConnection,
+      models: () => [],
+    });
+    await sideChat.openSideChatOn('sess_1');
+    markSideChannelAgent.mockClear();
+
+    state.activeSessionId = undefined;
+    await nextTick();
+    state.activeSessionId = 'sess_1';
+    await nextTick();
+
+    expect(markSideChannelAgent).toHaveBeenCalledWith('agent_btw_1', 'sess_1');
+  });
+
   it('carries model, thinking, permission and plan/swarm modes on the prompt', async () => {
     apiMock.startBtw.mockReset();
     apiMock.submitPrompt.mockReset();

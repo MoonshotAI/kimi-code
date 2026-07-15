@@ -1,5 +1,5 @@
 // apps/kimi-web/src/components/chat/tool-calls/toolRegistry.ts
-import type { Component } from 'vue';
+import { defineAsyncComponent, type Component } from 'vue';
 import type { ToolCall } from '../../../types';
 import { normalizeToolName } from '../../../lib/toolMeta';
 import AgentTool from './AgentTool.vue';
@@ -11,8 +11,11 @@ import SwarmTool from './SwarmTool.vue';
 
 type ToolRenderer = Component;
 
+const PlanReviewTool = defineAsyncComponent(() => import('./PlanReviewTool.vue'));
+
 /** Pick the renderer for a tool call. */
 export function resolveToolRenderer(tool: ToolCall): ToolRenderer {
+  if (tool.planReview) return PlanReviewTool;
   if (tool.media && tool.status === 'ok') return MediaTool;
   const name = normalizeToolName(tool.name);
   if (name === 'edit' || name === 'write' || name === 'multi_edit') return EditTool;

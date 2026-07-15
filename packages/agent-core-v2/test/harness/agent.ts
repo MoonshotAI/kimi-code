@@ -1546,7 +1546,7 @@ export class AgentTestContext {
     }
   }
 
-  private async persistedRecords(): Promise<WireRecord[]> {
+  async persistedRecords(): Promise<WireRecord[]> {
     const log = this.get(IAppendLogStore);
     if (log instanceof PersistenceAppendLogStore) return log.snapshot();
     const scope = this.get(IAgentScopeContext).scope();

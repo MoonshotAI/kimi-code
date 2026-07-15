@@ -25,4 +25,21 @@ export default {
   approvePlan: '批准 plan',
   revise: '修改',
   rejectAndExit: '拒绝并退出',
+  planHistory: {
+    title: '计划',
+    expand: '展开计划',
+    collapse: '收起计划',
+    options: '备选方案',
+    selectedApproach: '所选方案',
+    feedback: '反馈',
+    status: {
+      pending: '等待审核',
+      approved: '已批准',
+      rejected: '已拒绝',
+      revision_requested: '需要修改',
+      dismissed: '已关闭',
+      interrupted: '已中断',
+      failed: '执行失败',
+    },
+  },
 } as const;

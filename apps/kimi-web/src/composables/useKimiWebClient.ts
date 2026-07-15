@@ -73,7 +73,13 @@ import type {
   KimiEventMeta,
   ThinkingLevel,
 } from '../api/types';
-import { createInitialState, reduceAppEvent, type CompactionStatus, type KimiClientState } from '../api/daemon/eventReducer';
+import {
+  createInitialState,
+  reconcilePlanReviewOverlaysFromSnapshot,
+  reduceAppEvent,
+  type CompactionStatus,
+  type KimiClientState,
+} from '../api/daemon/eventReducer';
 import { isPlaceholderSessionUsage, toAppEvent } from '../api/daemon/mappers';
 
 import { messagesToTurns } from './messagesToTurns';
@@ -579,6 +585,7 @@ function forgetSession(sessionId: string): void {
   // buffered event for this id would otherwise be reduced and recreate the very
   // per-session maps we are about to delete.
   eventConn?.unsubscribe(sessionId);
+  sideChat.clearSideChatForSession(sessionId);
   dropWsSubscription(sessionId);
   // Drop this session's queued render AND control events. Flushing them here is
   // unsafe: a delayed idle event can drain a queued prompt into the session
@@ -588,6 +595,7 @@ function forgetSession(sessionId: string): void {
   removeSession(sessionId);
   removeSessionMessages(sessionId);
   delete rawState.approvalsBySession[sessionId];
+  delete rawState.planReviewOverlayBySession[sessionId];
   delete rawState.questionsBySession[sessionId];
   delete rawState.tasksBySession[sessionId];
   delete rawState.goalBySession[sessionId];
@@ -805,7 +813,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     activeSessionId: rawState.activeSessionId,
     messagesBySession: rawState.messagesBySession,
     approvalsBySession: rawState.approvalsBySession,
-    planReviewByToolCallId: rawState.planReviewByToolCallId,
+    planReviewOverlayBySession: rawState.planReviewOverlayBySession,
     questionsBySession: rawState.questionsBySession,
     tasksBySession: rawState.tasksBySession,
     goalBySession: rawState.goalBySession,
@@ -821,7 +829,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   setActiveSessionId(next.activeSessionId);
   setMessagesBySession(next.messagesBySession);
   rawState.approvalsBySession = next.approvalsBySession;
-  rawState.planReviewByToolCallId = next.planReviewByToolCallId;
+  rawState.planReviewOverlayBySession = next.planReviewOverlayBySession;
   rawState.questionsBySession = next.questionsBySession;
   rawState.tasksBySession = next.tasksBySession;
   rawState.goalBySession = next.goalBySession;
@@ -879,6 +887,10 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
   // persistent divider marker in the reducer (TUI parity: the scrollback
   // is kept, only a marker line records the compaction).
   applyEvent(appEvent, meta.sessionId, meta.seq);
+
+  if (appEvent.type === 'sessionDeleted') {
+    sideChat.clearSideChatForSession(appEvent.sessionId);
+  }
 
   const sideTarget = sideChat.sideChatTargetBySession.value[meta.sessionId];
   if (sideTarget) {
@@ -1379,20 +1391,15 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       ...rawState.approvalsBySession,
       [sessionId]: snap.pendingApprovals,
     };
-    // Preserve plan_review paths from the snapshot so the ExitPlanMode tool
-    // card can link to the plan file even after a reload.
-    for (const a of snap.pendingApprovals) {
-      const display = a.display as { kind?: unknown; plan?: unknown; path?: unknown } | null | undefined;
-      if (display?.kind === 'plan_review' && typeof display.plan === 'string' && display.plan.length > 0) {
-        rawState.planReviewByToolCallId = {
-          ...rawState.planReviewByToolCallId,
-          [a.toolCallId]: {
-            plan: display.plan,
-            path: typeof display.path === 'string' ? display.path : undefined,
-          },
-        };
-      }
-    }
+    // Rebuild pending correlations, but keep a resolved approval visible until
+    // its durable tool_use/result reaches the transcript. The snapshot can race
+    // that write and otherwise erase the only decision the user can see.
+    reconcilePlanReviewOverlaysFromSnapshot(
+      rawState,
+      sessionId,
+      snap.messages,
+      snap.pendingApprovals,
+    );
     rawState.questionsBySession = {
       ...rawState.questionsBySession,
       [sessionId]: snap.pendingQuestions,
@@ -1906,7 +1913,7 @@ const turns = computed<ChatTurn[]>(() => {
     approvals,
     (fileId) => getKimiWebApi().getFileUrl(fileId),
     activity.value !== 'idle',
-    rawState.planReviewByToolCallId,
+    rawState.planReviewOverlayBySession[sid] ?? {},
   );
 });
 

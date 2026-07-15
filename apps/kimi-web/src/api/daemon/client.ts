@@ -291,6 +291,17 @@ function isCompactionReason(reason: string): boolean {
   return reason === 'auto_compact' || reason === 'manual_compact';
 }
 
+/** Mirrors kap-server's global fan-out predicate. */
+function isGlobalWireEventType(type: string): boolean {
+  return (
+    type === 'session.meta.updated' ||
+    type.startsWith('event.session.') ||
+    type.startsWith('event.workspace.') ||
+    type.startsWith('event.config.') ||
+    type.startsWith('event.model_catalog.')
+  );
+}
+
 // ---------------------------------------------------------------------------
 // DaemonKimiWebApi
 // ---------------------------------------------------------------------------
@@ -554,6 +565,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
                   name: t.name,
                   args: t.args,
                   description: t.description,
+                  display: t.display,
                   lastProgress: t.last_progress,
                 })),
                 promptId: data.in_flight_turn.current_prompt_id,
@@ -1403,6 +1415,7 @@ export class DaemonKimiWebApi implements KimiWebApi {
     // Per-session projector for raw agent-core events.
     // Keyed by session_id; reset when a session is re-subscribed or resynced.
     const projector = createAgentProjector();
+    const projectedSessions = new Set<string>();
 
     const socket = new DaemonEventSocket(wsUrl, this.config.clientId, {
       // -----------------------------------------------------------------------
@@ -1410,6 +1423,16 @@ export class DaemonKimiWebApi implements KimiWebApi {
       // -----------------------------------------------------------------------
       onWireEvent: (wireEvent: WireEvent) => {
         const sessionId = wireEventSessionId(wireEvent);
+        // The socket may deliver one protocol frame that was already queued
+        // when unsubscribe() ran. Do not let session-scoped protocol events
+        // recreate reducer maps after that session was released. The daemon's
+        // lifecycle/meta/workspace/config/model events are global fan-out even
+        // when their envelope carries a real session_id. Session lifecycle
+        // events only patch the sidebar and advance its cursor; they do not
+        // recreate transcript/task maps for an evicted session.
+        if (!isGlobalWireEventType(wireEvent.type) && !projectedSessions.has(sessionId)) {
+          return;
+        }
         const seq = wireEventSeq(wireEvent);
         const appEvent = toAppEvent(wireEvent);
 
@@ -1417,7 +1440,11 @@ export class DaemonKimiWebApi implements KimiWebApi {
         // EXCEPT for compaction itself: the transcript keeps the scrollback and
         // the reducer appends a divider marker instead (reloading would replace
         // the visible conversation with the compacted model context).
-        if (appEvent.type === 'historyCompacted' && !isCompactionReason(appEvent.reason)) {
+        if (
+          appEvent.type === 'historyCompacted' &&
+          !isCompactionReason(appEvent.reason) &&
+          projectedSessions.has(appEvent.sessionId)
+        ) {
           handlers.onResync(appEvent.sessionId, appEvent.beforeSeq);
           // Still dispatch the event to onEvent so the reducer can update lastSeqBySession
         }
@@ -1432,6 +1459,9 @@ export class DaemonKimiWebApi implements KimiWebApi {
       // -----------------------------------------------------------------------
       onRawAgentEvent: (frame) => {
         const { type, seq, session_id: sessionId, payload, offset } = frame;
+        // The projector owns the raw-frame gate: it must see inactive
+        // side-channel frames so BTW output can finish without recreating the
+        // main session state. Ordinary inactive frames are discarded there.
         const appEvents = projector.project(type, payload, sessionId, { offset });
         for (const appEvent of appEvents) {
           const turnId = (payload as { turnId?: unknown } | null)?.turnId;
@@ -1458,6 +1488,10 @@ export class DaemonKimiWebApi implements KimiWebApi {
       },
 
       onResync: (sessionId: string, currentSeq: number, epoch?: string) => {
+        // Ignore a control frame that was already queued when unsubscribe()
+        // released this session. Otherwise reset() would reactivate the
+        // projector and the resync handler could rebuild an evicted session.
+        if (!projectedSessions.has(sessionId)) return;
         // Reset per-session projector state on resync
         projector.reset(sessionId);
         handlers.onResync(sessionId, currentSeq, epoch);
@@ -1489,9 +1523,19 @@ export class DaemonKimiWebApi implements KimiWebApi {
         // bindings — the remainder of an in-flight turn would be dropped on
         // the floor. The projector starts sessions fresh on first sight, and
         // onResync (below) resets explicitly before messages are reloaded.
+        // A previous LRU eviction may have released this session while a
+        // reconnect was in flight. Activate before sending the subscribe so
+        // a frame delivered immediately after the server ack is accepted.
+        projectedSessions.add(sessionId);
+        projector.activate(sessionId);
         socket.subscribe(sessionId, cursor ?? { seq: 0 });
       },
       unsubscribe(sessionId: string): void {
+        // Drop projector state before unsubscribing the socket. The socket can
+        // still deliver one already-queued frame after unsubscribe(); it must
+        // not recreate the per-session message/usage maps.
+        projectedSessions.delete(sessionId);
+        projector.release(sessionId);
         socket.unsubscribe(sessionId);
       },
       seedSnapshot(sessionId: string, snapshot: AppSessionSnapshot): void {
@@ -1502,6 +1546,11 @@ export class DaemonKimiWebApi implements KimiWebApi {
         // authoritative session record. When there is no in-flight turn we
         // only reset, so stale turn state can't leak into the freshly-loaded
         // message list.
+        // Seed is the first half of the snapshot → subscribe handoff.  Mark
+        // the session active before emitting the seed so a re-entrant queued
+        // protocol frame cannot be mistaken for a released session; subscribe
+        // below keeps the marker active for the live stream.
+        projectedSessions.add(sessionId);
         if (snapshot.inFlightTurn === null) {
           projector.reset(sessionId);
           return;
@@ -1536,8 +1585,11 @@ export class DaemonKimiWebApi implements KimiWebApi {
       terminalClose(sessionId: string, terminalId: string): void {
         socket.terminalClose(sessionId, terminalId);
       },
-      markSideChannelAgent(agentId: string): void {
-        projector.markSideChannelAgent(agentId);
+      markSideChannelAgent(agentId: string, sessionId?: string): void {
+        projector.markSideChannelAgent(agentId, sessionId);
+      },
+      clearSideChannelAgent(agentId: string, sessionId?: string): void {
+        projector.clearSideChannelAgent(agentId, sessionId);
       },
       health(): { connected: boolean; open: boolean; stale: boolean } {
         return socket.health();
@@ -1546,6 +1598,8 @@ export class DaemonKimiWebApi implements KimiWebApi {
         socket.reconnect();
       },
       close(): void {
+        projectedSessions.clear();
+        projector.releaseAll();
         socket.close();
       },
     };

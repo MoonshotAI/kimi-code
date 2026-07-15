@@ -227,4 +227,104 @@ describe('reduceContextTranscript', () => {
     expect(result.entries[2]!.toolCallId).toBe('call_1');
     expect(result.foldedLength).toBe(3);
   });
+
+  it('preserves tool display and correlates approvals by turn regardless of record order', () => {
+    const result = reduceContextTranscript([
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: '1' }),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 's1',
+        turnId: '1',
+        toolCallId: 'reused_call',
+        name: 'ExitPlanMode',
+        args: {},
+        display: { kind: 'plan_review', plan: '# First plan', path: '/plans/first.md' },
+      }),
+      loopEvent({ type: 'tool.result', toolCallId: 'reused_call', result: { output: 'first' } }),
+      loopEvent({ type: 'step.end', uuid: 's1', turnId: '1' }),
+      {
+        type: 'permission.record_approval_result',
+        turnId: 2,
+        toolCallId: 'reused_call',
+        result: { decision: 'approved', selectedLabel: 'Approve' },
+      },
+      loopEvent({ type: 'step.begin', uuid: 's2', turnId: '2' }),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 's2',
+        turnId: '2',
+        toolCallId: 'reused_call',
+        name: 'ExitPlanMode',
+        args: {},
+        display: { kind: 'plan_review', plan: '# Second plan', path: '/plans/second.md' },
+      }),
+      loopEvent({ type: 'tool.result', toolCallId: 'reused_call', result: { output: 'second' } }),
+      loopEvent({ type: 'step.end', uuid: 's2', turnId: '2' }),
+      {
+        type: 'permission.record_approval_result',
+        turnId: 1,
+        toolCallId: 'reused_call',
+        result: { decision: 'rejected', selectedLabel: 'Reject' },
+      },
+    ]);
+
+    const calls = result.entries
+      .filter((message) => message.role === 'assistant')
+      .map((message) => message.toolCalls[0]);
+    expect(calls).toEqual([
+      expect.objectContaining({
+        display: expect.objectContaining({ plan: '# First plan' }),
+        approvalResult: { decision: 'rejected', selectedLabel: 'Reject' },
+      }),
+      expect.objectContaining({
+        display: expect.objectContaining({ plan: '# Second plan' }),
+        approvalResult: { decision: 'approved', selectedLabel: 'Approve' },
+      }),
+    ]);
+  });
+
+  it('falls back to a legacy approval without turnId only for a unique toolCallId', () => {
+    const unique = reduceContextTranscript([
+      loopEvent({ type: 'step.begin', uuid: 's1' }),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 's1',
+        toolCallId: 'legacy_call',
+        name: 'ExitPlanMode',
+      }),
+      {
+        type: 'permission.record_approval_result',
+        toolCallId: 'legacy_call',
+        result: { decision: 'rejected' },
+      },
+    ]);
+    expect(unique.entries[0]!.toolCalls[0]!.approvalResult).toEqual({ decision: 'rejected' });
+
+    const ambiguous = reduceContextTranscript([
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: '1' }),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 's1',
+        turnId: '1',
+        toolCallId: 'legacy_call',
+        name: 'ExitPlanMode',
+      }),
+      loopEvent({ type: 'step.begin', uuid: 's2', turnId: '2' }),
+      loopEvent({
+        type: 'tool.call',
+        stepUuid: 's2',
+        turnId: '2',
+        toolCallId: 'legacy_call',
+        name: 'ExitPlanMode',
+      }),
+      {
+        type: 'permission.record_approval_result',
+        toolCallId: 'legacy_call',
+        result: { decision: 'rejected' },
+      },
+    ]);
+    expect(
+      ambiguous.entries.flatMap((message) => message.toolCalls).map((call) => call.approvalResult),
+    ).toEqual([undefined, undefined]);
+  });
 });

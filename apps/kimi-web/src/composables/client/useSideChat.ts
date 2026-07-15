@@ -7,7 +7,7 @@
 // Cross-dependencies (failure reporting, optimistic-id generation, the event
 // connection) are injected by the facade.
 
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { getKimiWebApi } from '../../api';
 import type { AppMessage, KimiEventConnection } from '../../api/types';
 import { messagesToTurns } from '../messagesToTurns';
@@ -41,6 +41,19 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     () => activeSideChatTarget.value?.parentId ?? null,
   );
   const sideChatVisible = computed<boolean>(() => activeSideChatTarget.value !== null);
+
+  // LRU eviction unsubscribes inactive sessions and releases their projector
+  // state. Re-register an existing side chat when its parent becomes active so
+  // the next snapshot/subscribe routes that agent back to the side panel.
+  watch(
+    () => rawState.activeSessionId,
+    (sessionId) => {
+      if (!sessionId) return;
+      const target = sideChatTargetBySession.value[sessionId];
+      if (target) getEventConn()?.markSideChannelAgent(target.agentId, sessionId);
+    },
+    { flush: 'sync' },
+  );
 
   const sideChatSending = computed<boolean>(() => {
     const target = activeSideChatTarget.value;
@@ -170,7 +183,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
         [parent]: { agentId },
       };
       connectEventsIfNeeded();
-      getEventConn()?.markSideChannelAgent(agentId);
+      getEventConn()?.markSideChannelAgent(agentId, parent);
     }
     if (initialPrompt && initialPrompt.trim()) {
       await sendSideChatPromptOn(parent, initialPrompt.trim());
@@ -232,6 +245,8 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
   function closeSideChat(): void {
     const sid = rawState.activeSessionId;
     if (!sid) return;
+    const target = sideChatTargetBySession.value[sid];
+    if (target) getEventConn()?.clearSideChannelAgent(target.agentId, sid);
     const { [sid]: _removed, ...rest } = sideChatTargetBySession.value;
     void _removed;
     sideChatTargetBySession.value = rest;
@@ -250,10 +265,21 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
   // When a session is deleted, drop its side-chat target so it cannot leak into a
   // later session that happens to reuse the same id.
   function clearSideChatForSession(sessionId: string): void {
-    if (!sideChatTargetBySession.value[sessionId]) return;
+    const target = sideChatTargetBySession.value[sessionId];
+    if (!target) return;
+    getEventConn()?.clearSideChannelAgent(target.agentId, sessionId);
     const { [sessionId]: _removed, ...rest } = sideChatTargetBySession.value;
     void _removed;
     sideChatTargetBySession.value = rest;
+    const { [target.agentId]: _messages, ...messagesRest } = rawState.sideChatMessagesByAgent;
+    void _messages;
+    rawState.sideChatMessagesByAgent = messagesRest;
+    const { [target.agentId]: _sending, ...sendingRest } = rawState.sideChatSendingByAgent;
+    void _sending;
+    rawState.sideChatSendingByAgent = sendingRest;
+    const { [sessionId]: _userIds, ...userIdsRest } = rawState.sideChatUserMessageIdsBySession;
+    void _userIds;
+    rawState.sideChatUserMessageIdsBySession = userIdsRest;
   }
 
   return {

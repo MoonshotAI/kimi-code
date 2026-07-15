@@ -14,6 +14,7 @@ import {
   IAgentLifecycleService,
   IAgentPromptService,
   ILogService,
+  IMessageLegacyService,
   ISessionActivity,
   ISessionInteractionService,
   ISessionContext,
@@ -42,6 +43,36 @@ function fakeAccessor(entries: ReadonlyArray<readonly [unknown, unknown]>) {
 }
 
 describe('server-v2 snapshot route enrichment', () => {
+  function captureLegacySnapshotHandler(core: unknown, broadcaster: unknown) {
+    let routeHandler:
+      | ((
+          req: { id: string; params: { session_id: string } },
+          reply: { send(payload: unknown): unknown },
+        ) => Promise<void> | void)
+      | undefined;
+    const previousReaderMode = process.env['KIMI_SNAPSHOT_READER'];
+    process.env['KIMI_SNAPSHOT_READER'] = 'legacy';
+    try {
+      registerSnapshotRoutes(
+        {
+          get: (_path, _options, handler) => {
+            routeHandler = handler;
+          },
+        },
+        {
+          core: core as never,
+          broadcaster: broadcaster as never,
+          reader: { read: async () => ({}) as never } as never,
+        },
+      );
+    } finally {
+      if (previousReaderMode === undefined) delete process.env['KIMI_SNAPSHOT_READER'];
+      else process.env['KIMI_SNAPSHOT_READER'] = previousReaderMode;
+    }
+    if (routeHandler === undefined) throw new Error('snapshot route was not registered');
+    return routeHandler;
+  }
+
   it('attaches current_prompt_id to an in-flight turn from prompt active state', async () => {
     const sessionId = 'sess_snapshot';
     const promptId = 'msg_snapshot_prompt';
@@ -80,6 +111,7 @@ describe('server-v2 snapshot route enrichment', () => {
       accessor: fakeAccessor([
         [ISessionLifecycleService, { resume: async () => session }],
         [IWorkspaceRegistry, { get: async () => ({ root: '/workspace' }) }],
+        [IMessageLegacyService, { list: async () => ({ items: [], has_more: false }) }],
       ]),
     };
     const broadcaster = {
@@ -109,37 +141,12 @@ describe('server-v2 snapshot route enrichment', () => {
       }),
     };
 
-    let routeHandler:
-      | ((
-          req: { id: string; params: { session_id: string } },
-          reply: { send(payload: unknown): unknown },
-        ) => Promise<void> | void)
-      | undefined;
     // Exercise the legacy (resume + live assembly) path — the fakes model the
     // live scope, not the on-disk reader.
-    const previousReaderMode = process.env['KIMI_SNAPSHOT_READER'];
-    process.env['KIMI_SNAPSHOT_READER'] = 'legacy';
-    const unusedReader = { read: async () => ({}) as never };
-    try {
-      registerSnapshotRoutes(
-        {
-          get: (_path, _options, handler) => {
-            routeHandler = handler;
-          },
-        },
-        {
-          core: core as never,
-          broadcaster: broadcaster as never,
-          reader: unusedReader as never,
-        },
-      );
-    } finally {
-      if (previousReaderMode === undefined) delete process.env['KIMI_SNAPSHOT_READER'];
-      else process.env['KIMI_SNAPSHOT_READER'] = previousReaderMode;
-    }
+    const routeHandler = captureLegacySnapshotHandler(core, broadcaster);
 
     let payload: unknown;
-    await routeHandler?.(
+    await routeHandler(
       { id: 'req_snapshot', params: { session_id: sessionId } },
       {
         send: (value) => {
@@ -166,6 +173,75 @@ describe('server-v2 snapshot route enrichment', () => {
         run_in_background: false,
       }),
     ]);
+  });
+
+  it('uses the full message transcript and restores oldest-first snapshot order', async () => {
+    const sessionId = 'sess_legacy_messages';
+    const workspaceId = 'wd_legacy_messages_012345abcdef';
+    const now = Date.parse('2026-01-02T00:00:00.000Z');
+    const session = {
+      accessor: fakeAccessor([
+        [ISessionContext, { workspaceId }],
+        [
+          ISessionMetadata,
+          {
+            read: async () => ({
+              id: sessionId,
+              title: 'Legacy transcript',
+              createdAt: now,
+              updatedAt: now,
+              archived: false,
+            }),
+          },
+        ],
+        [IAgentLifecycleService, { get: () => undefined }],
+        [ISessionInteractionService, { listPending: () => [] }],
+        [ISessionActivity, { status: () => 'idle' }],
+      ]),
+    };
+    const older = {
+      id: 'msg_old',
+      session_id: sessionId,
+      role: 'user' as const,
+      content: [{ type: 'text' as const, text: 'older' }],
+      created_at: '2026-01-02T00:00:00.000Z',
+    };
+    const newer = {
+      id: 'msg_new',
+      session_id: sessionId,
+      role: 'assistant' as const,
+      content: [{ type: 'text' as const, text: 'newer' }],
+      created_at: '2026-01-02T00:00:01.000Z',
+    };
+    const core = {
+      accessor: fakeAccessor([
+        [ISessionLifecycleService, { resume: async () => session }],
+        [IWorkspaceRegistry, { get: async () => ({ root: '/workspace' }) }],
+        [
+          IMessageLegacyService,
+          { list: async () => ({ items: [newer, older], has_more: true }) },
+        ],
+      ]),
+    };
+    const routeHandler = captureLegacySnapshotHandler(core, {
+      getSnapshotState: async () => ({
+        seq: 3,
+        epoch: 'ep_legacy_messages',
+        inFlightTurn: null,
+      }),
+    });
+
+    let payload: unknown;
+    await routeHandler(
+      { id: 'req_legacy_messages', params: { session_id: sessionId } },
+      { send: (value) => (payload = value) },
+    );
+
+    const body = payload as { code: number; data: unknown };
+    expect(body.code).toBe(0);
+    const snap = sessionSnapshotResponseSchema.parse(body.data);
+    expect(snap.messages.items.map((message) => message.id)).toEqual(['msg_old', 'msg_new']);
+    expect(snap.messages.has_more).toBe(true);
   });
 });
 

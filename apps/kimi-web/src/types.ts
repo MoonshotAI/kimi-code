@@ -89,6 +89,30 @@ export type WorkspaceScope = 'current' | 'all';
 
 export type ToolStatus = 'ok' | 'running' | 'error';
 
+export type PlanReviewStatus =
+  | 'pending'
+  | 'approved'
+  | 'rejected'
+  | 'revision_requested'
+  | 'dismissed'
+  | 'interrupted'
+  | 'failed';
+
+export interface PlanReviewOption {
+  label: string;
+  description?: string;
+}
+
+/** Durable, read-only view projected from an ExitPlanMode tool_use. */
+export interface PlanReviewHistory {
+  plan: string;
+  path?: string;
+  options?: PlanReviewOption[];
+  status: PlanReviewStatus;
+  selectedLabel?: string;
+  feedback?: string;
+}
+
 export interface ToolCall {
   id: string;
   name: string; // e.g. 'read' | 'bash'
@@ -98,9 +122,8 @@ export interface ToolCall {
   output?: string[]; // shown line by line when expanded
   media?: ToolMedia;
   defaultExpanded?: boolean;
-  /** Absolute path of the plan file (ExitPlanMode only) — rendered as a
-   *  clickable link that opens the plan in the file preview. */
-  planPath?: string;
+  /** ExitPlanMode plan history projected from the durable tool_use fields. */
+  planReview?: PlanReviewHistory;
 }
 
 export interface ToolMedia {
@@ -180,7 +203,7 @@ export type ApprovalBlock =
       kind: 'plan_review';
       plan: string;
       path?: string;
-      options?: { label: string; description?: string }[];
+      options?: PlanReviewOption[];
     }
   | { kind: 'generic'; summary: string };
 

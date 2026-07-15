@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import {
   IAgentContextMemoryService,
   IAgentLifecycleService,
+  IAgentPermissionRulesService,
   IWireService,
   ISessionLifecycleService,
   IModelResolver,
@@ -274,6 +275,89 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     expect(body.data.items.every((m) => m.role === 'user')).toBe(true);
     expect(body.data.items).toHaveLength(2);
     expect(body.data.items.every((m) => MSG_ID.test(m.id))).toBe(true);
+  });
+
+  it('returns a rejected plan review with its structured decision after a cold restart', async () => {
+    const id = await createSession();
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const agent = await session.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    const context = agent.accessor.get(IAgentContextMemoryService);
+
+    context.append({
+      role: 'user',
+      content: [{ type: 'text', text: 'Prepare a release plan.' }],
+      toolCalls: [],
+    });
+    context.appendLoopEvent({
+      type: 'step.begin',
+      uuid: 'step_plan_review',
+      turnId: '9',
+      step: 1,
+    });
+    context.appendLoopEvent({
+      type: 'tool.call',
+      uuid: 'call_plan_review',
+      turnId: '9',
+      step: 1,
+      stepUuid: 'step_plan_review',
+      toolCallId: 'call_plan_review',
+      name: 'ExitPlanMode',
+      args: {},
+      display: {
+        kind: 'plan_review',
+        plan: '# Release plan\n\nRun the targeted checks before publishing.',
+        path: '/tmp/release-plan.md',
+      },
+    });
+    agent.accessor.get(IAgentPermissionRulesService).recordApprovalResult({
+      turnId: 9,
+      toolCallId: 'call_plan_review',
+      toolName: 'ExitPlanMode',
+      action: 'Presenting plan and exiting plan mode',
+      result: { decision: 'rejected', feedback: 'Add rollback verification.' },
+    });
+    context.appendLoopEvent({
+      type: 'tool.result',
+      parentUuid: 'call_plan_review',
+      toolCallId: 'call_plan_review',
+      result: {
+        output: 'User rejected the plan. Feedback:\n\nAdd rollback verification.',
+        isError: false,
+      },
+    });
+    context.appendLoopEvent({
+      type: 'step.end',
+      uuid: 'step_plan_review',
+      turnId: '9',
+      step: 1,
+    });
+    await agent.accessor.get(IWireService).flush();
+
+    await server!.close();
+    server = undefined;
+    await boot();
+    expect(server!.core.accessor.get(ISessionLifecycleService).get(id)).toBeUndefined();
+
+    const { body } = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
+    expect(body.code).toBe(0);
+    const assistant = body.data.items.find((message) => message.role === 'assistant');
+    const toolUse = assistant?.content.find((part) => part['type'] === 'tool_use');
+
+    expect(toolUse).toMatchObject({
+      type: 'tool_use',
+      tool_call_id: 'call_plan_review',
+      tool_name: 'ExitPlanMode',
+      tool_input_display: {
+        kind: 'plan_review',
+        plan: '# Release plan\n\nRun the targeted checks before publishing.',
+        path: '/tmp/release-plan.md',
+      },
+      approval_result: {
+        decision: 'rejected',
+        feedback: 'Add rollback verification.',
+      },
+    });
   });
 
   // Regression for the cold-session gap: a persisted (non-live) session must

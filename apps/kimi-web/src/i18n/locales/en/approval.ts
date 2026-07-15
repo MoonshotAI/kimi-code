@@ -25,4 +25,21 @@ export default {
   approvePlan: 'Approve plan',
   revise: 'Revise',
   rejectAndExit: 'Reject and Exit',
+  planHistory: {
+    title: 'Plan',
+    expand: 'Expand plan',
+    collapse: 'Collapse plan',
+    options: 'Approaches considered',
+    selectedApproach: 'Selected approach',
+    feedback: 'Feedback',
+    status: {
+      pending: 'Awaiting review',
+      approved: 'Approved',
+      rejected: 'Rejected',
+      revision_requested: 'Revision requested',
+      dismissed: 'Dismissed',
+      interrupted: 'Interrupted',
+      failed: 'Failed',
+    },
+  },
 } as const;

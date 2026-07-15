@@ -43,10 +43,11 @@
  */
 
 import type { FinishReason } from '#/app/llmProtocol/finishReason';
-import { createToolMessage, type ContentPart, type ToolCall } from '#/app/llmProtocol/message';
+import { createToolMessage, type ContentPart } from '#/app/llmProtocol/message';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
+import type { ToolInputDisplay } from '@moonshot-ai/protocol';
 
-import type { ContextMessage } from './types';
+import type { ContextMessage, ContextToolCall } from './types';
 
 const TOOL_INTERRUPTED_ON_RESUME_OUTPUT =
   'Tool execution was interrupted before its result was recorded. Do not assume the tool completed successfully.';
@@ -90,6 +91,7 @@ export type LoopRecordedEvent =
       readonly name: string;
       readonly args?: unknown;
       readonly extras?: Record<string, unknown>;
+      readonly display?: ToolInputDisplay;
       readonly uuid?: string;
       readonly turnId?: string;
       readonly step?: number;
@@ -162,12 +164,13 @@ export function foldLoopEvent(
         content: [...message.content, event.part],
       })), ctx);
     case 'tool.call': {
-      const call: ToolCall = {
+      const call: ContextToolCall = {
         type: 'function',
         id: event.toolCallId,
         name: event.name,
         arguments: event.args === undefined ? null : JSON.stringify(event.args),
-        ...(event.extras !== undefined ? { extras: event.extras } : {}),
+        extras: event.extras,
+        display: event.display,
       };
       ctx.pending.add(event.toolCallId);
       return bind(appendToOpenAssistant(state, (message) => ({

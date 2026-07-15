@@ -132,6 +132,71 @@ async function writeWire(sessionDir: string, lines: ReadonlyArray<unknown>): Pro
   await writeFile(join(agentDir, 'wire.jsonl'), body, 'utf-8');
 }
 
+function planReviewWireRecords(input: {
+  callId: string;
+  plan: string;
+  decision?: 'approved' | 'rejected';
+  resultOutput?: string;
+}): unknown[] {
+  const stepId = `step_${input.callId}`;
+  const records: unknown[] = [
+    {
+      type: 'context.append_loop_event',
+      event: { type: 'step.begin', uuid: stepId, turnId: '7', step: 1 },
+    },
+    {
+      type: 'context.append_loop_event',
+      event: {
+        type: 'tool.call',
+        uuid: input.callId,
+        turnId: '7',
+        step: 1,
+        stepUuid: stepId,
+        toolCallId: input.callId,
+        name: 'ExitPlanMode',
+        args: {},
+        description: 'Presenting plan and exiting plan mode',
+        display: {
+          kind: 'plan_review',
+          plan: input.plan,
+          path: `/tmp/${input.callId}.md`,
+        },
+      },
+    },
+  ];
+  if (input.decision !== undefined) {
+    records.push({
+      type: 'permission.record_approval_result',
+      turnId: 7,
+      toolCallId: input.callId,
+      toolName: 'ExitPlanMode',
+      action: 'Presenting plan and exiting plan mode',
+      result: { decision: input.decision },
+    });
+  }
+  if (input.resultOutput !== undefined) {
+    records.push(
+      {
+        type: 'context.append_loop_event',
+        event: {
+          type: 'tool.result',
+          parentUuid: input.callId,
+          toolCallId: input.callId,
+          result: {
+            output: input.resultOutput,
+            isError: input.decision === 'rejected',
+          },
+        },
+      },
+      {
+        type: 'context.append_loop_event',
+        event: { type: 'step.end', uuid: stepId, turnId: '7', step: 1 },
+      },
+    );
+  }
+  return records;
+}
+
 afterEach(async () => {
   for (const dir of tmpDirs.splice(0)) await rm(dir, { recursive: true, force: true });
 });
@@ -241,6 +306,91 @@ describe('SnapshotReader.read', () => {
     const tool = snap.messages.items[2]!;
     expect(tool.role).toBe('tool');
     expect((tool.content[0] as { tool_call_id: string }).tool_call_id).toBe('call_1');
+  });
+
+  it('projects an approved plan review and its structured decision from disk', async () => {
+    const f = await makeFixtureAsync();
+    await seedSession(f, 'sess_plan_approved');
+    await writeWire(f.sessionDir('sess_plan_approved'), [
+      { type: 'metadata', protocol_version: '1.4', created_at: 1 },
+      ...planReviewWireRecords({
+        callId: 'call_plan_approved',
+        plan: '# Approved plan\n\nRun the focused checks.',
+        decision: 'approved',
+        resultOutput: 'Plan approved.',
+      }),
+    ]);
+
+    const snap = await f.reader.read('sess_plan_approved');
+    const assistant = snap.messages.items.find((message) => message.role === 'assistant');
+    const toolUse = assistant?.content.find((part) => part.type === 'tool_use');
+
+    expect(toolUse).toMatchObject({
+      type: 'tool_use',
+      tool_call_id: 'call_plan_approved',
+      tool_name: 'ExitPlanMode',
+      tool_input_display: {
+        kind: 'plan_review',
+        plan: '# Approved plan\n\nRun the focused checks.',
+        path: '/tmp/call_plan_approved.md',
+      },
+      approval_result: { decision: 'approved' },
+    });
+  });
+
+  it('projects a rejected plan review without replacing its body', async () => {
+    const f = await makeFixtureAsync();
+    await seedSession(f, 'sess_plan_rejected');
+    await writeWire(f.sessionDir('sess_plan_rejected'), [
+      { type: 'metadata', protocol_version: '1.4', created_at: 1 },
+      ...planReviewWireRecords({
+        callId: 'call_plan_rejected',
+        plan: '# Rejected plan\n\nKeep this exact historical draft.',
+        decision: 'rejected',
+        resultOutput: 'Plan rejected by user. Plan mode remains active.',
+      }),
+    ]);
+
+    const snap = await f.reader.read('sess_plan_rejected');
+    const assistant = snap.messages.items.find((message) => message.role === 'assistant');
+    const toolUse = assistant?.content.find((part) => part.type === 'tool_use');
+
+    expect(toolUse).toMatchObject({
+      type: 'tool_use',
+      tool_call_id: 'call_plan_rejected',
+      tool_input_display: {
+        kind: 'plan_review',
+        plan: '# Rejected plan\n\nKeep this exact historical draft.',
+      },
+      approval_result: { decision: 'rejected' },
+    });
+  });
+
+  it('keeps a pending plan visible when only the tool call reached disk', async () => {
+    const f = await makeFixtureAsync();
+    await seedSession(f, 'sess_plan_pending');
+    await writeWire(f.sessionDir('sess_plan_pending'), [
+      { type: 'metadata', protocol_version: '1.4', created_at: 1 },
+      ...planReviewWireRecords({
+        callId: 'call_plan_pending',
+        plan: '# Pending plan\n\nWaiting for review.',
+      }),
+    ]);
+
+    const snap = await f.reader.read('sess_plan_pending');
+    const assistant = snap.messages.items.find((message) => message.role === 'assistant');
+    const toolUse = assistant?.content.find((part) => part.type === 'tool_use');
+
+    expect(toolUse).toMatchObject({
+      type: 'tool_use',
+      tool_call_id: 'call_plan_pending',
+      tool_input_display: {
+        kind: 'plan_review',
+        plan: '# Pending plan\n\nWaiting for review.',
+      },
+    });
+    expect(toolUse?.approval_result).toBeUndefined();
+    expect(snap.messages.items.some((message) => message.role === 'tool')).toBe(false);
   });
 
   it('keeps the full history across context.apply_compaction and appends a summary marker', async () => {

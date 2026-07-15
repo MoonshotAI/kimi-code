@@ -19,17 +19,16 @@
  */
 
 import {
-  IAgentContextMemoryService,
   IAgentLifecycleService,
   IAgentPromptService,
   ILogService,
+  IMessageLegacyService,
   ISessionActivity,
   ISessionInteractionService,
   ISessionContext,
   ISessionLifecycleService,
   ISessionMetadata,
   IWorkspaceRegistry,
-  toProtocolMessage,
   type IAgentScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
@@ -37,7 +36,6 @@ import {
   ErrorCode,
   sessionSnapshotResponseSchema,
   type InFlightTurn,
-  type Message,
   type SessionSnapshotResponse,
 } from '@moonshot-ai/protocol';
 import { z } from 'zod';
@@ -171,17 +169,17 @@ async function readViaLegacyAssembly(
     handle.accessor.get(ISessionActivity).status(),
   );
 
-  // Messages — most recent page of the main agent's live history.
+  // Messages — use the same full wire transcript as `/messages`, rather than
+  // the folded live ContextMemory. The transcript also correlates persisted
+  // tool-call displays with `permission.record_approval_result`, which the
+  // live model deliberately does not retain. `/messages` is newest-first;
+  // snapshots are oldest-first so the Web client can render them directly.
   const main = handle.accessor.get(IAgentLifecycleService).get('main');
-  let items: Message[] = [];
-  let hasMore = false;
-  if (main !== undefined) {
-    const history = main.accessor.get(IAgentContextMemoryService).get();
-    hasMore = history.length > SNAPSHOT_MESSAGE_PAGE_SIZE;
-    const page = history.slice(-SNAPSHOT_MESSAGE_PAGE_SIZE);
-    const offset = history.length - page.length;
-    items = page.map((msg, i) => toProtocolMessage(sessionId, offset + i, msg, meta.createdAt));
-  }
+  const messagePage = await core.accessor.get(IMessageLegacyService).list(sessionId, {
+    page_size: SNAPSHOT_MESSAGE_PAGE_SIZE,
+  });
+  const items = messagePage.items.toReversed();
+  const hasMore = messagePage.has_more;
   const currentPromptId =
     snapState.inFlightTurn === null ? undefined : readCurrentPromptId(main);
   const inFlightTurn = attachCurrentPromptIdToInFlight(snapState.inFlightTurn, currentPromptId);
