@@ -7,7 +7,7 @@
  *   - WS `server_hello` → `client_hello` → ack handshake
  *   - `subscribe` / `unsubscribe` ack correlation
  *   - Approval + question reverse-RPC auto-resolve via per-event handlers
- *   - `waitForFrame` / `waitForSessionStatus` convenience waits
+ *   - `waitForFrame` / `waitForSessionBusy` convenience waits
  *
  * **What it is NOT**: a server bootstrap helper. Connect to a server process
  * that's already running at `baseUrl` (default `http://127.0.0.1:58627`).
@@ -48,7 +48,6 @@ import type {
   Session,
   SessionChildCreate,
   SessionCreate,
-  SessionStatus,
   SessionUpdate,
   Terminal,
   UndoSessionRequest,
@@ -62,7 +61,7 @@ import { WebSocket as WsWebSocket } from 'ws';
 
 import { HttpClient } from './http.js';
 import { installReverseRpcHandler } from './reverse-rpc.js';
-import { DEFAULT_FRAME_TIMEOUT_MS, waitForSessionStatus } from './wait.js';
+import { DEFAULT_FRAME_TIMEOUT_MS, waitForSessionBusy } from './wait.js';
 import { type AnyFrame, WsClient } from './ws.js';
 
 export interface DaemonClientOptions {
@@ -242,7 +241,7 @@ export class DaemonClient {
   }
   listChildren(
     sid: string,
-    query?: { page_size?: number; before_id?: string; after_id?: string; status?: Session['status'] },
+    query?: { page_size?: number; before_id?: string; after_id?: string; busy?: boolean },
   ): Promise<{ items: Session[]; has_more: boolean }> {
     return this.http.listChildren(sid, query);
   }
@@ -472,13 +471,13 @@ export class DaemonClient {
     );
   }
 
-  /** Poll `/sessions/{sid}` until it reaches `status`. */
-  waitForSessionStatus(
+  /** Poll `/sessions/{sid}` until its aggregate work flag reaches `busy`. */
+  waitForSessionBusy(
     sid: string,
-    status: SessionStatus,
+    busy: boolean,
     opts?: { timeoutMs?: number; pollMs?: number },
   ): Promise<Session> {
-    return waitForSessionStatus(this.http, sid, status, opts);
+    return waitForSessionBusy(this.http, sid, busy, opts);
   }
 
   // ── Terminal WS controls ───────────────────────────────────────────────

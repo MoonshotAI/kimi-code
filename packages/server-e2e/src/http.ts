@@ -252,7 +252,7 @@ export class HttpClient {
   }
   listChildren(
     sid: string,
-    query?: { page_size?: number; before_id?: string; after_id?: string; status?: Session['status'] },
+    query?: { page_size?: number; before_id?: string; after_id?: string; busy?: boolean },
   ): Promise<{ items: Session[]; has_more: boolean }> {
     return this.request(
       'GET',
