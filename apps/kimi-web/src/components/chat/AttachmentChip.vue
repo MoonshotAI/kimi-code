@@ -102,7 +102,6 @@ const title = computed(() => {
       <span class="att-name">{{ displayName }}</span>
       <Spinner v-if="uploading" size="sm" :label="t('composer.uploading')" />
       <span v-else-if="error" class="att-err"><Icon name="info" size="sm" /></span>
-      <span v-else-if="ext" class="att-ext">{{ ext }}</span>
     </button>
     <Tooltip v-if="removable" :text="removeLabel ?? t('composer.remove')">
       <button type="button" class="att-rm" :aria-label="removeLabel ?? t('composer.remove')" @click="emit('remove')">
@@ -170,16 +169,6 @@ const title = computed(() => {
   white-space: nowrap;
   color: var(--color-text);
   font-weight: var(--weight-medium);
-}
-.att-ext {
-  flex: none;
-  font-size: calc(var(--ui-font-size-sm) - 2px);
-  font-weight: var(--weight-semibold, 600);
-  letter-spacing: .02em;
-  color: var(--color-text-muted);
-  background: var(--color-surface-sunken);
-  border-radius: var(--radius-xs);
-  padding: 1px 4px;
 }
 .att-chip.is-error {
   border-color: var(--color-danger-bd);
