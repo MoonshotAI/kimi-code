@@ -129,6 +129,8 @@ export class SessionAPIImpl implements PromisableMethods<SessionAPI> {
   }
 
   async promptWithSkills({ agentId, ...payload }: AgentScopedPayload<PromptWithSkillsPayload>) {
+    // Resolve and submit first because skill preparation may fail. Invalid skill
+    // submissions must not update the session title or lastPrompt metadata.
     await (await this.getAgent(agentId)).promptWithSkills(payload);
     if (agentId === 'main') {
       await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));

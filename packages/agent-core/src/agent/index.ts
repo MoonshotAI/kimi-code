@@ -556,7 +556,13 @@ export class Agent {
         if (this.skills === null) {
           throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, 'No skills are available');
         }
-        this.skills.prompt(payload);
+        const submissionId = payload.submissionId ?? randomUUID();
+        const prepared = this.skills.prepareAll(payload.skills, submissionId);
+        for (const activation of prepared) {
+          this.skills.recordActivation(activation.origin);
+          this.context.appendUserMessage(activation.input, activation.origin);
+        }
+        this.turn.prompt(payload.input, { kind: 'user', submissionId });
       },
       runShellCommand: (payload) => this.tools.runShellCommand(payload.command, payload.commandId),
       cancelShellCommand: (payload) => this.tools.cancelShellCommand(payload.commandId),
@@ -676,7 +682,9 @@ export class Agent {
         if (this.skills === null) {
           throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${payload.name}" was not found`);
         }
-        this.skills.activate(payload);
+        const prepared = this.skills.prepare(payload);
+        this.skills.recordActivation(prepared.origin);
+        this.turn.prompt(prepared.input, prepared.origin);
       },
       activatePluginCommand: (payload) => {
         const def = this.pluginCommands.find(

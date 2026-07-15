@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ActivateSkillPayload, PromptWithSkillsPayload } from '#/rpc';
+import type { ActivateSkillPayload } from '#/rpc';
 import type { ContentPart } from '@moonshot-ai/kosong';
 
 import type { Agent } from '..';
@@ -12,31 +12,28 @@ import type { SkillRegistry } from './types';
 
 export type { SkillRegistry } from './types';
 
+export interface PreparedSkillActivation {
+  readonly origin: SkillActivationOrigin;
+  readonly input: readonly ContentPart[];
+}
+
 export class SkillManager {
   constructor(
     protected readonly agent: Agent,
     public readonly registry: SkillRegistry,
   ) {}
 
-  activate(input: ActivateSkillPayload): void {
-    const prepared = this.prepare(input);
-    this.recordActivation(prepared.origin, prepared.input);
+  prepareAll(
+    inputs: readonly ActivateSkillPayload[],
+    submissionId: string,
+  ): readonly PreparedSkillActivation[] {
+    return inputs.map((input) => this.prepare(input, submissionId));
   }
 
-  prompt(payload: PromptWithSkillsPayload): void {
-    const submissionId = payload.submissionId ?? randomUUID();
-    const prepared = payload.skills.map((skill) => this.prepare(skill, submissionId));
-    for (const activation of prepared) {
-      this.recordActivation(activation.origin);
-      this.agent.context.appendUserMessage(activation.input, activation.origin);
-    }
-    this.agent.turn.prompt(payload.input, { kind: 'user', submissionId });
-  }
-
-  private prepare(input: ActivateSkillPayload, submissionId?: string): {
-    readonly origin: SkillActivationOrigin;
-    readonly input: readonly ContentPart[];
-  } {
+  prepare(
+    input: ActivateSkillPayload,
+    submissionId?: string,
+  ): PreparedSkillActivation {
     const skill = this.registry.getSkill(input.name);
     if (skill === undefined) {
       throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
@@ -74,10 +71,7 @@ export class SkillManager {
     };
   }
 
-  recordActivation(
-    origin: SkillActivationOrigin,
-    input?: readonly ContentPart[] | undefined,
-  ): void {
+  recordActivation(origin: SkillActivationOrigin): void {
     this.agent.emitEvent({
       type: 'skill.activated',
       activationId: origin.activationId,
@@ -96,9 +90,6 @@ export class SkillManager {
       this.agent.telemetry.track('flow_invoked', {
         flow_name: origin.skillName,
       });
-    }
-    if (input !== undefined) {
-      this.agent.turn.prompt(input, origin);
     }
   }
 }
