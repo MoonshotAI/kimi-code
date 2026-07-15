@@ -6,6 +6,7 @@ import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
 import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX } from '../../lib/slashCommands';
+import { formatTokens } from '../../lib/formatTokens';
 import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, ThinkingLevel } from '../../api/types';
@@ -591,8 +592,8 @@ const pct = computed(() => {
 });
 
 const ctxTooltip = computed(() => {
-  const used = (props.status?.ctxUsed ?? 0).toLocaleString();
-  const max = (props.status?.ctxMax ?? 0).toLocaleString();
+  const used = formatTokens(props.status?.ctxUsed ?? 0);
+  const max = formatTokens(props.status?.ctxMax ?? 0);
   return t('status.ctxTooltip', { used, max, pct: pct.value });
 });
 
