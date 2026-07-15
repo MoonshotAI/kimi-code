@@ -1,16 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { SHUTDOWN_ID, startServerMock, installProxyMock } = vi.hoisted(() => ({
-  SHUTDOWN_ID: { _serviceBrand: undefined, id: 'IServerShutdownService' },
+const {
+  startServerMock,
+  installProxyMock,
+  hostRequestHeadersSeedMock,
+  createKimiDefaultHeadersMock,
+} = vi.hoisted(() => ({
   startServerMock: vi.fn(),
   installProxyMock: vi.fn(),
+  hostRequestHeadersSeedMock: vi.fn(() => 'HOST_HEADERS_SEED'),
+  createKimiDefaultHeadersMock: vi.fn(() => ({ 'User-Agent': 'kimi-desktop/1.2.3' })),
 }));
 
-vi.mock('@moonshot-ai/server', () => ({
+vi.mock('@moonshot-ai/kap-server', () => ({
   startServer: startServerMock,
   createServerLogger: vi.fn(),
-  IServerShutdownService: SHUTDOWN_ID,
   serverTokenPath: () => '/tmp/kimi-test/server.token',
+}));
+vi.mock('@moonshot-ai/agent-core-v2', () => ({
+  hostRequestHeadersSeed: hostRequestHeadersSeedMock,
+}));
+vi.mock('@moonshot-ai/kimi-code-oauth', () => ({
+  createKimiDefaultHeaders: createKimiDefaultHeadersMock,
 }));
 vi.mock('@moonshot-ai/kimi-code-sdk', () => ({
   installGlobalProxyDispatcher: installProxyMock,
@@ -23,14 +34,15 @@ describe('startDesktopServer', () => {
   beforeEach(() => {
     startServerMock.mockReset();
     installProxyMock.mockReset();
+    hostRequestHeadersSeedMock.mockClear();
+    createKimiDefaultHeadersMock.mockClear();
   });
 
-  it('wires startServer with loopback, ephemeral port, independent lock, identity, shutdown override (no process.exit), webAssetsDir; calls installGlobalProxyDispatcher; returns origin/port/close', async () => {
+  it('wires startServer with loopback, ephemeral port, independent lock, corsOrigins, identity seed, webAssetsDir; calls installGlobalProxyDispatcher; returns origin/port/close', async () => {
     const close = vi.fn().mockResolvedValue(undefined);
     startServerMock.mockResolvedValue({
-      address: '127.0.0.1:54321',
-      logger: {},
-      services: {},
+      host: '127.0.0.1',
+      port: 54321,
       close,
     });
 
@@ -46,25 +58,23 @@ describe('startDesktopServer', () => {
     expect(args.port).toBe(0);
     expect(args.lockPath).toMatch(/server-desktop\.lock$/);
     expect(args.webAssetsDir).toBe('/app/web-dist');
-    expect(args.coreProcessOptions.identity).toEqual({
+    expect(args.corsOrigins).toEqual(['app://renderer']);
+
+    // Host identity is seeded as the full Kimi request headers (v2 dropped
+    // `coreProcessOptions`); no serviceOverrides / process.exit hack remains.
+    expect(createKimiDefaultHeadersMock).toHaveBeenCalledWith({
+      homeDir: '/tmp/kimi-test',
       userAgentProduct: 'kimi-desktop',
       version: '1.2.3',
     });
-
-    // shutdown override neutralises process.exit and calls close
-    expect(Array.isArray(args.serviceOverrides)).toBe(true);
-    expect(args.serviceOverrides).toHaveLength(1);
-    expect(args.serviceOverrides[0][0]).toBe(SHUTDOWN_ID);
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit must not be called');
+    expect(hostRequestHeadersSeedMock).toHaveBeenCalledWith({
+      'User-Agent': 'kimi-desktop/1.2.3',
     });
-    await args.serviceOverrides[0][1].requestShutdown('test');
-    expect(close).toHaveBeenCalledOnce();
-    exitSpy.mockRestore();
+    expect(args.seeds).toBe('HOST_HEADERS_SEED');
 
     expect(handle.origin).toBe('http://127.0.0.1:54321');
     expect(handle.port).toBe(54321);
     await handle.close();
-    expect(close).toHaveBeenCalledTimes(2);
+    expect(close).toHaveBeenCalledOnce();
   });
 });

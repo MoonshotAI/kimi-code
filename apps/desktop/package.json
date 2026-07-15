@@ -21,8 +21,10 @@
     "dist": "npm run build:renderer && tsdown && electron-builder --config electron-builder.config.cjs"
   },
   "dependencies": {
+    "@moonshot-ai/agent-core-v2": "workspace:^",
+    "@moonshot-ai/kap-server": "workspace:^",
+    "@moonshot-ai/kimi-code-oauth": "workspace:^",
     "@moonshot-ai/kimi-code-sdk": "workspace:^",
-    "@moonshot-ai/server": "workspace:^",
     "@moonshot-ai/web-core": "workspace:*",
     "@moonshot-ai/web-i18n": "workspace:*",
     "@moonshot-ai/web-markdown": "workspace:*",

@@ -13,7 +13,7 @@ import {
 } from 'electron';
 import type { MenuItemConstructorOptions } from 'electron';
 import { resolveKimiHome } from '@moonshot-ai/kimi-code-sdk';
-import { serverTokenPath } from '@moonshot-ai/server';
+import { serverTokenPath } from '@moonshot-ai/kap-server';
 
 import { startDesktopServer, type DesktopServerHandle } from './server';
 import { registerRendererScheme, registerRendererProtocol, rendererUrl } from './protocol';

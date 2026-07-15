@@ -11,8 +11,8 @@ Electron 桌面客户端（产品名 **Kimi Code Desktop**，workspace 包 `@moo
 
 1. 在同一进程里 `startDesktopServer(...)`（直接 import `kimi-code` 的 server 代码，不再 fork
    SEA）。server 监听 loopback 随机端口，返回 `{ origin, token }`。
-2. 启动前把 `app://renderer` 注入 `KIMI_CODE_CORS_ORIGINS`，让 renderer（`app://renderer`
-   origin）能跨域调用 loopback HTTP API；server 端只对该 allowlist echo CORS 头。
+2. 起 server 时经 `corsOrigins: ['app://renderer']` 选项放行该 origin，让 renderer（`app://renderer`
+   origin）能跨域调用 loopback HTTP API；server 端只对 allowlist 内的 origin echo CORS 头。
 3. 注册 `app://renderer/<path>` → `desktop-dist/<path>` 的协议映射（带 `..` 越界防护），然后
    `loadURL(rendererUrl(origin, token))`：URL 形如
    `app://renderer/index.html?kimi_desktop=1&kimi_origin=<enc>#token=<enc>`，token 经 hash 注入，

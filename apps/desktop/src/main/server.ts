@@ -4,10 +4,10 @@ import { join } from 'node:path';
 import {
   startServer,
   createServerLogger,
-  IServerShutdownService,
   serverTokenPath,
-  type RunningServer,
-} from '@moonshot-ai/server';
+} from '@moonshot-ai/kap-server';
+import { hostRequestHeadersSeed } from '@moonshot-ai/agent-core-v2';
+import { createKimiDefaultHeaders } from '@moonshot-ai/kimi-code-oauth';
 import {
   installGlobalProxyDispatcher,
   resolveKimiHome,
@@ -40,19 +40,6 @@ function desktopLockPath(): string {
   return join(resolveKimiHome(), DESKTOP_LOCK_FILE);
 }
 
-function toOrigin(address: string): string {
-  return address.startsWith('http://') || address.startsWith('https://')
-    ? address
-    : `http://${address}`;
-}
-
-function parsePort(address: string): number {
-  const idx = address.lastIndexOf(':');
-  if (idx === -1) return 0;
-  const n = Number(address.slice(idx + 1));
-  return Number.isFinite(n) ? n : 0;
-}
-
 function readServerToken(): string | undefined {
   try {
     const token = readFileSync(serverTokenPath(resolveKimiHome()), 'utf-8').trim();
@@ -67,8 +54,8 @@ function readServerToken(): string | undefined {
  *
  * - Loopback only, ephemeral port (`port: 0`), independent lock file so it never
  *   races the CLI daemon's `<home>/server/lock`.
- * - Neutralises the shutdown route's `process.exit` via `serviceOverrides` so a
- *   `/api/v1/shutdown` request cannot terminate the Electron main process.
+ * - The v2 server never calls `process.exit` for `/api/v1/shutdown`; it just
+ *   closes the embedded server, so the Electron main process is safe.
  * - Returns once the HTTP server is listening (does not block the caller).
  */
 export async function startDesktopServer(
@@ -76,46 +63,27 @@ export async function startDesktopServer(
 ): Promise<DesktopServerHandle> {
   installGlobalProxyDispatcher();
 
-  // Allow the local `app://renderer` origin in the server's CORS allowlist so
-  // the renderer (served from app://renderer) can call the loopback HTTP API.
-  // The server only echoes CORS headers for origins in KIMI_CODE_CORS_ORIGINS
-  // (no wildcard); without this the browser blocks every /api/v1/* request.
-  {
-    const origin = 'app://renderer';
-    const entries = (process.env['KIMI_CODE_CORS_ORIGINS'] ?? '')
-      .split(',')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    if (!entries.includes(origin)) {
-      entries.push(origin);
-      process.env['KIMI_CODE_CORS_ORIGINS'] = entries.join(',');
-    }
-  }
-
-  let handle: RunningServer | undefined;
-  const shutdownOverride = {
-    _serviceBrand: undefined,
-    requestShutdown: async (_reason: string) => {
-      if (handle !== undefined) {
-        await handle.close();
-      }
-    },
-  };
-
-  handle = await startServer({
+  const handle = await startServer({
     host: '127.0.0.1',
     port: 0,
     logger: opts.logger,
     lockPath: desktopLockPath(),
     webAssetsDir: opts.webAssetsDir,
-    coreProcessOptions: { identity: opts.identity },
-    serviceOverrides: [[IServerShutdownService, shutdownOverride]],
+    // Allow the local `app://renderer` origin so the renderer (served from
+    // app://renderer) can call the loopback HTTP API. The v2 server takes the
+    // origin allowlist directly (no KIMI_CODE_CORS_ORIGINS env needed).
+    corsOrigins: ['app://renderer'],
+    // Host identity is seeded as the full Kimi request headers (v2 dropped
+    // `coreProcessOptions`); the upstream model API reads identity from these.
+    seeds: hostRequestHeadersSeed(
+      createKimiDefaultHeaders({ homeDir: resolveKimiHome(), ...opts.identity }),
+    ),
   });
 
   return {
-    origin: toOrigin(handle.address),
-    port: parsePort(handle.address),
+    origin: `http://${handle.host}:${handle.port}`,
+    port: handle.port,
     token: readServerToken(),
-    close: () => handle!.close(),
+    close: () => handle.close(),
   };
 }
