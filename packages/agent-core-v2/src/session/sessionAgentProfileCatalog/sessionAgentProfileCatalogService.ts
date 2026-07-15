@@ -71,7 +71,7 @@ export class SessionAgentProfileCatalogService
         this._register(
           s.onDidChange(() => {
             void this.reloadSource(s.id).catch((error) => {
-              this.log.warn(`agent profile source "${s.id}" reload failed: ${error}`);
+              this.log.warn(`agent profile source "${s.id}" reload failed: ${String(error)}`);
             });
           }),
         );
@@ -132,7 +132,7 @@ export class SessionAgentProfileCatalogService
           contribution = await source.load();
         } catch (error) {
           if (source.fatal) throw error;
-          this.log.warn(`agent profile source "${source.id}" load failed: ${error}`);
+          this.log.warn(`agent profile source "${source.id}" load failed: ${String(error)}`);
           return;
         }
         this.contributions.set(source.id, { c: contribution, priority: source.priority });
