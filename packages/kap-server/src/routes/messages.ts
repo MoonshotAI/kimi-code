@@ -18,9 +18,9 @@
  */
 
 import { IMessageLegacyService, isError2, type Scope } from '@moonshot-ai/agent-core-v2';
-import { messageRoleSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/wireMessage';
-import { ErrorCode } from '../wire/error-codes';
-import { getMessageResponseSchema, listMessagesResponseSchema } from '../wire/rest-message';
+import { messageRoleSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import { ErrorCode } from '../protocol/error-codes';
+import { getMessageResponseSchema, listMessagesResponseSchema } from '../protocol/rest-message';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

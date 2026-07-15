@@ -16,8 +16,8 @@
 
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
-import { metaResponseSchema } from '../wire/rest-meta';
-import type { MetaResponse } from '../wire/rest-meta';
+import { metaResponseSchema } from '../protocol/rest-meta';
+import type { MetaResponse } from '../protocol/rest-meta';
 
 interface RouteHost {
   get(

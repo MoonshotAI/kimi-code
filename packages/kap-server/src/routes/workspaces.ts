@@ -37,7 +37,7 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ErrorCode } from '../wire/error-codes';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   createWorkspaceRequestSchema,
   createWorkspaceResponseSchema,
@@ -46,8 +46,8 @@ import {
   updateWorkspaceRequestSchema,
   updateWorkspaceResponseSchema,
   workspaceIdParamSchema,
-} from '../wire/rest-workspace';
-import type { Workspace as WorkspaceWire } from '../wire/workspace';
+} from '../protocol/rest-workspace';
+import type { Workspace as WorkspaceWire } from '../protocol/workspace';
 
 interface WorkspaceRouteHost {
   get(

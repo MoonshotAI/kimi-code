@@ -26,7 +26,7 @@ import type { GoalSnapshot } from '#/agent/goal/types';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessionWire';
+import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessionProtocol';
 
 export interface SessionWireFields {
   readonly id: string;

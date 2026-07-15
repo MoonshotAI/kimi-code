@@ -45,15 +45,15 @@ import {
   type AgentTaskInfo,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode } from '../wire/error-codes';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   cancelTaskResultSchema,
   getTaskQuerySchema,
   getTaskResponseSchema,
   listTasksQuerySchema,
   listTasksResponseSchema,
-} from '../wire/rest-task';
-import type { Task, TaskKind, TaskStatus } from '../wire/task';
+} from '../protocol/rest-task';
+import type { Task, TaskKind, TaskStatus } from '../protocol/task';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

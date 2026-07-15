@@ -18,7 +18,7 @@
  */
 
 import { errEnvelope } from './envelope';
-import { ErrorCode } from './wire/error-codes';
+import { ErrorCode } from './protocol/error-codes';
 import type { FastifyError } from 'fastify';
 
 /**

@@ -3,7 +3,7 @@
  *
  * Lists the WebSocket clients currently attached to the server, projected onto
  * the v1 wire shape (`connectionsListResponseSchema` from the local
- * `wire/rest-connection`). Backed by the in-memory `IConnectionRegistry`.
+ * `protocol/rest-connection`). Backed by the in-memory `IConnectionRegistry`.
  *
  * server-v2 serves two WebSocket endpoints, so this lists clients of both:
  *   - `/api/v1/ws` (v1 protocol) — `has_client_hello` reflects the v1
@@ -19,7 +19,7 @@
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
-import { connectionsListResponseSchema } from '../wire/rest-connection';
+import { connectionsListResponseSchema } from '../protocol/rest-connection';
 
 interface ConnectionsRouteHost {
   get(

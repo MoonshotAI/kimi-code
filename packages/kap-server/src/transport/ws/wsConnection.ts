@@ -26,7 +26,7 @@ import type { ScopeKind } from '../channel';
 import { dispatch, resolveScope, resolveService } from '../dispatcher';
 import { assertSerializable, mapError } from '../errors';
 import type { CredentialValidator } from '../../services/auth/credentials';
-import { ErrorCode } from '../../wire/error-codes';
+import { ErrorCode } from '../../protocol/error-codes';
 import { resolveEventSource } from './eventMap';
 import type { CallMessage, ListenMessage, ServerMessage } from './wsProtocol';
 import { clientMessageSchema } from './wsProtocol';

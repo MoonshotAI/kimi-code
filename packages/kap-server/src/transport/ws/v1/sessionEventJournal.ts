@@ -32,7 +32,7 @@ const JOURNAL_VERSION = 1;
 
 /**
  * Wire event envelope — matches `wsEventEnvelopeSchema` /
- * `sessionEventMessageSchema` in the local `wire/ws-control` catalog. Defined
+ * `sessionEventMessageSchema` in the local `protocol/ws-control` catalog. Defined
  * structurally so the journal does not depend on the zod schema at runtime.
  */
 export interface EventEnvelope {

@@ -59,9 +59,9 @@ import type {
   Event,
 } from './events';
 import { isVolatileEventType } from './events';
-import type { SessionCursor } from '../../../wire/ws-control';
-import type { InFlightTurn, SnapshotSubagent } from '../../../wire/rest-snapshot';
-import type { SessionStatus } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionWire';
+import type { SessionCursor } from '../../../protocol/ws-control';
+import type { InFlightTurn, SnapshotSubagent } from '../../../protocol/rest-snapshot';
+import type { SessionStatus } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';

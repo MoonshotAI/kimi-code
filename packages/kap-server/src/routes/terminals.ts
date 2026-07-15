@@ -35,12 +35,12 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ErrorCode } from '../wire/error-codes';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   closeTerminalResponseSchema,
   getTerminalResponseSchema,
   listTerminalsResponseSchema,
-} from '../wire/rest-terminal';
+} from '../protocol/rest-terminal';
 import { parseActionSuffix } from './action-suffix';
 
 interface TerminalsRouteHost {

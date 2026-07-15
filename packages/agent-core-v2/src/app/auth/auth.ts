@@ -29,7 +29,7 @@ import type {
   OAuthLoginCancelResponse,
   OAuthLogoutResponse,
   RefreshOAuthProviderModelsResponse,
-} from './oauthWire';
+} from './oauthProtocol';
 
 export interface AuthStatus {
   readonly loggedIn: boolean;

@@ -11,19 +11,19 @@
  */
 
 import type { DomainEvent } from '@moonshot-ai/agent-core-v2/app/event/eventBus';
-import type { MessageContent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/wireMessage';
+import type { MessageContent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type {
   ProviderRefreshChange,
   ProviderRefreshFailure,
 } from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
-import type { SessionStatus } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionWire';
+import type { SessionStatus } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import type { AgentPhase } from '../../../services/legacyStatus/legacyStatus';
-import type { ConfigResponse } from '../../../wire/rest-config';
-import type { Session } from '../../../wire/session';
-import type { Workspace } from '../../../wire/workspace';
+import type { ConfigResponse } from '../../../protocol/rest-config';
+import type { Session } from '../../../protocol/session';
+import type { Workspace } from '../../../protocol/workspace';
 
 export interface AgentStatusUpdatedEvent {
   readonly type: 'agent.status.updated';

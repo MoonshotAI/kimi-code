@@ -7,14 +7,14 @@ import { z } from 'zod';
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { IGuiStoreService } from '../services/guiStore/guiStore';
-import { ErrorCode } from '../wire/error-codes';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   guiStoreGetItemQuerySchema,
   guiStoreGetItemResponseSchema,
   guiStoreLengthResponseSchema,
   guiStoreRemoveItemBodySchema,
   guiStoreSetItemBodySchema,
-} from '../wire/rest-guiStore';
+} from '../protocol/rest-guiStore';
 
 interface GuiStoreRouteHost {
   get(

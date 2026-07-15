@@ -25,7 +25,7 @@ import type {
   TaskOrigin,
   UserPromptOrigin,
 } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
-import { messageContentSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/wireMessage';
+import { messageContentSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
 import type { HookResultEvent } from '@moonshot-ai/agent-core-v2/agent/externalHooks/externalHooksService';
 import type {
   CompactionBlockedEvent,
@@ -81,7 +81,7 @@ import {
   providerRefreshChangeSchema,
   providerRefreshFailureSchema,
 } from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
-import { sessionStatusSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionWire';
+import { sessionStatusSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 import type {
   SubagentCompletedEvent,
   SubagentFailedEvent,

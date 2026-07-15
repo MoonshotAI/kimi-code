@@ -7,7 +7,7 @@ import {
   sessionAgentConfigSchema,
   sessionMetadataSchema,
   sessionStatusSchema,
-} from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionWire';
+} from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { workspaceIdSchema } from './workspace';
 

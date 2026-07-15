@@ -15,7 +15,7 @@
 
 import type { GoalSnapshot } from '#/agent/goal/types';
 
-import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessionWire';
+import type { SessionStatusResponse, UpdateSessionProfileRequest } from './sessionProtocol';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { type IAgentScopeHandle, LifecycleScope, registerScopedService } from '#/_base/di/scope';

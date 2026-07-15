@@ -7,7 +7,7 @@
  * already drive runtime validation — no second source of truth.
  */
 
-import { envelopeSchema } from '../wire/envelope';
+import { envelopeSchema } from '../protocol/envelope';
 import { z } from 'zod';
 
 /**

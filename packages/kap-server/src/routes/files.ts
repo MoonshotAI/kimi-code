@@ -24,14 +24,14 @@ import { z } from 'zod';
 
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ErrorCode } from '../wire/error-codes';
-import { errEnvelope, okEnvelope } from '../wire/envelope';
+import { ErrorCode } from '../protocol/error-codes';
+import { errEnvelope, okEnvelope } from '../protocol/envelope';
 import {
   deleteFileParamSchema,
   deleteFileResponseSchema,
   getFileParamSchema,
   uploadFileResponseSchema,
-} from '../wire/rest-file';
+} from '../protocol/rest-file';
 
 interface FilesRouteHost {
   register(plugin: unknown, opts?: unknown): unknown;

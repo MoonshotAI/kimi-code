@@ -5,7 +5,7 @@
 
 import { z } from 'zod';
 
-import { messageRoleSchema, messageSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/wireMessage';
+import { messageRoleSchema, messageSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
 
 import { cursorQuerySchema } from './pagination';
 

@@ -20,7 +20,7 @@ import type { ExperimentalFeatureState } from '#/app/flag/flag';
 import type { ResumeSessionResult } from '#/agent/replayBuilder/types';
 import type { SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import type { ContentPart } from '#/app/llmProtocol/message';
-import type { SessionWarning } from '#/app/sessionLegacy/sessionWire';
+import type { SessionWarning } from '#/app/sessionLegacy/sessionProtocol';
 import type { UsageStatus } from '#/agent/usage/usage';
 
 import type { ExportSessionPayload, ExportSessionResult } from '#/app/sessionExport/sessionExport';

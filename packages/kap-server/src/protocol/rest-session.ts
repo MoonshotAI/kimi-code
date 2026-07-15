@@ -17,7 +17,7 @@
 
 import { z } from 'zod';
 
-import { messageSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/wireMessage';
+import { messageSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
 import {
   sessionStatusResponseSchema,
   sessionWarningSchema,
@@ -25,7 +25,7 @@ import {
   sessionStatusSchema,
   updateSessionProfileRequestSchema,
   type UpdateSessionProfileRequest,
-} from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionWire';
+} from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { goalSnapshotSchema } from './goal';
 import { cursorQuerySchema, pageResponseSchema } from './pagination';
@@ -49,7 +49,7 @@ export type {
   SessionWarning,
   SessionWarningsResponse,
   UpdateSessionProfileRequest,
-} from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionWire';
+} from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 export const createSessionRequestSchema = sessionCreateSchema;
 export type CreateSessionRequest = z.infer<typeof createSessionRequestSchema>;

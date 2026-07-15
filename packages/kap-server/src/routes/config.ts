@@ -6,7 +6,7 @@
  *   GET  /config   — global Kimi configuration, secrets redacted
  *   POST /config   — update global configuration (merge semantics)
  *
- * **Wire fidelity**: reuses the local `wire/rest-config` `configResponseSchema` /
+ * **Wire fidelity**: reuses the local `protocol/rest-config` `configResponseSchema` /
  * `patchConfigRequestSchema` verbatim, so the request/response shape is
  * byte-for-byte compatible with v1's `routes/config.ts`. v2's `IConfigService`
  * is a per-domain registry (`get(domain)` / `set(domain, patch)`) and does not
@@ -31,9 +31,9 @@ import { IConfigService, IEventService, type Scope } from '@moonshot-ai/agent-co
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ErrorCode } from '../wire/error-codes';
-import { configResponseSchema, patchConfigRequestSchema } from '../wire/rest-config';
-import type { ConfigResponse } from '../wire/rest-config';
+import { ErrorCode } from '../protocol/error-codes';
+import { configResponseSchema, patchConfigRequestSchema } from '../protocol/rest-config';
+import type { ConfigResponse } from '../protocol/rest-config';
 
 type ProviderResponse = ConfigResponse['providers'][string];
 

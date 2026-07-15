@@ -39,7 +39,7 @@
  */
 
 import type { Event } from './events';
-import type { SnapshotSubagent } from '../../../wire/rest-snapshot';
+import type { SnapshotSubagent } from '../../../protocol/rest-snapshot';
 
 const MAIN_AGENT_ID = 'main';
 

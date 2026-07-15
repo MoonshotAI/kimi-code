@@ -8,7 +8,7 @@
  * (`packages/server/src/services/snapshot/snapshot.ts`).
  */
 
-import type { SessionSnapshotResponse } from '../../wire/rest-snapshot';
+import type { SessionSnapshotResponse } from '../../protocol/rest-snapshot';
 
 export interface ISnapshotReader {
   /** Assemble the atomic snapshot for `sid`. Throws `SnapshotNotFoundError` when the session (or its workspace) is absent on disk. */

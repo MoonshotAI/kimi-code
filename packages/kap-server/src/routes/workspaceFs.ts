@@ -43,7 +43,7 @@ import {
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
-import { ErrorCode } from '../wire/error-codes';
+import { ErrorCode } from '../protocol/error-codes';
 
 interface WorkspaceFsRouteHost {
   get(

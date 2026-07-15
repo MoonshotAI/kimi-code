@@ -18,7 +18,7 @@
  * reach the generic error hook, which only emits 50001 for unknown exceptions.
  */
 
-import { ErrorCode } from '../wire/error-codes';
+import { ErrorCode } from '../protocol/error-codes';
 import type { z } from 'zod';
 
 /**

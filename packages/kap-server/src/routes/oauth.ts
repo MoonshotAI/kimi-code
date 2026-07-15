@@ -17,7 +17,7 @@ import {
   oauthFlowStartSchema,
   oauthLoginCancelResponseSchema,
   oauthLogoutResponseSchema,
-} from '@moonshot-ai/agent-core-v2/app/auth/oauthWire';
+} from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';
@@ -27,7 +27,7 @@ import {
   oauthLoginQuerySchema,
   oauthLoginStartRequestSchema,
   oauthLogoutRequestSchema,
-} from '../wire/rest-oauth';
+} from '../protocol/rest-oauth';
 
 interface RouteHost {
   get(

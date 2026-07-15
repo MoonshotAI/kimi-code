@@ -53,13 +53,13 @@ import {
   type QuestionResult,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode } from '../wire/error-codes';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   type QuestionItem as ProtocolQuestionItem,
   type QuestionOption as ProtocolQuestionOption,
   type QuestionRequest as ProtocolQuestionRequest,
   type QuestionResponse as ProtocolQuestionResponse,
-} from '../wire/question';
+} from '../protocol/question';
 import {
   listPendingQuestionsQuerySchema,
   listPendingQuestionsResponseSchema,
@@ -67,7 +67,7 @@ import {
   questionDismissResultSchema,
   questionResolveRequestSchema,
   questionResolveResultSchema,
-} from '../wire/rest-question';
+} from '../protocol/rest-question';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

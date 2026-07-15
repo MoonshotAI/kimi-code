@@ -58,14 +58,14 @@ import {
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
-import { ErrorCode } from '../wire/error-codes';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   listMcpServersResponseSchema,
   listToolsQuerySchema,
   listToolsResponseSchema,
   restartMcpServerResultSchema,
-} from '../wire/rest-tool';
-import type { McpServer, ToolDescriptor } from '../wire/tool';
+} from '../protocol/rest-tool';
+import type { McpServer, ToolDescriptor } from '../protocol/tool';
 import { parseActionSuffix } from './action-suffix';
 
 /** v2 MCP tool-name prefix / separator (see `mcp/tool-naming.ts`). */

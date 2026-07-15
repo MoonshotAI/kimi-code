@@ -42,12 +42,12 @@ import {
 } from '../lib/fileLaunch';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ErrorCode } from '../wire/error-codes';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   fsOpenInRequestSchema,
   fsOpenRequestSchema,
   fsRevealRequestSchema,
-} from '../wire/rest-fs';
+} from '../protocol/rest-fs';
 
 interface FsRouteHost {
   post(

@@ -105,14 +105,14 @@ import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
 import { ensureMainAgent } from '../transport/mainAgent';
-import { ErrorCode } from '../wire/error-codes';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   activateSkillRequestSchema,
   activateSkillResultSchema,
   listSkillsResponseSchema,
-} from '../wire/rest-skill';
-import { workspaceIdParamSchema } from '../wire/rest-workspace';
-import type { SkillDescriptor } from '../wire/skill';
+} from '../protocol/rest-skill';
+import { workspaceIdParamSchema } from '../protocol/rest-workspace';
+import type { SkillDescriptor } from '../protocol/skill';
 import { parseActionSuffix } from './action-suffix';
 
 interface SkillsRouteHost {

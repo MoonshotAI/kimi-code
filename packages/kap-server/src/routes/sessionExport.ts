@@ -21,12 +21,12 @@ import {
 
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ErrorCode } from '../wire/error-codes';
-import { errEnvelope } from '../wire/envelope';
+import { ErrorCode } from '../protocol/error-codes';
+import { errEnvelope } from '../protocol/envelope';
 import {
   exportSessionParamsSchema,
   exportSessionRequestSchema,
-} from '../wire/rest-session';
+} from '../protocol/rest-session';
 
 const MAX_WEB_SESSION_EXPORT_BYTES = 64 * 1024 * 1024;
 

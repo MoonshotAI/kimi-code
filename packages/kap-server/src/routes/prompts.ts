@@ -47,7 +47,7 @@ import {
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode } from '../wire/error-codes';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   promptAbortResponseSchema,
   promptListResponseSchema,
@@ -56,7 +56,7 @@ import {
   promptSubmissionSchema,
   promptSubmitResultSchema,
   type PromptSubmission,
-} from '../wire/rest-prompt';
+} from '../protocol/rest-prompt';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

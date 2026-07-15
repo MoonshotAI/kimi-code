@@ -15,7 +15,7 @@
 
 import { z } from 'zod';
 
-import { messageSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/wireMessage';
+import { messageSchema } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
 
 import { approvalRequestSchema } from './approval';
 import { questionRequestSchema } from './question';
