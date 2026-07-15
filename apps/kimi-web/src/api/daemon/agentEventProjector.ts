@@ -1006,11 +1006,15 @@ export function createAgentProjector(): AgentProjector {
 
         // Clear per-turn state. Reset the stream offsets too so a stale length
         // from this turn can't wedge the next turn's delta alignment into a
-        // silent skip if its turn.started is missed across a reconnect.
+        // silent skip if its turn.started is missed across a reconnect. The
+        // retry reuse target is per-turn as well: if the turn died between
+        // turn.step.retrying and the retried step.started, the next prompt
+        // must open a fresh bubble, not refill this turn's emptied one.
         s.currentAssistantMsgId = undefined;
         s.currentPromptId = undefined;
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
+        s.retryReuseMsgId = undefined;
         break;
       }
 
@@ -1073,8 +1077,10 @@ export function createAgentProjector(): AgentProjector {
       }
 
       case 'turn.step.interrupted': {
-        // Discard current assistant message; next step.started will create a new one
+        // Discard current assistant message; next step.started will create a
+        // new one. Drop any pending retry reuse target for the same reason.
         s.currentAssistantMsgId = undefined;
+        s.retryReuseMsgId = undefined;
         break;
       }
 
