@@ -363,3 +363,33 @@ describe('step-boundary delta alignment', () => {
     );
   });
 });
+
+describe('turn.step.retrying bubble reuse', () => {
+  it('refills the abandoned bubble instead of stacking a duplicate one', () => {
+    const projector = createAgentProjector();
+    const sid = 's1';
+    projector.project('turn.started', { type: 'turn.started', turnId: 1, origin: { kind: 'user' }, agentId: 'main', sessionId: sid }, sid);
+    projector.project('turn.step.started', { type: 'turn.step.started', turnId: 1, step: 1, agentId: 'main', sessionId: sid }, sid);
+    projector.project('assistant.delta', { type: 'assistant.delta', turnId: 1, delta: 'AB', agentId: 'main', sessionId: sid }, sid, { offset: 0 });
+    projector.project('tool.call.started', { type: 'tool.call.started', turnId: 1, toolCallId: 'tc1', name: 'Bash', agentId: 'main', sessionId: sid }, sid);
+
+    const retryEvents = projector.project('turn.step.retrying', { type: 'turn.step.retrying', turnId: 1, step: 1, failedAttempt: 1, nextAttempt: 2, maxAttempts: 10, delayMs: 100, agentId: 'main', sessionId: sid }, sid);
+    expect(retryEvents).toContainEqual(expect.objectContaining({ type: 'messageUpdated' }));
+
+    const restarted = projector.project('turn.step.started', { type: 'turn.step.started', turnId: 1, step: 1, agentId: 'main', sessionId: sid }, sid);
+    // No new messageCreated for the retried step — the cleared bubble is reused.
+    expect(restarted.filter((e) => e.type === 'messageCreated')).toEqual([]);
+
+    const deltas = projector.project('assistant.delta', { type: 'assistant.delta', turnId: 1, delta: 'ABC', agentId: 'main', sessionId: sid }, sid, { offset: 0 });
+    const toolEvents = projector.project('tool.call.started', { type: 'tool.call.started', turnId: 1, toolCallId: 'tc1', name: 'Bash', agentId: 'main', sessionId: sid }, sid);
+
+    // The same bubble receives the retried stream: exactly one assistant
+    // message id across the whole attempt→retry sequence.
+    const messageIds = new Set(
+      [...deltas, ...toolEvents]
+        .map((e) => (e as { messageId?: string }).messageId)
+        .filter((id): id is string => typeof id === 'string'),
+    );
+    expect(messageIds.size).toBe(1);
+  });
+});

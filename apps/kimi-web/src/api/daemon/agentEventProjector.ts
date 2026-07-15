@@ -127,6 +127,10 @@ interface SessionState {
   // Subagent lifecycle deltas after spawned only carry subagentId. Keep the
   // spawned metadata here so later updates can replace the full AppTask.
   subagentMeta: Map<string, AppTask>;
+
+  // Bubble cleared by turn.step.retrying, to be reused by the retried
+  // step.started (same turn) instead of stacking a new bubble.
+  retryReuseMsgId: string | undefined;
 }
 
 function createSessionState(): SessionState {
@@ -147,6 +151,7 @@ function createSessionState(): SessionState {
     model: '',
     messages: [],
     subagentMeta: new Map(),
+    retryReuseMsgId: undefined,
   };
 }
 
@@ -736,6 +741,17 @@ export function createAgentProjector(): AgentProjector {
         s.turnTextLen = 0;
         s.turnThinkLen = 0;
 
+        // A retry continuation: refill the bubble turn.step.retrying cleared,
+        // instead of creating a second bubble with the same step's content.
+        if (s.retryReuseMsgId !== undefined) {
+          const reuseId = s.retryReuseMsgId;
+          s.retryReuseMsgId = undefined;
+          if (getMsgById(s, reuseId) !== undefined) {
+            s.currentAssistantMsgId = reuseId;
+            break;
+          }
+        }
+
         // Create a new pending assistant message
         const msg = startAssistantMessage(s, sessionId, promptId);
         s.currentAssistantMsgId = msg.id;
@@ -1026,7 +1042,36 @@ export function createAgentProjector(): AgentProjector {
       }
 
       // -----------------------------------------------------------------------
-      case 'turn.step.retrying':
+      case 'turn.step.retrying': {
+        // The step's stream restarts from offset 0. Reuse the abandoned
+        // bubble instead of stacking a new one: strip its streamed parts and
+        // keep the id in retryReuseMsgId so the retried step.started refills
+        // it in place. Otherwise the failed attempt's partial bubble stays
+        // rendered next to the retry's full stream — the "text/tool shown
+        // twice" duplication (far more visible since the retry budget grew).
+        const msgId = s.currentAssistantMsgId;
+        if (msgId !== undefined) {
+          const msg = getMsgById(s, msgId);
+          if (msg !== undefined) {
+            msg.content = msg.content.filter(
+              (c) => c.type !== 'text' && c.type !== 'thinking' && c.type !== 'toolUse',
+            );
+            out.push({
+              type: 'messageUpdated',
+              sessionId,
+              messageId: msgId,
+              content: msg.content.map((c) => ({ ...c })),
+              status: 'pending',
+            });
+            s.retryReuseMsgId = msgId;
+          }
+        }
+        s.turnTextLen = 0;
+        s.turnThinkLen = 0;
+        s.toolStartTimes.clear();
+        break;
+      }
+
       case 'turn.step.interrupted': {
         // Discard current assistant message; next step.started will create a new one
         s.currentAssistantMsgId = undefined;
