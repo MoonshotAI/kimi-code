@@ -1582,6 +1582,41 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(state.queuedBySession.sess_1).toEqual([{ text: 'next', attachments: undefined }]);
   });
 
+  it('drains one queued prompt when only background work remains', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.promptIdBySession = { sess_1: 'prompt_old' };
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first queued', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: true });
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'second queued', attachments: undefined },
+    ]);
+  });
+
+  it('clears local prompt state when busy disproves a stale snapshot turn', () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.promptIdBySession = { sess_1: 'prompt_old' };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.handleSessionSnapshot('sess_1', {
+      inFlightTurn: { turnId: 1, assistantText: '', thinkingText: '', runningTools: [] },
+      busy: false,
+    });
+
+    expect(state.inFlightBySession.sess_1).toBe(false);
+    expect(state.promptIdBySession.sess_1).toBeUndefined();
+  });
+
   it('rejects a snapshot when a new local prompt started during the request', async () => {
     const state = createState();
     const ws = useWorkspaceState(state, promptDeps());

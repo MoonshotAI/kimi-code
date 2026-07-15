@@ -1746,8 +1746,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     sid: string,
     snapshot: { inFlightTurn: AppInFlightTurn | null; busy: boolean },
   ): void {
-    if (snapshot.inFlightTurn !== null) return;
-    if (snapshot.busy) return;
+    // inFlightTurn tracks only the main agent, while busy aggregates all
+    // agents and background work. Keep the local prompt alive only when both
+    // facts still support a running main turn. Either terminal fact may also
+    // reconcile the other tracker when a snapshot catches it stale.
+    if (snapshot.inFlightTurn !== null && snapshot.busy) return;
     finishPromptLocal(sid);
   }
 

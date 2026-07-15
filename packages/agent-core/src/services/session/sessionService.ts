@@ -182,7 +182,9 @@ export class SessionService extends Disposable implements ISessionService {
       case 'turn.ended': {
         this._activeTurns.delete(sessionId);
         const reason = (event as { reason?: unknown }).reason;
-        if (reason === 'completed' || reason === 'cancelled' || reason === 'failed') {
+        if (reason === 'blocked') {
+          this._lastTurnReasonBySession.set(sessionId, 'failed');
+        } else if (reason === 'completed' || reason === 'cancelled' || reason === 'failed') {
           this._lastTurnReasonBySession.set(sessionId, reason);
         }
         this._emitStatusChanged(sessionId);

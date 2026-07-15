@@ -1060,12 +1060,30 @@ describe('SessionService busy lifecycle', () => {
   });
 
   it('turn.ended marks the session not busy, whatever the reason', async () => {
-    for (const reason of ['success', 'failed', 'blocked']) {
+    for (const reason of ['completed', 'failed', 'blocked']) {
       const session = await svc.create({ metadata: { cwd: `/tmp/ended-${reason}` } });
       eventBus.eventService.publish({ type: 'turn.started', sessionId: session.id } as unknown as Event);
       eventBus.eventService.publish({ type: 'turn.ended', sessionId: session.id, reason } as unknown as Event);
       expect((await svc.get(session.id)).busy).toBe(false);
     }
+  });
+
+  it('projects a blocked turn as failed across session wire surfaces', async () => {
+    const session = await svc.create({ metadata: { cwd: '/tmp/blocked' } });
+    eventBus.eventService.publish({ type: 'turn.started', sessionId: session.id } as unknown as Event);
+    eventBus.eventService.publish({
+      type: 'turn.ended',
+      sessionId: session.id,
+      reason: 'blocked',
+    } as unknown as Event);
+
+    expect((await svc.get(session.id)).last_turn_reason).toBe('failed');
+    expect(eventBus.events).toContainEqual(expect.objectContaining({
+      type: 'event.session.work_changed',
+      sessionId: session.id,
+      busy: false,
+      last_turn_reason: 'failed',
+    }));
   });
 
   it('prompt.submitted marks the session busy when a current prompt exists', async () => {
