@@ -45,6 +45,10 @@ onUnmounted(() => {
     clearTimeout(undoFallbackTimer);
     undoFallbackTimer = null;
   }
+  if (unsupportedOpenTimer !== null) {
+    clearTimeout(unsupportedOpenTimer);
+    unsupportedOpenTimer = null;
+  }
 });
 
 const props = withDefaults(
@@ -478,15 +482,29 @@ function userAttachmentMedia(att: TurnAttachment): ToolMedia {
   return { kind: att.kind === 'video' ? 'video' : 'image', url: att.url, path: att.name, fileId: att.fileId };
 }
 
+// Transient "can't open this type" hint after clicking a file chip of a
+// non-previewable type. Mirrors the copiedTurn timer pattern; cleared on unmount.
+const unsupportedOpenName = ref<string | null>(null);
+let unsupportedOpenTimer: ReturnType<typeof setTimeout> | null = null;
+
 function onAttachmentClick(att: TurnAttachment): void {
   if (att.kind === 'image' || att.kind === 'video') {
     emit('openMedia', userAttachmentMedia(att));
     return;
   }
-  // Generic files preview in a new tab (browser-renderable types) or download.
-  if (att.fileId !== undefined) {
-    void openFileAttachment(att.fileId, att.name, att.mediaType);
-  }
+  // Generic files open in a new tab, but only whitelisted inert types —
+  // anything else gets the unsupported hint instead of an active-document
+  // preview (see openFileAttachment).
+  if (att.fileId === undefined) return;
+  void openFileAttachment(att.fileId, att.name, att.mediaType).then((result) => {
+    if (result !== 'unsupported') return;
+    unsupportedOpenName.value = att.name ?? att.fileId ?? '';
+    if (unsupportedOpenTimer !== null) clearTimeout(unsupportedOpenTimer);
+    unsupportedOpenTimer = setTimeout(() => {
+      unsupportedOpenTimer = null;
+      unsupportedOpenName.value = null;
+    }, 2400);
+  });
 }
 
 function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }): boolean {
@@ -739,6 +757,10 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
     </div>
   </div>
 
+  <!-- Transient hint after clicking a file chip whose type can't be opened. -->
+  <div v-if="unsupportedOpenName !== null" class="open-unsupported" role="status">
+    {{ t('composer.attachmentOpenUnsupported', { name: unsupportedOpenName }) }}
+  </div>
 </template>
 
 <style scoped>
@@ -778,8 +800,29 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   padding: 16px 14px 20px;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 .chat .chat-empty { align-self: stretch; }
+
+/* Bottom-center pill for the "can't open this file type" hint. */
+.open-unsupported {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(90%, 480px);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-line);
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  font-size: var(--ui-font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
+}
 .chat > .u-turn,
 .chat > .a-msg,
 .chat > .compact-divider,

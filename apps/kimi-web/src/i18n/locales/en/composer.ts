@@ -13,6 +13,7 @@ export default {
   attachmentImage: 'Image',
   attachmentVideo: 'Video',
   attachmentFile: 'File',
+  attachmentOpenUnsupported: 'Can’t open {name} — this file type isn’t supported',
   dropToAttach: 'Drop files to attach',
   remove: 'Remove',
   removeNamed: 'Remove {name}',

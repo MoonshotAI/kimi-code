@@ -13,6 +13,7 @@ export default {
   attachmentImage: '图片',
   attachmentVideo: '视频',
   attachmentFile: '文件',
+  attachmentOpenUnsupported: '无法打开 {name}：暂不支持此文件类型',
   dropToAttach: '松开鼠标添加附件',
   remove: '移除',
   removeNamed: '移除 {name}',
