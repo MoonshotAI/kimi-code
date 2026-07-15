@@ -156,11 +156,13 @@ export class SessionEventBroadcaster {
   /**
    * Single-flight guard for session activation: without it, two concurrent
    * activations (WS subscribe racing a REST snapshot / replay / resync) each
-   * built their own SessionState — two bus subscriptions, two journal writers
-   * on one file, and (once a target landed in both) every delta fanned out
-   * twice with mismatched offset annotations, which the client cannot dedup
-   * (the blind state's frames carry no offset at all → the "text shown twice"
-   * bug).
+   * built their own SessionState, bus subscriptions, and journal writer. The
+   * leaked listeners all route through `onAgentEvent`, which looks up the
+   * current state by session id, so they advance the SAME tracker and journal:
+   * one source delta is emitted at consecutive offsets and adjacent durable
+   * events receive distinct consecutive seqs. WS coalescing then folds the
+   * adjacent delta copies into one doubled payload, producing the observed
+   * per-chunk `AABBCC` stream while every seq and offset still looks valid.
    */
   private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
   private readonly maxBufferSize: number;

@@ -1156,11 +1156,7 @@ describe('SessionEventBroadcaster', () => {
     }
   });
 
-  it('single-flights concurrent activations: one state, one journal, no duplicate fan-out', async () => {
-    // Regression for the "text shown twice" bug: a WS subscribe racing REST
-    // snapshot/replay calls built TWO SessionStates for one session — two bus
-    // subscriptions, two journal writers, and deltas fanned out twice (the
-    // blind twin's frames carried no offset, defeating client-side dedup).
+  it('fans each agent event out once when session activation calls race', async () => {
     const lc = new FakeLifecycle();
     const main = lc.addAgent('main');
     sessions.set('s1', lc);
@@ -1171,18 +1167,24 @@ describe('SessionEventBroadcaster', () => {
       bc.getSnapshotState('s1'),
       bc.getBufferedSince('s1', { seq: 0 }),
       bc.getCursor('s1'),
-      bc.subscribe('s1', target),
       bc.getSnapshotState('s1'),
     ]);
+    // Make the target observable from whichever state won the activation race.
+    // Before the single-flight fix, every losing state's leaked bus listener
+    // still routed through that winning state and advanced its tracker again.
+    await bc.subscribe('s1', target);
 
     main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
     main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'abc' }));
     await bc.getCursor('s1');
 
-    const durable = envelopes.filter((e) => e.volatile !== true);
-    const seqs = durable.map((e) => e.seq);
-    expect(new Set(seqs).size).toBe(seqs.length);
-    const deltas = envelopes.filter((e) => e.type === 'assistant.delta');
-    expect(deltas).toHaveLength(1);
+    expect(
+      envelopes
+        .filter((envelope) => envelope.type === 'assistant.delta')
+        .map((envelope) => ({
+          offset: envelope.offset,
+          delta: (envelope.payload as { delta: string }).delta,
+        })),
+    ).toEqual([{ offset: 0, delta: 'abc' }]);
   });
 });
