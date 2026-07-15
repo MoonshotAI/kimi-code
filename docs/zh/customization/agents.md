@@ -100,9 +100,15 @@ disallowedTools:
 
 目录中发现的非法文件会被跳过并告警，不影响其他文件。通过 `--agent-file` 显式传入的文件必须合法 —— 否则 CLI 会报错并退出。
 
+::: warning 注意
+`tools` 与 `disallowedTools` 只决定模型能"看到"哪些工具，并不是执行时的沙箱。如需保证某个工具无法运行，请收紧相应的权限规则。
+:::
+
+作为子 Agent 委派的自定义 Agent 不会携带内置子 Agent 的角色框架（"你的最后一条消息就是完整交付"）。如果编写的 Agent 用于委派，请在正文中说明：其最后一条消息应当是交付给调用方的完整、自包含的结果。
+
 ### 选择主 Agent
 
-两个 CLI flag 用于选择驱动会话的 Agent：
+两个 CLI flag 用于选择驱动会话的 Agent。**目前二者都要求 v2 引擎** —— 即 `KIMI_CODE_EXPERIMENTAL_FLAG=1` 下的 `kimi -p`；交互式 TUI（v1）暂时会以明确错误拒绝它们：
 
 - **`--agent <name>`**：以指定 Agent 作为主 Agent 启动会话。名称可以指向内置 Agent 或任何已发现的文件；名称不存在时会报错，并列出可用的 Agent。
 - **`--agent-file <path>`**：以最高优先级加载一个 Agent 文件（仅本次启动）并以其启动。重复传入可注册多个文件 —— 不传 `--agent` 时，以最后一个 `--agent-file` 定义的 Agent 启动 —— 配合 `--agent <name>` 按名称选择。
@@ -110,7 +116,7 @@ disallowedTools:
 例如在 print 模式下：
 
 ```sh
-kimi -p --agent reviewer "审查这个分支上的改动"
+KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "审查这个分支上的改动"
 ```
 
 绑定的 Agent 即会话的身份：在会话首次绑定后即固定，之后不可切换。重复选择已绑定的 Agent（例如以相同的 `--agent` 恢复会话）是 no-op；选择不同的 Agent 会报 "already bound" 错误。

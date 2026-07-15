@@ -100,9 +100,15 @@ Unknown fields are ignored, so newer files stay readable by older versions.
 
 A file with invalid content discovered in a directory is skipped with a warning and does not affect other files. A file passed explicitly via `--agent-file` must be valid — otherwise the CLI reports the error and exits.
 
+::: warning Note
+`tools` and `disallowedTools` only shape which tools the model is told about — they are not an execution-time sandbox. For a hard guarantee that a tool cannot run, tighten the corresponding permission rule instead.
+:::
+
+Custom agents delegated as sub-agents run without the built-in sub-agent framing ("your final message is the entire handoff"). If you write an agent meant for delegation, state in the body that its last message should be the complete, self-contained result for the caller.
+
 ### Selecting the Main Agent
 
-Two CLI flags select which agent drives the session:
+Two CLI flags select which agent drives the session. **Both currently require the v2 engine** — `kimi -p` with `KIMI_CODE_EXPERIMENTAL_FLAG=1`; the interactive TUI (v1) rejects them with a clear error for now:
 
 - **`--agent <name>`**: Start the session with the named agent as the main Agent. The name can refer to a built-in agent or to any discovered file; an unknown name fails with an error listing the available agents.
 - **`--agent-file <path>`**: Load one agent file at the highest priority for this launch and start with it. Repeat the flag to register several files — without `--agent`, the profile defined by the last `--agent-file` is selected — and combine it with `--agent <name>` to choose among them by name.
@@ -110,7 +116,7 @@ Two CLI flags select which agent drives the session:
 For example, in print mode:
 
 ```sh
-kimi -p --agent reviewer "Review the changes on this branch"
+KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "Review the changes on this branch"
 ```
 
 The bound agent is the session's identity: it is fixed at the session's first bind and cannot be switched later. Re-selecting the already-bound agent (for example resuming with the same `--agent`) is a no-op; selecting a different one fails with an "already bound" error.
