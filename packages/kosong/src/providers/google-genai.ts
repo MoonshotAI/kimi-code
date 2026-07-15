@@ -163,14 +163,18 @@ function toolCallIdToName(toolCallId: string, toolNameById: Map<string, string>)
   const name = toolNameById.get(toolCallId);
   if (name !== undefined) return name;
   // Fallback: ids produced by this provider follow the format
-  // "{tool_name}_{id_suffix}" where `tool_name` may itself contain
-  // underscores (e.g. `fetch_image`) and `id_suffix` is a single trailing
-  // token without underscores (e.g. a random hex / UUID fragment). We strip
-  // the last "_<suffix>" segment by matching it explicitly — splitting on
-  // the first underscore would truncate multi-word tool names like
-  // `fetch_image_<id>` to just `fetch`.
-  const match = /^(.+)_[^_]+$/.exec(toolCallId);
-  return match?.[1] ?? toolCallId;
+  // "{tool_name}_{upstream_id}_{entropy}" where `tool_name` may itself
+  // contain underscores (e.g. `fetch_image`) and `entropy` is the fixed
+  // 8-hex-char suffix this provider appends for cross-turn uniqueness. Strip
+  // the entropy suffix first, then the trailing "_<upstream_id>" segment by
+  // matching it explicitly — splitting on the first underscore would truncate
+  // multi-word tool names like `fetch_image_<id>` to just `fetch`. (Pre-entropy
+  // ids of the form "{tool_name}_{id_suffix}" still parse: a trailing 8-hex
+  // segment is indistinguishable from the entropy suffix, and stripping it
+  // recovers the same name the old single-suffix shape did.)
+  const withoutEntropy = toolCallId.replace(/_[0-9a-f]{8}$/, '');
+  const match = /^(.+)_[^_]+$/.exec(withoutEntropy);
+  return match?.[1] ?? withoutEntropy;
 }
 
 /**

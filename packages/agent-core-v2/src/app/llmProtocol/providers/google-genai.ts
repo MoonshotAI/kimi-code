@@ -141,8 +141,9 @@ interface GooglePart {
 function toolCallIdToName(toolCallId: string, toolNameById: Map<string, string>): string {
   const name = toolNameById.get(toolCallId);
   if (name !== undefined) return name;
-  const match = /^(.+)_[^_]+$/.exec(toolCallId);
-  return match?.[1] ?? toolCallId;
+  const withoutEntropy = toolCallId.replace(/_[0-9a-f]{8}$/, '');
+  const match = /^(.+)_[^_]+$/.exec(withoutEntropy);
+  return match?.[1] ?? withoutEntropy;
 }
 
 function convertMediaUrl(
@@ -509,12 +510,6 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
           const fc = (p['functionCall'] ?? p['function_call']) as Record<string, unknown>;
           const name = fc['name'] as string;
           if (!name) continue;
-          // The upstream function-call id is only unique within its own
-          // response (some backends re-issue small ids like "0" every turn),
-          // so `${name}_${id}` collided across turns — two AgentSwarm calls in
-          // different turns both became `AgentSwarm_0` and the web client
-          // merged their member lists into one card. Append entropy so ids
-          // stay unique across the whole session.
           const id_ = (fc['id'] as string) ?? crypto.randomUUID();
           const toolCallId = `${name}_${id_}_${crypto.randomUUID().replaceAll('-', '').slice(0, 8)}`;
           const thoughtSigB64 = p['thoughtSignature'] ?? p['thought_signature'];
