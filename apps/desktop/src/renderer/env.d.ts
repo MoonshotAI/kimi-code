@@ -21,7 +21,7 @@ declare global {
   const __KIMI_WEB_VERSION__: string;
 
   // Injected by Vite `define`: true only in the web bundle embedded in the Kimi
-  // Desktop app. Gates the internal-build banner (see InternalBuildBanner.vue).
+  // Code desktop app. Gates desktop-only behaviour (see lib/desktopFlag.ts).
   const __KIMI_WEB_DESKTOP__: boolean;
 }
 

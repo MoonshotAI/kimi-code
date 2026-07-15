@@ -41,7 +41,6 @@ import type { AppConfig, ThinkingLevel } from './api/types';
 import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThinking';
 import { stripSkillPrefix } from './lib/slashCommands';
 import { Button, Icon, IconButton } from '@moonshot-ai/web-ui';
-import InternalBuildBanner from './components/InternalBuildBanner.vue';
 import { isMacosDesktop } from './lib/desktopFlag';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
@@ -893,11 +892,6 @@ function openPr(url: string): void {
       />
     </aside>
 
-    <!-- Internal-build tag — pinned to the app's bottom-right corner, above
-         whatever pane happens to be there. Purely informational: pointer
-         events pass through so it never blocks clicks. -->
-    <InternalBuildBanner class="internal-build-fab" />
-
     <!-- Model Picker overlay -->
     <ModelPicker
       v-if="showModelPicker"
@@ -1187,17 +1181,6 @@ function openPr(url: string): void {
 }
 @keyframes sidebar-toggle-btn-in {
   from { opacity: 0; }
-}
-
-/* Internal-build tag pinned to the app's bottom-right corner (desktop app
-   only — the component renders nothing elsewhere). Informational: never
-   intercepts pointer input. */
-.internal-build-fab {
-  position: absolute;
-  right: var(--space-3);
-  bottom: var(--space-3);
-  z-index: var(--z-sticky);
-  pointer-events: none;
 }
 
 /* Mobile single-column shell: slim top bar (auto) over the full-width
