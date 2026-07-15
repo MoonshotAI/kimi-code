@@ -230,6 +230,18 @@ export type TurnBlock =
   | { kind: 'thinking'; thinking: string }
   | { kind: 'tool'; tool: ToolCall };
 
+/** One attachment on a user turn: an uploaded file, image or video. Images
+    and pasted media carry no name; the chip falls back to a generic label.
+    `url` is browser-loadable (a data URL, or the authed file URL). */
+export interface TurnAttachment {
+  kind: 'image' | 'video' | 'file';
+  url: string;
+  fileId?: string;
+  name?: string;
+  mediaType?: string;
+  size?: number;
+}
+
 export interface ChatTurn {
   id: string;
   role: TurnRole;
@@ -243,8 +255,9 @@ export interface ChatTurn {
   blocks?: TurnBlock[];
   approval?: ApprovalBlock;
   approvalId?: string; // daemon approval id — present when approval needs a decision
-  /** Image attachments sent by the user (rendered above the text bubble). */
-  images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[];
+  /** Attachments sent by the user — files, images and videos, rendered as a
+      chip row above the text bubble. */
+  attachments?: TurnAttachment[];
   /** Compaction divider data (role 'compaction'): the transcript keeps all
       prior turns and renders this as a separator line; `text` holds the
       LLM-generated summary, opened in the right-side panel on click. */
@@ -321,10 +334,11 @@ export interface ActivationBadges {
 /** A queued prompt as shown inline at the tail of the transcript. */
 export interface QueuedPromptView {
   text: string;
-  /** Number of image attachments waiting with this prompt. */
+  /** Number of attachments waiting with this prompt. */
   attachmentCount: number;
-  /** Image/video attachments waiting with this prompt, with resolved URLs for thumbnails. */
-  attachments?: { fileId: string; kind: 'image' | 'video'; url: string }[];
+  /** Attachments waiting with this prompt, with resolved URLs for thumbnails
+      (file attachments render an icon chip, no thumbnail). */
+  attachments?: { fileId: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[];
 }
 
 /** Horizontal alignment of the conversation reading column within the pane. */

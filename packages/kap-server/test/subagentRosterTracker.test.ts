@@ -2,7 +2,7 @@
  * `SubagentRosterTracker` — live subagent roster for snapshot rebuilds.
  */
 
-import type { Event } from '@moonshot-ai/protocol';
+import type { Event } from '../src/transport/ws/v1/events';
 import { describe, expect, it } from 'vitest';
 
 import { SubagentRosterTracker } from '../src/transport/ws/v1/subagentRosterTracker';

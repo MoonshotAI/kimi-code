@@ -36,6 +36,7 @@ import KimiSetting from '~icons/kimi/setting';
 // Components (Tabler) ---------------------------------------------------------
 import TablerSidebarLeftCollapse from '~icons/tabler/layout-sidebar-left-collapse';
 import TablerSidebarLeftExpand from '~icons/tabler/layout-sidebar-left-expand';
+import TablerPaperclip from '~icons/tabler/paperclip';
 
 // Components (Remix) ---------------------------------------------------------
 import RiAddLine from '~icons/ri/add-line';
@@ -107,6 +108,7 @@ import RawKimiSetting from '~icons/kimi/setting?raw';
 // Raw SVG strings (Tabler) ----------------------------------------------------
 import RawTablerSidebarLeftCollapse from '~icons/tabler/layout-sidebar-left-collapse?raw';
 import RawTablerSidebarLeftExpand from '~icons/tabler/layout-sidebar-left-expand?raw';
+import RawTablerPaperclip from '~icons/tabler/paperclip?raw';
 
 // Raw SVG strings (Remix) ----------------------------------------------------
 import RawAddLine from '~icons/ri/add-line?raw';
@@ -211,6 +213,7 @@ export type IconName =
   | 'file-edit'
   | 'file-plus'
   | 'file-off'
+  | 'attachment'
   | 'image-off'
   | 'code'
   | 'terminal'
@@ -296,6 +299,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   'file-edit': entry(RiFileEditLine, RawFileEditLine),
   'file-plus': entry(RiFileAddLine, RawFileAddLine),
   'file-off': entry(RiFileLine, RawFileLine),
+  attachment: entry(TablerPaperclip, RawTablerPaperclip),
   'image-off': entry(RiImageLine, RawImageLine),
   code: entry(RiCodeLine, RawCodeLine),
   terminal: entry(RiTerminalBoxLine, RawTerminalBoxLine),
@@ -351,6 +355,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
     'Actions',
     [
       'plus',
+      'attachment',
       'chat-new',
       'close',
       'check',

@@ -39,7 +39,7 @@ import type {
   OAuthLoginCancelResponse,
   OAuthLogoutResponse,
   RefreshOAuthProviderModelsResponse,
-} from './oauthWire';
+} from './oauthProtocol';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';

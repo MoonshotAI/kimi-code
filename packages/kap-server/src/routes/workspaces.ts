@@ -30,17 +30,6 @@ import {
   type Scope,
   type Workspace,
 } from '@moonshot-ai/agent-core-v2';
-import {
-  ErrorCode,
-  createWorkspaceRequestSchema,
-  createWorkspaceResponseSchema,
-  deleteWorkspaceResponseSchema,
-  listWorkspacesResponseSchema,
-  updateWorkspaceRequestSchema,
-  updateWorkspaceResponseSchema,
-  workspaceIdParamSchema,
-} from '@moonshot-ai/protocol';
-import type { Workspace as WorkspaceWire } from '@moonshot-ai/protocol';
 import { isAbsolute, join } from 'node:path';
 
 import { z } from 'zod';
@@ -48,6 +37,17 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
+import {
+  createWorkspaceRequestSchema,
+  createWorkspaceResponseSchema,
+  deleteWorkspaceResponseSchema,
+  listWorkspacesResponseSchema,
+  updateWorkspaceRequestSchema,
+  updateWorkspaceResponseSchema,
+  workspaceIdParamSchema,
+} from '../protocol/rest-workspace';
+import type { Workspace as WorkspaceWire } from '../protocol/workspace';
 
 interface WorkspaceRouteHost {
   get(

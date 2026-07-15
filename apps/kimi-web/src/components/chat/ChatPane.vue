@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedPromptView } from '../../types';
+import type { ChatTurn, ApprovalBlock, FilePreviewRequest, ToolMedia, QueuedPromptView, TurnAttachment } from '../../types';
 import ToolCall from './ToolCall.vue';
 import ToolGroup from './ToolGroup.vue';
 import Markdown from './Markdown.vue';
@@ -11,12 +11,14 @@ import ActivityNotice from './ActivityNotice.vue';
 import CronNotice from './CronNotice.vue';
 import MessageTime from './MessageTime.vue';
 import AuthMedia from './AuthMedia.vue';
+import AttachmentChip from './AttachmentChip.vue';
 import MoonSpinner from '../ui/MoonSpinner.vue';
 import Spinner from '../ui/Spinner.vue';
 import Icon from '../ui/Icon.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import { openFileAttachment } from '../../lib/openFileAttachment';
 import {
   assistantRenderBlocks,
   formatDuration,
@@ -42,6 +44,10 @@ onUnmounted(() => {
   if (undoFallbackTimer !== null) {
     clearTimeout(undoFallbackTimer);
     undoFallbackTimer = null;
+  }
+  if (unsupportedOpenTimer !== null) {
+    clearTimeout(unsupportedOpenTimer);
+    unsupportedOpenTimer = null;
   }
 });
 
@@ -200,7 +206,7 @@ const emit = defineEmits<{
   /** Show an Edit/Write tool call's diff in the right-side panel. */
   openToolDiff: [id: string];
   /** Edit + resend the last user message (parent undoes, then refills composer). */
-  editMessage: [payload: { text: string; images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] }];
+  editMessage: [payload: { text: string; attachments?: TurnAttachment[] }];
   /** Fetch the next older page of messages (triggered by top sentinel visibility or click). */
   loadOlderMessages: [];
   /** Remove a queued message by index. */
@@ -217,7 +223,7 @@ const emit = defineEmits<{
 const dragFrom = ref<number | null>(null);
 const dragOver = ref<{ index: number; position: 'before' | 'after' } | null>(null);
 
-function hasImages(item: QueuedPromptView): boolean {
+function hasAttachments(item: QueuedPromptView): boolean {
   return (item.attachments?.length ?? 0) > 0;
 }
 
@@ -332,7 +338,7 @@ async function onUndo(turn: ChatTurn): Promise<void> {
 function confirmEditMessage(turn: ChatTurn): void {
   if (undoingTurnId.value !== null) return;
   undoingTurnId.value = turn.id;
-  emit('editMessage', { text: turn.text, images: turn.images });
+  emit('editMessage', { text: turn.text, attachments: turn.attachments });
   // Fallback: if the server rewind never removes the turn (e.g. it failed),
   // release the guard so the user can retry.
   undoFallbackTimer = setTimeout(() => {
@@ -467,12 +473,37 @@ function copyUserMessage(turn: ChatTurn): void {
   }).catch(() => {/* ignore */});
 }
 
-function userImageMedia(img: { url: string; alt?: string; fileId?: string }): ToolMedia {
-  // User-uploaded images carry no path/mime metadata; the preview panel falls
+function userAttachmentMedia(att: TurnAttachment): ToolMedia {
+  // User-uploaded media carries no path/mime metadata; the preview panel falls
   // back to a generic label and sniffs the mime from the URL when needed. When
   // a fileId is present the preview fetches the bytes with auth (a bare
   // getFileUrl src 401s under daemon auth).
-  return { kind: 'image', url: img.url, path: img.alt, fileId: img.fileId };
+  return { kind: att.kind === 'video' ? 'video' : 'image', url: att.url, path: att.name, fileId: att.fileId };
+}
+
+// Transient "can't open this type" hint after clicking a file chip of a
+// non-previewable type. Mirrors the copiedTurn timer pattern; cleared on unmount.
+const unsupportedOpenName = ref<string | null>(null);
+let unsupportedOpenTimer: ReturnType<typeof setTimeout> | null = null;
+
+function onAttachmentClick(att: TurnAttachment): void {
+  if (att.kind === 'image' || att.kind === 'video') {
+    emit('openMedia', userAttachmentMedia(att));
+    return;
+  }
+  // Generic files open in a new tab, but only whitelisted inert types —
+  // anything else gets the unsupported hint instead of an active-document
+  // preview (see openFileAttachment).
+  if (att.fileId === undefined) return;
+  void openFileAttachment(att.fileId, att.name, att.mediaType).then((result) => {
+    if (result !== 'unsupported') return;
+    unsupportedOpenName.value = att.name ?? att.fileId ?? '';
+    if (unsupportedOpenTimer !== null) clearTimeout(unsupportedOpenTimer);
+    unsupportedOpenTimer = setTimeout(() => {
+      unsupportedOpenTimer = null;
+      unsupportedOpenName.value = null;
+    }, 2400);
+  });
 }
 
 function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }): boolean {
@@ -522,32 +553,19 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
       <template v-if="turn.role === 'user'">
         <div class="u-turn">
           <div class="u-bub turn-anchor" :class="{ undoing: undoingTurnId === turn.id }" :data-turn-id="turn.id">
-            <!-- Image / video attachments -->
-            <div v-if="turn.images && turn.images.length > 0" class="u-imgs">
-              <template v-for="(img, ii) in turn.images" :key="ii">
-                <AuthMedia
-                  v-if="img.kind === 'video'"
-                  :url="img.url"
-                  kind="video"
-                  :file-id="img.fileId"
-                  media-class="u-img"
-                />
-                <button
-                  v-else
-                  type="button"
-                  class="u-img-btn"
-                  :aria-label="t('filePreview.enlargeImage')"
-                  @click="emit('openMedia', userImageMedia(img))"
-                >
-                  <AuthMedia
-                    :url="img.url"
-                    kind="image"
-                    :alt="img.alt"
-                    :file-id="img.fileId"
-                    media-class="u-img"
-                  />
-                </button>
-              </template>
+            <!-- Unified attachment chips: files, images and videos -->
+            <div v-if="turn.attachments && turn.attachments.length > 0" class="u-atts">
+              <AttachmentChip
+                v-for="(att, ai) in turn.attachments"
+                :key="ai"
+                :kind="att.kind"
+                :name="att.name"
+                :url="att.url"
+                :file-id="att.fileId"
+                :media-type="att.mediaType"
+                :size="att.size"
+                @activate="onAttachmentClick(att)"
+              />
             </div>
             <!-- Skill activation card (replaces raw XML) -->
             <div v-if="turn.skillActivation" class="skill-act">
@@ -702,21 +720,26 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           >
             <span v-if="item.text" class="u-text q-text">{{ item.text }}</span>
             <span v-else class="q-text q-text-placeholder">
-              <Icon name="image" size="sm" />
-              {{ t('composer.queuedImageOnly', { n: item.attachments?.length ?? 0 }) }}
+              <Icon name="file" size="sm" />
+              {{ t('composer.queuedAttachments', { n: item.attachments?.length ?? 0 }) }}
             </span>
           </button>
-          <div v-if="hasImages(item)" class="q-imgs">
-            <AuthMedia
-              v-for="(att, ai) in item.attachments"
-              :key="ai"
-              :url="att.url"
-              :kind="att.kind"
-              :file-id="att.fileId"
-              media-class="q-img"
-              :controls="false"
-              muted
-            />
+          <div v-if="hasAttachments(item)" class="q-imgs">
+            <template v-for="(att, ai) in item.attachments" :key="ai">
+              <span v-if="att.kind === 'file'" class="q-file">
+                <Icon name="file" size="sm" />
+                {{ att.name ?? att.fileId }}
+              </span>
+              <AuthMedia
+                v-else
+                :url="att.url"
+                :kind="att.kind"
+                :file-id="att.fileId"
+                media-class="q-img"
+                :controls="false"
+                muted
+              />
+            </template>
           </div>
           <span v-if="qi === 0" class="q-tag q-tag-next">{{ t('composer.queueNext') }}</span>
           <span v-else class="q-tag q-tag-idx">#{{ qi + 1 }}</span>
@@ -733,6 +756,10 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
     </div>
   </div>
 
+  <!-- Transient hint after clicking a file chip whose type can't be opened. -->
+  <div v-if="unsupportedOpenName !== null" class="open-unsupported" role="status">
+    {{ t('composer.attachmentOpenUnsupported', { name: unsupportedOpenName }) }}
+  </div>
 </template>
 
 <style scoped>
@@ -772,8 +799,29 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   padding: 16px 14px 20px;
   flex: 1;
   min-height: 0;
+  position: relative;
 }
 .chat .chat-empty { align-self: stretch; }
+
+/* Bottom-center pill for the "can't open this file type" hint. */
+.open-unsupported {
+  position: absolute;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(90%, 480px);
+  padding: 6px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-line);
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  font-size: var(--ui-font-size-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
+}
 .chat > .u-turn,
 .chat > .a-msg,
 .chat > .compact-divider,
@@ -1058,38 +1106,13 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   }
 }
 
-.u-imgs {
+/* Unified attachment chips (files / images / videos) above the bubble text —
+   the chip itself is AttachmentChip; this is only the row layout. */
+.u-atts {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
   margin-bottom: 8px;
-}
-.u-img {
-  max-width: 100%;
-  max-height: 200px;
-  border-radius: 8px;
-  object-fit: cover;
-}
-/* Clickable image thumbnail — reset button chrome so it looks like the plain
-   image it replaced, while still opening the preview on click. */
-.u-img-btn {
-  display: block;
-  flex: none;
-  align-self: flex-start;
-  max-width: 100%;
-  padding: 0;
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  border-radius: 8px;
-  overflow: hidden;
-}
-.u-img-btn .u-img {
-  display: block;
-}
-.u-img-btn:focus-visible {
-  outline: none;
-  box-shadow: var(--p-focus-ring);
 }
 
 /* NOTE: Chat/bubble styles live in src/style.css (global). Scoped `.u-bub`
@@ -1345,6 +1368,21 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   object-fit: cover;
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-line);
+}
+.q-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-line);
+  color: var(--color-text-muted);
+  font-size: calc(var(--ui-font-size) - 3px);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .q-tag {
   flex: none;

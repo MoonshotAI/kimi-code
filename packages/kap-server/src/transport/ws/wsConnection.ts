@@ -19,7 +19,6 @@
  */
 
 import { ErrorCodes, Error2, type IDisposable, type Scope } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode } from '@moonshot-ai/protocol';
 import { ulid } from 'ulid';
 import type { RawData, WebSocket } from 'ws';
 
@@ -27,6 +26,7 @@ import type { ScopeKind } from '../channel';
 import { dispatch, resolveScope, resolveService } from '../dispatcher';
 import { assertSerializable, mapError } from '../errors';
 import type { CredentialValidator } from '../../services/auth/credentials';
+import { ErrorCode } from '../../protocol/error-codes';
 import { resolveEventSource } from './eventMap';
 import type { CallMessage, ListenMessage, ServerMessage } from './wsProtocol';
 import { clientMessageSchema } from './wsProtocol';

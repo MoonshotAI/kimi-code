@@ -657,9 +657,6 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
-      '@moonshot-ai/protocol':
-        specifier: workspace:^
-        version: link:../protocol
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3

@@ -4,7 +4,9 @@
  */
 
 import { ErrorCodes, Error2 } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode, errEnvelope } from '@moonshot-ai/protocol';
+
+import { errEnvelope } from '../protocol/envelope';
+import { ErrorCode } from '../protocol/error-codes';
 
 /** Thrown by {@link withTimeout} when a call exceeds its deadline. */
 export class TimeoutError extends Error {

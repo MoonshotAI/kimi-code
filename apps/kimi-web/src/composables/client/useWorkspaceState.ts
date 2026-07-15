@@ -1421,7 +1421,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (text) content.push({ type: 'text', text });
       for (const att of attachments ?? []) {
         if (att.kind === 'video') content.push({ type: 'video', source: { kind: 'file', fileId: att.fileId } });
-        else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
+        else if (att.kind === 'file') {
+          content.push({
+            type: 'file',
+            fileId: att.fileId,
+            name: att.name ?? '',
+            mediaType: att.mediaType || 'application/octet-stream',
+            size: att.size ?? 0,
+          });
+        } else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
       }
       if (content.length === 0) {
         rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
@@ -1590,7 +1598,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (merged) content.push({ type: 'text', text: merged });
     for (const att of mergedAttachments) {
       if (att.kind === 'video') content.push({ type: 'video', source: { kind: 'file', fileId: att.fileId } });
-      else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
+      else if (att.kind === 'file') {
+        content.push({
+          type: 'file',
+          fileId: att.fileId,
+          name: att.name ?? '',
+          mediaType: att.mediaType || 'application/octet-stream',
+          size: att.size ?? 0,
+        });
+      } else content.push({ type: 'image', source: { kind: 'file', fileId: att.fileId } });
     }
     const tempId = nextOptimisticMsgId();
     const optimisticMsg: AppMessage = {

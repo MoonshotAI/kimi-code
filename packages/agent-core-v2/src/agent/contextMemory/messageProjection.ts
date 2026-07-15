@@ -15,7 +15,7 @@
  * so REST consumers can still render the media after reload/resume.
  */
 
-import type { Message, MessageContent, MessageRole, ToolUseContent } from './wireMessage';
+import type { Message, MessageContent, MessageRole, ToolUseContent } from './protocolMessage';
 
 import type { ContextMessage } from './types';
 

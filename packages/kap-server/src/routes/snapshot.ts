@@ -32,13 +32,13 @@ import {
   type IAgentScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import type { Message } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
+import { ErrorCode } from '../protocol/error-codes';
 import {
-  ErrorCode,
   sessionSnapshotResponseSchema,
   type InFlightTurn,
-  type Message,
   type SessionSnapshotResponse,
-} from '@moonshot-ai/protocol';
+} from '../protocol/rest-snapshot';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

@@ -20,7 +20,7 @@ import {
   ISessionMetadata,
   IWorkspaceRegistry,
 } from '@moonshot-ai/agent-core-v2';
-import { sessionSnapshotResponseSchema } from '@moonshot-ai/protocol';
+import { sessionSnapshotResponseSchema } from '../src/protocol/rest-snapshot';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerSnapshotRoutes } from '../src/routes/snapshot';

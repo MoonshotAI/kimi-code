@@ -36,14 +36,14 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  ErrorCode,
   fsBrowseQuerySchema,
   fsBrowseResponseSchema,
   fsHomeResponseSchema,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
 
 import { errEnvelope, okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
 
 interface WorkspaceFsRouteHost {
   get(

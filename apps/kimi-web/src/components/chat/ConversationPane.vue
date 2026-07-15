@@ -2,9 +2,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, UIQuestion, WorkspaceView } from '../../types';
+import type { ActivationBadges, ApprovalBlock, ChatTurn, ConversationStatus, FilePreviewRequest, PermissionMode, QueuedPromptView, TaskItem, TodoView, ToolMedia, TurnAttachment, UIQuestion, WorkspaceView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
+import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import ChatPane from './ChatPane.vue';
 import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
@@ -97,8 +98,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
-  steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  submit: [payload: { text: string; attachments: PromptAttachment[] }];
+  steer: [payload: { text: string; attachments: PromptAttachment[] }];
   approval: [approvalId: string, response: { decision: 'approved' | 'rejected' | 'cancelled'; scope?: 'session'; feedback?: string }];
   cancelTask: [taskId: string];
   answer: [questionId: string, response: QuestionResponse];
@@ -128,7 +129,7 @@ const emit = defineEmits<{
   openChanges: [];
   refreshGitStatus: [];
   /** Edit + resend the last user message (App undoes, then refills composer). */
-  editMessage: [payload: { text: string; images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[] }];
+  editMessage: [payload: { text: string; attachments?: TurnAttachment[] }];
   /** Empty-composer workspace picker: start a new conversation elsewhere. */
   selectWorkspace: [workspaceId: string];
   /** Empty-composer workspace picker: create a new workspace. */
@@ -195,7 +196,7 @@ let copyConversationCopiedTimer: ReturnType<typeof setTimeout> | null = null;
     so the caller can avoid dropping the prompt. */
 function loadComposerForEdit(
   value: string,
-  attachments?: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[],
+  attachments?: TurnAttachment[],
 ): boolean {
   const composer = dockedComposerRef.value ?? emptyComposerRef.value;
   if (!composer) return false;
@@ -427,7 +428,7 @@ const chatDockStyle = computed(() => ({
 }));
 type ComposerHandle = {
   loadForEdit: (value: string) => boolean | void;
-  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]) => void;
+  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
   focus: () => void;
 };
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
@@ -922,7 +923,7 @@ function followAfterUserAction(): void {
   });
 }
 
-function handleComposerSubmit(payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }): void {
+function handleComposerSubmit(payload: { text: string; attachments: PromptAttachment[] }): void {
   followAfterUserAction();
   emit('submit', payload);
 }
@@ -934,7 +935,7 @@ function handleComposerSubmit(payload: { text: string; attachments: { fileId: st
 // smooth-scrolls once the truncated turns actually land.
 function handleEditMessage(payload: {
   text: string;
-  images?: { url: string; alt?: string; kind: 'image' | 'video'; fileId?: string }[];
+  attachments?: TurnAttachment[];
 }): void {
   following.value = true;
   showPill.value = false;

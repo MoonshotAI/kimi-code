@@ -8,6 +8,7 @@ import { useI18n } from 'vue-i18n';
 import type { ActivationBadges, ApprovalBlock, ConversationStatus, PermissionMode, QueuedPromptView, TaskItem, TodoView, UIQuestion } from '../../types';
 import type { AppGoal, AppModel, AppSkill, QuestionResponse, ThinkingLevel } from '../../api/types';
 import type { FileItem } from './MentionMenu.vue';
+import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import Composer from './Composer.vue';
 import GoalStrip from './GoalStrip.vue';
 import QuestionCard from './QuestionCard.vue';
@@ -56,8 +57,8 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
-  steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  submit: [payload: { text: string; attachments: PromptAttachment[] }];
+  steer: [payload: { text: string; attachments: PromptAttachment[] }];
   command: [cmd: string];
   interrupt: [];
   setPermission: [mode: PermissionMode];
@@ -86,7 +87,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 const composerRef = ref<{
   loadForEdit: (value: string) => boolean;
-  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]) => void;
+  loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
   focus: () => void;
 } | null>(null);
 const workPanelRef = ref<HTMLElement | null>(null);
@@ -102,7 +103,7 @@ function loadForEdit(value: string): boolean {
   return true;
 }
 
-function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]): void {
+function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
   composerRef.value?.loadAttachmentsForEdit(atts);
 }
 
