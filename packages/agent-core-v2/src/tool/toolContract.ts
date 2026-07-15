@@ -39,7 +39,6 @@ export interface ExecutableToolSuccessResult {
   readonly output: ExecutableToolOutput;
   readonly isError?: false | undefined;
   readonly stopTurn?: boolean | undefined;
-  readonly message?: string | undefined;
   readonly truncated?: boolean | undefined;
   readonly note?: string;
   readonly delivery?: ToolDelivery | undefined;
@@ -48,7 +47,6 @@ export interface ExecutableToolSuccessResult {
 export interface ExecutableToolErrorResult {
   readonly output: ExecutableToolOutput;
   readonly isError: true;
-  readonly message?: string | undefined;
   readonly stopTurn?: boolean | undefined;
   readonly truncated?: boolean | undefined;
   readonly note?: string;

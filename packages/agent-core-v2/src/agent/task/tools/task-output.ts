@@ -157,7 +157,6 @@ export class TaskOutputTool implements BuiltinTool<TaskOutputInput> {
     return {
       output: lines.join('\n'),
       isError: false,
-      message: 'Task snapshot retrieved.',
     };
   }
 }

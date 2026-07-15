@@ -587,7 +587,6 @@ export class AgentToolExecutorService implements IAgentToolExecutorService {
     const effectiveResult = normalizeToolResult(coercedResult);
     const finalResult: ToolResult = {
       ...effectiveResult,
-      message: coercedResult.message ?? result.message,
       description: result.description,
       display: result.display,
       approvalRule: result.approvalRule,
