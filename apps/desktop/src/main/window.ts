@@ -1,9 +1,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, shell } from 'electron';
 
 import { connect } from './connect';
+import { installExternalLinkGuard } from './external-links';
 import type { RendererEventChannel } from './ipc-channels';
 
 let mainWindow: BrowserWindow | null = null;
@@ -95,6 +96,10 @@ export function createWindow(): void {
     },
   });
   mainWindow = win;
+  // External http(s) links (PR pages, OAuth, Markdown anchors) open in the
+  // system browser, not in frameless Electron windows; cross-origin
+  // navigation of the main window is intercepted the same way.
+  installExternalLinkGuard(win.webContents, (url) => shell.openExternal(url));
   // Keep the window title as the product name. The web page sets document.title
   // ("Kimi Code Web"), which would otherwise replace it.
   win.webContents.on('page-title-updated', (event) => {
