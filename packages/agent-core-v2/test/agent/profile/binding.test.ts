@@ -147,6 +147,77 @@ describe('AgentProfileService.bind', () => {
     expect(svc.data().profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
   });
 
+  it('rejects an unsupported thinking effort atomically before first bind', async () => {
+    ctx = createTestAgent(
+      {
+        initialConfig: {
+          providers: {
+            kimi: { type: 'kimi', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' },
+          },
+          models: {
+            'kimi-code/kimi-for-coding': {
+              provider: 'kimi',
+              model: 'kimi-for-coding',
+              maxContextSize: 1_000_000,
+              capabilities: ['thinking'],
+              supportEfforts: ['low', 'high'],
+            },
+          },
+        },
+      },
+      hostEnvironmentServices(homeDir),
+    );
+    const svc = ctx.get(IAgentProfileService);
+
+    await expect(
+      svc.bind({
+        profile: DEFAULT_AGENT_PROFILE_NAME,
+        model: 'kimi-code/kimi-for-coding',
+        thinking: 'ultra',
+        strictThinking: true,
+      }),
+    ).rejects.toThrow(/not supported by model/);
+
+    // The failed bind must leave the agent unbound — a retry can still bind.
+    expect(svc.data().profileName).toBeUndefined();
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: 'kimi-code/kimi-for-coding' });
+    expect(svc.data().profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
+  });
+
+  it('clamps an inherited unsupported thinking effort instead of rejecting the bind', async () => {
+    ctx = createTestAgent(
+      {
+        initialConfig: {
+          providers: {
+            kimi: { type: 'kimi', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' },
+          },
+          models: {
+            'kimi-code/kimi-for-coding': {
+              provider: 'kimi',
+              model: 'kimi-for-coding',
+              maxContextSize: 1_000_000,
+              capabilities: ['thinking'],
+              supportEfforts: ['low', 'high'],
+            },
+          },
+        },
+      },
+      hostEnvironmentServices(homeDir),
+    );
+    const svc = ctx.get(IAgentProfileService);
+
+    // Spawn paths pass inherited (possibly drifted) thinking without
+    // strictThinking: the bind must succeed and clamp to a supported effort.
+    await svc.bind({
+      profile: DEFAULT_AGENT_PROFILE_NAME,
+      model: 'kimi-code/kimi-for-coding',
+      thinking: 'ultra',
+    });
+
+    expect(svc.data().profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
+    expect(svc.data().thinkingLevel).toBe('high');
+  });
+
   it('keeps the persisted thinking effort on a same-name rebind', async () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
     ctx.configure({

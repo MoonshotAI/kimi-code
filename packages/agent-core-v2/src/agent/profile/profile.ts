@@ -92,6 +92,15 @@ export interface BindAgentInput {
    */
   readonly model?: string;
   readonly thinking?: string;
+  /**
+   * Set when `thinking` is an explicit user request (edge input) rather than
+   * inherited state: the effort is then validated against the model's
+   * supported efforts and the bind rejects up front when unsupported.
+   * Internal spawns pass inherited thinking without this flag — a persisted
+   * effort that drifted out of the model's support list clamps instead of
+   * breaking the spawn.
+   */
+  readonly strictThinking?: boolean;
   readonly cwd?: string;
 }
 

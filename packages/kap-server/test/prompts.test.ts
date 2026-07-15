@@ -584,4 +584,26 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(body.code).toBe(40001);
     expect(body.msg).toContain('already bound');
   });
+
+  it('applies a requested thinking effort together with the profile bind', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    // `thinking` rides along in the bind: the effort is validated up front
+    // and applied with the first bind, not by a separate setThinking after.
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      profile: 'agent',
+      model: 'stub',
+      thinking: 'high',
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const main = session.accessor.get(IAgentLifecycleService).get('main');
+    const profile = main?.accessor.get(IAgentProfileService);
+    expect(profile?.data().profileName).toBe('agent');
+    expect(profile?.data().thinkingLevel).toBe('high');
+  });
 });

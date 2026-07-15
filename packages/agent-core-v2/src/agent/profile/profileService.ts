@@ -209,8 +209,8 @@ export class AgentProfileService implements IAgentProfileService {
       disallowedTools: profile.disallowedTools ?? [],
     });
     this.setActiveTools(profile.tools);
-    this.wire.dispatch(configUpdate({ modelAlias: input.model, thinkingEffort: thinkingLevel }));
-    this.afterConfigDispatch({ modelAlias: input.model, thinkingLevel });
+    this.wire.dispatch(configUpdate({ modelAlias: alias, thinkingEffort: thinkingLevel }));
+    this.afterConfigDispatch({ modelAlias: alias, thinkingLevel });
 
     this.publishAgentsMdWarning();
   }
@@ -232,16 +232,8 @@ export class AgentProfileService implements IAgentProfileService {
 
   setThinking(level: string): void {
     const previousEffort = this.thinkingLevel;
-    const model = this.tryResolveRawModel();
+    this.assertThinkingEffortSupported(level, this.tryResolveRawModel(), this.modelAlias ?? '');
     const normalized = normalizeRequestedThinkingEffort(level);
-    if (normalized !== undefined && !supportsThinkingEffort(normalized, model)) {
-      const efforts = model?.supportEfforts ?? [];
-      const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
-      throw new ProfileError(
-        ProfileErrors.codes.MODEL_CONFIG_INVALID,
-        `Thinking effort "${level}" is not supported by model "${this.modelAlias}". Supported efforts: ${supported}.`,
-      );
-    }
     this.update({ thinkingLevel: normalized ?? level });
     const effort = this.thinkingLevel;
     if (effort !== previousEffort) {
@@ -251,6 +243,21 @@ export class AgentProfileService implements IAgentProfileService {
         from: previousEffort,
       });
     }
+  }
+
+  private assertThinkingEffortSupported(
+    requested: string,
+    model: Model | undefined,
+    modelAlias: string,
+  ): void {
+    const normalized = normalizeRequestedThinkingEffort(requested);
+    if (normalized === undefined || supportsThinkingEffort(normalized, model)) return;
+    const efforts = model?.supportEfforts ?? [];
+    const supported = efforts.length === 0 ? 'off' : ['off', ...efforts].join(', ');
+    throw new ProfileError(
+      ProfileErrors.codes.MODEL_CONFIG_INVALID,
+      `Thinking effort "${requested}" is not supported by model "${modelAlias}". Supported efforts: ${supported}.`,
+    );
   }
 
   getModel(): string {
