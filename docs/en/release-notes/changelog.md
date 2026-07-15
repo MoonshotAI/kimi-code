@@ -6,6 +6,46 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.24.2 (2026-07-15)
+
+### Features
+
+- Add a builtin `/check-kimi-code-docs` skill that automatically answers Kimi Code product questions with official-docs sources.
+
+### Polish
+
+- Align `kimi -p` behavior across engines: `print_background_mode` and `print_max_turns` now apply, and `/goal` runs stay alive until the goal finishes.
+- `kimi -p` now stays alive by default while background tasks are pending, with no effective wait or turn limit, and feeds each completion back to the agent. Set `print_background_mode = "exit"` or `"drain"` to restore the old exit-after-one-turn behavior.
+- `kimi -p` background tasks and subagents no longer time out by default (interactive mode is unchanged); restore limits with `[background] bash_task_timeout_s` or `[subagent] timeout_ms`.
+- Subagent timeout now defaults to 2 hours everywhere; override with `[subagent] timeout_ms` or `KIMI_SUBAGENT_TIMEOUT_MS`.
+- The per-step LLM retry limit is raised from 3 to 10 attempts, so transient provider failures (429 / overload) are retried before a turn fails; tune with `loop_control.max_retries_per_step`.
+- Workspaces now stay in sync: new sessions register automatically, missing workspaces are restored at startup, and removed ones stay removed.
+- `kimi web` now logs failed requests and key operations so daemon issues are easier to diagnose.
+- web: AgentSwarm cards now stay expanded while subagents are still running.
+- web: Minimized plan review and question cards now use an upward chevron for expand.
+
+### Bug Fixes
+
+- web: Fix mobile layout on iOS, including the composer, safe areas, and toasts.
+- Fix new sessions not opening in older CLI versions.
+- Fix completion notifications firing early when a subagent finished while the main turn was still running.
+- Fix the web UI showing the wrong CLI version.
+- Fix Gemini tool call IDs colliding across turns and merging swarm runs into one card.
+- web: Show server error details when actions like stopping or archiving a session fail.
+- web: Fix long responses stalling after the tab was backgrounded.
+- web: Fix code block copy buttons over plain HTTP.
+- web: Keep loaded sessions visible when the session list fails to reload.
+- web: Restore the AgentSwarm member list after a page refresh.
+- web: Fix session titles not generating when the first message is a slash command.
+- web: Show each message's actual send time after reloading a session.
+- Fix several goal-mode issues around budgets and turn limits, pausing and resuming, crash recovery, final status messages, and invalid persisted goal records.
+- Fix replaced goals being able to affect the new goal's budget, and reject subagent goals consistently.
+- Correct the guidance shown when a goal cannot be paused or resumed.
+
+### Refactors
+
+- Rename the dynamic tool loading capability from `select_tools` to `dynamically_loaded_tools`; behavior is unchanged.
+
 ## 0.24.1 (2026-07-14)
 
 ### Bug Fixes
