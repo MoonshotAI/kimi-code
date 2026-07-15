@@ -42,6 +42,20 @@ pnpm build         # pnpm -r run build
 
 ## 双仓工作流
 
-- **kimi-code 侧改动（CLI / server / core）**：在你的 kimi-code 工作克隆里改并 `pnpm dev:server`；code-app 用 `KIMI_SERVER_URL` 指过去联调，完整流程见 `docs/dev-with-external-server.md`。
+- **kimi-code 侧改动（CLI / server / core）**：在你的 kimi-code 工作克隆里改并启动 server；code-app 用 `KIMI_SERVER_URL` 指过去联调（不启动内嵌 server，不用动 submodule）：
+
+  ```bash
+  # 1. kimi-code 克隆里启动 server（KIMI_CODE_CORS_ORIGINS 仅 desktop 需要；
+  #    web dev server 走同源代理，不需要 CORS）：
+  KIMI_CODE_CORS_ORIGINS=app://renderer pnpm dev:server
+
+  # 2a. desktop 指向该 server（不会启动内嵌 server）：
+  KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm dev:desktop
+
+  # 2b. 或者 web 指向该 server：
+  KIMI_SERVER_URL=http://127.0.0.1:58627 pnpm dev:web
+  ```
+
+  Token 通过 `KIMI_CODE_HOME` 共享：两边默认 `~/.kimi-code`，desktop 读到的正是外部 server 写入的 token 文件；server 用自定义 `KIMI_CODE_HOME` 启动时，`pnpm dev:desktop` 要传同一个。外部 server 使用 CLI 的 host 身份（不是 `kimi-desktop`），开发场景没有影响。不带 `KIMI_SERVER_URL` 时 `pnpm dev:desktop` 保持内嵌 server 行为。
 - **bump submodule**：工作克隆推了新 commit 后，在 `kimi-code/` 里 `git fetch origin <branch> && git checkout <commit>`，回本仓根目录 `git add kimi-code && git commit -m "chore: bump kimi-code submodule"`。
 - **web 改动同步**：`pnpm --filter @moonshot-ai/kimi-web run build` → `KIMI_CODE_REPO=<kimi-code checkout> pnpm run sync:web`。
