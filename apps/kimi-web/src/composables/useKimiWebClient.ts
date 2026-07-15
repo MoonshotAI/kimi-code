@@ -1570,34 +1570,18 @@ async function reopenSession(sessionId: string): Promise<SyncSessionResult> {
 // View-model mappers
 // ---------------------------------------------------------------------------
 
-/** Whether the session should show the "working" spinner. Only a session with
-    live work (`busy`) qualifies. Additionally, a session whose only running
-    task is its BTW side-channel agent should not look busy. When tasks have
-    not been loaded yet — e.g. right after a page refresh — we trust the
-    daemon-reported `busy` flag rather than hiding the spinner. */
-function isSessionEffectivelyRunning(session: AppSession | undefined): boolean {
-  if (!session) return false;
-  if (!session.busy) return false;
-  const sessionId = session.id;
-  // Awaiting input is not "working": pending approvals/questions pause the
-  // spinner, mirroring the retired awaiting_* lifecycle status (which the
-  // daemon used to substitute for `running` while input was pending).
-  if ((rawState.approvalsBySession[sessionId] ?? []).length > 0) return false;
-  if ((rawState.questionsBySession[sessionId] ?? []).length > 0) return false;
-  const hiddenBtwAgentId = sideChat.sideChatTargetBySession.value[sessionId]?.agentId;
-  const tasks = rawState.tasksBySession[sessionId] ?? [];
-  const runningTasks = tasks.filter((t) => t.status === 'running');
-  if (runningTasks.length === 0) {
-    // No task list yet (fresh refresh) — trust the daemon-reported session status,
-    // unless the only active work is a BTW side-chat agent. In that window the
-    // side chat is sending and its task hasn't been loaded, so suppress the main
-    // session spinner so the main composer stays usable.
-    if (hiddenBtwAgentId && rawState.sideChatSendingByAgent[hiddenBtwAgentId]) {
-      return false;
-    }
-    return true;
-  }
-  return runningTasks.some((t) => t.id !== hiddenBtwAgentId);
+/** Whether the session should show a "working" indicator (sidebar spinner,
+    row badge gating). ONE unified condition, shared with the working moon and
+    the Stop button: the main conversation has unfinished work — a prompt
+    submitted but not yet terminated (`inFlightBySession`) or a main turn in
+    flight (`turnActiveBySession`). Background tasks and subagent turns do NOT
+    light it; an approval/question pause does NOT dim it (the turn is still
+    open). */
+function isMainTurnActive(sessionId: string): boolean {
+  return (
+    (rawState.inFlightBySession[sessionId] ?? false) ||
+    (rawState.turnActiveBySession[sessionId] ?? false)
+  );
 }
 
 /** Format createdAt/updatedAt into a short display string */
@@ -1899,7 +1883,7 @@ const sessions = computed<Session[]>(() => {
       id: s.id,
       title: s.title,
       time: formatTime(s.updatedAt),
-      busy: isSessionEffectivelyRunning(s),
+      busy: isMainTurnActive(s.id),
       lastTurnReason: s.lastTurnReason,
     }));
 });
@@ -2407,7 +2391,7 @@ const sessionsForView = computed<Session[]>(() => {
         id: s.id,
         title: s.title,
         time: formatTime(s.updatedAt),
-        busy: isSessionEffectivelyRunning(s),
+        busy: isMainTurnActive(s.id),
         lastTurnReason: s.lastTurnReason,
         lastPrompt: s.lastPrompt,
         workspaceId,
@@ -2429,7 +2413,7 @@ const workspaceGroups = computed<WorkspaceGroup[]>(() => {
       id: s.id,
       title: s.title,
       time: formatTime(s.updatedAt),
-      busy: isSessionEffectivelyRunning(s),
+      busy: isMainTurnActive(s.id),
       lastTurnReason: s.lastTurnReason,
       updatedAt: s.updatedAt,
     };

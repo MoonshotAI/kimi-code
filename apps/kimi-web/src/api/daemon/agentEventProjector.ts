@@ -956,6 +956,16 @@ export function createAgentProjector(): AgentProjector {
         const reason: string = p?.reason ?? 'completed';
         const durationMs = numberField(p ?? {}, 'durationMs');
 
+        // Main-conversation liveness: the prompt this turn served is done.
+        // This — not the session-busy status — is what ends the working moon.
+        // It MUST be emitted first in this arm: the onMainTurnEnd side effect
+        // gates on `seq > lastSeqBySession`, and sibling events in this arm
+        // advance that cursor — emitted after them, this event would compare
+        // equal and the prompt-finish cleanup (moon, queue drain) would never
+        // fire (observed: moon stuck when a turn ends with background tasks
+        // still running, where no work_changed(busy:false) fallback exists).
+        out.push({ type: 'turnActiveChanged', sessionId, active: false, reason: p?.reason });
+
         if (msgId) {
           finishAssistantMessage(s, msgId);
           const msg = getMsgById(s, msgId);
@@ -977,10 +987,6 @@ export function createAgentProjector(): AgentProjector {
 
         // No busy projection here — see turn.started. The daemon's
         // `event.session.work_changed` flips the session busy fact.
-
-        // Main-conversation liveness: the prompt this turn served is done.
-        // This — not the session-busy status — is what ends the working moon.
-        out.push({ type: 'turnActiveChanged', sessionId, active: false, reason: p?.reason });
 
         // Clear per-turn state. Reset the stream offsets too so a stale length
         // from this turn can't wedge the next turn's delta alignment into a

@@ -23,8 +23,10 @@ export interface Session {
   id: string;
   title: string;
   time: string;
-  /** True only when the session should show a "working" spinner: it has live
-      work AND a real task in flight. A BTW-only session is not busy. */
+  /** True while the session shows a "working" indicator — the unified
+      condition shared by the sidebar spinner, the chat moon, and the Stop
+      button: a prompt submitted but not yet terminated, or a main turn in
+      flight. Background tasks and subagent turns do NOT set it. */
   busy: boolean;
   /** Main agent's latest turn outcome — drives the "aborted" tag when the
       session is quiet and the last turn was cancelled/failed. */
