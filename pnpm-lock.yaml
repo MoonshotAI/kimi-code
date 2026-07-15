@@ -37,15 +37,28 @@ importers:
 
   apps/desktop:
     dependencies:
+      node-pty:
+        specifier: ^1.1.0
+        version: 1.1.0
+    devDependencies:
       '@chenglou/pretext':
         specifier: 0.0.8
         version: 0.0.8
+      '@electron/rebuild':
+        specifier: 3.7.1
+        version: 3.7.1
       '@fontsource-variable/inter':
         specifier: 5.2.8
         version: 5.2.8
       '@fontsource-variable/jetbrains-mono':
         specifier: ^5.2.8
         version: 5.2.8
+      '@iconify-json/ri':
+        specifier: ^1.2.10
+        version: 1.2.10
+      '@iconify-json/tabler':
+        specifier: ^1.2.35
+        version: 1.2.35
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../../kimi-code/packages/agent-core-v2
@@ -58,6 +71,9 @@ importers:
       '@moonshot-ai/kimi-code-sdk':
         specifier: workspace:^
         version: link:../../kimi-code/packages/node-sdk
+      '@moonshot-ai/vite-preset':
+        specifier: workspace:*
+        version: link:../../packages/vite-preset
       '@moonshot-ai/web-core':
         specifier: workspace:*
         version: link:../../packages/web-core
@@ -70,12 +86,21 @@ importers:
       '@moonshot-ai/web-ui':
         specifier: workspace:*
         version: link:../../packages/web-ui
+      '@vitejs/plugin-vue':
+        specifier: ^5.2.4
+        version: 5.2.4(vite@6.4.3(@types/node@22.20.1)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))(vue@3.5.39(typescript@6.0.2))
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
       '@xterm/xterm':
         specifier: ^6.0.0
         version: 6.0.0
+      electron:
+        specifier: 33.4.11
+        version: 33.4.11
+      electron-builder:
+        specifier: 25.1.8
+        version: 25.1.8(electron-builder-squirrel-windows@25.1.8)
       katex:
         specifier: ^0.17.0
         version: 0.17.0
@@ -91,34 +116,6 @@ importers:
       stream-markdown:
         specifier: ^0.0.16
         version: 0.0.16(react@19.2.7)(shiki@4.3.1)(vue@3.5.39(typescript@6.0.2))
-      vue:
-        specifier: ^3.5.35
-        version: 3.5.39(typescript@6.0.2)
-      vue-i18n:
-        specifier: ^11.4.5
-        version: 11.4.6(vue@3.5.39(typescript@6.0.2))
-    devDependencies:
-      '@electron/rebuild':
-        specifier: 3.7.1
-        version: 3.7.1
-      '@iconify-json/ri':
-        specifier: ^1.2.10
-        version: 1.2.10
-      '@iconify-json/tabler':
-        specifier: ^1.2.35
-        version: 1.2.35
-      '@moonshot-ai/vite-preset':
-        specifier: workspace:*
-        version: link:../../packages/vite-preset
-      '@vitejs/plugin-vue':
-        specifier: ^5.2.4
-        version: 5.2.4(vite@6.4.3(@types/node@22.20.1)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))(vue@3.5.39(typescript@6.0.2))
-      electron:
-        specifier: 33.4.11
-        version: 33.4.11
-      electron-builder:
-        specifier: 25.1.8
-        version: 25.1.8(electron-builder-squirrel-windows@25.1.8)
       tsdown:
         specifier: 0.22.0
         version: 0.22.0(tsx@4.23.0)(typescript@6.0.2)(vue-tsc@3.2.9(typescript@6.0.2))
@@ -134,6 +131,12 @@ importers:
       vitest:
         specifier: 4.1.4
         version: 4.1.4(@types/node@22.20.1)(vite@6.4.3(@types/node@22.20.1)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))
+      vue:
+        specifier: ^3.5.35
+        version: 3.5.39(typescript@6.0.2)
+      vue-i18n:
+        specifier: ^11.4.5
+        version: 11.4.6(vue@3.5.39(typescript@6.0.2))
       vue-tsc:
         specifier: ~3.2.0
         version: 3.2.9(typescript@6.0.2)
