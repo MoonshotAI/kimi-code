@@ -287,6 +287,7 @@ function onSelectSession(sessionId: string): void {
 // ---------------------------------------------------------------------------
 const renamingId = ref<string | null>(null);
 const renameValue = ref('');
+const renameOriginal = ref('');
 const renameInputRef = ref<HTMLInputElement | null>(null);
 
 // Hand the rename-input ref OBJECT (not its unwrapped value) down to
@@ -299,6 +300,7 @@ function getRenameInputRef() {
 
 function startRenameWorkspace(id: string, name: string): void {
   renamingId.value = id;
+  renameOriginal.value = name;
   renameValue.value = name;
   void nextTick().then(() => renameInputRef.value?.focus());
 }
@@ -306,7 +308,9 @@ function startRenameWorkspace(id: string, name: string): void {
 function confirmRenameWorkspace(): void {
   const id = renamingId.value;
   const name = renameValue.value.trim();
-  if (id && name) {
+  // Same no-op guard as session rename: an untouched rename must not hit the
+  // daemon (the PATCH bumps updated_at).
+  if (id && name && name !== renameOriginal.value) {
     emit('renameWorkspace', id, name);
   }
   renamingId.value = null;

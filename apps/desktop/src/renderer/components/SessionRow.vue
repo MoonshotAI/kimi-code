@@ -128,7 +128,10 @@ async function startRename(): Promise<void> {
 }
 function commitRename(): void {
   const newTitle = renameValue.value.trim();
-  if (newTitle) emit('rename', props.session.id, newTitle);
+  // Skip no-op renames (Enter/blur with the title untouched, or changed only
+  // by surrounding whitespace): the PATCH would still bump the session's
+  // updated_at and reshuffle the sidebar ordering.
+  if (newTitle && newTitle !== props.session.title) emit('rename', props.session.id, newTitle);
   renaming.value = false;
 }
 function cancelRename(): void {
