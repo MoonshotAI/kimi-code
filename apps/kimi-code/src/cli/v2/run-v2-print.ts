@@ -283,14 +283,18 @@ async function resolveNativeSession(
 
   // `--agent` / `--agent-file` bind an explicit profile; without them the
   // historical setModel path (default profile on first bind) is kept. A
-  // same-name re-select on a resumed session is a no-op; a different name is
-  // rejected by the engine's first-bind guard inside `bind`.
+  // same-name re-select on a resumed session keeps the profile and only applies
+  // an explicitly requested model; a different name is rejected by the
+  // engine's first-bind guard inside `bind`.
   const applyProfileSelection = async (
     profile: IAgentProfileService,
     model: string | undefined,
   ): Promise<void> => {
     if (agentProfileName !== undefined) {
-      if (profile.data().profileName === agentProfileName) return;
+      if (profile.data().profileName === agentProfileName) {
+        if (model !== undefined) await profile.setModel(model);
+        return;
+      }
       await profile.bind({
         profile: agentProfileName,
         model: requireConfiguredModel(model ?? profile.getModel(), defaultModel),

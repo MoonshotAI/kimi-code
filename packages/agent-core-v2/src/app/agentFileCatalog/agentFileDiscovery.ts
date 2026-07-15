@@ -9,6 +9,7 @@
 import { join } from 'pathe';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 
 import { AgentFileParseError, parseAgentFileText } from './agentFile';
 import type {
@@ -55,8 +56,15 @@ export async function discoverAgentFiles(
     let entries: readonly string[];
     try {
       entries = (await fs.readdir(dirPath)).map((entry) => entry.name).toSorted();
-    } catch {
-      return;
+    } catch (error) {
+      if (
+        error instanceof HostFsError &&
+        (error.code === OsFsErrors.codes.OS_FS_NOT_FOUND ||
+          error.code === OsFsErrors.codes.OS_FS_NOT_DIRECTORY)
+      ) {
+        return;
+      }
+      throw error;
     }
 
     for (const entry of entries) {

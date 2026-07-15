@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { discoverAgentFiles } from '#/app/agentFileCatalog/agentFileDiscovery';
 import type { AgentFileRoot } from '#/app/agentFileCatalog/types';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 
 const hostFs = new HostFileSystem();
 
@@ -96,6 +98,36 @@ describe('discoverAgentFiles', () => {
     await writeFile(join(root, 'notes.txt'), agentMd('notes'));
 
     const result = await discoverAgentFiles(hostFs, [fileRoot(root)]);
+
+    expect(result.agents).toEqual([]);
+  });
+
+  it('rejects when a directory cannot be scanned so callers can keep stale contributions', async () => {
+    const failingFs = {
+      readdir: async () => {
+        throw new HostFsError(
+          OsFsErrors.codes.OS_FS_UNAVAILABLE,
+          'readdir failed: filesystem resource unavailable',
+        );
+      },
+    } as unknown as IHostFileSystem;
+
+    await expect(discoverAgentFiles(failingFs, [fileRoot(root)])).rejects.toMatchObject({
+      code: OsFsErrors.codes.OS_FS_UNAVAILABLE,
+    });
+  });
+
+  it('treats a directory that disappears during scanning as absent', async () => {
+    const disappearingFs = {
+      readdir: async () => {
+        throw new HostFsError(
+          OsFsErrors.codes.OS_FS_NOT_FOUND,
+          'readdir failed: path does not exist',
+        );
+      },
+    } as unknown as IHostFileSystem;
+
+    const result = await discoverAgentFiles(disappearingFs, [fileRoot(root)]);
 
     expect(result.agents).toEqual([]);
   });

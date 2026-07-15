@@ -404,4 +404,30 @@ describe('runV2Print', () => {
     expect(profile.bind).not.toHaveBeenCalled();
     expect(profile.setModel).not.toHaveBeenCalled();
   });
+
+  it('switches the model when resuming with the already-bound profile and an explicit model', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent, agentServices, appServices, profileState } = makeFakeHarness();
+    profileState.profileName = 'reviewer';
+
+    const index = appServices.get(ISessionIndex) as { list: ReturnType<typeof vi.fn> };
+    index.list.mockResolvedValue({ items: [{ id: 'ses_1', cwd: process.cwd() }] });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await runV2Print(
+      opts({ session: 'ses_1', agent: 'reviewer', model: 'new-model' }) as never,
+      '1.2.3-test',
+      { stdout, stderr },
+    );
+
+    const profile = agentServices.get(IAgentProfileService) as {
+      bind: ReturnType<typeof vi.fn>;
+      setModel: ReturnType<typeof vi.fn>;
+    };
+    expect(profile.bind).not.toHaveBeenCalled();
+    expect(profile.setModel).toHaveBeenCalledWith('new-model');
+  });
 });
