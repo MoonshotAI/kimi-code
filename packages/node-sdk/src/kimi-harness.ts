@@ -194,13 +194,22 @@ export class KimiHarness {
   }
 
   async forkSession(input: ForkSessionInput): Promise<Session> {
-    const summary = await this.rpc.forkSession({
-      id: normalizeSessionId(input.id),
-      forkId: input.forkId,
-      title: input.title,
-      metadata: input.metadata,
-      turnIndex: input.turnIndex,
-    });
+    const { kaos, persistenceKaos, ...forkInput } = input;
+    const normalizedInput = {
+      id: normalizeSessionId(forkInput.id),
+      forkId: forkInput.forkId,
+      title: forkInput.title,
+      metadata: forkInput.metadata,
+      turnIndex: forkInput.turnIndex,
+    };
+    const summary =
+      kaos === undefined && persistenceKaos === undefined
+        ? await this.rpc.forkSession(normalizedInput)
+        : await this.rpc.forkSessionWithKaos(
+            normalizedInput,
+            kaos ?? persistenceKaos as Kaos,
+            persistenceKaos,
+          );
     const session = new Session({
       id: summary.id,
       workDir: summary.workDir,

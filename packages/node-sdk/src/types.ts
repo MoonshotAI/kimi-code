@@ -159,6 +159,8 @@ export interface ForkSessionInput {
    * preserve the existing full-session fork behavior.
    */
   readonly turnIndex?: number;
+  readonly kaos?: Kaos | undefined;
+  readonly persistenceKaos?: Kaos | undefined;
 }
 
 export interface ExportSessionInput {

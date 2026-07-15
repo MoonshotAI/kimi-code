@@ -8,6 +8,7 @@ import {
   type PromptResponse,
   type SessionModeId,
 } from '@agentclientprotocol/sdk';
+import { isRealUserInput } from '@moonshot-ai/agent-core';
 import {
   ErrorCodes,
   log,
@@ -786,6 +787,59 @@ export class AcpSession {
     return this.runTurnBody(sessionId, conn, () => this.session.prompt(parts));
   }
 
+  /**
+   * `kimi/session/steer` — inject a pending user message into the
+   * session's active turn. The kernel buffers the input and the model
+   * consumes it at the next step boundary; in-flight tool calls and
+   * subagents are not interrupted. The content pipeline (ACP blocks →
+   * prompt parts → image compression) is identical to {@link prompt}.
+   *
+   * Returns `{ steered: true }` once the input lands in the kernel's
+   * steer buffer. When no turn is active there is nothing to steer
+   * into: rather than erroring, the method returns
+   * `{ steered: false, reason: 'no_active_turn' }` so the client can
+   * fall back to a normal `session/prompt`.
+   *
+   * The no-active-turn signal is the adapter-tracked
+   * {@link currentTurnId} — the same guard `/undo` uses. It must live
+   * adapter-side because the embedded v1 kernel's `Turn.steer` never
+   * rejects for a missing turn: with no active turn it LAUNCHES a fresh
+   * one, which is exactly what this method's contract promises not to
+   * do. The `prompt.not_found` catch is forward-compat for hosts whose
+   * steer RPC rejects with that code (the v2/protocol stack's
+   * PROMPT_NOT_FOUND) instead of launching.
+   */
+  async steer(
+    blocks: readonly ContentBlock[],
+  ): Promise<{ steered: true } | { steered: false; reason: 'no_active_turn' }> {
+    if (this.currentTurnId === undefined) {
+      return { steered: false, reason: 'no_active_turn' };
+    }
+    const sessionDir = this.session.summary?.sessionDir;
+    const track = this.track;
+    const parts = await compressPromptImageParts(acpBlocksToPromptParts(blocks), {
+      originalsDir:
+        sessionDir === undefined ? undefined : sessionMediaOriginalsDir(sessionDir),
+      maxImageEdgePx: this.harness?.imageLimits?.maxEdgePx(),
+      telemetry:
+        track === undefined
+          ? undefined
+          : {
+              track: (event, properties) =>
+                track(event, properties === undefined ? undefined : { ...properties }),
+            },
+    });
+    try {
+      await this.session.steer(parts);
+    } catch (error) {
+      if (isPromptNotFoundError(error)) {
+        return { steered: false, reason: 'no_active_turn' };
+      }
+      throw error;
+    }
+    return { steered: true };
+  }
+
   private async runBuiltInCommand(
     name: AcpBuiltinSlashCommandName,
     args: string,
@@ -916,6 +970,14 @@ export class AcpSession {
    * `undoHistory` mutates the context synchronously with no active-turn
    * check in the kernel, so an undo landing mid-turn would splice the
    * history the in-flight turn is still reading.
+   *
+   * Also pre-flights availability before calling the kernel: the kernel's
+   * `ContextMemory.undo` deletes messages as it walks and only throws
+   * REQUEST_INVALID when it runs out of undoable prompts, so an
+   * over-large `count` would silently drop part of the history before
+   * failing. The pre-check mirrors the web backend's
+   * `sessionService.undo` (which calls `canUndoHistory` first) and
+   * refuses up front with the kernel's own message wording.
    */
   private async runUndoCommand(args: string): Promise<void> {
     if (this.currentTurnId !== undefined) {
@@ -934,7 +996,33 @@ export class AcpSession {
       }
       count = parsed;
     }
-    await this.session.undoHistory(count);
+    const context = await this.session.getContext();
+    const availability = checkUndoAvailability(context.history, count);
+    if (!availability.ok) {
+      await this.emitLocalCommandMessage(
+        formatUndoUnavailableMessage(
+          count,
+          availability.undoableCount,
+          availability.stoppedAtBoundary,
+        ),
+      );
+      return;
+    }
+    try {
+      await this.session.undoHistory(count);
+    } catch (error) {
+      // Race fallback: a compaction (or a concurrent undo) landing
+      // between the pre-check and the kernel call can still trip the
+      // kernel's REQUEST_INVALID guard — after it partially deleted
+      // messages. Surface the kernel's message verbatim so the user sees
+      // how much was actually undoable, rather than the generic
+      // `/undo failed:` wrapper from `runBuiltInCommand`.
+      if (error instanceof Error && error.message.startsWith('Cannot undo')) {
+        await this.emitLocalCommandMessage(error.message);
+        return;
+      }
+      throw error;
+    }
     await this.emitLocalCommandMessage(
       count === 1 ? 'Undid the last turn.' : `Undid the last ${count} turns.`,
     );
@@ -1441,6 +1529,83 @@ type CompactionOutcome =
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Availability of an `/undo` of `count` turns over a context history.
+ * `ok` mirrors agent-core's `canUndoHistory` exactly (a compaction
+ * boundary means "cannot undo" even when some prompts were found);
+ * `undoableCount` / `stoppedAtBoundary` feed the refusal message.
+ */
+interface UndoAvailability {
+  readonly ok: boolean;
+  readonly undoableCount: number;
+  readonly stoppedAtBoundary: boolean;
+}
+
+/**
+ * Mirror of agent-core's `canUndoHistory`
+ * (`packages/agent-core/src/services/session/sessionService.ts:56-69`) —
+ * the same walk the web backend runs before calling `undoHistory` —
+ * extended to also report how far the walk got so the refusal can reuse
+ * the kernel's message wording. Walks the history from the tail: skips
+ * injections, stops (unsuccessfully) at a compaction summary, and counts
+ * real user inputs until `count` is reached.
+ */
+function checkUndoAvailability(
+  history: readonly ContextMessage[],
+  count: number,
+): UndoAvailability {
+  let found = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const message = history[i];
+    if (message === undefined) continue;
+    if (message.origin?.kind === 'injection') continue;
+    if (message.origin?.kind === 'compaction_summary') {
+      return { ok: false, undoableCount: found, stoppedAtBoundary: true };
+    }
+    if (isRealUserInput(message)) {
+      found++;
+      if (found >= count) {
+        return { ok: true, undoableCount: found, stoppedAtBoundary: false };
+      }
+    }
+  }
+  return { ok: false, undoableCount: found, stoppedAtBoundary: false };
+}
+
+/**
+ * Mirror of the kernel's private `formatUndoUnavailableMessage`
+ * (`packages/agent-core/src/agent/context/index.ts:753-764`) so the
+ * pre-check refusal reads byte-identical to the error the kernel would
+ * have thrown (after partially deleting history) without the pre-check.
+ */
+function formatUndoUnavailableMessage(
+  requestedCount: number,
+  undoableCount: number,
+  stoppedAtCompaction: boolean,
+): string {
+  const reason = stoppedAtCompaction ? ' after the last compaction' : '';
+  return `Cannot undo ${formatPromptCount(requestedCount)}; only ${formatPromptCount(undoableCount)} can be undone in the active context${reason}.`;
+
+  function formatPromptCount(count: number): string {
+    return `${String(count)} ${count === 1 ? 'prompt' : 'prompts'}`;
+  }
+}
+
+/**
+ * v1 (`@moonshot-ai/agent-core`) has no PROMPT_NOT_FOUND error code —
+ * its `Turn.steer` buffers into the active turn and never throws for a
+ * missing prompt. The literal `'prompt.not_found'` wire code comes from
+ * the v2/protocol stack; matching on the string keeps the guard correct
+ * for hosts that surface the v2 error without inventing a v1 code.
+ */
+function isPromptNotFoundError(error: unknown): boolean {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    (error as { code?: unknown }).code === 'prompt.not_found'
+  );
 }
 
 function formatHelpReport(commands: readonly AvailableCommand[]): string {

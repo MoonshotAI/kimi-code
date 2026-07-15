@@ -14,7 +14,7 @@ import {
   type WriteTextFileRequest,
   type WriteTextFileResponse,
 } from '@agentclientprotocol/sdk';
-import type { Event, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
+import type { ContextMessage, Event, KimiHarness, Session } from '@moonshot-ai/kimi-code-sdk';
 
 import { AcpServer } from '../src/server';
 import { AUTHED_STATUS } from './_helpers/harness-stubs';
@@ -56,10 +56,16 @@ function makeInMemoryStreamPair(): {
  * `listSkills` returns a single Prompt skill so the AcpServer's
  * `available_commands_update` resolver also populates the per-session
  * `skillCommandMap` that {@link AcpSession.prompt} consults.
+ *
+ * `getContext` feeds the `/undo` pre-check: `opts.history` defaults to
+ * three plain user messages (all real user input — no `origin`), so
+ * `/undo` and `/undo 3` pass the pre-check unless a test overrides the
+ * history to exercise a refusal.
  */
 function makeFakeSession(
   sessionId: string,
   script: readonly Event[],
+  opts?: { history?: readonly ContextMessage[] },
 ): {
   session: Session;
   calls: {
@@ -74,6 +80,12 @@ function makeFakeSession(
     activate: [] as Array<{ name: string; args?: string | undefined }>,
     undoHistory: [] as number[],
   };
+  const history =
+    opts?.history ??
+    ([1, 2, 3].map((n) => ({
+      role: 'user',
+      content: [{ type: 'text', text: `user message ${n}` }],
+    })) as unknown as readonly ContextMessage[]);
   const emit = async (): Promise<void> => {
     await Promise.resolve();
     for (const ev of script) {
@@ -93,6 +105,7 @@ function makeFakeSession(
     undoHistory: async (count: number) => {
       calls.undoHistory.push(count);
     },
+    getContext: async () => ({ history, tokenCount: 0 }),
     cancel: async () => undefined,
     onEvent: (fn: (event: Event) => void) => {
       listeners.add(fn);
@@ -474,5 +487,88 @@ describe('AcpSession slash routing', () => {
       )
       .map((n) => (n.update as { content?: { text?: string } }).content?.text ?? '');
     expect(texts.some((t) => t.includes('Cannot undo while a turn is running.'))).toBe(true);
+  });
+
+  it('refuses `/undo N` up front when fewer than N prompts are undoable', async () => {
+    const sessionId = 'sess-slash-undo-short';
+    // Default stub history: 3 real user messages → `/undo 5` must be
+    // refused by the pre-check WITHOUT calling undoHistory (the kernel
+    // would otherwise delete 3 turns and only then throw).
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)]);
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    await client.prompt({ sessionId, prompt: [textBlock('/undo 5')] });
+
+    expect(calls.undoHistory).toEqual([]);
+    const texts = collecting.updates
+      .filter(
+        (n) =>
+          (n.update as { sessionUpdate?: string }).sessionUpdate === 'agent_message_chunk',
+      )
+      .map((n) => (n.update as { content?: { text?: string } }).content?.text ?? '');
+    expect(
+      texts.some(
+        (t) =>
+          t === 'Cannot undo 5 prompts; only 3 prompts can be undone in the active context.',
+      ),
+    ).toBe(true);
+  });
+
+  it('refuses `/undo N` at a compaction boundary with the kernel wording', async () => {
+    const sessionId = 'sess-slash-undo-boundary';
+    const history = [
+      { role: 'user', content: [{ type: 'text', text: 'before compaction' }] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'summary of compacted history' }],
+        origin: { kind: 'compaction_summary' },
+      },
+      { role: 'user', content: [{ type: 'text', text: 'recent one' }] },
+      { role: 'user', content: [{ type: 'text', text: 'recent two' }] },
+    ] as unknown as readonly ContextMessage[];
+    const { session, calls } = makeFakeSession(sessionId, [endedTurn(sessionId)], { history });
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const collecting = new CollectingClient();
+    const client = new ClientSideConnection(() => collecting, clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    await waitForAvailableCommands(collecting);
+
+    // Two real user prompts sit after the compaction summary; `/undo 3`
+    // must stop at the boundary and refuse with the kernel's
+    // "after the last compaction" suffix.
+    await client.prompt({ sessionId, prompt: [textBlock('/undo 3')] });
+
+    expect(calls.undoHistory).toEqual([]);
+    const texts = collecting.updates
+      .filter(
+        (n) =>
+          (n.update as { sessionUpdate?: string }).sessionUpdate === 'agent_message_chunk',
+      )
+      .map((n) => (n.update as { content?: { text?: string } }).content?.text ?? '');
+    expect(
+      texts.some(
+        (t) =>
+          t ===
+          'Cannot undo 3 prompts; only 2 prompts can be undone in the active context after the last compaction.',
+      ),
+    ).toBe(true);
   });
 });

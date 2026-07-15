@@ -569,6 +569,13 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 
   async forkSession(input: ForkSessionPayload): Promise<ResumeSessionResult> {
+    return this.forkSessionWithOverrides(input, {});
+  }
+
+  async forkSessionWithOverrides(
+    input: ForkSessionPayload,
+    overrides: { kaos?: Kaos; persistenceKaos?: Kaos },
+  ): Promise<ResumeSessionResult> {
     const source = await this.sessionStore.get(input.sessionId);
     const active = this.sessions.get(source.id);
     if (active?.hasActiveTurn === true) {
@@ -591,7 +598,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       metadata: input.metadata,
       turnIndex: input.turnIndex,
     });
-    return this.resumeSession({ sessionId: id });
+    // The fork resumes through the override-aware path so an ACP-style
+    // caller's kaos pair (reverse-RPC bridge + local persistence) reaches
+    // the forked session exactly as it would in createSession/resumeSession.
+    return this.resumeSessionWithOverrides({ sessionId: id }, overrides);
   }
 
   async listSessions(input: ListSessionsPayload = {}): Promise<readonly SessionSummary[]> {

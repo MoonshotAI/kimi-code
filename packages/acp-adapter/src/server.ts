@@ -20,6 +20,7 @@ import {
   type AvailableCommand,
   type CancelNotification,
   type ClientCapabilities,
+  type ContentBlock,
   type Implementation,
   type InitializeRequest,
   type InitializeResponse,
@@ -753,6 +754,12 @@ export class AcpServer implements Agent {
    *   - `kimi/session/close` — close a session and drop it from the
    *     adapter; `archive: true` also archives the on-disk directory
    *     (the btw fork cleanup path).
+   *   - `kimi/session/steer` — inject a pending user message into the
+   *     session's active turn; the model consumes it at the next step
+   *     boundary while in-flight tool calls and subagents run on
+   *     undisturbed. With no active turn the method resolves to
+   *     `{ steered: false, reason: 'no_active_turn' }` instead of
+   *     erroring, so the client can fall back to `session/prompt`.
    */
   async extMethod(
     method: string,
@@ -763,6 +770,9 @@ export class AcpServer implements Agent {
     }
     if (method === 'kimi/session/close') {
       return this.closeSessionExt(params);
+    }
+    if (method === 'kimi/session/steer') {
+      return this.steerSessionExt(params);
     }
     throw RequestError.methodNotFound(method);
   }
@@ -778,6 +788,12 @@ export class AcpServer implements Agent {
    * thinking state. ACP-supplied MCP servers are NOT carried over —
    * `resumeSession` rebuilds MCP from the on-disk config only; forks
    * that need caller-supplied MCP servers are a follow-up.
+   *
+   * When the client advertised `fs.readTextFile` / `fs.writeTextFile`,
+   * the fork is resumed through an {@link AcpKaos} pair (reverse-RPC tool
+   * kaos + local persistence kaos), exactly like `session/new` — so file
+   * I/O inside the fork routes to the same client instead of silently
+   * falling back to the kernel's process-wide {@link LocalKaos}.
    *
    * Forks accumulate on disk until the client archives them via
    * `kimi/session/close` with `archive: true`.
@@ -802,9 +818,18 @@ export class AcpServer implements Agent {
         'AcpServer is missing its AgentSideConnection',
       );
     }
+    // Pre-mint the fork id so the optional AcpKaos carries the reverse-RPC
+    // channel of the session the kernel is about to resume — same boundary-
+    // injection pattern as `newSession`.
+    const forkId = `session_${randomUUID()}`;
+    const acpKaos = await this.maybeBuildAcpKaos(forkId);
+    const persistenceKaos = acpKaos === undefined ? undefined : await this.ensureInnerKaos();
     const fork = await this.harness.forkSession({
       id: sessionId,
+      forkId,
       title: `Fork of ${sessionId}`,
+      kaos: acpKaos,
+      persistenceKaos,
     });
     const acpSession = new AcpSession(
       this.conn,
@@ -846,6 +871,38 @@ export class AcpServer implements Agent {
       await this.harness.closeSession(sessionId);
     }
     return {};
+  }
+
+  /**
+   * `kimi/session/steer` — forward a pending user message to
+   * {@link AcpSession.steer}, which injects it into the session's active
+   * turn. The result is the steer outcome verbatim:
+   * `{ steered: true }`, or `{ steered: false, reason: 'no_active_turn' }`
+   * when the session has no running turn (the client is expected to fall
+   * back to `session/prompt` in that case).
+   */
+  private async steerSessionExt(
+    params: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    const sessionId = params['sessionId'];
+    if (typeof sessionId !== 'string' || sessionId.length === 0) {
+      throw RequestError.invalidParams(
+        undefined,
+        'kimi/session/steer requires a string sessionId',
+      );
+    }
+    const acpSession = this.sessions.get(sessionId);
+    if (acpSession === undefined) {
+      throw RequestError.invalidParams(undefined, `Unknown session: ${sessionId}`);
+    }
+    const prompt = params['prompt'];
+    if (!Array.isArray(prompt) || prompt.length === 0) {
+      throw RequestError.invalidParams(
+        undefined,
+        'kimi/session/steer requires a non-empty prompt array of content blocks',
+      );
+    }
+    return acpSession.steer(prompt as readonly ContentBlock[]);
   }
 
   /**

@@ -21,6 +21,7 @@ import { KimiHarness } from '#/kimi-harness';
 import { ClientAPI, SDKRpcClientBase } from '#/rpc';
 import type {
   CreateSessionOptions,
+  ForkSessionInput,
   KimiHarnessOptions,
   KimiHostIdentity,
   OAuthRefreshOutcome,
@@ -122,6 +123,23 @@ export class SDKRpcClient extends SDKRpcClientBase {
   ): Promise<ResumedSessionSummary> {
     return this.core.resumeSessionWithOverrides(
       { ...input, sessionId: input.id },
+      { kaos, persistenceKaos },
+    );
+  }
+
+  override async forkSessionWithKaos(
+    input: ForkSessionInput,
+    kaos: Kaos,
+    persistenceKaos?: Kaos,
+  ): Promise<SessionSummary> {
+    return this.core.forkSessionWithOverrides(
+      {
+        sessionId: input.id,
+        id: input.forkId,
+        title: input.title,
+        metadata: input.metadata,
+        turnIndex: input.turnIndex,
+      },
       { kaos, persistenceKaos },
     );
   }

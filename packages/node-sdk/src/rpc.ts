@@ -194,6 +194,16 @@ export abstract class SDKRpcClientBase {
     });
   }
 
+  async forkSessionWithKaos(
+    input: ForkSessionInput,
+    kaos: Kaos,
+    persistenceKaos?: Kaos,
+  ): Promise<SessionSummary> {
+    void kaos;
+    void persistenceKaos;
+    return this.forkSession(input);
+  }
+
   async closeSession(input: SessionIdRpcInput): Promise<void> {
     const rpc = await this.getRpc();
     return rpc.closeSession({ sessionId: input.sessionId });
