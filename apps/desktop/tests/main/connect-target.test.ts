@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { resolveConnectTarget } from './connect-target';
+import { resolveConnectTarget } from '../../src/main/connect-target';
 
 describe('resolveConnectTarget', () => {
   it('returns embedded mode for undefined / empty / whitespace-only KIMI_SERVER_URL, without reading the token', () => {

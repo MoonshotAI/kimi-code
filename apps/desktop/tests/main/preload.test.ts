@@ -42,7 +42,7 @@ beforeEach(() => {
 
 describe('kimiDesktop preload bridge', () => {
   it('exposes only the whitelisted API via contextBridge (no ipcRenderer/node/require)', async () => {
-    await import('./preload');
+    await import('../../src/main/preload');
     expect(expose).toHaveBeenCalledOnce();
     const [name, exposed] = expose.mock.calls[0]!;
 
@@ -59,7 +59,7 @@ describe('kimiDesktop preload bridge', () => {
   });
 
   it('wires each whitelisted method to the correct ipcRenderer channel', async () => {
-    await import('./preload');
+    await import('../../src/main/preload');
     const [, exposed] = expose.mock.calls[0]!;
 
     exposed.setTheme('dark');
@@ -98,7 +98,7 @@ describe('kimiDesktop preload bridge', () => {
   });
 
   it('forwards menu-action and shortcut payloads to the renderer callback', async () => {
-    await import('./preload');
+    await import('../../src/main/preload');
     const [, exposed] = expose.mock.calls[0]!;
 
     const actionCb = vi.fn();

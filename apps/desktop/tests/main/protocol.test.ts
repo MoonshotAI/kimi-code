@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { mkdtemp, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mimeFor, rendererUrl, handleRendererRequest } from './protocol';
+import { mimeFor, rendererUrl, handleRendererRequest } from '../../src/main/protocol';
 
 describe('mimeFor', () => {
   it('maps common web extensions and falls back to octet-stream', () => {

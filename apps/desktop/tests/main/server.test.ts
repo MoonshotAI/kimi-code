@@ -33,7 +33,7 @@ vi.mock('@moonshot-ai/kimi-code-sdk', () => ({
   resolveKimiHome: () => '/tmp/kimi-test',
 }));
 
-import { startDesktopServer } from './server';
+import { startDesktopServer } from '../../src/main/server';
 
 describe('startDesktopServer', () => {
   beforeEach(() => {

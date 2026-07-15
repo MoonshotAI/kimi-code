@@ -20,7 +20,7 @@
 
 ## 目录地图
 
-- `apps/desktop`：Electron 壳（`@moonshot-ai/kimi-desktop`）。`src/main/index.ts` 主进程入口（窗口 / 菜单 / 生命周期 / `connect()`）；`src/main/server.ts` 内嵌 server（`startDesktopServer`：回环 + 临时端口 + 独立 lock）；`src/main/connect-target.ts` 外部 server 模式解析（`KIMI_SERVER_URL`，纯函数，测试在同名 `.test.ts`）；`src/main/protocol.ts` `app://renderer` 协议映射（带 `..` 越界防护）。细则见 `apps/desktop/README.md`。
+- `apps/desktop`：Electron 壳（`@moonshot-ai/kimi-desktop`）。`src/main/index.ts` 主进程入口（只做编排；窗口 `window.ts`、菜单 `menu.ts`、快捷键 `shortcuts.ts`、IPC `ipc.ts` + channel 常量 `ipc-channels.ts`、server 连接 `connect.ts`、启动失败页 `screens.ts`）；`src/main/server.ts` 内嵌 server（`startDesktopServer`：回环 + 临时端口 + 独立 lock）；`src/main/connect-target.ts` 外部 server 模式解析（`KIMI_SERVER_URL`，纯函数）；`src/main/protocol.ts` `app://renderer` 协议映射（带 `..` 越界防护）。主进程测试在 `tests/main/`，renderer 测试与源码同目录。细则见 `apps/desktop/README.md`。
 - `apps/web`：浏览器 Web UI（`@moonshot-ai/kimi-web`，Vue 3 + Vite + vue-i18n）。dev 时 Vite 把 `/api/v1`（REST + WS）代理到 `KIMI_SERVER_URL`（默认 `http://127.0.0.1:58627`）。
 - `packages/*`：`@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` + `vite-preset`（exports→src，被 apps/web 与 desktop renderer 复用）。
 - `kimi-code/`：git submodule（核心仓）。`kimi-code/packages/*` 提供 `kap-server`、`agent-core-v2`、`kimi-code-sdk` 等源码。
