@@ -153,6 +153,16 @@ async function disposeSessionState(state: SessionState): Promise<void> {
 
 export class SessionEventBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
+  /**
+   * Single-flight guard for session activation: without it, two concurrent
+   * activations (WS subscribe racing a REST snapshot / replay / resync) each
+   * built their own SessionState — two bus subscriptions, two journal writers
+   * on one file, and (once a target landed in both) every delta fanned out
+   * twice with mismatched offset annotations, which the client cannot dedup
+   * (the blind state's frames carry no offset at all → the "text shown twice"
+   * bug).
+   */
+  private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
   private closed = false;
@@ -295,10 +305,24 @@ export class SessionEventBroadcaster {
     this.sessions.clear();
   }
 
-  private async ensureState(sessionId: string): Promise<SessionState | undefined> {
+  private ensureState(sessionId: string): Promise<SessionState | undefined> {
+    if (this.closed) return Promise.resolve(undefined);
+    const existing = this.sessions.get(sessionId);
+    if (existing !== undefined) return Promise.resolve(existing);
+    let pending = this.pendingStates.get(sessionId);
+    if (pending === undefined) {
+      pending = this.createSessionState(sessionId).finally(() => {
+        if (this.pendingStates.get(sessionId) === pending) {
+          this.pendingStates.delete(sessionId);
+        }
+      });
+      this.pendingStates.set(sessionId, pending);
+    }
+    return pending;
+  }
+
+  private async createSessionState(sessionId: string): Promise<SessionState | undefined> {
     if (this.closed) return undefined;
-    let state = this.sessions.get(sessionId);
-    if (state !== undefined) return state;
 
     const session = this.opts.core.accessor.get(ISessionLifecycleService).get(sessionId);
     if (session === undefined) return undefined;
@@ -315,7 +339,7 @@ export class SessionEventBroadcaster {
     for (const handle of session.accessor.get(IAgentLifecycleService).list()) {
       activityByAgent.set(handle.id, readAgentWorkFold(handle));
     }
-    state = {
+    const state: SessionState = {
       sessionId,
       journal,
       tracker: new InFlightTurnTracker(),
@@ -343,15 +367,27 @@ export class SessionEventBroadcaster {
     return state;
   }
 
-  private async ensureGlobalState(): Promise<SessionState> {
-    let state = this.sessions.get(GLOBAL_SESSION_ID);
-    if (state !== undefined) return state;
+  private ensureGlobalState(): Promise<SessionState> {
+    const existing = this.sessions.get(GLOBAL_SESSION_ID);
+    if (existing !== undefined) return Promise.resolve(existing);
+    let pending = this.pendingStates.get(GLOBAL_SESSION_ID);
+    if (pending === undefined) {
+      pending = this.createGlobalState().finally(() => {
+        if (this.pendingStates.get(GLOBAL_SESSION_ID) === pending) {
+          this.pendingStates.delete(GLOBAL_SESSION_ID);
+        }
+      });
+      this.pendingStates.set(GLOBAL_SESSION_ID, pending);
+    }
+    return pending as Promise<SessionState>;
+  }
 
+  private async createGlobalState(): Promise<SessionState> {
     const journal = await SessionEventJournal.open(
       sessionJournalPath(this.opts.eventsDir, GLOBAL_SESSION_ID),
       this.opts.logger,
     );
-    state = {
+    const state: SessionState = {
       sessionId: GLOBAL_SESSION_ID,
       journal,
       tracker: new InFlightTurnTracker(),

@@ -1155,4 +1155,34 @@ describe('SessionEventBroadcaster', () => {
       await rm(dir2, { recursive: true, force: true });
     }
   });
+
+  it('single-flights concurrent activations: one state, one journal, no duplicate fan-out', async () => {
+    // Regression for the "text shown twice" bug: a WS subscribe racing REST
+    // snapshot/replay calls built TWO SessionStates for one session — two bus
+    // subscriptions, two journal writers, and deltas fanned out twice (the
+    // blind twin's frames carried no offset, defeating client-side dedup).
+    const lc = new FakeLifecycle();
+    const main = lc.addAgent('main');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+
+    await Promise.all([
+      bc.subscribe('s1', target),
+      bc.getSnapshotState('s1'),
+      bc.getBufferedSince('s1', { seq: 0 }),
+      bc.getCursor('s1'),
+      bc.subscribe('s1', target),
+      bc.getSnapshotState('s1'),
+    ]);
+
+    main.bus.emit(agentEvent('turn.started', { turnId: 1 }));
+    main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'abc' }));
+    await bc.getCursor('s1');
+
+    const durable = envelopes.filter((e) => e.volatile !== true);
+    const seqs = durable.map((e) => e.seq);
+    expect(new Set(seqs).size).toBe(seqs.length);
+    const deltas = envelopes.filter((e) => e.type === 'assistant.delta');
+    expect(deltas).toHaveLength(1);
+  });
 });
