@@ -90,6 +90,9 @@ export function validateOptions(
   if (opts.agent !== undefined && opts.agent.trim().length === 0) {
     throw new OptionConflictError('Agent cannot be empty.');
   }
+  if (opts.agentFiles.some((file) => file.trim().length === 0)) {
+    throw new OptionConflictError('Agent file path cannot be empty.');
+  }
   if (
     (opts.agent !== undefined || opts.agentFiles.length > 0) &&
     (!promptMode || !isKimiV2Enabled(env))

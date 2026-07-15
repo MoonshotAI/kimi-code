@@ -63,6 +63,8 @@ extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
 
 **Built-in agents** are distributed with the CLI and have the lowest priority. A file loaded through `--agent-file` outranks every directory scope and applies to the current launch only.
 
+Because the default profile is named `agent`, a file that declares `name: agent` overrides the built-in default agent: a project-level `agent.md` effectively re-prompts the main Agent for everyone working in that repository. Choose names deliberately.
+
 ### Agent File Format
 
 An agent file is plain Markdown with a frontmatter block:
@@ -91,7 +93,7 @@ You are a strict code reviewer. Read the diff, then report findings grouped by s
 | `description` | yes | What the agent does. Shown to the main Agent when it picks a sub-agent, so write it to guide delegation decisions |
 | `whenToUse` | no | Extra hint describing when the agent should be used |
 | `mode` | no | `replace` (default): the body is the agent's entire system prompt. `append`: the body is added to the default system prompt, keeping workspace instructions and Skill injections in effect |
-| `tools` | no | Allowlist of tool names such as `Read` or `Bash`; MCP tools are matched with globs such as `mcp__github__*`. Omit to allow all tools |
+| `tools` | no | Allowlist of tool names such as `Read` or `Bash`; MCP tools are matched with globs such as `mcp__github__*`. Omit to allow all tools; an empty list (`tools: []`) disables all tools |
 | `disallowedTools` | no | Denylist with the same matching rules, applied after `tools` |
 
 Unknown fields are ignored, so newer files stay readable by older versions.
@@ -103,13 +105,17 @@ A file with invalid content discovered in a directory is skipped with a warning 
 Two CLI flags select which agent drives the session:
 
 - **`--agent <name>`**: Start the session with the named agent as the main Agent. The name can refer to a built-in agent or to any discovered file; an unknown name fails with an error listing the available agents.
-- **`--agent-file <path>`**: Load one agent file at the highest priority for this launch and start with it. Repeat the flag to register several files, and combine it with `--agent <name>` to choose among them by name.
+- **`--agent-file <path>`**: Load one agent file at the highest priority for this launch and start with it. Repeat the flag to register several files — without `--agent`, the profile defined by the last `--agent-file` is selected — and combine it with `--agent <name>` to choose among them by name.
 
 For example, in print mode:
 
 ```sh
 kimi -p --agent reviewer "Review the changes on this branch"
 ```
+
+The bound agent is the session's identity: it is fixed at the session's first bind and cannot be switched later. Re-selecting the already-bound agent (for example resuming with the same `--agent`) is a no-op; selecting a different one fails with an "already bound" error.
+
+For main-agent customization, prefer `mode: append` so the environment, workspace-instruction, and Skill injections stay in effect; `mode: replace` fits self-contained sub-agents that own their entire prompt.
 
 ## Instruction Files
 

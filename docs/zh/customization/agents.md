@@ -63,6 +63,8 @@ extra_agent_dirs = ["~/team-agents", ".agents/team-agents"]
 
 **内置 Agent** 随 CLI 分发，优先级最低。通过 `--agent-file` 加载的文件优先级高于所有目录作用域，且仅对本次启动生效。
 
+由于默认 profile 名为 `agent`，声明 `name: agent` 的文件会覆盖内置默认 Agent：项目级的 `agent.md` 实际上会为所有在该仓库工作的人替换主 Agent 的提示词。命名需谨慎。
+
 ### Agent 文件格式
 
 Agent 文件是带 Frontmatter 的普通 Markdown：
@@ -91,7 +93,7 @@ disallowedTools:
 | `description` | 是 | Agent 的用途。主 Agent 挑选子 Agent 时会看到，请围绕委派决策来写 |
 | `whenToUse` | 否 | 补充说明何时应使用该 Agent |
 | `mode` | 否 | `replace`（默认）：正文即 Agent 的完整系统提示词。`append`：正文追加到默认系统提示词之上，工作区指令和 Skill 注入保持生效 |
-| `tools` | 否 | 工具名允许列表，如 `Read`、`Bash`；MCP 工具用 glob 匹配，如 `mcp__github__*`。缺省表示允许全部工具 |
+| `tools` | 否 | 工具名允许列表，如 `Read`、`Bash`；MCP 工具用 glob 匹配，如 `mcp__github__*`。缺省表示允许全部工具；空列表（`tools: []`）表示禁用全部工具 |
 | `disallowedTools` | 否 | 禁止列表，匹配规则相同，在 `tools` 之后应用 |
 
 未知字段会被忽略，新版本写的文件在旧版本上仍可读取。
@@ -103,13 +105,17 @@ disallowedTools:
 两个 CLI flag 用于选择驱动会话的 Agent：
 
 - **`--agent <name>`**：以指定 Agent 作为主 Agent 启动会话。名称可以指向内置 Agent 或任何已发现的文件；名称不存在时会报错，并列出可用的 Agent。
-- **`--agent-file <path>`**：以最高优先级加载一个 Agent 文件（仅本次启动）并以其启动。重复传入可注册多个文件，配合 `--agent <name>` 按名称选择。
+- **`--agent-file <path>`**：以最高优先级加载一个 Agent 文件（仅本次启动）并以其启动。重复传入可注册多个文件 —— 不传 `--agent` 时，以最后一个 `--agent-file` 定义的 Agent 启动 —— 配合 `--agent <name>` 按名称选择。
 
 例如在 print 模式下：
 
 ```sh
 kimi -p --agent reviewer "审查这个分支上的改动"
 ```
+
+绑定的 Agent 即会话的身份：在会话首次绑定后即固定，之后不可切换。重复选择已绑定的 Agent（例如以相同的 `--agent` 恢复会话）是 no-op；选择不同的 Agent 会报 "already bound" 错误。
+
+定制主 Agent 时推荐使用 `mode: append`，以保持环境、工作区指令和 Skill 注入生效；`mode: replace` 适合自包含、完全拥有自己提示词的子 Agent。
 
 ## 指令文件
 

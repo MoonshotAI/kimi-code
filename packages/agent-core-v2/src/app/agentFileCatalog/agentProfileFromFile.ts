@@ -15,11 +15,15 @@ import { renderSystemPrompt } from '#/app/agentProfileCatalog/profile-shared';
 
 import type { AgentFileDefinition } from './types';
 
-// renderSystemPrompt only consults the list for `includes('Skill')`; inherit-all
-// means the Skill tool is active, so probe with a list that answers true.
-const SKILL_PROBE_ON_INHERIT = ['Skill'] as const;
+// renderSystemPrompt only consults the list for `includes('Skill')`; probe with
+// a list that answers true iff the Skill tool survives the allow/deny rules.
+const SKILL_PROBE_ON = ['Skill'] as const;
+const SKILL_PROBE_OFF = [] as const;
 
 export function agentProfileFromFile(definition: AgentFileDefinition): AgentProfile {
+  const skillActive =
+    (definition.tools === undefined || definition.tools.includes('Skill')) &&
+    !(definition.disallowedTools ?? []).includes('Skill');
   return {
     name: definition.name,
     description: definition.description,
@@ -32,7 +36,7 @@ export function agentProfileFromFile(definition: AgentFileDefinition): AgentProf
             renderSystemPrompt(
               definition.prompt,
               context,
-              definition.tools ?? SKILL_PROBE_ON_INHERIT,
+              skillActive ? SKILL_PROBE_ON : SKILL_PROBE_OFF,
             )
         : () => definition.prompt,
   };

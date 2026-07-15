@@ -104,7 +104,7 @@ kimi --plan
 kimi -p --agent reviewer "审查这个分支上的改动"
 ```
 
-`--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；重复传入可注册多个文件，再加 `--agent` 按名称选择。Agent 文件格式与发现目录详见 [Agent 与子 Agent](../customization/agents.md#自定义-agent)。
+`--agent-file` 以最高优先级注册单个 Agent 文件（仅本次启动）并选中它；重复传入可注册多个文件，再加 `--agent` 按名称选择 —— 不传 `--agent` 时，以最后一个 `--agent-file` 定义的 Agent 启动。选择在会话首次绑定后即固定：以相同的 `--agent` 恢复会话是 no-op，换成不同的 Agent 会报 "already bound" 错误。Agent 文件格式与发现目录详见 [Agent 与子 Agent](../customization/agents.md#自定义-agent)。
 
 ## 非交互执行
 

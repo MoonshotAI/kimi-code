@@ -269,6 +269,26 @@ describe('SessionAgentProfileCatalogService', () => {
     });
   });
 
+  it('recovers ready after a reload fixes a previously fatal explicit file', async () => {
+    await withFixture(async (fixture) => {
+      const bad = await writeAgent(
+        fixture.workDir,
+        'bad.md',
+        '---\ndescription: no name\n---\n\nbody\n',
+      );
+      const { host, session } = makeSession(fixture, { explicitFiles: [bad] });
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await expect(catalog.load()).rejects.toThrow(/name/i);
+
+      await writeFile(bad, agentMd('fixed', 'fixed agent'));
+      await catalog.reload();
+
+      await expect(catalog.load()).resolves.toBeUndefined();
+      expect(catalog.get('fixed')?.description).toBe('fixed agent');
+      host.dispose();
+    });
+  });
+
   it('resolves relative explicit files against the session workDir', async () => {
     await withFixture(async (fixture) => {
       await writeAgent(

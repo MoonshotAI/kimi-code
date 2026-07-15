@@ -70,6 +70,7 @@ import { ISessionContext, sessionContextSeed } from '#/session/sessionContext/se
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IWireService } from '#/wire/wire';
 import {
@@ -182,6 +183,10 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
     void handle.accessor.get(ISessionSkillCatalog).ready;
+    // Kick agent-file discovery at materialize time too, mirroring the skill
+    // catalog: a resumed session's first turn should see file-defined agent
+    // types in the `Agent` tool description, not only from the second turn on.
+    void handle.accessor.get(ISessionAgentProfileCatalog).ready;
     await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
     // Force-instantiate the session-level eager services whose subscriptions
     // must exist before the first agent / turn (external hooks, cron).

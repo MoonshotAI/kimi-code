@@ -104,7 +104,7 @@ There are two ways to specify Skills directories, with different semantics:
 kimi -p --agent reviewer "Review the changes on this branch"
 ```
 
-`--agent-file` registers a single agent file at the highest priority for this launch only and selects it; repeat the flag to register several files, and add `--agent` to choose among them by name. See [Agents and Sub-Agents](../customization/agents.md#custom-agents) for the agent file format and discovery directories.
+`--agent-file` registers a single agent file at the highest priority for this launch only and selects it; repeat the flag to register several files, and add `--agent` to choose among them by name — without `--agent`, the profile defined by the last `--agent-file` is selected. The selection is fixed at the session's first bind: resuming with the same `--agent` is a no-op, and switching to a different one fails with an "already bound" error. See [Agents and Sub-Agents](../customization/agents.md#custom-agents) for the agent file format and discovery directories.
 
 ## Non-Interactive Execution
 

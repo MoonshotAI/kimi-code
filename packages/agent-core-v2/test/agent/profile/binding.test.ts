@@ -135,6 +135,39 @@ describe('AgentProfileService.bind', () => {
 
     expect(svc.data().profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
   });
+
+  it('rejects binding a different profile once bound', async () => {
+    const { profile: svc } = buildContext();
+
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    await expect(svc.bind({ profile: 'coder', model: MOCK_MODEL })).rejects.toThrow(
+      /already bound/,
+    );
+    expect(svc.data().profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
+  });
+
+  it('keeps the persisted thinking effort on a same-name rebind', async () => {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
+    ctx.configure({
+      modelCapabilities: {
+        image_in: false,
+        video_in: false,
+        audio_in: false,
+        thinking: true,
+        tool_use: true,
+        max_context_tokens: 1_000_000,
+      },
+    });
+    const svc = ctx.get(IAgentProfileService);
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL, thinking: 'off' });
+    expect(svc.data().thinkingLevel).toBe('off');
+
+    // A same-name rebind without an explicit thinking override must not reset
+    // the persisted effort to the configured/model default ('on' here).
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    expect(svc.data().thinkingLevel).toBe('off');
+  });
 });
 
 describe('AgentProfileService tool denylist', () => {

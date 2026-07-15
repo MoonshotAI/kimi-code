@@ -26,6 +26,7 @@ import {
   IAgentPromptService,
   IAgentTaskService,
   IAuthSummaryService,
+  IBootstrapService,
   IConfigService,
   IEventBus,
   IOAuthToolkit,
@@ -40,6 +41,7 @@ import {
   logSeed,
   parseAgentFileText,
   resolveAgentTaskConfig,
+  resolveExplicitFile,
   resolveKimiHome,
   resolveLoggingConfig,
   resolvePrintBackgroundMode,
@@ -125,8 +127,10 @@ export async function runV2Print(
     // user / project discovery for this process.
     ...skillCatalogRuntimeOptionsSeed(opts.skillsDirs),
     // `--agent-file`: explicit agent definition files, registered with the
-    // highest-precedence source for this process.
-    ...agentCatalogRuntimeOptionsSeed(opts.agentFiles.map((file) => resolve(file))),
+    // highest-precedence source for this process. Passed through unresolved —
+    // the engine expands `~` and resolves relative paths against the session
+    // workDir (mirroring `--skills-dir`).
+    ...agentCatalogRuntimeOptionsSeed(opts.agentFiles),
   ]);
   const auth = app.accessor.get(IOAuthToolkit);
 
@@ -249,7 +253,11 @@ async function resolveNativeSession(
   let agentProfileName = opts.agent;
   const lastAgentFile = opts.agentFiles.at(-1);
   if (agentProfileName === undefined && lastAgentFile !== undefined) {
-    const agentFilePath = resolve(lastAgentFile);
+    const agentFilePath = resolveExplicitFile(
+      lastAgentFile,
+      workDir,
+      app.accessor.get(IBootstrapService).osHomeDir,
+    );
     let agentFileText: string;
     try {
       agentFileText = await readFile(agentFilePath, 'utf8');
@@ -274,12 +282,15 @@ async function resolveNativeSession(
   }
 
   // `--agent` / `--agent-file` bind an explicit profile; without them the
-  // historical setModel path (default profile on first bind) is kept.
+  // historical setModel path (default profile on first bind) is kept. A
+  // same-name re-select on a resumed session is a no-op; a different name is
+  // rejected by the engine's first-bind guard inside `bind`.
   const applyProfileSelection = async (
     profile: IAgentProfileService,
     model: string | undefined,
   ): Promise<void> => {
     if (agentProfileName !== undefined) {
+      if (profile.data().profileName === agentProfileName) return;
       await profile.bind({
         profile: agentProfileName,
         model: requireConfiguredModel(model ?? profile.getModel(), defaultModel),

@@ -125,6 +125,7 @@ function makeFakeHarness() {
   // Native event listeners registered on the main agent's IEventBus; the turn
   // emits a streaming assistant delta before completing.
   const eventListeners = new Set<(event: DomainEvent) => void>();
+  const profileState: { profileName: string | undefined } = { profileName: undefined };
 
   const agentServices = new Map<unknown, unknown>([
     [
@@ -133,6 +134,7 @@ function makeFakeHarness() {
         bind: vi.fn(async () => {}),
         setModel: vi.fn(async () => ({ model: 'k2' })),
         getModel: () => 'k2',
+        data: () => ({ profileName: profileState.profileName }),
       },
     ],
     [IAgentPermissionModeService, { mode: 'auto', setMode: vi.fn() }],
@@ -197,6 +199,7 @@ function makeFakeHarness() {
         platform: 'linux',
         arch: 'x64',
         clientVersion: '1.2.3-test',
+        osHomeDir: '/home/test',
         getEnv: () => undefined,
       },
     ],
@@ -218,7 +221,7 @@ function makeFakeHarness() {
     ],
   ]);
   const app = fakeScope('app', appServices);
-  return { app, agent, session, agentServices };
+  return { app, agent, session, agentServices, appServices, profileState };
 }
 
 describe('runV2Print', () => {
@@ -356,5 +359,49 @@ describe('runV2Print', () => {
 
     const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
     expect(seeds.some(([id]) => id === IAgentCatalogRuntimeOptions)).toBe(false);
+  });
+
+  it('passes --agent-file paths through unresolved so the engine can expand ~', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent } = makeFakeHarness();
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await runV2Print(
+      opts({ agent: 'reviewer', agentFiles: ['~/agents/reviewer.md'] }) as never,
+      '1.2.3-test',
+      { stdout, stderr },
+    );
+
+    const seeds = mocks.bootstrap.mock.calls[0]?.[1] as ScopeSeed;
+    const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
+    expect(seeded?.[1]).toMatchObject({ explicitFiles: ['~/agents/reviewer.md'] });
+  });
+
+  it('treats re-selecting the already-bound profile on resume as a no-op', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, agent, agentServices, appServices, profileState } = makeFakeHarness();
+    profileState.profileName = 'reviewer';
+
+    const index = appServices.get(ISessionIndex) as { list: ReturnType<typeof vi.fn> };
+    index.list.mockResolvedValue({ items: [{ id: 'ses_1', cwd: process.cwd() }] });
+
+    mocks.bootstrap.mockReturnValue({ app });
+    mocks.ensureMainAgent.mockResolvedValue(agent);
+
+    await runV2Print(opts({ session: 'ses_1', agent: 'reviewer' }) as never, '1.2.3-test', {
+      stdout,
+      stderr,
+    });
+
+    const profile = agentServices.get(IAgentProfileService) as {
+      bind: ReturnType<typeof vi.fn>;
+      setModel: ReturnType<typeof vi.fn>;
+    };
+    expect(profile.bind).not.toHaveBeenCalled();
+    expect(profile.setModel).not.toHaveBeenCalled();
   });
 });

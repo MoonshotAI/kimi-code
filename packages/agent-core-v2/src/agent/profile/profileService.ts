@@ -150,25 +150,38 @@ export class AgentProfileService implements IAgentProfileService {
 
   async bind(input: BindAgentInput): Promise<void> {
     await this.catalog.ready;
+    // A profile is the session's identity: first-bind only. The guard runs
+    // twice — here, before name resolution, so `already bound` wins over
+    // `unknown profile` and the common case fails fast; and again in the
+    // synchronous segment after every await and before the first
+    // wire.dispatch, so check-and-set is atomic and concurrent binds cannot
+    // both pass (an edge-level guard always leaves an interleaving window).
+    this.assertBindable(input.profile);
     const profile = this.catalog.get(input.profile);
     if (profile === undefined) {
       const available = this.catalog
         .list()
         .map((p) => p.name)
         .join(', ');
-      throw new Error(
+      throw new ProfileError(
+        ProfileErrors.codes.PROFILE_UNKNOWN,
         `Unknown agent profile: "${input.profile}". Available profiles: ${available}`,
+        { profile: input.profile, available },
       );
     }
     const model = this.modelFactory.resolve(input.model);
 
     const context = await this.buildSystemPromptContext(input.cwd);
+    this.assertBindable(profile.name);
+    const currentProfileName = this.profileName;
     const systemPrompt = profile.systemPrompt(context);
     this.activeProfile = profile;
     this.cacheAgentsMdWarning(context);
 
+    // A same-name rebind keeps the persisted thinking effort unless the caller
+    // explicitly overrides it; only a first bind resolves the default.
     const thinkingLevel = resolveThinkingEffort(
-      input.thinking,
+      input.thinking ?? (currentProfileName !== undefined ? this.thinkingLevel : undefined),
       this.config.get<ThinkingConfig>(THINKING_SECTION),
       model,
     );
@@ -540,6 +553,17 @@ export class AgentProfileService implements IAgentProfileService {
       return this.modelFactory.resolve(alias);
     } catch {
       return undefined;
+    }
+  }
+
+  private assertBindable(requested: string): void {
+    const current = this.profileName;
+    if (current !== undefined && current !== requested) {
+      throw new ProfileError(
+        ProfileErrors.codes.PROFILE_ALREADY_BOUND,
+        `agent is already bound to profile "${current}"; cannot switch to "${requested}" in this session`,
+        { current, requested },
+      );
     }
   }
 

@@ -63,7 +63,7 @@ export class ExplicitFileAgentSource implements IExplicitFileAgentSource {
   }
 }
 
-function resolveExplicitFile(file: string, workDir: string, osHomeDir: string): string {
+export function resolveExplicitFile(file: string, workDir: string, osHomeDir: string): string {
   if (file === '~') return osHomeDir;
   if (file.startsWith('~/')) return path.join(osHomeDir, file.slice(2));
   if (path.isAbsolute(file)) return file;

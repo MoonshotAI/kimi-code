@@ -249,6 +249,8 @@ export type KimiErrorCode =
   | 'model.not_configured'
   | 'model.config_invalid'
   | 'profile.thinking_alias_conflict'
+  | 'profile.unknown'
+  | 'profile.already_bound'
   | 'model.not_found'
   | 'auth.login_required'
   | 'auth.provisioning_required'
@@ -1153,6 +1155,8 @@ export const kimiErrorCodeSchema = z.enum([
   'model.not_configured',
   'model.config_invalid',
   'profile.thinking_alias_conflict',
+  'profile.unknown',
+  'profile.already_bound',
   'model.not_found',
   'auth.login_required',
   'auth.provisioning_required',

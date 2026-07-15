@@ -37,6 +37,7 @@ import { ISessionExternalHooksService } from '#/session/externalHooks/externalHo
 import { ISessionActivity } from '#/session/sessionActivity/sessionActivity';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -148,6 +149,21 @@ function skillCatalogStub(): ISessionSkillCatalog {
     },
     ready: Promise.resolve(),
     onDidChange: () => ({ dispose: () => {} }),
+    load: () => Promise.resolve(),
+    reload: () => Promise.resolve(),
+  };
+}
+
+function agentProfileCatalogStub(): ISessionAgentProfileCatalog {
+  return {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    onDidChange: () => ({ dispose: () => {} }),
+    get: () => undefined,
+    getDefault: () => {
+      throw new Error('not implemented');
+    },
+    list: () => [],
     load: () => Promise.resolve(),
     reload: () => Promise.resolve(),
   };
@@ -443,6 +459,7 @@ describe('SessionLifecycleService', () => {
       stubPair(ISessionMetadata, metadataStub()),
       stubPair(IHostEnvironment, hostEnvironmentStub()),
       stubPair(ISessionSkillCatalog, skillCatalogStub()),
+      stubPair(ISessionAgentProfileCatalog, agentProfileCatalogStub()),
       stubPair(IWorkspaceRegistry, workspaceRegistryStub()),
       stubPair(ISessionIndex, sessionIndexStub()),
       stubPair(IAppendLogStore, appendLogStoreStub()),

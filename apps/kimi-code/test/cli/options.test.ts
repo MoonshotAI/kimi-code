@@ -413,6 +413,12 @@ describe('CLI options parsing', () => {
       expect(() => validateOptions(opts)).toThrow('Agent cannot be empty.');
     });
 
+    it('rejects empty agent file values', () => {
+      const opts = parse(['-p', 'hi', '--agent-file', '   ']);
+      expect(() => validateOptions(opts)).toThrow(OptionConflictError);
+      expect(() => validateOptions(opts)).toThrow('Agent file path cannot be empty.');
+    });
+
     it('rejects the flags in shell mode', () => {
       const opts = parse(['--agent', 'reviewer']);
       expect(() => validateOptions(opts)).toThrow(OptionConflictError);

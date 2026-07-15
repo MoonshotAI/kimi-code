@@ -84,6 +84,12 @@ describe('parseAgentFileText', () => {
     ).toThrow(/"mode"/);
   });
 
+  it('rejects a non-string mode instead of defaulting to replace', () => {
+    expect(() => parse('---\nname: solo\ndescription: d\nmode: 42\n---\n\nbody\n')).toThrow(
+      /"mode"/,
+    );
+  });
+
   it('rejects a non-list tools field', () => {
     expect(() => parse('---\nname: solo\ndescription: d\ntools: Read\n---\n\nbody\n')).toThrow(
       /"tools"/,
@@ -132,6 +138,14 @@ describe('agentProfileFromFile', () => {
 
   it('append mode with an allowlist without Skill skips the skills listing', () => {
     const profile = agentProfileFromFile({ ...base, mode: 'append', tools: ['Read'] });
+    const prompt = profile.systemPrompt({ skills: 'SKILLS_LISTING' });
+
+    expect(prompt).toContain('PROMPT_BODY');
+    expect(prompt).not.toContain('SKILLS_LISTING');
+  });
+
+  it('append mode with Skill in disallowedTools skips the skills listing', () => {
+    const profile = agentProfileFromFile({ ...base, mode: 'append', disallowedTools: ['Skill'] });
     const prompt = profile.systemPrompt({ skills: 'SKILLS_LISTING' });
 
     expect(prompt).toContain('PROMPT_BODY');

@@ -22,10 +22,10 @@ import {
   IFileService,
   ISessionMetadata,
   promptMetadataTextFromContentParts,
+  ProfileError,
   type ContentPart,
   type PromptHandle,
   type PromptQueueSnapshot,
-  ISessionAgentProfileCatalog,
   ISessionContext,
   ISessionLifecycleService,
   ITelemetryService,
@@ -140,10 +140,12 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
 
 /**
  * Bind the resolved agent to the profile named by a prompt submission's
- * `profile` field. First-bind only: once a profile is bound, repeating the
- * same name is a no-op and a different name is rejected — mid-session profile
- * switches are not supported. The name is checked against the session catalog
- * first so an unknown profile surfaces as 40001 with the available list.
+ * `profile` field. First-bind semantics live in the engine: a same-name
+ * repeat is short-circuited here as a no-op, while an unknown name or a
+ * post-bind switch is rejected by `AgentProfileService.bind` with a coded
+ * `ProfileError` — this edge only maps it onto 40001. Checking anything
+ * beyond the no-op shortcut here would re-introduce a check-then-act window
+ * the engine guard has already closed.
  */
 async function applyProfileSelection(
   session: ISessionScopeHandle,
@@ -151,28 +153,7 @@ async function applyProfileSelection(
   profileName: string,
   model: string | undefined,
 ): Promise<void> {
-  const current = profile.data().profileName;
-  if (current !== undefined) {
-    if (current !== profileName) {
-      throw new Error2(
-        ErrorCodes.REQUEST_INVALID,
-        `agent is already bound to profile "${current}"; cannot switch to "${profileName}" in this session`,
-      );
-    }
-    return;
-  }
-  const catalog = session.accessor.get(ISessionAgentProfileCatalog);
-  await catalog.ready;
-  if (catalog.get(profileName) === undefined) {
-    const available = catalog
-      .list()
-      .map((p) => p.name)
-      .join(', ');
-    throw new Error2(
-      ErrorCodes.REQUEST_INVALID,
-      `unknown agent profile: "${profileName}". Available profiles: ${available}`,
-    );
-  }
+  if (profile.data().profileName === profileName) return;
   const resolvedModel =
     model ?? session.accessor.get(IConfigService).get<string>('defaultModel');
   if (resolvedModel === undefined || resolvedModel === '') {
@@ -181,7 +162,14 @@ async function applyProfileSelection(
       `model is required to bind profile "${profileName}" (no default model configured)`,
     );
   }
-  await profile.bind({ profile: profileName, model: resolvedModel });
+  try {
+    await profile.bind({ profile: profileName, model: resolvedModel });
+  } catch (error) {
+    if (error instanceof ProfileError) {
+      throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+    }
+    throw error;
+  }
 }
 
 export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {

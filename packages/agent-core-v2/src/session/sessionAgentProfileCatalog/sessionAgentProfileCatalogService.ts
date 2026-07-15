@@ -10,9 +10,13 @@
  * invalid `--agent-file`) propagates into `ready` so `bind()` / `load()`
  * awaiters see the error; a rejecting non-fatal source (a transient fs error
  * inside a directory source) degrades to a warning and keeps any previously
- * loaded contribution, so directory problems never poison the session. The
- * swallowed handler on `ready` keeps an un-awaited rejection from crashing
- * the process, and event-driven reloads get the same warning treatment.
+ * loaded contribution, so directory problems never poison the session.
+ * `ready` tracks the most recent load pass: `reload()` replaces it, so a
+ * fatal failure does not wedge the catalog once the underlying problem is
+ * fixed, and `loadAll` merges whatever loaded even when a fatal source
+ * rejects mid-pass. The swallowed handler on `ready` keeps an un-awaited
+ * rejection from crashing the process, and event-driven reloads get the
+ * same warning treatment.
  * Bound at Session scope.
  */
 
@@ -50,7 +54,7 @@ export class SessionAgentProfileCatalogService
   >();
   private readonly sourceLoadTails = new Map<IAgentProfileSource, Promise<void>>();
   private merged = new Map<string, AgentProfile>();
-  readonly ready: Promise<void>;
+  private readyPromise: Promise<void>;
   private readonly onDidChangeEmitter = this._register(new Emitter<string>());
   readonly onDidChange: Event<string> = this.onDidChangeEmitter.event;
 
@@ -78,8 +82,17 @@ export class SessionAgentProfileCatalogService
       }
     }
     this.remerge();
-    this.ready = this.loadAll();
-    void this.ready.catch(() => undefined);
+    this.readyPromise = this.loadAll();
+    void this.readyPromise.catch(() => undefined);
+  }
+
+  /**
+   * The most recent load pass. Replaced by `reload()`, so a `fatal` source
+   * failure does not wedge the catalog forever: once a reload succeeds,
+   * awaiters observe the fresh pass instead of the original rejection.
+   */
+  get ready(): Promise<void> {
+    return this.readyPromise;
   }
 
   get(name: string): AgentProfile | undefined {
@@ -105,15 +118,23 @@ export class SessionAgentProfileCatalogService
   }
 
   async reload(): Promise<void> {
-    await this.loadAll();
+    this.readyPromise = this.loadAll();
+    void this.readyPromise.catch(() => undefined);
+    await this.readyPromise;
     this.onDidChangeEmitter.fire('catalog');
   }
 
   private async loadAll(): Promise<void> {
-    for (const s of this.sources) {
-      await this.loadSource(s);
+    try {
+      for (const s of this.sources) {
+        await this.loadSource(s);
+      }
+    } finally {
+      // Even when a fatal source rejects mid-pass, merge the sources that did
+      // load — otherwise their contributions sit in `contributions` without
+      // ever reaching the merged view.
+      this.remerge();
     }
-    this.remerge();
   }
 
   private async reloadSource(id: string): Promise<void> {

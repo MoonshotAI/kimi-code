@@ -6,3 +6,5 @@
 ---
 
 Support custom agents defined as Markdown files with frontmatter — replace or append the system prompt, allow/deny tools — with `--agent` / `--agent-file` selecting the main agent.
+
+The bound agent is the session's identity: once bound it cannot be switched (`profile.already_bound`), and re-selecting the same agent on resume is a no-op. Note: a session recorded with a `disallowedTools` gate loses that gate when replayed by an older build (downgrade limitation).

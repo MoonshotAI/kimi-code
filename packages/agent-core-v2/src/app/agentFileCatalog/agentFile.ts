@@ -73,7 +73,7 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
     );
   }
 
-  const mode = parseMode(nonEmptyString(frontmatter['mode']), options.path);
+  const mode = parseMode(frontmatter['mode'], options.path);
   const tools = parseStringList(frontmatter['tools'], 'tools', options.path);
   const disallowedTools = parseStringList(
     frontmatter['disallowedTools'],
@@ -99,11 +99,12 @@ export function parseAgentFileText(options: ParseAgentFileOptions): AgentFileDef
   };
 }
 
-function parseMode(value: string | undefined, filePath: string): AgentPromptMode {
-  if (value === undefined) return 'replace';
-  if (value === 'replace' || value === 'append') return value;
+function parseMode(value: unknown, filePath: string): AgentPromptMode {
+  if (value === undefined || value === null) return 'replace';
+  const mode = typeof value === 'string' ? value.trim() : undefined;
+  if (mode === 'replace' || mode === 'append') return mode;
   throw new AgentFileParseError(
-    `Invalid "mode" value "${value}" in ${filePath}: expected "replace" or "append"`,
+    `Invalid "mode" value ${JSON.stringify(value)} in ${filePath}: expected "replace" or "append"`,
   );
 }
 
