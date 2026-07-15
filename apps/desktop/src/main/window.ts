@@ -72,7 +72,9 @@ function saveBounds(win: BrowserWindow): void {
 export function createWindow(): void {
   const win = new BrowserWindow({
     ...loadBounds(),
-    minWidth: 720,
+    // Sidebar (264px) + a usable conversation column (~636px) — just above the
+    // 640px viewport breakpoint where the UI drops into the mobile layout.
+    minWidth: 900,
     minHeight: 480,
     backgroundColor: '#0b0b0c',
     title: 'Kimi Code',
