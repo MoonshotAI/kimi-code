@@ -1444,10 +1444,13 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
 
     // The snapshot's inFlightTurn is main-agent-only — seed the moon's
     // liveness flag from it (the projector was reset by the resync, so no
-    // turn.ended may ever arrive for a turn that was live before it).
+    // turn.ended may ever arrive for a turn that was live before it). Gated
+    // on the snapshot's busy fact: the live tracker can hold a stale turn
+    // whose turn.ended was lost (abrupt agent disposal) — the server-side
+    // busy read is the reconciler, so a dead turn never relights the moon.
     {
       const next = { ...rawState.turnActiveBySession };
-      if (snap.inFlightTurn !== null) next[sessionId] = true;
+      if (snap.inFlightTurn !== null && snap.session.busy) next[sessionId] = true;
       else delete next[sessionId];
       rawState.turnActiveBySession = next;
     }
@@ -1576,6 +1579,11 @@ function isSessionEffectivelyRunning(session: AppSession | undefined): boolean {
   if (!session) return false;
   if (!session.busy) return false;
   const sessionId = session.id;
+  // Awaiting input is not "working": pending approvals/questions pause the
+  // spinner, mirroring the retired awaiting_* lifecycle status (which the
+  // daemon used to substitute for `running` while input was pending).
+  if ((rawState.approvalsBySession[sessionId] ?? []).length > 0) return false;
+  if ((rawState.questionsBySession[sessionId] ?? []).length > 0) return false;
   const hiddenBtwAgentId = sideChat.sideChatTargetBySession.value[sessionId]?.agentId;
   const tasks = rawState.tasksBySession[sessionId] ?? [];
   const runningTasks = tasks.filter((t) => t.status === 'running');
