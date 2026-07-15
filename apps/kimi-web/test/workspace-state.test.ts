@@ -1623,6 +1623,28 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(ws.localTurnStartState('sess_1').pending).toBe(false);
     expect(retrySnapshot).toHaveBeenCalledOnce();
   });
+
+  it('maps attachments to the matching content parts on submit (file parts included)', async () => {
+    const ws = useWorkspaceState(createState(), promptDeps());
+
+    await ws.submitPromptInternal('sess_1', 'look at these', [
+      { fileId: 'f_img', kind: 'image' },
+      { fileId: 'f_vid', kind: 'video' },
+      { fileId: 'f_pdf', kind: 'file', name: 'a.pdf', mediaType: 'application/pdf', size: 42 },
+    ]);
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({
+        content: [
+          { type: 'text', text: 'look at these' },
+          { type: 'image', source: { kind: 'file', fileId: 'f_img' } },
+          { type: 'video', source: { kind: 'file', fileId: 'f_vid' } },
+          { type: 'file', fileId: 'f_pdf', name: 'a.pdf', mediaType: 'application/pdf', size: 42 },
+        ],
+      }),
+    );
+  });
 });
 
 // Regression: a search-triggered full session-list reload must not clobber the

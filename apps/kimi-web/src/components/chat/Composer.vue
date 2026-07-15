@@ -21,7 +21,8 @@ import { useInputHistory } from '../../composables/useInputHistory';
 import { useSlashMenu } from '../../composables/useSlashMenu';
 import { useMentionMenu } from '../../composables/useMentionMenu';
 import { useComposerDraft } from '../../composables/useComposerDraft';
-import { useAttachmentUpload } from '../../composables/useAttachmentUpload';
+import { useAttachmentUpload, type Attachment } from '../../composables/useAttachmentUpload';
+import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import Spinner from '../ui/Spinner.vue';
 import Button from '../ui/Button.vue';
 import IconButton from '../ui/IconButton.vue';
@@ -82,10 +83,10 @@ const placeholder = computed(() =>
 );
 
 const emit = defineEmits<{
-  submit: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  submit: [payload: { text: string; attachments: PromptAttachment[] }];
   /** Steer the composer text (+ any queued prompts, merged by the parent)
       into the RUNNING turn — TUI ctrl+s. */
-  steer: [payload: { text: string; attachments: { fileId: string; kind: 'image' | 'video' }[] }];
+  steer: [payload: { text: string; attachments: PromptAttachment[] }];
   command: [cmd: string];
   interrupt: [];
   setPermission: [mode: PermissionMode];
@@ -287,10 +288,16 @@ function focus(): void {
   // or if focus is triggered during an animation/transition.
   textareaRef.value?.focus({ preventScroll: true });
 }
-function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]): void {
+function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
   loadAttachments(atts);
 }
 defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
+
+// Build the wire-bound attachment payload: images/videos only need the fileId,
+// while file parts also carry name/mediaType/size for the daemon's file shape.
+function toPromptAttachment(a: Attachment): PromptAttachment {
+  return { fileId: a.fileId!, kind: a.kind, name: a.name, mediaType: a.mediaType, size: a.size };
+}
 
 function handleSubmit(): void {
   const trimmed = text.value.trim();
@@ -334,7 +341,7 @@ function handleSubmit(): void {
 
   const payload = {
     text: trimmed,
-    attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
+    attachments: readyAttachments.map((a) => toPromptAttachment(a)),
   };
 
   // Revoke object URLs and drop the submitted attachments.
@@ -364,7 +371,7 @@ function handleSteer(): void {
 
   const payload = {
     text: trimmed,
-    attachments: readyAttachments.map((a) => ({ fileId: a.fileId!, kind: a.kind })),
+    attachments: readyAttachments.map((a) => toPromptAttachment(a)),
   };
   clearAfterSubmit();
   history.push(trimmed);
@@ -829,8 +836,12 @@ function selectModel(modelId: string): void {
     <!-- Attachment chips (above the input row) -->
     <div v-if="attachments.length > 0" class="att-strip">
       <div v-for="att in attachments" :key="att.localId" class="att-chip" :class="{ 'att-error': att.error }">
+        <!-- Generic file: icon chip, nothing to preview -->
+        <span v-if="att.kind === 'file'" class="att-file-icon" aria-hidden="true">
+          <Icon name="file" size="md" />
+        </span>
         <!-- Thumbnail (video shows its first frame; an icon overlays it) -->
-        <Tooltip :text="t('composer.previewAttachment', { name: att.name })">
+        <Tooltip v-else :text="t('composer.previewAttachment', { name: att.name })">
           <button type="button" class="att-preview" @click="openAttachmentPreview(att)">
             <video v-if="att.kind === 'video'" class="att-thumb" :src="att.previewUrl" muted playsinline preload="metadata" />
             <img v-else class="att-thumb" :src="att.previewUrl" :alt="att.name" />
@@ -924,12 +935,11 @@ function selectModel(modelId: string): void {
         </div>
       </div>
 
-      <!-- Hidden file input -->
+      <!-- Hidden file input (no accept filter — any file type can be attached) -->
       <input
         v-if="hasUpload"
         ref="fileInputRef"
         type="file"
-        accept="image/*,video/*"
         multiple
         class="file-input-hidden"
         @change="handleFileInputChange"
@@ -946,10 +956,10 @@ function selectModel(modelId: string): void {
           <IconButton
             v-if="hasUpload"
             size="md"
-            :label="t('composer.attachImage')"
+            :label="t('composer.attachFile')"
             @click="openFilePicker"
           >
-            <Icon name="image" />
+            <Icon name="file" />
           </IconButton>
 
           <!-- Permission pill — click to open dropdown -->
@@ -1307,6 +1317,19 @@ function selectModel(modelId: string): void {
   border-radius: var(--radius-xs);
   flex-shrink: 0;
   background: var(--line2);
+}
+
+/* Icon stand-in for a generic file chip (no thumbnail to preview). */
+.att-file-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-xs);
+  flex-shrink: 0;
+  background: var(--line2);
+  color: var(--muted);
 }
 
 .att-name {

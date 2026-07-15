@@ -28,6 +28,7 @@ import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
 import { useConfirmDialog } from './composables/useConfirmDialog';
+import type { PromptAttachment } from './composables/useKimiWebClient';
 import { useAuthGate } from './composables/useAuthGate';
 import { usePageTitle } from './composables/usePageTitle';
 import { useSidebarLayout } from './composables/useSidebarLayout';
@@ -320,7 +321,7 @@ const showSettings = ref(false);
 
 type SubmitPayload = {
   text: string;
-  attachments: { fileId: string; kind: 'image' | 'video' }[];
+  attachments: PromptAttachment[];
 };
 const pendingWorkspaceSubmit = ref<SubmitPayload | null>(null);
 // Inline error shown inside the add-workspace picker after the daemon rejects

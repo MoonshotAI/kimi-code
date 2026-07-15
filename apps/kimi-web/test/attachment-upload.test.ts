@@ -53,17 +53,61 @@ describe('useAttachmentUpload', () => {
     expect(createObjectURL).toHaveBeenCalledOnce();
   });
 
-  it('ignores non-media files', () => {
+  it('accepts a non-media file as a file attachment without a thumbnail object URL', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue({ fileId: 'f1', name: 'a.pdf', mediaType: 'application/pdf' });
+    const att = setup(uploadImage);
+    att.handleFileInputChange(inputEvent([{ name: 'a.pdf', type: 'application/pdf' } as unknown as File]));
+
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0]).toMatchObject({
+      name: 'a.pdf',
+      kind: 'file',
+      mediaType: 'application/pdf',
+      uploading: true,
+    });
+    // No thumbnail for generic files — the chip renders an icon instead.
+    expect(att.attachments.value[0].previewUrl).toBeUndefined();
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('accepts a file with an empty MIME type as a file attachment', () => {
     const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
     const att = setup(uploadImage);
-    att.handleFileInputChange(inputEvent([{ name: 'a.txt', type: 'text/plain' } as unknown as File]));
-    expect(att.attachments.value).toHaveLength(0);
+    att.handleFileInputChange(inputEvent([{ name: 'Makefile', type: '' } as unknown as File]));
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0].kind).toBe('file');
   });
 
   it('is a no-op when uploadImage is not provided', () => {
     const att = setup(undefined);
     att.handleFileInputChange(inputEvent([imageFile('a.png')]));
     expect(att.attachments.value).toHaveLength(0);
+  });
+
+  it('removeAttachment on a file chip has no object URL to revoke', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const att = setup(uploadImage);
+    att.handleFileInputChange(inputEvent([{ name: 'a.pdf', type: 'application/pdf' } as unknown as File]));
+    const localId = att.attachments.value[0].localId;
+
+    att.removeAttachment(localId);
+    expect(att.attachments.value).toHaveLength(0);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('loadAttachments refills a file attachment without fetching a thumbnail', () => {
+    const att = setup(undefined);
+    att.loadAttachments([
+      { fileId: 'f_pdf', kind: 'file', url: 'https://example.test/api/v1/files/f_pdf', name: 'a.pdf' },
+    ]);
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0]).toMatchObject({
+      fileId: 'f_pdf',
+      kind: 'file',
+      name: 'a.pdf',
+      uploading: false,
+    });
+    expect(att.attachments.value[0].previewUrl).toBeUndefined();
   });
 
   it('removeAttachment drops the entry and revokes its object URL', () => {

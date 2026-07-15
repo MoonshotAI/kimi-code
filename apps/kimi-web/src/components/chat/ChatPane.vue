@@ -217,7 +217,7 @@ const emit = defineEmits<{
 const dragFrom = ref<number | null>(null);
 const dragOver = ref<{ index: number; position: 'before' | 'after' } | null>(null);
 
-function hasImages(item: QueuedPromptView): boolean {
+function hasAttachments(item: QueuedPromptView): boolean {
   return (item.attachments?.length ?? 0) > 0;
 }
 
@@ -703,21 +703,26 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
           >
             <span v-if="item.text" class="u-text q-text">{{ item.text }}</span>
             <span v-else class="q-text q-text-placeholder">
-              <Icon name="image" size="sm" />
-              {{ t('composer.queuedImageOnly', { n: item.attachments?.length ?? 0 }) }}
+              <Icon name="file" size="sm" />
+              {{ t('composer.queuedAttachments', { n: item.attachments?.length ?? 0 }) }}
             </span>
           </button>
-          <div v-if="hasImages(item)" class="q-imgs">
-            <AuthMedia
-              v-for="(att, ai) in item.attachments"
-              :key="ai"
-              :url="att.url"
-              :kind="att.kind"
-              :file-id="att.fileId"
-              media-class="q-img"
-              :controls="false"
-              muted
-            />
+          <div v-if="hasAttachments(item)" class="q-imgs">
+            <template v-for="(att, ai) in item.attachments" :key="ai">
+              <span v-if="att.kind === 'file'" class="q-file">
+                <Icon name="file" size="sm" />
+                {{ att.name ?? att.fileId }}
+              </span>
+              <AuthMedia
+                v-else
+                :url="att.url"
+                :kind="att.kind"
+                :file-id="att.fileId"
+                media-class="q-img"
+                :controls="false"
+                muted
+              />
+            </template>
           </div>
           <span v-if="qi === 0" class="q-tag q-tag-next">{{ t('composer.queueNext') }}</span>
           <span v-else class="q-tag q-tag-idx">#{{ qi + 1 }}</span>
@@ -1346,6 +1351,21 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   object-fit: cover;
   border-radius: var(--radius-sm);
   border: 1px solid var(--color-line);
+}
+.q-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-line);
+  color: var(--color-text-muted);
+  font-size: calc(var(--ui-font-size) - 3px);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .q-tag {
   flex: none;
