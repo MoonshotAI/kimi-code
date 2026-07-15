@@ -67,7 +67,7 @@ async function makeFixtureAsync(opts?: { cacheLimit?: number }): Promise<Fixture
       [ISessionIndex, { get: async (sid: string) => index.get(sid) }],
       [IWorkspaceRegistry, { get: async (ws: string) => workspaces.get(ws) }],
       // Cold by default — no live handle.
-      [ISessionLifecycleService, { get: () => undefined, hasBusyAgents: () => false }],
+      [ISessionLifecycleService, { get: () => undefined }],
     ]),
   };
   const broadcaster = { seq: 0, epoch: 'ep_unit', inFlightTurn: null };

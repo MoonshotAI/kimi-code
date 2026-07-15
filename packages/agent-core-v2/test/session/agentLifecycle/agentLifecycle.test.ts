@@ -149,12 +149,6 @@ describe('AgentLifecycleService', () => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     ix.stub(IAppendLogStore, recordingAppendLog().store);
-    // Session admission gate: admit everything (the old `active` lane).
-    ix.stub(ISessionLifecycleService, {
-      canAccept: () => true,
-      admitWork: () => Disposable.None,
-      hasBusyAgents: () => false,
-    } as unknown as ISessionLifecycleService);
     stubBlobPassThrough(ix);
     registerAgent = vi.fn<ISessionMetadata['registerAgent']>().mockResolvedValue(undefined);
     atomicDocs = new Map();

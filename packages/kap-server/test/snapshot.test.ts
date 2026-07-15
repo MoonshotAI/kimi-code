@@ -78,7 +78,7 @@ describe('server-v2 snapshot route enrichment', () => {
       accessor: fakeAccessor([
         [
           ISessionLifecycleService,
-          { resume: async () => session, get: () => undefined, hasBusyAgents: () => false },
+          { resume: async () => session, get: () => undefined },
         ],
         [IWorkspaceRegistry, { get: async () => ({ root: '/workspace' }) }],
       ]),

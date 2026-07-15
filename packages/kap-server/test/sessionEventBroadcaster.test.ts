@@ -196,9 +196,9 @@ function collectingTarget(): { target: BroadcastTarget; envelopes: EventEnvelope
 }
 
 // A real turn yields the event loop between `turn.started` and `turn.ended`,
-// and the broadcaster re-reads `hasBusyAgents` when each queued work_changed
-// task runs. Back-to-back synchronous `bus.emit` calls never let the queue
-// drain, so every busy read would observe the final counter. Tests therefore
+// and the broadcaster aggregates the fold when each queued work_changed task
+// runs. Back-to-back synchronous `bus.emit` calls never let the queue drain,
+// so every aggregate read would observe the final state. Tests therefore
 // `await bc.getCursor(...)` between turn boundaries to reproduce the
 // production interleaving (book → publish → drain → release → publish).
 
