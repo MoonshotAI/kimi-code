@@ -185,6 +185,20 @@ describe('server-v2 /api/v1 skills', () => {
       expect(updateConfig).not.toHaveProperty('is_sub_skill');
       expect(updateConfig).not.toHaveProperty('isSubSkill');
     });
+
+    it('lists the check-kimi-code-docs builtin skill', async () => {
+      const id = await createSession();
+      const { body } = await getJson<{ skills: SkillWire[] }>(
+        `/api/v1/sessions/${id}/skills`,
+      );
+      expect(body.code).toBe(0);
+      const skills = listSkillsResponseSchema.parse(body.data).skills;
+
+      const docsSkill = skills.find((s) => s.name === 'check-kimi-code-docs');
+      expect(docsSkill).toBeDefined();
+      expect(docsSkill).toMatchObject({ source: 'builtin' });
+      expect(docsSkill?.description.length).toBeGreaterThan(0);
+    });
   });
 
   describe('POST /api/v1/sessions/{sid}/skills/{name}:activate', () => {
