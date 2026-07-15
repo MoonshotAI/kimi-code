@@ -584,11 +584,13 @@ onUnmounted(() => {
 });
 
 // Clamped to 0–100: ctxUsed can momentarily exceed ctxMax (estimates), and
-// ctxMax can be 0 before the first status fetch — both broke the ring.
+// ctxMax can be 0 before the first status fetch — both broke the ring. ceil
+// (not round) so a session under 0.5% usage still shows a sliver of arc —
+// Math.round floored it to an empty, "no data"-looking ring.
 const pct = computed(() => {
   const max = props.status?.ctxMax ?? 0;
   if (max <= 0) return 0;
-  return Math.min(100, Math.max(0, Math.round(((props.status?.ctxUsed ?? 0) / max) * 100)));
+  return Math.min(100, Math.max(0, Math.ceil(((props.status?.ctxUsed ?? 0) / max) * 100)));
 });
 
 const ctxTooltip = computed(() => {

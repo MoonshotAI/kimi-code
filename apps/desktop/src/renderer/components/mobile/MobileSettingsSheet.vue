@@ -106,8 +106,9 @@ const permSub = computed<string>(() => {
 });
 
 const ctxPct = computed<number>(() =>
+  // ceil (not round) so sub-0.5% usage still renders a visible bar sliver.
   props.status.ctxMax > 0
-    ? Math.min(100, Math.max(0, Math.round((props.status.ctxUsed / props.status.ctxMax) * 100)))
+    ? Math.min(100, Math.max(0, Math.ceil((props.status.ctxUsed / props.status.ctxMax) * 100)))
     : 0,
 );
 // Shared 1024-based formatter, same as the desktop tooltip / status panel.

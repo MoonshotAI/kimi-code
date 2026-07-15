@@ -29,8 +29,9 @@ const emit = defineEmits<{
 // button, which we forward to the parent.
 const open = ref(true);
 
+// ceil (not round) so sub-0.5% usage still renders a visible bar sliver.
 const pct = computed(() =>
-  props.status.ctxMax > 0 ? Math.round((props.status.ctxUsed / props.status.ctxMax) * 100) : 0,
+  props.status.ctxMax > 0 ? Math.ceil((props.status.ctxUsed / props.status.ctxMax) * 100) : 0,
 );
 
 const contextValue = computed(() =>
