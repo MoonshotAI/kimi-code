@@ -47,10 +47,13 @@ function makeInMemoryStreamPair(): {
 describe('AcpServer session/close', () => {
   it('closes a known session and removes it from the server map', async () => {
     let closeCalls = 0;
+    let cancelCalls = 0;
     const fakeSession = {
       id: 'sess-close-known',
       prompt: async () => undefined,
-      cancel: async () => undefined,
+      cancel: async () => {
+        cancelCalls += 1;
+      },
       close: async () => {
         closeCalls += 1;
       },
@@ -78,6 +81,7 @@ describe('AcpServer session/close', () => {
 
     await client.closeSession({ sessionId: 'sess-close-known' });
 
+    expect(cancelCalls).toBe(1);
     expect(closeCalls).toBe(1);
     expect(serverRef.current?.getSession('sess-close-known')).toBeUndefined();
   });

@@ -631,6 +631,9 @@ export class AcpServer implements Agent {
     if (!acpSession) {
       throw RequestError.invalidParams(undefined, `Unknown sessionId: ${params.sessionId}`);
     }
+    // Abort any prompt still in the pre-turn image-compression phase so it
+    // does not fall through to a closed session and surface an internal error.
+    await acpSession.cancel();
     await acpSession.session.close();
     this.sessions.delete(params.sessionId);
   }
