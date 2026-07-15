@@ -25,6 +25,7 @@
 - `packages/*`：`@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` + `vite-preset`（exports→src，被 apps/web 与 desktop renderer 复用）。
 - `kimi-code/`：git submodule（核心仓）。`kimi-code/packages/*` 提供 `kap-server`、`agent-core-v2`、`kimi-code-sdk` 等源码。
 - `scripts/sync-web-to-kimi-code.mjs`：`apps/web/dist` → `<kimi-code checkout>/apps/kimi-code/dist-web`（`KIMI_CODE_REPO` 必传，指定目标 checkout）。
+- `.gitlab-ci.yml`：desktop 打包流水线（macOS arm64/x64、Windows、Linux 四个手动触发 job，产物只进 artifacts）。macOS 签名/公证脚本在 `apps/desktop/scripts/ci/`，所需的 5 个 `APPLE_*` CI/CD 变量与 runner 要求见文件头注释。
 
 ## 常用命令
 
