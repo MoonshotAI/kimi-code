@@ -27,6 +27,7 @@ import GlobalLoading from './components/GlobalLoading.vue';
 import DebugPanel from './debug/DebugPanel.vue';
 import { isTraceEnabled } from './debug/trace';
 import { useKimiWebClient } from './composables/useKimiWebClient';
+import { useConfirmDialog } from './composables/useConfirmDialog';
 import { useAuthGate } from './composables/useAuthGate';
 import { usePageTitle } from './composables/usePageTitle';
 import { useSidebarLayout } from './composables/useSidebarLayout';
@@ -72,6 +73,7 @@ provide(
   (toolCallId: string): SwarmMember[] => client.swarmMembersByToolCallId.value.get(toolCallId) ?? [],
 );
 const { t } = useI18n();
+const { confirm } = useConfirmDialog();
 
 // KAP/daemon debug panel — opt-in via ?debug=1 or localStorage kimi-web.debug=1.
 const debugEnabled = isTraceEnabled();
@@ -411,12 +413,41 @@ async function handleAddProvider(input: { type: string; apiKey?: string; baseUrl
   await client.addProvider(input);
 }
 
-async function handleDeleteProvider(id: string): Promise<void> {
-  await client.deleteProvider(id);
-}
-
 async function handleRefreshProvider(id: string): Promise<void> {
   await client.refreshProvider(id);
+}
+
+// Destructive session/workspace/provider actions confirm through the shared
+// modal here (the menu components only emit the intent). Each passes its work
+// as the dialog `action`, so the dialog stays open with a loading state until
+// the operation settles. All three client calls toast their own errors and
+// never reject.
+async function confirmArchiveSession(id: string): Promise<void> {
+  await confirm({
+    title: t('sidebar.archive'),
+    message: t('sidebar.archiveConfirm'),
+    variant: 'danger',
+    action: () => client.archiveSession(id),
+  });
+}
+
+async function confirmDeleteWorkspace(id: string): Promise<void> {
+  const name = client.workspacesView.value.find((w) => w.id === id)?.name ?? id;
+  await confirm({
+    title: t('sidebar.removeWorkspace'),
+    message: t('workspace.removeWorkspaceConfirm', { name }),
+    variant: 'danger',
+    action: () => client.deleteWorkspace(id),
+  });
+}
+
+async function confirmDeleteProvider(id: string): Promise<void> {
+  await confirm({
+    title: t('providers.delete'),
+    message: t('providers.confirmDelete'),
+    variant: 'danger',
+    action: () => client.deleteProvider(id),
+  });
 }
 
 async function handleUpdateConfig(patch: Partial<AppConfig>): Promise<void> {
@@ -706,11 +737,11 @@ function openPr(url: string): void {
         @select-workspace="client.openWorkspace($event)"
         @add-workspace="showAddWorkspace = true"
         @rename="(id, title) => client.renameSession(id, title)"
-        @archive="(id) => client.archiveSession(id)"
+        @archive="confirmArchiveSession($event)"
         @fork="(id) => client.forkSession(id)"
         @export="(id) => client.exportSession(id)"
         @rename-workspace="(id, name) => client.renameWorkspace(id, name)"
-        @delete-workspace="(id) => client.deleteWorkspace(id)"
+        @delete-workspace="confirmDeleteWorkspace($event)"
         @reorder-workspaces="client.reorderWorkspaces($event)"
         @set-workspace-sort-mode="client.setWorkspaceSortMode($event)"
         @load-more-sessions="(id) => void client.loadMoreSessions(id)"
@@ -812,7 +843,7 @@ function openPr(url: string): void {
       @refresh-git-status="client.activeSessionId.value && client.loadGitStatus(client.activeSessionId.value)"
       @rename-session="(id, title) => client.renameSession(id, title)"
       @fork-session="(id) => client.forkSession(id)"
-      @archive-session="(id) => client.archiveSession(id)"
+      @archive-session="confirmArchiveSession($event)"
       @export-session="(id) => client.exportSession(id)"
       @compact="client.compact()"
       @pick-model="openModelPicker()"
@@ -991,7 +1022,7 @@ function openPr(url: string): void {
       :unavailable="providersUnavailable"
       @add="handleAddProvider($event)"
       @refresh="handleRefreshProvider($event)"
-      @delete="handleDeleteProvider($event)"
+      @delete="confirmDeleteProvider($event)"
       @open-login="() => { showProviders = false; openLogin(); }"
       @close="showProviders = false"
     />
@@ -1056,8 +1087,8 @@ function openPr(url: string): void {
       @create-in-workspace="handleCreateSessionInWorkspace($event)"
       @add-workspace="showAddWorkspace = true"
       @rename="(id, title) => client.renameSession(id, title)"
-      @archive="(id) => client.archiveSession(id)"
-      @delete-workspace="(id) => client.deleteWorkspace(id)"
+      @archive="confirmArchiveSession($event)"
+      @delete-workspace="confirmDeleteWorkspace($event)"
       @load-more="(id) => void client.loadMoreSessions(id)"
     />
 
