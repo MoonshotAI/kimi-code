@@ -43,6 +43,7 @@ import RiAlertLine from '~icons/ri/alert-line';
 import RiArchiveLine from '~icons/ri/archive-line';
 import RiArrowDownLine from '~icons/ri/arrow-down-line';
 import RiArrowDownSLine from '~icons/ri/arrow-down-s-line';
+import RiAttachmentLine from '~icons/ri/attachment-line';
 import RiArrowGoBackLine from '~icons/ri/arrow-go-back-line';
 import RiArrowRightLine from '~icons/ri/arrow-right-line';
 import RiArrowRightSLine from '~icons/ri/arrow-right-s-line';
@@ -132,6 +133,7 @@ import RawDraggable from '~icons/ri/draggable?raw';
 import RawEqualizerLine from '~icons/ri/equalizer-line?raw';
 import RawExpandDiagonalLine from '~icons/ri/expand-diagonal-line?raw';
 import RawExternalLinkLine from '~icons/ri/external-link-line?raw';
+import RawAttachmentLine from '~icons/ri/attachment-line?raw';
 import RawFileAddLine from '~icons/ri/file-add-line?raw';
 import RawFileCopyLine from '~icons/ri/file-copy-line?raw';
 import RawFileEditLine from '~icons/ri/file-edit-line?raw';
@@ -211,6 +213,7 @@ export type IconName =
   | 'file-edit'
   | 'file-plus'
   | 'file-off'
+  | 'attachment'
   | 'image-off'
   | 'code'
   | 'terminal'
@@ -296,6 +299,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   'file-edit': entry(RiFileEditLine, RawFileEditLine),
   'file-plus': entry(RiFileAddLine, RawFileAddLine),
   'file-off': entry(RiFileLine, RawFileLine),
+  attachment: entry(RiAttachmentLine, RawAttachmentLine),
   'image-off': entry(RiImageLine, RawImageLine),
   code: entry(RiCodeLine, RawCodeLine),
   terminal: entry(RiTerminalBoxLine, RawTerminalBoxLine),
@@ -351,6 +355,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
     'Actions',
     [
       'plus',
+      'attachment',
       'chat-new',
       'close',
       'check',

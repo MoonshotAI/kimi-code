@@ -22,6 +22,7 @@ import { useSlashMenu } from '../../composables/useSlashMenu';
 import { useMentionMenu } from '../../composables/useMentionMenu';
 import { useComposerDraft } from '../../composables/useComposerDraft';
 import { useAttachmentUpload, type Attachment } from '../../composables/useAttachmentUpload';
+import { openFileAttachment } from '../../lib/openFileAttachment';
 import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import Spinner from '../ui/Spinner.vue';
 import Button from '../ui/Button.vue';
@@ -300,10 +301,14 @@ function toPromptAttachment(a: Attachment): PromptAttachment {
   return { fileId: a.fileId!, kind: a.kind, name: a.name, mediaType: a.mediaType, size: a.size };
 }
 
-// Chip primary action: media opens the lightbox preview; generic files carry
-// no local preview, so their chips stay informational (title only).
+// Chip primary action: media opens the lightbox preview; a generic file opens
+// in a new tab (browser-renderable types) or downloads, once its upload has
+// completed and produced a daemon file id.
 function onAttachmentActivate(att: Attachment): void {
-  if (att.kind === 'file') return;
+  if (att.kind === 'file') {
+    if (att.fileId !== undefined) void openFileAttachment(att.fileId, att.name, att.mediaType);
+    return;
+  }
   openAttachmentPreview(att);
 }
 
@@ -951,7 +956,7 @@ function selectModel(modelId: string): void {
             :label="t('composer.attachFile')"
             @click="openFilePicker"
           >
-            <Icon name="file" />
+            <Icon name="attachment" />
           </IconButton>
 
           <!-- Permission pill — click to open dropdown -->

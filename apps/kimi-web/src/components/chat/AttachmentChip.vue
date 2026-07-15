@@ -4,8 +4,8 @@
      bubble. Context differences are props, not restyled variants:
        - composer: uploading spinner, error tint, remove button
        - bubble:   plain chip, click opens preview / downloads
-     Tile rule: images show a real thumbnail, videos a play glyph, files an
-     icon tinted by the --ft-* family hue for their extension. -->
+     Tile rule: images show a real thumbnail, videos a play glyph, files a
+     neutral file icon with the extension badge next to the name. -->
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -46,30 +46,10 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-/** Semantic hue per file family; unknown extensions use the neutral default. */
-const TILE_CLASS: [RegExp, string][] = [
-  [/^pdf$/i, 'ft-pdf'],
-  [/^(doc|docx|md|txt|rtf)$/i, 'ft-doc'],
-  [/^(xls|xlsx|csv|tsv)$/i, 'ft-sheet'],
-  [/^(zip|tar|gz|tgz|bz2|xz|7z|rar)$/i, 'ft-zip'],
-  [/^(png|jpe?g|gif|webp|avif|svg|heic|bmp)$/i, 'ft-img'],
-  [/^(m[km]ov|mp4|webm|avi)$/i, 'ft-img'],
-];
-
 const ext = computed(() => {
   const fromName = props.name?.match(/\.([A-Za-z0-9]{1,8})$/)?.[1];
   const e = fromName ?? props.mediaType?.split('/')[1]?.split('+')[0];
   return e ? e.toUpperCase() : undefined;
-});
-
-const tileClass = computed(() => {
-  if (props.kind === 'video') return 'ft-img';
-  if (props.kind !== 'file') return undefined;
-  const e = ext.value ?? '';
-  for (const [re, cls] of TILE_CLASS) {
-    if (re.test(e)) return cls;
-  }
-  return undefined;
 });
 
 const fileIcon = computed<IconName>(() => {
@@ -101,7 +81,7 @@ const title = computed(() => {
 <template>
   <span
     class="att-chip"
-    :class="[tileClass, { 'is-error': error, uploading }]"
+    :class="{ 'is-error': error, uploading }"
     :title="title"
     :data-kind="kind"
   >
@@ -174,8 +154,8 @@ const title = computed(() => {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  color: var(--ft-file);
-  background: var(--ft-file-soft);
+  color: var(--color-text-muted);
+  background: var(--color-surface-sunken);
 }
 .att-tile :deep(.att-thumb) {
   width: 100%;
@@ -183,12 +163,6 @@ const title = computed(() => {
   object-fit: cover;
   display: block;
 }
-.att-chip.ft-pdf .att-tile { color: var(--ft-pdf); background: var(--ft-pdf-soft); }
-.att-chip.ft-doc .att-tile { color: var(--ft-doc); background: var(--ft-doc-soft); }
-.att-chip.ft-sheet .att-tile { color: var(--ft-sheet); background: var(--ft-sheet-soft); }
-.att-chip.ft-zip .att-tile { color: var(--ft-zip); background: var(--ft-zip-soft); }
-.att-chip.ft-code .att-tile { color: var(--ft-code); background: var(--ft-code-soft); }
-.att-chip.ft-img .att-tile { color: var(--ft-img); background: var(--ft-img-soft); }
 .att-name {
   min-width: 0;
   overflow: hidden;
@@ -202,17 +176,11 @@ const title = computed(() => {
   font-size: calc(var(--ui-font-size-sm) - 2px);
   font-weight: var(--weight-semibold, 600);
   letter-spacing: .02em;
-  color: var(--ft-file);
-  background: var(--ft-file-soft);
+  color: var(--color-text-muted);
+  background: var(--color-surface-sunken);
   border-radius: var(--radius-xs);
   padding: 1px 4px;
 }
-.att-chip.ft-pdf .att-ext { color: var(--ft-pdf); background: var(--ft-pdf-soft); }
-.att-chip.ft-doc .att-ext { color: var(--ft-doc); background: var(--ft-doc-soft); }
-.att-chip.ft-sheet .att-ext { color: var(--ft-sheet); background: var(--ft-sheet-soft); }
-.att-chip.ft-zip .att-ext { color: var(--ft-zip); background: var(--ft-zip-soft); }
-.att-chip.ft-code .att-ext { color: var(--ft-code); background: var(--ft-code-soft); }
-.att-chip.ft-img .att-ext { color: var(--ft-img); background: var(--ft-img-soft); }
 .att-chip.is-error {
   border-color: var(--color-danger-bd);
 }

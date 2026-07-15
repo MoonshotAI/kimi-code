@@ -18,7 +18,7 @@ import Icon from '../ui/Icon.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { copyTextToClipboard } from '../../lib/clipboard';
-import { getKimiWebApi } from '../../api';
+import { openFileAttachment } from '../../lib/openFileAttachment';
 import {
   assistantRenderBlocks,
   formatDuration,
@@ -483,21 +483,10 @@ function onAttachmentClick(att: TurnAttachment): void {
     emit('openMedia', userAttachmentMedia(att));
     return;
   }
-  // Files open via an auth-aware blob download — a bare getFileUrl src 401s
-  // under daemon auth, so route the bytes through the API client.
-  void downloadAttachment(att);
-}
-
-async function downloadAttachment(att: TurnAttachment): Promise<void> {
-  if (!att.fileId) return;
-  const blob = await getKimiWebApi().getFileBlob(att.fileId).catch(() => null);
-  if (blob === null) return;
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = att.name ?? att.fileId;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  // Generic files preview in a new tab (browser-renderable types) or download.
+  if (att.fileId !== undefined) {
+    void openFileAttachment(att.fileId, att.name, att.mediaType);
+  }
 }
 
 function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }): boolean {
