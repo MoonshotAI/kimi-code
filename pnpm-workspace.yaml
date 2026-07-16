@@ -19,7 +19,3 @@ overrides:
   # $ZodType surfaces as ~159 type errors in @moonshot-ai/kimi-desktop's
   # typecheck, which resolves kimi-code sources via workspace:^ exports.
   "zod": "catalog:"
-
-# Allow Electron's postinstall to extract its prebuilt binary (apps/desktop).
-onlyBuiltDependencies:
-  - electron
