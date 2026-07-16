@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "prepare:fonts": "node scripts/prepare-fonts.mjs",
+    "postinstall": "pnpm prepare:fonts",
     "sync": "git submodule update --init --recursive",
     "build": "pnpm -r run build",
     "dev:desktop": "pnpm --filter @moonshot-ai/kimi-desktop run dev",
