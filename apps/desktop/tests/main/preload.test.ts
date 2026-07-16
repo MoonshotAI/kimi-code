@@ -19,6 +19,8 @@ vi.mock('electron', () => ({
 
 const WHITELIST = [
   'getServerToken',
+  'isFullscreen',
+  'onFullscreenChanged',
   'onMenu',
   'onMenuAction',
   'onShortcut',
@@ -82,6 +84,11 @@ describe('kimiDesktop preload bridge', () => {
     offShortcut();
     expect(removeListener).toHaveBeenCalledWith('kimi:shortcut', expect.any(Function));
 
+    const offFullscreen = exposed.onFullscreenChanged(() => {});
+    expect(on).toHaveBeenCalledWith('kimi:fullscreen-changed', expect.any(Function));
+    offFullscreen();
+    expect(removeListener).toHaveBeenCalledWith('kimi:fullscreen-changed', expect.any(Function));
+
     await exposed.openExternal('https://example.com');
     expect(invoke).toHaveBeenCalledWith('kimi:open-external', 'https://example.com');
 
@@ -95,6 +102,9 @@ describe('kimiDesktop preload bridge', () => {
 
     await exposed.getServerToken();
     expect(invoke).toHaveBeenCalledWith('kimi:get-server-token');
+
+    await exposed.isFullscreen();
+    expect(invoke).toHaveBeenCalledWith('kimi:is-fullscreen');
   });
 
   it('forwards menu-action and shortcut payloads to the renderer callback', async () => {
@@ -110,5 +120,14 @@ describe('kimiDesktop preload bridge', () => {
     exposed.onShortcut(shortcutCb);
     listeners.get('kimi:shortcut')?.({}, 'CommandOrControl+Alt+K');
     expect(shortcutCb).toHaveBeenCalledWith('CommandOrControl+Alt+K');
+
+    const fullscreenCb = vi.fn();
+    exposed.onFullscreenChanged(fullscreenCb);
+    listeners.get('kimi:fullscreen-changed')?.({}, true);
+    expect(fullscreenCb).toHaveBeenCalledWith(true);
+    // Anything that isn't a strict boolean true is coerced to false (no
+    // accidental truthy strings leaking into the renderer state).
+    listeners.get('kimi:fullscreen-changed')?.({}, 'yes');
+    expect(fullscreenCb).toHaveBeenLastCalledWith(false);
   });
 });

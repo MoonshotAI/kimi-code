@@ -46,6 +46,7 @@ import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThi
 import { stripSkillPrefix } from './lib/slashCommands';
 import { Button, Icon, IconButton } from '@moonshot-ai/web-ui';
 import { isMacosDesktop } from './lib/desktopFlag';
+import { useFullscreen } from './composables/useFullscreen';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -80,6 +81,11 @@ const debugEnabled = isTraceEnabled();
 // Narrow viewports (≤640px) render the single-column mobile shell; desktop is
 // unchanged. Falls back to desktop when matchMedia is unavailable.
 const isMobile = useIsMobile();
+
+// Native-window fullscreen state (desktop bridge only; always false on web).
+// On macOS fullscreen the traffic lights hide, so the resident sidebar toggle
+// drops their slot and hugs the left edge (see the fullscreen CSS below).
+const isFullscreen = useFullscreen();
 
 // Mobile sheet visibility
 const showMobileSwitcher = ref(false);
@@ -674,6 +680,7 @@ function openPr(url: string): void {
         mobile: isMobile,
         'sidebar-collapsed': sidebarCollapsed && !isMobile,
         'macos-desktop': isMacosDesktop,
+        fullscreen: isFullscreen,
       }"
       :style="{ '--preview-w': previewPanelWidth + 'px' }"
     >
@@ -1204,6 +1211,13 @@ function openPr(url: string): void {
   left: 72px;
   animation: none;
 }
+/* macOS full-screen: the traffic lights hide (they only re-appear as a
+   transient overlay while the pointer sits at the screen's top edge), so the
+   resident toggle drops the lights' slot and hugs the window edge — same 16px
+   as the default (non-mac) floating position. */
+.app.macos-desktop.fullscreen .sidebar-toggle-btn {
+  left: 16px;
+}
 @keyframes sidebar-toggle-btn-in {
   from { opacity: 0; }
 }
@@ -1288,5 +1302,11 @@ function openPr(url: string): void {
 }
 .app.sidebar-collapsed.macos-desktop .chat-header {
   padding-left: 108px;
+}
+/* Full-screen follow-up to the rule above: with the traffic lights hidden the
+   toggle moves to the window edge (16px), so the header padding falls back to
+   the non-mac collapsed value. */
+.app.fullscreen.sidebar-collapsed.macos-desktop .chat-header {
+  padding-left: 52px;
 }
 </style>

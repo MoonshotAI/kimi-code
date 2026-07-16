@@ -6,7 +6,7 @@ import { app, BrowserWindow, dialog, shell } from 'electron';
 import { connect } from './connect';
 import { installDownloadHandler } from './downloads';
 import { installExternalLinkGuard } from './external-links';
-import type { RendererEventChannel } from './ipc-channels';
+import { IPC, type RendererEventChannel } from './ipc-channels';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -20,7 +20,7 @@ export function getMainWindow(): BrowserWindow | null {
 // preload-whitelisted `kimi:menu-action` / `kimi:shortcut` channels. Task 4.5
 // connects the renderer side; here we only open the channels.
 
-export function sendToRenderer(channel: RendererEventChannel, payload: string): void {
+export function sendToRenderer(channel: RendererEventChannel, payload: string | boolean): void {
   if (mainWindow !== null && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
   }
@@ -142,6 +142,15 @@ export function createWindow(): void {
     win.on('leave-full-screen', showTrafficLights);
     win.on('focus', showTrafficLights);
   }
+  // Keep the renderer's fullscreen state in sync so the web UI can adapt (on
+  // macOS the traffic lights hide in full-screen, so the sidebar expand button
+  // hugs the left edge instead of leaving their slot empty). `isFullScreen()`
+  // is already true/false when these fire; the pair covers every transition.
+  const notifyFullscreen = (): void => {
+    sendToRenderer(IPC.fullscreenChanged, win.isFullScreen());
+  };
+  win.on('enter-full-screen', notifyFullscreen);
+  win.on('leave-full-screen', notifyFullscreen);
   win.on('close', () => {
     saveBounds(win);
   });

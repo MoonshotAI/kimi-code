@@ -32,4 +32,11 @@ export function registerIpcHandlers(): void {
   });
   // Token for the renderer's credentialStore (Task 4.5); read in main, never fs in renderer.
   ipcMain.handle(IPC.getServerToken, () => readServerToken());
+  // Initial fullscreen state for the renderer (transitions are pushed over
+  // `IPC.fullscreenChanged` by window.ts); needed when the page (re)loads while
+  // the window is already full-screen.
+  ipcMain.handle(IPC.isFullscreen, () => {
+    const win = getMainWindow();
+    return win !== null && !win.isDestroyed() && win.isFullScreen();
+  });
 }
