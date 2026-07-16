@@ -1,3 +1,29 @@
+/* UI variable fonts are generated once in web-ui so both renderer builds
+   resolve the same local assets. Vite fingerprints them into each final build. */
+@font-face {
+  font-family: "Noto Sans SC Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("./assets/fonts/NotoSansSC[wght].woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400 900;
+  src: url("./assets/fonts/SchibstedGrotesk[wght].woff2") format("woff2-variations");
+}
+
+@font-face {
+  font-family: "Schibsted Grotesk Variable";
+  font-style: italic;
+  font-display: swap;
+  font-weight: 400 900;
+  src: url("./assets/fonts/SchibstedGrotesk-Italic[wght].woff2") format("woff2-variations");
+}
+
 :root {
   --dim: #595959;
   --muted: #8a8a8a;
@@ -45,7 +71,7 @@
   --ui-font-size-xs: calc(var(--ui-font-size) - 2px);
   --ui-font-size-lg: calc(var(--ui-font-size) + 1px);
   --ui-font-size-xl: calc(var(--ui-font-size) + 2px);
-  --content-font-size: calc(var(--base-ui-font-size) + 1px);
+  --content-font-size: var(--base-ui-font-size);
   --mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   /* Body/UI font follows the design-system canonical token. Mirrors --font-ui
      so the legacy alias can never drift from the current text face. */
@@ -188,6 +214,8 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   /* -- 4 colour seeds (the only knobs a theme customiser should need) ------ */
   --accent-primary: #1783ff;
   --accent-secondary: #6b7280;
+  --color-theme-blue: #1783ff;
+  --color-theme-black: #171717;
   --surface-light: #ffffff;
   --surface-dark: #0d1117;
 
@@ -288,15 +316,16 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --duration-slow: 260ms;
 
   /* -- type families ------------------------------------------------------- */
-  /* UI/body use self-hosted Inter first. CJK and platform system UI families
-     stay late in the fallback chain so Latin glyphs resolve to Inter while
-     Chinese text can still fall through to native CJK fonts. */
-  --font-ui: "Inter Variable", "Inter", "Helvetica Neue", Arial,
-    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC",
-    "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-    Ubuntu, sans-serif, "Apple Color Emoji", "Segoe UI Emoji",
-    "Segoe UI Symbol", "Noto Color Emoji";
+  /* UI/body use self-hosted Schibsted Grotesk for Latin and Noto Sans SC for
+     Simplified Chinese. Platform CJK families remain as late fallbacks. */
+  --font-ui-latin: "Schibsted Grotesk Variable", "Helvetica Neue", Arial;
+  --font-ui: var(--font-ui-latin),
+    "Noto Sans SC Variable", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Source Han Sans SC", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, Ubuntu, sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
   --font-display: var(--font-ui);
+  --font-kbd: "Schibsted Grotesk Variable", system-ui, sans-serif;
   --font-mono: "JetBrains Mono Variable", "JetBrains Mono", ui-monospace,
     "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
 
@@ -311,7 +340,10 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --leading-normal: 1.5;
   --leading-relaxed: 1.7;
   --weight-regular: 400;
+  --weight-option-label: 475;
   --weight-medium: 500;
+  --weight-ui-strong: 525;
+  --weight-section-label: 600;
   --weight-semibold: 700;
 
   /* -- focus ring (design-system §02) -------------------------------------- */

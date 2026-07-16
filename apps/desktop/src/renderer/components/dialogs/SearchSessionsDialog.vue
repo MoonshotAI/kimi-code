@@ -7,7 +7,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../../types';
 import { highlightHtml, snippet } from '../../lib/searchHighlight';
-import { Dialog, Icon } from '@moonshot-ai/web-ui';
+import { Dialog, Icon, Kbd } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -175,7 +175,13 @@ onMounted(() => {
     </div>
 
     <template #foot>
-      <span class="sd-hint">{{ t('sidebar.searchHint') }}</span>
+      <span class="sd-hint">
+        <span class="sd-hint-group"><Kbd :keys="['↑', '↓']" />{{ t('sidebar.searchHintSelect') }}</span>
+        <span aria-hidden="true">·</span>
+        <span class="sd-hint-group"><Kbd :keys="['↵']" />{{ t('sidebar.searchHintOpen') }}</span>
+        <span aria-hidden="true">·</span>
+        <span class="sd-hint-group"><Kbd :keys="['Esc']" />{{ t('sidebar.searchHintClose') }}</span>
+      </span>
     </template>
   </Dialog>
 </template>
@@ -196,7 +202,7 @@ onMounted(() => {
   flex: 1;
   min-width: 0;
   font-family: var(--font-ui);
-  font-size: var(--text-lg);
+  font-size: 16px;
   color: var(--color-text);
   background: none;
   border: none;
@@ -208,7 +214,8 @@ onMounted(() => {
 }
 
 .sd-list {
-  height: 420px;
+  height: 100%;
+  min-height: 0;
   overflow-y: auto;
   padding: var(--space-1) var(--space-2);
 }
@@ -294,7 +301,11 @@ onMounted(() => {
   font-size: var(--text-sm);
 }
 .sd-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
   font-size: var(--text-xs);
   color: var(--color-text-muted);
 }
+.sd-hint-group { display: inline-flex; align-items: center; gap: var(--space-1); }
 </style>

@@ -13,6 +13,7 @@ withDefaults(
     time?: string;
     open?: boolean;
     expandable?: boolean;
+    monospace?: boolean;
     stacked?: boolean;
     stackPosition?: 'single' | 'first' | 'middle' | 'last';
   }>(),
@@ -22,6 +23,7 @@ withDefaults(
     time: '',
     open: false,
     expandable: false,
+    monospace: false,
     stacked: false,
     stackPosition: 'single',
   },
@@ -51,7 +53,7 @@ function onHeadClick(): void {
       'stack-last': stackPosition === 'last',
     }"
   >
-    <div class="bh" ref="bhEl" @click="onHeadClick">
+    <div class="bh" :class="{ monospace }" ref="bhEl" @click="onHeadClick">
       <span v-if="icon" class="gl" v-html="icon" aria-hidden="true" />
       <span class="bh-text">
         <span class="a">{{ name }}</span>
@@ -83,13 +85,13 @@ function onHeadClick(): void {
 .box {
   margin: 0;
   background: var(--color-surface);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line-strong);
   border-radius: var(--radius-md);
   overflow: hidden;
   transition: border-color var(--duration-base) var(--ease-out);
 }
 .box.err {
-  border-color: color-mix(in srgb, var(--color-danger) 25%, var(--bg));
+  border-color: color-mix(in srgb, var(--color-danger) 45%, var(--bg));
 }
 
 /* Stacked calls: the group owns the outer border + radius, so each row is flat
@@ -103,7 +105,11 @@ function onHeadClick(): void {
 }
 .box.stack-middle,
 .box.stack-last {
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line-strong);
+}
+.box.stack-middle.err,
+.box.stack-last.err {
+  border-top-color: color-mix(in srgb, var(--color-danger) 45%, var(--bg));
 }
 
 .bh {
@@ -113,8 +119,14 @@ function onHeadClick(): void {
   min-height: 30px;
   padding: 0 11px;
   cursor: pointer;
-  font: var(--text-sm) var(--font-mono);
+  font: var(--text-base) var(--font-ui);
   color: var(--color-text);
+}
+.bh.monospace {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-feature-settings: "liga" 0, "calt" 0;
+  font-variant-ligatures: none;
 }
 .box.open .bh,
 .bh:hover {
@@ -135,19 +147,21 @@ function onHeadClick(): void {
 }
 .bh-text {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: inherit;
   flex: 1;
   min-width: 0;
 }
 .a {
   color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--ui-font-size);
   font-weight: var(--weight-medium);
   flex: none;
 }
 .p {
   color: var(--color-text-muted);
-  font-size: var(--text-xs);
+  font-size: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -202,12 +216,17 @@ function onHeadClick(): void {
 .bb.open {
   grid-template-rows: minmax(0, 1fr);
 }
+.bb.open .bb-pad {
+  max-height: 16.5em; /* 10 lines at the 1.65 detail line-height. */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
 .bb-pad {
   min-height: 0;
   overflow: hidden;
   padding: var(--space-2) var(--space-3) var(--space-3);
   background: var(--color-surface-sunken);
-  border-top: 1px solid var(--color-line);
+  border-top: 0.5px solid var(--color-line);
   color: var(--color-text);
   font: var(--text-sm)/1.65 var(--font-mono);
   white-space: pre-wrap;

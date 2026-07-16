@@ -32,15 +32,17 @@ defineEmits<{ click: [event: MouseEvent] }>();
 .ui-menu-item {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 7px;
   width: 100%;
-  padding: 6px 10px;
+  padding: 5px 9px;
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--color-text);
   font-family: var(--font-ui);
-  font-size: var(--text-base);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-option-label);
+  line-height: 16px;
   text-align: left;
   cursor: pointer;
   transition: background var(--duration-base), color var(--duration-base);
@@ -51,8 +53,8 @@ defineEmits<{ click: [event: MouseEvent] }>();
 .ui-menu-item.is-active { background: var(--color-accent-soft); color: var(--color-accent-hover); }
 .ui-menu-item.is-danger { color: var(--color-danger); }
 .ui-menu-item.is-danger:hover:not(:disabled) { background: var(--color-danger-soft); }
-.ui-menu-item :deep(svg) { width: 14px; height: 14px; flex: none; }
+.ui-menu-item :deep(svg) { display: block; width: 16px; height: 16px; flex: none; }
 /* lg · touch / mobile: taller row, bigger tap target */
-.ui-menu-item--lg { min-height: 44px; padding: 12px 14px; font-size: var(--text-base); }
+.ui-menu-item--lg { min-height: 44px; padding: 12px 14px; font-size: var(--text-xs); }
 .ui-menu-sep { height: 1px; margin: 4px 0; background: var(--color-line); }
 </style>

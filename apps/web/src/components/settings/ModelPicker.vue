@@ -39,6 +39,23 @@ const searchRef = ref<HTMLInputElement | null>(null);
 const dialogRef = ref<HTMLElement | null>(null);
 const activeTab = ref('all');
 
+const CAPABILITY_META: Record<string, { icon: string; labelKey: string }> = {
+  image_in: { icon: 'image', labelKey: 'model.capabilityImageInput' },
+  video_in: { icon: 'play', labelKey: 'model.capabilityVideoInput' },
+  tool_use: { icon: 'tool', labelKey: 'model.capabilityToolUse' },
+  thinking: { icon: 'sparkles', labelKey: 'model.capabilityThinking' },
+  always_thinking: { icon: 'sparkles', labelKey: 'model.capabilityAlwaysThinking' },
+};
+
+function capabilityIcon(capability: string): string {
+  return CAPABILITY_META[capability]?.icon ?? 'bolt';
+}
+
+function capabilityLabel(capability: string): string {
+  const key = CAPABILITY_META[capability]?.labelKey;
+  return key ? t(key) : capability.replaceAll('_', ' ');
+}
+
 // Focus the search box on open; restore focus to the opener on close.
 useDialogFocus(dialogRef, searchRef);
 
@@ -181,14 +198,14 @@ function selectTab(tabId: string): void {
           @click="choose(m.id)"
           @mouseenter="selectedIdx = flatIdx(m)"
         >
-          <span class="check">
-            <Icon v-if="m.id === current" name="check" size="sm" />
-          </span>
           <span class="model-main">
             <span class="model-name">{{ m.displayName ?? m.model }}</span>
             <span class="model-id">{{ m.id }}</span>
             <span v-if="m.capabilities && m.capabilities.length > 0" class="caps">
-              <Badge v-for="cap in m.capabilities" :key="cap" variant="info" size="sm">{{ cap }}</Badge>
+              <Badge v-for="cap in m.capabilities" :key="cap" variant="info" size="sm">
+                <Icon :name="capabilityIcon(cap)" size="sm" />
+                <span>{{ capabilityLabel(cap) }}</span>
+              </Badge>
             </span>
           </span>
           <span class="model-provider">{{ m.provider }}</span>
@@ -214,7 +231,7 @@ function selectTab(tabId: string): void {
 </template>
 
 <style scoped>
-.mp { display: flex; flex-direction: column; gap: var(--space-2); }
+.mp { display: flex; flex-direction: column; gap: var(--space-2); height: 100%; min-height: 0; }
 
 /* Search */
 .search-wrap { padding-bottom: var(--space-1); }
@@ -223,12 +240,17 @@ function selectTab(tabId: string): void {
   display: flex;
   gap: var(--space-1);
   overflow-x: auto;
+  scrollbar-width: none;
 }
+.tab-strip::-webkit-scrollbar { display: none; }
 
 /* Model list */
 .model-list {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   padding: var(--space-1) 0;
 }
 
@@ -251,15 +273,6 @@ function selectTab(tabId: string): void {
   box-shadow: inset 0 0 0 1px var(--color-accent-bd);
 }
 
-.check {
-  width: 14px;
-  height: 14px;
-  color: var(--color-accent);
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
 .model-main {
   flex: 1;
   min-width: 0;
@@ -268,6 +281,9 @@ function selectTab(tabId: string): void {
   gap: 2px;
 }
 .model-name {
+  display: flex;
+  align-items: center;
+  min-height: 28px;
   font-family: var(--font-ui);
   font-size: var(--text-sm);
   font-weight: var(--weight-medium);
@@ -286,20 +302,24 @@ function selectTab(tabId: string): void {
   white-space: nowrap;
 }
 .model-provider {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
   flex: none;
-  max-width: 110px;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--color-text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .model-ctx {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
   flex: none;
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
 }
 .caps {
   display: flex;
@@ -307,6 +327,7 @@ function selectTab(tabId: string): void {
   gap: 4px;
   margin-top: 2px;
 }
+.caps :deep(.kw-icon) { width: 12px; height: 12px; }
 
 .state-row {
   display: flex;
@@ -328,7 +349,9 @@ function selectTab(tabId: string): void {
 
 /* Footer */
 .footer-hint {
+  flex: none;
   padding-top: var(--space-2);
+  background: var(--color-surface-raised);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--color-text-faint);

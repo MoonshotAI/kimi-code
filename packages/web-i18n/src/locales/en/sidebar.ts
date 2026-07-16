@@ -41,5 +41,8 @@ export default {
   searchPlaceholder: 'Search sessions',
   search: 'Search',
   searchHint: '↑↓ navigate · ↵ open · Esc close',
+  searchHintSelect: 'navigate',
+  searchHintOpen: 'open',
+  searchHintClose: 'close',
   searchNoResults: 'No matching sessions',
 } as const;

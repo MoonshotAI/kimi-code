@@ -24,7 +24,7 @@
 
 - `apps/desktop`：Electron 壳（`@moonshot-ai/kimi-desktop`）。`src/main/index.ts` 主进程入口（只做编排；窗口 `window.ts`、菜单 `menu.ts`、快捷键 `shortcuts.ts`、IPC `ipc.ts` + channel 常量 `ipc-channels.ts`、server 连接 `connect.ts`、启动失败页 `screens.ts`）；`src/main/server.ts` 内嵌 server（`startDesktopServer`：回环 + 临时端口 + 独立 lock）；`src/main/connect-target.ts` 外部 server 模式解析（`KIMI_SERVER_URL`，纯函数）；`src/main/protocol.ts` `app://renderer` 协议映射（带 `..` 越界防护）。`pnpm dev` 走 `scripts/dev.mjs`：起 renderer 的 Vite dev server（默认 `http://127.0.0.1:5174`）并把实际端口经 `KIMI_RENDERER_DEV_URL` 传给主进程，`connect.ts` 据此加载 dev server（renderer HMR）并把该 origin 加进内嵌 server 的 CORS 白名单；主进程改动需重启 dev。主进程测试在 `tests/main/`，renderer 测试与源码同目录。细则见 `apps/desktop/README.md`。
 - `apps/web`：浏览器 Web UI（`@moonshot-ai/kimi-web`，Vue 3 + Vite + vue-i18n）。dev 时 Vite 把 `/api/v1`（REST + WS）代理到 `KIMI_SERVER_URL`（默认 `http://127.0.0.1:58627`）。
-- `packages/*`：`@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` + `vite-preset`（exports→src，被 apps/web 与 desktop renderer 复用）。
+- `packages/*`：`@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` + `vite-preset`（exports→src，被 apps/web 与 desktop renderer 复用）；`web-ui/src/assets/fonts` 保存字体许可证与本地生成（gitignored）的两端共用字体产物，dev/build 前由 `scripts/prepare-fonts.mjs` 下载、校验并转换，再由 Vite 打入最终产物。
 - `kimi-code/`：git submodule（核心仓）。`kimi-code/packages/*` 提供 `kap-server`、`agent-core-v2`、`kimi-code-sdk` 等源码。
 - `scripts/sync-web-to-kimi-code.mjs`：`apps/web/dist` → `<kimi-code checkout>/apps/kimi-code/dist-web`（`KIMI_CODE_REPO` 必传，指定目标 checkout）。
 - `.gitlab-ci.yml`：desktop 打包流水线（macOS arm64/x64、Windows、Linux 四个手动触发 job，产物只进 artifacts）。macOS 签名/公证脚本在 `apps/desktop/scripts/ci/`，所需的 5 个 `APPLE_*` CI/CD 变量与 runner 要求见文件头注释。CI 不可用时的本地替代：`apps/desktop/scripts/package-local-macos.sh`（复用 ci/ 的 setup/cleanup，只打 arm64）。
@@ -34,6 +34,7 @@
 ```bash
 pnpm run sync      # git submodule update --init --recursive
 pnpm install       # 装依赖（首次或 workspace 变动后）
+pnpm prepare:fonts # 手动准备共享字体（dev/build 会自动执行并复用已校验的本地文件）
 pnpm dev:desktop   # 桌面端（renderer HMR + 默认启动内嵌 server）
 pnpm dev:desktop:debug  # 桌面端，并开启 Electron remote debugging（端口 9222，供 agent-browser 连接）
 pnpm dev:web       # Web UI（Vite，代理到 127.0.0.1:58627）

@@ -119,21 +119,23 @@ watch(
 .prev {
   color: var(--color-text-faint);
   font: var(--text-base)/var(--leading-relaxed) var(--font-ui);
-  font-weight: 425;
+  font-weight: 400;
   white-space: pre-wrap;
   word-break: break-word;
   display: block;
+  transition: color var(--duration-base) var(--ease-out);
 }
 
 .tc {
   font: var(--text-base)/var(--leading-relaxed) var(--font-ui);
-  font-weight: 425;
+  font-weight: 400;
   color: var(--color-text-muted);
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
   max-height: calc(var(--leading-relaxed) * 1em * 5);
   overflow-y: auto;
+  transition: color var(--duration-base) var(--ease-out);
 }
 
 /* ---- Mobile tweaks ---- */

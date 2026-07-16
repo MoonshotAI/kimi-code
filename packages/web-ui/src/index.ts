@@ -26,6 +26,7 @@ export { default as MenuItem } from './components/ui/MenuItem.vue';
 export { default as MoonSpinner } from './components/ui/MoonSpinner.vue';
 export { default as PanelHeader } from './components/ui/PanelHeader.vue';
 export { default as Pill } from './components/ui/Pill.vue';
+export { default as ScrollArea } from './components/ui/ScrollArea.vue';
 export { default as SegmentedControl } from './components/ui/SegmentedControl.vue';
 export { default as Select } from './components/ui/Select.vue';
 export { default as Sheet } from './components/ui/Sheet.vue';

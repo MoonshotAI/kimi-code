@@ -795,7 +795,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   align-self: flex-end;
   max-width: 78%;
   background: var(--color-accent-soft);
-  border: 1px solid var(--color-accent-bd);
+  border: 0.5px solid color-mix(in srgb, var(--color-accent) 32%, var(--color-line-strong));
   color: var(--color-text);
   border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
   padding: 11px 15px;
@@ -809,7 +809,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
   justify-content: flex-end;
   align-items: center;
   max-width: 78%;
-  margin-top: 2px;
+  margin-top: var(--space-2);
   margin-right: 4px;
 }
 .u-meta .u-edit {
@@ -1185,7 +1185,7 @@ function isStreamingRenderBlock(turn: ChatTurn, block: { sourceIndex: number }):
 }
 .u-bub {
   background: var(--color-accent-soft);
-  border-color: var(--color-accent-bd);
+  border-color: color-mix(in srgb, var(--color-accent) 32%, var(--color-line-strong));
   border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl);
   padding: 11px 15px;
   box-shadow: var(--shc);

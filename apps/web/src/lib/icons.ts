@@ -36,6 +36,7 @@ import KimiSetting from '~icons/kimi/setting';
 // Components (Tabler) ---------------------------------------------------------
 import TablerSidebarLeftCollapse from '~icons/tabler/layout-sidebar-left-collapse';
 import TablerSidebarLeftExpand from '~icons/tabler/layout-sidebar-left-expand';
+import TablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse';
 
 // Components (Remix) ---------------------------------------------------------
 import RiAddLine from '~icons/ri/add-line';
@@ -44,6 +45,7 @@ import RiArchiveLine from '~icons/ri/archive-line';
 import RiArrowDownLine from '~icons/ri/arrow-down-line';
 import RiArrowDownSLine from '~icons/ri/arrow-down-s-line';
 import RiArrowGoBackLine from '~icons/ri/arrow-go-back-line';
+import RiArrowLeftLine from '~icons/ri/arrow-left-line';
 import RiArrowRightLine from '~icons/ri/arrow-right-line';
 import RiArrowRightSLine from '~icons/ri/arrow-right-s-line';
 import RiArrowUpLine from '~icons/ri/arrow-up-line';
@@ -80,6 +82,7 @@ import RiListUnordered from '~icons/ri/list-unordered';
 import RiLoginBoxLine from '~icons/ri/login-box-line';
 import RiMailLine from '~icons/ri/mail-line';
 import RiMessageLine from '~icons/ri/message-line';
+import RiNodeTree from '~icons/ri/node-tree';
 import RiPauseFill from '~icons/ri/pause-fill';
 import RiPencilLine from '~icons/ri/pencil-line';
 import RiPlayFill from '~icons/ri/play-fill';
@@ -107,6 +110,7 @@ import RawKimiSetting from '~icons/kimi/setting?raw';
 // Raw SVG strings (Tabler) ----------------------------------------------------
 import RawTablerSidebarLeftCollapse from '~icons/tabler/layout-sidebar-left-collapse?raw';
 import RawTablerSidebarLeftExpand from '~icons/tabler/layout-sidebar-left-expand?raw';
+import RawTablerSidebarRightCollapse from '~icons/tabler/layout-sidebar-right-collapse?raw';
 
 // Raw SVG strings (Remix) ----------------------------------------------------
 import RawAddLine from '~icons/ri/add-line?raw';
@@ -115,6 +119,7 @@ import RawArchiveLine from '~icons/ri/archive-line?raw';
 import RawArrowDownLine from '~icons/ri/arrow-down-line?raw';
 import RawArrowDownSLine from '~icons/ri/arrow-down-s-line?raw';
 import RawArrowGoBackLine from '~icons/ri/arrow-go-back-line?raw';
+import RawArrowLeftLine from '~icons/ri/arrow-left-line?raw';
 import RawArrowRightLine from '~icons/ri/arrow-right-line?raw';
 import RawArrowRightSLine from '~icons/ri/arrow-right-s-line?raw';
 import RawArrowUpLine from '~icons/ri/arrow-up-line?raw';
@@ -151,6 +156,7 @@ import RawListUnordered from '~icons/ri/list-unordered?raw';
 import RawLoginBoxLine from '~icons/ri/login-box-line?raw';
 import RawMailLine from '~icons/ri/mail-line?raw';
 import RawMessageLine from '~icons/ri/message-line?raw';
+import RawNodeTree from '~icons/ri/node-tree?raw';
 import RawPauseFill from '~icons/ri/pause-fill?raw';
 import RawPencilLine from '~icons/ri/pencil-line?raw';
 import RawPlayFill from '~icons/ri/play-fill?raw';
@@ -194,12 +200,15 @@ export type IconName =
   | 'arrow-up'
   | 'arrow-down'
   | 'arrow-right'
+  | 'arrow-left'
   | 'minus'
   | 'panel-collapse'
+  | 'panel-collapse-right'
   | 'panel-expand'
   | 'expand'
   | 'collapse'
   | 'list'
+  | 'tree-view'
   | 'sort'
   | 'grip'
   | 'folder'
@@ -279,12 +288,15 @@ export const ICONS: Record<IconName, IconEntry> = {
   'arrow-up': entry(RiArrowUpLine, RawArrowUpLine),
   'arrow-down': entry(RiArrowDownLine, RawArrowDownLine),
   'arrow-right': entry(RiArrowRightLine, RawArrowRightLine),
+  'arrow-left': entry(RiArrowLeftLine, RawArrowLeftLine),
   minus: entry(RiSubtractLine, RawSubtractLine),
   'panel-collapse': entry(TablerSidebarLeftCollapse, RawTablerSidebarLeftCollapse),
+  'panel-collapse-right': entry(TablerSidebarRightCollapse, RawTablerSidebarRightCollapse),
   'panel-expand': entry(TablerSidebarLeftExpand, RawTablerSidebarLeftExpand),
   expand: entry(RiExpandDiagonalLine, RawExpandDiagonalLine),
   collapse: entry(RiCollapseDiagonalLine, RawCollapseDiagonalLine),
   list: entry(RiListUnordered, RawListUnordered),
+  'tree-view': entry(RiNodeTree, RawNodeTree),
   sort: entry(RiSortDesc, RawSortDesc),
   grip: entry(RiDraggable, RawDraggable),
   folder: entry(KimiFolderOpen, RawKimiFolderOpen),
@@ -376,12 +388,15 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'arrow-up',
       'arrow-down',
       'arrow-right',
+      'arrow-left',
       'minus',
       'panel-collapse',
+      'panel-collapse-right',
       'panel-expand',
       'expand',
       'collapse',
       'list',
+      'tree-view',
       'sort',
       'grip',
     ],

@@ -51,7 +51,7 @@ function rowClass(line: DiffViewLine): string {
 <style scoped>
 .diff-lines {
   padding: 4px 0 12px;
-  font-size: var(--ui-font-size);
+  font-size: 14px;
   line-height: 1.5;
   -webkit-overflow-scrolling: touch;
   /* Grow to the longest line so every row can fill one uniform width — this
@@ -151,7 +151,7 @@ function rowClass(line: DiffViewLine): string {
 @media (max-width: 640px) {
   .diff-lines {
     overflow-x: auto;
-    font-size: var(--ui-font-size);
+    font-size: 14px;
   }
 }
 </style>

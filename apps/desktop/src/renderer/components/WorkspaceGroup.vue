@@ -265,11 +265,12 @@ function onHeaderDragStart(event: DragEvent): void {
   color: var(--color-text-muted);
 }
 
-/* Group title — quiet by design: regular weight (no bold), muted color (one
+/* Group title — quiet by design: medium weight, muted color (one
    step lighter than the session titles), so group heads read as grouping
    labels rather than list content. */
 .gh-name {
   font-size: var(--ui-font-size-sm);
+  font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   color: var(--color-text-muted);
   flex: 1;

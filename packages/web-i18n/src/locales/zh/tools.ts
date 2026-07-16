@@ -36,6 +36,9 @@ export default {
     created: '已创建',
     todos: '{count} 项',
   },
+  summary: {
+    inScope: '{value} 在 {scope} 中',
+  },
   goal: {
     objectiveWithCriterion: '{objective} · {criterion}',
     status: '状态：{status}',
@@ -49,6 +52,8 @@ export default {
   },
   group: {
     title: '{count} 个工具调用',
+    countOne: '{number}个工具调用',
+    countOther: '{number}个工具调用',
     running: '运行中',
     error: '有失败',
     done: '已完成',

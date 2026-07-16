@@ -450,7 +450,7 @@ body {
 .app {
   font-size: var(--ui-font-size);
 }
-/* Chat/message content → 16px (like Feishu doc body). */
+/* Chat/message content follows the 14px default UI size. */
 .md,
 .md .markdown-renderer,
 .md .markdown-renderer p,
@@ -464,6 +464,13 @@ body {
 .box .bb,
 .ph {
   font-size: var(--content-font-size);
+}
+
+/* Transcript prose uses Chromium's CJK/Latin spacing for mixed-language text. */
+.md,
+.u-bub .u-text,
+.a-msg .msg {
+  text-autospace: normal;
 }
 
 /* UI chrome + code surfaces → 14px (like Feishu/Ant Design shell). */

@@ -31,6 +31,7 @@ export default {
   goalCancelConfirm: 'Cancel this goal? It cannot be resumed afterwards.',
   goalCancelConfirmYes: 'Yes',
   goalCancelConfirmNo: 'No',
+  goalDoneWhen: 'Done when',
   goalStatusActive: 'Active',
   goalStatusPaused: 'Paused',
   goalStatusBlocked: 'Blocked',

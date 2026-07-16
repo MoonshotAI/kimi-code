@@ -192,9 +192,10 @@ function statusLabel(status: AppProvider['status']): string {
         <template v-else>
           <div class="add-form">
             <Field :label="t('providers.fieldType')">
-              <Select v-model="addForm.type">
-                <option v-for="pt in PROVIDER_TYPES" :key="pt" :value="pt">{{ pt }}</option>
-              </Select>
+              <Select
+                v-model="addForm.type"
+                :options="PROVIDER_TYPES.map((type) => ({ value: type, label: type }))"
+              />
             </Field>
             <Field :label="t('providers.fieldApiKey')">
               <Input

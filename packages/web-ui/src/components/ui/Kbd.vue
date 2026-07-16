@@ -31,9 +31,9 @@ defineProps<{
   border: 1px solid var(--color-line);
   border-bottom-width: 2px;
   border-radius: var(--radius-xs);
-  background: var(--color-surface-sunken);
+  background: var(--color-sidebar-bg);
   color: var(--color-text-muted);
-  font-family: var(--font-ui);
+  font-family: var(--font-kbd);
   font-size: 11px;
   line-height: 1;
 }

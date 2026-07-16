@@ -321,7 +321,7 @@ defineExpose({ closeMenu });
 /* Selected: neutral fill (NOT accent-tinted — selection reads as "where I
    am", the accent stays reserved for actions and status). */
 .se.on {
-  background: var(--color-selected);
+  background: var(--sb-selected, var(--color-selected));
   color: var(--color-text);
 }
 
@@ -364,6 +364,7 @@ defineExpose({ closeMenu });
   font-size: var(--ui-font-size-sm);
   font-weight: 450;
   line-height: var(--leading-tight);
+  user-select: none;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -419,7 +420,7 @@ defineExpose({ closeMenu });
 .menu-time {
   padding: 6px 10px;
   color: var(--color-text-faint);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
   cursor: default;
   user-select: text;

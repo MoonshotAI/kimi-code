@@ -36,6 +36,9 @@ export default {
     created: 'created',
     todos: '{count} items',
   },
+  summary: {
+    inScope: '{value} in {scope}',
+  },
   goal: {
     objectiveWithCriterion: '{objective} · {criterion}',
     status: 'Status: {status}',
@@ -49,6 +52,8 @@ export default {
   },
   group: {
     title: '{count} tool call | {count} tool calls',
+    countOne: '{number} tool call',
+    countOther: '{number} tool calls',
     running: 'running',
     error: 'failed',
     done: 'done',

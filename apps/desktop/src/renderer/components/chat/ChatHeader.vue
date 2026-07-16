@@ -256,7 +256,7 @@ async function startArchive(): Promise<void> {
       aria-haspopup="menu"
       @click.stop="toggleMenu($event)"
     >
-      <Icon name="dots-horizontal" size="md" />
+      <Icon name="dots-horizontal" size="sm" />
     </IconButton>
 
     <!-- Fixed more menu -->
@@ -311,6 +311,7 @@ async function startArchive(): Promise<void> {
       class="ch-git"
       @click="emit('openChanges')"
     >
+      <Icon class="ch-branch-icon" name="git-fork" size="sm" />
       <span
         class="ch-branch"
         :class="{ 'ch-detached': !branch }"
@@ -350,10 +351,12 @@ async function startArchive(): Promise<void> {
   gap: 14px;
   height: 48px;
   padding: 0 16px;
-  border-bottom: 1px solid var(--color-line);
+  border-bottom: 0.5px solid var(--color-line);
   background: var(--color-bg);
   font-family: var(--font-ui);
   min-width: 0;
+  user-select: none;
+  container-type: inline-size;
 }
 /* macOS desktop: the window has a hidden title bar, so the conversation header
    doubles as a window-drag region. Interactive controls opt out with no-drag. */
@@ -386,6 +389,7 @@ async function startArchive(): Promise<void> {
   border-radius: var(--radius-xs);
   padding: 2px 5px;
   outline: none;
+  user-select: text;
 }
 
 .ch-git {
@@ -396,7 +400,7 @@ async function startArchive(): Promise<void> {
   background: transparent;
   padding: 0;
   color: var(--muted);
-  font-family: var(--mono);
+  font-family: var(--font-ui);
   font-size: calc(var(--ui-font-size) - 2px);
   flex: 0 1 auto;
   max-width: none;
@@ -404,6 +408,7 @@ async function startArchive(): Promise<void> {
   cursor: pointer;
 }
 .ch-git:hover .ch-branch { color: var(--color-text); }
+.ch-branch-icon { flex: none; color: var(--color-text-muted); }
 .ch-branch {
   color: var(--dim);
   min-width: 0;
@@ -424,15 +429,27 @@ async function startArchive(): Promise<void> {
   font-size: calc(var(--ui-font-size) - 3px);
 }
 .ch-sync-pill { border-color: var(--line); }
-.ch-diff-pill { border-color: color-mix(in srgb, var(--color-success) 20%, var(--line)); }
+.ch-diff-pill {
+  border-color: color-mix(in srgb, var(--color-success) 20%, var(--line));
+  font-variant-numeric: tabular-nums;
+}
 .ch-ahead { color: var(--color-warning); flex: none; }
 .ch-behind { color: var(--color-accent-hover); flex: none; }
 .ch-add { color: var(--color-success); flex: none; }
 .ch-del { color: var(--color-danger); flex: none; }
 .ch-spacer { flex: 1; min-width: 0; }
 
+@container (max-width: 720px) {
+  .ch-ws,
+  .ch-sep { display: none; }
+  .ch-id { flex: 1; max-width: none; }
+  .ch-spacer { flex: 0; }
+}
+
 /* Overflow "…" trigger — IconButton (md). The "open" state keeps the
    sunken highlight while the menu is showing. */
+.chat-header .ch-act-more { width: 24px; height: 24px; border-radius: var(--radius-sm); }
+.chat-header .ch-act-more :deep(svg) { width: 14px; height: 14px; }
 .ch-act-more.open { background: var(--color-surface-sunken); color: var(--color-text); }
 
 /* GitHub PR badge — semantic state colors aligned with GitHub

@@ -5,6 +5,7 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
+    "prepare:fonts": "node scripts/prepare-fonts.mjs",
     "sync": "git submodule update --init --recursive",
     "build": "pnpm -r run build",
     "dev:desktop": "pnpm --filter @moonshot-ai/kimi-desktop run dev",
@@ -23,7 +24,8 @@
     "tsdown": "0.22.0",
     "tsx": "^4.21.0",
     "typescript": "6.0.2",
-    "vitest": "4.1.4"
+    "vitest": "4.1.4",
+    "woff2-encoder": "2.0.0"
   },
   "engines": {
     "node": ">=24.15.0"

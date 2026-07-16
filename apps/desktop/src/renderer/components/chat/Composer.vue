@@ -783,6 +783,11 @@ function choosePermission(mode: PermissionMode): void {
 
 const permInfo = computed(() => PERM_MODES.find((p) => p.mode === props.status?.permission));
 const permLabel = computed(() => (permInfo.value ? t(permInfo.value.labelKey) : ''));
+const permIcon = computed(() => {
+  if (props.status?.permission === 'yolo') return 'bolt';
+  if (props.status?.permission === 'auto') return 'check';
+  return 'help-circle';
+});
 
 // ---------------------------------------------------------------------------
 // Model dropdown — current provider models + thinking + more
@@ -955,10 +960,14 @@ function selectModel(modelId: string): void {
             :class="['perm-' + status.permission, { open: permDropdownOpen }]"
             role="button"
             tabindex="0"
+            :aria-label="permLabel"
             @click.stop="togglePermDropdown"
             @keydown.enter="togglePermDropdown"
             @keydown.space.prevent="togglePermDropdown"
-          >{{ permLabel }}</span>
+          >
+            <Icon class="perm-pill-icon" :name="permIcon" size="sm" />
+            <span class="perm-pill-label">{{ permLabel }}</span>
+          </span>
 
           <!-- Permission dropdown — anchored to the toolbar left side -->
           <div
@@ -1217,11 +1226,13 @@ function selectModel(modelId: string): void {
   --composer-send-size: 32px;
   --composer-send-inset: var(--space-2);
   position: relative;
-  border: 1px solid var(--line);
+  border: 0.5px solid var(--line);
   border-radius: var(--radius-2xl);
   background: var(--bg);
   box-shadow: var(--shadow-input);
   transition: border-color 0.15s, box-shadow 0.15s;
+  user-select: none;
+  container-type: inline-size;
 }
 .composer-card:focus-within {
   border-color: var(--color-accent);
@@ -1437,12 +1448,14 @@ function selectModel(modelId: string): void {
   resize: none;
   font-family: var(--font-ui);
   font-size: var(--content-font-size);
+  text-autospace: normal;
   background: transparent;
   min-height: 36px;
   max-height: calc(100vh / 4);
   overflow-y: auto;
   line-height: 1.5;
   margin-bottom: 6px;
+  user-select: text;
 }
 
 .ph::placeholder {
@@ -1593,6 +1606,11 @@ function selectModel(modelId: string): void {
   min-width: 0;
   overflow: hidden;
 }
+.toolbar-left { flex: 0 1 auto; }
+.toolbar-right {
+  flex: 1 1 0;
+  justify-content: flex-end;
+}
 
 /* Permission pill */
 .perm-pill {
@@ -1624,6 +1642,23 @@ function selectModel(modelId: string): void {
 .perm-pill.perm-auto {
   color: var(--color-danger);
 }
+.perm-pill-icon {
+  display: none;
+  flex: none;
+}
+
+@container (max-width: 620px) {
+  .perm-pill-icon { display: block; }
+
+  .perm-pill {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    justify-content: center;
+    flex: none;
+  }
+  .perm-pill-label { display: none; }
+}
 
 /* Context group — circular ring. Focusable for keyboard / switch access to its
    aria-label and tooltip (see template), so it needs a focus ring. */
@@ -1632,7 +1667,7 @@ function selectModel(modelId: string): void {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
-  padding: 2px 4px;
+  padding: 2px 0;
   border-radius: var(--radius-xs);
 }
 .ctx-group:focus-visible {
@@ -1657,6 +1692,9 @@ function selectModel(modelId: string): void {
   transition: background 0.1s;
   position: relative;
   overflow: hidden;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 320px;
 }
 .model-pill:hover {
   background: var(--color-surface-sunken);
@@ -1666,13 +1704,13 @@ function selectModel(modelId: string): void {
   background: var(--color-accent-soft);
 }
 .model-pill b {
+  flex: 0 1 auto;
   font-weight: 500;
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
-  max-width: 280px;
 }
 .model-pill .think-suffix {
   color: var(--color-accent);
@@ -1692,7 +1730,7 @@ function selectModel(modelId: string): void {
 .model-dropdown {
   position: absolute;
   bottom: calc(100% + 4px);
-  right: 10px;
+  right: calc(var(--composer-send-inset) + var(--composer-send-size) + var(--space-2) + 2px);
   z-index: var(--z-dropdown);
   min-width: 200px;
   background: var(--color-surface-raised);
@@ -2131,9 +2169,6 @@ function selectModel(modelId: string): void {
 @media (max-width: 980px) {
   /* Model name was budgeted for a wide card (280px); trim it so the ring and
      send button are not squeezed out on a narrow column. */
-  .model-pill b {
-    max-width: 130px;
-  }
   /* Permission label is short (manual/yolo/auto); cap it defensively so a
      longer label can never push the toolbar past its container. */
   .perm-pill {
@@ -2218,7 +2253,7 @@ function selectModel(modelId: string): void {
 
   /* Model dropdown on mobile → anchored right with padding */
   .model-dropdown {
-    right: 10px;
+    right: calc(var(--composer-send-inset) + var(--composer-send-size) + var(--space-2) + 2px);
     left: auto;
     min-width: 180px;
     max-width: calc(100vw - 24px);

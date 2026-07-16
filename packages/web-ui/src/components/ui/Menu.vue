@@ -19,11 +19,14 @@ defineExpose({ el });
 <style scoped>
 .ui-menu {
   min-width: 180px;
-  padding: var(--space-1);
+  padding: 3.5px;
   background: var(--color-surface-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow:
+    0 6px 18px lch(0% 0 0 / 0.02),
+    0 3px 9px lch(0% 0 0 / 0.04),
+    0 1px 1px lch(0% 0 0 / 0.04);
   display: flex;
   flex-direction: column;
 }

@@ -123,12 +123,13 @@ watch(
   background: var(--color-surface-sunken);
 }
 .at-type {
-  font: var(--text-xs) var(--font-mono);
+  font: var(--text-xs) var(--font-ui);
   color: var(--color-text-muted);
   margin-bottom: 6px;
 }
 .at-task {
   color: var(--color-text);
+  font-family: var(--font-ui);
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -136,6 +137,7 @@ watch(
   margin-top: 10px;
 }
 .bb-code {
+  font-family: var(--font-ui);
   padding: 11px 13px;
   border: 1px solid var(--color-line);
   border-radius: var(--radius-md);

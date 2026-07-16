@@ -416,6 +416,9 @@ const dockHeight = ref(0);
 const chatDockStyle = computed(() => ({
   '--panes-scrollbar-width': `${panesScrollbarWidth.value}px`,
 }));
+const chatLayoutStyle = computed(() => ({
+  '--chat-dock-height': `${dockHeight.value}px`,
+}));
 type ComposerHandle = {
   loadForEdit: (value: string) => boolean | void;
   loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video'; url: string; name?: string }[]) => void;
@@ -1268,7 +1271,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
       @select="scrollToTurn"
     />
 
-    <div class="chat-layout">
+    <div class="chat-layout" :style="chatLayoutStyle">
       <div
         :ref="bindChatPane"
         class="panes chat-scroll"
@@ -1485,7 +1488,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
         :aria-label="t('conversation.jumpToLatestAria')"
         @click="scrollToBottom(true)"
       >
-        <Icon class="pill-chevron" name="chevron-down" size="md" />
+        <Icon class="pill-chevron" name="arrow-down" size="sm" />
         {{ t('conversation.newMessages') }}
       </button>
     </Transition>
@@ -1550,6 +1553,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
   width: 100%;
   max-width: var(--read-max);
   min-height: 100%;
+  box-sizing: border-box;
+  padding-bottom: var(--chat-dock-height, 0px);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -1587,6 +1592,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
   padding: 0 16px 16px;
   color: var(--color-text);
   font-family: var(--font-ui);
+  user-select: none;
 }
 .empty-hint-title {
   font-size: calc(var(--ui-font-size) + 16px);
@@ -1681,7 +1687,10 @@ defineExpose({ loadComposerForEdit, focusComposer });
   background: var(--color-surface-raised);
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
+  box-shadow:
+    0 6px 18px lch(0% 0 0 / 0.02),
+    0 3px 9px lch(0% 0 0 / 0.04),
+    0 1px 1px lch(0% 0 0 / 0.04);
   padding: 4px;
 }
 .ws-pick-item {
@@ -1785,7 +1794,8 @@ defineExpose({ loadComposerForEdit, focusComposer });
   border: 1px solid var(--line);
   background: var(--panel);
   color: var(--color-text);
-  font-size: var(--ui-font-size-sm);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-ui-strong);
   cursor: pointer;
   box-shadow: var(--shadow-sm);
   /* Positioned after the message flow, so base z-index is enough to float above
