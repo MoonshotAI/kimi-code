@@ -63,12 +63,12 @@ async function startInProcessSseMcpServer(opts?: {
   });
 
   await new Promise<void>((resolve) => {
-    httpServer.listen(0, '127.0.0.1', resolve);
+    httpServer.listen(0, 'localhost', resolve);
   });
   const port = (httpServer.address() as AddressInfo).port;
 
   return {
-    url: `http://127.0.0.1:${port}/mcp`,
+    url: `http://localhost:${port}/mcp`,
     async close() {
       await Promise.all([...transports.values()].map((transport) => transport.close()));
       await new Promise<void>((resolve, reject) => {

@@ -152,9 +152,9 @@ describe('StdioMcpClient', () => {
   }, 15000);
 
   it('inherits parent process env so PATH/HOME survive; config.env overrides on conflict', async () => {
-    const parentOnly = `KIMI_TEST_PARENT_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    // With the whitelist model, only known system vars are inherited from the
+    // parent process. Arbitrary env vars must be declared in config.env.
     const shared = `KIMI_TEST_SHARED_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    process.env[parentOnly] = 'from-parent';
     process.env[shared] = 'from-parent';
     const client = new StdioMcpClient({
       transport: 'stdio',
@@ -164,12 +164,16 @@ describe('StdioMcpClient', () => {
     });
     try {
       await client.connect();
-      const inherited = await client.callTool('read_env', { name: parentOnly });
-      expect(inherited.content).toEqual([{ type: 'text', text: 'from-parent' }]);
+      // PATH is always inherited from the parent via the whitelist.
+      const inherited = await client.callTool('read_env', { name: 'PATH' });
+      expect(inherited.content[0]).toHaveProperty('type', 'text');
+      expect((inherited.content[0] as { text: string }).text).toContain(
+        process.platform === 'win32' ? ';' : ':',
+      );
+      // config.env overrides parent env for the same key.
       const overridden = await client.callTool('read_env', { name: shared });
       expect(overridden.content).toEqual([{ type: 'text', text: 'from-config' }]);
     } finally {
-      delete process.env[parentOnly];
       delete process.env[shared];
       await client.close();
     }
