@@ -113,10 +113,8 @@ describeLive('legacy: image file prompts', () => {
       expect(submit.prompt_id.length).toBeGreaterThan(0);
       log('prompt submitted', { file_id: png.id, prompt_id: submit.prompt_id });
 
-      let terminalStatus: 'idle' | 'aborted' = 'idle';
       try {
         await client.abortPrompt(sid, submit.prompt_id);
-        terminalStatus = 'aborted';
         log('prompt aborted', { prompt_id: submit.prompt_id });
       } catch (error) {
         if (
@@ -129,7 +127,7 @@ describeLive('legacy: image file prompts', () => {
           throw error;
         }
       }
-      await client.waitForSessionStatus(sid, terminalStatus, { timeoutMs: SHORT_TIMEOUT_MS });
+      await client.waitForSessionBusy(sid, false, { timeoutMs: SHORT_TIMEOUT_MS });
     } finally {
       for (const fileId of files.toReversed()) {
         try {

@@ -54,6 +54,7 @@ export type {
   SessionFacade,
   SessionInteractionsFacade,
   SessionQuestionsFacade,
+  SessionStatus,
 } from './core/facade/session.js';
 export type {
   AgentContextData,
@@ -111,7 +112,6 @@ export type {
   SessionMeta,
   SessionMetaPatch,
 } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-export type { SessionStatus } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 export type {
   ApprovalRequest,
   ApprovalResponse,

@@ -7,6 +7,7 @@
  */
 
 import type { KlientContract } from './types.js';
+import { agentActivityViewContract } from './agent/activity.js';
 import { agentRpcContract } from './agent/rpc.js';
 import { authContract, authSummaryContract } from './global/auth.js';
 import { catalogContract } from './global/catalog.js';
@@ -19,7 +20,6 @@ import { pluginsContract } from './global/plugins.js';
 import { providersContract } from './global/providers.js';
 import { sessionsContract } from './global/sessions.js';
 import { workspacesContract } from './global/workspaces.js';
-import { sessionActivityContract } from './session/activity.js';
 import { sessionApprovalContract } from './session/approval.js';
 import { sessionInteractionContract } from './session/interaction.js';
 import { sessionLifecycleContract } from './session/lifecycle.js';
@@ -43,12 +43,12 @@ export const globalContract: KlientContract = {
   // session scope (+ the app-registered lifecycle service)
   sessionLifecycleService: sessionLifecycleContract,
   sessionMetadata: sessionMetadataContract,
-  sessionActivity: sessionActivityContract,
   sessionInteractionService: sessionInteractionContract,
   sessionApprovalService: sessionApprovalContract,
   sessionQuestionService: sessionQuestionContract,
   // agent scope
   agentRPCService: agentRpcContract,
+  agentActivityView: agentActivityViewContract,
 };
 
 export type { KlientContract, ProcedureContract, ServiceContract } from './types.js';

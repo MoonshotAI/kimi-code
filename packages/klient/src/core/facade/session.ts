@@ -7,12 +7,12 @@
  * wire).
  */
 
+import type { AgentActivityState } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type {
   AgentMeta,
   SessionMeta,
   SessionMetaPatch,
 } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import type { SessionStatus } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type {
   ApprovalRequest,
   ApprovalResponse,
@@ -51,6 +51,14 @@ export interface SessionInteractionsFacade {
   list(kind?: InteractionKind): Promise<readonly Interaction[]>;
   respond(id: string, response: unknown): Promise<void>;
 }
+
+/**
+ * Derived session lifecycle phase. The engine retired its `sessionActivity`
+ * service (#1751) — busy is now derived from agent activity views — so the
+ * facade composes the phase from the pending interaction lists and each
+ * agent's `agentActivityView`, keeping the retired service's precedence.
+ */
+export type SessionStatus = 'running' | 'idle' | 'awaiting_approval' | 'awaiting_question';
 
 export interface SessionFacade {
   get(): Promise<SessionMeta>;
@@ -94,7 +102,31 @@ export function createSessionFacade(call: ScopedCaller, sessionId: string): Sess
     update: (patch) => call(scope, 'sessionMetadata', 'update', [patch]) as Promise<void>,
     setArchived: (archived) =>
       call(scope, 'sessionMetadata', 'setArchived', [archived]) as Promise<void>,
-    status: () => call(scope, 'sessionActivity', 'status', []) as Promise<SessionStatus>,
+    status: async () => {
+      const pending = (kind: 'approval' | 'question') =>
+        call(scope, 'sessionInteractionService', 'listPending', [kind]) as Promise<
+          readonly unknown[]
+        >;
+      if ((await pending('approval')).length > 0) return 'awaiting_approval';
+      if ((await pending('question')).length > 0) return 'awaiting_question';
+      const meta = await read();
+      for (const agentId of Object.keys(meta.agents ?? {})) {
+        try {
+          const state = (await call(
+            { sessionId, agentId },
+            'agentActivityView',
+            'state',
+            [],
+          )) as AgentActivityState;
+          if (state.turn !== undefined || state.background.length > 0) return 'running';
+        } catch {
+          // Agents stay registered after their live handle is gone; the scope
+          // probe fails for a dead agent, so treat it as not active — the same
+          // view the retired service had from iterating live handles only.
+        }
+      }
+      return 'idle';
+    },
     close: () => call({}, 'sessionLifecycleService', 'close', [sessionId]) as Promise<void>,
     archive: () => call({}, 'sessionLifecycleService', 'archive', [sessionId]) as Promise<void>,
     restore: async () => {

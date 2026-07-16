@@ -127,8 +127,13 @@ describe('Klient (server-v2 smoke)', () => {
     );
     expect(after.title).toBe('renamed');
 
-    const status = await v2Rpc<string>(baseUrl, token, `/session/${sid}/sessionActivity/status`, []);
-    expect(['idle', 'running', 'awaiting_approval', 'awaiting_question']).toContain(status);
+    const pending = await v2Rpc<unknown[]>(
+      baseUrl,
+      token,
+      `/session/${sid}/sessionInteractionService/listPending`,
+      [],
+    );
+    expect(pending).toEqual([]);
 
     await v2Rpc(baseUrl, token, `/session/${sid}/sessionLifecycleService/archive`, [sid]);
   });

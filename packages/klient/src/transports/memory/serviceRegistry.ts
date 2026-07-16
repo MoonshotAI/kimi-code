@@ -23,11 +23,11 @@ import { IEventService } from '@moonshot-ai/agent-core-v2/app/event/event';
 import { IHostFolderBrowser } from '@moonshot-ai/agent-core-v2/app/hostFolderBrowser/hostFolderBrowser';
 import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/sessionLifecycle/sessionLifecycle';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
-import { ISessionActivity } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
+import { IAgentActivityView } from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 
 /** Wire service name (decorator id string) → token. */
 export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>> = {
@@ -45,11 +45,11 @@ export const serviceTokens: Readonly<Record<string, ServiceIdentifier<unknown>>>
   bootstrapService: IBootstrapService,
   sessionLifecycleService: ISessionLifecycleService,
   sessionMetadata: ISessionMetadata,
-  sessionActivity: ISessionActivity,
   sessionInteractionService: ISessionInteractionService,
   sessionApprovalService: ISessionApprovalService,
   sessionQuestionService: ISessionQuestionService,
   agentRPCService: IAgentRPCService,
+  agentActivityView: IAgentActivityView,
 };
 
 export { IEventService };

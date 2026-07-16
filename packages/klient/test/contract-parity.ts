@@ -10,7 +10,19 @@
 
 import type { z } from 'zod';
 
+import type {
+  ActivityLastTurnState,
+  ActivityRetryState,
+  ActivityTurnState,
+  ActivityViewLifecycle,
+  AgentActivityState,
+  ApprovalRef,
+  BackgroundRef,
+  ToolCallRef,
+  TurnPhase,
+} from '@moonshot-ai/agent-core-v2/agent/activityView/activityView';
 import type { AgentContextData } from '@moonshot-ai/agent-core-v2/agent/contextMemory/types';
+import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type { PlanData } from '@moonshot-ai/agent-core-v2/agent/plan/plan';
 import type {
   AgentAPI,
@@ -38,7 +50,6 @@ import type {
   QuestionResponse,
   QuestionResult,
 } from '@moonshot-ai/agent-core-v2/session/question/question';
-import type { SessionStatus } from '@moonshot-ai/agent-core-v2/session/sessionActivity/sessionActivity';
 import type {
   AgentMeta,
   SessionMeta,
@@ -107,6 +118,18 @@ import type {
 } from '@moonshot-ai/protocol';
 
 import {
+  activityLastTurnStateSchema,
+  activityRetryStateSchema,
+  activityTurnStateSchema,
+  activityViewLifecycleSchema,
+  agentActivityStateSchema,
+  approvalRefSchema,
+  backgroundRefSchema,
+  toolCallRefSchema,
+  turnEndReasonSchema,
+  turnPhaseSchema,
+} from '../src/contract/agent/activity.js';
+import {
   agentContextDataSchema,
   agentTaskInfoSchema,
   cancelPayloadSchema,
@@ -140,7 +163,6 @@ import {
   turnStartedEventSchema,
   warningEventSchema,
 } from '../src/contract/agent/events.js';
-import { sessionStatusSchema } from '../src/contract/session/activity.js';
 import {
   approvalRequestSchema,
   approvalResponseSchema,
@@ -382,9 +404,6 @@ const _sessionMetadataChangedEvent: AssertWire<
   SessionMetadataChangedEvent
 > = true;
 
-// session/activity.ts
-const _sessionStatus: AssertWire<typeof sessionStatusSchema, SessionStatus> = true;
-
 // session/lifecycle.ts
 const _createSessionOptions: AssertWire<typeof createSessionOptionsSchema, CreateSessionOptions> =
   true;
@@ -419,6 +438,26 @@ const _questionOption: AssertWire<typeof questionOptionSchema, QuestionOption> =
 const _questionAnswers: AssertWire<typeof questionAnswersSchema, QuestionAnswers> = true;
 const _questionResponse: AssertWire<typeof questionResponseSchema, QuestionResponse> = true;
 const _questionResult: AssertWire<typeof questionResultSchema, QuestionResult> = true;
+
+// agent/activity.ts
+const _turnPhase: AssertWire<typeof turnPhaseSchema, TurnPhase> = true;
+const _approvalRef: AssertWire<typeof approvalRefSchema, ApprovalRef> = true;
+const _toolCallRef: AssertWire<typeof toolCallRefSchema, ToolCallRef> = true;
+const _activityRetryState: AssertWire<typeof activityRetryStateSchema, ActivityRetryState> = true;
+// One-directional: `origin` is the deep `PromptOrigin` union mirrored as
+// `unknown`; the wire schema cannot be assignable back to the engine type.
+const _activityTurnState: AssertEngineToWire<typeof activityTurnStateSchema, ActivityTurnState> =
+  true;
+const _turnEndReason: AssertWire<typeof turnEndReasonSchema, TurnEndReason> = true;
+const _activityLastTurnState: AssertWire<
+  typeof activityLastTurnStateSchema,
+  ActivityLastTurnState
+> = true;
+const _backgroundRef: AssertWire<typeof backgroundRefSchema, BackgroundRef> = true;
+const _activityViewLifecycle: AssertWire<typeof activityViewLifecycleSchema, ActivityViewLifecycle> =
+  true;
+const _agentActivityState: AssertEngineToWire<typeof agentActivityStateSchema, AgentActivityState> =
+  true;
 
 // ── agent scope (rpc.ts) ────────────────────────────────────────────────────
 // Payload/result types are reached through the `AgentAPI` interface so the
