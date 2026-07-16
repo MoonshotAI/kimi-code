@@ -1,4 +1,5 @@
 import { sleep } from '@antfu/utils';
+import { isProviderRateLimitError } from '@moonshot-ai/kosong';
 
 import type { Logger } from '#/logging/types';
 
@@ -7,21 +8,29 @@ import type { LoopEventDispatcher } from './events';
 import { isAbortError } from './errors';
 import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
 
-// Default retry budget per step: 10 attempts (9 retries). With the
-// exponential ramp below the backoff climbs 0.5s, 1s, 2s … up to the 32s
-// cap, giving roughly 2–3 minutes of total wait — enough to ride out a
-// typical provider overload window (sustained 429s) instead of surfacing
-// the error after a couple of quick retries.
+// Default retry budget per step: 10 attempts (9 retries).
 export const DEFAULT_MAX_RETRY_ATTEMPTS = 10;
 
 const BASE_DELAY_MS = 500;
-// Per-attempt backoff cap (32s). The default 10-attempt ramp reaches the
-// cap on the 7th retry, so most of the budget is spent at the cap waiting
-// out multi-minute provider overload.
 const MAX_DELAY_MS = 32_000;
 const RETRY_FACTOR = 2;
-// Up to 25% jitter on top of the exponential base to avoid herd retries.
 const JITTER_FACTOR = 0.25;
+
+// Overload backoff: 5s/10s/30s for 503 errors
+const OVERLOAD_BASE_DELAY_MS = 5_000;
+const OVERLOAD_MAX_DELAY_MS = 30_000;
+const OVERLOAD_RETRY_FACTOR = 2;
+
+// Rate-limit backoff: 15s/30s/60s for Xunfei TPM codes
+const RATE_LIMIT_BASE_DELAY_MS = 15_000;
+const RATE_LIMIT_MAX_DELAY_MS = 60_000;
+const RATE_LIMIT_RETRY_FACTOR = 2;
+
+function isOverloadError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  return typeof statusCode === 'number' && statusCode === 503;
+}
 
 export interface ChatWithRetryInput {
   readonly llm: LLM;
@@ -58,10 +67,13 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
         throw error;
       }
 
-      // A server `Retry-After` (carried on the error) overrides the computed
-      // backoff. The chosen delay is what gets reported on the
-      // `step.retrying` event via `delayMs` either way.
-      const delayMs = readRetryAfterMs(error) ?? delays[attempt - 1] ?? 0;
+      const delayMs =
+        readRetryAfterMs(error) ??
+        (isProviderRateLimitError(error)
+          ? tieredBackoffDelay(attempt, RATE_LIMIT_BASE_DELAY_MS, RATE_LIMIT_MAX_DELAY_MS, RATE_LIMIT_RETRY_FACTOR)
+          : isOverloadError(error)
+            ? tieredBackoffDelay(attempt, OVERLOAD_BASE_DELAY_MS, OVERLOAD_MAX_DELAY_MS, OVERLOAD_RETRY_FACTOR)
+            : delays[attempt - 1] ?? 0);
       input.params.signal.throwIfAborted();
       input.dispatchEvent({
         type: 'step.retrying',
@@ -79,12 +91,7 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
   }
 }
 
-function logRequestFailure(
-  input: ChatWithRetryInput,
-  error: unknown,
-  attempt: number,
-  maxAttempts: number,
-): void {
+function logRequestFailure(input: ChatWithRetryInput, error: unknown, attempt: number, maxAttempts: number): void {
   if (isAbortError(error) || input.params.signal.aborted) return;
   input.log?.warn('llm request failed', {
     turnStep: `${input.turnId}.${String(input.currentStep)}`,
@@ -94,30 +101,18 @@ function logRequestFailure(
   });
 }
 
-function paramsForAttempt(
-  input: ChatWithRetryInput,
-  attempt: number,
-  maxAttempts: number,
-): LLMChatParams {
+function paramsForAttempt(input: ChatWithRetryInput, attempt: number, maxAttempts: number): LLMChatParams {
   const turnStep = `${input.turnId}.${String(input.currentStep)}`;
-  // Preserve caller-set fields (e.g. the strict-resend projection marker);
-  // only the per-attempt turnStep/attempt pair is owned here.
   return {
     ...input.params,
     requestLogFields:
       attempt === 1
         ? { ...input.params.requestLogFields, turnStep }
-        : {
-            ...input.params.requestLogFields,
-            turnStep,
-            attempt: `${String(attempt)}/${String(maxAttempts)}`,
-          },
+        : { ...input.params.requestLogFields, turnStep, attempt: `${String(attempt)}/${String(maxAttempts)}` },
   };
 }
 
 export function retryBackoffDelays(maxAttempts: number): number[] {
-  // For attempt (1-based) the base delay is min(500ms * 2^(attempt-1), 32s),
-  // plus up to 25% jitter. Index i here is 0-based, so attempt = i + 1.
   const count = Math.max(maxAttempts - 1, 0);
   const delays: number[] = [];
   for (let i = 0; i < count; i += 1) {
@@ -127,12 +122,10 @@ export function retryBackoffDelays(maxAttempts: number): number[] {
   return delays;
 }
 
-/**
- * Server-requested backoff carried on a kosong `APIStatusError` (parsed from
- * the `retry-after` response header). When present and positive it overrides
- * the computed backoff — a server `Retry-After` directive takes precedence
- * over the local exponential delay.
- */
+function tieredBackoffDelay(attempt: number, base: number, max: number, factor: number): number {
+  return Math.min(base * Math.pow(factor, attempt - 1), max);
+}
+
 function readRetryAfterMs(error: unknown): number | null {
   if (typeof error !== 'object' || error === null) return null;
   const value = (error as { retryAfterMs?: unknown }).retryAfterMs;
