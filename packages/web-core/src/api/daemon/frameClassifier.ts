@@ -27,6 +27,7 @@ const KNOWN_AGENT_CORE_TYPES = new Set([
   'agent.status.updated',
   'prompt.submitted',
   'prompt.completed',
+  'prompt.aborted',
   'session.meta.updated',
   'compaction.started',
   'compaction.completed',

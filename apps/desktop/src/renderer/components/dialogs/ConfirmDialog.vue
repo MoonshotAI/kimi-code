@@ -3,16 +3,9 @@
      Dialog (height auto, right-aligned footer). The single confirmation surface
      for user actions — driven app-wide by useConfirmDialog(). -->
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue';
+import { onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Button, Dialog } from '@moonshot-ai/web-ui';
-
-const confirmButtonRef = ref<InstanceType<typeof Button> | null>(null);
-
-function confirmButtonElement(): HTMLElement | null {
-  const el = confirmButtonRef.value?.$el;
-  return el instanceof HTMLElement ? el : null;
-}
 
 const props = withDefaults(defineProps<{
   open: boolean;
@@ -36,6 +29,10 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 function onCancel(): void {
+  // While the confirm action runs (loading), every cancel path — Cancel
+  // button, header close, Esc, overlay click — is inert so the dialog can't
+  // be dismissed out from under the in-flight work.
+  if (props.loading) return;
   emit('update:open', false);
   emit('cancel');
 }
@@ -69,11 +66,17 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
+  <!-- initial-focus uses a selector, not the Button component's $el: Button
+       has a template-root comment, so in dev builds it renders as a fragment
+       whose $el is a text node (unfocusable) — focus would fall back to the
+       header close button and Enter would cancel instead of confirm. -->
   <Dialog
     :open="open"
     :title="title"
     height="auto"
-    :initial-focus="confirmButtonElement"
+    initial-focus=".confirm-dialog__confirm"
+    :close-on-esc="!loading"
+    :close-on-overlay="!loading"
     @update:open="emit('update:open', $event)"
     @close="onCancel"
   >
@@ -83,7 +86,7 @@ onBeforeUnmount(() => {
         {{ cancelLabel ?? t('common.cancel') }}
       </Button>
       <Button
-        ref="confirmButtonRef"
+        class="confirm-dialog__confirm"
         :variant="variant"
         :loading="loading"
         @click="emit('confirm')"

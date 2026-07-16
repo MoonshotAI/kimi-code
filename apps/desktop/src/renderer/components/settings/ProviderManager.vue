@@ -6,10 +6,8 @@ import { useI18n } from 'vue-i18n';
 import type { AppProvider } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import { Badge, Button, Dialog, Field, Icon, Input, Select, Spinner, Tooltip } from '@moonshot-ai/web-ui';
-import { useConfirmDialog } from '../../composables/useConfirmDialog';
 
 const { t } = useI18n();
-const { confirm } = useConfirmDialog();
 
 const dialogRef = ref<HTMLElement | null>(null);
 // Move focus into the dialog on open; restore it to the opener on close.
@@ -35,17 +33,10 @@ const emit = defineEmits<{
 // Delete confirmation
 // -------------------------------------------------------------------------
 
-// Delete confirmation — modal, consistent with remove-workspace.
-async function onDeleteProvider(id: string): Promise<void> {
-  if (
-    await confirm({
-      title: t('providers.delete'),
-      message: t('providers.confirmDelete'),
-      variant: 'danger',
-    })
-  ) {
-    emit('delete', id);
-  }
+// Delete — the modal confirm and the async delete live in App.vue
+// (confirmDeleteProvider); the manager only emits the intent.
+function onDeleteProvider(id: string): void {
+  emit('delete', id);
 }
 
 // -------------------------------------------------------------------------

@@ -15,6 +15,6 @@ const preset = kimiRendererViteConfig({
 export default defineConfig({
   plugins: preset.plugins,
   test: {
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
   },
 });

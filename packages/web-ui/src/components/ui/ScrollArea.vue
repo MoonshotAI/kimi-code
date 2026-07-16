@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, type CSSProperties } from 'vue';
 
 type Axis = 'vertical' | 'horizontal';
 type Orientation = Axis | 'both';
@@ -35,7 +35,7 @@ let hideTimer: ReturnType<typeof setTimeout> | null = null;
 let resizeObserver: ResizeObserver | null = null;
 let mutationObserver: MutationObserver | null = null;
 
-const viewportStyle = computed(() => ({
+const viewportStyle = computed<CSSProperties>(() => ({
   overflowX: props.orientation === 'vertical' ? 'hidden' : 'auto',
   overflowY: props.orientation === 'horizontal' ? 'hidden' : 'auto',
 }));
