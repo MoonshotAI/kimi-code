@@ -6,13 +6,19 @@ name: Release
 # 流程（push 到 main 时）：
 # 1. changesets/action 维护 "ci: release desktop" 版本 PR（有未消费的
 #    changeset 时创建 / 更新；没有则跳过）。
-# 2. 版本 PR 合入后，检测到 apps/desktop/package.json 的版本还没有对应
-#    tag，则调 desktop-build.yml（签名 + 公证）打出四平台安装包，创建
-#    GitHub Release（tag v<version>，notes 自动生成），并把 dmg / zip /
-#    exe / AppImage / deb 全部上传为该 release 的 assets。
+# 2. 版本 PR 合入后，若判定本次 push 改动了 apps/desktop/package.json 的
+#    版本号且该版本还没有对应 tag，则调 desktop-build.yml（签名 + 公证）
+#    打出四平台安装包，创建 GitHub Release（tag v<version>，notes 自动
+#    生成），并把 dmg / zip / exe / AppImage / deb 全部上传为该 release
+#    的 assets。
+#
+# 触发语义：发版只在"版本号被这次 push 改变"（版本 PR 合入，或手动改版本
+# 号 = 手动发版）时发生；普通 PR 合入不会改变版本号，不会发版——包括发版
+# CI 自身合入、版本基线重置这类 push。
 #
 # 幂等：tag 已存在则整段跳过；tag 随 gh release create 在最后一步创建，
-# 打包失败时不会留下悬空 tag，修复后重跑本 workflow 即可。
+# 打包失败时不会留下悬空 tag，修复后重跑本 workflow 即可（版本 PR merge
+# commit 上版本号仍是"被这次 push 改变"的增量判定，重跑依旧成立）。
 on:
   push:
     branches:
@@ -67,7 +73,18 @@ jobs:
           set -euo pipefail
           version=$(node -p "require('./apps/desktop/package.json').version")
           tag="v${version}"
-          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
+          # 发版 = 版本 PR（ci: release desktop）合入。判定依据：本次 push
+          # 改动了桌面版本号（而不是"版本号恰好没有 tag"——发版 CI 自身合入、
+          # 手动改版本基线等情况不该触发发版）。版本 PR 之外直接改版本号视为
+          # 手动发版，同样放行。
+          prev_version=""
+          if git show "HEAD~1:apps/desktop/package.json" > /tmp/prev-desktop-pkg.json 2> /dev/null; then
+            prev_version=$(node -p "require('/tmp/prev-desktop-pkg.json').version")
+          fi
+          if [ "$prev_version" = "$version" ]; then
+            echo "desktop version unchanged in this push (${version}) — nothing to release"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          elif git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
             echo "tag ${tag} already exists on origin — nothing to release"
             echo "should_release=false" >> "$GITHUB_OUTPUT"
           else
