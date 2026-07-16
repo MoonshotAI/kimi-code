@@ -1,5 +1,39 @@
 # @moonshot-ai/kimi-code
 
+## 0.26.0
+
+### Minor Changes
+
+- [#1776](https://github.com/MoonshotAI/kimi-code/pull/1776) [`ffaf0b9`](https://github.com/MoonshotAI/kimi-code/commit/ffaf0b98ca76bb90ba9c989256441dceb468d85f) Thanks [@sailist](https://github.com/sailist)! - Expand the coder subagent tool set to include background tasks, todo lists, plan mode, skill invocation, and nested agents, mirroring the main agent's capabilities; a subagent run also waits for its background tasks to settle before reporting completion. Applies automatically to coder subagents launched through the Agent tool.
+
+### Patch Changes
+
+- [#1771](https://github.com/MoonshotAI/kimi-code/pull/1771) [`b513975`](https://github.com/MoonshotAI/kimi-code/commit/b5139757e2df1b5b8723d4bab5137266f5eb0f01) Thanks [@liruifengv](https://github.com/liruifengv)! - Optimize the unit formatting of the context usage display.
+
+- [#1765](https://github.com/MoonshotAI/kimi-code/pull/1765) [`d531398`](https://github.com/MoonshotAI/kimi-code/commit/d531398d0143cd3b0a2f4a099ff537894c9245e9) Thanks [@RealKai42](https://github.com/RealKai42)! - Fix Kimi-provider models routed through the Anthropic protocol incorrectly showing reasoning effort options. Effort choices now come only from the model's declared metadata, and the inferred fallback profile applies solely to non-Kimi Anthropic-compatible providers.
+
+- [#1774](https://github.com/MoonshotAI/kimi-code/pull/1774) [`3d5d630`](https://github.com/MoonshotAI/kimi-code/commit/3d5d630c12ea71fb7066e8018dfa2cb6d42da3e8) Thanks [@RealKai42](https://github.com/RealKai42)! - Honor an explicit thinking "off" on OpenAI-compatible (chat completions) providers: it used to be indistinguishable from "never configured", so the history-based auto `reasoning_effort` injection kept the model reasoning (and could leak the field to models that reject it). The provider now also reports the actual current thinking effort ("on"/"off") instead of recording "off" for both.
+
+- [#1766](https://github.com/MoonshotAI/kimi-code/pull/1766) [`7042af3`](https://github.com/MoonshotAI/kimi-code/commit/7042af3571dbfbf5600535a56692434b84afb4ce) Thanks [@kermanx](https://github.com/kermanx)! - web: Fix the sidebar resize handle being covered by the chat composer background.
+
+- [#1769](https://github.com/MoonshotAI/kimi-code/pull/1769) [`d1ca65e`](https://github.com/MoonshotAI/kimi-code/commit/d1ca65e1de189617e9edbc54010e62d472a1de3d) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Keep legacy migrations idempotent across multiple Kimi homes and report damaged or unmapped sessions instead of silently skipping them.
+
+- [#1763](https://github.com/MoonshotAI/kimi-code/pull/1763) [`81414b6`](https://github.com/MoonshotAI/kimi-code/commit/81414b6ad5eddb64bbd959a8754ffb6c20b4f6fe) Thanks [@liruifengv](https://github.com/liruifengv)! - Warn in the /model and /effort pickers that switching invalidates the existing prompt cache, and hint to use /new to avoid extra token costs.
+
+- [#1773](https://github.com/MoonshotAI/kimi-code/pull/1773) [`1169a6d`](https://github.com/MoonshotAI/kimi-code/commit/1169a6d5fdafca4c1455c3ac4889586ef42f4435) Thanks [@RealKai42](https://github.com/RealKai42)! - Replay empty thinking content verbatim instead of substituting a placeholder space on Anthropic-compatible and Kimi preserved-thinking endpoints.
+
+- [#1781](https://github.com/MoonshotAI/kimi-code/pull/1781) [`09e8554`](https://github.com/MoonshotAI/kimi-code/commit/09e855401be62431b967dcb3b7caf1bcc9705df5) Thanks [@kermanx](https://github.com/kermanx)! - Report when users stop tasks and preserve other stop reasons in model context.
+
+- [#1784](https://github.com/MoonshotAI/kimi-code/pull/1784) [`d465591`](https://github.com/MoonshotAI/kimi-code/commit/d465591eb3fdb30c0c0348d6edb6f4d3d2f72698) Thanks [@sailist](https://github.com/sailist)! - Fix a resumed session being marked as just updated and jumping to the top of the session list without any new activity.
+
+- [#1759](https://github.com/MoonshotAI/kimi-code/pull/1759) [`9e3e670`](https://github.com/MoonshotAI/kimi-code/commit/9e3e6700f9276f4ab60219897b297fc96be2355a) Thanks [@sailist](https://github.com/sailist)! - Fix a race where resuming a background subagent right after it was manually stopped could fail with an "already running" error.
+
+- [#1782](https://github.com/MoonshotAI/kimi-code/pull/1782) [`072eed4`](https://github.com/MoonshotAI/kimi-code/commit/072eed476b5fe7599d994783649a21083320df58) Thanks [@sailist](https://github.com/sailist)! - Fix the context size indicator under-reporting the model's actual context usage.
+
+- [#1769](https://github.com/MoonshotAI/kimi-code/pull/1769) [`d1ca65e`](https://github.com/MoonshotAI/kimi-code/commit/d1ca65e1de189617e9edbc54010e62d472a1de3d) Thanks [@wbxl2000](https://github.com/wbxl2000)! - Support in-process editor hosts with session lifecycle, context, MCP configuration, and cross-platform session storage APIs.
+
+- [#1772](https://github.com/MoonshotAI/kimi-code/pull/1772) [`78967e2`](https://github.com/MoonshotAI/kimi-code/commit/78967e283d28238337e6437b4824f67b2c3cea7d) Thanks [@sailist](https://github.com/sailist)! - web: Refresh the model catalog for all providers when opening the model picker, so newly available models always show up.
+
 ## 0.25.0
 
 ### Minor Changes
