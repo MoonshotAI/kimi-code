@@ -27,7 +27,7 @@ import {
   type LLMRequestTrace,
 } from './llm';
 import { chatWithRetry } from './retry';
-import { runToolCallBatch, type ToolCallStepContext } from './tool-call';
+import { recordUnexecutedToolCalls, runToolCallBatch, type ToolCallStepContext } from './tool-call';
 import type {
   ExecutableTool,
   LoopHooks,
@@ -403,6 +403,19 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
   if (effectiveStopReason === 'tool_use') {
     const toolBatch = await runToolCallBatch(step, response);
     if (toolBatch.stopTurn) effectiveStopReason = 'end_turn';
+  } else if (
+    (stopReason === 'paused' || stopReason === 'unknown' || stopReason === 'max_tokens') &&
+    response.toolCalls.length > 0
+  ) {
+    // The provider stream broke off (paused / overloaded / token limit) while
+    // the response still carries tool calls — possibly cut off mid-arguments.
+    // Record each call and close it with a synthetic interrupted result:
+    // dropping them would lose the model's intent and can persist an
+    // assistant message strict providers reject as empty. Filtered responses
+    // keep their existing behavior (calls vanish): persisting flagged content
+    // risks re-triggering the filter on every resend, and a well-formed
+    // tool_use response stopped by usage recording keeps its skip behavior.
+    await recordUnexecutedToolCalls(step, response);
   }
 
   // When a tool batch runs, it drains paired `tool.result` events even when
