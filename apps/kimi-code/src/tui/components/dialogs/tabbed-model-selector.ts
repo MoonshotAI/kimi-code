@@ -43,6 +43,10 @@ export interface TabbedModelSelectorOptions {
   /** When set, the tab for this provider id is initially active instead of the
    * tab derived from `currentValue`. */
   readonly initialTabId?: string;
+  /** Forwarded to each inner selector; when set, a warning-colored line is
+   * rendered directly below the key-hint line (e.g. the mid-conversation
+   * switch cost notice). */
+  readonly warning?: string;
   readonly onSelect: (selection: ModelSelection) => void;
   /** Forwarded to each inner selector; when set, Alt+S applies the choice to
    * the current session only without persisting it as the default. */
@@ -100,24 +104,20 @@ export class TabbedModelSelectorComponent extends Container implements Focusable
     if (this.tabs.length <= 1) {
       return inner.map((line) => truncateToWidth(line, width));
     }
-    // Layout: divider, title, hint, blank, tab strip, blank, then the model
-    // list. The inner selector's blank line (inner[3]) separates the hint from
-    // the tab strip; an extra blank separates the tabs from their list.
+    // Layout: divider, title, hint, optional warning, blank, tab strip, blank,
+    // then the model list. The header ends at its first blank line — keep that
+    // blank above the strip, and separate the tabs from the list with another
+    // blank.
     const stripLine = renderTabStrip({
       labels: this.tabs.map((tab) => tab.label),
       activeIndex: this.activeIndex,
       width,
       colors: currentTheme.palette,
     });
-    const out: string[] = [
-      inner[0] ?? '',
-      inner[1] ?? '',
-      inner[2] ?? '',
-      inner[3] ?? '',
-      stripLine,
-      '',
-    ];
-    for (let i = 4; i < inner.length; i++) out.push(inner[i]!);
+    const headerEnd = inner.findIndex((line) => line === '');
+    const splitAt = headerEnd === -1 ? 3 : headerEnd;
+    const out: string[] = [...inner.slice(0, splitAt + 1), stripLine, ''];
+    for (let i = splitAt + 1; i < inner.length; i++) out.push(inner[i]!);
     return out.map((line) => truncateToWidth(line, width));
   }
 
@@ -182,6 +182,7 @@ function makeSelector(
     currentThinkingEffort: opts.currentThinkingEffort,
     searchable: true,
     providerSwitchHint: true,
+    warning: opts.warning,
     onSelect: opts.onSelect,
     onSessionOnlySelect: opts.onSessionOnlySelect,
     onCancel: opts.onCancel,

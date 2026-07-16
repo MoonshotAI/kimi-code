@@ -35,6 +35,21 @@ import type { SlashCommandHost } from './dispatch';
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
 
+const MODEL_SWITCH_CACHE_WARNING =
+  'Switching models clears context cache. Use /new to avoid extra costs.';
+const EFFORT_SWITCH_CACHE_WARNING =
+  'Switching effort clears context cache. Use /new to avoid extra costs.';
+
+/** True once the conversation has at least one user message: a switch from
+ * then on resends the accumulated context, losing the cache. Shell-command
+ * echoes are also 'user' transcript entries but carry an empty `bullet`, so
+ * they're excluded. */
+function hasConversationHistory(host: SlashCommandHost): boolean {
+  return host.state.transcriptEntries.some(
+    (entry) => entry.kind === 'user' && entry.bullet !== '',
+  );
+}
+
 function currentTuiConfig(host: SlashCommandHost): TuiConfig {
   return {
     theme: host.state.appState.theme,
@@ -276,6 +291,7 @@ function showEffortPicker(
     new EffortSelectorComponent({
       efforts: segments,
       currentValue,
+      warning: hasConversationHistory(host) ? EFFORT_SWITCH_CACHE_WARNING : undefined,
       onSelect: (effort) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, effort, true);
@@ -392,6 +408,7 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinkingEffort: host.state.appState.thinkingEffort,
+      warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, thinking, true);

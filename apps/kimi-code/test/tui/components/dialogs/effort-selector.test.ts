@@ -102,4 +102,31 @@ describe('EffortSelectorComponent', () => {
     picker.handleInput(ESC);
     expect(onCancel).toHaveBeenCalledTimes(1);
   });
+
+  it('renders the warning line directly below the key-hint line when provided', () => {
+    const picker = new EffortSelectorComponent({
+      efforts: ['off', 'low', 'high', 'max'],
+      currentValue: 'high',
+      warning: 'Switching may increase token usage.',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = picker.render(120).map(strip);
+    const hintIdx = lines.findIndex((l) => l.includes('←→ switch'));
+    expect(hintIdx).toBeGreaterThanOrEqual(0);
+    expect(lines[hintIdx + 1]).toContain('Switching may increase token usage.');
+  });
+
+  it('renders no warning line without the warning option', () => {
+    const picker = new EffortSelectorComponent({
+      efforts: ['off', 'low', 'high', 'max'],
+      currentValue: 'high',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = picker.render(120).map(strip);
+    const hintIdx = lines.findIndex((l) => l.includes('←→ switch'));
+    expect(hintIdx).toBeGreaterThanOrEqual(0);
+    expect(lines[hintIdx + 1]).toBe('');
+  });
 });

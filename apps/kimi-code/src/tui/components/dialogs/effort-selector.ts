@@ -22,6 +22,9 @@ export interface EffortSelectorOptions {
   /** When provided, Alt+S applies the choice to the current session only. */
   readonly onSessionOnlySelect?: (effort: ThinkingEffort) => void;
   readonly onCancel: () => void;
+  /** When set, rendered as a warning-colored line directly below the key-hint
+   * line (e.g. the mid-conversation switch cost notice). */
+  readonly warning?: string;
 }
 
 /**
@@ -76,8 +79,11 @@ export class EffortSelectorComponent extends Container implements Focusable {
       currentTheme.fg('primary', '─'.repeat(width)),
       currentTheme.boldFg('primary', ` ${this.opts.title ?? 'Select thinking effort'}`),
       currentTheme.fg('textMuted', ` ${hintParts.join(' · ')}`),
-      '',
     ];
+    if (this.opts.warning !== undefined) {
+      lines.push(currentTheme.fg('warning', ` ${this.opts.warning}`));
+    }
+    lines.push('');
 
     const segments = this.opts.efforts.map((effort, index) => {
       const label = effortLabel(effort);
