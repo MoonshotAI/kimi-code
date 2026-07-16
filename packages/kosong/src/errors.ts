@@ -124,6 +124,52 @@ export class APIEmptyResponseError extends ChatProviderError {
   }
 }
 
+// Upstream stream interrupted before a complete response was received.
+// Reverse proxies (e.g. new-api relay) may surface this as a generic
+// error when the upstream connection drops mid-stream.
+export const PROVIDER_STREAM_INTERRUPTED_MESSAGE_PATTERN =
+  /\b(?:upstream\s+)?stream\s+(?:ended|terminated|closed|interrupted|disconnected)\b/i;
+
+// Transient Xunfei reverse-proxy failure codes relayed through the
+// Anthropic passthrough channel. These match error text the relay embeds
+// into the Claude Error message body (e.g. "code: 11210").
+//
+//   10006 - concurrent connection conflict (retry)
+//   10007 - user traffic limited (retry later)
+//   10008 - service capacity insufficient (retry later)
+//   10009 - failed to connect to engine (retry)
+//   10010 - engine data error or queue (retry)
+//   10011 - error sending data to engine (retry)
+//   10012 - engine internal error or queue (retry)
+//   10110 - service busy (retry later)
+//   10222 - engine network error (retry)
+//   10223 - LB cannot find engine node (retry)
+//   11202 - second-level rate limit exceeded (retry)
+//   11203 - concurrent rate limit exceeded (retry)
+//   11210 - TPM limit exceeded (retry after wait)
+//
+// Excluded (permanent / config / billing):
+//   10015 (appid blacklisted), 10016 (authorization),
+//   10907/10910 (token limit), 11200-11201 (authorization/call count),
+//   11221 (model config).
+//
+// Uses tempered greedy token to match only the first code= occurrence after
+// "xunfei request failed", preventing false positives on multi-code errors.
+export const XUNFEI_REVERSE_PROXY_TRANSIENT_ERROR_PATTERN =
+  /\bxunfei\s+(?:claude\s+)?request\s+failed\b(?:(?!\bcode\s*[:=]).)*\bcode\s*[:=]\s*(?:1000[6-9]|1001[01]|10012|10110|1022[23]|1120[23]|11210)\b/i;
+
+// Xunfei rate-limit codes (subset of the transient codes).
+//   11202 - second-level rate limit exceeded
+//   11203 - concurrent rate limit exceeded
+//   11210 - TPM limit exceeded
+export const XUNFEI_REVERSE_PROXY_RATE_LIMIT_PATTERN =
+  /\bxunfei\s+(?:claude\s+)?request\s+failed\b(?:(?!\bcode\s*[:=]).)*\bcode\s*[:=]\s*(?:1120[23]|11210)\b/i;
+
+// Transient Xunfei errors carried directly in the error body with code
+// 10310 "The system is busy". Relay passthrough embeds these as-is.
+export const XUNFEI_SYSTEM_BUSY_MESSAGE_PATTERN =
+  /\b(?:code|type)\s*[:=]\s*\"?10310\"?.*?(?:system\s+is\s+busy|try\s+again\s+later)\b/i;
+
 export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {
     return true;
@@ -137,19 +183,23 @@ export function isRetryableGenerateError(error: unknown): boolean {
     // (provider overloaded — the "engine is currently overloaded" case).
     return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
   }
-  // Fallback safety net: an unclassified provider failure — typically an
-  // upstream gateway that forwards the original error only as text, with no
-  // usable HTTP status (e.g. llmproxy embedding `status_code=429` in the
-  // message) — lands here as a base `ChatProviderError`. Retrying beats
-  // failing the run on the first transient blip. Typed `APIStatusError`
-  // instances are deliberately excluded above: deterministic 4xx
-  // (400/401/403/404/422) and the recovery-owned context-overflow /
-  // request-too-large subclasses keep their dedicated handling instead of
-  // burning retries first. Image-format rejections are likewise excluded:
-  // they are deterministic per history and recovered by the media-stripped
-  // resend (see isImageFormatError), so retrying the identical request first
-  // would only burn the retry budget.
-  return error instanceof ChatProviderError && !isImageFormatError(error);
+  // Fallback: check message text for Xunfei transient error codes and other
+  // patterns that indicate a recoverable upstream failure even when the HTTP
+  // status code was swallowed by the relay.
+  if (error instanceof ChatProviderError) {
+    if (isImageFormatError(error)) return false;
+    const lowerMessage = error.message.toLowerCase();
+    if (
+      XUNFEI_REVERSE_PROXY_TRANSIENT_ERROR_PATTERN.test(lowerMessage) ||
+      XUNFEI_SYSTEM_BUSY_MESSAGE_PATTERN.test(lowerMessage) ||
+      PROVIDER_STREAM_INTERRUPTED_MESSAGE_PATTERN.test(lowerMessage)
+    ) {
+      return true;
+    }
+    // Safety net for any unclassified ChatProviderError.
+    return true;
+  }
+  return false;
 }
 
 // Client-side image rejections thrown before the request is sent (kosong's
@@ -333,6 +383,13 @@ export function normalizeAPIStatusError(
   if (statusCode === 429) {
     return new APIProviderRateLimitError(message, requestId, retryAfterMs);
   }
+  // Xunfei reverse proxies return rate-limit errors with non-429 status
+  // codes (e.g. 500 with code 11210 in the body). Normalize to
+  // APIProviderRateLimitError so the full rate-limit handling pipeline
+  // (longer backoff, subagent batch requeue) triggers.
+  if (XUNFEI_REVERSE_PROXY_RATE_LIMIT_PATTERN.test(message)) {
+    return new APIProviderRateLimitError(message, requestId, retryAfterMs);
+  }
   // Context overflow first: Vertex returns prompt-too-long as a 413, and a
   // token overflow must keep routing to compaction even on that status.
   if (isContextOverflowStatusError(statusCode, message)) {
@@ -467,10 +524,12 @@ export function isRecoverableRequestStructureError(error: unknown): boolean {
 export function isProviderRateLimitError(error: unknown): boolean {
   if (error instanceof APIProviderRateLimitError) return true;
 
+  const lowerMessage = errorMessage(error).toLowerCase();
+  if (XUNFEI_REVERSE_PROXY_RATE_LIMIT_PATTERN.test(lowerMessage)) return true;
+
   const statusCode = getStatusCode(error);
   if (statusCode !== undefined) return statusCode === 429;
 
-  const lowerMessage = errorMessage(error).toLowerCase();
   return PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 

@@ -1,4 +1,5 @@
 import { sleep } from '@antfu/utils';
+import { isProviderRateLimitError } from '@moonshot-ai/kosong';
 
 import type { Logger } from '#/logging/types';
 
@@ -22,6 +23,26 @@ const MAX_DELAY_MS = 32_000;
 const RETRY_FACTOR = 2;
 // Up to 25% jitter on top of the exponential base to avoid herd retries.
 const JITTER_FACTOR = 0.25;
+
+// Overload backoff (503, "system busy", stream interrupted). Start at 5s
+// with a 30s cap, factor 2 — gentler than rate-limit but much longer than
+// transient to ride out sustained upstream overload without contributing to
+// the thundering herd.
+const OVERLOAD_BASE_DELAY_MS = 5_000;
+const OVERLOAD_MAX_DELAY_MS = 30_000;
+const OVERLOAD_RETRY_FACTOR = 2;
+
+// Rate-limit backoff (429, Xunfei TPM codes). TPM limits typically refresh
+// per minute, so a sub-minute backoff is wasted. 15s min, 60s cap.
+const RATE_LIMIT_BASE_DELAY_MS = 15_000;
+const RATE_LIMIT_MAX_DELAY_MS = 60_000;
+const RATE_LIMIT_RETRY_FACTOR = 2;
+
+function isOverloadError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  return typeof statusCode === 'number' && statusCode === 503;
+}
 
 export interface ChatWithRetryInput {
   readonly llm: LLM;
@@ -58,10 +79,16 @@ export async function chatWithRetry(input: ChatWithRetryInput): Promise<LLMChatR
         throw error;
       }
 
-      // A server `Retry-After` (carried on the error) overrides the computed
-      // backoff. The chosen delay is what gets reported on the
-      // `step.retrying` event via `delayMs` either way.
-      const delayMs = readRetryAfterMs(error) ?? delays[attempt - 1] ?? 0;
+      // Tiered backoff: rate-limit errors get the longest delay (TPM
+      // windows refresh per minute), overload/503 get a moderate
+      // backoff, transient errors use the default exponential ramp.
+      const delayMs =
+        readRetryAfterMs(error) ??
+        (isProviderRateLimitError(error)
+          ? tieredBackoffDelay(attempt, RATE_LIMIT_BASE_DELAY_MS, RATE_LIMIT_MAX_DELAY_MS, RATE_LIMIT_RETRY_FACTOR)
+          : isOverloadError(error)
+            ? tieredBackoffDelay(attempt, OVERLOAD_BASE_DELAY_MS, OVERLOAD_MAX_DELAY_MS, OVERLOAD_RETRY_FACTOR)
+            : delays[attempt - 1] ?? 0);
       input.params.signal.throwIfAborted();
       input.dispatchEvent({
         type: 'step.retrying',
@@ -125,6 +152,15 @@ export function retryBackoffDelays(maxAttempts: number): number[] {
     delays.push(base + Math.random() * JITTER_FACTOR * base);
   }
   return delays;
+}
+
+function tieredBackoffDelay(
+  attempt: number,
+  base: number,
+  max: number,
+  factor: number,
+): number {
+  return Math.min(base * Math.pow(factor, attempt - 1), max);
 }
 
 /**

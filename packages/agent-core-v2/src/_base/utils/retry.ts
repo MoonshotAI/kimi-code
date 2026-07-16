@@ -5,6 +5,12 @@
  * budget is 10 attempts per step (kept in sync with v1
  * `agent-core/loop/retry.ts`): the 500ms ×2 ramp capped at 32s waits out
  * multi-minute provider overload (sustained 429s) before a turn fails.
+ *
+ * Tiered backoff: rate-limit errors use 15–60s, overload/503 use 5–30s,
+ * transient errors use the default 500ms–32s exponential ramp. These
+ * longer backoff tiers avoid thundering herd on reverse-proxy upstreams
+ * (e.g. Xunfei relay) where the SDK's uniform 2-retry default causes
+ * cascading 503s.
  */
 
 import { abortable } from '#/_base/utils/abort';
@@ -15,6 +21,14 @@ const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 32_000;
 const RETRY_FACTOR = 2;
 const JITTER_FACTOR = 0.25;
+
+const OVERLOAD_BASE_DELAY_MS = 5_000;
+const OVERLOAD_MAX_DELAY_MS = 30_000;
+const OVERLOAD_RETRY_FACTOR = 2;
+
+const RATE_LIMIT_BASE_DELAY_MS = 15_000;
+const RATE_LIMIT_MAX_DELAY_MS = 60_000;
+const RATE_LIMIT_RETRY_FACTOR = 2;
 
 export interface RetryErrorFields {
   readonly errorName: string;
@@ -30,6 +44,35 @@ export function retryBackoffDelays(maxAttempts: number): number[] {
     delays.push(base + Math.random() * JITTER_FACTOR * base);
   }
   return delays;
+}
+
+function tieredBackoffDelay(
+  attempt: number,
+  base: number,
+  max: number,
+  factor: number,
+): number {
+  return Math.min(base * Math.pow(factor, attempt - 1), max);
+}
+
+export function overloadBackoffDelay(attempt: number): number {
+  return tieredBackoffDelay(attempt, OVERLOAD_BASE_DELAY_MS, OVERLOAD_MAX_DELAY_MS, OVERLOAD_RETRY_FACTOR);
+}
+
+export function rateLimitBackoffDelay(attempt: number): number {
+  return tieredBackoffDelay(attempt, RATE_LIMIT_BASE_DELAY_MS, RATE_LIMIT_MAX_DELAY_MS, RATE_LIMIT_RETRY_FACTOR);
+}
+
+export function isOverloadError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const statusCode = (error as { statusCode?: unknown }).statusCode;
+  if (typeof statusCode === 'number' && statusCode === 503) return true;
+  const details = (error as { details?: unknown }).details;
+  if (details !== null && typeof details === 'object') {
+    const detailsStatus = (details as { statusCode?: unknown }).statusCode;
+    if (typeof detailsStatus === 'number' && detailsStatus === 503) return true;
+  }
+  return false;
 }
 
 export function readRetryAfterMs(error: unknown): number | null {

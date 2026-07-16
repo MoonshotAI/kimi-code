@@ -1,10 +1,14 @@
 import {
   APIConnectionError,
+  APIStatusError,
   APITimeoutError,
   ChatProviderError,
   classifyBaseApiError,
   normalizeAPIStatusError,
   parseRetryAfterMs,
+  XUNFEI_REVERSE_PROXY_TRANSIENT_ERROR_PATTERN,
+  XUNFEI_SYSTEM_BUSY_MESSAGE_PATTERN,
+  PROVIDER_STREAM_INTERRUPTED_MESSAGE_PATTERN,
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { isToolDeclarationOnlyMessage } from '#/message';
@@ -642,6 +646,18 @@ export function convertAnthropicError(error: unknown): ChatProviderError {
     );
   }
   if (error instanceof AnthropicError) {
+    const lowerMessage = error.message.toLowerCase();
+    // Xunfei reverse proxies and relays embed transient error codes in the
+    // error message body. When the SDK cannot extract a status code, parse
+    // the text directly so these failures are retried instead of surfacing
+    // as fatal.
+    if (
+      XUNFEI_REVERSE_PROXY_TRANSIENT_ERROR_PATTERN.test(lowerMessage) ||
+      XUNFEI_SYSTEM_BUSY_MESSAGE_PATTERN.test(lowerMessage) ||
+      PROVIDER_STREAM_INTERRUPTED_MESSAGE_PATTERN.test(lowerMessage)
+    ) {
+      return new APIStatusError(503, error.message, null);
+    }
     return new ChatProviderError(`Anthropic error: ${error.message}`);
   }
   // Raw, non-SDK errors (e.g. undici's `TypeError: terminated` raised when a
@@ -1227,6 +1243,11 @@ export class AnthropicChatProvider implements ChatProvider {
       authToken: null,
       baseURL: this._baseUrl ?? null,
       defaultHeaders: this._buildDefaultHeaders(apiKey),
+      // Disable SDK internal retries. Retries are handled by the agent-core
+      // retry loop with Xunfei-aware backoff tiers (overload 5–30s,
+      // rate-limit 15–60s) instead of the SDK's uniform backoff, which
+      // creates thundering herd on busy upstreams.
+      maxRetries: 0,
     });
   }
 

@@ -18,12 +18,15 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import {
   DEFAULT_MAX_RETRY_ATTEMPTS,
+  isOverloadError,
+  overloadBackoffDelay,
+  rateLimitBackoffDelay,
   readRetryAfterMs,
   retryBackoffDelays,
   retryErrorFields,
   sleepForRetry,
 } from '#/_base/utils/retry';
-import { isRetryableGenerateError } from '#/app/llmProtocol/errors';
+import { isProviderRateLimitError, isRetryableGenerateError } from '#/app/llmProtocol/errors';
 import { IConfigService } from '#/app/config/config';
 import { IEventBus } from '#/app/event/eventBus';
 import { unwrapErrorCause } from '#/errors';
@@ -110,7 +113,12 @@ export class AgentStepRetryService extends Disposable implements IAgentStepRetry
 
     const error = unwrapErrorCause(context.error);
     const delayMs =
-      readRetryAfterMs(error) ?? retryBackoffDelays(maxAttempts)[this.failedAttempts - 1] ?? 0;
+      readRetryAfterMs(error) ??
+      (isProviderRateLimitError(error)
+        ? rateLimitBackoffDelay(this.failedAttempts)
+        : isOverloadError(error)
+          ? overloadBackoffDelay(this.failedAttempts)
+          : retryBackoffDelays(maxAttempts)[this.failedAttempts - 1] ?? 0);
     this.eventBus.publish({
       type: 'turn.step.retrying',
       turnId: context.turnId,
