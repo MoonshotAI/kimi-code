@@ -25,7 +25,7 @@ This page documents the changes in each Kimi Code CLI release.
 - Fix custom-named models on Anthropic-compatible providers starting new sessions with thinking effort off instead of the model default, and not showing the thinking control in ACP clients.
 - Honor adaptive_thinking = false on Anthropic-compatible models by omitting the effort parameter from requests.
 - web: Fix the Content-Security-Policy on non-loopback server binds blocking the web UI's theme bootstrap script and bundled fonts.
-- Fix sessions failing to be created when the workspace directory is given through a symlink, which the v2 engine rejected as "not a directory".
+- Fix sessions failing to be created when the workspace directory is given through a symlink.
 - Fix the CLI exiting unexpectedly when reading an image from the clipboard fails; it now falls back to pasting text.
 - web: Fix completed background subagents losing their final output after a session reload, and retry the output backfill when a transient fetch failure occurs.
 - web: Fix Enter not confirming modal confirmation dialogs in dev builds; the dialog now stays open with a loading state until the action completes.
