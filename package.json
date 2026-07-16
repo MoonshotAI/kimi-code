@@ -18,6 +18,8 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@iconify-json/ri": "^1.2.10",
+    "@iconify-json/tabler": "^1.2.35",
     "@types/node": "^22.15.3",
     "oxlint": "1.59.0",
     "oxlint-tsgolint": "0.20.0",

@@ -87,6 +87,39 @@ describe('handleRendererRequest', () => {
     expect(res.status).toBe(404);
   });
 
+  // SPA fallback: the renderer's history routing pushes paths like
+  // `/sessions/<id>` (and `/login` from the auth gate) onto the URL; a native
+  // reload re-requests that path, which has no file in desktop-dist.
+  it('serves index.html for SPA session routes (reload on a deep link)', async () => {
+    const root = await makeRoot();
+    const res = await handleRendererRequest(
+      { url: 'app://renderer/sessions/abc' } as any,
+      () => root,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('text/html; charset=utf-8');
+    expect(await res.text()).toBe('<h1>ok</h1>');
+  });
+
+  it('serves index.html for the auth-gate /login path', async () => {
+    const root = await makeRoot();
+    const res = await handleRendererRequest(
+      { url: 'app://renderer/login' } as any,
+      () => root,
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe('<h1>ok</h1>');
+  });
+
+  it('404s an extensionless path when index.html itself is missing', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'kimi-renderer-'));
+    const res = await handleRendererRequest(
+      { url: 'app://renderer/sessions/abc' } as any,
+      () => root,
+    );
+    expect(res.status).toBe(404);
+  });
+
   it('serves files from the configured desktop-dist root (app://renderer/<path>)', async () => {
     const root = await makeRoot();
     await writeFile(join(root, 'assets', 'marker.js'), 'desktop-dist-root');
