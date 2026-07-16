@@ -12,15 +12,13 @@ const props = withDefaults(
   defineProps<{
     tools: ToolStackItem[];
     mobile?: boolean;
-    toolDiffPanel?: boolean;
   }>(),
-  { mobile: false, toolDiffPanel: false },
+  { mobile: false },
 );
 
 const emit = defineEmits<{
   openMedia: [media: ToolMedia];
   openFile: [target: FilePreviewRequest];
-  openToolDiff: [id: string];
   openAgent: [toolCallId: string];
 }>();
 
@@ -76,10 +74,8 @@ function onHeadClick(): void {
           :tool="item.tool"
           :mobile="mobile"
           :stack-position="toolStackPosition(si, tools.length)"
-          :tool-diff-panel="toolDiffPanel"
           @open-media="emit('openMedia', $event)"
           @open-file="emit('openFile', $event)"
-          @open-tool-diff="emit('openToolDiff', $event)"
           @open-agent="emit('openAgent', $event)"
         />
       </div>

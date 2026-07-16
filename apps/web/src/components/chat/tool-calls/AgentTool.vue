@@ -17,15 +17,13 @@ const props = withDefaults(
     tool: ToolCall;
     mobile?: boolean;
     stackPosition?: 'single' | 'first' | 'middle' | 'last';
-    toolDiffPanel?: boolean;
   }>(),
-  { mobile: false, stackPosition: 'single', toolDiffPanel: false },
+  { mobile: false, stackPosition: 'single' },
 );
 
 const emit = defineEmits<{
   openMedia: [media: ToolMedia];
   openFile: [target: FilePreviewRequest];
-  openToolDiff: [id: string];
   /** Open this subagent's live progress in the right-side detail panel. */
   openAgent: [toolCallId: string];
 }>();

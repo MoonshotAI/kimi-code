@@ -1,8 +1,7 @@
 // apps/kimi-web/src/lib/toolDiff.ts
-// Helpers for previewing Edit/Write tool calls: build the line diff and locate
-// a live tool call in the session turns so the side panel can stay reactive.
+// Builds the line diff shown inline inside an expanded Edit tool card.
 
-import type { ChatTurn, DiffViewLine, ToolCall } from '../types';
+import type { DiffViewLine } from '../types';
 import { buildDiffLines } from './diffLines';
 import { normalizeToolName } from './toolMeta';
 
@@ -39,19 +38,4 @@ export function buildEditDiffLines(tool: { name: string; arg: string }): DiffVie
   // diff would show an overwrite as "all additions, no deletions", which is
   // misleading — so fall back to the tool output for every Write.
   return null;
-}
-
-/** Pull the file path out of an Edit/Write tool call's input, if present. */
-export function extractEditPath(arg: string): string | undefined {
-  const d = parseArg(arg);
-  return d && typeof d.path === 'string' ? d.path : undefined;
-}
-
-/** Find a tool call by id across all session turns (for the live panel lookup). */
-export function findToolCallById(turns: ChatTurn[], id: string): ToolCall | undefined {
-  for (const turn of turns) {
-    const found = turn.tools?.find((t) => t.id === id);
-    if (found) return found;
-  }
-  return undefined;
 }
