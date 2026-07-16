@@ -57,7 +57,12 @@ module.exports = {
   // into `desktop-dist` (decoupled from the CLI/SEA `web-dist`). Ship it as an
   // extra resource so the `app://renderer` protocol and the server's static
   // fallback both read from `<resourcesPath>/desktop-dist`.
-  extraResources: [{ from: 'desktop-dist', to: 'desktop-dist' }],
+  // `build/lproj` carries localized InfoPlist.strings (TCC prompt copy — see
+  // mac.extendInfo); lproj dirs must sit directly under Contents/Resources.
+  extraResources: [
+    { from: 'desktop-dist', to: 'desktop-dist' },
+    { from: 'build/lproj/', to: '.' },
+  ],
 
   mac: {
     category: 'public.app-category.developer-tools',
@@ -68,6 +73,19 @@ module.exports = {
     target: ['dmg', 'zip'],
     artifactName,
     notarize,
+    // TCC usage descriptions (English baseline): shown in the macOS permission
+    // prompt the first time the app touches files under ~/Desktop, ~/Documents
+    // or ~/Downloads (e.g. a workspace opened there). Simplified-Chinese
+    // overrides ship in build/lproj/zh_CN.lproj/InfoPlist.strings and take
+    // precedence for zh_CN users.
+    extendInfo: {
+      NSDesktopFolderUsageDescription:
+        'Kimi Code only accesses files in your Desktop folder when you open a project located there.',
+      NSDocumentsFolderUsageDescription:
+        'Kimi Code only accesses files in your Documents folder when you open a project located there.',
+      NSDownloadsFolderUsageDescription:
+        'Kimi Code only accesses files in your Downloads folder when you open a project located there.',
+    },
   },
 
   win: {
