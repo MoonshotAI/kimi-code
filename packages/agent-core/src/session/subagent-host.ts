@@ -430,10 +430,12 @@ export class SessionSubagentHost {
   private async drainChildBackgroundTasks(child: Agent, signal: AbortSignal): Promise<void> {
     for (;;) {
       signal.throwIfAborted();
-      for (const task of child.background.list(true)) {
-        await child.background.suppressTerminalNotification(task.taskId);
-      }
+      await this.suppressChildTaskNotifications(child);
       await child.background.waitForActiveTasks(() => true, { signal });
+      // Suppress again after the wait: notification delivery re-checks
+      // suppression after its async output snapshot, so this pass still
+      // blocks notifications for tasks that settled during the wait.
+      await this.suppressChildTaskNotifications(child);
       // A terminal effect that slipped past the suppression race may have
       // steered a follow-up turn onto the child; let it finish (it can fan
       // out new tasks) before declaring the child drained.
@@ -442,6 +444,19 @@ export class SessionSubagentHost {
         continue;
       }
       if (child.background.list(true).length === 0) return;
+    }
+  }
+
+  /**
+   * Suppress terminal notifications for every child background task —
+   * including already-settled ones whose notification may still be in
+   * flight. `list(false)` is required: the active-only list drops a task
+   * the moment it terminates, which is exactly when an unsuppressed
+   * notification can still steer an orphan turn onto the finished child.
+   */
+  private async suppressChildTaskNotifications(child: Agent): Promise<void> {
+    for (const task of child.background.list(false)) {
+      await child.background.suppressTerminalNotification(task.taskId);
     }
   }
 

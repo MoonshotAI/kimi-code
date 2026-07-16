@@ -440,4 +440,45 @@ describe('coder subagent aligned tools (real Session e2e)', () => {
 
     await expect(handle.completion).rejects.toThrow(/abort/i);
   }, 30_000);
+
+  it('completes cleanly when the background task settles before the final turn ends', async () => {
+    const scripted = createScriptedGenerate();
+    // The background task settles while the turn is still running: its
+    // terminal notification is delivered into the active turn (the
+    // legitimate path), so the drain afterwards has nothing to wait for
+    // and must not launch or leak a follow-up turn either.
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'c1',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: 'sleep 0.2', description: 'early settle probe', run_in_background: true }),
+    });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'c2',
+      name: 'Bash',
+      arguments: JSON.stringify({ command: 'sleep 1' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: DRAIN_FINAL_TEXT });
+    const { session, mainAgent } = await createCoderSession(scripted.generate);
+
+    const handle = await mainAgent.subagentHost!.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'e2e-early-settle-call',
+      prompt: 'Start a quick background sleep, keep working briefly, then finish.',
+      description: 'early settle check',
+      runInBackground: false,
+      signal: new AbortController().signal,
+    });
+
+    const completion = await handle.completion;
+    expect(completion.result).toContain('DRAIN-CHECK-DONE');
+
+    const child = await session.ensureAgentResumed(handle.agentId);
+    expect(child.background.list(true)).toHaveLength(0);
+    expect(child.turn.hasActiveTurn).toBe(false);
+    // The task settled mid-turn, so its notification was delivered into the
+    // turn (visible in context) rather than orphaned after completion.
+    expect(JSON.stringify(child.context.history)).toContain('<notification ');
+  }, 30_000);
 });
