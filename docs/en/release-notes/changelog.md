@@ -32,10 +32,6 @@ This page documents the changes in each Kimi Code CLI release.
 - web: Fix a background subagent showing up as two identical rows in the agents dock panel during streaming.
 - Fix the diagnostic log missing the actual error when the CLI exits unexpectedly.
 
-### Refactors
-
-- Move the server's v1 wire schema definitions into the engine domains and the server package, removing the shared schema package from the v2 server stack with no behavior change.
-
 ## 0.24.2 (2026-07-15)
 
 ### Features
