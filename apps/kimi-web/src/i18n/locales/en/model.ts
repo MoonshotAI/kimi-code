@@ -7,7 +7,7 @@ export default {
   searchPlaceholder: 'Search models or providers…',
   loading: 'Loading models…',
   unavailable: 'The daemon does not support model listing yet',
-  contextSuffix: '{size}k ctx',
+  contextSuffix: '{size} ctx',
   emptyNoModels: 'The daemon offers no selectable models',
   emptyNoMatch: 'No matching models',
   starTitle: 'Add to favorites',
