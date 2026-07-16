@@ -27,7 +27,7 @@ async function assertBuiltWeb() {
     }
   } catch {
     throw new Error(
-      `未找到 web 构建产物 ${source}/index.html，请先运行 \`pnpm --filter @moonshot-ai/kimi-web run build\`。`,
+      `未找到 web 构建产物 ${source}/index.html，请先运行 \`pnpm --filter kimi-code-web run build\`。`,
     );
   }
 }

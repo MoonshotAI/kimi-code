@@ -2,7 +2,7 @@
 // DaemonKimiWebApi public REST adapter: session export binary/error contracts,
 // getSessionGoal wire → app mapping, and raw stream-coordinate delivery.
 // Wiring: real client/projector; fetch or WebSocket is stubbed at the network boundary.
-// Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/daemon-client.test.ts
+// Run: pnpm --filter kimi-code-web exec vitest run test/daemon-client.test.ts
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 

@@ -1,0 +1,12 @@
+name: macOS keychain cleanup
+description: Delete the temporary keychain created by macos-keychain-setup.
+
+runs:
+  using: composite
+  steps:
+    - name: Cleanup keychain
+      shell: bash
+      run: |
+        if [[ -n "${APPLE_KEYCHAIN_PATH:-}" && -f "${APPLE_KEYCHAIN_PATH}" ]]; then
+          security delete-keychain "$APPLE_KEYCHAIN_PATH" || true
+        fi

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# macOS signing cleanup for GitLab CI — pairs with macos-sign-setup.sh.
+# macOS signing cleanup — pairs with macos-sign-setup.sh. Used by the local
+# packaging script (apps/desktop/scripts/package-local-macos.sh); the GitHub
+# Actions workflow uses .github/actions/macos-keychain-cleanup instead.
 #
-# Runs in after_script (a separate shell), so it reads the state file written
-# by the setup script instead of relying on exported variables. Restores the
-# runner's original default keychain + user search list, then deletes the
-# temporary keychain and the whole .ci-signing directory.
+# Runs in a separate shell, so it reads the state file written by the setup
+# script instead of relying on exported variables. Restores the original
+# default keychain + user search list, then deletes the temporary keychain
+# and the whole .ci-signing directory.
 #
 # Never fails the job: every step is best-effort.
 

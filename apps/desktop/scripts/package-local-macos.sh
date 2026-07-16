@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Local macOS packaging + signing for @moonshot-ai/kimi-desktop (arm64 only).
+# Local macOS packaging + signing for kimi-code-app (arm64 only).
 #
 # CI 不可用时的本地替代流程。签名逻辑完全复用 CI 脚本
 #（scripts/ci/macos-sign-setup.sh / macos-sign-cleanup.sh），本脚本只负责：
@@ -106,9 +106,9 @@ source "$REPO_ROOT/apps/desktop/scripts/ci/macos-sign-setup.sh"
 # ---------------------------------------------------------------------------
 # 4. 构建 + 打包（与 `dist` 脚本同序：build:renderer -> tsdown -> electron-builder）
 # ---------------------------------------------------------------------------
-pnpm --filter @moonshot-ai/kimi-desktop run build:renderer
-pnpm --filter @moonshot-ai/kimi-desktop exec tsdown
-pnpm --filter @moonshot-ai/kimi-desktop exec electron-builder --config electron-builder.config.cjs --arm64
+pnpm --filter kimi-code-app run build:renderer
+pnpm --filter kimi-code-app exec tsdown
+pnpm --filter kimi-code-app exec electron-builder --config electron-builder.config.cjs --arm64
 
 # ---------------------------------------------------------------------------
 # 5. 验证：签名完整、Gatekeeper 接受、公证票据已 staple

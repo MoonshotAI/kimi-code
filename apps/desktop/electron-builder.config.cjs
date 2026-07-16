@@ -70,7 +70,7 @@ module.exports = {
     gatekeeperAssess: false,
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
-    target: ['dmg', 'zip'],
+    target: ['dmg'],
     artifactName,
     notarize,
     // TCC usage descriptions (English baseline): shown in the macOS permission
@@ -104,5 +104,8 @@ module.exports = {
     target: ['AppImage', 'deb'],
     artifactName,
     maintainer: 'Moonshot AI',
+    // electron-builder 26 校验 executableName 的文件路径合法性；不显式设置时会
+    // 从 package.json 的 name 派生（老包名带 @moonshot-ai/ 前缀，派生值含 @ 非法）。
+    executableName: 'kimi-code',
   },
 };

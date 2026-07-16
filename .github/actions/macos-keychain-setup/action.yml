@@ -1,0 +1,82 @@
+name: macOS keychain setup
+description: |
+  Create a temporary keychain, import a Developer ID Application certificate,
+  discover the signing identity, and export APPLE_SIGNING_IDENTITY +
+  APPLE_KEYCHAIN_PATH to GITHUB_ENV for subsequent steps. Must be paired
+  with macos-keychain-cleanup in an if: always() step at job end.
+
+inputs:
+  certificate-p12:
+    description: Base64-encoded P12 certificate
+    required: true
+  certificate-password:
+    description: P12 password
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Import signing certificate
+      shell: bash
+      env:
+        APPLE_CERTIFICATE_P12: ${{ inputs.certificate-p12 }}
+        APPLE_CERTIFICATE_PASSWORD: ${{ inputs.certificate-password }}
+        KEYCHAIN_PASSWORD: actions
+      run: |
+        set -euo pipefail
+
+        # 0. Validate inputs early — base64 decoding "" gives 0-byte .p12 → security import reports
+        # "SecKeychainItemImport: One or more parameters passed to a function were not valid"
+        # which is cryptic. Fail loudly here instead.
+        if [ -z "$APPLE_CERTIFICATE_P12" ]; then
+          echo "::error::APPLE_CERTIFICATE_P12 secret is empty. Configure it in repo settings, or pass sign-macos=false."
+          exit 1
+        fi
+        if [ -z "$APPLE_CERTIFICATE_PASSWORD" ]; then
+          echo "::error::APPLE_CERTIFICATE_PASSWORD secret is empty."
+          exit 1
+        fi
+
+        # 1. Decode certificate
+        cert_path="${RUNNER_TEMP}/certificate.p12"
+        printf '%s' "$APPLE_CERTIFICATE_P12" | base64 -d > "$cert_path"
+        if [ ! -s "$cert_path" ]; then
+          echo "::error::Decoded certificate is empty. APPLE_CERTIFICATE_P12 secret value may not be valid base64."
+          exit 1
+        fi
+
+        # 2. Create temporary keychain (don't pollute runner default keychain)
+        keychain_path="${RUNNER_TEMP}/signing.keychain-db"
+        security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+        security set-keychain-settings -lut 21600 "$keychain_path"
+        security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+
+        # 3. Add to user keychain search list and set default
+        security list-keychains -d user -s "$keychain_path" $(security list-keychains -d user | tr -d '"')
+        security default-keychain -s "$keychain_path"
+
+        # 4. Import cert, authorize codesign + security tools
+        security import "$cert_path" -k "$keychain_path" \
+          -P "$APPLE_CERTIFICATE_PASSWORD" \
+          -T /usr/bin/codesign -T /usr/bin/security
+
+        # 5. Non-interactive private key access
+        security set-key-partition-list -S apple-tool:,apple: \
+          -s -k "$KEYCHAIN_PASSWORD" "$keychain_path" > /dev/null
+
+        # 6. Discover identity (don't hardcode team ID)
+        IDENTITY=$(security find-identity -v -p codesigning "$keychain_path" \
+          | grep "Developer ID Application" | head -1 \
+          | sed -n 's/.*"\(Developer ID Application[^"]*\)".*/\1/p')
+
+        if [[ -z "$IDENTITY" ]]; then
+          echo "::error::No Developer ID Application identity found in keychain"
+          security find-identity -v -p codesigning "$keychain_path"
+          exit 1
+        fi
+
+        echo "Found signing identity: $IDENTITY"
+        echo "APPLE_SIGNING_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+        echo "APPLE_KEYCHAIN_PATH=$keychain_path" >> "$GITHUB_ENV"
+
+        rm -f "$cert_path"

@@ -1,8 +1,7 @@
 {
-  "name": "@moonshot-ai/kimi-web",
+  "name": "kimi-code-web",
   "version": "0.1.2",
   "private": true,
-  "license": "MIT",
   "type": "module",
   "scripts": {
     "prepare:fonts": "node ../../scripts/prepare-fonts.mjs",

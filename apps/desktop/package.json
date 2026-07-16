@@ -1,11 +1,10 @@
 {
-  "name": "@moonshot-ai/kimi-desktop",
-  "version": "0.1.1-internal.0",
+  "name": "kimi-code-app",
+  "version": "0.0.0",
   "private": true,
-  "license": "MIT",
   "description": "Kimi Code desktop client — an Electron shell around the Kimi web UI.",
   "author": "Moonshot AI",
-  "homepage": "https://github.com/MoonshotAI/code-app",
+  "homepage": "https://github.com/MoonshotAI/kimi-code-app",
   "type": "module",
   "main": "out/main.cjs",
   "scripts": {
@@ -46,7 +45,7 @@
     "stream-markdown": "^0.0.16",
     "vue": "^3.5.35",
     "vue-i18n": "^11.4.5",
-    "@electron/rebuild": "3.7.1",
+    "@electron/rebuild": "4.2.0",
     "@moonshot-ai/vite-preset": "workspace:*",
     "@vitejs/plugin-vue": "^5.2.4",
     "electron": "43.1.1",

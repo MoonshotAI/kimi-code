@@ -1,0 +1,162 @@
+name: desktop-build
+
+# 桌面端（Electron）安装包流水线：macOS arm64/x64、Windows x64、Linux x64。
+# 手动触发（Actions -> desktop-build -> Run workflow），产物只进 artifacts，
+# 不做 Release / OSS 分发与自动更新。参考 kimi-code 仓库的同名 workflow。
+#
+# macOS 默认用 Developer ID 证书签名 + notarize；Run workflow 时把
+# sign-macos 设为 false 可出未签名包。Windows / Linux 不签名
+#（Windows 会弹 SmartScreen）。
+#
+# 需要的 secrets（Settings -> Secrets and variables -> Actions）：
+#   APPLE_CERTIFICATE_P12          base64 编码的 Developer ID Application .p12
+#   APPLE_CERTIFICATE_PASSWORD     .p12 导出密码
+#   APPLE_NOTARIZATION_KEY_P8      base64 编码的 App Store Connect API Key (.p8)
+#   APPLE_NOTARIZATION_KEY_ID      API Key ID
+#   APPLE_NOTARIZATION_ISSUER_ID   Issuer ID (UUID)
+on:
+  workflow_dispatch:
+    inputs:
+      sign-macos:
+        description: '签名 + 公证 macOS 包（需要 APPLE_* secrets）'
+        required: false
+        type: boolean
+        default: true
+      retention-days:
+        description: 'Artifact 保留天数'
+        required: false
+        type: number
+        default: 7
+      upload-artifact-prefix:
+        description: '上传的 artifact 名前缀'
+        required: false
+        type: string
+        default: 'kimi-code-app'
+  # release.yml 通过 workflow_call 调用本 workflow 打发版产物。
+  workflow_call:
+    inputs:
+      sign-macos:
+        required: false
+        type: boolean
+        default: false
+      retention-days:
+        required: false
+        type: number
+        default: 7
+      upload-artifact-prefix:
+        required: false
+        type: string
+        default: 'kimi-code-app'
+    secrets:
+      APPLE_CERTIFICATE_P12:
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        required: false
+      APPLE_NOTARIZATION_KEY_P8:
+        required: false
+      APPLE_NOTARIZATION_KEY_ID:
+        required: false
+      APPLE_NOTARIZATION_ISSUER_ID:
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  # 单一开关，供下方各步骤的 if / env 条件复用。
+  SIGN_MACOS: ${{ inputs.sign-macos }}
+
+jobs:
+  package:
+    name: package (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            target: darwin-arm64
+          - os: macos-15-intel
+            target: darwin-x64
+          - os: windows-2025
+            target: win32-x64
+          - os: ubuntu-24.04
+            target: linux-x64
+
+    steps:
+      - name: Checkout (with kimi-code submodule)
+        # desktop 经 workspace import kimi-code 的 packages 源码，必须拉
+        # submodule；kimi-code 是公开仓，默认 GITHUB_TOKEN 即可。
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        # postinstall 会自动准备共享字体（prepare-fonts）并跑 electron-rebuild。
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup macOS keychain (Developer ID)
+        if: runner.os == 'macOS' && env.SIGN_MACOS == 'true'
+        uses: ./.github/actions/macos-keychain-setup
+        with:
+          certificate-p12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+
+      - name: Prepare CSC_NAME for electron-builder (macOS)
+        if: runner.os == 'macOS' && env.SIGN_MACOS == 'true'
+        shell: bash
+        run: |
+          # electron-builder 不认 CSC_NAME 里的 "Developer ID Application: "
+          # 前缀，剥掉后按团队名 + Team ID 匹配证书。
+          name="${APPLE_SIGNING_IDENTITY}"
+          name="${name#Developer ID Application: }"
+          echo "CSC_NAME=$name" >> "$GITHUB_ENV"
+
+      - name: Prepare notarization API key (macOS)
+        if: runner.os == 'macOS' && env.SIGN_MACOS == 'true'
+        shell: bash
+        env:
+          APPLE_NOTARIZATION_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          key_path="$RUNNER_TEMP/notary-AuthKey.p8"
+          printf '%s' "$APPLE_NOTARIZATION_KEY_P8" | base64 -d > "$key_path"
+          echo "APPLE_API_KEY=$key_path" >> "$GITHUB_ENV"
+
+      - name: Build & package desktop app
+        shell: bash
+        env:
+          # macOS 签名由 env 驱动：sign-macos 时 electron-builder 用 keychain
+          # 里的 Developer ID 签名并经 notary API key 公证，否则出未签名包。
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ (runner.os == 'macOS' && env.SIGN_MACOS == 'true') && 'true' || 'false' }}
+          CSC_KEYCHAIN: ${{ env.APPLE_KEYCHAIN_PATH }}
+          KIMI_DESKTOP_NOTARIZE: ${{ (runner.os == 'macOS' && env.SIGN_MACOS == 'true') && 'true' || 'false' }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+        run: pnpm --filter kimi-code-app run dist
+
+      - name: Cleanup macOS keychain
+        if: always() && runner.os == 'macOS' && env.SIGN_MACOS == 'true'
+        uses: ./.github/actions/macos-keychain-cleanup
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.upload-artifact-prefix }}-${{ matrix.target }}
+          retention-days: ${{ inputs.retention-days }}
+          path: |
+            apps/desktop/dist-app/*.dmg
+            apps/desktop/dist-app/*.zip
+            apps/desktop/dist-app/*.exe
+            apps/desktop/dist-app/*.AppImage
+            apps/desktop/dist-app/*.deb
+          if-no-files-found: ignore

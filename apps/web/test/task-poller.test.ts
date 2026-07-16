@@ -3,7 +3,7 @@
 // fetched under their REST task id, and a transient getTask failure must not
 // permanently suppress later backfills.
 // Wiring: the composable is real; daemon requests are stubbed.
-// Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/task-poller.test.ts
+// Run: pnpm --filter kimi-code-web exec vitest run test/task-poller.test.ts
 
 import { computed } from 'vue';
 import { beforeEach, describe, expect, it, vi } from 'vitest';

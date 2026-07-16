@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# macOS signing setup for GitLab CI — translated from the kimi-code repo's
-# .github/actions/macos-keychain-setup composite action.
+# macOS signing setup for local packaging — must be SOURCED from
+# apps/desktop/scripts/package-local-macos.sh so the exported variables reach
+# the packaging step:
 #
-# This script must be SOURCED from a job's before_script so the exported
-# variables reach the packaging step:
+#   source apps/desktop/scripts/ci/macos-sign-setup.sh
 #
-#   before_script:
-#     - source apps/desktop/scripts/ci/macos-sign-setup.sh
+# (Translated from the kimi-code repo's .github/actions/macos-keychain-setup
+# composite action; the GitHub Actions workflow uses the composite actions
+# directly and does not depend on this script.)
 #
 # Behavior:
 #   - DESKTOP_SIGN_MACOS != "true"  -> export unsigned-build env and return.

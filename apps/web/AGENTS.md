@@ -1,6 +1,6 @@
 # kimi-web Agent Guide
 
-Package-local rules for `apps/kimi-web` (`@moonshot-ai/kimi-web`).
+Package-local rules for `apps/kimi-web` (`kimi-code-web`).
 
 ## What it is
 
@@ -12,7 +12,7 @@ The browser web UI for Kimi Code — a peer to the TUI in `apps/kimi-code`. It t
 - **Use the primitives from `@moonshot-ai/web-ui`** (source in `packages/web-ui`; import as `import { Button, Icon, … } from '@moonshot-ai/web-ui'`, and the app's `src/style.css` already imports `@moonshot-ai/web-ui/style.css` for the tokens). The library covers Button, IconButton, Badge, Pill, Card, Input/Select/Textarea/Field, Dialog, Spinner, MoonSpinner, Link, Menu/MenuItem, SegmentedControl, Tabs, Switch, Checkbox, Avatar, EmptyState, Divider, Tooltip, Banner, Sheet, Skeleton, CommandBar, TopBar. One semantic = one component — do not hand-roll a bespoke button/badge/dialog/input for a single screen. When a primitive replaces an element, **delete the old scoped CSS** (do not append override blocks).
 - **Use the tokens, not ad-hoc values.** Colors, fonts, radii, spacing, shadows, z-index, and motion come from the CSS custom properties in `src/style.css` (catalogued in the design-system view §02). Canonical names are `--color-*` / `--radius-*` / `--space-*` / `--text-*` / `--font-*` / `--z-*` / `--shadow-*` / `--ease-*` / `--duration-*` / `--weight-*` / `--leading-*`. A small set of layout/focus tokens keep the `--p-` prefix: `--p-focus-ring`, `--p-selection`, `--p-ic-sm/md/lg`, `--p-sidebar-w`, `--p-content-max/-wide`, `--p-bp-sm/-md`.
 - **The moon spinner (🌑…🌘) is reserved** for the chat "waiting for the agent's first response" state only, and is rendered solely by `ui/MoonSpinner.vue`; every other loading state uses the plain `Spinner`.
-- **Run `pnpm --filter @moonshot-ai/kimi-web check:style`** (`scripts/check-style.mjs`) — it enforces the §06 anti-pattern rules (no-gradient, no-glassmorphism except TopBar `frost`, no-emoji-icon except moon, no-hardcoded-hex/font, radius/z/weight from scale). Do not add new violations.
+- **Run `pnpm --filter kimi-code-web check:style`** (`scripts/check-style.mjs`) — it enforces the §06 anti-pattern rules (no-gradient, no-glassmorphism except TopBar `frost`, no-emoji-icon except moon, no-hardcoded-hex/font, radius/z/weight from scale). Do not add new violations.
 - **Verify visually.** For any UI change, render it in the browser (light + dark, plus hover/focus states) and confirm it matches the design-system view and introduces no regression before considering it done. Build/typecheck/check-style are necessary but not sufficient.
 
 ## Layout (`src/`)
@@ -42,7 +42,7 @@ The browser web UI for Kimi Code — a peer to the TUI in `apps/kimi-code`. It t
 
 ## Commands
 
-All via `pnpm --filter @moonshot-ai/kimi-web …`:
+All via `pnpm --filter kimi-code-web …`:
 
 - `dev` — Vite dev server (port `WEB_PORT`, default 5175; proxies `/api/v1` to `KIMI_SERVER_URL`, default `http://127.0.0.1:58627`).
 - `dev:stub` — offline stub daemon (`dev/stub-daemon.mjs`).

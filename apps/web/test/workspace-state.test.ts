@@ -1,7 +1,7 @@
 // Scenario: workspace/session actions exposed by useWorkspaceState.
 // Responsibilities: observable state and error reporting across load, paging, and user actions.
 // Wiring: the composable is real; daemon requests and unrelated facade collaborators are stubbed.
-// Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/workspace-state.test.ts
+// Run: pnpm --filter kimi-code-web exec vitest run test/workspace-state.test.ts
 
 import { computed, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

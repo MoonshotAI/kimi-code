@@ -12,7 +12,7 @@
 
 - **依赖方向 `code-app → kimi-code` 单向**：desktop 只经 `@moonshot-ai/*` 包名 import kimi-code 的 packages 源码，禁止跨包相对路径 import；`kimi-code` 不得 import `code-app`。
 - `apps/web` 只依赖 `@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` 共享包，不直接 import kimi-code 的包。
-- **不改包名**：`@moonshot-ai/kimi-web`、`@moonshot-ai/kimi-desktop`。
+- **不改包名**：`kimi-code-web`、`kimi-code-app`（两端原名 `@moonshot-ai/kimi-web` / `@moonshot-ai/kimi-desktop`，2026-07 更名）。
 - **两端逐步分叉是既定方向**：desktop 的原生功能（经 `window.kimiDesktop` 桥接，如原生目录选择器）只在 `apps/desktop` 实现；web 刻意保留原有 daemon 接口实现，不回填。原生路径必须带无桥降级（探测不到桥时回退旧实现）。已分叉的功能点记录在 `apps/desktop/docs/native-todos.md`；改两端共有的文件前先查它，手动同步副本时保留 desktop 侧的分叉块。
 - **开发顺序**：两端共有的 UI 改动优先在 `apps/desktop` 开发，开发完成后再同步到 `apps/web`（desktop 专属原生功能除外，见上条）。
 - **不在本仓直接改 `kimi-code/` submodule 的内容**；kimi-code 侧改动在你的工作克隆里做（见"双仓工作流"），本仓只 bump submodule 指针。
@@ -22,12 +22,13 @@
 
 ## 目录地图
 
-- `apps/desktop`：Electron 壳（`@moonshot-ai/kimi-desktop`）。`src/main/index.ts` 主进程入口（只做编排；窗口 `window.ts`、菜单 `menu.ts`、快捷键 `shortcuts.ts`、IPC `ipc.ts` + channel 常量 `ipc-channels.ts`、server 连接 `connect.ts`、启动失败页 `screens.ts`）；`src/main/server.ts` 内嵌 server（`startDesktopServer`：回环 + 临时端口 + 独立 lock）；`src/main/connect-target.ts` 外部 server 模式解析（`KIMI_SERVER_URL`，纯函数）；`src/main/protocol.ts` `app://renderer` 协议映射（带 `..` 越界防护）。`pnpm dev` 走 `scripts/dev.mjs`：起 renderer 的 Vite dev server（默认 `http://127.0.0.1:5174`）并把实际端口经 `KIMI_RENDERER_DEV_URL` 传给主进程，`connect.ts` 据此加载 dev server（renderer HMR）并把该 origin 加进内嵌 server 的 CORS 白名单；主进程改动需重启 dev。主进程测试在 `tests/main/`，renderer 测试与源码同目录。细则见 `apps/desktop/README.md`。
-- `apps/web`：浏览器 Web UI（`@moonshot-ai/kimi-web`，Vue 3 + Vite + vue-i18n）。dev 时 Vite 把 `/api/v1`（REST + WS）代理到 `KIMI_SERVER_URL`（默认 `http://127.0.0.1:58627`）。
+- `apps/desktop`：Electron 壳（`kimi-code-app`）。`src/main/index.ts` 主进程入口（只做编排；窗口 `window.ts`、菜单 `menu.ts`、快捷键 `shortcuts.ts`、IPC `ipc.ts` + channel 常量 `ipc-channels.ts`、server 连接 `connect.ts`、启动失败页 `screens.ts`）；`src/main/server.ts` 内嵌 server（`startDesktopServer`：回环 + 临时端口 + 独立 lock）；`src/main/connect-target.ts` 外部 server 模式解析（`KIMI_SERVER_URL`，纯函数）；`src/main/protocol.ts` `app://renderer` 协议映射（带 `..` 越界防护）。`pnpm dev` 走 `scripts/dev.mjs`：起 renderer 的 Vite dev server（默认 `http://127.0.0.1:5174`）并把实际端口经 `KIMI_RENDERER_DEV_URL` 传给主进程，`connect.ts` 据此加载 dev server（renderer HMR）并把该 origin 加进内嵌 server 的 CORS 白名单；主进程改动需重启 dev。主进程测试在 `tests/main/`，renderer 测试与源码同目录。细则见 `apps/desktop/README.md`。
+- `apps/web`：浏览器 Web UI（`kimi-code-web`，Vue 3 + Vite + vue-i18n）。dev 时 Vite 把 `/api/v1`（REST + WS）代理到 `KIMI_SERVER_URL`（默认 `http://127.0.0.1:58627`）。
 - `packages/*`：`@moonshot-ai/{web-core,web-i18n,web-markdown,web-ui}` + `vite-preset`（exports→src，被 apps/web 与 desktop renderer 复用）；`web-ui/src/assets/fonts` 保存字体许可证与本地生成（gitignored）的两端共用字体产物，install 的 root postinstall 以及 dev/build 前会由 `scripts/prepare-fonts.mjs` 下载、校验并转换，再由 Vite 打入最终产物。
 - `kimi-code/`：git submodule（核心仓）。`kimi-code/packages/*` 提供 `kap-server`、`agent-core-v2`、`kimi-code-sdk` 等源码。
 - `scripts/sync-web-to-kimi-code.mjs`：`apps/web/dist` → `<kimi-code checkout>/apps/kimi-code/dist-web`（`KIMI_CODE_REPO` 必传，指定目标 checkout）。
-- `.gitlab-ci.yml`：desktop 打包流水线（macOS arm64/x64、Windows、Linux 四个手动触发 job，产物只进 artifacts）。macOS 签名/公证脚本在 `apps/desktop/scripts/ci/`，所需的 5 个 `APPLE_*` CI/CD 变量与 runner 要求见文件头注释。CI 不可用时的本地替代：`apps/desktop/scripts/package-local-macos.sh`（复用 ci/ 的 setup/cleanup，只打 arm64）。
+- `.github/workflows/desktop-build.yml`：desktop 打包流水线（workflow_dispatch 手动触发 + workflow_call 供 release.yml 调用，matrix 出 macOS arm64/x64、Windows、Linux 四平台安装包，产物以 `kimi-code-app-<target>` 命名进 artifacts）。macOS 签名/公证用 `.github/actions/macos-keychain-{setup,cleanup}` composite action（源自 kimi-code 仓同名 action），需在 repo Secrets 配置 5 个 `APPLE_*` secret，见 workflow 文件头注释；`sign-macos=false` 出未签名包。CI 不可用时的本地替代：`apps/desktop/scripts/package-local-macos.sh`（复用 `apps/desktop/scripts/ci/` 的 setup/cleanup shell 脚本，只打 arm64）。
+- `.github/workflows/release.yml` + `.changeset/`：desktop 发版流程（不发 npm）。功能 PR 带 `pnpm changeset` 生成的 changeset（只选 `kimi-code-app`，其余包全在 ignore 里）合入 main 后，action 自动开 `ci: release desktop` 版本 PR；版本 PR 合入即调 desktop-build 打四平台签名包，并创建 GitHub Release（tag `v<version>`）挂上全部安装包。细节见 `.changeset/README.md`。
 
 ## 常用命令
 
@@ -67,4 +68,4 @@ pnpm build         # pnpm -r run build
 
   Token 通过 `KIMI_CODE_HOME` 共享：两边默认 `~/.kimi-code`，desktop 读到的正是外部 server 写入的 token 文件；server 用自定义 `KIMI_CODE_HOME` 启动时，`pnpm dev:desktop` 要传同一个。外部 server 使用 CLI 的 host 身份（不是 `kimi-desktop`），开发场景没有影响。不带 `KIMI_SERVER_URL` 时 `pnpm dev:desktop` 保持内嵌 server 行为。
 - **bump submodule**：工作克隆推了新 commit 后，在 `kimi-code/` 里 `git fetch origin <branch> && git checkout <commit>`，回本仓根目录 `git add kimi-code && git commit -m "chore: bump kimi-code submodule"`。
-- **web 改动同步**：`pnpm --filter @moonshot-ai/kimi-web run build` → `KIMI_CODE_REPO=<kimi-code checkout> pnpm run sync:web`。
+- **web 改动同步**：`pnpm --filter kimi-code-web run build` → `KIMI_CODE_REPO=<kimi-code checkout> pnpm run sync:web`。

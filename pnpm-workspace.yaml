@@ -16,6 +16,6 @@ overrides:
   "ssh2@1.17.0>nan": "-"
   # Unify zod to a single copy. kimi-code packages split zod across 4.3.6
   # (server via catalog) and 4.4.3 (agent-core et al. via ^4.3.6); the mixed
-  # $ZodType surfaces as ~159 type errors in @moonshot-ai/kimi-desktop's
+  # $ZodType surfaces as ~159 type errors in kimi-code-app's
   # typecheck, which resolves kimi-code sources via workspace:^ exports.
   "zod": "catalog:"

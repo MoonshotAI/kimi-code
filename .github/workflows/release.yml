@@ -1,0 +1,130 @@
+name: Release
+
+# 参考 kimi-code 仓库的 release.yml，区别在于本仓不发布 npm——发布物是
+# 桌面端安装包，以 GitHub Release 形式分发。
+#
+# 流程（push 到 main 时）：
+# 1. changesets/action 维护 "ci: release desktop" 版本 PR（有未消费的
+#    changeset 时创建 / 更新；没有则跳过）。
+# 2. 版本 PR 合入后，检测到 apps/desktop/package.json 的版本还没有对应
+#    tag，则调 desktop-build.yml（签名 + 公证）打出四平台安装包，创建
+#    GitHub Release（tag v<version>，notes 自动生成），并把 dmg / zip /
+#    exe / AppImage / deb 全部上传为该 release 的 assets。
+#
+# 幂等：tag 已存在则整段跳过；tag 随 gh release create 在最后一步创建，
+# 打包失败时不会留下悬空 tag，修复后重跑本 workflow 即可。
+on:
+  push:
+    branches:
+      - main
+
+concurrency: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    if: github.repository_owner == 'MoonshotAI'
+    outputs:
+      desktop_release: ${{ steps.desktop-release.outputs.should_release }}
+      desktop_release_tag: ${{ steps.desktop-release.outputs.tag }}
+      desktop_release_sha: ${{ steps.desktop-release.outputs.sha }}
+    permissions:
+      contents: write # changesets/action 推版本 PR 分支
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Create release Pull Request
+        id: changesets
+        uses: changesets/action@v1
+        with:
+          version: pnpm changeset version
+          commit: "ci: release desktop"
+          title: "ci: release desktop"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve desktop release
+        id: desktop-release
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./apps/desktop/package.json').version")
+          tag="v${version}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${tag}" > /dev/null 2>&1; then
+            echo "tag ${tag} already exists on origin — nothing to release"
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "will release ${tag} at ${GITHUB_SHA}"
+            {
+              echo "should_release=true"
+              echo "tag=${tag}"
+              echo "sha=${GITHUB_SHA}"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+  desktop-artifacts:
+    name: Desktop release artifacts
+    needs: release
+    if: needs.release.outputs.desktop_release == 'true'
+    uses: ./.github/workflows/desktop-build.yml
+    with:
+      sign-macos: true
+      retention-days: 7
+      upload-artifact-prefix: kimi-code-app
+    secrets:
+      APPLE_CERTIFICATE_P12: ${{ secrets.APPLE_CERTIFICATE_P12 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_NOTARIZATION_KEY_P8: ${{ secrets.APPLE_NOTARIZATION_KEY_P8 }}
+      APPLE_NOTARIZATION_KEY_ID: ${{ secrets.APPLE_NOTARIZATION_KEY_ID }}
+      APPLE_NOTARIZATION_ISSUER_ID: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
+
+  publish-desktop-assets:
+    name: Publish desktop release assets
+    needs:
+      - release
+      - desktop-artifacts
+    if: needs.release.outputs.desktop_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create / upload
+    steps:
+      - name: Download installer artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kimi-code-app-*
+          path: dist-desktop-release
+          merge-multiple: true
+
+      - name: Create GitHub Release and upload installers
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.release.outputs.desktop_release_tag }}
+          RELEASE_SHA: ${{ needs.release.outputs.desktop_release_sha }}
+        run: |
+          set -euo pipefail
+          ls -la dist-desktop-release
+          # tag 一并创建，钉在触发本次发版的 merge commit 上（而不是当时的
+          # main HEAD——打包期间 main 可能已前移）。
+          gh release create "$RELEASE_TAG" \
+            --target "$RELEASE_SHA" \
+            --title "Kimi Code Desktop $RELEASE_TAG" \
+            --generate-notes
+          gh release upload "$RELEASE_TAG" dist-desktop-release/* --clobber

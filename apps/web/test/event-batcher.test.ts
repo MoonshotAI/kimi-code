@@ -4,7 +4,7 @@
  * streams, bound each drain, keep a hidden-tab task fallback, and cancel stale
  * callbacks after flush. Wiring: real batcher/coalescer/reducer with only the
  * browser scheduler replaced by a manual public scheduler.
- * Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/event-batcher.test.ts
+ * Run: pnpm --filter kimi-code-web exec vitest run test/event-batcher.test.ts
  */
 
 import { describe, expect, it, vi } from 'vitest';

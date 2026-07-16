@@ -1,6 +1,6 @@
 # Kimi Code
 
-Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `@moonshot-ai/kimi-desktop`）。
+Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `kimi-code-app`）。
 主进程在进程内直接启动 Kimi Code server，渲染进程加载一份 web UI 的副本，经自定义协议
 `app://renderer` 提供给窗口。它不再 spawn 独立 server 可执行文件（SEA），也不再套壳远
 程/共享 daemon 的网页。
@@ -56,14 +56,14 @@ pnpm dev:desktop       # = scripts/dev.mjs：vite dev server（renderer HMR）+ 
 生产形态单独构建 renderer：
 
 ```bash
-pnpm --filter @moonshot-ai/kimi-desktop run build:renderer   # 产物 apps/desktop/desktop-dist/
+pnpm --filter kimi-code-app run build:renderer   # 产物 apps/desktop/desktop-dist/
 ```
 
 检查：
 
 ```bash
-pnpm --filter @moonshot-ai/kimi-desktop run typecheck
-pnpm --filter @moonshot-ai/kimi-desktop run test
+pnpm --filter kimi-code-app run typecheck
+pnpm --filter kimi-code-app run test
 ```
 
 ## 现状：web 与 desktop 各维护一份
@@ -102,7 +102,7 @@ pnpm --filter @moonshot-ai/kimi-desktop run test
 
 ```bash
 # 本机未签名构建：
-CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --filter @moonshot-ai/kimi-desktop run dist
+CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --filter kimi-code-app run dist
 # -> apps/desktop/dist-app/（macOS 上为 dmg + zip）
 ```
 
@@ -114,27 +114,30 @@ CSC_IDENTITY_AUTO_DISCOVERY=false pnpm --filter @moonshot-ai/kimi-desktop run di
 
 注意：不要重命名构建出的 `.app`，重命名会使签名失效，macOS 会提示「已损坏」。
 
-### CI 打包（GitLab）
+### CI 打包（GitHub Actions）
 
-根目录 `.gitlab-ci.yml` 提供 4 个手动触发的打包 job（`package:macos-arm64` /
-`package:macos-x64` / `package:windows-x64` / `package:linux-x64`），产物只进 GitLab
-artifacts（保留 7 天），未做 Release / OSS 分发与自动更新。
+根目录 `.github/workflows/desktop-build.yml` 提供手动触发的打包流水线
+（Actions -> desktop-build -> Run workflow），matrix 并发出 macOS arm64/x64、
+Windows x64、Linux x64 四个平台的安装包，产物以 `kimi-code-app-<target>`
+命名进 artifacts（默认保留 7 天，可用 `retention-days` 输入调整）。
+发版走 `.github/workflows/release.yml`（changeset + GitHub Release，见
+`.changeset/README.md`），会复用本 workflow 打出签名包并挂为 release
+assets；未做 OSS 分发与自动更新。
 
-- **macOS 签名 + 公证**：默认开启。`apps/desktop/scripts/ci/macos-sign-setup.sh`
-  建临时 keychain、导入 Developer ID 证书、自动发现签名身份；`macos-sign-cleanup.sh`
-  在 `after_script` 恢复 runner 原有钥匙串状态。需在 GitLab CI/CD Variables 配置
+- **macOS 签名 + 公证**：默认开启。`.github/actions/macos-keychain-setup`
+  composite action 建临时 keychain、导入 Developer ID 证书、自动发现签名身份；
+  `macos-keychain-cleanup` 在 job 末尾（`if: always()`）删除临时 keychain。
+  需在 repo Settings -> Secrets and variables -> Actions 配置
   `APPLE_CERTIFICATE_P12` / `APPLE_CERTIFICATE_PASSWORD` /
   `APPLE_NOTARIZATION_KEY_P8` / `APPLE_NOTARIZATION_KEY_ID` /
-  `APPLE_NOTARIZATION_ISSUER_ID`（masked；若配成 protected，注意普通分支拿不到）。
-  触发 pipeline 时传 `DESKTOP_SIGN_MACOS=false` 可出未签名包。
+  `APPLE_NOTARIZATION_ISSUER_ID`。Run workflow 时把 `sign-macos` 设为
+  false 可出未签名包。
 - **Windows / Linux**：不签名（Windows 会弹 SmartScreen）。
-- runner 需预装 Node >= 24.15.0 与 pnpm 10.33.0；macOS runner 另需 Xcode
-  （xcrun / notarytool）。checkout 会自动初始化 kimi-code submodule
-  （`GIT_SUBMODULE_STRATEGY: recursive`），runner 需能访问 github.com。
+- 使用 GitHub 标配 runner（`macos-15` / `macos-15-intel` / `windows-2025` /
+  `ubuntu-24.04`），checkout 带 `submodules: recursive` 自动初始化 kimi-code
+  submodule，Node/pnpm 由 setup actions 按仓内版本要求安装。
 
-> macOS 未签名出包已实跑验证（dmg/zip、node-pty asarUnpack、desktop-dist 资源均正确）；
-> 签名 + 公证链路从原仓 GitHub Actions workflow 逐行翻译，待 GitLab macOS runner
-> 首跑验证。
+> 四平台打包（含 macOS 签名 + 公证）已在本仓首跑验证通过。
 
 ### 本地签名打包（CI 不可用时）
 
@@ -142,11 +145,11 @@ artifacts（保留 7 天），未做 Release / OSS 分发与自动更新。
 pnpm package:macos   # = bash apps/desktop/scripts/package-local-macos.sh
 ```
 
-`scripts/package-local-macos.sh` 复用 CI 的 `scripts/ci/macos-sign-setup.sh` /
-`macos-sign-cleanup.sh`（同一套临时 keychain + 身份发现 + 公证逻辑），只出 arm64 的
-dmg + zip；本地没有 GitLab 的 `after_script`，脚本用 `trap` 保证任何退出路径都执行
-cleanup 恢复钥匙串。出包后自动做 `codesign --verify --deep --strict`、`spctl -a -vv`、
-`xcrun stapler validate` 三项验证。
+`scripts/package-local-macos.sh` 复用 `scripts/ci/macos-sign-setup.sh` /
+`macos-sign-cleanup.sh`（与 CI 的 composite action 同一套临时 keychain + 身份发现 +
+公证逻辑），只出 arm64 的 dmg + zip；本地没有 CI 的收尾步骤，脚本用 `trap` 保证任何
+退出路径都执行 cleanup 恢复钥匙串。出包后自动做 `codesign --verify --deep --strict`、
+`spctl -a -vv`、`xcrun stapler validate` 三项验证。
 
 凭证与 CI 的 5 个变量同名，三种给法（都支持文件形式转 base64，详见脚本头注释）：
 
