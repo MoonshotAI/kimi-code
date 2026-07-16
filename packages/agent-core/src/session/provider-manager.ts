@@ -113,8 +113,7 @@ export class ProviderManager implements ModelProvider {
       );
     }
 
-    const protocol = alias.protocol ?? providerConfig.type;
-    const effectiveAlias = effectiveModelAlias(alias, protocol === 'anthropic');
+    const effectiveAlias = effectiveModelAlias(alias, providerConfig.type);
 
     if (!Number.isInteger(effectiveAlias.maxContextSize) || effectiveAlias.maxContextSize <= 0) {
       throw new KimiError(

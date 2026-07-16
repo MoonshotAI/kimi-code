@@ -58,6 +58,9 @@ describe('listModelsFromHarness', () => {
   it('advertises thinking with a high default for an unknown model using the Anthropic protocol', async () => {
     const harness = {
       getConfig: async () => ({
+        providers: {
+          custom: { type: 'anthropic' },
+        },
         models: {
           custom: {
             provider: 'custom',
@@ -76,6 +79,34 @@ describe('listModelsFromHarness', () => {
         thinkingSupported: true,
         alwaysThinking: false,
         defaultThinkingEffort: 'high',
+      },
+    ]);
+  });
+
+  it('does not advertise thinking for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
+    const harness = {
+      getConfig: async () => ({
+        providers: {
+          'managed:kimi-code': { type: 'kimi' },
+        },
+        models: {
+          custom: {
+            provider: 'managed:kimi-code',
+            model: 'custom-anthropic-model',
+            maxContextSize: 200000,
+            protocol: 'anthropic',
+          },
+        },
+      }),
+    } as unknown as KimiHarness;
+
+    await expect(listModelsFromHarness(harness)).resolves.toEqual([
+      {
+        id: 'custom',
+        name: 'custom-anthropic-model',
+        thinkingSupported: false,
+        alwaysThinking: false,
+        defaultThinkingEffort: 'on',
       },
     ]);
   });

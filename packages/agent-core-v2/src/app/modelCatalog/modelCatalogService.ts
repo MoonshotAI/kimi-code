@@ -37,6 +37,7 @@ import {
   IProviderService,
   type OAuthRef,
   type ProviderConfig,
+  type ProviderType,
   PROVIDERS_SECTION,
 } from '#/app/provider/provider';
 
@@ -68,7 +69,7 @@ export class ModelCatalogService implements IModelCatalogService {
   async listModels(): Promise<readonly ModelCatalogItem[]> {
     const models = this.modelService.list();
     return Object.entries(models).map(([modelId, alias]) =>
-      toProtocolModel(modelId, alias, this.usesAnthropicProtocol(alias)),
+      toProtocolModel(modelId, alias, this.providerTypeOf(alias)),
     );
   }
 
@@ -102,14 +103,14 @@ export class ModelCatalogService implements IModelCatalogService {
     const updatedAlias = this.modelService.get(modelId) ?? alias;
     return {
       default_model: modelId,
-      model: toProtocolModel(modelId, updatedAlias, this.usesAnthropicProtocol(updatedAlias)),
+      model: toProtocolModel(modelId, updatedAlias, this.providerTypeOf(updatedAlias)),
     };
   }
 
-  private usesAnthropicProtocol(alias: ModelAlias): boolean {
+  private providerTypeOf(alias: ModelAlias): ProviderType | undefined {
     const providerId =
       alias.providerId ?? alias.provider ?? this.config.get<string>('defaultProvider');
-    return (alias.protocol ?? this.providerService.get(providerId ?? '')?.type) === 'anthropic';
+    return this.providerService.get(providerId ?? '')?.type;
   }
 
   refreshProviderModels(

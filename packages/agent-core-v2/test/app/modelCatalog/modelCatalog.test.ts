@@ -189,10 +189,10 @@ describe('ModelCatalogService', () => {
     });
   });
 
-  it('projects latest Opus efforts for unknown Kimi-managed Anthropic models', async () => {
+  it('projects latest Opus efforts for unknown Anthropic-compatible models', async () => {
+    backing.providers['custom'] = { type: 'anthropic' };
     backing.models['compatible'] = {
-      provider: 'kimi',
-      protocol: 'anthropic',
+      provider: 'custom',
       model: 'compatible-model',
       maxContextSize: 128000,
     };
@@ -205,6 +205,26 @@ describe('ModelCatalogService', () => {
       support_efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       default_effort: 'high',
     });
+  });
+
+  it('does not project fallback efforts for unknown Kimi-managed Anthropic models', async () => {
+    backing.models['compatible'] = {
+      provider: 'kimi',
+      protocol: 'anthropic',
+      model: 'compatible-model',
+      maxContextSize: 128000,
+    };
+
+    const compatible = (await catalog().listModels()).find(
+      (model) => model.model === 'compatible',
+    );
+    expect(compatible).toMatchObject({
+      provider: 'kimi',
+      model: 'compatible',
+    });
+    expect(compatible?.capabilities).toBeUndefined();
+    expect(compatible?.support_efforts).toBeUndefined();
+    expect(compatible?.default_effort).toBeUndefined();
   });
 
   it('projects effort fields from overrides when present', async () => {

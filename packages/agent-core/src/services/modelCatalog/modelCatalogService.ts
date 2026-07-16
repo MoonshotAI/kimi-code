@@ -1,5 +1,5 @@
 import { Disposable, InstantiationType, registerSingleton } from '../../di';
-import type { KimiConfig, ModelAlias, ProviderConfig } from '../../config';
+import type { KimiConfig, ModelAlias, ProviderConfig, ProviderType } from '../../config';
 import type {
   ModelCatalogItem,
   ProviderCatalogItem,
@@ -61,7 +61,7 @@ export class ModelCatalogService
   async listModels(): Promise<readonly ModelCatalogItem[]> {
     const config = await this._readConfig();
     return Object.entries(config.models ?? {}).map(([modelId, alias]) =>
-      toProtocolModel(modelId, alias, this._usesAnthropicProtocol(config, alias)),
+      toProtocolModel(modelId, alias, this._providerTypeOf(config, alias)),
     );
   }
 
@@ -97,14 +97,14 @@ export class ModelCatalogService
       model: toProtocolModel(
         modelId,
         updatedAlias,
-        this._usesAnthropicProtocol(updated, updatedAlias),
+        this._providerTypeOf(updated, updatedAlias),
       ),
     };
   }
 
-  private _usesAnthropicProtocol(config: KimiConfig, alias: ModelAlias): boolean {
+  private _providerTypeOf(config: KimiConfig, alias: ModelAlias): ProviderType | undefined {
     const providerId = alias.provider ?? config.defaultProvider;
-    return (alias.protocol ?? config.providers[providerId ?? '']?.type) === 'anthropic';
+    return config.providers[providerId ?? '']?.type;
   }
 
   async refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse> {

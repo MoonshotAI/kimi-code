@@ -60,7 +60,7 @@ describe('effectiveModelAlias', () => {
     });
   });
 
-  it('infers Anthropic effort metadata for an unknown model with an explicit Anthropic protocol', () => {
+  it('infers Anthropic effort metadata for an unknown model on a non-Kimi Anthropic provider', () => {
     const model: ModelAlias = {
       provider: 'custom',
       model: 'custom-anthropic-model',
@@ -68,11 +68,35 @@ describe('effectiveModelAlias', () => {
       protocol: 'anthropic',
     };
 
-    expect(effectiveModelAlias(model)).toMatchObject({
+    expect(effectiveModelAlias(model, 'anthropic')).toMatchObject({
       capabilities: ['thinking'],
       supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
       defaultEffort: 'high',
     });
+  });
+
+  it('does not infer Anthropic effort metadata for a Kimi provider routed through the Anthropic protocol', () => {
+    const model: ModelAlias = {
+      provider: 'managed:kimi-code',
+      model: 'kimi-for-coding',
+      maxContextSize: 262144,
+      capabilities: ['thinking', 'always_thinking'],
+      protocol: 'anthropic',
+      adaptiveThinking: true,
+    };
+
+    expect(effectiveModelAlias(model, 'kimi')).toEqual(model);
+  });
+
+  it('does not infer the fallback profile without provider context', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+    };
+
+    expect(effectiveModelAlias(model)).toEqual(model);
   });
 
   it('limits an adaptive_thinking=false model to budget efforts', () => {
@@ -84,7 +108,7 @@ describe('effectiveModelAlias', () => {
       adaptiveThinking: false,
     };
 
-    expect(effectiveModelAlias(model)).toMatchObject({
+    expect(effectiveModelAlias(model, 'anthropic')).toMatchObject({
       capabilities: ['thinking'],
       supportEfforts: ['low', 'medium', 'high'],
       defaultEffort: 'high',
@@ -101,7 +125,7 @@ describe('effectiveModelAlias', () => {
       supportEfforts: ['low', 'high'],
     };
 
-    expect(effectiveModelAlias(model)).toMatchObject({
+    expect(effectiveModelAlias(model, 'anthropic')).toMatchObject({
       capabilities: ['thinking'],
       supportEfforts: ['low', 'high'],
       defaultEffort: 'high',

@@ -5205,6 +5205,32 @@ describe('/effort support_efforts override', () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
         providers: {
+          compatible: { type: 'anthropic', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).toContain('Max');
+  });
+
+  it('offers no fallback efforts for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {
           compatible: { type: 'kimi', apiKey: 'test-key' },
         },
         models: {
@@ -5225,7 +5251,7 @@ describe('/effort support_efforts override', () => {
       expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
     });
     const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
-    expect(picker.render(80).join('\n')).toContain('Max');
+    expect(picker.render(80).join('\n')).not.toContain('Max');
   });
 
   it('keeps rejecting efforts hidden by a Kimi support_efforts override', async () => {

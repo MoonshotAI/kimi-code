@@ -47,7 +47,7 @@ function currentTuiConfig(host: SlashCommandHost): TuiConfig {
 
 function effectiveModelForHost(host: SlashCommandHost, model: ModelAlias): ModelAlias {
   const providerType = host.state.appState.availableProviders[model.provider]?.type;
-  return effectiveModelAlias(model, (model.protocol ?? providerType) === 'anthropic');
+  return effectiveModelAlias(model, providerType);
 }
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
