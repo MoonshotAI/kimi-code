@@ -62,6 +62,7 @@ interface RuntimeRig {
   readonly runtime: KimiRuntime;
   readonly broadcasts: BroadcastRecord[];
   readonly logs: LogRecord[];
+  readonly version: string;
   closeProvider(): Promise<void>;
 }
 
