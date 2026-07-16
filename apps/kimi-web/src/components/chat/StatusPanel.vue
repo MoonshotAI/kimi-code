@@ -29,10 +29,12 @@ const emit = defineEmits<{
 // button, which we forward to the parent.
 const open = ref(true);
 
-// ceil (not round) so sub-0.5% usage still renders a visible bar sliver.
-const pct = computed(() =>
-  props.status.ctxMax > 0 ? Math.ceil((props.status.ctxUsed / props.status.ctxMax) * 100) : 0,
-);
+// ceil (not round) so sub-0.5% usage still renders a visible bar sliver;
+// clamped to 0–100 — ctxUsed can momentarily exceed ctxMax (estimates).
+const pct = computed(() => {
+  if (props.status.ctxMax <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.ceil((props.status.ctxUsed / props.status.ctxMax) * 100)));
+});
 
 const contextValue = computed(() =>
   props.status.ctxMax > 0
