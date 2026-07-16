@@ -256,7 +256,7 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      await resolved.tasks?.stop(task_id);
+      await resolved.tasks?.stopByUser(task_id);
       requestLog(req)?.info({ session_id, task_id }, 'task cancelled');
       reply.send(okEnvelope({ cancelled: true as const }, req.id));
     },

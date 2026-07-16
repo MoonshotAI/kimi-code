@@ -1256,10 +1256,36 @@ describe('Agent tool execution contract', () => {
 
     expect(result.isError).toBe(true);
     expect(result.output).toContain('status: failed');
-    expect(result.output).not.toContain('was stopped by the user');
-    expect(result.output).toContain('not a system error');
-    expect(result.output).toContain('capacity');
-    expect(result.output).toContain('wait for the user');
+    expect(result.output).toContain('The subagent was stopped before it finished by user.');
+  });
+
+  it('reports the reason when a foreground subagent is stopped for another cause', async () => {
+    const lifecycle = createAgentLifecycleStub({
+      createAgentIds: ['agent-child'],
+      runCompletion: (_agentId, _request, options) =>
+        new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(options.signal.reason), {
+            once: true,
+          });
+        }),
+    });
+    const context = createAgentToolContext(lifecycle);
+
+    const resultPromise = executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+    await vi.waitFor(() => {
+      expect(context.get(IAgentTaskService).list(false)).toHaveLength(1);
+    });
+    const [task] = context.get(IAgentTaskService).list(false);
+    await context.get(IAgentTaskService).stop(task!.taskId, 'Session closed');
+    const result = await resultPromise;
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toContain(
+      'The subagent was stopped before it finished. Reason: Session closed',
+    );
   });
 
   it('returns the spawned agent id when a foreground subagent times out', async () => {

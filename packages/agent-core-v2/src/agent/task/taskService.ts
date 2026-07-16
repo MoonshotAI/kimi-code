@@ -36,7 +36,10 @@ import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { ContentPart } from '#/app/llmProtocol/message';
 
 import { Disposable } from '#/_base/di/lifecycle';
-import { abortable } from '#/_base/utils/abort';
+import {
+  abortable,
+  userCancellationReason,
+} from '#/_base/utils/abort';
 import { escapeXml, escapeXmlAttr } from '#/_base/utils/xml-escape';
 import { IEventBus } from '#/app/event/eventBus';
 import type { ContextMessage, TaskOrigin } from '#/agent/contextMemory/types';
@@ -167,7 +170,6 @@ function outputLimitReason(): string {
 
 const SIGTERM_GRACE_MS = 5_000;
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
-const USER_INTERRUPT_REASON = 'Interrupted by user';
 const SESSION_CLOSED_REASON = 'Session closed';
 const NOTIFICATION_FALLBACK_PREVIEW_BYTES = 3_000;
 const ACTIVE_BACKGROUND_TASK_INJECTION_VARIANT = 'background_task_status';
@@ -621,6 +623,17 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     return this.terminateWithGrace(entry, {
       stopReason: normalized,
       abortReason: normalized,
+      finalStatus: 'killed',
+    });
+  }
+
+  async stopByUser(taskId: string): Promise<AgentTaskInfo | undefined> {
+    const entry = this.tasks.get(taskId);
+    if (entry === undefined) return undefined;
+    const reason = userCancellationReason();
+    return this.terminateWithGrace(entry, {
+      stopReason: reason.message,
+      abortReason: reason,
       finalStatus: 'killed',
     });
   }
@@ -1098,8 +1111,9 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
 
     const abortFromSignal = (): void => {
       if (this.isDetached(entry)) return;
+      const userReason = userCancellationReason();
       void this.terminateWithGrace(entry, {
-        stopReason: USER_INTERRUPT_REASON,
+        stopReason: userReason.message,
         abortReason: signal.reason,
         finalStatus: 'killed',
       });
@@ -1229,9 +1243,11 @@ function buildAgentTaskNotificationBody(info: AgentTaskInfo): string {
   const baseLine =
     info.status === 'timed_out'
       ? `${info.description} timed out.`
-      : info.stopReason
-        ? `${info.description} ${info.status === 'killed' ? 'was killed' : info.status}: ${info.stopReason}.`
-        : `${info.description} ${info.status}.`;
+      : info.status === 'killed' && isSerializedUserCancellation(info.stopReason)
+        ? `${info.description} was stopped by user.`
+        : info.stopReason
+          ? `${info.description} ${info.status === 'killed' ? 'was stopped' : info.status}. Reason: ${info.stopReason}`
+          : `${info.description} ${info.status}.`;
 
   if (info.kind !== 'agent') return baseLine;
   if (info.status === 'completed') return baseLine;
@@ -1261,6 +1277,10 @@ function generateTaskId(kind: string): string {
 function normalizeReason(reason: string | undefined): string | undefined {
   const trimmed = reason?.trim();
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+}
+
+function isSerializedUserCancellation(reason: string | undefined): boolean {
+  return reason === userCancellationReason().message;
 }
 
 function createForegroundRelease(): ForegroundRelease {

@@ -50,6 +50,7 @@ import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { literalRulePattern, matchesGlobRuleSubject } from '#/tool/rule-match';
 import { renderPrompt } from '#/_base/utils/render-prompt';
+import { userCancellationReason } from '#/_base/utils/abort';
 import bashDescriptionTemplate from './bash.md?raw';
 import { ProcessTask } from './process-task';
 
@@ -58,7 +59,6 @@ const DEFAULT_TIMEOUT_S = 60;
 const MAX_TIMEOUT_S = 5 * 60;
 const DEFAULT_BACKGROUND_TIMEOUT_S = 10 * 60;
 const MAX_BACKGROUND_TIMEOUT_S = 24 * 60 * 60;
-const USER_INTERRUPT_REASON = 'Interrupted by user';
 
 export const BashInputSchema = z
   .object({
@@ -395,8 +395,11 @@ export class BashTool implements BuiltinTool<BashInput> {
       result = builder.error(`Command killed by timeout (${timeoutLabel})`, {
         brief: `Killed by timeout (${timeoutLabel})`,
       });
-    } else if (current?.status === 'killed' && current.stopReason === USER_INTERRUPT_REASON) {
-      result = builder.error(USER_INTERRUPT_REASON, { brief: USER_INTERRUPT_REASON });
+    } else if (
+      current?.status === 'killed' &&
+      current.stopReason === userCancellationReason().message
+    ) {
+      result = builder.error('Interrupted by user', { brief: 'Interrupted by user' });
     } else if (
       (current?.status === 'failed' || current?.status === 'killed') &&
       current.stopReason !== undefined
