@@ -24,6 +24,42 @@ export type OAuthRef = z.infer<typeof OAuthRefSchema>;
 
 const StringRecordSchema = z.record(z.string(), z.string());
 
+type JSONValue = string | number | boolean | null | JSONValue[] | JSONObject;
+interface JSONObject {
+  [key: string]: JSONValue;
+}
+
+const JSONValueSchema: z.ZodType<JSONValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number().finite(),
+    z.boolean(),
+    z.null(),
+    z.array(JSONValueSchema),
+    z.record(z.string(), JSONValueSchema),
+  ]),
+);
+function hasUnsafeCustomBodyKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasUnsafeCustomBodyKey);
+  if (typeof value !== 'object' || value === null) return false;
+  return Object.entries(value).some(
+    ([key, entryValue]) =>
+      key === '__proto__' ||
+      key === 'prototype' ||
+      key === 'constructor' ||
+      hasUnsafeCustomBodyKey(entryValue),
+  );
+}
+
+const CustomBodySchema: z.ZodType<JSONObject> = z
+  .unknown()
+  .superRefine((value, ctx) => {
+    if (hasUnsafeCustomBodyKey(value)) {
+      ctx.addIssue({ code: 'custom', message: 'customBody cannot contain unsafe object keys' });
+    }
+  })
+  .pipe(z.record(z.string(), JSONValueSchema));
+
 export const ProviderConfigSchema = z.object({
   type: ProviderTypeSchema,
   apiKey: z.string().optional(),
@@ -32,6 +68,7 @@ export const ProviderConfigSchema = z.object({
   oauth: OAuthRefSchema.optional(),
   env: StringRecordSchema.optional(),
   customHeaders: StringRecordSchema.optional(),
+  customBody: CustomBodySchema.optional(),
   source: z.record(z.string(), z.unknown()).optional(),
 });
 

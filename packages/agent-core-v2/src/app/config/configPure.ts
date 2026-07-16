@@ -30,6 +30,15 @@ export function deepEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
+function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
 export function deepMerge<T>(base: T | undefined, patch: unknown): T {
   if (!isPlainObject(base) || !isPlainObject(patch)) {
     return (patch ?? base) as T;
@@ -38,7 +47,7 @@ export function deepMerge<T>(base: T | undefined, patch: unknown): T {
   for (const key of Object.keys(patch)) {
     const pv = patch[key];
     const bv = out[key];
-    out[key] = isPlainObject(bv) && isPlainObject(pv) ? deepMerge(bv, pv) : pv;
+    setOwn(out, key, isPlainObject(bv) && isPlainObject(pv) ? deepMerge(bv, pv) : pv);
   }
   return out as T;
 }
@@ -48,7 +57,7 @@ export function omitUndefined<T extends Record<string, unknown>>(value: T): Part
   for (const key of Object.keys(value)) {
     const v = value[key];
     if (v !== undefined) {
-      out[key as keyof T] = v as T[keyof T];
+      setOwn(out, key, v);
     }
   }
   return out;

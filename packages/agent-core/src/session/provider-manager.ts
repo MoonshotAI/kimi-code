@@ -273,6 +273,7 @@ function toKosongProviderConfig(
             ? baseUrl.replace(/\/v1\/?$/, '')
             : baseUrl,
         apiKey: providerApiKey(provider),
+        customBody: provider.customBody,
         ...(maxOutputSize !== undefined ? { defaultMaxTokens: maxOutputSize } : {}),
         supportEfforts,
         ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
@@ -301,6 +302,7 @@ function toKosongProviderConfig(
         model,
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
+        customBody: provider.customBody,
         reasoningKey,
         ...defaultHeadersField({
           ...envCustomHeaders,
@@ -314,6 +316,7 @@ function toKosongProviderConfig(
         model,
         baseUrl: providerValue(provider.baseUrl, provider.env, 'KIMI_BASE_URL'),
         apiKey: providerApiKey(provider),
+        customBody: provider.customBody,
         generationKwargs: { prompt_cache_key: promptCacheKey },
         ...defaultHeadersField({
           ...envCustomHeaders,
@@ -327,6 +330,7 @@ function toKosongProviderConfig(
         model,
         baseUrl: providerValue(provider.baseUrl, provider.env, 'GOOGLE_GEMINI_BASE_URL'),
         apiKey: providerApiKey(provider),
+        customBody: provider.customBody,
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
@@ -339,6 +343,7 @@ function toKosongProviderConfig(
         model,
         baseUrl: providerValue(provider.baseUrl, provider.env, 'OPENAI_BASE_URL'),
         apiKey: providerApiKey(provider),
+        customBody: provider.customBody,
         ...defaultHeadersField({
           ...envCustomHeaders,
           ...kimiUserAgentHeader(kimiRequestHeaders),
@@ -359,6 +364,7 @@ function toKosongProviderConfig(
         vertexai: useServiceAccount,
         baseUrl,
         apiKey: useServiceAccount ? undefined : providerApiKey(provider),
+        customBody: provider.customBody,
         project: vertexAIProject(provider),
         location: vertexAILocation(provider, baseUrl),
         ...defaultHeadersField({

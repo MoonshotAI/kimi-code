@@ -37,6 +37,7 @@ import {
   sanitizeOpenAIResponsesCallId,
   type ToolCallIdPolicy,
 } from './tool-call-id';
+import { applyCustomBody, resolveCustomBodyStream, type CustomBody } from './custom-body';
 
 /**
  * Normalize the Responses API status / incomplete_details into the unified
@@ -346,6 +347,7 @@ export interface OpenAIResponsesOptions {
   maxOutputTokens?: number | undefined;
   httpClient?: unknown;
   defaultHeaders?: Record<string, string>;
+  customBody?: CustomBody;
   toolMessageConversion?: ToolMessageConversion | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => OpenAI;
 }
@@ -1024,6 +1026,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
   private _apiKey: string | undefined;
   private _baseUrl: string | undefined;
   private _defaultHeaders: Record<string, string> | undefined;
+  private _customBody: CustomBody | undefined;
   private _generationKwargs: OpenAIResponsesGenerationKwargs;
   private _toolMessageConversion: ToolMessageConversion;
   private _client: OpenAI | undefined;
@@ -1035,6 +1038,7 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     this._apiKey = apiKey === undefined || apiKey.length === 0 ? undefined : apiKey;
     this._baseUrl = options.baseUrl ?? 'https://api.openai.com/v1';
     this._defaultHeaders = options.defaultHeaders;
+    this._customBody = options.customBody;
     this._model = options.model;
     this._stream = true; // Responses API always supports streaming
     this._generationKwargs = {};
@@ -1122,6 +1126,9 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
           ...responseFormatToResponsesText(options.responseFormat),
         };
       }
+      const stream = resolveCustomBodyStream(this._customBody, createParams['stream'] === true);
+      createParams['stream'] = stream;
+      const finalCreateParams = applyCustomBody(createParams, this._customBody);
 
       if (
         !('responses' in client) ||
@@ -1137,8 +1144,8 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
         client.responses as {
           create(params: unknown, opts?: unknown): Promise<unknown>;
         }
-      ).create(createParams, options?.signal ? { signal: options.signal } : undefined);
-      return new OpenAIResponsesStreamedMessage(response, this._stream);
+      ).create(finalCreateParams, options?.signal ? { signal: options.signal } : undefined);
+      return new OpenAIResponsesStreamedMessage(response, stream);
     } catch (error: unknown) {
       throw convertOpenAIError(error);
     }

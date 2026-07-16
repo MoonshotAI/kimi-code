@@ -118,6 +118,20 @@ timeout = 5
 | `oauth` | `table` | 否 | OAuth 凭据引用（`storage`、`key` 两个字段），由登录流程自动注入，通常无需手写 |
 | `env` | `table<string, string>` | 否 | 供应商凭证的备用来源，详见下文 |
 | `custom_headers` | `table<string, string>` | 否 | 每次请求附加的自定义 HTTP 头 |
+| `custom_body` | `table` | 否 | 在 Kimi Code 生成供应商请求后应用的 JSON 自定义请求体补丁。对象递归合并；数组和标量值（包括 `false`、`0`、空字符串以及 TOML 可表达的值）会替换生成值。可覆盖 `model`、`messages`、`tools`、`stream` 等生成字段。TOML 没有 `null` 字面量；SDK/RPC 配置可使用嵌套 `null`。 |
+
+### `custom_body`
+
+使用 `custom_body` 添加供应商特定字段，或有意覆盖已生成的请求字段：
+
+```toml
+[providers.gateway]
+type = "openai"
+base_url = "https://gateway.example/v1"
+custom_body = { stream = false, metadata = { route = "batch" }, tools = [] }
+```
+
+补丁最后应用。对象字段递归合并；数组和标量值会替换生成值。因此它可以覆盖 `model`、`messages`、`input`、`contents`、`tools`、`stream` 等系统字段；请谨慎使用，不兼容的覆盖可能使供应商请求无效。TOML 不能表达 `null`；SDK/RPC 配置可以使用嵌套 `null`。所有嵌套层级均拒绝保留对象键 `__proto__`、`prototype` 和 `constructor`。对于 Google GenAI 和 Vertex AI，布尔值 `stream` 会选择 SDK 的流式或非流式方法，且不会作为 `generateContent` 参数透传。其他补丁字段作用于 SDK 的 `generateContent` 参数对象（例如 `model`、`contents`、`config`），并非声明为原始 HTTP 请求体。
 
 **`env` 子表**：可以把供应商惯用的键名（如 `KIMI_API_KEY`）写在 `[providers.<name>.env]` 里，作为 `api_key` / `base_url` 的备用来源。这个子表**只在配置文件里读取**，不会修改 shell 环境：
 

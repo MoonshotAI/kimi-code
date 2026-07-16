@@ -25,6 +25,42 @@ const oAuthRefSchema = z.object({
 
 const stringRecordSchema = z.record(z.string(), z.string());
 
+type JSONValue = string | number | boolean | null | JSONValue[] | JSONObject;
+interface JSONObject {
+  [key: string]: JSONValue;
+}
+
+const jsonValueSchema: z.ZodType<JSONValue> = z.lazy(() =>
+  z.union([
+    z.string(),
+    z.number().finite(),
+    z.boolean(),
+    z.null(),
+    z.array(jsonValueSchema),
+    z.record(z.string(), jsonValueSchema),
+  ]),
+);
+function hasUnsafeCustomBodyKey(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasUnsafeCustomBodyKey);
+  if (typeof value !== 'object' || value === null) return false;
+  return Object.entries(value).some(
+    ([key, entryValue]) =>
+      key === '__proto__' ||
+      key === 'prototype' ||
+      key === 'constructor' ||
+      hasUnsafeCustomBodyKey(entryValue),
+  );
+}
+
+const customBodySchema: z.ZodType<JSONObject> = z
+  .unknown()
+  .superRefine((value, ctx) => {
+    if (hasUnsafeCustomBodyKey(value)) {
+      ctx.addIssue({ code: 'custom', message: 'customBody cannot contain unsafe object keys' });
+    }
+  })
+  .pipe(z.record(z.string(), jsonValueSchema));
+
 const modelSourceSchema = z.enum(['static', 'discover', 'oauth-catalog']);
 
 export const providerConfigSchema = z.object({
@@ -33,6 +69,7 @@ export const providerConfigSchema = z.object({
 
   baseUrl: z.string().optional(),
   customHeaders: stringRecordSchema.optional(),
+  customBody: customBodySchema.optional(),
   defaultModel: z.string().optional(),
 
   type: providerTypeSchema.optional(),

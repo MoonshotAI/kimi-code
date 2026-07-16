@@ -121,6 +121,30 @@ describe('contract validation', () => {
     expect(channel.calls).toHaveLength(0);
   });
 
+  it('rejects unsafe customBody keys before the provider call leaves the client', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+    const customBody = JSON.parse('{"metadata":{"__proto__":{"enabled":true}}}');
+
+    await expect(
+      klient.global.providers.set({ name: 'gateway', config: { customBody } }),
+    ).rejects.toBeInstanceOf(KlientValidationError);
+    expect(channel.calls).toHaveLength(0);
+  });
+
+  it('rejects non-finite customBody numbers before the provider call leaves the client', async () => {
+    const channel = new FakeChannel();
+    const klient = createKlientFromChannel(channel);
+
+    await expect(
+      klient.global.providers.set({
+        name: 'gateway',
+        config: { customBody: { retryAfter: Number.POSITIVE_INFINITY } },
+      }),
+    ).rejects.toBeInstanceOf(KlientValidationError);
+    expect(channel.calls).toHaveLength(0);
+  });
+
   it('rejects drifted output payloads', async () => {
     const channel = new FakeChannel();
     const klient = createKlientFromChannel(channel);

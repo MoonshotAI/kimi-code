@@ -41,12 +41,14 @@ import {
   sanitizeToolCallId,
   type ToolCallIdPolicy,
 } from './tool-call-id';
+import { applyCustomBody, resolveCustomBodyStream, type CustomBody } from './custom-body';
 export interface KimiOptions {
   apiKey?: string | undefined;
   baseUrl?: string | undefined;
   model: string;
   stream?: boolean | undefined;
   defaultHeaders?: Record<string, string> | undefined;
+  customBody?: CustomBody;
   generationKwargs?: GenerationKwargs | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => OpenAI;
 }
@@ -408,6 +410,7 @@ export class KimiChatProvider implements ChatProvider {
   private _apiKey: string | undefined;
   private _baseUrl: string;
   private _defaultHeaders: Record<string, string> | undefined;
+  private _customBody: CustomBody | undefined;
   private _generationKwargs: GenerationKwargs;
   private _client: OpenAI | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => OpenAI) | undefined;
@@ -418,6 +421,7 @@ export class KimiChatProvider implements ChatProvider {
     this._apiKey = apiKey === undefined || apiKey.length === 0 ? undefined : apiKey;
     this._baseUrl = options.baseUrl ?? process.env['KIMI_BASE_URL'] ?? 'https://api.moonshot.ai/v1';
     this._defaultHeaders = options.defaultHeaders;
+    this._customBody = options.customBody;
     this._clientFactory = options.clientFactory;
     this._model = options.model;
     this._stream = options.stream ?? true;
@@ -534,9 +538,12 @@ export class KimiChatProvider implements ChatProvider {
       createParams['tools'] = tools.map((t) => convertTool(t));
     }
 
-    if (this._stream) {
+    const stream = resolveCustomBodyStream(this._customBody, createParams['stream'] === true);
+    createParams['stream'] = stream;
+    if (stream) {
       createParams['stream_options'] = { include_usage: true };
     }
+    const finalCreateParams = applyCustomBody(createParams, this._customBody);
 
     try {
       const client = this._createClient(options?.auth);
@@ -548,7 +555,7 @@ export class KimiChatProvider implements ChatProvider {
       // even for a stream the caller later cancels mid-flight.
       const { data, response } = await client.chat.completions
         .create(
-          createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+          finalCreateParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
           options?.signal ? { signal: options.signal } : undefined,
         )
         .withResponse();
@@ -556,7 +563,7 @@ export class KimiChatProvider implements ChatProvider {
         data as unknown as
           | OpenAI.Chat.ChatCompletion
           | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
-        this._stream,
+        stream,
         parseTraceId(response.headers),
       );
     } catch (error: unknown) {

@@ -54,6 +54,7 @@ import {
   type AnthropicModelVersion,
 } from './anthropic-profile';
 import { mergeConsecutiveUserMessages } from './merge-user-messages';
+import { applyCustomBody, resolveCustomBodyStream, type CustomBody } from './custom-body';
 import { mergeRequestHeaders, resolveAuthBackedClient } from './request-auth';
 import {
   normalizeToolCallIdsForProvider,
@@ -91,6 +92,7 @@ export interface AnthropicOptions {
   defaultMaxTokens?: number | undefined;
   betaFeatures?: string[] | undefined;
   defaultHeaders?: Record<string, string>;
+  customBody?: CustomBody;
   metadata?: Record<string, string> | undefined;
   stream?: boolean | undefined;
   adaptiveThinking?: boolean | undefined;
@@ -755,6 +757,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private _apiKey: string | undefined;
   private _baseUrl: string | undefined;
   private _defaultHeaders: Record<string, string | null> | undefined;
+  private _customBody: CustomBody | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => Anthropic) | undefined;
   private _adaptiveThinking: boolean | undefined;
   private readonly _supportEfforts: readonly string[] | undefined;
@@ -774,6 +777,7 @@ export class AnthropicChatProvider implements ChatProvider {
       options.apiKey === undefined || options.apiKey.length === 0 ? undefined : options.apiKey;
     this._baseUrl = options.baseUrl;
     this._defaultHeaders = options.defaultHeaders;
+    this._customBody = options.customBody;
     this._clientFactory = options.clientFactory;
     this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
     this._explicitMaxTokens = options.defaultMaxTokens !== undefined;
@@ -925,6 +929,9 @@ export class AnthropicChatProvider implements ChatProvider {
       createParams['betas'] = betas;
     }
 
+    const stream = resolveCustomBodyStream(this._customBody, this._stream);
+    const finalCreateParams = applyCustomBody({ ...createParams, stream }, this._customBody);
+
     const requestOptions: Record<string, unknown> = {};
     const headers = mergeRequestHeaders(extraHeaders, options?.auth?.headers);
     if (headers !== undefined) {
@@ -937,15 +944,15 @@ export class AnthropicChatProvider implements ChatProvider {
     const client = this._createClient(options?.auth);
     options?.onRequestSent?.();
 
-    if (this._stream) {
+    if (stream) {
       try {
         const stream = this._betaApi
           ? await client.beta.messages.create(
-              { ...createParams, stream: true } as unknown as MessageCreateParamsStreaming,
+              finalCreateParams as unknown as MessageCreateParamsStreaming,
               finalRequestOptions,
             )
           : await client.messages.create(
-              { ...createParams, stream: true } as unknown as MessageCreateParamsStreaming,
+              finalCreateParams as unknown as MessageCreateParamsStreaming,
               finalRequestOptions,
             );
         return new AnthropicStreamedMessage(stream, true);
@@ -957,11 +964,11 @@ export class AnthropicChatProvider implements ChatProvider {
     try {
       const response = this._betaApi
         ? await client.beta.messages.create(
-            { ...createParams, stream: false } as unknown as MessageCreateParams,
+            finalCreateParams as unknown as MessageCreateParams,
             finalRequestOptions,
           )
         : await client.messages.create(
-            { ...createParams, stream: false } as unknown as MessageCreateParams,
+            finalCreateParams as unknown as MessageCreateParams,
             finalRequestOptions,
           );
       return new AnthropicStreamedMessage(response, false);

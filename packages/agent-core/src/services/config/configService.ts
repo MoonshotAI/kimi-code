@@ -91,7 +91,8 @@ function convertKeysSnakeToCamel(obj: unknown): unknown {
   if (obj !== null && typeof obj === 'object') {
     const result: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(obj)) {
-      result[snakeToCamel(key)] = convertKeysSnakeToCamel(value);
+      const targetKey = snakeToCamel(key);
+      result[targetKey] = targetKey === 'customBody' ? value : convertKeysSnakeToCamel(value);
     }
     return result;
   }

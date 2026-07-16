@@ -3,9 +3,10 @@ import { readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ErrorCodes, KimiError } from '../../src/errors';
+import { ConfigService } from '../../src/services/config/configService';
 import {
   KimiConfigSchema,
   applyPrintModeConfigDefaults,
@@ -49,6 +50,39 @@ function expectKimiErrorCode(fn: () => unknown, code: string): void {
   }
   throw new Error('expected function to throw');
 }
+
+it('preserves provider-native custom_body keys when updating config through the service', async () => {
+  const setKimiConfig = vi.fn(async () => ({
+    providers: {
+      gateway: {
+        type: 'openai' as const,
+        customBody: { service_tier: 'priority', nested: { cache_control: 'strict' } },
+      },
+    },
+  }));
+  const service = new ConfigService(
+    { rpc: { setKimiConfig } } as never,
+    { publish: vi.fn() } as never,
+  );
+
+  await service.set({
+    providers: {
+      gateway: {
+        type: 'openai',
+        custom_body: { service_tier: 'priority', nested: { cache_control: 'strict' } },
+      },
+    },
+  });
+
+  expect(setKimiConfig).toHaveBeenCalledWith({
+    providers: {
+      gateway: {
+        type: 'openai',
+        customBody: { service_tier: 'priority', nested: { cache_control: 'strict' } },
+      },
+    },
+  });
+});
 
 const COMPLETE_TOML = `
 default_model = "kimi-code/kimi-for-coding"
@@ -256,6 +290,45 @@ source = { kind = "apiJson", url = "https://registry.example/api.json", apiKey =
       url: 'https://registry.example/api.json',
       apiKey: 'sk-registry',
     });
+  });
+
+  it('validates and round-trips provider custom_body JSON objects', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'custom-body.toml');
+    const config = parseConfigString(`
+[providers.gateway]
+type = "openai"
+custom_body = { model = "configured-model", enabled = false, retries = 0, empty = "", nested = { mode = "strict", values = [true, 1, "two"] } }
+`, configPath);
+
+    expect(config.providers['gateway']?.customBody).toEqual({
+      model: 'configured-model',
+      enabled: false,
+      retries: 0,
+      empty: '',
+      nested: { mode: 'strict', values: [true, 1, 'two'] },
+    });
+
+    await writeConfigFile(configPath, config);
+    const roundTripped = parseConfigString(await readFile(configPath, 'utf-8'), configPath);
+    expect(roundTripped.providers['gateway']?.customBody).toEqual(
+      config.providers['gateway']?.customBody,
+    );
+
+    expect(
+      KimiConfigSchema.parse({
+        providers: { memory: { type: 'openai', customBody: { nested: { nullValue: null } } } },
+      }).providers['memory']?.customBody,
+    ).toEqual({ nested: { nullValue: null } });
+    expect(
+      KimiConfigSchema.safeParse({ providers: { invalid: { type: 'openai', customBody: [] } } })
+        .success,
+    ).toBe(false);
+    expect(
+      KimiConfigSchema.safeParse({
+        providers: { invalid: { type: 'openai', customBody: { invalid: Number.NaN } } },
+      }).success,
+    ).toBe(false);
   });
 
   it('round-trips OAuth refs with scoped OAuth hosts', async () => {
@@ -533,6 +606,16 @@ describe('harness config schema and patch merge', () => {
     expect(merged.thinking).toEqual({ enabled: true, effort: 'high' });
     expect(merged.hooks).toEqual(base.hooks);
     expect(merged.raw?.['theme']).toBe('dark');
+  });
+
+  it('rejects unsafe keys in customBody patches', () => {
+    const customBody = JSON.parse('{"__proto__":{"enabled":true}}') as Record<string, unknown>;
+
+    expect(
+      KimiConfigSchema.safeParse({
+        providers: { gateway: { type: 'openai', customBody: customBody as never } },
+      }).success,
+    ).toBe(false);
   });
 
   it('deep-merges experimental config patches', () => {

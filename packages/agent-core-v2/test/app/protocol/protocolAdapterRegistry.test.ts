@@ -20,6 +20,19 @@ describe('ProtocolAdapterRegistry', () => {
     expect(Reflect.get(provider, '_defaultHeaders')).toEqual({ 'X-Test': '1' });
   });
 
+  it('maps customBody through to transport providers', () => {
+    const customBody = { nested: { enabled: false }, tools: null };
+    const provider = new ProtocolAdapterRegistry().createChatProvider({
+      protocol: 'openai',
+      baseUrl: 'https://example.test/v1',
+      modelName: 'wire-name',
+      apiKey: 'sk',
+      providerOptions: { customBody },
+    });
+
+    expect(Reflect.get(provider, '_customBody')).toEqual(customBody);
+  });
+
   it('maps providerOptions into OpenAI provider config', () => {
     const provider = new ProtocolAdapterRegistry().createChatProvider({
       protocol: 'openai',

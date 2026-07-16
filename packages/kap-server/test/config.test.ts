@@ -2,6 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { IConfigService } from '@moonshot-ai/agent-core-v2';
 import { configResponseSchema, type ConfigResponse } from '../src/protocol/rest-config';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -95,5 +96,40 @@ describe('server-v2 /api/v1/config default_permission_mode + yolo', () => {
     const after = await getConfig();
     expect(after.default_permission_mode).toBe('auto');
     expect(after.yolo).toBe(false);
+  });
+
+  it('preserves provider-native custom_body keys when patching config', async () => {
+    await boot();
+    const customBody = { service_tier: 'priority', nested: { cache_control: 'strict' } };
+    await patchConfig({
+      providers: {
+        gateway: {
+          type: 'openai',
+          custom_body: customBody,
+        },
+      },
+    });
+
+    const config = server!.core.accessor.get(IConfigService);
+    await config.ready;
+    const providers = config.get('providers') as Record<string, { customBody?: Record<string, unknown> }>;
+    expect(providers['gateway']?.customBody).toMatchObject({
+      service_tier: 'priority',
+      nested: { cache_control: 'strict' },
+    });
+  });
+
+  it('rejects unsafe custom_body keys', async () => {
+    await boot();
+    const customBody = JSON.parse('{"__proto__":{"enabled":true}}');
+    const res = await authedFetch(server as RunningServer, base, '/api/v1/config', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ providers: { gateway: { type: 'openai', custom_body: customBody } } }),
+    });
+    const body = (await res.json()) as Envelope<unknown>;
+
+    expect(res.status).toBe(200);
+    expect(body.code).toBe(50001);
   });
 });

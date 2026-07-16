@@ -38,6 +38,7 @@ export interface ProtocolProviderOptions {
   readonly kimiThinking?: boolean;
   readonly betaApi?: boolean;
   readonly metadata?: Readonly<Record<string, string>>;
+  readonly customBody?: Readonly<Record<string, unknown>>;
   readonly vertexai?: boolean;
   readonly project?: string;
   readonly location?: string;

@@ -70,6 +70,25 @@ describe('resolveRuntimeProvider model metadata', () => {
     expect(resolved.provider.model).toBe('kimi-for-coding');
   });
 
+  it('forwards provider customBody to the Kosong provider config', () => {
+    const customBody = { nested: { enabled: false, retries: 0 }, tools: null };
+    const resolved = resolveRuntimeProvider({
+      config: {
+        ...BASE_CONFIG,
+        providers: {
+          'managed:kimi-code': {
+            type: 'kimi',
+            apiKey: 'test-key',
+            baseUrl: 'https://api.example/v1',
+            customBody,
+          },
+        },
+      },
+    });
+
+    expect(resolved.provider).toMatchObject({ customBody });
+  });
+
   it('resolves requested aliases to the configured provider and provider model', () => {
     const resolved = resolveRuntimeProvider({
       config: {

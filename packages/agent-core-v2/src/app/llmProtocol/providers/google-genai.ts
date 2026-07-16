@@ -19,6 +19,12 @@ import type { Tool } from '../tool';
 import type { TokenUsage } from '../usage';
 import { ApiError as GoogleApiError, GoogleGenAI as GenAIClient } from '@google/genai';
 import { mergeConsecutiveUserMessages } from './merge-user-messages';
+import {
+  applyCustomBody,
+  resolveCustomBodyStream,
+  withoutCustomBodyStream,
+  type CustomBody,
+} from './custom-body';
 
 import { requireProviderApiKey, resolveAuthBackedClient } from './request-auth';
 
@@ -69,6 +75,7 @@ export interface GoogleGenAIOptions {
   location?: string | undefined;
   stream?: boolean | undefined;
   defaultHeaders?: Record<string, string>;
+  customBody?: CustomBody;
   clientFactory?: (auth: ProviderRequestAuth) => GenAIClient;
 }
 
@@ -635,6 +642,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
   private _project: string | undefined;
   private _location: string | undefined;
   private _defaultHeaders: Record<string, string> | undefined;
+  private _customBody: CustomBody | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => GenAIClient) | undefined;
 
   constructor(options: GoogleGenAIOptions) {
@@ -650,6 +658,7 @@ export class GoogleGenAIChatProvider implements ChatProvider {
     this._project = options.project;
     this._location = options.location;
     this._defaultHeaders = options.defaultHeaders;
+    this._customBody = options.customBody;
     this._clientFactory = options.clientFactory;
     this._client =
       this._vertexai || this._apiKey !== undefined ? this._buildClient(this._apiKey) : undefined;
@@ -746,10 +755,12 @@ export class GoogleGenAIChatProvider implements ChatProvider {
         generateContentStream(params: Record<string, unknown>): Promise<AsyncGenerator>;
       };
 
-      const params = { model: this._model, contents, config };
+      const effectiveStream = resolveCustomBodyStream(this._customBody, this._stream);
+      const customBody = withoutCustomBodyStream(this._customBody);
+      const params = applyCustomBody({ model: this._model, contents, config }, customBody);
 
       options?.onRequestSent?.();
-      if (this._stream) {
+      if (effectiveStream) {
         const stream = await Promise.race([
           models.generateContentStream(params),
           abortPromise(options?.signal),

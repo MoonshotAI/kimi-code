@@ -93,9 +93,22 @@ export function defineKlientConformance(
 
       const name = '__klient_conformance__';
       try {
-        await target.klient.global.providers.set({ name, config: { apiKey: 'conf-key' } });
+        await target.klient.global.providers.set({
+          name,
+          config: {
+            apiKey: 'conf-key',
+            customBody: { service_tier: 'priority', nested: { cache_control: 'strict' } },
+          },
+        });
         const got = await target.klient.global.providers.get(name);
         expect(got?.apiKey).toBe('conf-key');
+        expect(got?.customBody).toEqual({
+          service_tier: 'priority',
+          nested: { cache_control: 'strict' },
+        });
+        expect((await target.klient.global.providers.list())[name]?.customBody).toEqual(
+          got?.customBody,
+        );
 
         await waitFor(
           () => events.some((event) => [...event.added, ...event.changed].includes(name)),

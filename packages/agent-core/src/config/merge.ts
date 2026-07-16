@@ -24,6 +24,15 @@ function parsePatch(patch: KimiConfigPatch): KimiConfigPatch {
   }
 }
 
+function setOwn(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    writable: true,
+    enumerable: true,
+    configurable: true,
+  });
+}
+
 function deepMerge(
   target: Record<string, unknown>,
   source: Record<string, unknown>,
@@ -33,9 +42,9 @@ function deepMerge(
     if (sourceValue === undefined) continue;
     const targetValue = result[key];
     if (isPlainObject(targetValue) && isPlainObject(sourceValue)) {
-      result[key] = deepMerge(targetValue, sourceValue);
+      setOwn(result, key, deepMerge(targetValue, sourceValue));
     } else {
-      result[key] = sourceValue;
+      setOwn(result, key, sourceValue);
     }
   }
   return result;
@@ -51,7 +60,7 @@ function stripUndefinedDeep(value: unknown): unknown {
   const out: Record<string, unknown> = {};
   for (const [key, entryValue] of Object.entries(value)) {
     if (entryValue !== undefined) {
-      out[key] = stripUndefinedDeep(entryValue);
+      setOwn(out, key, stripUndefinedDeep(entryValue));
     }
   }
   return out;

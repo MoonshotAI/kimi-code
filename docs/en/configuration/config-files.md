@@ -118,6 +118,20 @@ Each entry in the `providers` table defines an API provider, keyed by a unique n
 | `oauth` | `table` | No | OAuth credential reference (`storage` and `key` fields); injected automatically by the login flow — normally no need to write this by hand |
 | `env` | `table<string, string>` | No | Fallback source for provider credentials; see below |
 | `custom_headers` | `table<string, string>` | No | Custom HTTP headers attached to each request |
+| `custom_body` | `table` | No | JSON custom-body patch applied after Kimi Code generates the provider request. Objects merge recursively; arrays and scalar values (including `false`, `0`, empty strings, and TOML-expressible values) replace generated values. It can override generated fields such as `model`, `messages`, `tools`, and `stream`. TOML has no `null` literal; SDK/RPC configuration may use nested `null`. |
+
+### `custom_body`
+
+Use `custom_body` to add provider-specific fields or deliberately override a generated request field:
+
+```toml
+[providers.gateway]
+type = "openai"
+base_url = "https://gateway.example/v1"
+custom_body = { stream = false, metadata = { route = "batch" }, tools = [] }
+```
+
+The patch is applied last. Object fields merge recursively, while arrays and scalar values replace the generated value. It can therefore override system fields such as `model`, `messages`, `input`, `contents`, `tools`, or `stream`; use this carefully, because an incompatible override can make a provider request invalid. TOML cannot express `null`; SDK/RPC configuration can use nested `null`. The reserved object keys `__proto__`, `prototype`, and `constructor` are rejected at every nesting level. For Google GenAI and Vertex AI, a boolean `stream` selects the SDK's streaming or non-streaming method and is not forwarded as a `generateContent` parameter. Other patch fields apply to the SDK `generateContent` parameter object (for example `model`, `contents`, and `config`), not a documented raw HTTP body.
 
 **`env` sub-table**: You can write provider-conventional key names (such as `KIMI_API_KEY`) inside `[providers.<name>.env]` as a fallback source for `api_key` / `base_url`. This sub-table is **read only from the config file** and does not modify the shell environment:
 

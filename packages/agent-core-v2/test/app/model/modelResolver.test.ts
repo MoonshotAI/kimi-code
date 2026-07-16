@@ -528,6 +528,21 @@ describe('ModelResolverService', () => {
   });
 
   describe('provider options', () => {
+    it('passes provider customBody through to the protocol adapter', async () => {
+      const customBody = { nested: { enabled: false, retries: 0 }, tools: null };
+      providers['p'] = {
+        type: 'openai',
+        baseUrl: 'https://example.test/v1',
+        apiKey: 'sk',
+        customBody,
+      };
+      models['m'] = { provider: 'p', model: 'wire-name', maxContextSize: 1000 };
+
+      const config = await resolveAndCreateProvider();
+
+      expect(config).toMatchObject({ providerOptions: { customBody } });
+    });
+
     it('passes an OpenAI reasoningKey through to the protocol adapter', async () => {
       providers['p'] = { type: 'openai', baseUrl: 'https://example.test/v1', apiKey: 'sk' };
       models['m'] = {
