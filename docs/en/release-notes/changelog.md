@@ -6,6 +6,27 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.26.0 (2026-07-16) Say hi to the BIIIG DAY!
+
+### Polish
+
+- Expand the coder subagent tool set to include background tasks, todo lists, plan mode, skill invocation, and nested agents, mirroring the main agent's capabilities.
+- Warn in the `/model` and `/effort` pickers that switching invalidates the existing prompt cache, and hint to use `/new` to avoid extra token costs.
+- web: Refresh the model catalog for all providers when opening the model picker, so newly available models always show up.
+- Optimize the unit formatting of the context usage display.
+
+### Bug Fixes
+
+- Fix a resumed session being marked as just updated and jumping to the top of the session list without any new activity.
+- Fix the context size indicator under-reporting the model's actual context usage.
+- Fix Kimi-provider models routed through the Anthropic protocol incorrectly showing reasoning effort options.
+- Honor an explicit thinking "off" on OpenAI-compatible (chat completions) providers.
+- Report when users stop tasks and preserve other stop reasons in model context.
+- Fix a race where resuming a background subagent right after it was manually stopped could fail with an "already running" error.
+- Replay empty thinking content verbatim instead of substituting a placeholder space on Anthropic-compatible and Kimi preserved-thinking endpoints.
+- Keep legacy migrations idempotent across multiple Kimi homes and report damaged or unmapped sessions instead of silently skipping them.
+- web: Fix the sidebar resize handle being covered by the chat composer background.
+
 ## 0.25.0 (2026-07-16)
 
 ### Features
