@@ -25,6 +25,12 @@ export const taskSchema = z.object({
   completed_at: isoDateTimeSchema.optional(),
   output_preview: z.string().optional(),
   output_bytes: z.number().int().nonnegative().optional(),
+  /**
+   * `false` = a tool call is still waiting on this task in the foreground
+   * (not detached background work). Optional for cross-version tolerance:
+   * older servers omit it and served only background tasks.
+   */
+  run_in_background: z.boolean().optional(),
 });
 export type Task = z.infer<typeof taskSchema>;
 

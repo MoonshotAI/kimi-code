@@ -10,6 +10,7 @@ import { DaemonApiError } from '../src/api/errors';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
 import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
+import { useTaskPoller } from '../src/composables/client/useTaskPoller';
 import { useWorkspaceState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 import { clearTrace, traceKeyEvent } from '../src/debug/trace';
@@ -33,6 +34,7 @@ const apiMock = vi.hoisted(() => ({
   getHealth: vi.fn(),
   getMeta: vi.fn(),
   listSessions: vi.fn(),
+  listTasks: vi.fn(),
   listWorkspaces: vi.fn(),
 }));
 
@@ -1734,5 +1736,53 @@ describe('useWorkspaceState — loadAllSessions usage preservation', () => {
 
     const next = setSessions.mock.calls[0][0];
     expect(next[0].usage.contextTokens).toBe(0);
+  });
+});
+
+describe('useTaskPoller — foreground subagent identity', () => {
+  beforeEach(() => {
+    apiMock.listTasks.mockReset();
+  });
+
+  it('keeps the snapshot task when REST refreshes only background tasks', async () => {
+    const state = createState();
+    const foreground: AppTask = {
+      id: 'agent-1',
+      sessionId: 'sess_1',
+      kind: 'subagent',
+      description: 'Review files',
+      status: 'running',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      subagentType: 'explore',
+      parentToolCallId: 'call-1',
+      swarmIndex: 0,
+      runInBackground: false,
+    };
+    const oldBackground: AppTask = {
+      id: 'bash-1',
+      sessionId: 'sess_1',
+      kind: 'bash',
+      description: 'Run tests',
+      status: 'running',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      outputPreview: 'old output',
+    };
+    const refreshedBackground: AppTask = {
+      ...oldBackground,
+      description: 'Fresh background task',
+      outputPreview: 'fresh output',
+    };
+    const poller = useTaskPoller(state, computed(() => []));
+    state.tasksBySession = { sess_1: [foreground, oldBackground] };
+    apiMock.listTasks.mockResolvedValue([refreshedBackground]);
+
+    await poller.loadTasksForSession('sess_1');
+
+    const tasks = state.tasksBySession.sess_1 ?? [];
+    expect(tasks.find((task) => task.id === foreground.id)).toEqual(foreground);
+    expect(tasks.find((task) => task.id === oldBackground.id)).toMatchObject({
+      description: 'Fresh background task',
+      outputPreview: 'fresh output',
+    });
   });
 });

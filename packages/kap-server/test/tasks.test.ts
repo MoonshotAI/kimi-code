@@ -34,6 +34,7 @@ interface TaskWire {
   completed_at?: string;
   output_preview?: string;
   output_bytes?: number;
+  run_in_background?: boolean;
 }
 
 interface ListWire {
@@ -194,6 +195,47 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
       session_id: id,
       kind: 'tool', // question → tool
       status: 'running',
+    });
+  });
+
+  it('lists only background tasks while GET preserves the foreground flag', async () => {
+    const id = await createSession();
+    const tasks = await mainAgentTasks(id);
+    const backgroundId = tasks.registerTask(fakeTask('agent'));
+    const foregroundId = tasks.registerTask(fakeTask('agent'), { detached: false });
+    await flush();
+
+    const { body } = await getJson<ListWire>(`/api/v1/sessions/${id}/tasks`);
+    const byId = new Map(body.data.items.map((t) => [t.id, t]));
+    expect(byId.get(backgroundId)?.run_in_background).toBe(true);
+    expect(byId.has(foregroundId)).toBe(false);
+
+    const foreground = await getJson<TaskWire>(
+      `/api/v1/sessions/${id}/tasks/${foregroundId}`,
+    );
+    expect(foreground.body.data.run_in_background).toBe(false);
+  });
+
+  it('drops settled foreground tasks from the list but keeps settled background ones', async () => {
+    const id = await createSession();
+    const tasks = await mainAgentTasks(id);
+    const settleNow = (): AgentTask => ({
+      ...fakeTask('agent'),
+      start: (sink) => {
+        void sink.settle({ status: 'completed' });
+      },
+    });
+    const foregroundId = tasks.registerTask(settleNow(), { detached: false });
+    const backgroundId = tasks.registerTask(settleNow());
+    await flush();
+
+    const { body } = await getJson<ListWire>(`/api/v1/sessions/${id}/tasks`);
+    // Terminal foreground tasks are deliberately hidden (shouldListTask);
+    // terminal background tasks stay as ghost records.
+    expect(body.data.items.some((t) => t.id === foregroundId)).toBe(false);
+    expect(body.data.items.find((t) => t.id === backgroundId)).toMatchObject({
+      status: 'completed',
+      run_in_background: true,
     });
   });
 

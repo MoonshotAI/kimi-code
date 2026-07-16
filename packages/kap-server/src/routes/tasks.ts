@@ -123,11 +123,12 @@ export function registerTasksRoutes(app: TasksRouteHost, core: Scope): void {
         return;
       }
 
-      // `list(false)` = include terminal (ghost) tasks, matching v1 which
-      // lists everything and filters by wire status in-memory.
-      const all = (resolved.tasks?.list(false) ?? []).map((info) =>
-        toWireTask(session_id, info),
-      );
+      // `list(false)` includes terminal ghost records. The v1 endpoint lists
+      // only background tasks, while v2 also tracks foreground work internally,
+      // so keep foreground ownership on the snapshot / WS path.
+      const all = (resolved.tasks?.list(false) ?? [])
+        .filter((info) => info.detached !== false)
+        .map((info) => toWireTask(session_id, info));
       const query = req.query as { status?: TaskStatus };
       const items =
         query.status !== undefined ? all.filter((t) => t.status === query.status) : all;
@@ -362,6 +363,11 @@ function toWireTask(
     // running tasks usually start immediately after creation.
     created_at: createdIso,
     started_at: createdIso,
+    // `detached === false` marks a task a tool call is still waiting on in the
+    // foreground (v2 registers those too, e.g. foreground Agent runs) — the web
+    // dock must not list them as background work. Legacy records without the
+    // flag count as detached.
+    run_in_background: info.detached !== false,
   };
   if (info.endedAt !== null && info.endedAt !== undefined) {
     base.completed_at = new Date(info.endedAt).toISOString();

@@ -69,4 +69,9 @@ describe('taskSchema', () => {
     const bad = { ...full, created_at: '2026-06-04T10:00:00' };
     expect(taskSchema.safeParse(bad).success).toBe(false);
   });
+
+  it('accepts the optional run_in_background flag', () => {
+    expect(taskSchema.parse({ ...full, run_in_background: false }).run_in_background).toBe(false);
+    expect(taskSchema.parse(full).run_in_background).toBeUndefined();
+  });
 });
