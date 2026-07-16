@@ -8,7 +8,6 @@ import ConversationPane from './components/chat/ConversationPane.vue';
 import FilePreview from './components/FilePreview.vue';
 import ThinkingPanel from './components/chat/ThinkingPanel.vue';
 import AgentDetailPanel from './components/chat/AgentDetailPanel.vue';
-import ToolDiffPanel from './components/chat/ToolDiffPanel.vue';
 import SideChatPanel from './components/chat/SideChatPanel.vue';
 import DiffView from './components/chat/DiffView.vue';
 import ModelPicker from './components/settings/ModelPicker.vue';
@@ -251,9 +250,6 @@ const {
   agentPanelMember,
   openAgentPanel,
   closeAgentPanel,
-  toolDiffTarget,
-  openToolDiff,
-  closeToolDiff,
   detailDiffMode,
   detailDiffPath,
   openDiffDetail,
@@ -785,7 +781,6 @@ function openPr(url: string): void {
       @open-thinking="openThinkingPanel($event)"
       @open-compaction="openCompactionPanel($event)"
       @open-agent="openAgentPanel($event)"
-      @open-tool-diff="openToolDiff($event)"
       @edit-message="handleEditMessage"
     />
 
@@ -884,11 +879,6 @@ function openPr(url: string): void {
         @open="selectDiffFile"
         @back="detailDiffMode = 'list'; detailDiffPath = null; client.clearFileDiff()"
         @close="closeDiffDetail"
-      />
-      <ToolDiffPanel
-        v-else-if="detailTarget === 'toolDiff' && toolDiffTarget"
-        :target="toolDiffTarget"
-        @close="closeToolDiff"
       />
       <FilePreview
         v-else-if="detailTarget === 'file'"

@@ -25,15 +25,13 @@ const props = withDefaults(
     tool: ToolCall;
     mobile?: boolean;
     stackPosition?: 'single' | 'first' | 'middle' | 'last';
-    toolDiffPanel?: boolean;
   }>(),
-  { mobile: false, stackPosition: 'single', toolDiffPanel: false },
+  { mobile: false, stackPosition: 'single' },
 );
 
 defineEmits<{
   openMedia: [media: ToolMedia];
   openFile: [target: FilePreviewRequest];
-  openToolDiff: [id: string];
   openAgent: [toolCallId: string];
 }>();
 
