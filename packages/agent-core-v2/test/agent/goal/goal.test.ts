@@ -480,7 +480,7 @@ describe('AgentGoalService', () => {
 
     it('forbids model-driven goal pauses', async () => {
       await goals.createGoal({ objective: 'work' });
-      const tool = new UpdateGoalTool(goals);
+      const tool = new UpdateGoalTool(goals, {} as any);
 
       for (const status of ['active', 'complete', 'blocked']) {
         expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(true);

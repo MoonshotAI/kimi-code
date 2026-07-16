@@ -17,7 +17,7 @@ function makeTodoService(initial: readonly TodoItem[] = []): {
       _serviceBrand: undefined,
       getTodos: () => todos,
       setTodos: (next: readonly TodoItem[]) => {
-        todos = next.map((todo) => ({ title: todo.title, status: todo.status }));
+        todos = next.map((todo) => ({ ...todo }));
       },
       clear: () => {
         todos = [];
@@ -78,7 +78,7 @@ describe('TodoListTool', () => {
   });
 
   it('query mode renders the current list without mutating it', async () => {
-    const { tool, getTodos } = makeTool([{ title: 'existing', status: 'in_progress' }]);
+    const { tool, getTodos } = makeTool([{ id: 'T1', parentId: null, title: 'existing', status: 'in_progress', createdAt: Date.now(), updatedAt: Date.now() }]);
 
     const result = await executeTool(tool, {
       turnId: 1,
@@ -88,16 +88,16 @@ describe('TodoListTool', () => {
     });
 
     expect(result).toMatchObject({ isError: false });
-    expect(result.output).toContain('Current todo list');
-    expect(result.output).toContain('[in_progress] existing');
-    expect(getTodos()).toEqual([{ title: 'existing', status: 'in_progress' }]);
+    expect(result.output).toContain('Current task list');
+    expect(result.output).toContain('[in_progress] T1: existing');
+    expect(getTodos()).toEqual([expect.objectContaining({ title: 'existing', status: 'in_progress' })]);
   });
 
   it('write mode replaces the list and defensively copies todos into the service', async () => {
     const { tool, getTodos } = makeTool();
     const todos: TodoItem[] = [
-      { title: 'first', status: 'pending' },
-      { title: 'second', status: 'in_progress' },
+      { id: 'T1', parentId: null, title: 'first', status: 'open', createdAt: Date.now(), updatedAt: Date.now() },
+      { id: 'T2', parentId: null, title: 'second', status: 'in_progress', createdAt: Date.now(), updatedAt: Date.now() },
     ];
 
     const result = await executeTool(tool, {
@@ -106,24 +106,24 @@ describe('TodoListTool', () => {
       args: { todos },
       signal,
     });
-    todos[0] = { title: 'leaked', status: 'done' };
+    todos[0] = { id: 'T1', parentId: null, title: 'leaked', status: 'done', createdAt: Date.now(), updatedAt: Date.now() };
 
     expect(result).toMatchObject({ isError: false });
     expect(result.output).toContain('Todo list updated');
-    expect(result.output).toContain('[pending] first');
-    expect(result.output).toContain('[in_progress] second');
+    expect(result.output).toContain('[open] T1: first');
+    expect(result.output).toContain('[in_progress] T2: second');
     expect(result.output).toContain(
       'Ensure that you continue to use the todo list to track progress.',
     );
     expect(result.output).toContain('exactly one task in_progress');
     expect(getTodos()).toEqual([
-      { title: 'first', status: 'pending' },
-      { title: 'second', status: 'in_progress' },
+      expect.objectContaining({ id: 'T1', parentId: null, title: 'first', status: 'open' }),
+      expect.objectContaining({ id: 'T2', parentId: null, title: 'second', status: 'in_progress' }),
     ]);
   });
 
   it('renders a done todo with a marker matching the status enum value', async () => {
-    const { tool } = makeTool([{ title: 'shipped', status: 'done' }]);
+    const { tool } = makeTool([{ id: 'T1', parentId: null, title: 'shipped', status: 'done', createdAt: Date.now(), updatedAt: Date.now() }]);
 
     const result = await executeTool(tool, {
       turnId: 1,
@@ -133,12 +133,12 @@ describe('TodoListTool', () => {
     });
 
     expect(result).toMatchObject({ isError: false });
-    expect(result.output).toContain('[done] shipped');
+    expect(result.output).toContain('[done] T1: shipped');
     expect(result.output).not.toContain('[completed]');
   });
 
   it('clear mode empties the list without adding the progress-tracking reminder', async () => {
-    const { tool, getTodos } = makeTool([{ title: 'x', status: 'pending' }]);
+    const { tool, getTodos } = makeTool([{ id: 'T1', parentId: null, title: 'x', status: 'open', createdAt: Date.now(), updatedAt: Date.now() }]);
 
     const result = await executeTool(tool, {
       turnId: 1,
@@ -156,7 +156,7 @@ describe('TodoListTool', () => {
     const readExecution = tool.resolveExecution({});
     const clearExecution = tool.resolveExecution({ todos: [] });
     const updateExecution = tool.resolveExecution({
-      todos: [{ title: 'x', status: 'pending' }],
+      todos: [{ id: 'T1', parentId: null, title: 'x', status: 'open' }],
     });
 
     if (

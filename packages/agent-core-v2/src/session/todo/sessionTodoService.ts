@@ -77,9 +77,15 @@ export class SessionTodoService extends Disposable implements ISessionTodoServic
   }
 
   setTodos(todos: readonly TodoItem[]): void {
+    const now = Date.now();
     const next: readonly TodoItem[] = todos.map((todo) => ({
+      id: todo.id,
+      parentId: todo.parentId,
       title: todo.title,
       status: todo.status,
+      description: todo.description,
+      createdAt: todo.createdAt || now,
+      updatedAt: now,
     }));
     this.dispatchTodoSet(next);
   }

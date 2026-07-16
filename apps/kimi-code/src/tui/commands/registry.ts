@@ -185,6 +185,14 @@ export function getBuiltinSlashCommands(): readonly KimiSlashCommand[] {
       availability: 'idle-only',
     },
     {
+      name: 'workflow',
+      aliases: ['wf'],
+      description: t('tui.slashCommands.workflow'),
+      priority: 90,
+      argumentHint: '[list|status <id>|cancel <id>|<name> <args>]',
+      availability: 'idle-only',
+    },
+    {
       name: 'discuss',
       aliases: [],
       description: t('tui.slashCommands.discuss'),

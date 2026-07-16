@@ -184,6 +184,7 @@ export * from '#/agent/goal/goalDeadlineScheduler';
 import '#/agent/goal/goalDeadlineSchedulerService';
 export * from '#/agent/goal/goal';
 export * from '#/agent/goal/goalService';
+export * from '#/agent/goal/judge/goalJudgeService';
 export * from '#/agent/goal/types';
 import '#/agent/swarm/tools/agent-swarm';
 export * from '#/agent/swarm/swarm';
@@ -453,6 +454,17 @@ export * from '#/session/todo/todoListReminder';
 export * from '#/session/todo/sessionTodo';
 export * from '#/session/todo/sessionTodoService';
 export * from '#/session/todo/tools/todo-list';
+
+// ── Persistent Memory ──────────────────────────────────────────────
+export * from '#/app/memory/memoryPaths';
+export * from '#/app/memory/memoryStore';
+import '#/app/memory/tools/memoryTool';
+
+// ── Workflow ────────────────────────────────────────────────────────
+export * from '#/app/workflow/workflowTypes';
+export * from '#/app/workflow/workflowRegistry';
+export * from '#/app/workflow/workflowService';
+import '#/app/workflow/tools/workflow';
 export * from '#/tool/toolContract';
 export * from '#/agent/toolExecutor/toolHooks';
 export * from '#/agent/toolExecutor/toolExecutor';

@@ -17,6 +17,7 @@ import type { BuiltinTool, ToolExecution } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 
 import { IAgentGoalService } from '#/agent/goal/goal';
+import { IAgentGoalJudgeService } from '#/agent/goal/judge/goalJudgeService';
 import {
   buildGoalBlockedReasonPrompt,
   buildGoalCompletionSummaryPrompt,
@@ -40,7 +41,10 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
   readonly description: string = DESCRIPTION;
   readonly parameters: Record<string, unknown> = toInputJsonSchema(UpdateGoalToolInputSchema);
 
-  constructor(@IAgentGoalService private readonly goal: IAgentGoalService) {}
+  constructor(
+    @IAgentGoalService private readonly goal: IAgentGoalService,
+    @IAgentGoalJudgeService private readonly judge: IAgentGoalJudgeService,
+  ) {}
 
   resolveExecution(args: UpdateGoalToolInput): ToolExecution {
     if (!isUpdateGoalStatus(args.status)) {
@@ -74,6 +78,23 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
           return { output: 'Goal resumed.' };
         }
         if (status === 'complete') {
+          // Ask the judge to independently verify goal completion.
+          const verdict = await this.judge.evaluate(goalAtExecution);
+          if (!verdict.ok) {
+            if (verdict.impossible) {
+              // Judge says the goal is impossible — transition to blocked.
+              const blocked = await this.goal.markBlocked({ reason: verdict.reason }, 'model');
+              if (blocked === null) {
+                return { output: 'Goal not blocked: no active goal.' };
+              }
+              return { output: buildGoalBlockedReasonPrompt(blocked), stopTurn: true };
+            }
+            // Judge rejects completion — let the agent continue working.
+            return {
+              output: `Goal completion rejected by judge: ${verdict.reason}\nContinue working toward the goal objective.`,
+            };
+          }
+          // Judge approved — proceed with completion.
           const completed = await this.goal.markComplete({}, 'model');
           if (completed === null) {
             return { output: 'Goal not completed: no active goal.' };

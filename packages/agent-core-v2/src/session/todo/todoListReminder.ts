@@ -109,5 +109,7 @@ function renderTodoListReminder(todos: readonly TodoItem[]): string {
 }
 
 function renderTodoItems(todos: readonly TodoItem[]): string {
-  return todos.map((todo, index) => `${index + 1}. [${todo.status}] ${todo.title}`).join('\n');
+  return todos
+    .map((todo) => `${todo.id}. [${todo.status}] ${todo.title}`)
+    .join('\n');
 }

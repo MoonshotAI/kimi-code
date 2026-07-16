@@ -60,7 +60,7 @@ describe('goal tools', () => {
     eventBus = ctx.get(IEventBus);
     toolExecutor = ctx.get(IAgentToolExecutorService);
     setGoalBudgetTool = new SetGoalBudgetTool(goals);
-    updateGoalTool = new UpdateGoalTool(goals);
+    updateGoalTool = new UpdateGoalTool(goals, { evaluate: async () => ({ ok: true, reason: '' }) } as any);
   });
 
   afterEach(async () => {

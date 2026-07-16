@@ -237,6 +237,7 @@ export default {
       settings: '打开 TUI 设置',
       plan: '切换计划模式',
       swarm: '切换 Swarm 模式或运行一个 swarm 任务',
+      workflow: '运行或管理工作流（列表、状态、取消或按名称运行）',
       discuss: '启动多 Agent 圆桌讨论',
       model: '切换 LLM 模型',
       effort: '切换思考模式',

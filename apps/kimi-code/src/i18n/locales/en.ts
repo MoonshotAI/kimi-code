@@ -237,6 +237,7 @@ export default {
       settings: 'Open TUI settings',
       plan: 'Toggle plan mode',
       swarm: 'Toggle swarm mode or run one task in swarm mode',
+      workflow: 'Run or manage workflows (list, status, cancel, or run by name)',
       discuss: 'Start a roundtable discussion among multiple agents',
       model: 'Switch LLM model',
       effort: 'Switch thinking effort',

@@ -177,11 +177,14 @@ describe('SessionTodoService', () => {
     expect(service.getTodos()).toEqual([]);
 
     const next: TodoItem[] = [
-      { title: 'a', status: 'pending' },
-      { title: 'b', status: 'in_progress' },
+      { id: 'T1', parentId: null, title: 'a', status: 'open', createdAt: Date.now(), updatedAt: Date.now() },
+      { id: 'T2', parentId: null, title: 'b', status: 'in_progress', createdAt: Date.now(), updatedAt: Date.now() },
     ];
     service.setTodos(next);
-    expect(service.getTodos()).toEqual(next);
+    expect(service.getTodos()).toEqual([
+      expect.objectContaining({ id: 'T1', parentId: null, title: 'a', status: 'open' }),
+      expect.objectContaining({ id: 'T2', parentId: null, title: 'b', status: 'in_progress' }),
+    ]);
 
     service.clear();
     expect(service.getTodos()).toEqual([]);
@@ -194,13 +197,13 @@ describe('SessionTodoService', () => {
 
     const seen: Array<readonly TodoItem[]> = [];
     const d = service.onDidChange((todos) => seen.push(todos));
-    service.setTodos([{ title: 'x', status: 'pending' }]);
-    service.setTodos([{ title: 'y', status: 'done' }]);
+    service.setTodos([{ id: 'T1', parentId: null, title: 'x', status: 'open', createdAt: Date.now(), updatedAt: Date.now() }]);
+    service.setTodos([{ id: 'T1', parentId: null, title: 'y', status: 'done', createdAt: Date.now(), updatedAt: Date.now() }]);
     d.dispose();
 
     expect(seen).toEqual([
-      [{ title: 'x', status: 'pending' }],
-      [{ title: 'y', status: 'done' }],
+      [expect.objectContaining({ title: 'x', status: 'open' })],
+      [expect.objectContaining({ title: 'y', status: 'done' })],
     ]);
   });
 
@@ -209,13 +212,13 @@ describe('SessionTodoService', () => {
     const lifecycle = makeLifecycleStub([main.handle]);
     const service = new SessionTodoService(lifecycle.service);
 
-    service.setTodos([{ title: 'persist me', status: 'in_progress' }]);
+    service.setTodos([{ id: 'T1', parentId: null, title: 'persist me', status: 'in_progress', createdAt: Date.now(), updatedAt: Date.now() }]);
 
     expect(main.appended).toEqual([
       {
         type: 'tools.update_store',
         key: 'todo',
-        value: [{ title: 'persist me', status: 'in_progress' }],
+        value: [expect.objectContaining({ title: 'persist me', status: 'in_progress' })],
       },
     ]);
   });
@@ -223,7 +226,7 @@ describe('SessionTodoService', () => {
   it('does not append to the wire when the main agent is absent', () => {
     const lifecycle = makeLifecycleStub();
     const service = new SessionTodoService(lifecycle.service);
-    expect(() => service.setTodos([{ title: 'x', status: 'pending' }])).not.toThrow();
+    expect(() => service.setTodos([{ id: 'T1', parentId: null, title: 'x', status: 'open', createdAt: Date.now(), updatedAt: Date.now() }])).not.toThrow();
     expect(service.getTodos()).toEqual([]);
   });
 
@@ -247,10 +250,10 @@ describe('SessionTodoService', () => {
     const service = new SessionTodoService(lifecycle.service);
 
     await main.restore([
-      { type: 'tools.update_store', key: 'todo', value: [{ title: 'restored', status: 'done' }] },
+      { type: 'tools.update_store', key: 'todo', value: [{ id: 'T1', parentId: null, title: 'restored', status: 'done', createdAt: Date.now(), updatedAt: Date.now() }] },
     ]);
 
-    expect(service.getTodos()).toEqual([{ title: 'restored', status: 'done' }]);
+    expect(service.getTodos()).toEqual([expect.objectContaining({ title: 'restored', status: 'done' })]);
   });
 
   it('disposes per-agent bindings when the agent is disposed', () => {
@@ -285,14 +288,17 @@ describe('SessionTodoService', () => {
         value: [
           { title: 'valid', status: 'done' },
           { title: 'missing status' },
-          { title: 123, status: 'pending' },
+          { title: 123, status: 'open' },
           'garbage',
           { title: 'bad status', status: 'wip' },
         ],
       } as unknown as WireRecord,
     ]);
 
-    expect(service.getTodos()).toEqual([{ title: 'valid', status: 'done' }]);
+    expect(service.getTodos()).toEqual([
+      expect.objectContaining({ title: 'valid', status: 'done' }),
+      expect.objectContaining({ title: 'bad status', status: 'open' }),
+    ]);
   });
 
   it('treats a non-array todo tools.update_store value as an empty list on replay', async () => {

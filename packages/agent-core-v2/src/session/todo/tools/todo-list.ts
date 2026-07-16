@@ -34,12 +34,33 @@ import DESCRIPTION from './todo-list.md?raw';
 import TODO_LIST_WRITE_REMINDER from './todo-list-write-reminder.md?raw';
 
 const TodoItemSchema = z.object({
-  title: z.string().min(1).describe('Short, actionable title for the todo.'),
-  status: z.enum(['pending', 'in_progress', 'done']).describe('Current status of the todo.'),
+  id: z
+    .string()
+    .describe(
+      'Unique task ID. Top-level: "T1", "T2", …. Children: "T1.1", "T1.2", …. Auto-assigned if omitted.',
+    ),
+  parentId: z
+    .string()
+    .nullable()
+    .describe('Parent task ID for hierarchy, or null for top-level tasks.'),
+  title: z.string().min(1).describe('Short, actionable title for the task.'),
+  status: z
+    .enum(['open', 'in_progress', 'blocked', 'done', 'abandoned'])
+    .describe('Current status of the task.'),
+  description: z
+    .string()
+    .optional()
+    .describe('Optional longer description or context for the task.'),
 });
 
 export interface TodoListInput {
-  todos?: Array<{ title: string; status: TodoStatus }>;
+  todos?: Array<{
+    id: string;
+    parentId: string | null;
+    title: string;
+    status: TodoStatus;
+    description?: string;
+  }>;
 }
 
 export const TodoListInputSchema: z.ZodType<TodoListInput> = z.object({
@@ -47,7 +68,7 @@ export const TodoListInputSchema: z.ZodType<TodoListInput> = z.object({
     .array(TodoItemSchema)
     .optional()
     .describe(
-      'The updated todo list. Omit to read the current todo list without making changes. Pass an empty array to clear the list.',
+      'The updated task list with hierarchy. Omit to read the current list without making changes. Pass an empty array to clear the list.',
     ),
 });
 
@@ -73,9 +94,15 @@ export class TodoListTool implements BuiltinTool<TodoListInput> {
           return { isError: false, output: renderTodoList(this.todo.getTodos()) };
         }
 
+        const now = Date.now();
         const next: readonly TodoItem[] = args.todos.map((todo) => ({
+          id: todo.id,
+          parentId: todo.parentId,
           title: todo.title,
           status: todo.status,
+          description: todo.description,
+          createdAt: now,
+          updatedAt: now,
         }));
         this.todo.setTodos(next);
         const stored = this.todo.getTodos();
