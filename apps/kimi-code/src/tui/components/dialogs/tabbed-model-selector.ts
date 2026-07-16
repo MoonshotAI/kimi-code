@@ -43,9 +43,9 @@ export interface TabbedModelSelectorOptions {
   /** When set, the tab for this provider id is initially active instead of the
    * tab derived from `currentValue`. */
   readonly initialTabId?: string;
-  /** Forwarded to each inner selector; when set, a warning-colored line is
-   * rendered directly below the key-hint line (e.g. the mid-conversation
-   * switch cost notice). */
+  /** Forwarded to each inner selector; when set, warning-colored lines are
+   * rendered directly below the key-hint line, wrapping as needed (e.g. the
+   * mid-conversation switch cost notice). */
   readonly warning?: string;
   readonly onSelect: (selection: ModelSelection) => void;
   /** Forwarded to each inner selector; when set, Alt+S applies the choice to

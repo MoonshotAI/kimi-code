@@ -5,6 +5,7 @@ import {
   matchesKey,
   truncateToWidth,
   visibleWidth,
+  wrapTextWithAnsi,
   type Focusable,
 } from '@moonshot-ai/pi-tui';
 
@@ -73,8 +74,9 @@ export interface ModelSelectorOptions {
   /** When true, the hint line mentions the Tab provider switch — set by
    * TabbedModelSelectorComponent so the inner list advertises the tab keys. */
   readonly providerSwitchHint?: boolean;
-  /** When set, rendered as a warning-colored line directly below the key-hint
-   * line (e.g. the mid-conversation switch cost notice). */
+  /** When set, rendered as warning-colored lines directly below the key-hint
+   * line; wraps instead of truncating when it exceeds the width (e.g. the
+   * mid-conversation switch cost notice). */
   readonly warning?: string;
   readonly onSelect: (selection: ModelSelection) => void;
   /** When provided, Alt+S invokes this instead of onSelect — used to apply the
@@ -291,7 +293,9 @@ export class ModelSelectorComponent extends Container implements Focusable {
       currentTheme.fg('textMuted', ' ' + hintParts.join(' · ')),
     ];
     if (this.opts.warning !== undefined) {
-      lines.push(currentTheme.fg('warning', ` ${this.opts.warning}`));
+      for (const line of wrapTextWithAnsi(this.opts.warning, Math.max(1, width - 1))) {
+        lines.push(currentTheme.fg('warning', ` ${line}`));
+      }
     }
     lines.push('');
 

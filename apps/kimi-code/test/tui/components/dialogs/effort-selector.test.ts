@@ -129,4 +129,23 @@ describe('EffortSelectorComponent', () => {
     expect(hintIdx).toBeGreaterThanOrEqual(0);
     expect(lines[hintIdx + 1]).toBe('');
   });
+
+  it('wraps a warning longer than the width instead of truncating it', () => {
+    const warning =
+      'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.';
+    const picker = new EffortSelectorComponent({
+      efforts: ['off', 'low', 'high', 'max'],
+      currentValue: 'high',
+      warning,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const lines = picker.render(40).map(strip);
+    const hintIdx = lines.findIndex((l) => l.includes('←→ switch'));
+    expect(lines[hintIdx + 1]).not.toBe('');
+    expect(lines[hintIdx + 2]).not.toBe('');
+    // Word-wrapped: nothing dropped — the full warning survives across lines.
+    const squashed = lines.join('').replaceAll(/\s+/g, '');
+    expect(squashed).toContain(warning.replaceAll(/\s+/g, ''));
+  });
 });
