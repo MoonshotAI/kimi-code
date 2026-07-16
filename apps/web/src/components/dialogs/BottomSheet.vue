@@ -145,7 +145,7 @@ onUnmounted(() => {
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  padding-bottom: max(16px, var(--safe-bottom));
 }
 
 /* Slide-up + fade transition for the whole sheet (scrim fades, panel slides). */

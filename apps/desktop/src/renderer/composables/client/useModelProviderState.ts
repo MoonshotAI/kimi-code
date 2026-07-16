@@ -61,7 +61,6 @@ export interface UseModelProviderStateDeps {
   refreshSessionStatus: (sessionId: string) => Promise<void>;
   persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<void>;
   activity: ComputedRef<ActivityState>;
-  inFlightPromptSessions: Set<string>;
   saveThinkingToStorage: (v: ThinkingLevel) => void;
   /** Replace one session in place (matched by id). Owned by the facade so the
    *  model module never assigns rawState.sessions directly. */
@@ -82,7 +81,6 @@ export function useModelProviderState(
     refreshSessionStatus,
     persistSessionProfile,
     activity,
-    inFlightPromptSessions,
     saveThinkingToStorage,
     updateSession,
     updateSessionMessages,
@@ -186,19 +184,6 @@ export function useModelProviderState(
     }
   }
 
-  async function refreshOAuthProviderModels(): Promise<void> {
-    try {
-      const result = await getKimiWebApi().refreshOAuthProviderModels();
-      for (const failure of result.failed) {
-        pushOperationFailure('refreshOAuthProviderModels', new Error(failure.reason), {
-          message: failure.provider,
-        });
-      }
-    } catch {
-      // Older daemons may not expose this endpoint; model listing still works.
-    }
-  }
-
   /** Load providers */
   async function loadProviders(): Promise<void> {
     try {
@@ -298,15 +283,14 @@ export function useModelProviderState(
   async function activateSkill(skillName: string, args?: string, sessionId?: string): Promise<void> {
     const sid = sessionId ?? rawState.activeSessionId;
     if (!sid) return;
-    const guarded = activity.value === 'idle' && !inFlightPromptSessions.has(sid);
+    const guarded = activity.value === 'idle' && !rawState.inFlightBySession[sid];
     const tempId = `msg_skill_opt_${Date.now().toString(36)}`;
 
     const localTurnToken = guarded ? beginLocalTurn(sid) : undefined;
     if (guarded) {
       // Share the local-turn-start lifecycle with prompt submits: a racing
       // terminal snapshot must not clear this skill's turn either.
-      inFlightPromptSessions.add(sid);
-      rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: true };
+      rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: true };
       const optimisticMsg: AppMessage = {
         id: tempId,
         sessionId: sid,
@@ -330,8 +314,7 @@ export function useModelProviderState(
       await getKimiWebApi().activateSkill(sid, skillName, args);
     } catch (err) {
       if (guarded) {
-        inFlightPromptSessions.delete(sid);
-        rawState.sendingBySession = { ...rawState.sendingBySession, [sid]: false };
+        rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
         updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
       }
       pushOperationFailure('activateSkill', err, { sessionId: sid });
@@ -456,7 +439,6 @@ export function useModelProviderState(
     loadSkillsForSession,
     loadSkillsForWorkspace,
     loadModels,
-    refreshOAuthProviderModels,
     loadProviders,
     setModel,
     toggleStarModel,

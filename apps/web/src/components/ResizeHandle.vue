@@ -69,7 +69,9 @@ watch(dragging, (d) => emit('update:dragging', d));
   touch-action: none;
   /* sits over the 1px column border so the whole 4px strip is grabbable */
   margin: 0 -2px;
-  z-index: var(--z-sticky);
+  /* above pane-level sticky chrome (chat dock, headers at --z-sticky): its 2px
+     overhang into the neighbour pane must stay visible and grabbable */
+  z-index: var(--z-dropdown);
 }
 .rh-bar {
   position: absolute;

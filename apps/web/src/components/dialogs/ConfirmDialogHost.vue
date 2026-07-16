@@ -5,7 +5,13 @@
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import ConfirmDialog from './ConfirmDialog.vue';
 
-const { current, settle } = useConfirmDialog();
+const { current, busy, settle, runAction } = useConfirmDialog();
+
+// runAction never rejects (a failing action rejects the confirm() promise
+// instead), so the floating promise is safe to drop here.
+function onConfirm(): void {
+  void runAction();
+}
 </script>
 
 <template>
@@ -16,7 +22,8 @@ const { current, settle } = useConfirmDialog();
     :confirm-label="current?.confirmLabel"
     :cancel-label="current?.cancelLabel"
     :variant="current?.variant"
-    @confirm="settle(true)"
+    :loading="busy"
+    @confirm="onConfirm"
     @cancel="settle(false)"
   />
 </template>

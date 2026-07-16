@@ -295,7 +295,9 @@ onUnmounted(() => {
   .toasts {
     left: 12px;
     right: 12px;
-    bottom: calc(76px + env(safe-area-inset-bottom));
+    /* Sit just above the chat dock; --dock-h already includes the dock's own
+       safe-area padding, so no extra safe-bottom term is needed. */
+    bottom: calc(var(--dock-h, 76px) + 8px);
     width: auto;
     max-height: 50vh;
   }

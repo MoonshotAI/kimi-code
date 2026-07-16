@@ -2,6 +2,16 @@ export default {
   dismiss: '关闭',
   errorLabel: '错误',
   noteLabel: '提示',
+  agentError: {
+    title: '模型请求失败',
+    connection: '无法连接模型服务',
+    auth: '模型认证失败',
+    rateLimit: '模型请求被限流',
+    overloaded: '模型服务过载',
+    filtered: '响应被提供方过滤',
+    api: '模型接口返回错误',
+    contextOverflow: '上下文超出模型限制',
+  },
   details: {
     cause: '底层原因',
     code: '错误码',
