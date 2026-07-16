@@ -52,12 +52,7 @@ import {
   MAIN_AGENT_ID,
 } from '@moonshot-ai/agent-core-v2';
 import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
-import type {
-  ModelCatalogChangedEvent,
-  SessionCreatedEvent,
-  SessionMetaUpdatedEvent,
-  Event,
-} from './events';
+import type { SessionCreatedEvent, SessionMetaUpdatedEvent, Event } from './events';
 import { isVolatileEventType } from './events';
 import type { SessionCursor } from '../../../protocol/ws-control';
 import type { InFlightTurn, SnapshotSubagent } from '../../../protocol/rest-snapshot';
@@ -420,20 +415,6 @@ export class SessionEventBroadcaster {
   }
 
   private onCoreEvent(event: GlobalEvent): void {
-    if (event.type === 'event.model_catalog.changed') {
-      const payload = modelCatalogChangedPayload(event.payload);
-      if (payload === undefined) return;
-      const modelEvent: ModelCatalogChangedEvent = {
-        type: 'event.model_catalog.changed',
-        ...payload,
-      };
-      void this.dispatchGlobal({
-        ...modelEvent,
-        agentId: 'main',
-        sessionId: GLOBAL_SESSION_ID,
-      });
-      return;
-    }
     if (event.type === 'event.session.created') {
       const payload = sessionCreatedPayload(event.payload);
       if (payload === undefined) return;
@@ -803,7 +784,7 @@ export class SessionEventBroadcaster {
     }
 
     if (isGlobalEvent(event.type)) {
-      // Global events (session/workspace/config/model-catalog) are not agent
+      // Global events (session/workspace/config) are not agent
       // events — fan out to every subscriber regardless of any agent filter.
       for (const target of this.allTargets()) {
         try {
@@ -928,14 +909,13 @@ function legacyTaskEvent(event: DomainEvent, agentId: string, sessionId: string)
   return { ...event, type: legacyType, agentId, sessionId } as unknown as Event;
 }
 
-/** Session/workspace/config/model-catalog events are broadcast to every connection. */
+/** Session/workspace/config events are broadcast to every connection. */
 function isGlobalEvent(type: string): boolean {
   return (
     type === 'session.meta.updated' ||
     type.startsWith('event.session.') ||
     type.startsWith('event.workspace.') ||
-    type.startsWith('event.config.') ||
-    type.startsWith('event.model_catalog.')
+    type.startsWith('event.config.')
   );
 }
 
@@ -945,7 +925,7 @@ function isGlobalEvent(type: string): boolean {
  * `filter`:
  *   - `filter === undefined` → receive every agent (legacy session-grained
  *     behavior);
- *   - global events (session/workspace/config/model-catalog) are not agent
+ *   - global events (session/workspace/config) are not agent
  *     events and always pass;
  *   - events without a string `agentId` (should not happen on the v1 wire,
  *     where the broadcaster stamps every event) pass defensively rather than
@@ -1041,25 +1021,6 @@ function interactionResolvedEvent(
     default:
       return undefined;
   }
-}
-
-function modelCatalogChangedPayload(
-  payload: unknown,
-): Pick<ModelCatalogChangedEvent, 'changed' | 'unchanged' | 'failed'> | undefined {
-  if (typeof payload !== 'object' || payload === null) return undefined;
-  const candidate = payload as Partial<ModelCatalogChangedEvent>;
-  if (
-    !Array.isArray(candidate.changed) ||
-    !Array.isArray(candidate.unchanged) ||
-    !Array.isArray(candidate.failed)
-  ) {
-    return undefined;
-  }
-  return {
-    changed: candidate.changed,
-    unchanged: candidate.unchanged,
-    failed: candidate.failed,
-  };
 }
 
 /**

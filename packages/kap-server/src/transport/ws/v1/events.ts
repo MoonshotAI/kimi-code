@@ -4,7 +4,7 @@
  * Most frames are the engine's own `DomainEvent`s (turn / tool / subagent /
  * compaction / mcp / …), re-exported here as the stream's backbone. The
  * remaining interfaces are the v1-only frames this transport synthesizes
- * (session/workspace lifecycle, config/model-catalog changes, the merged
+ * (session/workspace lifecycle, config changes, the merged
  * legacy status overlay, and the legacy background-task spellings) — they
  * never had an engine-side producer, so they are defined here, next to the
  * broadcaster that emits them.
@@ -14,10 +14,6 @@ import type { DomainEvent } from '@moonshot-ai/agent-core-v2/app/event/eventBus'
 import type { MessageContent } from '@moonshot-ai/agent-core-v2/agent/contextMemory/protocolMessage';
 import type { PermissionMode } from '@moonshot-ai/agent-core-v2/agent/permissionPolicy/types';
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
-import type {
-  ProviderRefreshChange,
-  ProviderRefreshFailure,
-} from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
 import type { AgentPhase } from '../../../services/legacyStatus/legacyStatus';
 import type { ConfigResponse } from '../../../protocol/rest-config';
 import type { Session, SessionPendingInteraction } from '../../../protocol/session';
@@ -90,19 +86,6 @@ export interface ConfigChangedEvent {
   readonly type: 'event.config.changed';
   readonly changedFields: string[];
   readonly config: ConfigResponse;
-}
-
-/**
- * Pushed when the daemon refreshes provider model metadata (manual or
- * scheduled) and the effective catalog changed. Carries the per-provider
- * diff so clients can both refresh their model/provider caches and surface a
- * summary ("3 models added") without re-diffing the whole config.
- */
-export interface ModelCatalogChangedEvent {
-  readonly type: 'event.model_catalog.changed';
-  readonly changed: readonly ProviderRefreshChange[];
-  readonly unchanged: readonly string[];
-  readonly failed: readonly ProviderRefreshFailure[];
 }
 
 export interface PromptSubmittedEvent {
@@ -185,7 +168,6 @@ export type AgentEvent =
   | SessionWorkChangedEvent
   | SessionStatusChangedEvent
   | ConfigChangedEvent
-  | ModelCatalogChangedEvent
   | PromptSubmittedEvent
   | BackgroundTaskStartedEvent
   | BackgroundTaskTerminatedEvent;

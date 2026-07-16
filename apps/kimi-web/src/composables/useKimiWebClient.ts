@@ -2915,7 +2915,6 @@ export function useKimiWebClient() {
     resolveImageUrl: workspaceState.resolveImageUrl,
 
     // Model + Provider actions
-    refreshOAuthProviderModels: modelProvider.refreshOAuthProviderModels,
     loadModels: modelProvider.loadModels,
     loadProviders: modelProvider.loadProviders,
     skills,

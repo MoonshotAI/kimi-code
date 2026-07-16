@@ -77,10 +77,6 @@ import type {
 import type { UsageStatus } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
 import type { FinishReason } from '@moonshot-ai/agent-core-v2/app/llmProtocol/finishReason';
 import type { TokenUsage } from '@moonshot-ai/agent-core-v2/app/llmProtocol/usage';
-import {
-  providerRefreshChangeSchema,
-  providerRefreshFailureSchema,
-} from '@moonshot-ai/agent-core-v2/app/modelCatalog/modelCatalog';
 import type {
   SubagentCompletedEvent,
   SubagentFailedEvent,
@@ -592,13 +588,6 @@ export const configChangedEventSchema = z.object({
   config: configResponseSchema,
 });
 
-export const modelCatalogChangedEventSchema = z.object({
-  type: z.literal('event.model_catalog.changed'),
-  changed: z.array(providerRefreshChangeSchema),
-  unchanged: z.array(z.string().min(1)),
-  failed: z.array(providerRefreshFailureSchema),
-});
-
 export const goalUpdatedEventSchema = z.object({
   type: z.literal('goal.updated'),
   snapshot: goalSnapshotSchema.nullable(),
@@ -911,7 +900,6 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceDeletedEventSchema,
   sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
-  modelCatalogChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
   pluginCommandActivatedEventSchema,
