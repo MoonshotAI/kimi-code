@@ -9,6 +9,7 @@ export default defineConfig({
     './src/providers/anthropic-profile.ts',
     './src/providers/anthropic.ts',
     './src/providers/google-genai.ts',
+    './src/providers/mimo-free.ts',
     './src/providers/openai-common.ts',
   ],
   format: ['esm'],

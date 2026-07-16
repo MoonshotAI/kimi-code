@@ -2286,7 +2286,7 @@ function createGenerateBackedProtocolRegistry(generate: GenerateFn): IProtocolAd
   return {
     _serviceBrand: undefined,
     supportedProtocols: () =>
-      ['kimi', 'anthropic', 'openai', 'openai_responses', 'google-genai', 'vertexai'] as const,
+      ['kimi', 'anthropic', 'openai', 'openai_responses', 'google-genai', 'vertexai', 'mimo-free'] as const,
     createChatProvider: (input: ProtocolAdapterConfig) => {
       const config = {
         type: input.protocol,
