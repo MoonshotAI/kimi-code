@@ -7,7 +7,7 @@ import {
   type ThinkingEffort,
 } from '@moonshot-ai/kimi-code-sdk';
 
-import { t } from '#/i18n';
+import { t, setLocale, getLocale } from '#/i18n';
 
 import { EditorSelectorComponent } from '../components/dialogs/editor-selector';
 import { EffortSelectorComponent } from '../components/dialogs/effort-selector';
@@ -15,6 +15,7 @@ import {
   ExperimentsSelectorComponent,
   type ExperimentalFeatureDraftChange,
 } from '../components/dialogs/experiments-selector';
+import { LocaleSelectorComponent } from '../components/dialogs/locale-selector';
 import { modelDisplayName, segmentsFor } from '../components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '../components/dialogs/tabbed-model-selector';
 import { PermissionSelectorComponent } from '../components/dialogs/permission-selector';
@@ -593,6 +594,28 @@ export function showPermissionPicker(host: SlashCommandHost): void {
   );
 }
 
+function showLocalePicker(host: SlashCommandHost): void {
+  host.mountEditorReplacement(
+    new LocaleSelectorComponent({
+      currentValue: getLocale(),
+      onSelect: async (locale) => {
+        host.restoreEditor();
+        const config = currentTuiConfig(host);
+        config.locale = locale;
+        await saveTuiConfig(config);
+        setLocale(locale);
+        host.showNotice(
+          t('tui.statusMessages.configSaved'),
+          t('tui.statusMessages.localeChanged', { locale }),
+        );
+      },
+      onCancel: () => {
+        host.restoreEditor();
+      },
+    }),
+  );
+}
+
 export function showUpdatePreferencePicker(host: SlashCommandHost): void {
   host.mountEditorReplacement(
     new UpdatePreferenceSelectorComponent({
@@ -753,6 +776,7 @@ function handleSettingsSelection(host: SlashCommandHost, value: SettingsSelectio
     case 'theme': showThemePicker(host); return;
     case 'editor': showEditorPicker(host); return;
     case 'experiments': void showExperimentsPanel(host); return;
+    case 'language': showLocalePicker(host); return;
     case 'upgrade': showUpdatePreferencePicker(host); return;
     case 'usage': void showUsage(host); return;
   }

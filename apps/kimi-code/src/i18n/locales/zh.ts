@@ -813,6 +813,8 @@ export default {
       mcpServerDisabled: 'MCP 服务器 "{{name}}" 已禁用',
       mcpServerConnecting: 'MCP 服务器 "{{name}}" 正在连接…',
       activatedSkill: '已激活技能：{{skillName}}',
+      configSaved: '设置已保存。',
+      localeChanged: '语言已切换为 {{locale}}。',
       // goal.ts
       resumeGoalInput: '恢复活动目标。',
       startingNow: '没有活动目标，立即开始此目标。',

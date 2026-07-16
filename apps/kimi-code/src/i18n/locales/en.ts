@@ -813,6 +813,8 @@ export default {
       mcpServerDisabled: 'MCP server "{{name}}" disabled',
       mcpServerConnecting: 'MCP server "{{name}}" connecting…',
       activatedSkill: 'Activated skill: {{skillName}}',
+      configSaved: 'Settings saved.',
+      localeChanged: 'Language changed to {{locale}}.',
       // goal.ts
       resumeGoalInput: 'Resume the active goal.',
       startingNow: 'No active goal. Starting this goal now.',
