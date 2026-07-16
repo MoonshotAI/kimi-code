@@ -521,6 +521,15 @@ export class ToolManager {
     // builtin/user tool names. The split keeps every caller on one string[].
     this.enabledTools = new Set(names.filter((name) => !isMcpToolName(name)));
     this.mcpAccessPatterns = names.filter((name) => isMcpToolName(name));
+    // Builtin construction reads the enabled set (Bash/Agent bake
+    // `allowBackground` from the Task* trio), and the constructor may already
+    // have built the map while the enabled set was still empty. The lazy
+    // re-init in `get tools()` only fires on an empty map, so rebuild here —
+    // otherwise a profile applied after construction (every subagent) keeps
+    // the construction-time capabilities.
+    if (this.agent.config.hasProvider) {
+      this.initializeBuiltinTools();
+    }
   }
 
   copyLoopToolsFrom(source: ToolManager): void {

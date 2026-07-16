@@ -456,10 +456,19 @@ describe('SessionSubagentHost', () => {
     expect(child.llmCalls[0]?.systemPrompt).toContain('You are now running as a subagent.');
     expect(child.llmCalls[0]?.tools.map((tool) => tool.name).toSorted()).toEqual([
       'Bash',
+      'CronCreate',
+      'CronDelete',
+      'CronList',
       'Edit',
+      'EnterPlanMode',
+      'ExitPlanMode',
       'Glob',
       'Grep',
       'Read',
+      'TaskList',
+      'TaskOutput',
+      'TaskStop',
+      'TodoList',
       'Write',
     ]);
     expect(child.llmCalls[0]?.history).toMatchObject([
