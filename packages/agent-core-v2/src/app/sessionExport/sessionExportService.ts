@@ -197,9 +197,10 @@ export async function exportSessionDirectory(input: {
       );
     }
     const bundledWebLog = input.webLog !== undefined;
+    const now = new Date();
     const baseManifest = buildExportManifest({
       summary: input.summary,
-      now: new Date(),
+      now,
       version: input.request.version,
       sessionScan,
       sessionLogPath: stableSessionLog === undefined ? undefined : SESSION_LOG_REL,
@@ -210,7 +211,7 @@ export async function exportSessionDirectory(input: {
     const outputPath =
       input.request.outputPath !== undefined
         ? resolve(input.request.outputPath)
-        : resolve(`${input.summary.id}.zip`);
+        : resolve(defaultExportZipName(input.summary.id, now));
     const extras: ExtraZipEntry[] = [];
     if (input.webLog !== undefined) {
       extras.push({ data: Buffer.from(input.webLog, 'utf8'), target: WEB_LOG_REL });
@@ -250,6 +251,12 @@ export async function exportSessionDirectory(input: {
       await globalSource.close().catch(() => {});
     }
   }
+}
+
+function defaultExportZipName(sessionId: string, now: Date): string {
+  const shortId = sessionId.slice(0, 8);
+  const timestamp = now.toISOString().replaceAll(/[-:]/g, '').replace(/T/, '-').slice(0, 15);
+  return `kimi-debug-${shortId}-${timestamp}.zip`;
 }
 
 function sessionZipEntryPath(entry: SessionZipEntry): string {
