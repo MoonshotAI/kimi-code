@@ -36,9 +36,9 @@ import type { SlashCommandHost } from './dispatch';
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
 
 const MODEL_SWITCH_CACHE_WARNING =
-  'Switching models clears context cache. Use /new to avoid extra costs.';
+  'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
 const EFFORT_SWITCH_CACHE_WARNING =
-  'Switching effort clears context cache. Use /new to avoid extra costs.';
+  'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.';
 
 /** True once the conversation has at least one user message: a switch from
  * then on resends the accumulated context, losing the cache. Shell-command
