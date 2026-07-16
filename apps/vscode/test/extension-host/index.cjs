@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const { writeFile } = require("node:fs/promises");
+const { readFile, writeFile } = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const vscode = require("vscode");
@@ -31,7 +31,10 @@ exports.run = async function run() {
 
   const extension = vscode.extensions.getExtension(EXTENSION_ID);
   assert.ok(extension, `${EXTENSION_ID} is not installed in the isolated Extension Host`);
-  assert.equal(extension.packageJSON.version, "0.6.0");
+  const sourceManifest = JSON.parse(
+    await readFile(path.join(__dirname, "..", "..", "package.json"), "utf8"),
+  );
+  assert.equal(extension.packageJSON.version, sourceManifest.version);
   assert.equal(extension.packageJSON.main, "./dist/extension.js");
   assert.ok(process.env.KIMI_CODE_HOME, "KIMI_CODE_HOME must point at the isolated test home");
   assert.equal(process.env.HOME, isolatedHome);
