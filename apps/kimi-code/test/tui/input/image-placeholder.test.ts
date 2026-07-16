@@ -103,12 +103,19 @@ describe('extractMediaAttachments', () => {
       const r = extractMediaAttachments(text, store);
       expect(r.imageAttachmentIds).toEqual([1]);
       expect(r.videoAttachmentIds).toEqual([2]);
-      expect(r.parts[0]).toEqual({ type: 'text', text: 'first ' });
-      expect(r.parts[1]).toEqual({
+      // First part is the video hint (because video is present)
+      expect(r.parts[0]).toEqual({
+        type: 'text',
+        text:
+          'Use the ReadMediaFile tool to read and analyze the attached video directly. ' +
+          'Do not write Python scripts or Bash commands to extract frames.',
+      });
+      expect(r.parts[1]).toEqual({ type: 'text', text: 'first ' });
+      expect(r.parts[2]).toEqual({
         type: 'image_url',
         imageUrl: { url: 'data:image/png;base64,AQ==' },
       });
-      const cachePath = videoPathFromParts(r.parts);
+      const cachePath = videoPathFromParts(r.parts.slice(3));
       expect(cachePath.startsWith(getCacheDir())).toBe(true);
       expect(readFileSync(cachePath, 'utf8')).toBe('video-bytes');
     } finally {
@@ -145,8 +152,9 @@ describe('extractMediaAttachments', () => {
       // The filename drives the cache label; `&` must be escaped in the attribute.
       const att = store.addVideo('video/mp4', srcVideo, 'a&b.mp4');
       const r = extractMediaAttachments(att.placeholder, store);
-      expect(r.parts).toHaveLength(1);
-      const text = (r.parts[0] as TextPart).text;
+      expect(r.parts).toHaveLength(2);
+      // First part is the video hint; second part is the actual tag.
+      const text = (r.parts[1] as TextPart).text;
       expect(text).toMatch(/<video path="[^"]+a&amp;b\.mp4"><\/video>/);
     } finally {
       cleanup();
@@ -165,7 +173,15 @@ describe('extractMediaAttachments', () => {
       const r = extractMediaAttachments(att.placeholder, store);
       expect(r.hasMedia).toBe(true);
       expect(r.videoAttachmentIds).toEqual([1]);
-      const cachePath = videoPathFromParts(r.parts);
+      expect(r.parts).toHaveLength(2);
+      // First part is the video hint
+      expect(r.parts[0]).toEqual({
+        type: 'text',
+        text:
+          'Use the ReadMediaFile tool to read and analyze the attached video directly. ' +
+          'Do not write Python scripts or Bash commands to extract frames.',
+      });
+      const cachePath = videoPathFromParts(r.parts.slice(1));
       // The tag points at the cache, not the original source path.
       expect(cachePath.startsWith(getCacheDir())).toBe(true);
       expect(cachePath).not.toBe(srcVideo);

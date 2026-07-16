@@ -89,6 +89,17 @@ export function extractMediaAttachments(
   const tail = text.slice(cursor);
   pushText(parts, tail);
 
+  // When video attachments are present, prepend a prompt hint so the model
+  // knows to use ReadMediaFile rather than writing Python frame-extraction scripts.
+  if (videoAttachmentIds.length > 0) {
+    parts.unshift({
+      type: 'text',
+      text:
+        'Use the ReadMediaFile tool to read and analyze the attached video directly. ' +
+        'Do not write Python scripts or Bash commands to extract frames.',
+    });
+  }
+
   return {
     // Text-only submissions drop the synthesised parts array — the
     // caller's contract is "parts is meaningful iff hasMedia", and
