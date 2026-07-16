@@ -110,9 +110,6 @@ export class ModelCatalogService implements IModelCatalogService {
   private providerTypeOf(alias: ModelAlias): ProviderType | undefined {
     const providerId =
       alias.providerId ?? alias.provider ?? this.config.get<string>('defaultProvider');
-    // Flat models (inline base_url, no named provider) have no provider entry
-    // to look up; their own protocol declaration plays the provider-identity
-    // role, mirroring ModelResolverService.
     return this.providerService.get(providerId ?? '')?.type ?? alias.protocol;
   }
 

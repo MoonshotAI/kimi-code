@@ -88,9 +88,6 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     const { providerConfig, providerName, resolvedBaseUrl: rawBaseUrl } =
       this.resolveProviderContext(id, routingModel);
     const protocol = this.resolveProtocol(id, routingModel, providerConfig);
-    // For providerless models (inline base_url, no named provider) the model's
-    // own protocol declaration plays the provider-identity role when deciding
-    // whether the Anthropic fallback profile applies.
     const model = effectiveModelConfig(
       configuredModel,
       providerConfig?.type ?? configuredModel.protocol,

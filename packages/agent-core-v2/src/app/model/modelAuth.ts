@@ -4,6 +4,10 @@
  * Resolves Model / Provider / Platform credential precedence for runtime
  * model resolution and auth-readiness probes. Pure computation; callers
  * supply the Platform lookup so this file stays outside the service graph.
+ * The inferred Anthropic effort profile is reserved for non-Kimi
+ * Anthropic-compatible providers; Kimi providers — including managed models
+ * routed through protocol = "anthropic" — keep only catalog-declared effort
+ * metadata.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
@@ -95,11 +99,6 @@ export function effectiveModelConfig(
 function withAnthropicProfile(model: ModelConfig, providerType?: ProviderType): ModelConfig {
   const wireName = model.name ?? model.model;
   const protocol = model.protocol ?? providerType;
-  // The inferred fallback profile exists for third-party Anthropic-compatible
-  // endpoints whose model name encodes no known Claude version. Kimi providers
-  // — including managed models routed through protocol = "anthropic" — declare
-  // thinking efforts via the catalog, so they never receive the fallback.
-  // Callers without provider context fall back to name matching only.
   const profile =
     wireName === undefined
       ? undefined
