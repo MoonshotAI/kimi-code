@@ -15,20 +15,20 @@ This page documents the changes in each Kimi Code CLI release.
 ### Polish
 
 - web: Show full diagnostics for model request failures.
-- Apply official Anthropic effort profiles and a 128k output fallback for unknown models, and preserve compatible-provider thinking history across session resumes and model switches.
+- Apply official Anthropic effort profiles and a 128k output fallback for unknown models.
 
 ### Bug Fixes
 
-- Fix the web server bearer-token check being bypassed by percent-encoded API paths (e.g. `/%61pi/v1/…`), which allowed unauthenticated access to every API route.
-- Fix the session filesystem API following symlinks that point outside the workspace, which allowed accessing host files beyond the session directory through a planted symlink.
+- Fix the web server bearer-token check being bypassed by percent-encoded API paths, which allowed unauthenticated access to every API route.
+- Fix the session filesystem API following symlinks that point outside the workspace, which allowed accessing host files beyond the session directory.
 - web: Keep session activity indicators in sync with agent work and prevent duplicate streamed content after session activation races or LLM retries.
-- Fix custom-named models on Anthropic-compatible providers starting new sessions with thinking effort off instead of the model default, and not showing the thinking control in ACP clients.
+- Fix custom-named models on Anthropic-compatible providers starting new sessions with thinking effort off and not showing the thinking control in ACP clients.
 - Honor adaptive_thinking = false on Anthropic-compatible models by omitting the effort parameter from requests.
 - web: Fix the Content-Security-Policy on non-loopback server binds blocking the web UI's theme bootstrap script and bundled fonts.
 - Fix sessions failing to be created when the workspace directory is given through a symlink.
 - Fix the CLI exiting unexpectedly when reading an image from the clipboard fails; it now falls back to pasting text.
 - web: Fix completed background subagents losing their final output after a session reload.
-- web: Fix Enter not confirming modal confirmation dialogs in dev builds; the dialog now stays open with a loading state until the action completes.
+- web: Fix Enter not confirming modal confirmation dialogs in dev builds.
 - web: Fix a background subagent showing up as two identical rows in the agents dock panel during streaming.
 - Fix the diagnostic log missing the actual error when the CLI exits unexpectedly.
 
