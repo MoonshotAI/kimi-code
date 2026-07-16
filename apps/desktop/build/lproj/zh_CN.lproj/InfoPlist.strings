@@ -1,0 +1,4 @@
+/* Localized TCC usage descriptions (see mac.extendInfo in electron-builder.config.cjs). */
+"NSDesktopFolderUsageDescription" = "只有当你打开位于桌面文件夹中的项目时，Kimi Code 才会访问其中的文件。";
+"NSDocumentsFolderUsageDescription" = "只有当你打开位于文稿文件夹中的项目时，Kimi Code 才会访问其中的文件。";
+"NSDownloadsFolderUsageDescription" = "只有当你打开位于下载文件夹中的项目时，Kimi Code 才会访问其中的文件。";
