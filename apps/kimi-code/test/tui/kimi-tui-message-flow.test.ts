@@ -3872,7 +3872,7 @@ command = "vim"
       expect(output).toContain('Permissions  auto');
       expect(output).toContain('Plan mode    on');
       expect(output).toContain('Context window');
-      expect(output).toContain('25.0%');
+      expect(output).toContain('25%');
     });
   });
 
@@ -5207,12 +5207,64 @@ describe('/effort support_efforts override', () => {
     const { driver } = await makeDriver(makeSession(), {
       getConfig: vi.fn(async () => ({
         providers: {
+          compatible: { type: 'anthropic', apiKey: 'test-key' },
+        },
+        models: {
+          k2: {
+            provider: 'compatible',
+            model: 'compatible-model',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).toContain('Max');
+  });
+
+  it('offers no fallback efforts for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {
           compatible: { type: 'kimi', apiKey: 'test-key' },
         },
         models: {
           k2: {
             provider: 'compatible',
             model: 'compatible-model',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).not.toContain('Max');
+  });
+
+  it('offers the latest Opus efforts for a flat providerless Anthropic model', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {},
+        models: {
+          // v2 flat model shape: no named provider, inline endpoint + protocol.
+          k2: {
+            model: 'compatible-model',
+            baseUrl: 'https://anthropic.example.test',
             protocol: 'anthropic',
             maxContextSize: 100,
           },

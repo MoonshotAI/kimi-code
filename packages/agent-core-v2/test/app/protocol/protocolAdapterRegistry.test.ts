@@ -92,9 +92,7 @@ describe('ProtocolAdapterRegistry', () => {
       apiKey: 'sk',
     });
 
-    expect(Reflect.get(provider.withThinking('max'), '_reasoningEffort')).toBe('max');
     expect(provider.withThinking('max').thinkingEffort).toBe('max');
-    expect(Reflect.get(provider.withThinking('medium'), '_reasoningEffort')).toBe('medium');
     expect(provider.withThinking('medium').thinkingEffort).toBe('medium');
   });
 

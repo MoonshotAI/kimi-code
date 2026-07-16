@@ -28,6 +28,7 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import type { AgentTaskSettlement } from '#/agent/task/types';
+import { userCancellationReason } from '#/_base/utils/abort';
 import type { IConfigService } from '#/app/config/config';
 import { ProcessTask } from '#/os/backends/node-local/tools/process-task';
 import type { IHostEnvironment } from '#/os/interface/hostEnvironment';
@@ -313,7 +314,6 @@ const TERMINAL_STATUSES: ReadonlySet<AgentTaskStatus> = new Set([
   'lost',
 ]);
 const SIGTERM_GRACE_MS = 5_000;
-const USER_INTERRUPT_REASON = 'Interrupted by user';
 const TASK_ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyz';
 
 interface ForegroundRelease {
@@ -542,7 +542,7 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
         const signal = registerOptions.signal;
         const abortFromSignal = (): void => {
           if (entry.foregroundRelease === undefined) return;
-          void stopEntry(entry, USER_INTERRUPT_REASON);
+          void stopEntry(entry, userCancellationReason().message);
         };
         if (signal.aborted) {
           abortFromSignal();
@@ -610,6 +610,10 @@ function createFakeTaskService(options: { maxRunningTasks?: number } = {}): {
       const entry = tasks.get(taskId);
       if (entry === undefined) return undefined;
       return stopEntry(entry, reason);
+    },
+
+    async stopByUser(taskId: string): Promise<AgentTaskInfo | undefined> {
+      return service.stop(taskId, userCancellationReason().message);
     },
 
     async stopAll(reason?: string): Promise<readonly AgentTaskInfo[]> {

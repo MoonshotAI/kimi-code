@@ -25,6 +25,7 @@ import {
   resolveKimiHome,
   writeConfigFile,
   type KimiConfig,
+  type McpRemoteServerConfig,
   type McpServerConfig,
   type MoonshotServiceConfig,
 } from '../config';
@@ -34,7 +35,16 @@ import {
   type ExperimentalFeatureState,
 } from '../flags';
 import type { Logger } from '../logging/types';
-import { resolveSessionMcpConfig, mergeCallerMcpServers, type SessionMcpConfig } from '../mcp';
+import {
+  AlreadyAuthorizedError,
+  GlobalMcpConfigStore,
+  McpConnectionManager,
+  McpOAuthService,
+  resolveSessionMcpConfig,
+  mergeCallerMcpServers,
+  type BeginAuthorizationResult,
+  type SessionMcpConfig,
+} from '../mcp';
 import { Session, type SessionMeta, type SessionSkillConfig } from '../session';
 import { exportSessionDirectory } from '../session/export';
 import {
@@ -64,22 +74,29 @@ import type {
   AddAdditionalDirPayload,
   AddAdditionalDirResult,
   ArchiveSessionPayload,
+  BeginGlobalMcpServerAuthResult,
   BeginCompactionPayload,
+  CancelGlobalMcpServerAuthPayload,
   CancelPayload,
   CancelPlanPayload,
   CancelShellCommandPayload,
   CloseSessionPayload,
+  CompleteGlobalMcpServerAuthPayload,
   ConfigDiagnostics,
   CoreAPI,
   CoreInfo,
   CreateGoalPayload,
   CreateSessionPayload,
+  DeleteSessionPayload,
   DetachBackgroundPayload,
   ClientTelemetryInfo,
   EmptyPayload,
   EnterSwarmPayload,
   GoalSnapshot,
   GoalToolResult,
+  GlobalMcpServerConfig,
+  GlobalMcpServerNamePayload,
+  GlobalMcpServerTestResult,
   ExportSessionPayload,
   ExportSessionResult,
   ForkSessionPayload,
@@ -89,6 +106,7 @@ import type {
   GetKimiConfigPayload,
   GetPluginInfoPayload,
   InstallPluginPayload,
+  ImportContextPayload,
   ListSessionsPayload,
   ListWorkspaceSkillsPayload,
   McpServerInfo,
@@ -96,6 +114,7 @@ import type {
   PluginInfo,
   PluginSummary,
   PromptPayload,
+  PutGlobalMcpServerPayload,
   RunShellCommandPayload,
   ReconnectMcpServerPayload,
   RegisterToolPayload,
@@ -118,6 +137,7 @@ import type {
   PluginCommandDef,
   SteerPayload,
   StopBackgroundPayload,
+  TestGlobalMcpServerPayload,
   UndoHistoryPayload,
   UnregisterToolPayload,
   UpdateSessionMetadataPayload,
@@ -133,11 +153,15 @@ const KIMI_CODE_PROVIDER_NAME = 'managed:kimi-code';
 const KIMI_CODE_BASE_URL_ENV = 'KIMI_CODE_BASE_URL';
 const KIMI_CODE_OAUTH_HOST_ENV = 'KIMI_CODE_OAUTH_HOST';
 const KIMI_OAUTH_HOST_ENV = 'KIMI_OAUTH_HOST';
+const DEFAULT_GLOBAL_MCP_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
 type AgentScopedPayload<T> = T & { readonly agentId: string };
 type SessionScopedPayload<T> = T & { readonly sessionId: string };
 type SessionAgentPayload<T> = SessionScopedPayload<AgentScopedPayload<T>>;
 type RenameSessionRequest = SessionScopedPayload<RenameSessionPayload>;
 type UpdateSessionMetadataRequest = SessionScopedPayload<UpdateSessionMetadataPayload>;
+interface GlobalMcpOAuthFlow {
+  readonly flow: BeginAuthorizationResult;
+}
 
 export interface KimiCoreOptions {
   readonly homeDir?: string | undefined;
@@ -173,6 +197,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   private readonly resolveOAuthTokenProvider: OAuthTokenProviderResolver | undefined;
   private readonly skillDirs: readonly string[];
   private readonly sessionStore: SessionStore;
+  private readonly globalMcpConfig: GlobalMcpConfigStore;
+  private readonly globalMcpOAuth: McpOAuthService;
+  private readonly globalMcpOAuthFlows = new Map<string, GlobalMcpOAuthFlow>();
   readonly plugins: PluginManager;
   private pluginsReady: Promise<void>;
   private pluginsLoadError: Error | undefined;
@@ -222,6 +249,8 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     );
     this.imageLimits = new ImageLimits(process.env, this.config.image);
     this.sessionStore = new SessionStore(this.homeDir);
+    this.globalMcpConfig = new GlobalMcpConfigStore(this.homeDir);
+    this.globalMcpOAuth = new McpOAuthService({ kimiHomeDir: this.homeDir });
     this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });
     // Capture the error rather than swallow it: mutators and explicit /plugins
     // reads rethrow so the user sees what's wrong; createSession/resumeSession
@@ -398,6 +427,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
     await this.sessionStore.archive(sessionId);
   }
 
+  async deleteSession({ sessionId }: DeleteSessionPayload): Promise<void> {
+    await this.closeSession({ sessionId });
+    await this.sessionStore.delete(sessionId);
+  }
+
   async resumeSession(input: ResumeSessionPayload): Promise<ResumeSessionResult> {
     return this.resumeSessionWithOverrides(input, {});
   }
@@ -432,8 +466,11 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       if (overrides.kaos !== undefined) {
         active.setToolKaos(overrides.kaos.withCwd(summary.workDir));
       }
-      await active.setAdditionalDirs(additionalDirs);
-      return withAdditionalDirs(await resumeSessionResult(summary, active), active);
+      await active.setBaseAdditionalDirs(additionalDirs);
+      return withAdditionalDirs(
+        await resumeSessionResult(summary, active, undefined, input.includeSubagents),
+        active,
+      );
     }
 
     const config = this.reloadProviderManager();
@@ -492,7 +529,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       // (and any SDK caller's resumeState) reflects the refreshed plugin context.
       await session.appendPluginSessionStartReminder();
     }
-    return resumeSessionResult(summary, session, warning);
+    return resumeSessionResult(summary, session, warning, input.includeSubagents);
   }
 
   async reloadSession(input: ReloadSessionPayload): Promise<ResumeSessionResult> {
@@ -541,6 +578,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       targetId: id,
       title: input.title,
       metadata: input.metadata,
+      turnIndex: input.turnIndex,
     });
     return this.resumeSession({ sessionId: id });
   }
@@ -635,6 +673,100 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
     await writeConfigFile(this.configPath, config);
     return this.reloadRuntimeConfig();
+  }
+
+  async listGlobalMcpServers(_input?: EmptyPayload): Promise<readonly GlobalMcpServerConfig[]> {
+    return this.globalMcpConfig.list();
+  }
+
+  async addGlobalMcpServer(
+    { server }: PutGlobalMcpServerPayload,
+  ): Promise<readonly GlobalMcpServerConfig[]> {
+    return this.globalMcpConfig.add(server);
+  }
+
+  async updateGlobalMcpServer(
+    { server }: PutGlobalMcpServerPayload,
+  ): Promise<readonly GlobalMcpServerConfig[]> {
+    return this.globalMcpConfig.update(server);
+  }
+
+  async removeGlobalMcpServer(
+    { name }: GlobalMcpServerNamePayload,
+  ): Promise<readonly GlobalMcpServerConfig[]> {
+    return this.globalMcpConfig.remove(name);
+  }
+
+  async beginGlobalMcpServerAuth(
+    { name }: GlobalMcpServerNamePayload,
+  ): Promise<BeginGlobalMcpServerAuthResult> {
+    const server = await this.globalMcpConfig.get(name);
+    const config = requireOAuthMcpServer(server);
+    try {
+      const flow = await this.globalMcpOAuth.beginAuthorization(server.name, config.url);
+      const flowId = randomUUID();
+      this.globalMcpOAuthFlows.set(flowId, { flow });
+      return {
+        status: 'authorization-required',
+        flowId,
+        authorizationUrl: flow.authorizationUrl.toString(),
+      };
+    } catch (error) {
+      if (error instanceof AlreadyAuthorizedError) {
+        return { status: 'already-authorized' };
+      }
+      throw error;
+    }
+  }
+
+  async completeGlobalMcpServerAuth(
+    { flowId, timeoutMs }: CompleteGlobalMcpServerAuthPayload,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<void> {
+    const active = this.globalMcpOAuthFlows.get(flowId);
+    if (active === undefined) {
+      throw new KimiError(ErrorCodes.REQUEST_INVALID, `Unknown MCP OAuth flow: ${flowId}`);
+    }
+    try {
+      await active.flow.complete({
+        signal: options.signal,
+        timeoutMs: timeoutMs ?? DEFAULT_GLOBAL_MCP_AUTH_TIMEOUT_MS,
+      });
+    } finally {
+      this.globalMcpOAuthFlows.delete(flowId);
+    }
+  }
+
+  async cancelGlobalMcpServerAuth(
+    { flowId }: CancelGlobalMcpServerAuthPayload,
+  ): Promise<void> {
+    const active = this.globalMcpOAuthFlows.get(flowId);
+    if (active === undefined) return;
+    this.globalMcpOAuthFlows.delete(flowId);
+    await active.flow.cancel();
+  }
+
+  async resetGlobalMcpServerAuth({ name }: GlobalMcpServerNamePayload): Promise<void> {
+    const server = await this.globalMcpConfig.get(name);
+    const config = requireRemoteMcpServer(server);
+    this.globalMcpOAuth.invalidate(server.name, config.url);
+  }
+
+  async testGlobalMcpServer(
+    { name, cwd }: TestGlobalMcpServerPayload,
+  ): Promise<GlobalMcpServerTestResult> {
+    const server = await this.globalMcpConfig.get(name);
+    const config = mcpConfigWithoutName(server);
+    const manager = new McpConnectionManager({
+      stdioCwd: cwd,
+      oauthService: this.globalMcpOAuth,
+    });
+    try {
+      await manager.connectAll({ [server.name]: config });
+      return standaloneMcpTestResult(server.name, manager);
+    } finally {
+      await manager.shutdown();
+    }
   }
 
   prompt({ sessionId, ...payload }: SessionAgentPayload<PromptPayload>) {
@@ -735,6 +867,10 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
 
   clearContext({ sessionId, ...payload }: SessionAgentPayload<EmptyPayload>) {
     return this.sessionApi(sessionId).clearContext(payload);
+  }
+
+  importContext({ sessionId, ...payload }: SessionAgentPayload<ImportContextPayload>) {
+    return this.sessionApi(sessionId).importContext(payload);
   }
 
   activateSkill({
@@ -1180,6 +1316,57 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
   }
 }
 
+function requireRemoteMcpServer(server: GlobalMcpServerConfig): McpRemoteServerConfig {
+  const config = mcpConfigWithoutName(server);
+  if (config.transport !== 'stdio') return config;
+  throw new KimiError(
+    ErrorCodes.REQUEST_INVALID,
+    `MCP server "${server.name}" does not use a remote transport`,
+  );
+}
+
+function requireOAuthMcpServer(server: GlobalMcpServerConfig): McpRemoteServerConfig {
+  const config = requireRemoteMcpServer(server);
+  if (config.bearerTokenEnvVar !== undefined) {
+    throw new KimiError(
+      ErrorCodes.REQUEST_INVALID,
+      `MCP server "${server.name}" uses a static bearer token`,
+    );
+  }
+  if (config.headers !== undefined && config.auth !== 'oauth') {
+    throw new KimiError(
+      ErrorCodes.REQUEST_INVALID,
+      `MCP server "${server.name}" uses static headers and is not marked for OAuth`,
+    );
+  }
+  return config;
+}
+
+function mcpConfigWithoutName(server: GlobalMcpServerConfig): McpServerConfig {
+  const { name: _name, ...config } = server;
+  return config;
+}
+
+function standaloneMcpTestResult(
+  name: string,
+  manager: McpConnectionManager,
+): GlobalMcpServerTestResult {
+  const entry = manager.get(name);
+  if (entry?.status !== 'connected') {
+    return {
+      success: false,
+      output: entry?.error ?? `MCP server "${name}" finished with status ${entry?.status ?? 'unknown'}`,
+    };
+  }
+  const tools = manager.resolved(name)?.rawTools ?? [];
+  const lines = [
+    `Connected to MCP server "${name}".`,
+    `Available tools: ${tools.length}`,
+    ...tools.map((tool) => `- ${tool.name}${tool.description ? `: ${tool.description}` : ''}`),
+  ];
+  return { success: true, output: lines.join('\n') };
+}
+
 async function createRuntimeConfig(input: {
   readonly config: KimiConfig;
   readonly kimiRequestHeaders?: Record<string, string> | undefined;
@@ -1279,7 +1466,23 @@ async function resumeSessionResult(
   summary: SessionSummary,
   session: Session,
   warning?: string,
+  includeSubagents = false,
 ): Promise<ResumeSessionResult> {
+  if (includeSubagents) {
+    const persistedAgentIds = Object.keys(session.metadata.agents).filter(
+      (agentId) => agentId !== 'main',
+    );
+    const resumedAgents = await Promise.allSettled(
+      persistedAgentIds.map((agentId) => session.ensureAgentResumed(agentId)),
+    );
+    for (const [index, result] of resumedAgents.entries()) {
+      if (result.status === 'fulfilled') continue;
+      session.log.warn('persisted subagent replay unavailable during session resume', {
+        agentId: persistedAgentIds[index],
+        error: result.reason,
+      });
+    }
+  }
   const api = new SessionAPIImpl(session);
   const agents: Record<string, ResumedAgentState> = {};
   for (const [agentId, entry] of session.agents) {

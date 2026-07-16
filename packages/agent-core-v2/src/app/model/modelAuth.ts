@@ -4,6 +4,10 @@
  * Resolves Model / Provider / Platform credential precedence for runtime
  * model resolution and auth-readiness probes. Pure computation; callers
  * supply the Platform lookup so this file stays outside the service graph.
+ * The inferred Anthropic effort profile is reserved for non-Kimi
+ * Anthropic-compatible providers; Kimi providers — including managed models
+ * routed through protocol = "anthropic" — keep only catalog-declared effort
+ * metadata.
  */
 
 import { ErrorCodes, Error2 } from '#/errors';
@@ -13,7 +17,7 @@ import {
   matchKnownAnthropicModelProfile,
 } from '#/app/llmProtocol/providers/anthropic-profile';
 import { type PlatformConfig, UNKNOWN_PLATFORM_KEY } from '#/app/platform/platform';
-import type { OAuthRef, ProviderConfig } from '#/app/provider/provider';
+import type { OAuthRef, ProviderConfig, ProviderType } from '#/app/provider/provider';
 import type { Protocol } from '#/app/protocol/protocol';
 
 import type { ModelConfig } from './model';
@@ -77,7 +81,7 @@ export function resolveModelAuthMaterial(args: {
 
 export function effectiveModelConfig(
   model: ModelConfig,
-  anthropicCompatible = false,
+  providerType?: ProviderType,
 ): ModelConfig {
   const { overrides, ...base } = model;
   const effective: ModelConfig = overrides === undefined ? model : { ...base, ...overrides };
@@ -89,18 +93,16 @@ export function effectiveModelConfig(
   ) {
     delete effective.defaultEffort;
   }
-  return withAnthropicProfile(
-    effective,
-    anthropicCompatible || effective.protocol === 'anthropic',
-  );
+  return withAnthropicProfile(effective, providerType);
 }
 
-function withAnthropicProfile(model: ModelConfig, anthropicCompatible: boolean): ModelConfig {
+function withAnthropicProfile(model: ModelConfig, providerType?: ProviderType): ModelConfig {
   const wireName = model.name ?? model.model;
+  const protocol = model.protocol ?? providerType;
   const profile =
     wireName === undefined
       ? undefined
-      : anthropicCompatible
+      : providerType !== undefined && providerType !== 'kimi' && protocol === 'anthropic'
         ? inferAnthropicModelProfile(wireName)
         : matchKnownAnthropicModelProfile(wireName);
   if (profile === undefined) return model;

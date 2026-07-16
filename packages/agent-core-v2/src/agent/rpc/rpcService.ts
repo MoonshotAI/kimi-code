@@ -241,6 +241,10 @@ export class AgentRPCService implements IAgentRPCService {
   }
 
   stopTask(payload: StopTaskPayload): void {
+    if (payload.reason === undefined) {
+      void this.tasks.stopByUser(payload.taskId);
+      return;
+    }
     void this.tasks.stop(payload.taskId, payload.reason);
   }
 

@@ -258,6 +258,7 @@ describe('server-v2 /api/v1/sessions/{sid}/tasks', () => {
     );
     expect(cancelled.body.code).toBe(0);
     expect(cancelled.body.data).toEqual({ cancelled: true });
+    expect(tasks.getTask(taskId)?.stopReason).toBe('Aborted by the user');
 
     // The task is now terminal (killed → cancelled); a second cancel is a
     // conflict with the idempotent envelope shape.

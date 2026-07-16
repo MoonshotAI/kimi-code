@@ -2,6 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { oldMd5BucketName } from '../src/sessions/workdir-bucket.js';
 import { detectMigration } from '../src/detect.js';
 
 let src: string;
@@ -37,6 +38,25 @@ describe('detectMigration', () => {
     expect(plan.oauthCredentials).toEqual(['kimi-code.json']);
     expect(plan.detectedPlugins).toEqual(['p1']);
     expect(plan.detectedMcpOauthServers).toContain('server-1');
+  });
+
+  it('reports an unknown workdir bucket when kimi.json cannot map it', async () => {
+    const bucket = join(src, 'sessions', oldMd5BucketName('/workspace/example'));
+    await mkdir(join(bucket, 'legacy-session'), { recursive: true });
+    await writeFile(
+      join(bucket, 'legacy-session', 'context.jsonl'),
+      '{"role":"user","content":"hello"}\n',
+    );
+
+    const plan = await detectMigration({ sourcePath: src });
+
+    expect(plan.totalSessions).toBe(0);
+    expect(plan.sessionScanFailures).toEqual([
+      {
+        sourcePath: bucket,
+        reason: expect.stringMatching(/workdir.*kimi\.json/i),
+      },
+    ]);
   });
 
 });

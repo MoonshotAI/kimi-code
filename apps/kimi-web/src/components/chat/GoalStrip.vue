@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppGoal } from '../../api/types';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
+import { formatTokens } from '../../lib/formatTokens';
 import Card from '../ui/Card.vue';
 import Badge from '../ui/Badge.vue';
 import Button from '../ui/Button.vue';
@@ -95,7 +96,7 @@ async function onCancel(): Promise<void> {
       >
         <div class="goal-meta">
           <span>{{ goal.turnsUsed }} turns</span>
-          <span>{{ goal.tokensUsed.toLocaleString() }} tokens</span>
+          <span>{{ formatTokens(goal.tokensUsed) }} tokens</span>
           <span>{{ formatMs(goal.wallClockMs) }}</span>
           <span v-if="goal.budget.tokenBudget !== null">{{ tokenPct }}% token budget</span>
         </div>

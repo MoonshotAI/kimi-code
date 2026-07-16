@@ -470,6 +470,45 @@ describe('ModelSelectorComponent', () => {
     // middle entry (medium), not a hardcoded level.
     expect(text(picker)).toContain('[ Medium ]');
   });
+
+  it('renders the warning line directly below the key-hint line when provided', () => {
+    const picker = new ModelSelectorComponent({
+      models: { kimi: model('Kimi K2') },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'on',
+      warning: 'Switching may increase token usage.',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const lines = picker.render(120).map(strip);
+    const hintIdx = lines.findIndex((l) => l.includes('↑↓ navigate'));
+    expect(hintIdx).toBeGreaterThanOrEqual(0);
+    expect(lines[hintIdx + 1]).toContain('Switching may increase token usage.');
+    // Model list is pushed below the inserted warning line, not overlapped.
+    expect(lines.findIndex((l) => l.includes('Kimi K2'))).toBeGreaterThan(hintIdx + 1);
+  });
+
+  it('wraps a warning longer than the width instead of truncating it', () => {
+    const warning =
+      'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
+    const picker = new ModelSelectorComponent({
+      models: { kimi: model('Kimi K2') },
+      currentValue: 'kimi',
+      currentThinkingEffort: 'on',
+      warning,
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const lines = picker.render(50).map(strip);
+    const hintIdx = lines.findIndex((l) => l.includes('↑↓ navigate'));
+    expect(lines[hintIdx + 1]).not.toBe('');
+    expect(lines[hintIdx + 2]).not.toBe('');
+    // Word-wrapped: nothing dropped — the full warning survives across lines.
+    const squashed = lines.join('').replaceAll(/\s+/g, '');
+    expect(squashed).toContain(warning.replaceAll(/\s+/g, ''));
+  });
 });
 
 describe('ModelSelectorComponent overrides', () => {

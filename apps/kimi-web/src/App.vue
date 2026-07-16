@@ -360,8 +360,10 @@ async function openModelPicker(): Promise<void> {
   modelsUnavailable.value = false;
   showModelPicker.value = true;
   try {
-    await client.refreshOAuthProviderModels();
-    await client.loadModels();
+    // Full refresh first (every refreshable provider, not just OAuth), so the
+    // list always reflects the live catalog — the WS model-catalog event that
+    // used to keep the cache warm is no longer forwarded by the daemon.
+    await client.refreshAllProviders();
   } catch {
     modelsUnavailable.value = true;
   } finally {

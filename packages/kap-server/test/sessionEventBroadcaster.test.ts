@@ -499,35 +499,6 @@ describe('SessionEventBroadcaster', () => {
     expect(next.subagents).toEqual([]);
   });
 
-  it('fans core model-catalog changes out to every session subscriber', async () => {
-    const lc = new FakeLifecycle();
-    lc.addAgent('main');
-    sessions.set('s1', lc);
-    const { target, envelopes } = collectingTarget();
-    await bc.subscribe('s1', target);
-
-    eventBus.emit({
-      type: 'event.model_catalog.changed',
-      payload: {
-        changed: [{ provider_id: 'managed:kimi-code', provider_name: 'Kimi Code', added: 1, removed: 0 }],
-        unchanged: [],
-        failed: [],
-      },
-    });
-
-    await vi.waitFor(() => expect(envelopes).toHaveLength(1));
-    expect(envelopes[0]).toMatchObject({
-      type: 'event.model_catalog.changed',
-      seq: 1,
-      session_id: '__global__',
-      payload: {
-        type: 'event.model_catalog.changed',
-        agentId: 'main',
-        sessionId: '__global__',
-      },
-    });
-  });
-
   it('subscribe returns false for an unknown session', async () => {
     const { target } = collectingTarget();
     expect(await bc.subscribe('nope', target)).toBe(false);

@@ -79,8 +79,10 @@ async function awaitRun(
   const controller = new AbortController();
   const unlink = linkAbortSignal(options.signal, controller);
   const loop = target.accessor.get(IAgentLoopService);
-  const cancelTurn = (reason: unknown): void => {
-    loop.cancel(undefined, reason);
+  // Cancel by turn id: `loop.cancel(undefined, …)` only reaches the active
+  // turn, but this run's turn may still be queued when the abort lands.
+  const cancelTurn = (turnToCancel: Turn, reason: unknown): void => {
+    loop.cancel(turnToCancel.id, reason);
   };
   let turnRef: Turn = turn;
   try {
@@ -100,24 +102,43 @@ async function awaitRun(
   } finally {
     unlink();
     if (controller.signal.aborted) {
-      cancelTurn(controller.signal.reason);
+      cancelTurn(turnRef, controller.signal.reason);
     }
   }
 }
 
+/**
+ * Await a turn's terminal result, cancelling it first when the run aborts.
+ *
+ * This deliberately does NOT race `turn.result` against the abort signal:
+ * the loop only goes idle once `runTurn` unwinds (`releaseActiveTurn`), and
+ * downstream consumers — task settlement, the `task.killed` notification,
+ * and the resume guard reading `loop.status()` — must not observe the run
+ * as finished before that. A turn that never responds to the cancel is
+ * still bounded by the task layer's SIGTERM grace, not by an early
+ * rejection here.
+ */
 async function awaitTurn(
   turn: Turn,
   controller: AbortController,
-  cancelTurn: (reason: unknown) => void,
+  cancelTurn: (turn: Turn, reason: unknown) => void,
 ): Promise<TurnResult> {
-  const onAbort = (): void => {
-    cancelTurn(controller.signal.reason);
+  const cancelOnAbort = (): void => {
+    cancelTurn(turn, controller.signal.reason);
   };
-  controller.signal.addEventListener('abort', onAbort, { once: true });
+  controller.signal.addEventListener('abort', cancelOnAbort, { once: true });
   try {
-    return await Promise.race([turn.result, abortPromise(controller.signal)]);
+    if (controller.signal.aborted) {
+      cancelOnAbort();
+    }
+    const result = await turn.result;
+    // Rethrow the original abort reason instead of returning the cancelled
+    // result: consumers match the reason by identity (`isAbortError` /
+    // `error === sink.signal.reason`) to tell a kill apart from a failure.
+    controller.signal.throwIfAborted();
+    return result;
   } finally {
-    controller.signal.removeEventListener('abort', onAbort);
+    controller.signal.removeEventListener('abort', cancelOnAbort);
   }
 }
 
@@ -126,7 +147,7 @@ async function distillSummary(
   controller: AbortController,
   policy: AgentProfileSummaryPolicy | undefined,
   setTurn: (turn: Turn) => void,
-  cancelTurn: (reason: unknown) => void,
+  cancelTurn: (turn: Turn, reason: unknown) => void,
 ): Promise<string> {
   const memory = target.accessor.get(IAgentContextMemoryService);
   let summary = latestAssistantText(memory.get());
@@ -192,21 +213,6 @@ function providerRateLimitErrorFromPayload(error: KimiErrorPayload): APIProvider
   const requestId =
     typeof error.details?.['requestId'] === 'string' ? error.details['requestId'] : null;
   return new APIProviderRateLimitError(error.message, requestId);
-}
-
-function abortPromise(signal: AbortSignal): Promise<never> {
-  if (signal.aborted) {
-    return Promise.reject(signal.reason ?? userCancellationReason());
-  }
-  return new Promise<never>((_resolve, reject) => {
-    signal.addEventListener(
-      'abort',
-      () => {
-        reject(signal.reason ?? userCancellationReason());
-      },
-      { once: true },
-    );
-  });
 }
 
 function latestAssistantText(messages: readonly ContextMessage[]): string {

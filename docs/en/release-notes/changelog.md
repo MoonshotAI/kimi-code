@@ -6,6 +6,53 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.26.0 (2026-07-16) Say hi to the BIIIG DAY!
+
+### Polish
+
+- Expand the coder subagent tool set to include background tasks, todo lists, plan mode, skill invocation, and nested agents, mirroring the main agent's capabilities.
+- Warn in the `/model` and `/effort` pickers that switching invalidates the existing prompt cache, and hint to use `/new` to avoid extra token costs.
+- web: Refresh the model catalog for all providers when opening the model picker, so newly available models always show up.
+- Optimize the unit formatting of the context usage display.
+
+### Bug Fixes
+
+- Fix a resumed session being marked as just updated and jumping to the top of the session list without any new activity.
+- Fix the context size indicator under-reporting the model's actual context usage.
+- Fix Kimi-provider models routed through the Anthropic protocol incorrectly showing reasoning effort options.
+- Honor an explicit thinking "off" on OpenAI-compatible (chat completions) providers.
+- Report when users stop tasks and preserve other stop reasons in model context.
+- Fix a race where resuming a background subagent right after it was manually stopped could fail with an "already running" error.
+- Replay empty thinking content verbatim instead of substituting a placeholder space on Anthropic-compatible and Kimi preserved-thinking endpoints.
+- Keep legacy migrations idempotent across multiple Kimi homes and report damaged or unmapped sessions instead of silently skipping them.
+- web: Fix the sidebar resize handle being covered by the chat composer background.
+
+## 0.25.0 (2026-07-16)
+
+### Features
+
+- web: Attach any file type in chat — files can be dropped anywhere in the window, and sent files, images, and videos show as chips in the message bubble.
+
+### Polish
+
+- web: Show full diagnostics for model request failures.
+- Apply official Anthropic effort profiles and a 128k output fallback for unknown models.
+
+### Bug Fixes
+
+- Fix the web server bearer-token check being bypassed by percent-encoded API paths, which allowed unauthenticated access to every API route.
+- Fix the session filesystem API following symlinks that point outside the workspace, which allowed accessing host files beyond the session directory.
+- web: Keep session activity indicators in sync with agent work and prevent duplicate streamed content after session activation races or LLM retries.
+- Fix custom-named models on Anthropic-compatible providers starting new sessions with thinking effort off and not showing the thinking control in ACP clients.
+- Honor adaptive_thinking = false on Anthropic-compatible models by omitting the effort parameter from requests.
+- web: Fix the Content-Security-Policy on non-loopback server binds blocking the web UI's theme bootstrap script and bundled fonts.
+- Fix sessions failing to be created when the workspace directory is given through a symlink.
+- Fix the CLI exiting unexpectedly when reading an image from the clipboard fails; it now falls back to pasting text.
+- web: Fix completed background subagents losing their final output after a session reload.
+- web: Fix Enter not confirming modal confirmation dialogs in dev builds.
+- web: Fix a background subagent showing up as two identical rows in the agents dock panel during streaming.
+- Fix the diagnostic log missing the actual error when the CLI exits unexpectedly.
+
 ## 0.24.2 (2026-07-15)
 
 ### Features

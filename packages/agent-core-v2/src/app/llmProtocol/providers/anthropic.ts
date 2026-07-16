@@ -252,20 +252,6 @@ function shouldPreserveUnsignedThinking(model: string): boolean {
   );
 }
 
-function shouldBackfillPreservedThinking(
-  model: string,
-  thinking: MessageCreateParams['thinking'] | undefined,
-  contextManagement: AnthropicContextManagement | undefined,
-): boolean {
-  return (
-    shouldPreserveUnsignedThinking(model) &&
-    thinking?.type !== 'disabled' &&
-    contextManagement?.edits.some(
-      (edit) => edit.type === CLEAR_THINKING_EDIT && edit.keep === 'all',
-    ) === true
-  );
-}
-
 const CACHEABLE_TYPES = new Set([
   'text',
   'image',
@@ -411,11 +397,7 @@ function toolResultToBlock(toolCallId: string, content: ContentPart[]): ToolResu
     content: blocks,
   } as ToolResultBlockParam;
 }
-function convertMessage(
-  message: Message,
-  model: string,
-  backfillPreservedThinking: boolean,
-): MessageParam {
+function convertMessage(message: Message, model: string): MessageParam {
   const role = message.role;
 
   if (role === 'system') {
@@ -438,26 +420,19 @@ function convertMessage(
   }
 
   const blocks: ContentBlockParam[] = [];
-  let hasThinkingPart = false;
-  let lastUnsignedThinkingBlockIndex: number | undefined;
-  let hasNonEmptyEmittedThinking = false;
   for (const part of message.content) {
     if (part.type === 'text') {
       blocks.push({ type: 'text', text: part.text } satisfies TextBlockParam);
     } else if (part.type === 'image_url') {
       blocks.push(imageUrlPartToAnthropic(part.imageUrl.url) as unknown as ContentBlockParam);
     } else if (part.type === 'think') {
-      hasThinkingPart = true;
       if (part.encrypted !== undefined) {
-        hasNonEmptyEmittedThinking ||= part.think.length > 0;
         blocks.push({
           type: 'thinking',
           thinking: part.think,
           signature: part.encrypted,
         } satisfies ThinkingBlockParam);
       } else if (shouldPreserveUnsignedThinking(model)) {
-        lastUnsignedThinkingBlockIndex = blocks.length;
-        hasNonEmptyEmittedThinking ||= part.think.length > 0;
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
       }
     } else if (part.type === 'video_url') {
@@ -468,20 +443,6 @@ function convertMessage(
       if (!(last?.type === 'text' && last.text === placeholder)) {
         blocks.push({ type: 'text', text: placeholder } satisfies TextBlockParam);
       }
-    }
-  }
-
-  if (role === 'assistant' && backfillPreservedThinking) {
-    if (!hasThinkingPart) {
-      blocks.unshift({ type: 'thinking', thinking: ' ' } as unknown as ThinkingBlockParam);
-    } else if (
-      lastUnsignedThinkingBlockIndex !== undefined &&
-      !hasNonEmptyEmittedThinking
-    ) {
-      blocks[lastUnsignedThinkingBlockIndex] = {
-        type: 'thinking',
-        thinking: ' ',
-      } as unknown as ThinkingBlockParam;
     }
   }
 
@@ -881,18 +842,12 @@ export class AnthropicChatProvider implements ChatProvider {
         ]
       : undefined;
 
-    const backfillPreservedThinking = shouldBackfillPreservedThinking(
-      this._model,
-      this._generationKwargs.thinking,
-      this._generationKwargs.contextManagement,
-    );
-
     const messages = mergeConsecutiveUserMessages(
       normalizeToolCallIdsForProvider(
         history.filter((msg) => !isToolDeclarationOnlyMessage(msg)),
         ANTHROPIC_TOOL_CALL_ID_POLICY,
       )
-        .map((msg) => convertMessage(msg, this._model, backfillPreservedThinking))
+        .map((msg) => convertMessage(msg, this._model))
         .filter(shouldKeepConvertedMessage),
       {
         isUser: (message) => message.role === 'user',

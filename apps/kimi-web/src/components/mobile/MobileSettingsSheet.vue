@@ -21,6 +21,7 @@ import {
 } from '../../lib/modelThinking';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
+import { formatTokens } from '../../lib/formatTokens';
 import Button from '../ui/Button.vue';
 import Input from '../ui/Input.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
@@ -106,15 +107,15 @@ const permSub = computed<string>(() => {
   return `${p} · ${desc}`;
 });
 
-const kFmt = (n: number): string => `${Math.round(n / 1000)}k`;
 const ctxPct = computed<number>(() =>
+  // ceil (not round) so sub-0.5% usage still renders a visible bar sliver.
   props.status.ctxMax > 0
-    ? Math.min(100, Math.max(0, Math.round((props.status.ctxUsed / props.status.ctxMax) * 100)))
+    ? Math.min(100, Math.max(0, Math.ceil((props.status.ctxUsed / props.status.ctxMax) * 100)))
     : 0,
 );
-// Same "12k/256k" format as the desktop toolbar ring.
+// Shared 1024-based formatter, same as the desktop tooltip / status panel.
 const ctxValue = computed<string>(() =>
-  props.status.ctxMax > 0 ? `${kFmt(props.status.ctxUsed)}/${kFmt(props.status.ctxMax)}` : t('status.statusNone'),
+  props.status.ctxMax > 0 ? `${formatTokens(props.status.ctxUsed)}/${formatTokens(props.status.ctxMax)}` : t('status.statusNone'),
 );
 
 function setThinkingSegment(value: string): void {

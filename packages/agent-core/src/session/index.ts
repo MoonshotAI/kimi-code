@@ -132,6 +132,10 @@ export interface SessionMeta {
    *  session directory is self-describing and the global session index does not
    *  have to be trusted for the (one-way-hashed) workDir. */
   workDir?: string;
+  /** Directories added for this session only. Unlike workspace local config,
+   *  these follow the session across close/resume without affecting any other
+   *  session opened in the same workspace. */
+  additionalDirs?: string[];
   agents: Record<string, AgentMeta>;
   custom: Record<string, any>;
 }
@@ -178,6 +182,7 @@ export class Session {
   private toolKaos: Kaos;
   private persistenceKaos: Kaos;
   private additionalDirs: readonly string[];
+  private sessionAdditionalDirs: readonly string[] = [];
   private readonly pluginCommands: readonly PluginCommandDef[];
   private agentIdCounter = 0;
   private readonly skillsReady: Promise<void>;
@@ -263,6 +268,10 @@ export class Session {
     }
   }
 
+  async setBaseAdditionalDirs(additionalDirs: readonly string[]): Promise<void> {
+    await this.setAdditionalDirs([...additionalDirs, ...this.sessionAdditionalDirs]);
+  }
+
   async addAdditionalDir(
     path: string,
     persist = true,
@@ -280,6 +289,22 @@ export class Session {
     const workspace = await readWorkspaceAdditionalDirs(systemKaos, cwd);
     const additionalDirs = await resolveWorkspaceAdditionalDirs(systemKaos, cwd, [path]);
     const nextAdditionalDirs = normalizeAdditionalDirs([...this.additionalDirs, ...additionalDirs]);
+    const nextSessionAdditionalDirs = normalizeAdditionalDirs([
+      ...this.sessionAdditionalDirs,
+      ...additionalDirs,
+    ]);
+    const previousMetadata = this.metadata;
+    this.metadata = {
+      ...this.metadata,
+      additionalDirs: nextSessionAdditionalDirs,
+    };
+    try {
+      await this.writeMetadata();
+    } catch (error) {
+      this.metadata = previousMetadata;
+      throw error;
+    }
+    this.sessionAdditionalDirs = nextSessionAdditionalDirs;
     await this.setAdditionalDirs(nextAdditionalDirs);
     this.notifyAdditionalDirAdded(path, false, workspace.configPath);
     return {
@@ -322,7 +347,14 @@ export class Session {
   async resume(): Promise<{ warning?: string }> {
     await this.skillsReady;
     this.log.info('session resume', { app_version: this.options.appVersion });
-    const { agents } = await this.readMetadata();
+    const { agents, additionalDirs = [] } = await this.readMetadata();
+    const cwd = this.toolKaos.getcwd();
+    this.sessionAdditionalDirs = await resolveWorkspaceAdditionalDirs(
+      this.systemContextKaos(cwd),
+      cwd,
+      additionalDirs,
+    );
+    await this.setBaseAdditionalDirs(this.additionalDirs);
     this.agents.clear();
     // Only the main agent is needed to reopen the session; subagents replay
     // lazily when an RPC or Agent(resume=...) call asks for their state.

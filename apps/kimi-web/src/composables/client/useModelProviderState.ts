@@ -192,19 +192,6 @@ export function useModelProviderState(
     }
   }
 
-  async function refreshOAuthProviderModels(): Promise<void> {
-    try {
-      const result = await getKimiWebApi().refreshOAuthProviderModels();
-      for (const failure of result.failed) {
-        pushOperationFailure('refreshOAuthProviderModels', new Error(failure.reason), {
-          message: failure.provider,
-        });
-      }
-    } catch {
-      // Older daemons may not expose this endpoint; model listing still works.
-    }
-  }
-
   /** Load providers */
   async function loadProviders(): Promise<void> {
     try {
@@ -460,7 +447,6 @@ export function useModelProviderState(
     loadSkillsForSession,
     loadSkillsForWorkspace,
     loadModels,
-    refreshOAuthProviderModels,
     loadProviders,
     setModel,
     toggleStarModel,

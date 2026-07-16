@@ -28,6 +28,48 @@ jobs:
       - name: Smoke test CLI bundle
         run: pnpm -C apps/kimi-code run smoke
 
+  vscode-vsix-package:
+    name: VSIX package audit (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: all
+          - os: macos-latest
+            target: darwin-arm64
+          - os: windows-latest
+            target: win32-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - name: Build and audit target VSIX
+        run: pnpm --filter kimi-code run package:platform -- --target "${{ matrix.target }}"
+      - name: Run installed VSIX Extension Host smoke (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm --filter kimi-code run test:extension-host -- --version 1.100.0
+      - name: Run installed VSIX Extension Host smoke on stable (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run -a pnpm --filter kimi-code run test:extension-host -- --version stable
+      - name: Run installed VSIX Extension Host smoke
+        if: runner.os != 'Linux'
+        run: pnpm --filter kimi-code run test:extension-host -- --version 1.100.0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vscode-vsix-${{ matrix.target }}
+          path: apps/vscode/artifacts/vsix/*.vsix
+          if-no-files-found: error
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -125,6 +167,8 @@ jobs:
             echo "Typechecking ${config}"
             pnpm dlx --package @typescript/native-preview@beta tsgo -p "${config}" --noEmit
           done
+      - name: Typecheck VS Code extension
+        run: pnpm --filter kimi-code run typecheck
       - name: Typecheck kimi-web (vue-tsc)
         run: pnpm --filter @moonshot-ai/kimi-web run typecheck
       - name: Typecheck vis-server

@@ -606,6 +606,15 @@ export class Agent {
       clearContext: () => {
         this.context.clear();
       },
+      importContext: (payload) => {
+        if (this.turn.hasActiveTurn || this.fullCompaction.isCompacting) {
+          throw new KimiError(
+            ErrorCodes.TURN_AGENT_BUSY,
+            'Cannot import context while the agent is busy',
+          );
+        }
+        this.context.importContext(payload.content, payload.source);
+      },
       activateSkill: (payload) => {
         if (this.skills === null) {
           throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${payload.name}" was not found`);

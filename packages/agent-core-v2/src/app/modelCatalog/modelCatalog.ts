@@ -17,7 +17,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 
 import type { ModelAlias } from '#/app/model/model';
 import { effectiveModelConfig } from '#/app/model/modelAuth';
-import type { ProviderConfig } from '#/app/provider/provider';
+import type { ProviderConfig, ProviderType } from '#/app/provider/provider';
 
 export const modelCatalogItemSchema = z.object({
   provider: z.string().min(1),
@@ -107,9 +107,9 @@ export interface ProviderCredentialState {
 export function toProtocolModel(
   modelId: string,
   alias: ModelAlias,
-  anthropicCompatible = false,
+  providerType?: ProviderType,
 ): ModelCatalogItem {
-  const effective = effectiveModelConfig(alias, anthropicCompatible);
+  const effective = effectiveModelConfig(alias, providerType);
   return {
     provider: effective.provider ?? '',
     model: modelId,

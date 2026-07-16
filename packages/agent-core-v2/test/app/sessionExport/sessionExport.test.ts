@@ -8,6 +8,7 @@ import {
   readFile,
   readdir,
   rename,
+  rm,
   stat,
   symlink,
   unlink,
@@ -17,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { Readable } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { join } from 'pathe';
+import { basename, dirname, join, resolve } from 'pathe';
 import { open as openZip } from 'yauzl';
 
 import { Disposable, DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
@@ -141,6 +142,54 @@ describe('sessionExport', () => {
       sessionLogPath: 'logs/kimi-code.log',
       globalLogPath: 'logs/global/kimi-code.log',
     });
+  });
+
+  it('uses a timestamped default output path when outputPath is omitted', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_demo', 'ses_default_output');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+
+    const result = await exportSessionDirectory({
+      request: { sessionId: 'ses_default_output', version: '1.0.0-test' },
+      summary: { id: 'ses_default_output', sessionDir },
+    });
+
+    try {
+      expect(dirname(result.zipPath)).toBe(resolve('.'));
+      expect(basename(result.zipPath)).toMatch(/^kimi-debug-ses_defa-\d{8}-\d{6}\.zip$/);
+      await expect(stat(result.zipPath)).resolves.toMatchObject({ size: expect.any(Number) });
+    } finally {
+      await rm(result.zipPath, { force: true });
+    }
+  });
+
+  it('does not overwrite a previous default-path export when run again', async () => {
+    const tmp = await mkdtemp(join(tmpdir(), 'session-export-test-'));
+    const sessionDir = join(tmp, 'sessions', 'ws_demo', 'ses_repeated_export');
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(join(sessionDir, 'state.json'), '{}\n', 'utf-8');
+    const summary = { id: 'ses_repeated_export', sessionDir };
+
+    const first = await exportSessionDirectory({
+      request: { sessionId: 'ses_repeated_export', version: '1.0.0-test' },
+      summary,
+    });
+    // Cross the next second boundary so the second export gets a distinct timestamp.
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 1100 - (Date.now() % 1000)));
+    const second = await exportSessionDirectory({
+      request: { sessionId: 'ses_repeated_export', version: '1.0.0-test' },
+      summary,
+    });
+
+    try {
+      expect(second.zipPath).not.toBe(first.zipPath);
+      await expect(stat(first.zipPath)).resolves.toMatchObject({ size: expect.any(Number) });
+      await expect(stat(second.zipPath)).resolves.toMatchObject({ size: expect.any(Number) });
+    } finally {
+      await rm(first.zipPath, { force: true });
+      await rm(second.zipPath, { force: true });
+    }
   });
 
   it('keeps the session log bound when it rotates as wire scanning starts', async () => {

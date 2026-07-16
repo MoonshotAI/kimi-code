@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { win32 } from 'node:path';
 import { basename, resolve } from 'pathe';
 
 import { slugifyWorkDirName } from '#/utils/workdir-slug';
@@ -7,6 +8,9 @@ const WORKDIR_KEY_PREFIX = 'wd_';
 const HASH_LENGTH = 12;
 
 export function normalizeWorkDir(workDir: string): string {
+  if (isWindowsAbsolutePath(workDir)) {
+    return win32.resolve(workDir).replaceAll('\\', '/');
+  }
   return resolve(workDir);
 }
 
@@ -15,4 +19,8 @@ export function encodeWorkDirKey(workDir: string): string {
   const slug = slugifyWorkDirName(basename(normalized));
   const hash = createHash('sha256').update(normalized).digest('hex').slice(0, HASH_LENGTH);
   return `${WORKDIR_KEY_PREFIX}${slug}_${hash}`;
+}
+
+function isWindowsAbsolutePath(value: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(value) || /^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(value);
 }

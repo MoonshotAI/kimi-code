@@ -654,12 +654,26 @@ describe('ModelResolverService', () => {
       });
     });
 
-    it('infers latest Opus metadata for an unknown Kimi-managed Anthropic model', () => {
+    it('does not infer fallback effort metadata for an unknown Kimi-managed Anthropic model', () => {
       providers['p'] = { type: 'kimi', baseUrl: 'https://example.test', apiKey: 'sk' };
       models['m'] = {
         provider: 'p',
         protocol: 'anthropic',
         model: 'compatible-model',
+        maxContextSize: 1000,
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+
+      expect(model.supportEfforts).toBeUndefined();
+      expect(model.defaultEffort).toBeUndefined();
+    });
+
+    it('infers latest Opus metadata for a flat providerless Anthropic model', () => {
+      models['m'] = {
+        model: 'compatible-model',
+        baseUrl: 'https://anthropic.example.test',
+        protocol: 'anthropic',
         maxContextSize: 1000,
       };
 

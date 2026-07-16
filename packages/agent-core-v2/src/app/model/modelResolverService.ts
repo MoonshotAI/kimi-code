@@ -88,7 +88,10 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     const { providerConfig, providerName, resolvedBaseUrl: rawBaseUrl } =
       this.resolveProviderContext(id, routingModel);
     const protocol = this.resolveProtocol(id, routingModel, providerConfig);
-    const model = effectiveModelConfig(configuredModel, protocol === 'anthropic');
+    const model = effectiveModelConfig(
+      configuredModel,
+      providerConfig?.type ?? configuredModel.protocol,
+    );
     const auth = resolveModelAuthMaterial({
       modelId: id,
       model,

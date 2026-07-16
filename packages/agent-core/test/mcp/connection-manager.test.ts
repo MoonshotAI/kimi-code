@@ -367,7 +367,7 @@ describe('McpConnectionManager', () => {
     }
   }, 7000);
 
-  it('flips HTTP servers into needs-auth when the server returns 401 and no static token is set', async () => {
+  it('marks an explicitly OAuth HTTP server as needs-auth when non-auth headers accompany a 401', async () => {
     const server: HttpServer = createHttpServer((_req, res) => {
       res.writeHead(401, {
         'content-type': 'application/json',
@@ -385,6 +385,8 @@ describe('McpConnectionManager', () => {
         gated: {
           transport: 'http',
           url: `http://127.0.0.1:${port}/mcp`,
+          headers: { 'X-Tenant': 'example' },
+          auth: 'oauth',
           startupTimeoutMs: 5_000,
         },
       });

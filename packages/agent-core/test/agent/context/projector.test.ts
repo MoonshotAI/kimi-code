@@ -160,6 +160,24 @@ function compactionSummary(text = 'summary'): ContextMessage {
 // Targeted regression tests
 // ---------------------------------------------------------------------------
 
+describe('project UI-only context metadata', () => {
+  it('does not send persisted tool displays to the model provider', () => {
+    const assistantMessage = assistant(['edit-call']);
+    assistantMessage.toolCallDisplays = {
+      'edit-call': {
+        kind: 'diff',
+        path: '/workspace/file.txt',
+        before: 'old',
+        after: 'new',
+      },
+    };
+
+    const projected = project([user('update it'), assistantMessage, tool('edit-call')]);
+
+    expect(projected[1]).not.toHaveProperty('toolCallDisplays');
+  });
+});
+
 describe('project tool_use/tool_result adjacency', () => {
   it('leaves an already well-formed history unchanged (idempotent)', () => {
     const history: ContextMessage[] = [

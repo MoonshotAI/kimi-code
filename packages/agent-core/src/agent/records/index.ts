@@ -99,6 +99,9 @@ function restoreAgentRecord(agent: Agent, input: AgentRecord): void {
         }
       }
       return;
+    case 'context.update_token_count':
+      agent.context.updateTokenCount(input.tokenCount);
+      return;
     case 'context.clear':
       agent.context.clear();
       return;

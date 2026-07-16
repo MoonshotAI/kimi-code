@@ -4,11 +4,11 @@ import {
   matchKnownAnthropicModelProfile,
 } from '@moonshot-ai/kosong/providers/anthropic-profile';
 
-import type { ModelAlias } from './schema';
+import type { ModelAlias, ProviderType } from './schema';
 
 export function effectiveModelAlias(
   alias: ModelAlias,
-  anthropicCompatible = false,
+  providerType?: ProviderType,
 ): ModelAlias {
   const { overrides, ...base } = alias;
   const effective: ModelAlias = overrides === undefined ? alias : { ...base, ...overrides };
@@ -22,16 +22,20 @@ export function effectiveModelAlias(
     delete effective.defaultEffort;
   }
 
-  return withAnthropicProfile(
-    effective,
-    anthropicCompatible || effective.protocol === 'anthropic',
-  );
+  return withAnthropicProfile(effective, providerType);
 }
 
-function withAnthropicProfile(model: ModelAlias, anthropicCompatible: boolean): ModelAlias {
-  const profile = anthropicCompatible
-    ? inferAnthropicModelProfile(model.model)
-    : matchKnownAnthropicModelProfile(model.model);
+function withAnthropicProfile(model: ModelAlias, providerType?: ProviderType): ModelAlias {
+  const protocol = model.protocol ?? providerType;
+  // The inferred fallback profile exists for third-party Anthropic-compatible
+  // endpoints whose model name encodes no known Claude version. Kimi providers
+  // — including managed models routed through protocol = "anthropic" — declare
+  // thinking efforts via the catalog, so they never receive the fallback.
+  // Callers without provider context fall back to name matching only.
+  const profile =
+    providerType !== undefined && providerType !== 'kimi' && protocol === 'anthropic'
+      ? inferAnthropicModelProfile(model.model)
+      : matchKnownAnthropicModelProfile(model.model);
   if (profile === undefined) return model;
 
   const capability = profile.canDisableThinking ? 'thinking' : 'always_thinking';

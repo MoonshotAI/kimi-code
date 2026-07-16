@@ -28,6 +28,7 @@ import type { TokenUsage } from '@moonshot-ai/kimi-code-sdk';
 import { appendStreamingArgsPreview } from '#/tui/utils/event-payload';
 import { decodeMcpToolName } from '#/tui/utils/mcp-tool-name';
 import { isRenderCacheEnabled } from '#/tui/utils/render-cache';
+import { formatTokenCount } from '#/utils/usage/usage-format';
 
 import { agentSwarmResultSummaryFromOutput } from './agent-swarm-progress';
 import { PlanBoxComponent } from './plan-box';
@@ -138,8 +139,7 @@ function str(v: unknown): string {
 
 function formatSubagentContextTokens(contextTokens: number | undefined): string | undefined {
   if (contextTokens === undefined || contextTokens <= 0) return undefined;
-  const formatted = contextTokens >= 1000 ? `${(contextTokens / 1000).toFixed(1)}k` : String(contextTokens);
-  return `${formatted} tok`;
+  return `${formatTokenCount(contextTokens)} tok`;
 }
 
 function usageInputTotal(usage: TokenUsage): number {
@@ -154,8 +154,7 @@ function usageTotal(usage: TokenUsage | undefined): number {
 function formatSubagentTokens(usage: TokenUsage | undefined): string | undefined {
   const total = usageTotal(usage);
   if (total <= 0) return undefined;
-  const formatted = total >= 1000 ? `${(total / 1000).toFixed(1)}k` : String(total);
-  return `${formatted} tok`;
+  return `${formatTokenCount(total)} tok`;
 }
 
 function formatByteSize(bytes: number): string {
@@ -2318,9 +2317,7 @@ function computeLatestActivity(
 }
 
 function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M tok`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k tok`;
-  return `${String(n)} tok`;
+  return `${formatTokenCount(n)} tok`;
 }
 
 function formatActivityLine(

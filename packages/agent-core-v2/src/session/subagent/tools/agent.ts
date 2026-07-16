@@ -17,7 +17,11 @@
 import { z } from 'zod';
 
 import type { IAgentScopeHandle } from '#/_base/di/scope';
-import { isAbortError, isUserCancellation } from '#/_base/utils/abort';
+import {
+  isAbortError,
+  isUserCancellation,
+  userCancellationReason,
+} from '#/_base/utils/abort';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { matchesGlobRuleSubject } from '#/tool/rule-match';
 import {
@@ -128,7 +132,8 @@ const BACKGROUND_AGENT_UNAVAILABLE =
 const RESUME_WITH_TYPE_UNAVAILABLE =
   'Cannot set subagent_type when resuming an existing agent. Resume by agent id only.';
 const USER_INTERRUPTED_SUBAGENT_MESSAGE =
-  "The user manually interrupted this subagent (and any sibling agents launched alongside it). This was a deliberate user action, not a system error, a timeout, or a capacity/concurrency limit. Do not retry automatically or speculate about why it failed — wait for the user's next instruction.";
+  'The subagent was stopped before it finished by user.';
+const SUBAGENT_STOPPED_MESSAGE = 'The subagent was stopped before it finished.';
 
 
 export class AgentTool implements BuiltinTool<AgentToolInput> {
@@ -430,11 +435,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     const timedOut = info?.status === 'timed_out';
     const message = timedOut
       ? `Agent timed out after ${formatSubagentTimeoutDescription(timeoutMs)}.`
-      : info?.stopReason === 'Interrupted by user'
-        ? USER_INTERRUPTED_SUBAGENT_MESSAGE
-        : info?.stopReason !== undefined
-          ? info.stopReason
-          : 'The subagent was stopped before it finished.';
+      : formatSubagentStoppedMessage(info?.stopReason);
     return {
       output: formatForegroundAgentFailure(handle, message, timedOut),
       isError: true,
@@ -524,6 +525,19 @@ function formatForegroundAgentFailure(
 
 function launchErrorMessage(error: unknown, signal: AbortSignal): string {
   if (isUserCancellation(signal.reason)) return USER_INTERRUPTED_SUBAGENT_MESSAGE;
-  if (isAbortError(error)) return 'The subagent was stopped before it finished.';
+  if (isAbortError(error)) return formatSubagentStoppedMessage(errorMessage(signal.reason));
   return error instanceof Error ? error.message : String(error);
+}
+
+function formatSubagentStoppedMessage(reason: string | undefined): string {
+  const normalized = reason?.trim();
+  if (normalized === userCancellationReason().message) return USER_INTERRUPTED_SUBAGENT_MESSAGE;
+  if (normalized === undefined || normalized.length === 0) return SUBAGENT_STOPPED_MESSAGE;
+  return `${SUBAGENT_STOPPED_MESSAGE} Reason: ${normalized}`;
+}
+
+function errorMessage(error: unknown): string | undefined {
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
+  return undefined;
 }

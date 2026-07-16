@@ -113,6 +113,18 @@ describe('TodoListTool', () => {
     expect(getTodos()).toEqual([{ title: 'existing', status: 'in_progress' }]);
   });
 
+  it('exposes the visible todo items in the tool-call display', () => {
+    const { tool } = makeTool([{ title: 'existing', status: 'in_progress' }]);
+
+    const execution = tool.resolveExecution({});
+
+    if (execution.isError === true) throw new TypeError('expected runnable execution');
+    expect(execution.display).toEqual({
+      kind: 'todo_list',
+      items: [{ title: 'existing', status: 'in_progress' }],
+    });
+  });
+
   it('write mode replaces the list and defensively copies todos into the store', async () => {
     const { tool, getTodos } = makeTool();
     const todos: TodoItem[] = [

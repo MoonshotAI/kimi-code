@@ -12,6 +12,8 @@ Kimi Code CLI includes three built-in sub-agents, ready to use out of the box, e
 - **`explore`**: Dedicated to codebase exploration; performs read-only operations only and does not modify any files. Ideal for quickly searching, reading, and summarizing a repository without touching files.
 - **`plan`**: Dedicated to implementation planning and architecture design; even shell commands are not available, keeping the focus on "figuring out how to do something" rather than "actually doing it."
 
+A `coder` sub-agent shares most of the main Agent's tool set: it can run shell commands in the background, maintain todo lists, enter Plan mode, invoke Agent Skills, and dispatch its own nested sub-agents when a task decomposes naturally. If it finishes its turn while background tasks are still running, its run only reports completion after those tasks settle, so the parent receives the result after the underlying work has actually finished.
+
 ## How to Invoke
 
 Sub-agents are scheduled automatically by the main Agent — based on task complexity, context consumption, and sub-task independence, they are dispatched at the right moment without the user having to specify one.
@@ -29,7 +31,7 @@ This isolation provides two benefits:
 - **The main Agent's context stays lean** and is not filled with large volumes of exploratory logs during long sessions.
 - **Multiple sub-agents can run in parallel** without interfering with each other.
 
-Note that each sub-agent independently consumes model tokens. For simple tasks, there is no need to dispatch a sub-agent — the main Agent handles them more economically. Sub-agents also cannot themselves schedule further nested sub-agents.
+Note that each sub-agent independently consumes model tokens. For simple tasks, there is no need to dispatch a sub-agent — the main Agent handles them more economically.
 
 ## Permission Inheritance
 

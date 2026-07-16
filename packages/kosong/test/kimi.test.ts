@@ -651,7 +651,7 @@ describe('KimiChatProvider', () => {
       ]);
     });
 
-    it('backfills non-empty reasoning for an assistant tool call when preserved thinking is active', async () => {
+    it('sends empty reasoning_content for an assistant tool call when preserved thinking is active', async () => {
       const history: Message[] = [
         {
           role: 'assistant',
@@ -666,10 +666,10 @@ describe('KimiChatProvider', () => {
         provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
       );
 
-      expect(messages[0]).toHaveProperty('reasoning_content', ' ');
+      expect(messages[0]).toHaveProperty('reasoning_content', '');
     });
 
-    it('backfills non-empty reasoning for a text assistant when keep=all omits thinking.type', async () => {
+    it('sends empty reasoning_content for a text assistant when keep=all omits thinking.type', async () => {
       const history: Message[] = [
         {
           role: 'assistant',
@@ -682,10 +682,10 @@ describe('KimiChatProvider', () => {
         provider.withExtraBody({ thinking: { keep: 'all' } }),
       );
 
-      expect(messages[0]).toHaveProperty('reasoning_content', ' ');
+      expect(messages[0]).toHaveProperty('reasoning_content', '');
     });
 
-    it('makes an existing empty ThinkPart non-empty when preserved thinking is active', async () => {
+    it('replays an existing empty ThinkPart unchanged when preserved thinking is active', async () => {
       const history: Message[] = [
         {
           role: 'assistant',
@@ -698,10 +698,10 @@ describe('KimiChatProvider', () => {
         provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
       );
 
-      expect(messages[0]).toHaveProperty('reasoning_content', ' ');
+      expect(messages[0]).toHaveProperty('reasoning_content', '');
     });
 
-    it('makes aggregated empty ThinkParts non-empty when preserved thinking is active', async () => {
+    it('replays aggregated empty ThinkParts unchanged when preserved thinking is active', async () => {
       const history: Message[] = [
         {
           role: 'assistant',
@@ -717,7 +717,7 @@ describe('KimiChatProvider', () => {
         provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
       );
 
-      expect(messages[0]).toHaveProperty('reasoning_content', ' ');
+      expect(messages[0]).toHaveProperty('reasoning_content', '');
     });
 
     it('preserves non-empty reasoning when preserved thinking is active', async () => {
