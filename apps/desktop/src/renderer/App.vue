@@ -46,6 +46,7 @@ import { commitLevel, effectiveThinkingLevel, segmentsFor } from './lib/modelThi
 import { stripSkillPrefix } from './lib/slashCommands';
 import { Button, Icon, IconButton } from '@moonshot-ai/web-ui';
 import { isMacosDesktop } from './lib/desktopFlag';
+import { useFullscreen } from './composables/useFullscreen';
 
 // Hydrate the server-transport credential (fragment token or localStorage)
 // BEFORE the client connects, so the first REST/WS calls already carry it.
@@ -80,6 +81,11 @@ const debugEnabled = isTraceEnabled();
 // Narrow viewports (≤640px) render the single-column mobile shell; desktop is
 // unchanged. Falls back to desktop when matchMedia is unavailable.
 const isMobile = useIsMobile();
+
+// Native-window fullscreen state (desktop bridge only; always false on web).
+// On macOS fullscreen the traffic lights hide, so the resident sidebar toggle
+// drops their slot and hugs the left edge (see the fullscreen CSS below).
+const isFullscreen = useFullscreen();
 
 // Mobile sheet visibility
 const showMobileSwitcher = ref(false);
@@ -674,6 +680,7 @@ function openPr(url: string): void {
         mobile: isMobile,
         'sidebar-collapsed': sidebarCollapsed && !isMobile,
         'macos-desktop': isMacosDesktop,
+        fullscreen: isFullscreen,
       }"
       :style="{ '--preview-w': previewPanelWidth + 'px' }"
     >
@@ -836,6 +843,19 @@ function openPr(url: string): void {
       @click="toggleSidebarCollapse"
     >
       <Icon :name="sidebarCollapsed ? 'panel-expand' : 'panel-collapse'" />
+    </IconButton>
+
+    <!-- New-chat shortcut — only while the sidebar is COLLAPSED (the expanded
+         sidebar already owns the primary "New chat" button). Sits immediately
+         right of the toggle and reuses its chat-new icon. -->
+    <IconButton
+      v-if="!isMobile && sidebarCollapsed"
+      class="new-chat-btn"
+      size="sm"
+      :label="t('sidebar.newChat')"
+      @click="handleCreateSession"
+    >
+      <Icon name="chat-new" />
     </IconButton>
 
     <ResizeHandle
@@ -1204,6 +1224,34 @@ function openPr(url: string): void {
   left: 72px;
   animation: none;
 }
+/* macOS full-screen: the traffic lights hide (they only re-appear as a
+   transient overlay while the pointer sits at the screen's top edge), so the
+   resident toggle drops the lights' slot and hugs the window edge — same 16px
+   as the default (non-mac) floating position. */
+.app.macos-desktop.fullscreen .sidebar-toggle-btn {
+  left: 16px;
+}
+/* Collapsed-state "new chat" shortcut — flush against the toggle's right
+   edge (26px button, no gap). Rendered only while collapsed on every
+   platform, so unlike the resident macOS toggle it keeps the entrance
+   animation. */
+.new-chat-btn {
+  position: absolute;
+  /* Vertically centered in the 48px conversation header. */
+  top: 11px;
+  left: 42px;
+  z-index: var(--z-sticky);
+  animation: sidebar-toggle-btn-in 0.18s var(--ease-out) 0.12s backwards;
+  /* Floats over the macOS-desktop window-drag header; keep it clickable. */
+  -webkit-app-region: no-drag;
+}
+.app.macos-desktop .new-chat-btn {
+  left: 98px;
+}
+/* Follows the toggle's fullscreen shift (toggle at 16px + 26px). */
+.app.macos-desktop.fullscreen .new-chat-btn {
+  left: 42px;
+}
 @keyframes sidebar-toggle-btn-in {
   from { opacity: 0; }
 }
@@ -1276,17 +1324,24 @@ function openPr(url: string): void {
 }
 
 /* Sidebar collapsed (desktop): the conversation header pads left so its
-   content clears the floating sidebar toggle (.sidebar-toggle-btn) — and the
-   macOS traffic lights on desktop builds. Animated in step with the sidebar
-   width transition. Cross-component rule (ChatHeader renders the header), so
-   it lives in this global block. */
+   content clears the floating sidebar toggle (.sidebar-toggle-btn) and the
+   new-chat shortcut (.new-chat-btn) beside it — plus the macOS traffic lights
+   on desktop builds. Animated in step with the sidebar width transition.
+   Cross-component rule (ChatHeader renders the header), so it lives in this
+   global block. */
 .app:not(.mobile) .chat-header {
   transition: padding-left 0.28s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .app.sidebar-collapsed .chat-header {
-  padding-left: 52px;
+  padding-left: 78px;
 }
 .app.sidebar-collapsed.macos-desktop .chat-header {
-  padding-left: 108px;
+  padding-left: 134px;
+}
+/* Full-screen follow-up to the rule above: with the traffic lights hidden the
+   buttons shift to the window edge (toggle at 16px, new-chat at 42px), so the
+   header padding falls back to the non-mac collapsed value. */
+.app.fullscreen.sidebar-collapsed.macos-desktop .chat-header {
+  padding-left: 78px;
 }
 </style>

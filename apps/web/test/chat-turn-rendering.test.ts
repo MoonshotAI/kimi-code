@@ -25,13 +25,26 @@ function assistantTurn(blocks: TurnBlock[], over: Partial<ChatTurn> = {}): ChatT
 }
 
 describe('formatTokens', () => {
-  it('keeps small counts verbatim and abbreviates at the k / M thresholds', () => {
+  // Units are 1024-based: context sizes are powers of two, so a 256k context
+  // must render as "256k", never "262k" (see src/lib/formatTokens.ts).
+  it('keeps small counts verbatim and switches to k at 1024', () => {
     expect(formatTokens(0)).toBe('0');
     expect(formatTokens(999)).toBe('999');
-    expect(formatTokens(1000)).toBe('1.0k');
+    expect(formatTokens(1024)).toBe('1k');
     expect(formatTokens(1500)).toBe('1.5k');
-    expect(formatTokens(1_000_000)).toBe('1.0M');
-    expect(formatTokens(2_500_000)).toBe('2.5M');
+  });
+
+  it('stays 1024-based through the k / M ranges', () => {
+    // k range: one decimal under 100k, rounded above.
+    expect(formatTokens(50_586)).toBe('49.4k');
+    expect(formatTokens(102_400)).toBe('100k');
+    expect(formatTokens(262_144)).toBe('256k');
+    // Just under 1 MiB is still k.
+    expect(formatTokens(999_999)).toBe('977k');
+    // M range: one decimal, trailing ".0" dropped.
+    expect(formatTokens(1_048_576)).toBe('1M');
+    expect(formatTokens(1_572_864)).toBe('1.5M');
+    expect(formatTokens(2_500_000)).toBe('2.4M');
   });
 });
 

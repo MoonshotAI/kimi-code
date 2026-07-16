@@ -15,6 +15,11 @@ export type KimiDesktopApi = {
   showOpenDialog: (opts: DialogOptions) => Promise<{ canceled: boolean; filePaths: string[] }>;
   showSaveDialog: (opts: DialogOptions) => Promise<{ canceled: boolean; filePath?: string }>;
   getServerToken: () => Promise<string | undefined>;
+  /** Current native-window fullscreen state (initial value; transitions come
+   *  through `onFullscreenChanged`). */
+  isFullscreen: () => Promise<boolean>;
+  /** Main → renderer push on every window fullscreen enter/leave. */
+  onFullscreenChanged: (cb: (fullscreen: boolean) => void) => () => void;
 };
 
 export const api: KimiDesktopApi = {
@@ -42,6 +47,12 @@ export const api: KimiDesktopApi = {
   showOpenDialog: (opts) => ipcRenderer.invoke('kimi:dialog-open', opts),
   showSaveDialog: (opts) => ipcRenderer.invoke('kimi:dialog-save', opts),
   getServerToken: () => ipcRenderer.invoke('kimi:get-server-token'),
+  isFullscreen: () => ipcRenderer.invoke('kimi:is-fullscreen'),
+  onFullscreenChanged: (cb) => {
+    const listener = (_event: unknown, flag: unknown) => cb(flag === true);
+    ipcRenderer.on('kimi:fullscreen-changed', listener);
+    return () => ipcRenderer.removeListener('kimi:fullscreen-changed', listener);
+  },
 };
 
 contextBridge.exposeInMainWorld('kimiDesktop', api);

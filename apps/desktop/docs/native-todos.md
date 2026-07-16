@@ -1,6 +1,6 @@
 # Desktop 原生化 TODO
 
-桌面端目前大量功能仍用 web 方式实现。preload 已暴露 8 个桥接方法（`src/main/preload.ts`），renderer 实际只用了 `setTheme` 一个，其余通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
+桌面端目前大量功能仍用 web 方式实现。preload 已暴露 10 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
 
 改之前注意两点：
 
@@ -26,6 +26,11 @@
 - [ ] **聊天附件选择用原生 dialog**
   - 现状：`Composer.vue:924` 隐藏 `<input type="file" accept="image/*,video/*">`，逻辑在 `useAttachmentUpload.ts`。
   - 做法：desktop 下调 `showOpenDialog` 直接拿本地路径。
+
+- [x] **macOS 全屏时侧栏开关贴左边**（已完成，desktop 专属）
+  - 实现：hidden title bar 下常驻的 sidebar toggle 平时停在红绿灯右侧（`App.vue` `left: 72px`）；全屏后红绿灯隐藏，按钮左移贴窗口边（`left: 16px`），收起态的 chat-header 左 padding 同步从 108px 回到 52px（`.app.macos-desktop.fullscreen` 规则）。主进程 `window.ts` 向 renderer 推送 `kimi:fullscreen-changed`（enter/leave-full-screen），renderer 初值走 `kimi:is-fullscreen` invoke（preload 暴露 `isFullscreen()` / `onFullscreenChanged()`）；renderer 侧 `composables/useFullscreen.ts` 单例跟踪，无桥恒 false（无桥降级）。
+  - **web 不改**：红绿灯只存在于 Electron macOS；`App.vue` 两端分叉又添一块（模板 class、fullscreen CSS、import），整目录 re-copy 时需保留。
+  - 测试：`src/renderer/composables/useFullscreen.test.ts`（4 用例：无桥、初值、推送、桥故障）；`tests/main/preload.test.ts` 白名单 + 通道断言同步更新。
 
 - [ ] **打开文件 / 在 Finder 显示 / OpenIn 菜单本地化**
   - 现状：`useWorkspaceState.ts:2405-2439`（`openWorkspaceFile` / `revealWorkspaceFile` / `openInApp`）走 daemon REST 由 server 执行 OS 打开；UI 入口 `FilePreview.vue:493`、`OpenInMenu.vue`。
@@ -61,5 +66,5 @@
 
 ## 参考
 
-- IPC channel 定义：`src/main/ipc-channels.ts`（7 个 channel）
+- IPC channel 定义：`src/main/ipc-channels.ts`（9 个 channel）
 - preload 白名单测试：`tests/main/preload.test.ts`（新增桥接方法要同步更新）

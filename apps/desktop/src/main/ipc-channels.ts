@@ -8,11 +8,16 @@ export const IPC = {
   dialogOpen: 'kimi:dialog-open',
   dialogSave: 'kimi:dialog-save',
   getServerToken: 'kimi:get-server-token',
+  isFullscreen: 'kimi:is-fullscreen',
   menuAction: 'kimi:menu-action',
   shortcut: 'kimi:shortcut',
+  fullscreenChanged: 'kimi:fullscreen-changed',
 } as const;
 
 export type ColorScheme = 'light' | 'dark' | 'system';
 
 // Channels that carry main → renderer events (see window.ts sendToRenderer).
-export type RendererEventChannel = typeof IPC.menuAction | typeof IPC.shortcut;
+export type RendererEventChannel =
+  | typeof IPC.menuAction
+  | typeof IPC.shortcut
+  | typeof IPC.fullscreenChanged;
