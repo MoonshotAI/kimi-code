@@ -20,6 +20,13 @@ vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
 
 const lookupMock = lookup as unknown as Mock;
 
+// The init's dispatcher property is typed by @types/node's bundled
+// undici-types, while the runtime value is the undici package's Agent —
+// convert through unknown to bridge the two declarations.
+function asUndiciAgent(dispatcher: RequestInit['dispatcher']): Agent {
+  return dispatcher as unknown as Agent;
+}
+
 // Keep DNS hermetic: every hostname resolves to a public address unless a
 // test overrides it (mockReset clears per-test overrides first).
 beforeEach(() => {
@@ -294,7 +301,7 @@ describe('LocalFetchURLProvider connection pinning', () => {
     // The DNS answer was validated once and reused for the connection.
     expect(lookupMock).toHaveBeenCalledTimes(1);
     // The per-hop Agent is closed once the body has been consumed.
-    expect((dispatcher as Agent).closed).toBe(true);
+    expect(asUndiciAgent(dispatcher).closed).toBe(true);
   });
 
   it('pins every redirect hop to its own validated addresses and closes both Agents', async () => {
@@ -311,8 +318,8 @@ describe('LocalFetchURLProvider connection pinning', () => {
     expect(first).toBeInstanceOf(Agent);
     expect(second).toBeInstanceOf(Agent);
     expect(first).not.toBe(second);
-    expect((first as Agent).closed).toBe(true);
-    expect((second as Agent).closed).toBe(true);
+    expect(asUndiciAgent(first).closed).toBe(true);
+    expect(asUndiciAgent(second).closed).toBe(true);
     expect(lookupMock).toHaveBeenCalledTimes(2);
   });
 
