@@ -70,7 +70,7 @@ describe('token estimates for media content parts', () => {
     const estimate = estimateTokensForMessage({
       role: 'assistant',
       content: [{ type: 'text', text: 'I will call a tool' }],
-      toolCalls: [{ id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '{}' } }],
+      toolCalls: [{ id: 'call_1', type: 'function', name: 'get_weather', arguments: '{}' }],
     });
     expect(estimate).toBeGreaterThan(0);
   });

@@ -26,6 +26,7 @@ export default defineConfig({
   plugins: [rawTextPlugin()],
   alias: {
     '@': resolve(appRoot, 'src'),
+    '#/i18n': resolve(appRoot, 'src', 'i18n', 'index.ts'),
   },
   define: {
     [BUILT_IN_CATALOG_DEFINE]: builtInCatalogDefine(),

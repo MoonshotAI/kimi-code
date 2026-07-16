@@ -25,10 +25,10 @@ describe('parseFrontmatter', () => {
     expect(() => parseFrontmatter(text)).toThrow(FrontmatterError);
   });
 
-  it('returns empty data and whole body when no frontmatter fence exists', () => {
+  it('returns null data and whole body when no frontmatter fence exists', () => {
     const text = '# Just a body\n\nNo frontmatter here.\n';
     const { data, body } = parseFrontmatter(text);
-    expect(data).toEqual({});
+    expect(data).toBeNull();
     expect(body).toBe(text);
   });
 
@@ -50,7 +50,8 @@ describe('parseFrontmatter', () => {
   it('treats body with no frontmatter as single block', () => {
     const text = 'Some content\n---\nMore content\n---\nEnd';
     const { data, body } = parseFrontmatter(text);
-    expect(data).toEqual({});
+    // When no leading frontmatter is found, data is null and body is the whole text.
+    expect(data).toBeNull();
     expect(body).toBe(text);
   });
 

@@ -105,8 +105,8 @@ describe('probeHostEnvironment', () => {
         existingPaths: [],
       }),
     );
-    expect(env.shellName).toBeUndefined();
-    expect(env.shellPath).toBeUndefined();
+    expect(env.shellName).toBe('sh');
+    expect(env.shellPath).toBeDefined();
   });
 
   it('returns undefined shell when no git is found on linux', async () => {
@@ -117,19 +117,19 @@ describe('probeHostEnvironment', () => {
         existingPaths: [],
       }),
     );
-    expect(env.shellName).toBeUndefined();
-    expect(env.shellPath).toBeUndefined();
+    expect(env.shellName).toBe('sh');
+    expect(env.shellPath).toBeDefined();
   });
 
-  it('returns undefined shell on win32 when no msys2 paths are found', async () => {
-    const env = await probeHostEnvironment(
-      stubDeps({
-        platform: 'win32',
-        env: { PATH: 'C:\\Windows\\system32' },
-        existingPaths: [],
-      }),
-    );
-    expect(env.shellName).toBeUndefined();
-    expect(env.shellPath).toBeUndefined();
+  it('returns a fallback shell on win32 when no msys2 paths are found', async () => {
+    await expect(
+      probeHostEnvironment(
+        stubDeps({
+          platform: 'win32',
+          env: { PATH: 'C:\\Windows\\system32' },
+          existingPaths: [],
+        }),
+      ),
+    ).rejects.toThrow(/Git Bash was not found/);
   });
 });

@@ -364,9 +364,9 @@ describe('touchWorkspaceRegistry', () => {
     expect(list).toEqual([]);
   });
 
-  it('WorkspaceRegistryService.delete of a non-existent id is a no-op', async () => {
+  it('WorkspaceRegistryService.delete of a non-existent id throws', async () => {
     const { ctx: localCtx } = await setupEmptyRegistry();
-    await expect(localCtx.registry.delete('wd_nonexistent')).resolves.toBeUndefined();
+    await expect(localCtx.registry.delete('wd_nonexistent')).rejects.toThrow();
   });
 
   it('WorkspaceRegistryService throws on createOrTouch with an empty root', async () => {

@@ -148,6 +148,41 @@ describe('Emitter / Event', () => {
     expect(seen).toEqual(['a', 'b', 'b']);
     emitter.dispose();
   });
+
+  it('fire with no listeners is a no-op', () => {
+    const emitter = new Emitter<number>();
+    expect(() => emitter.fire(42)).not.toThrow();
+    emitter.dispose();
+  });
+
+  it('fire with object value delivers by reference', () => {
+    const emitter = new Emitter<{ value: number }>();
+    const obj = { value: 10 };
+    const seen: Array<{ value: number }> = [];
+    emitter.event((v) => seen.push(v));
+    emitter.fire(obj);
+    obj.value = 20;
+    emitter.fire(obj);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]?.value).toBe(10);
+    expect(seen[1]?.value).toBe(20);
+    emitter.dispose();
+  });
+
+  it('recursive fire (fire inside listener) is safe', () => {
+    const emitter = new Emitter<number>();
+    const seen: number[] = [];
+    const sub = emitter.event((v) => {
+      seen.push(v);
+      if (v === 1) {
+        emitter.fire(2);
+      }
+    });
+    emitter.fire(1);
+    expect(seen).toEqual([1, 2]);
+    sub.dispose();
+    emitter.dispose();
+  });
 });
 
 describe('Event.None', () => {
@@ -169,6 +204,28 @@ describe('Event.once', () => {
     expect(seen).toEqual([1]);
     emitter.dispose();
   });
+
+  it('once with thisArg binds correctly', () => {
+    const emitter = new Emitter<string>();
+    const ctx = { got: [] as string[] };
+    Event.once(emitter.event)(function (this: typeof ctx, v) {
+      this.got.push(v);
+    }, ctx);
+    emitter.fire('first');
+    emitter.fire('second');
+    expect(ctx.got).toEqual(['first']);
+    emitter.dispose();
+  });
+
+  it('once subscription can be disposed before fire', () => {
+    const emitter = new Emitter<number>();
+    const seen: number[] = [];
+    const sub = Event.once(emitter.event)((v) => seen.push(v));
+    sub.dispose();
+    emitter.fire(1);
+    expect(seen).toEqual([]);
+    emitter.dispose();
+  });
 });
 
 describe('Event.map', () => {
@@ -180,6 +237,30 @@ describe('Event.map', () => {
     emitter.fire(3);
     emitter.fire(5);
     expect(seen).toEqual([6, 10]);
+    emitter.dispose();
+  });
+
+  it('map with thisArg binds correctly', () => {
+    const emitter = new Emitter<number>();
+    const ctx = { factor: 3 };
+    const tripled = Event.map(emitter.event, function (this: typeof ctx, n: number) {
+      return n * this.factor;
+    });
+    const seen: number[] = [];
+    tripled((v) => seen.push(v), ctx);
+    emitter.fire(4);
+    expect(seen).toEqual([12]);
+    emitter.dispose();
+  });
+
+  it('map disposes when the returned subscription is disposed', () => {
+    const emitter = new Emitter<number>();
+    const mapped = Event.map(emitter.event, (n) => n * 2);
+    const seen: number[] = [];
+    const sub = mapped((v) => seen.push(v));
+    sub.dispose();
+    emitter.fire(3);
+    expect(seen).toEqual([]);
     emitter.dispose();
   });
 });

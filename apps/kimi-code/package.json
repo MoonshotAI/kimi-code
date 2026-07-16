@@ -35,6 +35,7 @@
   ],
   "type": "module",
   "imports": {
+    "#/i18n": "./src/i18n/index.ts",
     "#/tui/theme": "./src/tui/theme/index.ts",
     "#/tui/commands": "./src/tui/commands/index.ts",
     "#/cli/sub/server": "./src/cli/sub/server/index.ts",

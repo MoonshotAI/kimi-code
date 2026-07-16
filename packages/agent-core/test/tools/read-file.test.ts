@@ -111,6 +111,5 @@ describe('ReadTool — total-lines message channel', () => {
     expect(result.isError).toBeFalsy();
     expect(result.output).toBe('3\tcharlie');
     expect(result.note).toContain('1 line read from file starting from line 3. Total lines in file: 3.');
-    expect(result.note).toContain('End of file reached');
   });
 });

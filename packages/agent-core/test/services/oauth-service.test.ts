@@ -337,15 +337,16 @@ describe('OAuthService.logout', () => {
     expect(mock.loginCalls[0]!.signal!.aborted).toBe(true);
   });
 
-  it('cancels a pending flow with onDeviceCode that throws', async () => {
+  it('cancels a pending flow using cancelLogin after onDeviceCode', async () => {
     const { impl, mock } = makeImpl();
     impl.startLogin();
     await flushMicrotasks();
-    // Simulate onDeviceCode rejecting
-    mock.loginCalls[0]!.onDeviceCode?.(fakeDeviceAuth()).catch(() => {});
+    expect(mock.loginCalls).toHaveLength(1);
+    await mock.loginCalls[0]!.onDeviceCode?.(fakeDeviceAuth());
     await flushMicrotasks();
 
-    await impl.cancelLogin();
+    const result = await impl.cancelLogin();
+    expect(result.cancelled).toBe(true);
     expect(impl.getFlow()!.status).toBe('cancelled');
   });
 

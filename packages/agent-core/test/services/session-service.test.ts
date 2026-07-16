@@ -800,6 +800,18 @@ describe('SessionService.fork', () => {
     await expect(svc.fork('missing', {})).rejects.toBeInstanceOf(SessionNotFoundError);
     expect(state.forkPayloads).toEqual([]);
   });
+
+  it('forks with empty metadata does not crash', async () => {
+    const source = await svc.create({
+      metadata: { cwd: '/tmp/fork-empty-meta' },
+      title: 'Source',
+    });
+
+    const fork = await svc.fork(source.id, {});
+
+    expect(fork.id).toMatch(/^sess_fork_/);
+    expect(fork.metadata.cwd).toBe('/tmp/fork-empty-meta');
+  });
 });
 
 describe('SessionService children', () => {
@@ -978,6 +990,19 @@ describe('SessionService.undo', () => {
       { type: 'text', text: 'recent prompt' },
       { type: 'text', text: 'recent answer' },
     ]);
+  });
+
+  it('undo with count=0 throws SessionUndoUnavailableError', async () => {
+    const created = await svc.create({ metadata: { cwd: '/tmp/undo-zero' } });
+    state.contexts.set(created.id, {
+      history: [textMessage('user', 'hi'), textMessage('assistant', 'hello')],
+      tokenCount: 10,
+    });
+
+    await expect(svc.undo(created.id, { count: 0 })).rejects.toBeInstanceOf(
+      SessionUndoUnavailableError,
+    );
+    expect(state.undoPayloads).toEqual([]);
   });
 
   it('throws SessionNotFoundError on a missing id', async () => {

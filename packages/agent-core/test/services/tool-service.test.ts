@@ -10,7 +10,7 @@
  *   - empty-session-list behavior (returns [] / throws not found)
  */
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type {
   CoreRPC,
@@ -242,25 +242,24 @@ describe('McpService.restart', () => {
     expect(state.reconnectCalls[0]!.name).toBe('lark');
   });
 
-  it('McpService.list returns [] when rpc.listMcpServers throws', async () => {
+  it('McpService.list propagates errors from rpc.listMcpServers', async () => {
     const state = freshState();
     state.sessions.push(fakeSession('s', 1));
     const bridge = makeFakeBridge(state);
-    (bridge.rpc.listMcpServers as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
-      new Error('server error'),
-    );
+    (bridge.rpc as unknown as Record<string, ReturnType<typeof vi.fn>>).listMcpServers = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('server error'));
     const svc = new McpService(bridge);
-    expect(await svc.list()).toEqual([]);
+    await expect(svc.list()).rejects.toThrow('server error');
   });
 
-  it('toProtocolTool passes input_schema through when present', () => {
+  it('toProtocolTool always returns input_schema as null (agent-core lacks schema)', () => {
     const out = toProtocolTool({
       name: 'Bash',
       description: 'd',
       source: 'builtin',
-      inputSchema: { type: 'object', properties: { cmd: { type: 'string' } } },
     });
-    expect(out.input_schema).toEqual({ type: 'object', properties: { cmd: { type: 'string' } } });
+    expect(out.input_schema).toBeNull();
   });
 
   it('toProtocolTool handles mcp tool with mcp: prefix and empty name segment', () => {

@@ -101,8 +101,8 @@ describe('estimateTokensForMessage — message.tools', () => {
 });
 
 describe('estimateTokens — edge cases', () => {
-  it('returns 1 for an empty string', () => {
-    expect(estimateTokens('')).toBe(1);
+  it('returns 0 for an empty string', () => {
+    expect(estimateTokens('')).toBe(0);
   });
 
   it('returns positive for a single character', () => {

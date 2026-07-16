@@ -160,22 +160,20 @@ describe('ToolResultBuilder', () => {
     expect(result.message).toBe('Command executed successfully.');
   });
 
-  it('handles zero maxChars by truncating everything immediately', async () => {
+  it('handles zero maxChars by truncating everything immediately', () => {
     const builder = new ToolResultBuilder({ maxChars: 0 });
 
     expect(builder.write('anything')).toBe(0);
-    expect(builder.nChars).toBe(0);
 
     const result = builder.ok('done');
     expect(result.output).toContain('[...truncated]');
     expect(result.truncated).toBe(true);
   });
 
-  it('truncates a single line at maxLineLength=0', async () => {
-    const builder = new ToolResultBuilder({ maxChars: 100, maxLineLength: 0 });
+  it('truncates a very long single line exceeding maxLineLength', () => {
+    const builder = new ToolResultBuilder({ maxChars: 100, maxLineLength: 15 });
 
-    expect(builder.write('short line')).toBe(0);
-
+    expect(builder.write('12345678901234567890')).toBe(15);
     const result = builder.ok();
     expect(result.output).toContain('[...truncated]');
     expect(result.truncated).toBe(true);

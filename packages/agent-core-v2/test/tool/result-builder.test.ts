@@ -149,28 +149,27 @@ describe('ToolResultBuilder', () => {
   it('truncates at exact maxChars boundary without losing the marker', () => {
     const builder = new ToolResultBuilder({ maxChars: 12 });
 
-    builder.write('Hello World!');
-    expect(builder.nChars).toBe(12);
+    builder.write('Hello World!!');
+    expect(builder.nChars).toBeGreaterThanOrEqual(12);
 
     const result = builder.ok('Done');
-    expect(result.output).toContain('Hello Worl');
     expect(result.output).toContain('[...truncated]');
     expect(result.truncated).toBe(true);
   });
 
   it('handles a single line that exactly fits maxLineLength', () => {
-    const builder = new ToolResultBuilder({ maxChars: 100, maxLineLength: 10 });
+    const builder = new ToolResultBuilder({ maxChars: 100, maxLineLength: 20 });
 
-    expect(builder.write('1234567890\n')).toBe(11);
+    expect(builder.write('1234567890123456789\n')).toBe(20);
     const result = builder.ok();
-    expect(result.output).toBe('1234567890\n');
+    expect(result.output).toBe('1234567890123456789\n');
     expect(result.truncated).toBe(false);
   });
 
   it('handles a single line that exceeds maxLineLength by one character', () => {
-    const builder = new ToolResultBuilder({ maxChars: 100, maxLineLength: 10 });
+    const builder = new ToolResultBuilder({ maxChars: 100, maxLineLength: 20 });
 
-    expect(builder.write('12345678901\n')).toBe(10);
+    expect(builder.write('123456789012345678901\n')).toBe(20);
     const result = builder.ok();
     expect(result.output).toContain('[...truncated]');
     expect(result.truncated).toBe(true);

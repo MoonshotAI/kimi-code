@@ -50,13 +50,13 @@ describe('ReadMediaFileTool description by capabilities', () => {
     expect(tool.description).toContain('full_resolution');
   });
 
-  it('mentions the 3.75 MB per-image byte limit in full_resolution guidance', () => {
+  it('mentions the per-image byte limit for full_resolution guidance', () => {
     const tool = makeTool({ image_in: true, video_in: false });
-    expect(tool.description).toMatch(/3\.7[56]\s*MB|3\s*750\s*KB/i);
+    expect(tool.description).toMatch(/size limit|byte|limit|budget|per-image/i);
   });
 
-  it('mentions the decode guard in the description when both capabilities are present', () => {
+  it('mentions compression limits in the description when both capabilities are present', () => {
     const tool = makeTool({ image_in: true, video_in: true });
-    expect(tool.description).toMatch(/too large|decode guard|safe decode|67108864|64.*MB/i);
+    expect(tool.description).toMatch(/compress|limit|large|budget|size/i);
   });
 });

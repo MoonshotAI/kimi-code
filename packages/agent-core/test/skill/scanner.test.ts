@@ -1395,3 +1395,33 @@ async function writeSkill(
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, lines.join('\n'));
 }
+
+describe('scanner edge cases', () => {
+  it('skips a skill root that is a file rather than a directory', async () => {
+    const { repoDir } = await makeWorkspace();
+    const fileRoot = path.join(repoDir, 'not-a-dir.md');
+    await writeFile(fileRoot, 'not a directory', 'utf-8');
+
+    const skills = await discoverSkills({ roots: [{ path: fileRoot, source: 'extra' }] });
+    expect(skills).toEqual([]);
+  });
+
+  it('returns an empty array when the root directory is completely empty', async () => {
+    const { repoDir } = await makeWorkspace();
+    const root = path.join(repoDir, 'empty-skills');
+    await mkdir(root, { recursive: true });
+
+    const skills = await discoverSkills({ roots: [{ path: root, source: 'user' }] });
+    expect(skills).toEqual([]);
+  });
+
+  it('skips files with empty content in the root directory', async () => {
+    const { repoDir } = await makeWorkspace();
+    const root = path.join(repoDir, 'kimi-code', 'skills');
+    await mkdir(root, { recursive: true });
+    await writeFile(path.join(root, 'empty.md'), '', 'utf-8');
+
+    const skills = await discoverSkills({ roots: [{ path: root, source: 'user' }] });
+    expect(skills).toEqual([]);
+  });
+});

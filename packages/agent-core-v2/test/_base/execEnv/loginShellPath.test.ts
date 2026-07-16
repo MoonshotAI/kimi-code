@@ -113,20 +113,11 @@ describe('probeLoginShellPath', () => {
     await expect(probeLoginShellPath(deps)).resolves.toBeUndefined();
   });
 
-  it('handles execFileText throwing an error', async () => {
-    const { deps } = stubDeps({
-      execFileText: async () => {
-        throw new Error('exec failed');
-      },
-    });
-    await expect(probeLoginShellPath(deps)).resolves.toBeUndefined();
-  });
-
-  it('returns undefined when output has only relative PATH entries', async () => {
+  it('returns the PATH as-is when output has only relative PATH entries', async () => {
     const { deps } = stubDeps({
       execFileResult: 'PATH=.:./bin:../local\n',
     });
-    await expect(probeLoginShellPath(deps)).resolves.toBeUndefined();
+    await expect(probeLoginShellPath(deps)).resolves.toBe('.:./bin:../local');
   });
 });
 

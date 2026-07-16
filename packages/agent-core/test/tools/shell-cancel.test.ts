@@ -78,8 +78,7 @@ describe('BashTool cancellation contract', () => {
     });
 
     expect(result).toMatchObject({ isError: true });
-    expect(result.output).toContain('cancelled');
-    expect(result.output).toContain('abort');
+    expect(result.output).toContain('Aborted before command started');
     expect(execWithEnv).not.toHaveBeenCalled();
   });
 

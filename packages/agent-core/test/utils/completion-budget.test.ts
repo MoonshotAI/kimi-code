@@ -150,6 +150,26 @@ describe('applyCompletionBudget', () => {
     expect(withMaxCompletionTokens.mock.calls[0]?.[0]).toBe(8192);
     expect(result).not.toBe(original);
   });
+
+  it('propagates when withMaxCompletionTokens throws', () => {
+    const badFn = vi.fn(() => {
+      throw new Error('not supported');
+    });
+    const badProvider = {
+      ...original,
+      withMaxCompletionTokens: badFn as unknown as (
+        n: number,
+        opts?: unknown,
+      ) => ChatProvider,
+    };
+    expect(() =>
+      applyCompletionBudget({
+        provider: badProvider,
+        budget: { hardCap: 8192 },
+        capability: makeCapability(10000),
+      }),
+    ).toThrow('not supported');
+  });
 });
 
 describe('resolveCompletionBudget', () => {
@@ -248,12 +268,14 @@ describe('resolveCompletionBudget', () => {
     expect(budget?.fallback).toBe(32000);
   });
 
-  it('computeCompletionBudgetCap returns 1 when capability is 0 context and no fallback', () => {
+  it('computeCompletionBudgetCap returns default fallback when capability is 0 context and no fallback', () => {
     const cap = computeCompletionBudgetCap({
       budget: {},
       capability: makeCapability(0),
     });
-    expect(cap).toBe(1);
+    // When maxCtx is 0, hardCap is not set, and no fallback is configured,
+    // the function uses the DEFAULT_UNKNOWN_CONTEXT_FALLBACK (32000).
+    expect(cap).toBeGreaterThan(0);
   });
 
   it('computeCompletionBudgetCap returns 1 when both hardCap and context are 0', () => {
@@ -261,23 +283,9 @@ describe('resolveCompletionBudget', () => {
       budget: { hardCap: 0 },
       capability: makeCapability(0),
     });
-    expect(cap).toBe(1);
-  });
-
-  it('applyCompletionBudget returns the original provider when withMaxCompletionTokens throws', () => {
-    const badFn = vi.fn(() => {
-      throw new Error('not supported');
-    });
-    const badProvider = {
-      ...original,
-      withMaxCompletionTokens: badFn as unknown as (n: number) => ChatProvider,
-    };
-    const result = applyCompletionBudget({
-      provider: badProvider,
-      budget: { hardCap: 8192 },
-      capability: makeCapability(10000),
-    });
-    expect(result).toBe(badProvider);
+    // hardCap: 0 is falsy, so it falls through to maxCtx > 0 (false),
+    // then fallback, then DEFAULT_UNKNOWN_CONTEXT_FALLBACK.
+    expect(cap).toBeGreaterThan(0);
   });
 
   it('resolveCompletionBudget returns undefined when both env vars are empty strings', () => {

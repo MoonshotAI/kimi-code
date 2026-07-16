@@ -1814,4 +1814,20 @@ describe('PromptService.applyAgentState (POST /sessions/{sid}/profile path)', ()
       permissionMode: 'yolo',
     });
   });
+
+  it('submit with empty content array still creates a prompt', async () => {
+    const { bridge, record } = makeBridge();
+    const { bus } = makeBus();
+    const impl = newSvc(bridge, bus);
+    const result = await impl.submit(SID, mkBody({ content: [] }));
+    expect(result.prompt_id).toMatch(/^prompt_/);
+    expect(record.promptCalls).toHaveLength(1);
+  });
+
+  it('submit with null-like content is rejected', async () => {
+    const { bridge } = makeBridge();
+    const { bus } = makeBus();
+    const impl = newSvc(bridge, bus);
+    await expect(impl.submit(SID, mkBody({ content: undefined }))).rejects.toThrow();
+  });
 });

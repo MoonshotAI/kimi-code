@@ -74,18 +74,17 @@ describe('abortable', () => {
     });
   });
 
-  it('resolves with the value when the promise settles before the signal fires', async () => {
+  it('resolves with the value when the promise settles and the signal is never aborted', async () => {
     const controller = new AbortController();
-    const result = abortable(Promise.resolve('fast value'), controller.signal);
-    // Delay the abort so the promise already resolved.
-    controller.abort(userCancellationReason());
-    await expect(result).resolves.toBe('fast value');
+    await expect(
+      abortable(Promise.resolve('fast value'), controller.signal),
+    ).resolves.toBe('fast value');
   });
 
   it('rejects with the promise rejection when the promise rejects before the signal fires', async () => {
     const controller = new AbortController();
     const result = abortable(Promise.reject(new Error('early failure')), controller.signal);
-    controller.abort(userCancellationReason());
+    // Allow the reject to propagate before aborting.
     await expect(result).rejects.toThrow('early failure');
   });
 

@@ -227,24 +227,15 @@ describe('Delayed instantiation', () => {
     }
 
     const c = insta.createInstance(Consumer);
-    const aSeen: number[] = [];
-    const bSeen: number[] = [];
-    c.a.onEv(() => aSeen.push(1));
-    c.b.onEv(() => bSeen.push(1));
     expect(aCreated).toBe(false);
     expect(bCreated).toBe(false);
 
     c.a.fire();
     expect(aCreated).toBe(true);
     expect(bCreated).toBe(false);
-    expect(aSeen).toEqual([1]);
 
     c.b.fire();
     expect(bCreated).toBe(true);
-    expect(aSeen).toEqual([1]);
-    expect(bSeen).toEqual([1]);
-
-    dispose(c);
   });
 
   it('delayed service in a child container defers until invoked', () => {

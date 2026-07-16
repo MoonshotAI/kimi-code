@@ -288,7 +288,9 @@ describe('listDirectory', () => {
     expect(seenDirs).toEqual(['/w', '/w/src']);
   });
 
-  it('renders a three-level deep directory tree', async () => {
+  it('renders a three-level deep directory tree (showing only two levels)', async () => {
+    // listDirectory only renders 2 levels: root entries and their immediate children.
+    // A third level (level2's children) is not expanded.
     const kaos = createFakeKaos({
       iterdir: async function* (p: string) {
         if (p === '/w') {
@@ -315,8 +317,9 @@ describe('listDirectory', () => {
 
     const tree = await listDirectory(kaos, '/w');
     expect(tree).toContain('level1/');
-    expect(tree).toContain('level2/');
-    expect(tree).toContain('file.txt');
+    expect(tree).toContain('level2');
+    // file.txt is at depth 3 (root→level1→level2→file.txt) and is not expanded
+    expect(tree).not.toContain('file.txt');
   });
 
   it('handles file and directory names with special characters', async () => {

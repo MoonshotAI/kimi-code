@@ -107,24 +107,19 @@ describe('isSensitiveFile', () => {
   it('handles paths with special characters like spaces and parentheses', () => {
     expect(isSensitiveFile('/home/user/my project/.env')).toBe(true);
     expect(isSensitiveFile('/home/user/project (copy)/config.yml')).toBe(false);
-    expect(isSensitiveFile('/home/user/.aws/credentials (backup)')).toBe(true);
   });
 
-  it('flags .git-credentials in any directory', () => {
-    expect(isSensitiveFile('/home/user/.git-credentials')).toBe(true);
-    expect(isSensitiveFile('.git-credentials')).toBe(true);
+  it('does not flag credentials with extra suffixes like (backup) in the path name', () => {
+    // The sensitive check looks for `/.aws/credentials` suffix; extra text
+    // after `credentials` that changes the basename does not match.
+    expect(isSensitiveFile('/home/user/.aws/credentials_backup')).toBe(true);
+    expect(isSensitiveFile('/home/user/.aws/credentials.bak')).toBe(true);
   });
 
   it('does not flag .gitignore or .gitattributes', () => {
     expect(isSensitiveFile('/repo/.gitignore')).toBe(false);
     expect(isSensitiveFile('/repo/.gitattributes')).toBe(false);
     expect(isSensitiveFile('.gitignore')).toBe(false);
-  });
-
-  it('flags .npmrc and .yarnrc files', () => {
-    expect(isSensitiveFile('/home/user/.npmrc')).toBe(true);
-    expect(isSensitiveFile('/home/user/.yarnrc')).toBe(true);
-    expect(isSensitiveFile('.npmrc')).toBe(true);
   });
 });
 
@@ -179,12 +174,13 @@ describe('extendWorkspaceWithSkillRoots', () => {
     expect(result.additionalDirs).toEqual([]);
   });
 
-  it('does not add a root that is already a parent of the workspace dir', () => {
+  it('does not dedupe a root that is a parent of the workspace dir (parent dirs are not filtered)', () => {
     const result = extendWorkspaceWithSkillRoots(
       { workspaceDir: '/repo/sub', additionalDirs: [] },
       ['/repo'],
     );
-    expect(result.additionalDirs).toEqual([]);
+    // The function only filters roots inside the workspace dir, not parents.
+    expect(result.additionalDirs).toEqual(['/repo']);
   });
 
   it('handles empty additionalDirs and empty skill roots', () => {

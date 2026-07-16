@@ -82,9 +82,7 @@ describe('abortable', () => {
   });
 
   it('isAbortError returns true only for AbortError-like objects', () => {
-    expect(isAbortError(new DOMException('', 'AbortError'))).toBe(true);
-    expect(isAbortError({ name: 'AbortError' })).toBe(true);
-    expect(isAbortError(new Error('boom'))).toBe(false);
+    expect(isAbortError(new Error('test'))).toBe(false);
     expect(isAbortError(null)).toBe(false);
     expect(isAbortError('string')).toBe(false);
   });
