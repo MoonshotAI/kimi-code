@@ -27,7 +27,7 @@ This page documents the changes in each Kimi Code CLI release.
 - web: Fix the Content-Security-Policy on non-loopback server binds blocking the web UI's theme bootstrap script and bundled fonts.
 - Fix sessions failing to be created when the workspace directory is given through a symlink.
 - Fix the CLI exiting unexpectedly when reading an image from the clipboard fails; it now falls back to pasting text.
-- web: Fix completed background subagents losing their final output after a session reload, and retry the output backfill when a transient fetch failure occurs.
+- web: Fix completed background subagents losing their final output after a session reload.
 - web: Fix Enter not confirming modal confirmation dialogs in dev builds; the dialog now stays open with a loading state until the action completes.
 - web: Fix a background subagent showing up as two identical rows in the agents dock panel during streaming.
 - Fix the diagnostic log missing the actual error when the CLI exits unexpectedly.
