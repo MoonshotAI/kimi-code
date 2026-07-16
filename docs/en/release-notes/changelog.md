@@ -8,7 +8,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ## Fork Changes (2026-07-16)
 
-These are custom modifications on top of upstream 0.24.2.
+These are custom modifications on top of upstream 0.25.0.
 
 ### Performance & Rust Native
 
@@ -29,7 +29,7 @@ These are custom modifications on top of upstream 0.24.2.
 
 ### Infrastructure
 
-- Merge upstream v0.23.6 → v0.24.2 (158 commits, 2205 files, +277K/-32K lines).
+- Merge upstream v0.23.6 → v0.25.0 (one merge commit, 1 new upstream commit on top of already-cherry-picked fixes).
 - Keep fork customizations: packages/server/, i18n, Rust optimizations, WSL compatibility.
 
 ## 0.24.2 (2026-07-15)
