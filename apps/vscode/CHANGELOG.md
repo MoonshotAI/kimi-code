@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.6.1
+
+### Fixed
+
+- The **Sign in** action in the settings (gear) menu now actually starts the
+  Kimi login flow and shows an error toast when sign-in fails, instead of
+  silently doing nothing.
+
 ## 0.6.0
 
 ### Breaking
