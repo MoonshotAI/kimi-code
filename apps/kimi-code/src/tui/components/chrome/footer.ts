@@ -3,7 +3,7 @@
  *
  * Layout:
  *   Line 1: [yolo] [plan] <model> <cwd>  <git-badge>  <shortcut hints>
- *   Line 2: context: XX.X% (tokens/max)
+ *   Line 2: context: N% (tokens/max)
  */
 
 import type { Component } from '@moonshot-ai/pi-tui';
@@ -23,7 +23,11 @@ import {
   type GitStatus,
   type GitStatusCache,
 } from '#/utils/git/git-status';
-import { safeUsageRatio } from '#/utils/usage/usage-format';
+import {
+  formatTokenCount,
+  usagePercent,
+  usagePercentFromRatio,
+} from '#/utils/usage/usage-format';
 
 const MAX_CWD_SEGMENTS = 3;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
@@ -154,22 +158,18 @@ function shortenCwd(path: string): string {
   return `…/${tail}`;
 }
 
-function formatTokenCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
-
-function safeUsage(usage: number): number {
-  return safeUsageRatio(usage);
-}
-
+/**
+ * Footer context readout. Percent comes from the exact token counts when
+ * both are known (the ratio can lag a step behind); otherwise it falls
+ * back to the precomputed ratio. Counts use the shared 1024-based
+ * formatter.
+ */
 function formatContextStatus(usage: number, tokens?: number, maxTokens?: number): string {
-  const pct = `${(safeUsage(usage) * 100).toFixed(1)}%`;
-  if (maxTokens && maxTokens > 0 && tokens !== undefined) {
-    return `context: ${pct} (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
+  if (maxTokens !== undefined && maxTokens > 0 && tokens !== undefined) {
+    const pct = String(usagePercent(tokens, maxTokens));
+    return `context: ${pct}% (${formatTokenCount(tokens)}/${formatTokenCount(maxTokens)})`;
   }
-  return `context: ${pct}`;
+  return `context: ${String(usagePercentFromRatio(usage))}%`;
 }
 
 export function formatFooterGitBadge(status: GitStatus, colors: ColorPalette): string {

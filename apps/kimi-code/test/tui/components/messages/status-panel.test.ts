@@ -59,8 +59,8 @@ describe('status panel report lines', () => {
     expect(output).toContain('Session      ses-1');
     expect(output).toContain('Title        Implement status');
     expect(output).toContain('Context window');
-    expect(output).toContain('25.0%');
-    expect(output).toContain('(3.0k / 12.0k)');
+    expect(output).toContain('25%');
+    expect(output).toContain('(2.9k / 11.7k)');
     expect(output).toContain('Plan usage');
     expect(output).toContain('8% used');
     expect(output).not.toContain('Account');
