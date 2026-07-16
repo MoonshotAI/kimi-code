@@ -14,7 +14,7 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Polish
 
-- web: Show full diagnostics for model request failures with expandable details and copy support, instead of a bare "Connection error" toast.
+- web: Show full diagnostics for model request failures.
 - Apply official Anthropic effort profiles and a 128k output fallback for unknown models, and preserve compatible-provider thinking history across session resumes and model switches.
 - Report crash telemetry for unhandled promise rejections, so exits they cause are no longer invisible.
 

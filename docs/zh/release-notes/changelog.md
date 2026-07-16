@@ -14,7 +14,7 @@ outline: 2
 
 ### 优化
 
-- web: 模型请求失败时展示完整诊断信息，支持展开详情与一键复制，不再只是简单的 "Connection error" 提示。
+- web: 模型请求失败时展示完整诊断信息。
 - 应用 Anthropic 官方 effort 配置，未知模型回退到 128k 输出上限；兼容供应商的 thinking 历史在会话恢复与模型切换后保留。
 - 上报未处理的 Promise rejection 崩溃遥测，此类异常导致的退出不再无迹可寻。
 
