@@ -325,20 +325,6 @@ function shouldPreserveUnsignedThinking(model: string): boolean {
   );
 }
 
-function shouldBackfillPreservedThinking(
-  model: string,
-  thinking: MessageCreateParams['thinking'] | undefined,
-  contextManagement: AnthropicContextManagement | undefined,
-): boolean {
-  return (
-    shouldPreserveUnsignedThinking(model) &&
-    thinking?.type !== 'disabled' &&
-    contextManagement?.edits.some(
-      (edit) => edit.type === CLEAR_THINKING_EDIT && edit.keep === 'all',
-    ) === true
-  );
-}
-
 /**
  * Content block types that support cache_control injection.
  */
@@ -497,11 +483,7 @@ function toolResultToBlock(toolCallId: string, content: ContentPart[]): ToolResu
     content: blocks,
   } as ToolResultBlockParam;
 }
-function convertMessage(
-  message: Message,
-  model: string,
-  backfillPreservedThinking: boolean,
-): MessageParam {
+function convertMessage(message: Message, model: string): MessageParam {
   const role = message.role;
 
   // system role -> <system>...</system> wrapped user message
@@ -527,16 +509,12 @@ function convertMessage(
 
   // user or assistant
   const blocks: ContentBlockParam[] = [];
-  let hasThinkingPart = false;
-  let lastUnsignedThinkingBlockIndex: number | undefined;
-  let hasNonEmptyEmittedThinking = false;
   for (const part of message.content) {
     if (part.type === 'text') {
       blocks.push({ type: 'text', text: part.text } satisfies TextBlockParam);
     } else if (part.type === 'image_url') {
       blocks.push(imageUrlPartToAnthropic(part.imageUrl.url) as unknown as ContentBlockParam);
     } else if (part.type === 'think') {
-      hasThinkingPart = true;
       // ThinkPart -> ThinkingBlockParam.
       //
       // Signed: emit the block with its signature. api.anthropic.com requires a
@@ -556,11 +534,8 @@ function convertMessage(
           thinking: part.think,
           signature: part.encrypted,
         } satisfies ThinkingBlockParam);
-        hasNonEmptyEmittedThinking ||= part.think.length > 0;
       } else if (shouldPreserveUnsignedThinking(model)) {
-        lastUnsignedThinkingBlockIndex = blocks.length;
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
-        hasNonEmptyEmittedThinking ||= part.think.length > 0;
       }
     } else if (part.type === 'video_url') {
       blocks.push(videoUrlPartToAnthropic(part.videoUrl.url) as unknown as ContentBlockParam);
@@ -570,23 +545,6 @@ function convertMessage(
       if (!(last?.type === 'text' && last.text === placeholder)) {
         blocks.push({ type: 'text', text: placeholder } satisfies TextBlockParam);
       }
-    }
-  }
-
-  if (role === 'assistant' && backfillPreservedThinking) {
-    // Some compatible endpoints require every replayed assistant message to
-    // carry non-empty thinking. Keep the placeholder wire-only, and never
-    // alter signed blocks because their text is covered by the signature.
-    if (!hasThinkingPart) {
-      blocks.unshift({ type: 'thinking', thinking: ' ' } as unknown as ThinkingBlockParam);
-    } else if (
-      lastUnsignedThinkingBlockIndex !== undefined &&
-      !hasNonEmptyEmittedThinking
-    ) {
-      blocks[lastUnsignedThinkingBlockIndex] = {
-        type: 'thinking',
-        thinking: ' ',
-      } as unknown as ThinkingBlockParam;
     }
   }
 
@@ -1006,12 +964,6 @@ export class AnthropicChatProvider implements ChatProvider {
         ]
       : undefined;
 
-    const backfillPreservedThinking = shouldBackfillPreservedThinking(
-      this._model,
-      this._generationKwargs.thinking,
-      this._generationKwargs.contextManagement,
-    );
-
     // Convert messages, then merge consecutive user messages into one. Strict
     // Anthropic-compatible backends reject consecutive user messages with HTTP
     // 400 ("roles must alternate"), and api.anthropic.com concatenates them
@@ -1031,7 +983,7 @@ export class AnthropicChatProvider implements ChatProvider {
         history.filter((msg) => !isToolDeclarationOnlyMessage(msg)),
         ANTHROPIC_TOOL_CALL_ID_POLICY,
       )
-        .map((msg) => convertMessage(msg, this._model, backfillPreservedThinking))
+        .map((msg) => convertMessage(msg, this._model))
         .filter(shouldKeepConvertedMessage),
       {
         isUser: (message) => message.role === 'user',

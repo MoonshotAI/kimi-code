@@ -437,7 +437,7 @@ describe('withThinkingKeep (context_management)', () => {
     expect(body['betas']).toContain('context-management-2025-06-27');
   });
 
-  it('backfills non-empty thinking when compatible text history is replayed with keep all', async () => {
+  it('replays compatible text history without injecting thinking when keep all is active', async () => {
     const compatibleHistory: Message[] = [
       { role: 'user', content: [{ type: 'text', text: 'Hi' }], toolCalls: [] },
       {
@@ -455,14 +455,11 @@ describe('withThinkingKeep (context_management)', () => {
 
     expect(messages[1]).toEqual({
       role: 'assistant',
-      content: [
-        { type: 'thinking', thinking: ' ' },
-        { type: 'text', text: 'Hello' },
-      ],
+      content: [{ type: 'text', text: 'Hello' }],
     });
   });
 
-  it('backfills non-empty thinking before a compatible assistant tool call with keep all', async () => {
+  it('replays a compatible assistant tool call without injecting thinking when keep all is active', async () => {
     const compatibleHistory: Message[] = [
       {
         role: 'assistant',
@@ -481,7 +478,6 @@ describe('withThinkingKeep (context_management)', () => {
     expect(messages[0]).toEqual({
       role: 'assistant',
       content: [
-        { type: 'thinking', thinking: ' ' },
         {
           type: 'tool_use',
           id: 'call_1',
@@ -493,7 +489,7 @@ describe('withThinkingKeep (context_management)', () => {
     });
   });
 
-  it('makes an existing unsigned empty thinking block non-empty when keep all is active', async () => {
+  it('preserves an existing unsigned empty thinking block unchanged when keep all is active', async () => {
     const compatibleHistory: Message[] = [
       {
         role: 'assistant',
@@ -513,13 +509,13 @@ describe('withThinkingKeep (context_management)', () => {
     expect(messages[0]).toEqual({
       role: 'assistant',
       content: [
-        { type: 'thinking', thinking: ' ' },
+        { type: 'thinking', thinking: '' },
         { type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } },
       ],
     });
   });
 
-  it('makes only the last unsigned block non-empty when every unsigned block is empty', async () => {
+  it('preserves all unsigned blocks unchanged when every one is empty', async () => {
     const compatibleHistory: Message[] = [
       {
         role: 'assistant',
@@ -540,12 +536,12 @@ describe('withThinkingKeep (context_management)', () => {
 
     expect(messages[0]!.content).toEqual([
       { type: 'thinking', thinking: '' },
-      { type: 'thinking', thinking: ' ' },
+      { type: 'thinking', thinking: '' },
       { type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } },
     ]);
   });
 
-  it('backfills each empty assistant message independently when keep all is active', async () => {
+  it('replays each empty assistant message without injecting thinking when keep all is active', async () => {
     const compatibleHistory: Message[] = [
       { role: 'user', content: [{ type: 'text', text: 'First' }], toolCalls: [] },
       {
@@ -569,8 +565,8 @@ describe('withThinkingKeep (context_management)', () => {
     );
 
     expect([messages[1]!.content[0], messages[3]!.content[0]]).toEqual([
-      { type: 'thinking', thinking: ' ' },
-      { type: 'thinking', thinking: ' ' },
+      { type: 'text', text: 'First response' },
+      { type: 'text', text: 'Second response' },
     ]);
   });
 
@@ -624,7 +620,7 @@ describe('withThinkingKeep (context_management)', () => {
     ]);
   });
 
-  it('makes the unsigned block non-empty when signed and unsigned thinking are empty', async () => {
+  it('preserves the unsigned empty block when signed and unsigned thinking are empty', async () => {
     const compatibleHistory: Message[] = [
       {
         role: 'assistant',
@@ -645,7 +641,7 @@ describe('withThinkingKeep (context_management)', () => {
 
     expect(messages[0]!.content).toEqual([
       { type: 'thinking', thinking: '', signature: 'signature' },
-      { type: 'thinking', thinking: ' ' },
+      { type: 'thinking', thinking: '' },
       { type: 'text', text: 'Hello', cache_control: { type: 'ephemeral' } },
     ]);
   });

@@ -157,10 +157,7 @@ function convertMessage(message: Message, preservedThinkingEnabled: boolean): Op
   }
 
   if (hasReasoningPart || (preservedThinkingEnabled && message.role === 'assistant')) {
-    result.reasoning_content =
-      preservedThinkingEnabled && message.role === 'assistant' && reasoningContent.length === 0
-        ? ' '
-        : reasoningContent;
+    result.reasoning_content = reasoningContent;
   }
 
   if (message.tools !== undefined && message.tools.length > 0) {
