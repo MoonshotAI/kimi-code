@@ -20,7 +20,7 @@ describe('buildGoalCompletionMessage', () => {
     const text = buildGoalCompletionMessage(snapshot());
     expect(text).toContain('Goal complete — all tests pass.');
     expect(text).toContain('3 turns');
-    expect(text).toContain('12.5k tokens');
+    expect(text).toContain('12.2k tokens');
     expect(text).toContain('4m20s');
   });
 
