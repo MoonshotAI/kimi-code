@@ -376,7 +376,7 @@ onUnmounted(() => document.removeEventListener('keydown', handleKeydown));
 }
 .apath {
   color: var(--color-text);
-  font: var(--text-sm) var(--font-mono);
+  font: var(--text-sm) var(--font-ui);
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;

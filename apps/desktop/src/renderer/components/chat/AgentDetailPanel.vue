@@ -79,11 +79,11 @@ function foldCount(group: ProgressGroup): number {
 
 function phaseLabel(phase: AgentMember['phase']): string {
   switch (phase) {
-    case 'queued': return 'Queued';
-    case 'working': return 'Working';
-    case 'suspended': return 'Suspended';
-    case 'completed': return 'Completed';
-    case 'failed': return 'Failed';
+    case 'queued': return t('tools.swarm.phaseQueued');
+    case 'working': return t('tools.swarm.phaseWorking');
+    case 'suspended': return t('tools.swarm.phaseSuspended');
+    case 'completed': return t('tools.swarm.phaseCompleted');
+    case 'failed': return t('tools.swarm.phaseFailed');
   }
 }
 
@@ -166,6 +166,9 @@ watch(
   background: var(--color-bg);
 }
 .ap-phase { flex: none; }
+.ap :deep(.ui-panel-header__sub) {
+  font-family: var(--font-ui);
+}
 
 .ap-body {
   flex: 1;
@@ -176,8 +179,8 @@ watch(
   color: var(--color-text-muted);
 }
 .ap-type {
-  font: var(--text-xs) var(--font-mono);
-  color: var(--color-text-muted);
+  font: var(--weight-section-label) var(--text-base) var(--font-ui);
+  color: var(--color-text);
   margin-bottom: 8px;
 }
 .ap-reason {
@@ -190,7 +193,7 @@ watch(
 .ap-field-label {
   display: block;
   color: var(--color-text-muted);
-  font: var(--text-xs) var(--font-mono);
+  font: var(--text-xs) var(--font-ui);
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-bottom: 4px;
@@ -208,7 +211,7 @@ watch(
   min-width: 0;
 }
 .ap-live {
-  font: var(--text-base)/var(--leading-relaxed) var(--font-mono);
+  font: var(--text-base)/var(--leading-relaxed) var(--font-ui);
   color: var(--color-text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -221,6 +224,7 @@ watch(
   align-items: baseline;
   gap: 6px;
   min-width: 0;
+  font-family: var(--font-ui);
   font-weight: var(--weight-medium);
   color: var(--color-text);
   overflow-wrap: anywhere;

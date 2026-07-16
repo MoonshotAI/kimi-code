@@ -41,5 +41,8 @@ export default {
   searchPlaceholder: '搜索会话',
   search: '搜索',
   searchHint: '↑↓ 选择 · ↵ 打开 · Esc 关闭',
+  searchHintSelect: '选择',
+  searchHintOpen: '打开',
+  searchHintClose: '关闭',
   searchNoResults: '没有匹配的会话',
 };

@@ -13,7 +13,8 @@ import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
 import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel } from '../../api/types';
-import { Button, Dialog, SegmentedControl, Select, Switch, Tooltip } from '@moonshot-ai/web-ui';
+import type { IconName } from '../../lib/icons';
+import { Button, Dialog, Icon, IconButton, SegmentedControl, Select, Switch, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -62,16 +63,40 @@ const emit = defineEmits<{
   close: [];
 }>();
 
+const uiFontSizeDraft = ref(String(props.uiFontSize));
+
+watch(
+  () => props.uiFontSize,
+  (size) => {
+    uiFontSizeDraft.value = String(size);
+  },
+);
+
+function setUiFontSize(size: number): void {
+  const next = Math.min(20, Math.max(12, size));
+  uiFontSizeDraft.value = String(next);
+  if (next !== props.uiFontSize) emit('setUiFontSize', next);
+}
+
+function commitUiFontSize(): void {
+  const value = Number(uiFontSizeDraft.value.trim());
+  if (!Number.isInteger(value) || value < 12 || value > 20) {
+    uiFontSizeDraft.value = String(props.uiFontSize);
+    return;
+  }
+  setUiFontSize(value);
+}
+
 type SettingsTab = 'general' | 'agent' | 'account' | 'advanced' | 'archived';
 
 const activeTab = ref<SettingsTab>('general');
 
-const tabs: { id: SettingsTab; labelKey: string }[] = [
-  { id: 'general', labelKey: 'settings.tabs.general' },
-  { id: 'agent', labelKey: 'settings.tabs.agent' },
-  { id: 'account', labelKey: 'settings.tabs.account' },
-  { id: 'advanced', labelKey: 'settings.tabs.advanced' },
-  { id: 'archived', labelKey: 'settings.tabs.archived' },
+const tabs: { id: SettingsTab; labelKey: string; icon: IconName }[] = [
+  { id: 'general', labelKey: 'settings.tabs.general', icon: 'sliders' },
+  { id: 'agent', labelKey: 'settings.tabs.agent', icon: 'sparkles' },
+  { id: 'account', labelKey: 'settings.tabs.account', icon: 'user' },
+  { id: 'advanced', labelKey: 'settings.tabs.advanced', icon: 'tool' },
+  { id: 'archived', labelKey: 'settings.tabs.archived', icon: 'archive' },
 ];
 
 const daemonEndpoint = serverEndpointLabel();
@@ -135,6 +160,16 @@ const modelGroups = computed<Array<{ provider: string; options: ModelOption[] }>
   return Array.from(map.entries())
     .toSorted(([a], [b]) => a.localeCompare(b))
     .map(([provider, options]) => ({ provider, options }));
+});
+
+const defaultModelSelectOptions = computed(() => {
+  const options: Array<{ value: string; label: string; group?: string; disabled?: boolean }> = modelGroups.value.flatMap((group) =>
+    group.options.map((model) => ({ value: model.id, label: model.label, group: group.provider })),
+  );
+  if (!props.config?.defaultModel) {
+    options.unshift({ value: '', label: t('settings.noDefaultModel'), group: '', disabled: true });
+  }
+  return options;
 });
 
 const defaultPermissionMode = computed(() => {
@@ -263,6 +298,10 @@ const archiveWorkspaces = computed<string[]>(() => {
   for (const s of archivedItems.value) set.add(s.cwd);
   return Array.from(set).sort((a, b) => a.localeCompare(b));
 });
+const archiveWorkspaceSelectOptions = computed(() => [
+  { value: 'all', label: t('settings.archivedAllWorkspaces') },
+  ...archiveWorkspaces.value.map((workspace) => ({ value: workspace, label: workspace })),
+]);
 
 const filteredArchived = computed<AppSession[]>(() => {
   const q = archiveQuery.value.trim().toLowerCase();
@@ -311,7 +350,7 @@ function archiveTime(iso: string): string {
 </script>
 
 <template>
-  <Dialog :open="true" :close-on-esc="false" :title="t('settings.title')" size="xl" height="fixed" :padded="false" @close="emit('close')">
+  <Dialog :open="true" :close-on-esc="false" :aria-label="t('settings.title')" size="xl" height="fixed" :padded="false" @close="emit('close')">
     <div ref="dialogRef" class="sd">
       <nav class="settings-tabs" role="tablist" :aria-label="t('settings.title')">
         <button
@@ -324,17 +363,30 @@ function archiveTime(iso: string): string {
           :class="{ on: activeTab === tb.id }"
           @click="setTab(tb.id)"
         >
-          {{ t(tb.labelKey) }}
+          <Icon :name="tb.icon" size="md" />
+          <span>{{ t(tb.labelKey) }}</span>
         </button>
       </nav>
 
-      <div class="body">
+      <section class="settings-region">
+        <header class="settings-region-header">
+          <h2 class="settings-dialog-title">{{ t('settings.title') }}</h2>
+          <IconButton size="sm" :label="t('settings.close')" @click="emit('close')">
+            <Icon name="close" size="md" />
+          </IconButton>
+        </header>
+
+        <div class="body">
         <!-- General: Appearance + Notifications -->
         <section v-show="activeTab === 'general'" class="panel">
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.appearance') }}</h3>
+            <div class="settings-group">
             <div class="row">
-              <span class="rlabel">{{ t('theme.colorSchemeLabel') }}</span>
+              <span class="rlabel">
+                {{ t('theme.colorSchemeLabel') }}
+                <span class="hint">{{ t('settings.colorSchemeHint') }}</span>
+              </span>
               <SegmentedControl
                 :model-value="colorScheme"
                 :options="[
@@ -346,34 +398,61 @@ function archiveTime(iso: string): string {
               />
             </div>
             <div class="row">
-              <span class="rlabel">{{ t('theme.accentLabel') }}</span>
+              <span class="rlabel">
+                {{ t('theme.accentLabel') }}
+                <span class="hint">{{ t('settings.accentHint') }}</span>
+              </span>
               <SegmentedControl
                 :model-value="accent"
                 :options="[
-                  { value: 'blue', label: t('theme.accentBlue') },
-                  { value: 'mono', label: t('theme.accentBlack') },
+                  { value: 'blue', label: t('theme.accentBlue'), swatch: 'var(--color-theme-blue)' },
+                  { value: 'mono', label: t('theme.accentBlack'), swatch: 'var(--color-theme-black)' },
                 ]"
                 @update:model-value="emit('setAccent', $event as Accent)"
               />
             </div>
-            <div class="row">
-              <span class="rlabel">{{ t('settings.uiFontSize') }}</span>
-              <label class="num-field">
+            <div class="row font-size-row">
+              <span class="rlabel">
+                {{ t('settings.uiFontSize') }}
+                <span class="hint">{{ t('settings.uiFontSizeHint') }}</span>
+              </span>
+              <div class="num-field" role="group" :aria-label="t('settings.uiFontSize')">
+                <button
+                  class="num-step"
+                  type="button"
+                  :aria-label="t('settings.decreaseUiFontSize')"
+                  :disabled="uiFontSize <= 12"
+                  @click="setUiFontSize(uiFontSize - 1)"
+                >
+                  <Icon name="minus" size="sm" />
+                </button>
                 <input
-                  class="num-input"
-                  type="number"
-                  min="12"
-                  max="20"
-                  step="1"
-                  :value="uiFontSize"
+                  v-model="uiFontSizeDraft"
+                  class="num-value"
+                  type="text"
+                  inputmode="numeric"
+                  maxlength="2"
                   :aria-label="t('settings.uiFontSize')"
-                  @input="emit('setUiFontSize', Number(($event.target as HTMLInputElement).value))"
+                  @blur="commitUiFontSize"
+                  @keydown.enter.prevent="commitUiFontSize"
                 />
                 <span class="num-unit">px</span>
-              </label>
+                <button
+                  class="num-step"
+                  type="button"
+                  :aria-label="t('settings.increaseUiFontSize')"
+                  :disabled="uiFontSize >= 20"
+                  @click="setUiFontSize(uiFontSize + 1)"
+                >
+                  <Icon name="plus" size="sm" />
+                </button>
+              </div>
             </div>
-            <div class="row">
-              <span class="rlabel">{{ t('sidebar.language') }}</span>
+            <div class="row language-row">
+              <span class="rlabel">
+                {{ t('sidebar.language') }}
+                <span class="hint">{{ t('settings.languageHint') }}</span>
+              </span>
               <LanguageSwitcher />
             </div>
             <div class="row">
@@ -387,13 +466,16 @@ function archiveTime(iso: string): string {
                 @update:model-value="emit('setConversationToc', $event)"
               />
             </div>
+            </div>
           </section>
 
-          <section class="sec">
+          <section class="sec notification-settings">
             <h3 class="sec-title">{{ t('settings.notifications') }}</h3>
+            <div class="settings-group">
             <div class="row">
               <span class="rlabel">
                 {{ t('settings.notifyOnComplete') }}
+                <span class="hint">{{ t('settings.notifyOnCompleteHint') }}</span>
                 <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
               </span>
               <Switch
@@ -406,6 +488,7 @@ function archiveTime(iso: string): string {
             <div class="row">
               <span class="rlabel">
                 {{ t('settings.notifyOnQuestion') }}
+                <span class="hint">{{ t('settings.notifyOnQuestionHint') }}</span>
                 <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
               </span>
               <Switch
@@ -418,6 +501,7 @@ function archiveTime(iso: string): string {
             <div class="row">
               <span class="rlabel">
                 {{ t('settings.notifyOnApproval') }}
+                <span class="hint">{{ t('settings.notifyOnApprovalHint') }}</span>
                 <span v-if="notifyPermission === 'denied'" class="hint">{{ t('settings.notifyDenied') }}</span>
               </span>
               <Switch
@@ -428,12 +512,16 @@ function archiveTime(iso: string): string {
               />
             </div>
             <div class="row">
-              <span class="rlabel">{{ t('settings.soundOnComplete') }}</span>
+              <span class="rlabel">
+                {{ t('settings.soundOnComplete') }}
+                <span class="hint">{{ t('settings.soundOnCompleteHint') }}</span>
+              </span>
               <Switch
                 :model-value="sound"
                 :label="t('settings.soundOnComplete')"
                 @update:model-value="emit('setSound', $event)"
               />
+            </div>
             </div>
           </section>
         </section>
@@ -442,8 +530,12 @@ function archiveTime(iso: string): string {
         <section v-show="activeTab === 'account'" class="panel">
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.account') }}</h3>
+            <div class="settings-group">
             <div class="row">
-              <span class="rlabel">{{ authReady ? 'managed:kimi-code' : t('sidebar.notSignedIn') }}</span>
+              <span class="rlabel">
+                {{ authReady ? 'managed:kimi-code' : t('sidebar.notSignedIn') }}
+                <span class="hint">{{ t('settings.accountHint') }}</span>
+              </span>
               <Tooltip :text="accountModel">
                 <span v-if="authReady && accountModel" class="rvalue">{{ accountModel }}</span>
               </Tooltip>
@@ -453,6 +545,7 @@ function archiveTime(iso: string): string {
               <Button v-if="authReady" variant="danger-soft" size="sm" @click="emit('logout')">{{ t('sidebar.signOut') }}</Button>
               <Button v-else variant="primary" size="sm" @click="emit('login')">{{ t('sidebar.signIn') }}</Button>
             </div>
+            </div>
           </section>
         </section>
 
@@ -461,9 +554,9 @@ function archiveTime(iso: string): string {
           <section class="sec">
             <div class="sec-head">
               <h3 class="sec-title">{{ t('settings.agentDefaults') }}</h3>
-              <span v-if="configSaving" class="saving">{{ t('settings.saving') }}</span>
             </div>
 
+            <div class="settings-group">
             <template v-if="config">
               <div class="row">
                 <span class="rlabel">
@@ -473,17 +566,10 @@ function archiveTime(iso: string): string {
                 <div v-if="modelGroups.length > 0" class="select-wrap">
                   <Select
                     :model-value="config.defaultModel ?? ''"
-                    :disabled="configSaving"
+                    :options="defaultModelSelectOptions"
                     :aria-label="t('settings.defaultModel')"
                     @update:model-value="setDefaultModel"
-                  >
-                    <option v-if="!config.defaultModel" value="" disabled>{{ t('settings.noDefaultModel') }}</option>
-                    <optgroup v-for="group in modelGroups" :key="group.provider" :label="group.provider">
-                      <option v-for="model in group.options" :key="model.id" :value="model.id">
-                        {{ model.label }}
-                      </option>
-                    </optgroup>
-                  </Select>
+                  />
                 </div>
                 <span v-else class="rvalue mono">{{ config.defaultModel ?? t('settings.noDefaultModel') }}</span>
               </div>
@@ -507,7 +593,6 @@ function archiveTime(iso: string): string {
                 </span>
                 <Switch
                   :model-value="thinkingEnabled()"
-                  :disabled="configSaving"
                   :label="t('settings.defaultThinking')"
                   @update:model-value="toggleDefaultThinking()"
                 />
@@ -520,7 +605,6 @@ function archiveTime(iso: string): string {
                 </span>
                 <Switch
                   :model-value="configBool(config.defaultPlanMode)"
-                  :disabled="configSaving"
                   :label="t('settings.defaultPlanMode')"
                   @update:model-value="toggleConfigBoolean('defaultPlanMode')"
                 />
@@ -533,7 +617,6 @@ function archiveTime(iso: string): string {
                 </span>
                 <Switch
                   :model-value="configBool(config.mergeAllAvailableSkills)"
-                  :disabled="configSaving"
                   :label="t('settings.mergeSkills')"
                   @update:model-value="toggleConfigBoolean('mergeAllAvailableSkills')"
                 />
@@ -543,6 +626,7 @@ function archiveTime(iso: string): string {
             <div v-else class="empty-config">
               {{ t('settings.configUnavailable') }}
             </div>
+            </div>
           </section>
         </section>
 
@@ -550,13 +634,20 @@ function archiveTime(iso: string): string {
         <section v-show="activeTab === 'advanced'" class="panel">
           <section class="sec">
             <h3 class="sec-title">{{ t('settings.advanced') }}</h3>
+            <div class="settings-group">
             <div class="row">
-              <span class="rlabel">{{ t('sidebar.daemon') }}</span>
-              <span class="rvalue mono">{{ daemonEndpoint }}</span>
+              <span class="rlabel">
+                {{ t('sidebar.daemon') }}
+                <span class="hint">{{ t('settings.daemonHint') }}</span>
+              </span>
+              <span class="rvalue">{{ daemonEndpoint }}</span>
             </div>
             <div class="row">
-              <span class="rlabel">{{ t('settings.serverVersion') }}</span>
-              <span class="rvalue mono">{{ serverVersion || '-' }}</span>
+              <span class="rlabel">
+                {{ t('settings.serverVersion') }}
+                <span class="hint">{{ t('settings.serverVersionHint') }}</span>
+              </span>
+              <span class="rvalue">{{ serverVersion || '-' }}</span>
             </div>
             <div v-if="config" class="row">
               <span class="rlabel">
@@ -574,9 +665,11 @@ function archiveTime(iso: string): string {
             <div class="row">
               <span class="rlabel">
                 {{ t('settings.exportLog') }}
+                <span class="hint">{{ t('settings.exportLogHint') }}</span>
                 <span v-if="!isTraceEnabled()" class="hint">{{ t('settings.logHint') }}</span>
               </span>
               <Button variant="secondary" size="sm" @click="exportLog">{{ t('settings.exportLogBtn') }}</Button>
+            </div>
             </div>
           </section>
         </section>
@@ -584,7 +677,6 @@ function archiveTime(iso: string): string {
         <!-- Archived sessions -->
         <section v-show="activeTab === 'archived'" class="panel">
           <div class="panel-head">
-            <div class="panel-kicker">Archived sessions</div>
             <h4 class="panel-title">{{ t('settings.archivedTitle') }}</h4>
             <p class="panel-desc">{{ t('settings.archivedDesc') }}</p>
           </div>
@@ -596,20 +688,18 @@ function archiveTime(iso: string): string {
             </label>
             <Select
               :model-value="archiveWsFilter"
+              :options="archiveWorkspaceSelectOptions"
               size="sm"
               :aria-label="t('settings.archivedAllWorkspaces')"
               @update:model-value="archiveWsFilter = $event as string"
-            >
-              <option value="all">{{ t('settings.archivedAllWorkspaces') }}</option>
-              <option v-for="ws in archiveWorkspaces" :key="ws" :value="ws">{{ ws }}</option>
-            </Select>
+            />
             <SegmentedControl
               size="sm"
               :model-value="archiveSort"
               :options="[
-                { value: 'archived-desc', label: t('settings.archivedSortArchived') },
-                { value: 'created-desc', label: t('settings.archivedSortCreated') },
-                { value: 'name-asc', label: t('settings.archivedSortName') },
+                { value: 'archived-desc', label: t('settings.archivedSortArchived'), icon: 'clock' },
+                { value: 'created-desc', label: t('settings.archivedSortCreated'), icon: 'calendar-schedule' },
+                { value: 'name-asc', label: t('settings.archivedSortName'), icon: 'sort' },
               ]"
               @update:model-value="archiveSort = $event as 'archived-desc' | 'created-desc' | 'name-asc'"
             />
@@ -623,7 +713,7 @@ function archiveTime(iso: string): string {
             <div v-if="groupedArchived.length > 0" class="archive-list">
               <section v-for="g in groupedArchived" :key="g.cwd" class="archive-card">
                 <div class="archive-workspace">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h6l2 2h10v9H3z" /><path d="M3 7V5h6l2 2" /></svg>
+                  <Icon name="folder-closed" size="md" />
                   <span class="path">{{ g.cwd }}</span>
                   <span class="count">{{ t('settings.archivedSessionsCount', { count: g.items.length }) }}</span>
                 </div>
@@ -633,7 +723,10 @@ function archiveTime(iso: string): string {
                       <div class="archive-name">{{ s.title }}</div>
                       <div class="archive-time">{{ t('settings.archivedAt', { time: archiveTime(s.updatedAt) }) }}</div>
                     </div>
-                    <Button variant="secondary" size="sm" @click="onRestore(s.id)">{{ t('settings.archivedRestore') }}</Button>
+                    <Button variant="secondary" size="sm" @click="onRestore(s.id)">
+                      <Icon name="undo" size="sm" />
+                      <span>{{ t('settings.archivedRestore') }}</span>
+                    </Button>
                   </div>
                 </div>
               </section>
@@ -644,24 +737,54 @@ function archiveTime(iso: string): string {
           </template>
         </section>
 
-      </div>
+        </div>
+      </section>
     </div>
   </Dialog>
 </template>
 
 <style scoped>
-.sd { display: flex; flex-direction: row; min-height: 0; height: 100%; }
+.sd {
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  height: 100%;
+  user-select: none;
+}
+.sd :is(input, textarea, [contenteditable='true']) {
+  user-select: text;
+}
+.settings-region { display: flex; flex: 1; min-width: 0; min-height: 0; flex-direction: column; }
+.settings-region-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 20px 22px 14px;
+}
+.settings-dialog-title {
+  margin: 0;
+  font-family: var(--font-ui);
+  font-size: var(--text-xl);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  color: var(--color-text);
+}
 
 .settings-tabs {
   display: flex;
   flex-direction: column;
   flex: none;
   width: 148px;
-  padding: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2);
   gap: 2px;
   overflow-y: auto;
+  background: var(--color-sidebar-bg);
 }
 .tab {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   text-align: left;
   padding: 8px 10px;
   border: none;
@@ -670,17 +793,17 @@ function archiveTime(iso: string): string {
   color: var(--color-text-muted);
   font-family: var(--font-ui);
   font-size: var(--text-base);
+  font-weight: var(--weight-ui-strong);
   cursor: pointer;
   transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
 }
 .tab:hover { background: var(--color-surface-sunken); color: var(--color-text); }
-.tab.on { background: var(--color-accent-soft); color: var(--color-accent); font-weight: var(--weight-medium); }
+.tab.on { background: var(--color-accent-soft); color: var(--color-accent); }
 .tab:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 
-.body { display: flex; flex-direction: column; overflow-y: auto; padding: var(--space-2) var(--space-5) var(--space-5) var(--space-6); flex: 1; min-width: 0; }
+.body { display: flex; flex-direction: column; overflow-y: auto; padding: var(--space-2) 32px var(--space-5); flex: 1; min-width: 0; }
 .panel { display: block; }
-.sec { padding: var(--space-4) 0; border-bottom: 1px solid var(--color-line); }
-.sec:last-child { border-bottom: none; }
+.sec { padding: var(--space-4) 0; }
 .sec-head {
   display: flex;
   align-items: center;
@@ -691,19 +814,13 @@ function archiveTime(iso: string): string {
 .sec-title {
   margin: 0 0 var(--space-3);
   font-family: var(--font-ui);
-  font-size: var(--text-xs);
+  font-size: var(--text-lg);
   font-weight: var(--weight-medium);
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-muted);
+  letter-spacing: 0;
+  color: var(--color-text);
 }
+.notification-settings { user-select: none; }
 .sec-head .sec-title { margin-bottom: 0; }
-.saving {
-  flex: none;
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-}
 .row {
   display: flex;
   align-items: center;
@@ -712,13 +829,38 @@ function archiveTime(iso: string): string {
   min-height: 38px;
   padding: var(--space-1) 0;
 }
+.settings-group {
+  overflow: hidden;
+  margin-inline: calc(-1 * var(--space-4));
+  border: 0.5px solid var(--color-line);
+  border-radius: var(--radius-xl);
+  background: var(--color-bg);
+}
+.settings-group:has(.ui-select.is-open) {
+  position: relative;
+  z-index: var(--z-dropdown);
+  overflow: visible;
+}
+.settings-group > .row {
+  min-height: 52px;
+  padding: var(--space-4);
+  border-top: 0.5px solid var(--color-line);
+}
+.settings-group > .row:first-child { border-top: none; }
+.settings-group > .actions {
+  margin: 0;
+  padding: var(--space-3);
+  border-top: 0.5px solid var(--color-line);
+}
+.settings-group > .empty-config { padding: var(--space-3); }
 .rlabel {
   font-family: var(--font-ui);
   font-size: var(--text-base);
   color: var(--color-text);
+  font-weight: var(--weight-option-label);
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 0;
 }
 .rvalue {
   font-family: var(--font-ui);
@@ -730,35 +872,70 @@ function archiveTime(iso: string): string {
   white-space: nowrap;
 }
 .rvalue.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
-.hint { font-family: var(--font-ui); font-size: var(--text-xs); color: var(--color-text-faint); }
+.hint { font-family: var(--font-ui); font-size: var(--text-xs); line-height: var(--leading-tight); color: var(--color-text-faint); }
 
+/* Settings controls use the same fine hairline as the dialog's surrounding
+   chrome, including filled controls such as switches. */
+.body :deep(.ui-seg),
+.body :deep(.ui-select__trigger),
+.body :deep(.ui-button),
+.num-field,
+.archive-search {
+  border-width: 0.5px;
+}
 .num-field {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
   flex: none;
-  padding: 0 var(--space-3);
-  height: 38px;
-  border: 1px solid var(--color-line);
+  align-self: center;
+  box-sizing: border-box;
+  /* Centre against the row's visible edges; its 0.5px top divider otherwise
+     shifts the flex content down by a quarter pixel. */
+  transform: translateY(-0.25px);
+  height: 28px;
+  padding: 0;
+  overflow: hidden;
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   background: var(--color-surface-raised);
   transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
 }
 .num-field:hover { border-color: var(--color-line-strong); }
 .num-field:focus-within { border-color: var(--color-accent); box-shadow: var(--p-focus-ring); }
-.num-input {
-  width: 48px;
+.num-step {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 100%;
+  padding: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.num-step:first-child { border-right: 0.5px solid var(--color-line); }
+.num-step:last-child { border-left: 0.5px solid var(--color-line); }
+.num-step:hover:not(:disabled) { background: var(--color-surface-sunken); color: var(--color-text); }
+.num-step:focus-visible { background: var(--color-accent-soft); color: var(--color-accent); }
+.num-step:disabled { opacity: 0.4; cursor: not-allowed; }
+.num-value {
+  width: 20px;
+  padding: 0;
   border: none;
   outline: none;
   background: transparent;
   color: var(--color-text);
-  font-family: var(--font-mono);
-  font-size: var(--text-base);
-  text-align: right;
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  text-align: center;
 }
 .num-unit {
+  padding: 0 var(--space-2) 0 var(--space-1);
   color: var(--color-text-muted);
-  font-family: var(--font-mono);
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
 }
 
@@ -775,6 +952,7 @@ function archiveTime(iso: string): string {
 
 @media (max-width: 640px) {
   .sd { flex-direction: column; }
+  .settings-region-header { padding: var(--space-3); }
   .settings-tabs {
     flex-direction: row;
     width: auto;
@@ -782,11 +960,14 @@ function archiveTime(iso: string): string {
     gap: var(--space-1);
     overflow-x: auto;
   }
+  .body { padding-inline: var(--space-3); }
   .tab { white-space: nowrap; flex: none; }
   .row {
     align-items: flex-start;
     flex-direction: column;
   }
+  .settings-group > .font-size-row { height: auto; }
+  .settings-group { margin-inline: 0; }
   .select-wrap {
     width: 100%;
     max-width: none;
@@ -795,7 +976,6 @@ function archiveTime(iso: string): string {
 /* Archived-sessions tab */
 .setting-card { border: 1px solid var(--color-line); border-radius: var(--radius-xl); overflow: hidden; background: var(--color-bg); }
 .panel-head { margin-bottom: var(--space-4); }
-.panel-kicker { font-size: var(--text-xs); letter-spacing: 0.05em; text-transform: uppercase; color: var(--color-text-faint); margin-bottom: var(--space-1); }
 .panel-title { margin: 0 0 var(--space-2); font-family: var(--font-ui); font-size: var(--text-2xl); font-weight: var(--weight-semibold); letter-spacing: -0.01em; color: var(--color-text); }
 .panel-desc { margin: 0; font-family: var(--font-ui); font-size: var(--text-sm); line-height: var(--leading-normal); color: var(--color-text-muted); max-width: 560px; }
 .archive-toolbar { display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-4); flex-wrap: wrap; }
@@ -807,14 +987,14 @@ function archiveTime(iso: string): string {
 .archive-card .setting-card { margin-bottom: 0; }
 .archive-workspace { display: flex; align-items: center; gap: var(--space-2); margin: 0 2px var(--space-2); color: var(--color-text-muted); font-size: var(--text-sm); font-weight: var(--weight-medium); }
 .archive-workspace svg { width: 16px; height: 16px; color: var(--color-text-faint); flex: none; }
-.archive-workspace .path { font-family: var(--font-mono); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.archive-workspace .count { margin-left: auto; color: var(--color-text-faint); font-weight: var(--weight-regular); font-size: var(--text-xs); flex: none; }
+.archive-workspace .path { font-family: var(--font-ui); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.archive-workspace .count { margin-left: auto; color: var(--color-text-faint); font-weight: var(--weight-medium); font-size: var(--text-xs); flex: none; }
 .archive-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-3); align-items: center; padding: var(--space-3) var(--space-4); border-top: 1px solid var(--color-line); }
 .archive-row:first-child { border-top: none; }
 .archive-row:hover { background: var(--color-surface-sunken); }
 .archive-meta { min-width: 0; }
 .archive-name { font-size: var(--text-base); font-weight: var(--weight-medium); color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.archive-time { margin-top: 2px; font-size: var(--text-xs); color: var(--color-text-faint); font-family: var(--font-mono); }
+.archive-time { margin-top: 2px; font-size: var(--text-xs); color: var(--color-text-faint); font-family: var(--font-ui); }
 .archive-draining { margin-bottom: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--color-accent-soft); color: var(--color-accent-hover); font-size: var(--text-sm); }
 .archive-empty { padding: var(--space-6) var(--space-4); border: 1px solid var(--color-line); border-radius: var(--radius-xl); color: var(--color-text-faint); font-size: var(--text-sm); text-align: center; background: var(--color-bg); }
 @media (max-width: 640px) {

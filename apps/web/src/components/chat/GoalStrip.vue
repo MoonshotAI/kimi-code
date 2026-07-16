@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppGoal } from '../../api/types';
-import { Badge, Button, Card, Icon } from '@moonshot-ai/web-ui';
+import { Button, Card, Icon } from '@moonshot-ai/web-ui';
 import { useConfirmDialog } from '../../composables/useConfirmDialog';
 import { formatTokens } from '../../lib/formatTokens';
 
@@ -65,11 +65,9 @@ async function onCancel(): Promise<void> {
         <Icon class="goal-icon" name="target" size="md" />
         <span class="goal-kicker">{{ t('status.goalLabel') }}</span>
         <span class="goal-objective" :class="{ 'expanded-hidden': expanded }">{{ goal.objective }}</span>
-        <Badge
-          :variant="goal.status === 'active' ? 'success' : goal.status === 'blocked' ? 'danger' : goal.status === 'paused' ? 'warning' : 'neutral'"
-          size="sm"
-          class="goal-status"
-        >{{ goalStatusLabel(goal.status) }}</Badge>
+        <span class="goal-status" :class="`goal-status--${goal.status}`">
+          {{ goalStatusLabel(goal.status) }}
+        </span>
         <span v-if="goal.budget.tokenBudget !== null" class="goal-progress" aria-hidden="true">
           <span class="goal-progress-fill" :style="{ width: `${tokenPct}%` }"></span>
         </span>
@@ -80,7 +78,10 @@ async function onCancel(): Promise<void> {
     <template #default>
       <div class="goal-full">{{ goal.objective }}</div>
       <div v-if="goal.completionCriterion" class="goal-criterion">
-        <span>Done when</span>
+        <span class="goal-criterion-label">
+          <Icon name="check-list" size="sm" />
+          {{ t('status.goalDoneWhen') }}
+        </span>
         <p>{{ goal.completionCriterion }}</p>
       </div>
     </template>
@@ -111,8 +112,8 @@ async function onCancel(): Promise<void> {
           <Button
             v-if="goal.status === 'paused' || goal.status === 'blocked'"
             size="sm"
-            variant="primary"
-            class="goal-action"
+            variant="ghost"
+            class="goal-action goal-action--resume"
             @click.stop="emit('controlGoal', 'resume')"
           >
             <Icon name="play" size="md" />
@@ -120,8 +121,8 @@ async function onCancel(): Promise<void> {
           </Button>
           <Button
             size="sm"
-            variant="danger-soft"
-            class="goal-action"
+            variant="ghost"
+            class="goal-action goal-action--cancel"
             @click.stop="onCancel"
           >
             <Icon name="close" size="md" />
@@ -139,9 +140,10 @@ async function onCancel(): Promise<void> {
   --composer-send-inset: var(--space-2);
   --goal-corner-radius: calc((var(--composer-send-size) / 2) + var(--composer-send-inset) + var(--space-3));
   margin: var(--space-2) var(--space-4) 0;
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-input);
 }
 .goal-strip.ui-card {
+  border-width: 0.5px;
   border-radius: var(--goal-corner-radius);
   corner-shape: superellipse(1.5);
 }
@@ -223,7 +225,13 @@ async function onCancel(): Promise<void> {
 }
 .goal-status {
   flex: none;
+  color: var(--color-text-muted);
+  font: var(--text-xs)/var(--leading-normal) var(--font-ui);
+  font-weight: var(--weight-medium);
 }
+.goal-status--active { color: var(--color-success); }
+.goal-status--paused { color: var(--color-warning); }
+.goal-status--blocked { color: var(--color-danger); }
 .goal-progress {
   width: 54px;
   height: 4px;
@@ -252,20 +260,31 @@ async function onCancel(): Promise<void> {
   color: var(--color-text);
   font-size: var(--text-base);
   line-height: var(--leading-normal);
+  max-height: 15em;
+  overflow-y: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 .goal-criterion {
   margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 0.5px solid var(--color-line);
   color: var(--color-text-muted);
-  font: var(--text-xs) var(--font-mono);
-  text-transform: uppercase;
+}
+.goal-criterion-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--color-text);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-weight: 600;
+  line-height: var(--leading-normal);
 }
 .goal-criterion p {
   margin: var(--space-1) 0 0;
   color: var(--color-text-muted);
-  font: var(--text-xs)/var(--leading-normal) var(--font-ui);
-  text-transform: none;
+  font: var(--text-base)/var(--leading-normal) var(--font-ui);
 }
 .goal-footer {
   display: flex;
@@ -317,6 +336,12 @@ async function onCancel(): Promise<void> {
 }
 .goal-action :deep(.ui-button__content) {
   gap: var(--space-1);
+}
+.goal-action--resume {
+  color: var(--color-accent);
+}
+.goal-action--cancel {
+  color: var(--color-danger);
 }
 @media (max-width: 640px) {
   .goal-strip {

@@ -11,6 +11,8 @@ import Icon from './Icon.vue';
 const props = withDefaults(defineProps<{
   open: boolean;
   title?: string;
+  /** Accessible name when a consumer renders its own in-body heading. */
+  ariaLabel?: string;
   description?: string;
   closeOnOverlay?: boolean;
   closeOnEsc?: boolean;
@@ -140,6 +142,7 @@ onBeforeUnmount(() => {
         :class="[`ui-dialog--${size}`, { 'ui-dialog--flush': !padded, 'ui-dialog--fixed-height': height === 'fixed' }]"
         role="dialog"
         aria-modal="true"
+        :aria-label="ariaLabel ?? title"
         tabindex="-1"
       >
         <div v-if="title || $slots.head" class="ui-dialog__head">
@@ -169,7 +172,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   padding: var(--space-6);
-  background: rgba(13, 17, 23, 0.45);
+  background: rgba(13, 17, 23, 0.28);
   animation: kimi-dialog-overlay-in var(--duration-base) var(--ease-out);
 }
 @keyframes kimi-dialog-overlay-in {

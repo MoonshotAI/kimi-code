@@ -6,7 +6,7 @@
 //   icon-from-registry (hand-written <svg>; Icon/Spinner/MoonSpinner + the
 //   32x22 brand mark exempt), no-emoji-icon (moon in MoonSpinner exempt),
 //   no-hardcoded-hex (DiffView/DiffLines/Terminal domain colors + var()
-//   fallbacks exempt), no-hardcoded-font (token definitions exempt),
+//   fallbacks exempt), no-hardcoded-font (token and @font-face definitions exempt),
 //   radius-from-scale, z-from-scale, weight-from-scale.
 //
 // Default mode: report a baseline and exit 0 (warnings only). Pass --strict
@@ -117,11 +117,13 @@ function checkFile(abs) {
 
   for (const { text, baseLine } of blocks) {
     const lines = text.split('\n');
+    let inFontFace = false;
     for (let i = 0; i < lines.length; i++) {
       const raw = lines[i];
       const line = baseLine + i;
       const trimmed = raw.trim();
       const isTokenDef = /^\s*--[\w-]+\s*:/.test(raw);
+      if (/^@font-face\b/i.test(trimmed)) inFontFace = true;
 
       // no-gradient-text
       if (/\b(?:linear|radial|conic)-gradient\s*\(/i.test(raw)) {
@@ -133,8 +135,9 @@ function checkFile(abs) {
         add('no-glassmorphism', file, line, trimmed.slice(0, 80));
       }
 
-      // no-hardcoded-font (skip token definitions)
-      if (/font-family\s*:/i.test(raw) && !isTokenDef) {
+      // no-hardcoded-font (skip token definitions and the family declaration
+      // that gives a bundled font asset its CSS name)
+      if (/font-family\s*:/i.test(raw) && !isTokenDef && !inFontFace) {
         const val = raw.split(':').slice(1).join(':');
         if (!/var\(/.test(val) && /["']/.test(val)) {
           add('no-hardcoded-font', file, line, trimmed.slice(0, 80));
@@ -176,12 +179,14 @@ function checkFile(abs) {
 
       // weight-from-scale
       const wMatch = raw.match(/font-weight\s*:\s*([^;}]+)/i);
-      if (wMatch) {
+      if (wMatch && !inFontFace) {
         const v = wMatch[1].trim();
         if (!(v.startsWith('var(') || WEIGHT_OK.has(v))) {
           add('weight-from-scale', file, line, `${v} · ${trimmed.slice(0, 60)}`);
         }
       }
+
+      if (inFontFace && trimmed === '}') inFontFace = false;
     }
 
     // no-color-glow (block-level heuristic: colored shadow with large blur) — warning only

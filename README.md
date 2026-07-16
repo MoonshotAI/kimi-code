@@ -14,6 +14,7 @@ Kimi Code 客户端仓库：桌面端（`apps/desktop`）+ Web UI（`apps/web`�
 ```bash
 pnpm run sync      # 初始化/更新 submodule
 pnpm install
+pnpm prepare:fonts # 可选；dev/build 会自动下载、校验并转换缺失的共享字体
 pnpm dev:desktop   # 桌面端（renderer HMR + 默认启动内嵌 server）
 pnpm dev:desktop:debug  # 桌面端，并开启 Electron remote debugging（端口 9222，供 agent-browser 连接）
 pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:58627）
@@ -58,6 +59,7 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 
 - `apps/desktop`：Electron 桌面端（`@moonshot-ai/kimi-desktop`）
 - `apps/web`：浏览器 Web UI（`@moonshot-ai/kimi-web`）
-- `packages/*`：web 共享包（web-core / web-i18n / web-markdown / web-ui / vite-preset）
+- `packages/*`：web 共享包（web-core / web-i18n / web-markdown / web-ui / vite-preset）；字体许可证及本地生成（不入 Git）的两端共用字体位于 `packages/web-ui/src/assets/fonts`
+- `scripts/prepare-fonts.mjs`：下载并校验 Noto Sans SC Variable 源字体，再转换为 Vite/Electron 使用的 WOFF2；dev/build 会自动调用
 - `kimi-code/`：核心仓 submodule（CLI / server / agent-core / packages）
 - `scripts/sync-web-to-kimi-code.mjs`：web 产物同步到 kimi-code 的脚本

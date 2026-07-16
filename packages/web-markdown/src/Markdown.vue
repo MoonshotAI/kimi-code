@@ -493,12 +493,12 @@ function copyDiff(code: string, idx: number) {
 
 /* Base prose — assistant message text. */
 .md {
-  font: 400 15px/1.6 var(--font-ui);
+  font: 400 var(--content-font-size)/1.6 var(--font-ui);
   color: var(--color-text);
   word-break: break-word;
 }
 .md :deep(.markdown-renderer) {
-  font: 400 15px/1.6 var(--font-ui);
+  font: 400 var(--content-font-size)/1.6 var(--font-ui);
   color: var(--color-text);
 }
 .md :deep(.markstream-vue),
@@ -531,6 +531,9 @@ function copyDiff(code: string, idx: number) {
 }
 .md :deep(.md-file-link:hover) {
   color: var(--color-accent);
+}
+.md :deep(.inline-code .md-file-link) {
+  text-underline-offset: 1.5px;
 }
 /* Pin the prose text size explicitly. markstream sets no font-size of its own,
    so without this the rendered <p>/<li> can pick up a different base size. */
@@ -594,6 +597,7 @@ function copyDiff(code: string, idx: number) {
   font: .9em var(--font-mono);
   background: var(--color-surface-sunken);
   color: var(--color-fg);
+  border: 0;
   padding: 0 4px;
   border-radius: var(--radius-sm);
 }
@@ -621,13 +625,13 @@ function copyDiff(code: string, idx: number) {
 .md :deep(.code-block-header) {
   background: var(--color-surface);
   border-bottom: 1px solid var(--color-line);
-  padding: 4px 12px;
+  padding: 4px 6px 4px 12px;
   color: var(--color-text-muted);
-  font: var(--text-xs) var(--font-mono);
+  font: var(--text-xs) var(--font-ui);
 }
 .md :deep(.code-block-header *) {
   color: var(--color-text-muted);
-  font: var(--text-xs) var(--font-mono);
+  font: var(--text-xs) var(--font-ui);
 }
 .md :deep(.code-block-header .code-header-main) {
   font-family: var(--font-ui);

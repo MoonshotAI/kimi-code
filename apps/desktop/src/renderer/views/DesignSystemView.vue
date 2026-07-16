@@ -231,23 +231,25 @@ onUnmounted(() => {
             <p>All disabled controls use <code>opacity:.5</code> + <code>cursor:not-allowed</code> uniformly; do not separately grey out or recolor.</p>
 
             <h3 class="sub">Font families</h3>
-            <p>Kimi Web uses two font families: <b>--font-ui</b> (UI and body, Inter first) and <b>--font-mono</b> (code and monospace). Components always reference the variables; do not hard-code font names.</p>
+            <p>Kimi Web uses two font tokens: <b>--font-ui</b> (UI and body, with Schibsted Grotesk for Latin and Noto Sans SC for Simplified Chinese) and <b>--font-mono</b> (code and monospace). Components always reference the variables; do not hard-code font names.</p>
 
-            <h4 class="mini">--font-ui · UI &amp; body (Inter first)</h4>
-            <p>Body and UI use self-hosted Inter as the primary face. CJK and platform system UI fonts sit late in the fallback chain so Latin glyphs resolve to Inter while Chinese text can fall through to native CJK fonts:</p>
-            <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">--font-ui</span></div><pre>--font-ui: "Inter Variable", "Inter", "Helvetica Neue", Arial,
-      "PingFang SC", "Microsoft YaHei", "Noto Sans SC",
+            <h4 class="mini">--font-ui · UI &amp; body (Schibsted Grotesk + Noto Sans SC)</h4>
+            <p>Body and UI use self-hosted Schibsted Grotesk for Latin text and self-hosted Noto Sans SC Variable for Simplified Chinese. Platform fonts remain as fallbacks:</p>
+            <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">--font-ui</span></div><pre>--font-ui: "Schibsted Grotesk Variable", "Helvetica Neue", Arial,
+      "Noto Sans SC Variable", "Noto Sans SC", "PingFang SC",
+      "Microsoft YaHei",
       -apple-system, BlinkMacSystemFont, "Segoe UI",
       Roboto, Ubuntu, sans-serif,
       "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";</pre></div>
             <ul class="clean">
-              <li>Inter first: self-hosted Latin UI and body text, loaded through the optical-size normal and italic variable faces.</li>
-              <li>Western fallbacks next: Helvetica Neue / Arial for environments where Inter cannot load.</li>
-              <li>CJK and system UI fallbacks late: PingFang SC / Microsoft YaHei / Noto Sans SC, then platform UI fonts and emoji fonts.</li>
+              <li>Schibsted Grotesk first: self-hosted Latin UI and body text, with normal and italic variable faces.</li>
+              <li>Western fallbacks next: Helvetica Neue / Arial for environments where Schibsted Grotesk cannot load.</li>
+              <li>Noto Sans SC Variable next: bundled Simplified Chinese glyphs with a weight range of 100–900.</li>
+              <li>System UI fallbacks last: PingFang SC / Microsoft YaHei, platform UI fonts, and emoji fonts.</li>
             </ul>
 
             <h4 class="mini">--font-mono · Code &amp; monospace</h4>
-            <p>Code, tool names, line numbers, diffs, etc. use JetBrains Mono (a self-hosted variable font), falling back to the system monospace:</p>
+            <p>Code, line numbers, diffs, and Bash commands use JetBrains Mono (a self-hosted variable font), falling back to the system monospace. Other tool labels and summaries use the UI font:</p>
             <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">--font-mono</span></div><pre>--font-mono: "JetBrains Mono Variable", "JetBrains Mono",
       ui-monospace, "SF Mono", Menlo, Consolas, monospace;</pre></div>
 
@@ -256,30 +258,31 @@ onUnmounted(() => {
               <thead><tr><th>Font</th><th>Source</th><th>Bundled</th><th>Usage</th></tr></thead>
               <tbody>
                 <tr><td class="tk">JetBrains Mono</td><td class="val">@fontsource-variable/jetbrains-mono</td><td class="val">✓ self-hosted</td><td>monospace / code (--font-mono)</td></tr>
-                <tr><td class="tk">Inter</td><td class="val">@fontsource-variable/inter/opsz.css + opsz-italic.css</td><td class="val">✓ self-hosted</td><td>UI / body / display (--font-ui, --font-display), wght 100-900, opsz 14-32, normal + italic</td></tr>
-                <tr><td class="tk">System UI / CJK fonts</td><td class="val">operating system</td><td class="val">—</td><td>late fallback for UI / body, not bundled</td></tr>
+                <tr><td class="tk">Schibsted Grotesk</td><td class="val">prepare-fonts → web-ui/assets/fonts</td><td class="val">✓ generated + bundled</td><td>UI / body / display (--font-ui, --font-display), wght 400-900, normal + italic</td></tr>
+                <tr><td class="tk">Noto Sans SC</td><td class="val">prepare-fonts → web-ui/assets/fonts</td><td class="val">✓ generated + bundled</td><td>Simplified Chinese UI / body, wght 100–900</td></tr>
+                <tr><td class="tk">System UI / CJK fonts</td><td class="val">operating system</td><td class="val">—</td><td>late fallback for UI / body</td></tr>
               </tbody>
             </table>
             <div class="callout good"><span class="ico">✓</span><div>
-              Self-hosted Inter / JetBrains Mono: no external network requests, no FOUT, works offline; system fonts are not bundled, consistent with the local-first approach.
+              Schibsted Grotesk, Noto Sans SC, and JetBrains Mono are self-hosted. They make no external network requests and work offline; platform fonts remain as fallbacks.
             </div></div>
 
             <h4 class="mini">Usage rules</h4>
             <ul class="clean check">
-              <li>Components always use <code>var(--font-ui)</code> / <code>var(--font-mono)</code>; do not hard-code font names like <code>'Inter'</code> / <code>'JetBrains Mono'</code>.</li>
-              <li>Body / UI use <code>--font-ui</code> (Inter first); code / monospace use <code>--font-mono</code> (JetBrains Mono).</li>
-              <li>Inter is loaded from the complete optical-size variable faces, including normal and italic styles; <code>font-optical-sizing: auto</code> is enabled globally.</li>
-              <li>CJK and platform system UI fonts stay late in the <code>--font-ui</code> fallback chain, after Inter and Western fallbacks.</li>
+              <li>Components always use <code>var(--font-ui)</code> / <code>var(--font-mono)</code>; do not hard-code font names like <code>'Schibsted Grotesk'</code> / <code>'JetBrains Mono'</code>.</li>
+              <li>Body / UI use <code>--font-ui</code> (Schibsted Grotesk for Latin, Noto Sans SC for Simplified Chinese); code / monospace use <code>--font-mono</code> (JetBrains Mono).</li>
+              <li>Schibsted Grotesk is loaded from complete variable faces, including normal and italic styles; <code>font-optical-sizing: auto</code> is enabled globally.</li>
+              <li>Noto Sans SC is loaded from one complete weight-variable WOFF2 asset. Platform CJK fonts stay late in the fallback chain.</li>
             </ul>
 
             <h3 class="sub">Type scale &amp; weight</h3>
-            <p>The user font-size preference writes <code>--base-ui-font-size</code>. Compact UI chrome and the sidebar follow it through <code>--ui-font-size</code>, while chat reading surfaces derive one readable step above it through <code>--content-font-size</code>.</p>
-            <p>The fixed product type tokens still define component defaults: <b>UI controls / buttons / forms</b> use <code>--text-base</code> (14px); <b>reading body — including chat Markdown, message bubbles, etc.</b> stays one step larger than compact chrome for readability; the <b>sidebar session list</b> follows that same readable step while keeping list density.
-            Drop stray <code>font-weight: 650 / 750</code>; converge on two weights, 400 / 500 (regular / emphasis).</p>
+            <p>The user font-size preference writes <code>--base-ui-font-size</code>. UI chrome, the sidebar, and chat history follow it through <code>--ui-font-size</code> and <code>--content-font-size</code>.</p>
+            <p>The fixed product type tokens still define component defaults: <b>UI controls / buttons / forms</b> and <b>reading body — including chat Markdown and message bubbles</b> use <code>--text-base</code> (14px); transcript prose also enables <code>text-autospace: normal</code> for mixed CJK and Latin text. The <b>sidebar session list</b> follows the same base size while keeping list density.
+            Drop stray <code>font-weight: 650 / 750</code>; converge on 400 / 500 (regular / emphasis), with a dedicated 600 weight for sidebar section labels.</p>
             <div class="panel panel-pad" style="margin:16px 0">
               <div class="type-row"><div class="type-sample" style="font-size:22px;font-weight:500">Page Title</div><div class="type-meta">--text-2xl · 22 / 500</div></div>
               <div class="type-row"><div class="type-sample" style="font-size:18px;font-weight:500">Section Title</div><div class="type-meta">--text-xl · 18 / 500</div></div>
-              <div class="type-row"><div class="type-sample" style="font-size:16px;font-weight:400">Chat body / card title</div><div class="type-meta">--text-lg · 16 / 400</div></div>
+              <div class="type-row"><div class="type-sample" style="font-size:14px;font-weight:400">Chat body / card title</div><div class="type-meta">--text-base · 14 / 400</div></div>
               <div class="type-row"><div class="type-sample" style="font-size:14px;font-weight:500">UI control / button / form</div><div class="type-meta">--text-base · 14 / 500</div></div>
               <div class="type-row"><div class="type-sample" style="font-size:13px">Helper text / table</div><div class="type-meta">--text-sm · 13 / 400</div></div>
               <div class="type-row"><div class="type-sample" style="font-size:12px">Badge / timestamp / line number</div><div class="type-meta">--text-xs · 12 / 500</div></div>
@@ -287,12 +290,14 @@ onUnmounted(() => {
             <table class="dt">
               <thead><tr><th>Token</th><th>Value</th><th>Usage</th></tr></thead>
               <tbody>
-                <tr><td class="tk">--font-ui</td><td class="val">"Inter Variable", "Inter", "Helvetica Neue", Arial…</td><td>UI &amp; body (Inter first)</td></tr>
-                <tr><td class="tk">--font-mono</td><td class="val">JetBrains Mono…</td><td>code, tool names, line numbers, diffs</td></tr>
+                <tr><td class="tk">--font-ui</td><td class="val">"Schibsted Grotesk Variable", …, "Noto Sans SC Variable", …</td><td>UI &amp; body (Schibsted Grotesk + Noto Sans SC)</td></tr>
+                <tr><td class="tk">--font-kbd</td><td class="val">"Schibsted Grotesk Variable", system-ui, sans-serif</td><td>keyboard shortcut keycaps</td></tr>
+                <tr><td class="tk">--font-mono</td><td class="val">JetBrains Mono…</td><td>code, Bash commands, line numbers, diffs</td></tr>
                 <tr><td class="tk">--base-ui-font-size</td><td class="val">14px user preference</td><td>root setting that drives UI, reading body, and sidebar font sizes</td></tr>
-                <tr><td class="tk">--content-font-size</td><td class="val">calc(base + 1px)</td><td>chat Markdown, message bubbles, composer</td></tr>
+                <tr><td class="tk">--content-font-size</td><td class="val">var(--base-ui-font-size)</td><td>chat Markdown, message bubbles, composer</td></tr>
                 <tr><td class="tk">--leading-tight/normal/relaxed</td><td class="val">1.25 / 1.5 / 1.7</td><td>headings / UI / long text</td></tr>
-                <tr><td class="tk">--weight-regular/medium</td><td class="val">400 / 500</td><td>body / emphasis</td></tr>
+                <tr><td class="tk">--weight-regular/option-label/medium/ui-strong</td><td class="val">400 / 475 / 500 / 525</td><td>body / settings labels / emphasis / compact UI emphasis</td></tr>
+                <tr><td class="tk">--weight-section-label</td><td class="val">600</td><td>sidebar section labels</td></tr>
               </tbody>
             </table>
 
@@ -457,6 +462,7 @@ onUnmounted(() => {
                 <tr><td>2–4 mutually exclusive options</td><td><code>SegmentedControl</code></td></tr>
                 <tr><td>Top tabs</td><td><code>Tabs</code></td></tr>
                 <tr><td>Switch / multi-select</td><td><code>Switch</code> / <code>Checkbox</code></td></tr>
+                <tr><td>Scrollable regions with overlay controls</td><td><code>ScrollArea</code></td></tr>
                 <tr><td>Floating content card / list action menu</td><td><code>Card</code> / <code>Menu</code></td></tr>
                 <tr><td>Inline notice / global toast</td><td><code>Banner</code> / <code>Toast</code></td></tr>
                 <tr><td>Dialog / confirmation · bottom panel (mobile)</td><td><code>Dialog</code> / <code>Sheet</code></td></tr>
@@ -572,7 +578,7 @@ onUnmounted(() => {
 
             <!-- ===== Kbd ===== -->
             <h3 class="sub">Kbd · keyboard shortcut</h3>
-            <p><b>Kbd</b> renders a shortcut as keycaps — one block per key, never inline text like <code>(⌘K)</code>. Caps are 18px tall (Badge sm rhythm): sunken surface, 1px border with a 2px bottom edge, 11px UI font, muted text. Typical placement: pushed to the row's trailing edge, opposite the label (e.g. the sidebar search row).</p>
+            <p><b>Kbd</b> renders a shortcut as keycaps — one block per key, never inline text like <code>(⌘K)</code>. Caps are 18px tall (Badge sm rhythm): the warm <code>--color-sidebar-bg</code> surface, 1px border with a 2px bottom edge, 11px <code>--font-kbd</code> (Inter + system-ui), muted text. Typical placement: pushed to the row's trailing edge, opposite the label (e.g. the sidebar search row), and inside dialog navigation hints.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Kbd · keycaps</span></div>
               <div class="stage p">
@@ -629,7 +635,7 @@ onUnmounted(() => {
 
             <!-- ===== Input ===== -->
             <h3 class="sub">Input / Select / Textarea</h3>
-            <p>Unified 38px height (32px small), <code>--radius-md</code> radius, <code>--color-surface-raised</code> background, and a unified blue focus ring (<code>0 0 0 3px accent-soft</code>).</p>
+            <p>Unified 38px height (32px small), <code>--radius-md</code> radius, <code>--color-surface-raised</code> background, and a unified blue focus ring (<code>0 0 0 3px accent-soft</code>). Select is a custom combobox and listbox, not a native <code>&lt;select&gt;</code>; opening it centres the selected option in the scrollable menu. Open Select roots enter the dropdown layer; containing settings groups temporarily release clipping and join that layer so later sections cannot cover the menu.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Form primitives</span></div>
               <div class="stage p col">
@@ -641,7 +647,7 @@ onUnmounted(() => {
                   </div>
                   <div class="p-field demo-grow">
                     <label class="p-label">Model provider</label>
-                    <select class="p-select"><option>Anthropic</option><option>OpenAI</option><option>Moonshot</option></select>
+                    <button class="p-select" type="button">Anthropic</button>
                   </div>
                 </div>
                 <div class="p-field">
@@ -670,7 +676,9 @@ onUnmounted(() => {
 
             <!-- ===== Code / Diff ===== -->
             <h3 class="sub">Code / Diff</h3>
-            <p>Inline code, code blocks, and diffs all use the monospace font (<code>--p-font-mono</code>). Code blocks have a filename title bar and a copy button. Diffs use <code>+</code> / <code>-</code> row colors to express additions and deletions — additions use a success light background, deletions use a danger light background, with no gradients.</p>
+            <p><b>Diff controls</b>: The non-selectable branch summary starts with a 14px branch icon, aligns to the panel header's 12px inset, uses 12px labels, and ends with a 0.5px hairline. List and tree choices use the 14px <code>list</code> and <code>tree-view</code> registry icons. Flat-list and tree-view paths use the UI font at 12px. Tree roots share the flat list's 14px content inset, then each depth advances by 12px and adds a grey indentation rule.</p>
+            <p><b>Diff empty state</b>: Centre the clean-workspace message in the available panel height and lead with a quiet 32px status icon.</p>
+            <p>Inline code, code blocks, and diff contents use the monospace font (<code>--p-font-mono</code>); diff change counts and branch summaries use the UI font. Code blocks have a filename title bar and a copy button; the action edge uses a compact 6px inset. Diffs use <code>+</code> / <code>-</code> row colors to express additions and deletions — additions use a success light background, deletions use a danger light background, with no gradients.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Code / Diff</span></div>
               <div class="stage p col">
@@ -728,8 +736,15 @@ onUnmounted(() => {
             </div>
 
             <div class="callout info"><span class="ico">i</span><div>
-              <b>Size &amp; height</b>: Dialog offers three widths — <code>md</code> 440 / <code>lg</code> 640 / <code>xl</code> 760 (<code>--p-content-max</code>) — chosen by content weight. Height comes in two kinds: <code>auto</code> (default, grows with content up to <code>max-height</code>) and <code>fixed</code> (constant height <code>min(680px, 100vh - 64px)</code>, with overflow scrolled inside the body). <b>Content / multi-tab dialogs</b> (settings, model picker, provider manager, folder browser) always use <code>fixed</code> so the frame size stays constant and doesn't jump when switching tabs or content length; short confirmation dialogs keep <code>auto</code>.
+              <b>Size &amp; height</b>: Dialog offers three widths — <code>md</code> 440 / <code>lg</code> 640 / <code>xl</code> 760 (<code>--p-content-max</code>) — chosen by content weight. Height comes in two kinds: <code>auto</code> (default, grows with content up to <code>max-height</code>) and <code>fixed</code> (constant height <code>min(680px, 100vh - 64px)</code>, with overflow scrolled inside the body). <b>Content / multi-tab dialogs</b> (settings, model picker, provider manager, folder browser) always use <code>fixed</code> so the frame size stays constant and doesn't jump when switching tabs or content length; short confirmation dialogs keep <code>auto</code>. Selectable controls inside Settings use 0.5px hairlines. Its navigation shares <code>--color-sidebar-bg</code> with the app sidebar and uses 12px labels at weight 525 with 16px registry icons; section captions use 16px UI text in <code>--color-text</code>. Every setting row has a plain-language description; option labels use <code>--color-text</code> at weight 475 with a 1px gap before that description. Chinese descriptions use “思考” and “计划模式” rather than the English terms; “skills” stays lowercase when it appears within a sentence. Every settings section puts its rows inside one rounded group with 0.5px dividers. The font-size stepper is a compact 32px UI-font control with 12px values and custom minus and plus buttons. Its 52px desktop row centres the control with equal space above and below. Archived workspace headings reuse the sidebar’s <code>folder-closed</code> registry icon, and Restore actions lead with the <code>undo</code> icon. Archive counts use weight 500; timestamps and workspace paths use the UI font.
             </div></div>
+            <p><b>Dialog backdrop</b>: Use a restrained 28% neutral overlay so the workspace remains legible without competing with the modal.</p>
+            <p><b>Settings regions</b>: The settings title and close action belong to the right content region. The navigation is a separate full-height region that starts at the dialog's top edge, not content beneath a dialog-wide header.</p>
+            <p><b>Archived sessions</b>: Start with the localized page title. Do not add a repeated English kicker above it.</p>
+            <p><b>Settings interaction</b>: Notification labels and descriptions are not selectable; their switches remain fully interactive.</p>
+            <p><b>Conversation chrome</b>: Header labels are not selectable; the rename input remains selectable and editable. Branch names start with a 14px branch icon. The overflow trigger is a compact 24px control with a 14px icon. Below a 720px header container, hide the workspace prefix and give the conversation title the available width.</p>
+            <p><b>Session search</b>: The dialog search field uses 16px UI text. Its result list fills the body’s available height and owns vertical scrolling.</p>
+            <p><b>Model picker</b>: The provider filter remains horizontally scrollable without showing a persistent scrollbar. Model rows start at the standard 8px inset; the current-row surface replaces an empty leading check slot. Capability badges pair a registry icon with a localized label. Provider names and context counts use the UI font; the name, provider, context and star share a 28px top-line alignment. Provider names use their natural width instead of an arbitrary truncation cap. Only the model list scrolls; the navigation hint remains pinned at the bottom.</p>
 
             <!-- ===== Toast ===== -->
             <h3 class="sub">Toast</h3>
@@ -787,7 +802,7 @@ onUnmounted(() => {
 
             <!-- ===== Link ===== -->
             <h3 class="sub">Link</h3>
-            <p>Inline text link: the default is the accent color with no underline; on hover it shows an underline and darkens. The <code>.muted</code> variant uses the secondary text color. Used for in-text jumps, external links, "view all", and other lightweight actions.</p>
+            <p>Inline text link: the default is the accent color with no underline; on hover it shows an underline and darkens. File links inside inline code use a 1.5px underline offset so the line stays clear of the chip background. The <code>.muted</code> variant uses the secondary text color. Used for in-text jumps, external links, "view all", and other lightweight actions.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Link · inline link</span></div>
               <div class="stage p col">
@@ -801,7 +816,8 @@ onUnmounted(() => {
 
             <!-- ===== Menu / Dropdown ===== -->
             <h3 class="sub">Menu / Dropdown</h3>
-            <p>Dropdown menu panel: raised surface + border + light shadow (<code>--shadow-sm</code>, flat-leaning). Menu items support icons, the current (active) state, the danger state, and the disabled state, with separators grouping items. On touch / mobile, use <code>lg</code> (≥44px row height) for menu items.</p>
+            <p>Desktop menus use a 3.5px panel inset. Standard items use 5px × 9px padding and a 7px icon gap. Their three-layer neutral shadow stays below 4% opacity.</p>
+            <p>Dropdown menu panel: raised surface + border + light shadow (<code>--shadow-sm</code>, flat-leaning). Menu items support icons, the current (active) state, the danger state, and the disabled state, with separators grouping items. All menu actions use 12px labels at weight 475 with 16px leading icons; both share a 16px line box for vertical alignment. Menu timestamps use the UI font. On touch / mobile, use <code>lg</code> (≥44px row height) while keeping the same type size.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Menu · dropdown menu</span></div>
               <div class="stage p col" style="align-items:flex-start">
@@ -817,13 +833,13 @@ onUnmounted(() => {
 
             <!-- ===== SegmentedControl ===== -->
             <h3 class="sub">SegmentedControl</h3>
-            <p>Mutually exclusive short option groups, commonly used for 2–4 option switches such as "light / dark / follow system". The current item is highlighted with a raised surface + subtle shadow.</p>
+            <p>Mutually exclusive short option groups, commonly used for 2–4 option switches such as "light / dark / follow system". Options may include a 14px registry icon or a colour swatch. A single raised indicator with a subtle shadow slides and resizes between options using the standard motion tokens.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">SegmentedControl</span></div>
               <div class="stage p col">
                 <div class="p-seg">
-                  <span class="p-seg-item on">Light</span>
-                  <span class="p-seg-item">Dark</span>
+                  <span class="p-seg-item on"><i class="p-color-dot blue"></i>Blue</span>
+                  <span class="p-seg-item"><i class="p-color-dot black"></i>Black</span>
                   <span class="p-seg-item">Follow system</span>
                 </div>
               </div>
@@ -845,7 +861,7 @@ onUnmounted(() => {
 
             <!-- ===== Switch ===== -->
             <h3 class="sub">Switch</h3>
-            <p>A two-state switch for settings that take effect immediately. 36×20 track with full radius, 16px knob; when on, the track turns accent and the knob slides right, with the transition driven by tokens.</p>
+            <p>A two-state switch for settings that take effect immediately. The 36×20 track has a 0.5px hairline and full radius; its 16px knob uses 1.5px internal offsets so the visible inset remains 2px and symmetric after accounting for the border. On hover, the knob eases to an 18px rounded rectangle towards the track centre. When on, the track turns accent and the knob slides right.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Switch</span></div>
               <div class="stage p">
@@ -1023,6 +1039,11 @@ onUnmounted(() => {
             </p>
 
             <h3 class="sub">Unified message stream</h3>
+            <p>User-message bubbles use a 0.5px accent hairline mixed with the strong line colour. This keeps the edge visible against the soft accent fill without making the bubble look heavy.</p>
+            <p>Message timestamps use 12px UI text at weight 500, matching the compact metadata scale without switching to a monospace face.</p>
+            <p>The user-message metadata row sits one 8px spacing step below the bubble, so its actions and timestamp read as supporting information rather than part of the bubble edge.</p>
+            <p>The floating jump-to-latest control uses 12px UI text at weight 525, led by the full down-arrow icon rather than a disclosure caret.</p>
+            <p>Collapsed and expanded thinking previews animate their text-colour change on hover with the standard duration and easing tokens.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Conversation · 760px reading column</span></div>
               <div class="stage p col" style="align-items:center;background:#fff">
@@ -1127,7 +1148,7 @@ onUnmounted(() => {
               <div class="stage-bar"><span class="st">Three visual-weight tiers</span></div>
               <div class="stage p col">
                 <span class="stage-label">① Tool row · lightest (default)</span>
-                <div class="p-tool-row" style="border:1px solid var(--p-line);border-radius:8px">
+                <div class="p-tool-row" style="border:0.5px solid var(--p-line);border-radius:8px">
                   <span class="p-dot done"></span>
                   <svg class="tr-ic" viewBox="0 0 24 24" fill="currentColor"><path fill="currentColor" d="M9 2.003V2h10.998C20.55 2 21 2.455 21 2.992v18.016a.993.993 0 0 1-.993.992H3.993A1 1 0 0 1 3 20.993V8zM5.83 8H9V4.83zM11 4v5a1 1 0 0 1-1 1H5v10h14V4z"/></svg>
                   <span class="tr-name">read_file</span>
@@ -1153,10 +1174,10 @@ onUnmounted(() => {
             </div>
 
             <ul class="clean check">
-              <li>Tool calls <b>render as compact rows by default</b> (30px single-line mono + status dot + key argument); no head / body / shadow.</li>
-              <li>Consecutive or parallel calls <b>auto-merge into one tool group</b>; when collapsed, the whole group takes one line (<code>N tool calls · status</code>).</li>
-              <li>Clicking a row <b>expands it in place</b> to show details (code / output); click again to collapse — details don't grab attention by default.</li>
-              <li>Status is expressed with a <b>colored dot</b>: running (pulsing blue) / done (green) / failed (red), taking no extra space.</li>
+              <li>Tool calls <b>render as compact rows by default</b> (30px single-line UI text + status dot + key argument) with 0.5px <code>--color-line-strong</code> outer borders and dividers. The glyph, tool name, argument, and trailing status all align to the row's vertical centre. Tool names always use the 14px UI font; UI-row arguments also use 14px, while Bash and other mono arguments use 12px with ligatures disabled. Bash keeps the complete command in the text slot and lets CSS ellipsis follow the actual available width instead of pre-clipping by character count. Search and find summaries localize the full pattern-to-scope relationship rather than embedding an English <code>in</code>.</li>
+              <li>Consecutive or parallel calls <b>auto-merge into one tool group</b>; when collapsed, the whole group takes one line (<code>N tool calls · status</code>). Counts from one through ten use localized words; larger counts fall back to localized digits. An expanded group separates its header from the rows with a 1px strong hairline.</li>
+              <li>Clicking a row <b>expands it in place</b> to show details (code / output); click again to collapse — details don't grab attention by default. Expanded details show at most 10 lines and scroll internally when their content is longer.</li>
+              <li>Status is expressed with a <b>colored dot</b>: running (pulsing blue) / done (green) / failed (red), taking no extra space. Semantic hairlines retain 0.5px thickness but use a stronger 45% status-colour mix so errors remain legible in both themes.</li>
               <li><b>Only two types keep a full card</b>: <code>Question</code> (needs an answer) and <code>Approval</code> (needs authorization) — they genuinely need the user's attention.</li>
             </ul>
 
@@ -1174,7 +1195,7 @@ onUnmounted(() => {
             </div>
 
             <h3 class="sub">Composer</h3>
-            <p>Unified into a single rounded container: <code>--radius-xl</code>, with the whole border turning blue + a soft focus ring on focus. Toolbar controls all use the Pill / IconButton primitives, and the send button is a 32px circle.</p>
+            <p>Unified into a single rounded container: <code>--radius-xl</code> with a stable 0.5px border; focus changes it to blue and adds a soft ring without changing the container size. The textarea uses <code>text-autospace: normal</code> for mixed CJK and Latin input. Toolbar controls all use the Pill / IconButton primitives; the context ring drops horizontal inset so it sits close to the model switcher, and the send button is a 32px circle.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Composer</span></div>
               <div class="stage p col" style="align-items:center;background:#fff">
@@ -1195,7 +1216,7 @@ onUnmounted(() => {
               </div>
             </div>
             <div class="callout info"><span class="ico">i</span><div>
-              <b>Site-wide consistency</b>: the composer has only one radius (<code>--radius-xl</code> · 16px) and one height; toolbar controls all use the Pill / IconButton primitives, and the send button is a 32px circle — it no longer drifts with the theme.
+              <b>Site-wide consistency</b>: the composer has only one radius (<code>--radius-xl</code> · 16px) and one height; toolbar controls all use the Pill / IconButton primitives, and the send button is a 32px circle — it no longer drifts with the theme. The transparent dock floats over the transcript, while the scrolling content receives bottom padding equal to the live dock height so its final item can still clear the composer. Composer chrome is not selectable; only the message input permits text selection. Permission pills pair an icon with the label and collapse to the accessible icon below a 620px composer container. The right toolbar is the flexible region: the model pill shrink-wraps its content, then shrinks and truncates internally only when the toolbar runs out of room.
             </div></div>
 
             <h3 class="sub">Responsive</h3>
@@ -1361,25 +1382,25 @@ onUnmounted(() => {
               <tbody>
                 <tr><td class="tk">sidebar width</td><td class="val">270px default (adjustable)</td><td>expanded sidebar width, changed by dragging the ResizeHandle; should approach §02's <code>--p-sidebar-w</code> (264px)</td></tr>
                 <tr><td class="tk">--preview-w</td><td class="val">460px</td><td>width of the right preview panel when open</td></tr>
-                <tr><td class="tk">--panel-head-h</td><td class="val">48px</td><td>unified height for all right panel heads + the conversation column head, so the hairline runs as one line</td></tr>
+                <tr><td class="tk">--panel-head-h</td><td class="val">48px</td><td>unified height for all right panel heads + the conversation column head; both use a 0.5px bottom hairline</td></tr>
                 <tr><td class="tk">--p-bp-sm</td><td class="val">640px</td><td>≤640 switches to a mobile single column (top bar + conversation), no sidebar / handle / right panel</td></tr>
               </tbody>
             </table>
             <ul class="clean">
               <li>The right panel track exists permanently, with its width transitioning between <code>0 ↔ var(--preview-w)</code> (when open it squeezes the conversation column, rather than switching templates).</li>
-              <li>The sidebar collapses SYMMETRICALLY to the right panel: its container width animates to 0 while the content keeps its fixed width anchored to the right edge (clipped, sliding out left — no reflow, hairline stays on the clipped content). No rail remains. The collapse control differs by platform: on <b>macOS desktop</b> the toggle is a single resident floating IconButton pinned beside the traffic lights (rendered in both states, only the glyph swaps — the sidebar slides underneath it, never moves or flashes); on <b>Windows / web</b> the collapse button lives inside the sidebar header (right-aligned), and a floating expand button appears at the top-left only while collapsed. The conversation header pads left in step with the transition while collapsed.</li>
+              <li>The sidebar collapses SYMMETRICALLY to the right panel: its container width animates to 0 while the content keeps its fixed width anchored to the right edge (clipped, sliding out left — no reflow, hairline stays on the clipped content). No rail remains. The collapse control differs by platform: on <b>macOS desktop</b> the toggle is a single resident floating IconButton pinned beside the traffic lights (rendered in both states, only the glyph swaps — the sidebar slides underneath it, never moves or flashes); on <b>Windows / web</b> the collapse button lives inside the sidebar header (right-aligned), and a floating expand button appears at the top-left only while collapsed. The conversation header uses a 0.5px bottom hairline and pads left in step with the transition while collapsed.</li>
               <li>All grid children must have <code>min-height:0; min-width:0</code>, so only the inner scroll containers scroll and the page itself does not scroll.</li>
             </ul>
 
             <h3 class="sub">Sidebar alignment system (<code>--sb-*</code>)</h3>
-            <p>All sidebar rows (group head, session row, New chat button) share 4 custom properties, so the "session title" aligns precisely under the "workspace name".</p>
+            <p>All sidebar rows (group head, session row, New chat, search, and Settings buttons) share 4 custom properties. Their 16px icon slots and <code>--sb-gap</code> place every label on the same x-axis as the workspace name.</p>
             <table class="dt">
               <thead><tr><th>Token</th><th>Value</th><th>Usage</th></tr></thead>
               <tbody>
                 <tr><td class="tk">--sb-inset</td><td class="val">12px</td><td>row box (hover/selected pill) inset from the sidebar edges — matches the brand header's 12px padding</td></tr>
                 <tr><td class="tk">--sb-pad-x</td><td class="val">20px</td><td>content start x (= --sb-inset + 8px row padding)</td></tr>
                 <tr><td class="tk">--sb-gutter</td><td class="val">16px</td><td>leading icon slot width — matches the workspace folder icon so the session title aligns under the workspace name</td></tr>
-                <tr><td class="tk">--sb-gap</td><td class="val">6px</td><td>gap between the icon slot and the text</td></tr>
+                <tr><td class="tk">--sb-gap</td><td class="val">8px</td><td>gap between the icon slot and the text</td></tr>
               </tbody>
             </table>
             <div class="callout info"><span class="ico">i</span><div>
@@ -1387,16 +1408,16 @@ onUnmounted(() => {
             </div></div>
 
             <h3 class="sub">Sidebar structure</h3>
-            <p>The sidebar from top to bottom: brand header → New chat → search → grouped list (workspace head + session rows) → settings footer. Controls reuse the §03 primitives as much as possible. The sidebar sits on <code>--color-sidebar-bg</code> (one step off <code>--color-bg</code>: warm off-white in light, near-black in dark — the session column reads as its own plane; the hairline still separates it from the conversation pane). Vertical rhythm: the brand header keeps 12px padding (on macOS desktop the left padding grows to 80px to clear the traffic lights); rows inside the actions group (New chat + search) stack flush (0 gap, same rhythm as the list rows); adjacent groups are separated by 12px. Row hover uses <code>--sb-hover</code> (= the global <code>--color-hover</code> wash); the selected row uses <code>--color-selected</code> — neutral, never the accent.</p>
+            <p>The sidebar from top to bottom: brand header → action group → grouped list (workspace head + session rows) → settings footer. New chat and Search are direct sibling controls in the same grid container; the optional new-workspace action shares the first row, while Search spans the next row. A 4px gap keeps Search clear of the scroll boundary. Both pinned edges use three light near, middle and far fades across 18px, entering over 260ms only while more session content exists beyond that edge. The Settings seam is a 0.5px hairline. Controls reuse the §03 primitives as much as possible. The sidebar sits on <code>--color-sidebar-bg</code> (one step off <code>--color-bg</code>: warm off-white in light, near-black in dark — the session column reads as its own plane; the hairline still separates it from the conversation pane). Vertical rhythm: the brand header keeps 12px padding (on macOS desktop the left padding grows to 80px to clear the traffic lights); rows inside the action group stack flush (0 gap, same rhythm as the list rows); adjacent groups are separated by 12px. The search glyph has a -0.5px optical correction to align its visual centre with the label. Row hover uses <code>--sb-hover</code> (= the global <code>--color-hover</code> wash); the selected row uses the lighter <code>--sb-selected</code> wash derived from <code>--color-selected</code> — neutral, never the accent.</p>
             <table class="dt">
               <thead><tr><th>Block</th><th>Use</th><th>Note</th></tr></thead>
               <tbody>
-                <tr><td>Brand header</td><td>logo + name + collapse IconButton (right-aligned)</td><td>on Windows / web the brand is left and the collapse IconButton sm is right-aligned inside the header; the logo is animated (a blinking eye). On macOS desktop the header is a bare drag strip (brand hidden, traffic lights + resident floating toggle over it)</td></tr>
-                <tr><td>New chat</td><td>full-width left-aligned button (custom)</td><td>same rhythm as the session rows in the list (left-aligned, hover = <code>--sb-hover</code>). <b>Do not</b> use Button (centered, breaks the rhythm)</td></tr>
-                <tr><td>Search</td><td>bare search row (custom)</td><td>no border, hover/focus shows a sunken background; icon + label, with the <code>Kbd</code> keycaps (⌘K / Ctrl K) pushed to the trailing edge — label and shortcut are justified apart. <b>Do not</b> use Input (the 38px bordered version is too heavy). Last fixed row above the list — its wrapper carries the scroll-linked seam</td></tr>
-                <tr><td>Section label</td><td><code>.p-section-label</code></td><td>uppercase muted small titles like "Workspaces"</td></tr>
+                <tr><td>Brand header</td><td>logo + name + collapse IconButton (right-aligned)</td><td>on Windows / web the brand is left and the collapse IconButton sm is right-aligned inside the header; the dev-only backend version/address pill uses the UI font, not monospace; the logo is animated (a blinking eye). On macOS desktop the header is a bare drag strip (brand hidden, traffic lights + resident floating toggle over it)</td></tr>
+                <tr><td>New chat</td><td>full-width left-aligned button (custom)</td><td>500-weight label; same rhythm as the session rows in the list (left-aligned, hover = <code>--sb-hover</code>). <b>Do not</b> use Button (centered, breaks the rhythm)</td></tr>
+                <tr><td>Search</td><td>bare search row (custom)</td><td>500-weight label; no border, hover/focus shows a sunken background; icon + label, with the <code>Kbd</code> keycaps (⌘K / Ctrl K) pushed to the trailing edge — label and shortcut are justified apart. <b>Do not</b> use Input (the 38px bordered version is too heavy). It is a direct sibling of New chat; their common container carries the scroll-linked seam</td></tr>
+                <tr><td>Section label</td><td><code>.p-section-label</code></td><td>uppercase muted small titles like "Workspaces", using <code>--weight-section-label</code> (600)</td></tr>
                 <tr><td>Workspace head / session row</td><td>see next two sections</td><td>share <code>--sb-*</code> alignment</td></tr>
-                <tr><td>Settings footer</td><td>full-width left-aligned button (custom)</td><td>pinned row under the session list, separated by a 1px <code>--line</code> top border; icon + label, same list-style family as New chat</td></tr>
+                <tr><td>Settings footer</td><td>full-width left-aligned button (custom)</td><td>500-weight label; pinned row under the session list, separated by a 1px <code>--line</code> top border; icon + label, same list-style family as New chat</td></tr>
               </tbody>
             </table>
             <div class="callout warn"><span class="ico">!</span><div>
@@ -1408,9 +1429,9 @@ onUnmounted(() => {
             <table class="dt">
               <thead><tr><th>Part</th><th>Rule</th></tr></thead>
               <tbody>
-                <tr><td>Container</td><td><code>padding: 8px 8px</code> inside the list's <code>--sb-inset</code> gutter, <code>radius-sm</code>; <b>no fixed/min height</b> — row height is font-driven (title <code>line-height: --leading-tight</code>, ≈16px) → ≈32px total, the sidebar-wide row rhythm. The hover kebab is absolutely positioned so it never forces the row taller (no hover jitter). hover = <code>--sb-hover</code> (the global <code>--color-hover</code> wash); active = <code>--color-selected</code> — neutral, no accent tint, no border, no weight change</td></tr>
+                <tr><td>Container</td><td><code>padding: 8px 8px</code> inside the list's <code>--sb-inset</code> gutter, <code>radius-sm</code>; <b>no fixed/min height</b> — row height is font-driven (title <code>line-height: --leading-tight</code>, ≈16px) → ≈32px total, the sidebar-wide row rhythm. The hover kebab is absolutely positioned so it never forces the row taller (no hover jitter). hover = <code>--sb-hover</code> (the global <code>--color-hover</code> wash); active = <code>--sb-selected</code> (75% of the global selected wash) — neutral, no accent tint, no border, no weight change</td></tr>
                 <tr><td>Status slot (lead)</td><td>fixed <code>--sb-gutter</code> width; running = <code>Spinner</code> sm, otherwise unread = 7px accent dot</td></tr>
-                <tr><td>Title</td><td>flex:1 with truncation; double-click enters inline rename (compact input, not Input)</td></tr>
+                <tr><td>Title</td><td>flex:1 with truncation and <code>user-select:none</code>; double-click enters inline rename (compact input, not Input), whose text remains selectable</td></tr>
                 <tr><td>Time</td><td>mono xs, <code>fg-faint</code>; yields to the kebab on hover</td></tr>
                 <tr><td>Attention Badge</td><td><code>Badge</code> sm: info (needs answer) / warning (needs approval) / danger (aborted)</td></tr>
                 <tr><td>kebab</td><td><code>IconButton</code> sm, shown on hover; dropdown uses <code>Menu/MenuItem</code></td></tr>
@@ -1422,7 +1443,7 @@ onUnmounted(() => {
             <p>The group head and session rows share <code>--sb-*</code>: folder icon (open/closed) → name, with the kebab and "+" revealed on hover.</p>
             <ul class="clean">
               <li>The folder icon leads the row (switching icons between open and closed states) with the plain <code>--sb-gap</code> before the name — it does not pad out the <code>--sb-gutter</code> slot.</li>
-              <li>The name is quiet by design — regular weight, muted color (<code>--color-text-muted</code>, one step lighter than session titles), so group heads read as grouping labels. No path subtitle; hovering the name shows the full root path in a <code>Tooltip</code>.</li>
+              <li>The name uses 500 weight with muted color (<code>--color-text-muted</code>, one step lighter than session titles), so group heads remain clear without competing with list content. No path subtitle; hovering the name shows the full root path in a <code>Tooltip</code>.</li>
               <li>The kebab (menu) and "+" (new chat in this workspace) both use <code>IconButton</code> sm inside a floating actions layer anchored to the row's right edge — no reserved layout space, so the name uses the full row width when idle. Shown on hover, keyboard focus, or while the menu is open; the layer backs itself with the sidebar surface (container background) plus the row hover wash (an <code>::after</code> shown only while the row is hovered), so its color exactly equals the row's current background and the overlapped name tail doesn't bleed through (hidden via <code>opacity:0</code>, staying in the tab order).</li>
               <li>The group is collapsible; when collapsed its session list is hidden.</li>
             </ul>
@@ -1619,7 +1640,7 @@ onUnmounted(() => {
   .brand-name { font-weight: 700; font-size: 15px; letter-spacing: -.01em; }
   .brand-sub { font-size: 12px; color: var(--d-fg-faint); margin-bottom: 26px; padding-left: 36px; }
   .nav-group { margin: 22px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--d-fg-faint); }
-  .p-section-label { font-size: 12px; font-weight: 400; text-transform: uppercase; color: var(--d-fg-faint); }
+  .p-section-label { font-size: 12px; font-weight: 600; text-transform: uppercase; color: var(--d-fg-faint); }
   .nav a {
     display: flex; align-items: center; gap: 9px; padding: 7px 10px; border-radius: 7px;
     font-size: 13.5px; font-weight: 500; color: var(--d-fg-soft); margin: 1px 0;
@@ -1844,6 +1865,7 @@ onUnmounted(() => {
   /* ---- Proposal tokens: default = modern / light ---- */
   .ds-page .p, .ds-page .stage.p-skin, .ds-page [data-p] {
     --p-font-sans: var(--font-ui);
+    --p-font-kbd: var(--font-kbd);
     --p-font-mono: var(--font-mono);
     --p-bg: var(--color-bg);
     --p-surface: var(--color-surface);
@@ -1958,7 +1980,7 @@ onUnmounted(() => {
     min-width: 18px; height: 18px; padding: 0 5px;
     border: 1px solid var(--p-line); border-bottom-width: 2px; border-radius: var(--p-r-xs);
     background: var(--p-surface-sunken); color: var(--p-text-muted);
-    font-family: var(--p-font-sans); font-size: 11px; line-height: 1;
+    font-family: var(--p-font-kbd); font-size: 11px; line-height: 1;
   }
 
   /* model / mode pill (composer toolbar) */
@@ -1998,6 +2020,8 @@ onUnmounted(() => {
     box-shadow: var(--p-sh-xs); transition: border-color var(--p-dur) var(--p-ease), box-shadow var(--p-dur) var(--p-ease);
   }
   .p-textarea { height: auto; min-height: 84px; padding: 10px 12px; resize: vertical; line-height: var(--p-leading-normal); }
+  .p-select { display: flex; align-items: center; justify-content: space-between; text-align: left; }
+  .p-select::after { content: "⌄"; color: var(--p-text-muted); }
   .p-input:hover, .p-select:hover, .p-textarea:hover { border-color: var(--p-line-strong); }
   .p-input:focus, .p-select:focus, .p-textarea:focus { outline: none; border-color: var(--p-accent); box-shadow: 0 0 0 3px var(--p-accent-soft); }
   .p-input::placeholder, .p-textarea::placeholder { color: var(--p-text-faint); }
@@ -2037,13 +2061,13 @@ onUnmounted(() => {
 
   /* ===== Chat: user bubble ===== */
   .p-bubble-user {
-    align-self: flex-end; max-width: 78%; background: var(--p-accent-soft); border: 1px solid var(--p-accent-bd);
+    align-self: flex-end; max-width: 78%; background: var(--p-accent-soft); border: 0.5px solid color-mix(in srgb, var(--p-accent) 32%, var(--p-line-strong));
     color: var(--p-text); border-radius: 18px 18px 5px 18px; padding: 11px 15px;
     font-size: var(--p-font-size-md); line-height: var(--p-leading-normal); box-shadow: var(--p-sh-xs);
   }
   .p-msg { max-width: 760px; font-size: var(--p-font-size-md); line-height: var(--p-leading-relaxed); color: var(--p-text); }
   .p-msg p { margin: 0 0 10px; color: var(--p-text); }
-  .p-msg code { font-family: var(--p-font-mono); background: var(--p-surface-sunken); border: 1px solid var(--p-line); color: var(--p-accent-hover); padding: 1px 6px; border-radius: 5px; font-size: .9em; }
+  .p-msg code { font-family: var(--p-font-mono); background: var(--p-surface-sunken); border: 0; color: var(--p-accent-hover); padding: 1px 6px; border-radius: 5px; font-size: .9em; }
 
   /* ===== Chat: Agent card ===== */
   .p-agent { background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-md); overflow: hidden; }
@@ -2090,16 +2114,18 @@ onUnmounted(() => {
 
   /* Tool call group: collapses a run of consecutive / parallel calls into a stack;
      overall visual weight is much lower than a card. */
-  .p-tool-group { border: 1px solid var(--p-line); border-radius: var(--p-r-md); background: var(--p-surface); overflow: hidden; }
+  .p-tool-group { border: 0.5px solid var(--p-line); border-radius: var(--p-r-md); background: var(--p-surface); overflow: hidden; }
   .p-tool-group-head { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 11px; cursor: pointer; font-size: var(--p-font-size-sm); color: var(--p-text-muted); user-select: none; }
   .p-tool-group-head:hover { background: var(--p-surface-sunken); color: var(--p-text); }
+  .p-tool-group.open .p-tool-group-head { border-bottom: 1px solid var(--p-line-strong); }
   .p-tool-group-head .tg-title { font-weight: 600; color: var(--p-text); }
   .p-tool-group-head .tg-meta { color: var(--p-text-faint); }
   .p-tool-group-head .tg-car { margin-left: auto; width: 14px; height: 14px; color: var(--p-text-faint); transition: transform var(--p-dur) var(--p-ease); }
   .p-tool-group.open .p-tool-group-head .tg-car { transform: rotate(90deg); }
 
   /* Single-line tool call: compact by default, fits on one line */
-  .p-tool-row { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 11px; border-top: 1px solid var(--p-line-2, var(--p-line)); cursor: pointer; font-family: var(--p-font-mono); font-size: var(--p-font-size-sm); color: var(--p-text); }
+  .p-tool-row { display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 11px; border-top: 0.5px solid var(--p-line-2, var(--p-line)); cursor: pointer; font-family: var(--p-font-sans); font-size: var(--p-font-size-sm); color: var(--p-text); }
+  .p-tool-row.monospace { font-family: var(--p-font-mono); font-feature-settings: "liga" 0, "calt" 0; font-variant-ligatures: none; }
   .p-tool-row:hover { background: var(--p-surface-sunken); }
   .p-tool-row .tr-ic { width: 14px; height: 14px; color: var(--p-text-faint); flex: none; }
   .p-tool-row .tr-name { font-weight: 600; color: var(--p-text); flex: none; }
@@ -2110,13 +2136,13 @@ onUnmounted(() => {
   .p-tool-row.expanded .tr-car { transform: rotate(90deg); }
 
   /* Detail after a row is expanded (code / output) */
-  .p-tool-detail { padding: 0 11px 11px; background: var(--p-surface-sunken); border-top: 1px solid var(--p-line); }
+  .p-tool-detail { padding: 0 11px 11px; background: var(--p-surface-sunken); border-top: 0.5px solid var(--p-line); }
   .p-tool-detail .p-code { margin-top: 10px; }
 
   /* ===== Chat: Composer ===== */
-  .p-composer { background: var(--p-surface-raised); border: 1px solid var(--p-line); border-radius: var(--p-r-xl); box-shadow: var(--p-sh-md); overflow: hidden; }
+  .p-composer { background: var(--p-surface-raised); border: 0.5px solid var(--p-line); border-radius: var(--p-r-xl); box-shadow: var(--p-sh-md); overflow: hidden; }
   .p-composer:focus-within { border-color: var(--p-accent); box-shadow: var(--p-sh-md), 0 0 0 3px var(--p-accent-soft); }
-  .p-composer-ta { padding: 14px 16px 8px; font-family: var(--p-font-sans); font-size: var(--p-font-size-md); color: var(--p-text); line-height: var(--p-leading-normal); }
+  .p-composer-ta { padding: 14px 16px 8px; font-family: var(--p-font-sans); font-size: var(--p-font-size-md); color: var(--p-text); line-height: var(--p-leading-normal); text-autospace: normal; }
   .p-composer-ta.ph { color: var(--p-text-faint); }
   .p-composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 8px 8px; }
   .p-composer-left, .p-composer-right { display: flex; align-items: center; gap: 2px; }
@@ -2143,11 +2169,11 @@ onUnmounted(() => {
   .p-menu {
     background: var(--p-surface-raised); border: 1px solid var(--p-line);
     border-radius: var(--p-r-lg); box-shadow: var(--p-sh-sm);
-    padding: var(--p-sp-1); min-width: 180px;
+    padding: 3.5px; min-width: 180px;
     font-family: var(--p-font-sans); color: var(--p-text);
   }
   .p-menu-item {
-    display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+    display: flex; align-items: center; gap: 7px; padding: 5px 9px;
     border-radius: var(--p-r-sm); font-size: var(--p-font-size-sm); color: var(--p-text);
     cursor: pointer; transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease);
   }
@@ -2169,12 +2195,15 @@ onUnmounted(() => {
     border-radius: var(--p-r-md); font-family: var(--p-font-sans);
   }
   .p-seg-item {
-    padding: 5px 12px; border-radius: var(--p-r-sm); font-size: var(--p-font-size-sm);
+    display: inline-flex; align-items: center; gap: 4px; padding: 5px 12px; border-radius: var(--p-r-sm); font-size: var(--p-font-size-sm);
     font-weight: 500; color: var(--p-text); cursor: pointer; white-space: nowrap;
     transition: background var(--p-dur) var(--p-ease), color var(--p-dur) var(--p-ease), box-shadow var(--p-dur) var(--p-ease);
   }
   .p-seg-item:hover { color: var(--p-text); }
   .p-seg-item.on { background: var(--p-surface-raised); color: var(--p-text); box-shadow: var(--p-sh-xs); }
+  .p-color-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .p-color-dot.blue { background: var(--color-theme-blue); }
+  .p-color-dot.black { background: var(--color-theme-black); }
 
   /* ===== Tabs ===== */
   .p-tabs {
@@ -2200,10 +2229,13 @@ onUnmounted(() => {
     content: ""; position: absolute; top: 2px; left: 2px;
     width: 16px; height: 16px; border-radius: var(--p-r-full);
     background: var(--p-surface-raised); box-shadow: var(--p-sh-xs);
+    transform-origin: left center;
     transition: transform var(--p-dur) var(--p-ease);
   }
+  .p-switch:hover::after { transform: scaleX(1.125); }
   .p-switch.on { background: var(--p-accent); }
-  .p-switch.on::after { transform: translateX(16px); }
+  .p-switch.on::after { transform: translateX(16px); transform-origin: right center; }
+  .p-switch.on:hover::after { transform: translateX(16px) scaleX(1.125); }
   .p-switch:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 
   /* ===== Checkbox ===== */

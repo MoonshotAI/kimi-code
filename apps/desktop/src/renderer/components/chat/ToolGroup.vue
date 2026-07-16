@@ -7,6 +7,7 @@ import { toolStackKey, toolStackPosition } from '../chatTurnRendering';
 import type { ToolStackItem } from '../chatTurnRendering';
 import type { FilePreviewRequest, ToolMedia } from '../../types';
 import { Icon, StatusDot } from '@moonshot-ai/web-ui';
+import { formatCountNumber } from '@moonshot-ai/web-i18n';
 
 const props = withDefaults(
   defineProps<{
@@ -31,6 +32,11 @@ const aggregateStatus = computed<'running' | 'error' | 'done'>(() => {
   return 'done';
 });
 const { t } = useI18n();
+
+const countTitle = computed(() => {
+  const key = count.value === 1 ? 'tools.group.countOne' : 'tools.group.countOther';
+  return t(key, { number: formatCountNumber(count.value, t) });
+});
 
 const statusLabel = computed(() => {
   switch (aggregateStatus.value) {
@@ -62,7 +68,7 @@ function onHeadClick(): void {
     <button class="tool-group-head" ref="headEl" type="button" :aria-expanded="open" @click="onHeadClick">
       <StatusDot :status="aggregateStatus" />
       <Icon class="tg-ic" name="list" size="sm" />
-      <span class="tg-title">{{ t('tools.group.title', count) }}</span>
+      <span class="tg-title">{{ countTitle }}</span>
       <span class="tg-meta">· {{ statusLabel }}</span>
       <Icon class="tg-car" name="chevron-right" size="sm" />
     </button>
@@ -88,7 +94,7 @@ function onHeadClick(): void {
   display: flex;
   flex-direction: column;
   background: var(--color-surface);
-  border: 1px solid var(--color-line);
+  border: 0.5px solid var(--color-line);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
@@ -115,6 +121,9 @@ function onHeadClick(): void {
 .tool-group-head:focus-visible {
   outline: none;
   box-shadow: inset 0 0 0 2px var(--color-accent-soft);
+}
+.tool-group.open .tool-group-head {
+  border-bottom: 0.5px solid var(--color-line-strong);
 }
 .tg-ic {
   color: var(--color-text-faint);

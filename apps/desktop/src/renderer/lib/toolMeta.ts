@@ -135,7 +135,7 @@ export interface ToolChipInput {
 // ---------------------------------------------------------------------------
 // toolSummary: a concise, per-tool-kind header string derived from the tool's
 // arguments (`arg` holds the JSON-stringified tool input, or a plain string).
-// Read → path + line range, Write/Edit → path, Bash → command (truncated),
+// Read → path + line range, Write/Edit → path, Bash → command (CSS-truncated),
 // Grep/Search → pattern, Glob/LS → path/pattern, Fetch → host/url.
 // Falls back to the raw arg for unknown tools. Defensive: never throws.
 // ---------------------------------------------------------------------------
@@ -229,8 +229,6 @@ function goalBudgetSummary(d: Record<string, unknown>): string | undefined {
   }
 }
 
-const BASH_MAX = 64;
-
 /**
  * @param full when true, skip the `…` length clip and return the complete
  *   summary — used by the expanded tool-card body (it has room to wrap). The
@@ -270,19 +268,22 @@ export function toolSummary(name: string, arg: string, full = false): string {
       }
       case 'bash': {
         const cmd = str(d.command) ?? str(d.cmd) ?? str(d.script);
-        return cmd ? c(cmd, BASH_MAX) : fallback();
+        // Keep the complete command in the DOM and let the row's available
+        // width decide where the visual ellipsis belongs. A fixed character
+        // clip truncates too early on wide conversation panes.
+        return cmd ? cmd.trim() : fallback();
       }
       case 'grep':
       case 'search': {
         const pattern = str(d.pattern) ?? str(d.query) ?? str(d.regex);
         const path = str(d.path) ?? str(d.glob) ?? str(d.include);
-        if (pattern && path) return c(`${pattern}  in ${path}`);
+        if (pattern && path) return c(t('tools.summary.inScope', { value: pattern, scope: path }));
         return pattern ? c(pattern) : fallback();
       }
       case 'glob': {
         const pattern = str(d.pattern) ?? str(d.glob) ?? str(d.query);
         const path = str(d.path) ?? str(d.cwd);
-        if (pattern && path) return c(`${pattern}  in ${path}`);
+        if (pattern && path) return c(t('tools.summary.inScope', { value: pattern, scope: path }));
         return pattern ? c(pattern) : (str(d.path) ? c(str(d.path)!) : fallback());
       }
       case 'ls': {

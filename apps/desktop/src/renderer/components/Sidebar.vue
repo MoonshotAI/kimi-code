@@ -3,7 +3,7 @@
      The old workspace rail and workspace tabs have been removed;
      workspace switching, folding and renaming all live in the group header. -->
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, defineAsyncComponent, nextTick, onBeforeUnmount, onMounted, onUpdated, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { serverEndpointLabel } from '../api/config';
 import {
@@ -122,6 +122,7 @@ const emit = defineEmits<{
 // ---------------------------------------------------------------------------
 const showSearch = ref(false);
 const sessionSearchKeys = isAppleShortcutPlatform() ? ['⌘', 'K'] : ['Ctrl', 'K'];
+const newChatKeys = isAppleShortcutPlatform() ? ['⌘', 'N'] : ['Ctrl', 'N'];
 
 function openSearch(): void {
   // Sessions are loaded per-workspace (first page only); lazily drain the rest
@@ -131,9 +132,14 @@ function openSearch(): void {
 }
 
 function onSearchKeydown(e: KeyboardEvent): void {
-  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+  if (!(e.metaKey || e.ctrlKey)) return;
+
+  if (e.key.toLowerCase() === 'k') {
     e.preventDefault();
     openSearch();
+  } else if (e.key.toLowerCase() === 'n') {
+    e.preventDefault();
+    emit('create');
   }
 }
 
@@ -148,13 +154,35 @@ function isAppleShortcutPlatform(): boolean {
   return userAgentData?.platform === 'macOS' || userAgentData?.platform === 'iOS';
 }
 
-// Scroll-linked header seam: the .search-wrap bottom border/shadow only appears
-// once the session list has actually scrolled, so an unscrolled list shows no
-// abrupt boundary.
+// Scroll-linked seams: each edge shows a soft 18px fade only while more session
+// content exists beyond that edge. This keeps the pinned actions and Settings
+// entry readable without leaving a permanent shadow on a short list.
+const sessionsEl = ref<HTMLElement | null>(null);
 const sessionsScrolled = ref(false);
-function onSessionsScroll(e: Event): void {
-  sessionsScrolled.value = (e.target as HTMLElement).scrollTop > 0;
+const sessionsCanScrollDown = ref(false);
+
+function updateSessionsScrollState(el = sessionsEl.value): void {
+  if (!el) return;
+  sessionsScrolled.value = el.scrollTop > 0;
+  sessionsCanScrollDown.value = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
 }
+
+function onSessionsScroll(e: Event): void {
+  updateSessionsScrollState(e.target as HTMLElement);
+}
+
+let sessionsResizeObserver: ResizeObserver | null = null;
+onMounted(() => {
+  nextTick(() => {
+    updateSessionsScrollState();
+    if (typeof ResizeObserver === 'function' && sessionsEl.value) {
+      sessionsResizeObserver = new ResizeObserver(() => updateSessionsScrollState());
+      sessionsResizeObserver.observe(sessionsEl.value);
+    }
+  });
+});
+onUpdated(() => updateSessionsScrollState());
+onBeforeUnmount(() => sessionsResizeObserver?.disconnect());
 
 // ---------------------------------------------------------------------------
 // Collapse groups
@@ -702,11 +730,19 @@ onBeforeUnmount(() => {
         </IconButton>
       </div>
 
-      <!-- New chat + new workspace buttons -->
-      <div class="btn-wrap">
+      <!-- Sidebar actions share one container so New chat and Search are true
+           sibling controls. The optional workspace action occupies column 2. -->
+      <div
+        class="sidebar-actions"
+        :class="{
+          'sidebar-actions--scrolled': sessionsScrolled,
+          'sidebar-actions--has-workspace-action': showNewWorkspaceButton,
+        }"
+      >
         <button class="btn-new-chat" type="button" @click.stop="emit('create')">
           <Icon name="chat-new" />
           <span>{{ t('sidebar.newChat') }}</span>
+          <Kbd :keys="newChatKeys" />
         </button>
         <IconButton
           v-if="showNewWorkspaceButton"
@@ -716,11 +752,6 @@ onBeforeUnmount(() => {
         >
           <Icon name="folder" />
         </IconButton>
-      </div>
-
-      <!-- Session search — opens the Spotlight-style search dialog. Last fixed
-           row above the list, so it carries the scroll-linked seam. -->
-      <div class="search-wrap" :class="{ 'search-wrap--scrolled': sessionsScrolled }">
         <button class="search" type="button" @click="openSearch">
           <Icon class="search-icon" name="search" />
           <span class="search-input">{{ t('sidebar.search') }}</span>
@@ -729,7 +760,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Session list — grouped by workspace -->
-      <div class="sessions" @scroll="onSessionsScroll">
+      <div ref="sessionsEl" class="sessions" @scroll="onSessionsScroll">
         <!-- Empty state — only when no workspace is registered at all; empty
              workspaces still render their group header (with the + button). -->
         <div v-if="groups.length === 0" class="empty">
@@ -807,7 +838,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Footer: settings entry pinned under the session list -->
-      <div class="side-footer">
+      <div class="side-footer" :class="{ 'side-footer--shadowed': sessionsCanScrollDown }">
         <button class="btn-settings" type="button" @click.stop="emit('openSettings')">
           <Icon name="settings" />
           <span>{{ t('settings.title') }}</span>
@@ -823,9 +854,18 @@ onBeforeUnmount(() => {
       :style="ghMenuStyle"
       @click.stop
     >
-      <MenuItem @click="copyPathFromMenu">{{ t('sidebar.copyPath') }}</MenuItem>
-      <MenuItem @click="startRenameFromMenu">{{ t('sidebar.rename') }}</MenuItem>
-      <MenuItem danger @click="deleteFromMenu">{{ t('sidebar.removeWorkspace') }}</MenuItem>
+      <MenuItem @click="copyPathFromMenu">
+        <Icon name="copy" size="sm" />
+        {{ t('sidebar.copyPath') }}
+      </MenuItem>
+      <MenuItem class="workspace-rename-item" @click="startRenameFromMenu">
+        <Icon name="pencil" size="sm" />
+        {{ t('sidebar.rename') }}
+      </MenuItem>
+      <MenuItem danger @click="deleteFromMenu">
+        <Icon name="close" size="sm" />
+        {{ t('sidebar.removeWorkspace') }}
+      </MenuItem>
     </Menu>
 
     <!-- Workspace kebab menu (position:fixed, anchored to the ⋯ button so the
@@ -837,11 +877,18 @@ onBeforeUnmount(() => {
       :style="wsMenuStyle"
       @click.stop
     >
-      <MenuItem @click="copyWsPath(wsMenuTarget)">{{ t('sidebar.copyPath') }}</MenuItem>
-      <MenuItem separator />
-      <MenuItem @click="startRenameWs(wsMenuTarget)">{{ t('sidebar.rename') }}</MenuItem>
-      <MenuItem separator />
-      <MenuItem danger @click="deleteWs(wsMenuTarget)">{{ t('sidebar.removeWorkspace') }}</MenuItem>
+      <MenuItem @click="copyWsPath(wsMenuTarget)">
+        <Icon name="copy" size="sm" />
+        {{ t('sidebar.copyPath') }}
+      </MenuItem>
+      <MenuItem class="workspace-rename-item" @click="startRenameWs(wsMenuTarget)">
+        <Icon name="pencil" size="sm" />
+        {{ t('sidebar.rename') }}
+      </MenuItem>
+      <MenuItem danger @click="deleteWs(wsMenuTarget)">
+        <Icon name="close" size="sm" />
+        {{ t('sidebar.removeWorkspace') }}
+      </MenuItem>
     </Menu>
     <!-- Workspace sort menu (position:fixed, anchored to the sort button) -->
     <Menu
@@ -918,13 +965,14 @@ onBeforeUnmount(() => {
      - row boxes (hover/selected pills) sit --sb-inset from the sidebar edges;
      - text/icons start at --sb-pad-x = --sb-inset + 8px row padding;
      - row titles start at --sb-pad-x + --sb-gutter + --sb-gap. */
-  --sb-inset: var(--space-3);  /* row box inset from the sidebar edge */
-  --sb-pad-x: var(--space-5);  /* content start x (inset + row padding) */
+  --sb-inset: var(--space-2);  /* row box inset from the sidebar edge */
+  --sb-pad-x: var(--space-4);  /* content start x (inset + row padding) */
   --sb-gutter: 16px;           /* leading icon slot (matches the 16px folder icon, so the session title aligns under the workspace name) */
   --sb-gap: var(--space-2);    /* gap between the icon slot and the text */
   /* Row hover wash — global --color-hover (lighter than the selected fill;
      both translucent, so they sit on any surface). */
   --sb-hover: var(--color-hover);
+  --sb-selected: color-mix(in srgb, var(--color-selected) 75%, transparent);
 }
 /* While dragging the resize handle, follow the pointer 1:1 (same pattern as
    .global-preview.no-anim in App.vue). */
@@ -1025,9 +1073,10 @@ onBeforeUnmount(() => {
 .ch-backend {
   flex: none;
   min-width: 0;
+  font-family: var(--font-ui);
 }
 .ch-backend-kind {
-  font-family: var(--mono);
+  font-family: inherit;
   font-weight: 500;
   color: var(--color-text-muted);
 }
@@ -1035,7 +1084,7 @@ onBeforeUnmount(() => {
   color: var(--color-accent);
 }
 .ch-backend-ep {
-  font-family: var(--mono);
+  font-family: inherit;
   color: var(--color-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1051,20 +1100,51 @@ onBeforeUnmount(() => {
   .ch-name { display: none; }
 }
 
-/* Action buttons — first row of the actions group (New chat + search): rows
-   inside the group stack flush (0 gap, same rhythm as the session list rows);
-   the group's bottom gap lives on .search-wrap. */
-.btn-wrap {
-  display: flex;
+/* New chat and Search are direct siblings in one action group. The grid keeps
+   the optional workspace action beside New chat while Search spans both
+   columns on the next row. The group also owns the scroll-linked list seam. */
+.sidebar-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  gap: 8px;
-  padding: 0 var(--sb-inset);
+  gap: 0 var(--space-2);
+  padding: 0 var(--sb-inset) var(--space-1);
+  position: relative;
+  z-index: 1;
+  background: var(--color-sidebar-bg);
+  border-bottom: 0.5px solid transparent;
+  transition: border-color var(--duration-base) var(--ease-out),
+    box-shadow var(--duration-base) var(--ease-out);
 }
+.sidebar-actions::after,
+.side-footer::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 18px;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--duration-base) var(--ease-out);
+}
+.sidebar-actions::after {
+  top: 100%;
+  background:
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 2.5%, transparent), transparent 35%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.75%, transparent), transparent 65%),
+    linear-gradient(to bottom, color-mix(in srgb, var(--color-text) 1.25%, transparent), transparent);
+  transition-duration: var(--duration-slow);
+}
+.sidebar-actions--scrolled {
+  border-bottom-color: var(--line);
+}
+.sidebar-actions--scrolled::after { opacity: 1; }
 .btn-new-chat {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 12px;
-  flex: 1;
+  gap: var(--sb-gap);
+  width: 100%;
   min-width: 0;
   padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
   border: none;
@@ -1073,10 +1153,12 @@ onBeforeUnmount(() => {
   color: var(--color-text);
   font-family: var(--font-ui);
   font-size: var(--ui-font-size-sm);
+  font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   cursor: pointer;
   text-align: left;
 }
+.sidebar-actions--has-workspace-action .btn-new-chat { grid-column: 1; }
 .btn-new-chat:hover { background: var(--sb-hover); }
 .btn-new-chat:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .btn-new-chat svg { flex: none; }
@@ -1085,28 +1167,13 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.btn-new-chat :deep(.ui-kbd) { margin-left: auto; }
 
-/* Session search — the wrapper is the last fixed row above the list and
-   carries the scroll-linked seam: its bottom border/shadow only appear once
-   the session list has actually scrolled, so an unscrolled list shows no
-   abrupt boundary. */
-.search-wrap {
-  padding: 0 var(--sb-inset);
-  position: relative;
-  z-index: 1;
-  background: var(--color-sidebar-bg);
-  border-bottom: 1px solid transparent;
-  transition: border-color var(--duration-base) var(--ease-out),
-    box-shadow var(--duration-base) var(--ease-out);
-}
-.search-wrap--scrolled {
-  border-bottom-color: var(--line);
-  box-shadow: var(--shadow-sm);
-}
 .search {
+  grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sb-gap);
   width: 100%;
   margin: 0;
   padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
@@ -1127,6 +1194,7 @@ onBeforeUnmount(() => {
 }
 .search-icon {
   flex: none;
+  transform: translateY(-0.5px);
 }
 .search-input {
   flex: 1;
@@ -1134,6 +1202,7 @@ onBeforeUnmount(() => {
   color: var(--color-text);
   font-family: var(--font-ui);
   font-size: var(--ui-font-size-sm);
+  font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1142,7 +1211,7 @@ onBeforeUnmount(() => {
 
 /* Sessions — owns the vertical padding around the list (the 12px gap to the
    search row above and the bottom breathing room). Scrolled content passes
-   through the top padding and clips at the .search-wrap seam. Scrollbar: the
+   through the top padding and clips at the .sidebar-actions seam. Scrollbar: the
    4px ::-webkit-scrollbar below; standard scrollbar-width would kill it on
    Chromium (see the global scrollbar block in style.css). */
 .sessions {
@@ -1166,13 +1235,25 @@ onBeforeUnmount(() => {
    sunken — not a Button). */
 .side-footer {
   flex: none;
+  position: relative;
+  z-index: 1;
   padding: var(--space-2) var(--sb-inset);
-  border-top: 1px solid var(--line);
+  border-top: 0.5px solid var(--line);
+  background: var(--color-sidebar-bg);
 }
+.side-footer::before {
+  bottom: 100%;
+  background:
+    linear-gradient(to top, color-mix(in srgb, var(--color-text) 2.5%, transparent), transparent 35%),
+    linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.75%, transparent), transparent 65%),
+    linear-gradient(to top, color-mix(in srgb, var(--color-text) 1.25%, transparent), transparent);
+  transition-duration: var(--duration-slow);
+}
+.side-footer--shadowed::before { opacity: 1; }
 .btn-settings {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--sb-gap);
   width: 100%;
   min-width: 0;
   padding: 8px calc(var(--sb-pad-x) - var(--sb-inset));
@@ -1182,6 +1263,7 @@ onBeforeUnmount(() => {
   color: var(--color-text);
   font-family: var(--font-ui);
   font-size: var(--ui-font-size-sm);
+  font-weight: var(--weight-medium);
   line-height: var(--leading-tight);
   cursor: pointer;
   text-align: left;
@@ -1205,7 +1287,7 @@ onBeforeUnmount(() => {
   padding: 0 var(--space-3) var(--space-1) var(--space-2);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
-  font-weight: var(--weight-regular);
+  font-weight: var(--weight-section-label);
   text-transform: uppercase;
   color: var(--faint);
   user-select: none;
@@ -1262,6 +1344,10 @@ onBeforeUnmount(() => {
   top: 0;
   left: 0;
   z-index: var(--z-dropdown);
+}
+:deep(.workspace-rename-item) {
+  font-size: var(--text-xs);
+  font-weight: var(--weight-option-label);
 }
 
 /* Check slot for the section overflow menu — fixed width so unchecked items

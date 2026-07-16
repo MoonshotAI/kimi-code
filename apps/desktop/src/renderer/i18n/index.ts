@@ -3,7 +3,7 @@ import { safeSetString, STORAGE_KEYS } from '../lib/storage';
 
 export const availableLocales = [
   { code: 'en', label: 'English' },
-  { code: 'zh', label: '中文' },
+  { code: 'zh', label: '简体中文' },
 ] as const;
 
 export type LocaleCode = (typeof availableLocales)[number]['code'];

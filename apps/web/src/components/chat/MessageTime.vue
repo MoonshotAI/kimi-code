@@ -29,7 +29,8 @@ const display = computed(() => formatMessageTime(props.time, t('conversation.yes
   padding: 2px 5px;
   border-radius: var(--radius-sm);
   color: var(--muted);
-  font-size: var(--text-base);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
   line-height: 1;
   opacity: 0.7;
   white-space: nowrap;

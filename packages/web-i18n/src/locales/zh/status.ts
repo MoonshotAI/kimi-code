@@ -31,6 +31,7 @@ export default {
   goalCancelConfirm: '是否需要取消当前目标？取消后将无法恢复。',
   goalCancelConfirmYes: '是',
   goalCancelConfirmNo: '否',
+  goalDoneWhen: '完成条件',
   goalStatusActive: '进行中',
   goalStatusPaused: '已暂停',
   goalStatusBlocked: '已阻塞',

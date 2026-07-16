@@ -2,7 +2,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import type { FilePreviewRequest, ToolCall, ToolMedia } from '../../../types';
-import { toolChip, toolGlyph, toolLabel, toolSummary } from '../../../lib/toolMeta';
+import { normalizeToolName, toolChip, toolGlyph, toolLabel, toolSummary } from '../../../lib/toolMeta';
 import ToolRow from '../ToolRow.vue';
 import ToolOutputBlock from './ToolOutputBlock.vue';
 
@@ -28,6 +28,7 @@ const canExpand = computed(() => hasOutput.value || isRunningBash.value);
 const open = ref(props.tool.defaultExpanded === true && canExpand.value);
 
 const status = computed<'running' | 'ok' | 'error'>(() => props.tool.status as 'running' | 'ok' | 'error');
+const monospace = computed(() => normalizeToolName(props.tool.name) === 'bash');
 const label = computed(() => toolLabel(props.tool.name));
 const glyph = computed(() => toolGlyph(props.tool.name));
 const summary = computed(() => toolSummary(props.tool.name, props.tool.arg));
@@ -63,6 +64,7 @@ watch(
     :time="tool.name !== 'bash' ? tool.timing : ''"
     :open="open"
     :expandable="canExpand"
+    :monospace="monospace"
     :stacked="stackPosition !== 'single'"
     :stack-position="stackPosition"
     @toggle="toggle"

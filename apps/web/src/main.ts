@@ -8,8 +8,6 @@ import { useKimiWebClient } from './composables/useKimiWebClient';
 import { isDesktop } from './lib/desktopFlag';
 import { getIcon, type IconName } from './lib/icons';
 import { installClientErrorCapture } from './debug/trace';
-import '@fontsource-variable/inter/opsz.css';
-import '@fontsource-variable/inter/opsz-italic.css';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import './style.css';
 

@@ -185,12 +185,6 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
       </div>
     </Transition>
 
-    <GoalStrip
-      v-if="goal"
-      :goal="goal"
-      :force-expanded="goalExpandSignal"
-      @control-goal="emit('controlGoal', $event)"
-    />
     <div v-if="hasDockWork" ref="workbarRef" class="dock-workbar">
       <Pill
         v-if="bashTasks.length > 0"
@@ -223,6 +217,12 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
         <span class="dw-count">(<b>{{ todoDoneCount }}/{{ todos?.length ?? 0 }}</b>)</span>
       </Pill>
     </div>
+    <GoalStrip
+      v-if="goal"
+      :goal="goal"
+      :force-expanded="goalExpandSignal"
+      @control-goal="emit('controlGoal', $event)"
+    />
 
     <QuestionCard
       v-if="pendingQuestion"
@@ -290,8 +290,9 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
   max-width: calc(var(--read-max) + var(--panes-scrollbar-width, 0px));
   padding-right: var(--panes-scrollbar-width, 0px);
   flex: none;
-  position: relative;
-  background: var(--color-bg);
+  position: absolute;
+  inset: auto 0 0;
+  background: transparent;
   z-index: var(--z-sticky);
 }
 .chat-dock.align-center { margin-left: auto; margin-right: auto; }
@@ -352,6 +353,17 @@ defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
   align-items: center;
   gap: 6px;
   padding: 4px var(--dock-inline-right) 2px var(--dock-inline-left);
+}
+.dock-workbar :deep(.ui-pill) {
+  background: color-mix(in srgb, var(--color-surface) 92%, transparent);
+  border-color: var(--color-line);
+  box-shadow: var(--shadow-xs);
+}
+.dock-workbar :deep(.ui-pill:hover:not(:disabled)) {
+  background: color-mix(in srgb, var(--color-surface) 96%, transparent);
+}
+.dock-workbar :deep(.ui-pill.is-active) {
+  background: color-mix(in srgb, var(--color-accent) 12%, var(--color-surface) 80%);
 }
 .dock-workbar .dw-count { margin-left: 1px; }
 .dock-workbar .dw-count b { font-weight: 500; }

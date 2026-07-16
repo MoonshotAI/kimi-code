@@ -32,7 +32,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
   height: 20px;
   flex: none;
   padding: 0;
-  border: none;
+  border: 0.5px solid var(--color-line-strong);
   border-radius: var(--radius-full);
   background: var(--color-line-strong);
   cursor: pointer;
@@ -43,14 +43,20 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 .ui-switch:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .ui-switch__thumb {
   position: absolute;
-  top: 2px;
-  left: 2px;
+  top: 1.5px;
+  left: 1.5px;
   width: 16px;
   height: 16px;
   border-radius: var(--radius-full);
   background: var(--color-text-on-accent);
   box-shadow: var(--shadow-xs);
+  transform-origin: left center;
   transition: transform var(--duration-base) var(--ease-out);
 }
-.ui-switch.is-on .ui-switch__thumb { transform: translateX(16px); }
+.ui-switch:not(:disabled):hover .ui-switch__thumb { transform: scaleX(1.125); }
+.ui-switch.is-on .ui-switch__thumb {
+  transform: translateX(16px);
+  transform-origin: right center;
+}
+.ui-switch.is-on:not(:disabled):hover .ui-switch__thumb { transform: translateX(16px) scaleX(1.125); }
 </style>
