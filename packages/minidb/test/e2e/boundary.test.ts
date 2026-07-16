@@ -83,7 +83,7 @@ test('boundary: empty db open/close/reopen', async () => {
   await rmrf(dir);
 });
 
-test('boundary: overwrite same key many times keeps size 1', async () => {
+test('boundary: overwrite same key many times keeps size 1', { timeout: 30_000 }, async () => {
   const dir = await tmpDir();
   const db = await MiniDb.open({ dir, valueCodec: 'string' });
   try {

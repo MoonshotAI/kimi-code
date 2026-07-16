@@ -24,6 +24,12 @@ import type { PostingEntry } from './text-postings.js';
 
 const LATIN = /[a-z0-9]+/g;
 const CJK = /[\u3400-\u9fff\u3040-\u30ff\uff00-\uffef]+/g;
+// Postings records store the term length in a uint16. A single document with a
+// longer token previously made every postings rebuild throw after the index had
+// already been cleared, permanently poisoning the index (and compaction). Such
+// tokens can never be real query terms — drop them at tokenization so one
+// pathological document cannot destroy the index.
+const MAX_TERM_CHARS = 0xffff;
 
 /** Tokenize text into terms (lowercased latin words + CJK uni/bigrams). */
 export function tokenize(str: unknown): string[] {
@@ -32,7 +38,8 @@ export function tokenize(str: unknown): string[] {
   const latin = s.match(LATIN);
   // Loop-push instead of `terms.push(...latin)`: spreading a large match array
   // (hundreds of thousands of tokens from a big doc) overflows the call stack.
-  if (latin) for (const t of latin) terms.push(t);
+  // Latin matches are ASCII, so chars == utf8 bytes for the length guard.
+  if (latin) for (const t of latin) if (t.length <= MAX_TERM_CHARS) terms.push(t);
   const runs = s.match(CJK) ?? [];
   for (const r of runs) {
     for (let i = 0; i < r.length; i++) {

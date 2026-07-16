@@ -192,3 +192,58 @@ test('compaction-race: valueMode disk preserves concurrent writes and remaps poi
     await rmrf(dir);
   }
 });
+
+// Regression: under sustained writes whose append rate approaches the pre-copy
+// rate, auto-compactions previously never converged (stats.compactions stayed 0
+// until the storm stopped; the WAL grew unboundedly). Compaction must now give
+// up pre-copying and finish via the rotation critical section.
+test(
+  'compaction-race: auto compaction completes during a sustained write storm',
+  { timeout: 60_000 },
+  async () => {
+    const dir = await tmpDir();
+    let db = await MiniDb.open({
+      dir,
+      valueCodec: 'string',
+      fsyncPolicy: 'no',
+      compactThresholdBytes: 8 * 1024 * 1024,
+    });
+    let stop = false;
+    let written = 0;
+    let writeError: unknown = null;
+    try {
+      const val = 'v'.repeat(1024);
+      const start = Date.now();
+      const writers = Array.from({ length: 16 }, async () => {
+        while (!stop && Date.now() - start < 15_000) {
+          try {
+            await db.set(`k${written++}`, val);
+          } catch (e) {
+            writeError ??= e;
+            stop = true;
+          }
+        }
+      });
+      while (!stop && db.stats.compactions < 2 && Date.now() - start < 15_000) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      stop = true;
+      await Promise.all(writers);
+      assert.equal(writeError, null, `write failed during compaction storm: ${writeError}`);
+      assert.ok(
+        db.stats.compactions >= 2,
+        `expected auto compactions to complete during the storm, got ${db.stats.compactions} (written=${written})`,
+      );
+      await db.close();
+
+      // every acknowledged write must survive compaction rotations + recovery
+      db = await MiniDb.open({ dir, valueCodec: 'string' });
+      assert.equal(db.size, written, `size=${db.size} vs written=${written}`);
+      assert.equal(db.get('k0'), val);
+      assert.equal(db.get(`k${written - 1}`), val);
+    } finally {
+      await db.close().catch(() => {});
+      await rmrf(dir);
+    }
+  },
+);

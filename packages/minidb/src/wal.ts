@@ -45,6 +45,11 @@ export class WAL {
   private flushing = false;
   private inflight: Promise<unknown> | null = null;
   private scheduled = false;
+  /** When sealed, appendLoc rejects new frames (code 'WAL_SEALED') while the
+   *  already-queued frames can still be flushed. Compaction rotation seals the
+   *  old WAL so no append can slip between the final flush and close(): any
+   *  frame that will ever land in the old file is durable after one flush. */
+  private sealed = false;
   private timer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
   private readonly stats: { walBytesWritten: number; walFsyncs: number } | null;
@@ -72,6 +77,12 @@ export class WAL {
     }
   }
 
+  /** Reject new appends from now on; already-queued frames stay flushable.
+   *  Idempotent. */
+  seal(): void {
+    this.sealed = true;
+  }
+
   /** Append one frame and return its predicted absolute file offset. The offset
    *  is known synchronously because frames are flushed strictly in append order.
    *  NOTE: the frame's bytes are NOT in the file yet — they sit in the in-memory
@@ -80,6 +91,11 @@ export class WAL {
    *  that window would hit a short read past the current end of the file. */
   appendLoc(frame: Buffer): { offset: number; done: Promise<void> } {
     if (this.closed) return { offset: -1, done: Promise.reject(new Error('WAL is closed')) };
+    if (this.sealed) {
+      const err = new Error('WAL is sealed by a compaction rotation; retry against the new WAL');
+      (err as { code?: string }).code = 'WAL_SEALED';
+      return { offset: -1, done: Promise.reject(err) };
+    }
     if (!Buffer.isBuffer(frame)) return { offset: -1, done: Promise.reject(new TypeError('frame must be a Buffer')) };
     const offset = this.nextOffset;
     this.nextOffset += frame.length;
@@ -151,6 +167,18 @@ export class WAL {
     };
     this.inflight = run();
     return this.inflight;
+  }
+
+  /** Re-sync size/nextOffset with the file on disk. Required after recovery
+   *  truncates a torn WAL tail: the truncate happens on the path behind this
+   *  WAL's back, and stale bookkeeping would otherwise make later appends
+   *  publish value pointers offset by the torn byte count (reads then hit the
+   *  wrong frames). */
+  async refreshSize(): Promise<void> {
+    if (!this.fh) return;
+    const st = await this.fh.stat();
+    this.size = st.size;
+    this.nextOffset = st.size;
   }
 
   /** Force an fsync of the underlying file. */

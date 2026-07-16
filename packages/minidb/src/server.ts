@@ -164,8 +164,14 @@ export async function startServer({ dir, port = 6379, host = '127.0.0.1', fsyncP
   const db = (await MiniDb.open({ dir, valueCodec: 'string', fsyncPolicy })) as MiniDb<string>;
   const server = net.createServer((socket: Socket) => {
     const parser = new RespParser();
+    // Serialize per-connection processing: a new chunk's commands are queued
+    // behind the previous chunk's in-flight work, so replies always leave in
+    // request order. Without this, a slow command in one packet (e.g. SET with
+    // fsync 'always') let replies from the next packet overtake it, breaking
+    // pipelined clients.
+    let queue: Promise<void> = Promise.resolve();
     socket.on('data', (chunk: Buffer) => {
-      void (async () => {
+      queue = queue.then(async () => {
         try {
           for (const args of parser.feed(chunk)) {
             const res = await handle(db, args);
@@ -178,7 +184,7 @@ export async function startServer({ dir, port = 6379, host = '127.0.0.1', fsyncP
         } catch (e) {
           socket.write(reply.err((e as Error).message));
         }
-      })();
+      });
     });
   });
 
