@@ -281,8 +281,11 @@ export class LocalFetchURLProvider implements UrlFetcher {
         method: 'GET',
         headers: { 'User-Agent': this.userAgent },
         redirect: 'manual',
-        dispatcher: this.pinnedDispatcherFor(target, dispatchers),
-      });
+        // `dispatcher` is honored by undici at runtime but absent from
+        // DOM's RequestInit type (DOM-lib consumers typecheck this source)
+        // — hide it behind `unknown` to stay lib-agnostic.
+        dispatcher: this.pinnedDispatcherFor(target, dispatchers) as unknown,
+      } as RequestInit);
       if (!REDIRECT_STATUSES.has(response.status)) return response;
       const location = response.headers.get('location');
       if (location === null) return response;
@@ -310,7 +313,7 @@ export class LocalFetchURLProvider implements UrlFetcher {
   private pinnedDispatcherFor(
     target: SafeFetchTarget,
     dispatchers: Dispatcher[],
-  ): RequestInit['dispatcher'] {
+  ): Dispatcher | undefined {
     // IP literals (and allowPrivate mode) need no pin — there is no second
     // resolution to race.
     if (target.addresses === undefined) return undefined;
@@ -322,10 +325,7 @@ export class LocalFetchURLProvider implements UrlFetcher {
       connect: { lookup: pinnedLookup(target.host, target.addresses) },
     });
     dispatchers.push(dispatcher);
-    // Compatible at runtime (undici is undici); the two type declarations —
-    // the package's own and the copy bundled with @types/node's global
-    // fetch — just can't see each other.
-    return dispatcher as unknown as RequestInit['dispatcher'];
+    return dispatcher;
   }
 
   private extractMainContent(html: string): string {
