@@ -35,11 +35,10 @@ import type { SlashCommandHost } from './dispatch';
 
 const MODEL_PICKER_REFRESH_TIMEOUT_MS = 2_000;
 
-/** Build the switch-cost warning at mount time (bold is generated on the
- * render path, not cached at module level). */
-function switchCacheWarning(subject: 'models' | 'effort'): string {
-  return `Note: Switching ${subject} invalidates the existing prompt cache. Use ${currentTheme.bold('/new')} to avoid extra token costs.`;
-}
+const MODEL_SWITCH_CACHE_WARNING =
+  'Note: Switching models invalidates the existing prompt cache. Use /new to avoid extra token costs.';
+const EFFORT_SWITCH_CACHE_WARNING =
+  'Note: Switching effort invalidates the existing prompt cache. Use /new to avoid extra token costs.';
 
 /** True once the conversation has at least one user message: a switch from
  * then on resends the accumulated context, losing the cache. Shell-command
@@ -292,7 +291,7 @@ function showEffortPicker(
     new EffortSelectorComponent({
       efforts: segments,
       currentValue,
-      warning: hasConversationHistory(host) ? switchCacheWarning('effort') : undefined,
+      warning: hasConversationHistory(host) ? EFFORT_SWITCH_CACHE_WARNING : undefined,
       onSelect: (effort) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, effort, true);
@@ -409,7 +408,7 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinkingEffort: host.state.appState.thinkingEffort,
-      warning: hasConversationHistory(host) ? switchCacheWarning('models') : undefined,
+      warning: hasConversationHistory(host) ? MODEL_SWITCH_CACHE_WARNING : undefined,
       onSelect: ({ alias, thinking }) => {
         host.restoreEditor();
         void performModelSwitch(host, alias, thinking, true);
