@@ -6,29 +6,26 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
-## 0.26.0 (2026-07-16)
-
-### Features
-
-- Expand the coder subagent tool set to include background tasks, todo lists, plan mode, skill invocation, and nested agents, mirroring the main agent's capabilities; a subagent run also waits for its background tasks to settle before reporting completion.
+## 0.26.0 (2026-07-16) Say hi to the BIIIG DAY!
 
 ### Polish
 
-- Optimize the unit formatting of the context usage display.
-- Warn in the /model and /effort pickers that switching invalidates the existing prompt cache, and hint to use /new to avoid extra token costs.
+- Expand the coder subagent tool set to include background tasks, todo lists, plan mode, skill invocation, and nested agents, mirroring the main agent's capabilities.
+- Warn in the `/model` and `/effort` pickers that switching invalidates the existing prompt cache, and hint to use `/new` to avoid extra token costs.
 - web: Refresh the model catalog for all providers when opening the model picker, so newly available models always show up.
+- Optimize the unit formatting of the context usage display.
 
 ### Bug Fixes
 
-- Fix Kimi-provider models routed through the Anthropic protocol incorrectly showing reasoning effort options.
-- Honor an explicit thinking "off" on OpenAI-compatible providers: it used to be indistinguishable from never configured, so the history-based auto reasoning_effort injection kept the model reasoning.
-- web: Fix the sidebar resize handle being covered by the chat composer background.
-- Keep legacy migrations idempotent across multiple Kimi homes and report damaged or unmapped sessions instead of silently skipping them.
-- Replay empty thinking content verbatim instead of substituting a placeholder space on Anthropic-compatible and Kimi preserved-thinking endpoints.
-- Report when users stop tasks and preserve other stop reasons in model context.
 - Fix a resumed session being marked as just updated and jumping to the top of the session list without any new activity.
-- Fix a race where resuming a background subagent right after it was manually stopped could fail with an "already running" error.
 - Fix the context size indicator under-reporting the model's actual context usage.
+- Fix Kimi-provider models routed through the Anthropic protocol incorrectly showing reasoning effort options.
+- Honor an explicit thinking "off" on OpenAI-compatible (chat completions) providers.
+- Report when users stop tasks and preserve other stop reasons in model context.
+- Fix a race where resuming a background subagent right after it was manually stopped could fail with an "already running" error.
+- Replay empty thinking content verbatim instead of substituting a placeholder space on Anthropic-compatible and Kimi preserved-thinking endpoints.
+- Keep legacy migrations idempotent across multiple Kimi homes and report damaged or unmapped sessions instead of silently skipping them.
+- web: Fix the sidebar resize handle being covered by the chat composer background.
 
 ## 0.25.0 (2026-07-16)
 
@@ -82,15 +79,15 @@ This page documents the changes in each Kimi Code CLI release.
 - Fix the web UI showing the wrong CLI version.
 - Fix Gemini tool call IDs colliding across turns and merging swarm runs into one card.
 - web: Show server error details when actions like stopping or archiving a session fail.
-- web: Fix long responses getting stuck when the tab is backgrounded.
-- web: Fix copy button on code blocks not working on plain HTTP.
-- web: Fix session list being cleared after a failed refresh.
-- web: Fix the AgentSwarm member list missing after a page reload.
+- web: Fix long responses stalling after the tab was backgrounded.
+- web: Fix code block copy buttons over plain HTTP.
+- web: Keep loaded sessions visible when the session list fails to reload.
+- web: Restore the AgentSwarm member list after a page refresh.
 - web: Fix session titles not generating when the first message is a slash command.
-- web: Fix message timestamps showing the session creation time after reloading a session.
-- Fix multiple /goal mode issues: budget and turn limit enforcement, pause and resume, crash recovery, final status messages, and invalid persisted goal records.
-- Fix a replaced goal still affecting the new goal's budget, and reject invalid subagent goals consistently.
-- Fix the guidance text shown when a goal cannot be paused or resumed.
+- web: Show each message's actual send time after reloading a session.
+- Fix several goal-mode issues around budgets and turn limits, pausing and resuming, crash recovery, final status messages, and invalid persisted goal records.
+- Fix replaced goals being able to affect the new goal's budget, and reject subagent goals consistently.
+- Correct the guidance shown when a goal cannot be paused or resumed.
 
 ### Refactors
 
@@ -100,81 +97,81 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Bug Fixes
 
-- Fix Kimi sessions hanging when preserved-thinking history contains empty reasoning steps.
-- Fix built-in tools being unavailable when the model provider initializes after session start.
-- Fix thinking effort routing: non-Kimi providers now preserve configured values, Kimi models validate runtime selections and fall back safely during model resolution.
-- web: Align web and CLI thinking level handling: selected levels are submitted as-is, not silently downgraded; unselected or model-switched sessions fall back to the model's default; explicit selections are saved as defaults and inherited by new sessions.
-- Fix goal completion summaries being lost; untyped LLM errors in step interruption events no longer show internal error code prefixes.
+- Fix Kimi sessions getting stuck when preserved-thinking history contains an empty reasoning step.
+- Fix built-in tools being unavailable when the model provider becomes ready after the session starts.
+- Fix Thinking effort routing: non-Kimi providers now preserve configured values, while Kimi models validate runtime selections and fall back safely during model resolution.
+- web: Align thinking-level handling with the CLI: submit the selected level verbatim instead of silently downgrading it, fall back to the model's own default when nothing was chosen or the model switches, and persist explicit picks as the default for new sessions.
+- Preserve goal completion summaries and show untyped LLM errors without an internal error-code prefix in step interruption events.
 
 ### Polish
 
-- web: Model labels show only the level name (e.g., Max), no longer "thinking: max".
+- web: Show just the level name (e.g. Max) in the model pill instead of "thinking: max".
 
 ## 0.24.0 (2026-07-14)
 
 ### Features
 
-- web: Add session export, run `/export` or select "Export session" in the session more menu to download a ZIP with the session and troubleshooting logs (up to 64 MiB).
-- Foreground `Bash` commands that time out are no longer killed; instead they move to the background and report results when done. Set `bash_auto_background_on_timeout = false` in `[background]` in `config.toml` to restore the old kill-on-timeout behavior.
+- web: Add session export: run `/export` or pick Export session from a session's more menu to download the session and troubleshooting logs as a ZIP (limited to 64 MiB).
+- Move foreground Bash commands that hit their timeout to the background instead of killing them, so long-running commands survive the timeout and report back on completion. Set `bash_auto_background_on_timeout = false` under `[background]` in config.toml to restore the kill-on-timeout behavior.
 
 ### Polish
 
-- web: Polish `/goal` mode controls with an animated bar interaction, budget-aware progress bar, and design-system-aligned cancel confirmation.
-- Polish session close: request background tasks to stop with a grace period before force-stopping remaining tasks.
-- Rewrite the repeated tool call reminder to guide the agent toward alternative actions instead of forbidding the call.
-- Polish `TaskOutput` tool prompt to prevent the agent from blocking on background tasks.
-- Send a `kimi-code-cli` User-Agent header when fetching provider registry (api.json) and model catalogs.
-- Warn when a skill fails to parse instead of silently dropping it; fix the skill scan report being omitted.
+- web: Refine goal mode controls with animated strip interactions, budget-aware progress, and design-system cancellation confirmation.
+- On session close, background tasks are now asked to stop and given a grace period before being force-stopped.
+- Rewrite repeated-tool-call reminders to redirect the agent toward a different action instead of prohibiting the call.
+- Optimize the TaskOutput tool prompts to discourage blocking waits on background tasks.
+- Send the kimi-code-cli User-Agent on provider registry (api.json) and model catalog fetches, so registries can identify the client version.
+- Log a warning when a skill fails to parse instead of silently dropping it, and fix skill scan results not being reported.
 
 ### Bug Fixes
 
-- Fix oversized images corrupting the session; sessions that already failed with request-too-large errors now auto-recover.
-- Fix session forks losing content: forked sessions now retain media attachments, plan files, background task output, and cron tasks; failed forks no longer leave a broken copy.
-- web: Fix multiple rendering glitches on session reopen, reconnect, or resync, including the context usage indicator resetting to zero, user message bubbles duplicating, and text duplication across multi-step turns.
-- web: Fix uploaded images not showing when connecting to the server through a non-localhost address.
-- web: Fix a blocked goal not resuming after unblocking from the /goal controls.
-- web: Fix the AgentSwarm member list disappearing after a page reload while subagents are still running.
-- web: Fix the goal card disappearing after a page reload while a session goal is active.
-- web: Fix the workspace picker menu being too narrow for its content.
-- web: Fix transient subagent rate limits surfacing as session errors; they now recover automatically.
-- Fix Bash auto-detection failing on Windows when git comes from a native MSYS2 toolchain (ucrt64/clang64/clangarm64).
-- Fix OAuth login hanging after browser authorization when the provider configuration changes during the login flow.
-- Fix OAuth-hosted models persistently showing a re-login prompt when tokens return 401 after refresh; now shows the provider's actual rejection reason.
-- Fix providers without a configured `base_url` being rejected: anthropic/openai protocol providers now fall back to their official default endpoints as before.
-- Fix MCP tools being unavailable on the first turn after session start.
-- Fix pasted media and images being dropped in `/skill` and plugin command arguments, and images being dropped when submitted with Ctrl-S.
-- Fix empty reasoning blocks being dropped across providers, breaking multi-step tool calls.
-- Fix plan mode exit under auto permission being marked as "user reviewed": now correctly marked as auto-approved, so the agent no longer treats it as a signal to start executing.
-- Fix background tasks potentially being lost or falsely marked as missing when resuming a session.
-- Fix server potentially leaving stale instance files after shutdown.
+- Prevent oversized image reads from poisoning sessions; sessions that already failed with request-too-large errors now recover automatically.
+- Fix session fork losing everything except the conversation log: forked sessions now carry over media attachments, plan files, background task output, and cron tasks, and a failed fork no longer leaves a broken copy behind.
+- web: Fix several session rendering glitches when reopening, reconnecting, or resyncing a session, including the context usage indicator dropping to 0, duplicate user message bubbles, and duplicated text in multi-step turns.
+- web: Fix uploaded images failing to display when connecting to the server over a non-localhost address.
+- web: Continue blocked goals after the user resumes them from the goal controls.
+- web: Fix the AgentSwarm member list disappearing after a page refresh while subagents are still running.
+- web: Fix the goal card disappearing after a page refresh while a session goal is active.
+- web: Fix the workspace picker menu sizing too narrowly for its content.
+- web: Recover transient subagent rate limits without surfacing them as session errors.
+- Fix Bash auto-detection on Windows failing when git comes from a native MSYS2 toolchain (ucrt64/clang64/clangarm64).
+- Fix OAuth login hanging after browser authorization when the provider configuration changes during sign-in.
+- Show the provider's actual rejection message instead of a misleading re-login prompt when an OAuth-managed model keeps returning 401 after a token refresh.
+- Fix providers without a configured `base_url` being rejected: anthropic/openai and other protocol providers now fall back to their official default endpoints again.
+- Fix MCP tools being unavailable on the first turn after session startup.
+- Fix pasted media and images being dropped from `/skill` and plugin command arguments, and when steering with `Ctrl-S`.
+- Fix empty reasoning blocks being dropped across providers, which broke multi-step tool calls.
+- In auto permission mode, plan exits are now marked as auto-approved instead of user-reviewed, so the agent no longer mistakes the approval for a user signal to start executing.
+- Fix background tasks being lost or wrongly marked as lost when resuming sessions.
+- Fix server shutdown sometimes leaving a stale instance file behind.
 
 ### Refactors
 
-- `kimi web` now defaults to the refactored agent engine.
+- `kimi web` now runs on the reworked agent engine by default.
 
 ## 0.23.6 (2026-07-12)
 
 ### Polish
 
-- web: Render wide Markdown tables beyond the reading column width up to 1040px, with horizontal scrolling inside the table for wider content.
-- web: The server access token persists for up to 7 days after closing the tab or restarting the browser, so re-entering it on every new tab is no longer needed.
-- web: The workspace picker search box supports entering absolute paths to add workspaces, with real-time validation and completion suggestions.
-- web: Automatically enable the default thinking effort when switching to a model that supports thinking effort levels.
-- Recognize `support_efforts` and `default_effort` fields in custom registry imports so these models can have thinking effort configured.
-- Update the WebBridge install page link in the /plugins panel.
-- Add `subagent.timeout_ms` config (or `KIMI_SUBAGENT_TIMEOUT_MS` env var) to control individual subagent timeout, raising the default from 30 minutes to 2 hours.
-- Add print-mode background policy: set `[background].print_background_mode = "steer"` to keep `kimi -p` alive after background tasks finish, steering the main agent into further turns.
+- web: Let wide Markdown tables grow beyond the reading column up to 1040px, scrolling horizontally inside the table when wider.
+- web: Keep the server access token for up to 7 days across tab close and browser restarts, instead of asking for it again with every new tab.
+- web: Add workspaces by typing an absolute path directly in the workspace picker's search box, with live validation and completion suggestions.
+- web: Auto-enable the default thinking effort when switching to a model that supports effort levels in the web UI.
+- Recognize the `support_efforts` and `default_effort` fields when importing a custom registry, so thinking effort levels are available for those models.
+- Update the WebBridge install page link opened from the `/plugins` panel.
+- Add a `subagent.timeout_ms` config option (or the `KIMI_SUBAGENT_TIMEOUT_MS` env var) to control how long a single subagent may run before timing out; the default is raised from 30 minutes to 2 hours.
+- Add a print-mode background policy: set `[background].print_background_mode = "steer"` to keep `kimi -p` alive across background-task completions, so the main agent can be steered into follow-up turns.
 
 ### Bug Fixes
 
-- web: Fix sessions getting stuck in a sending state after reconnect; turns completed during the disconnect now properly finish loading and allow the next message.
-- web: Fix the initial auth check failing and redirecting to the login page on first visit after a web UI start or update; now stays on the connecting screen, shows the connection error, and keeps retrying.
-- Fix `kimi -p` exiting after the main turn ends when a goal is still active or a cron task is pending; goal continuation and cron task firing now execute their turns properly.
-- Fix dismissing a question prompt defaulting to the recommended option; now treated as the user choosing not to answer.
-- web: Fix ReadMediaFile results showing as a generic tool card instead of an image after session resume or reload.
-- web: Fix the chat view jumping downward when scrolling through conversation history.
-- web: Fix identically named models from different providers being incorrectly selected in the model dropdown; now matches by the unique model ID.
-- web: Fix sidebar lag when many sessions are present by removing redundant session list scans during rendering.
+- web: Fix sessions getting stuck in a sending state after a reconnect; turns that finish while the connection is down now stop the spinner and let the next message send normally.
+- web: Fix the first visit after starting or updating the web UI bouncing to the login page when the initial auth check fails; the connecting screen now stays up, shows the connection error, and retries.
+- Keep `kimi -p` runs alive after a turn ends while a goal is still active or a cron task is pending, so goal continuations and cron fires run their turns instead of being cut off when the main turn finishes.
+- Treat a dismissed question prompt as the user choosing not to answer, instead of implicitly selecting the recommended option.
+- web: Fix ReadMediaFile results rendering as plain tool cards instead of images after resuming or reloading a session.
+- web: Fix the chat view jumping downward while scrolling through conversation history.
+- web: Fix the model dropdown showing checkmarks on same-named models from other providers; the current model is now matched by its unique model id.
+- web: Fix sidebar lag with many sessions by removing repeated session list scans during rendering.
 
 ### Refactors
 
@@ -184,517 +181,517 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Polish
 
-- Improve retry reliability for transient provider errors (429, overload): respect the server's Retry-After header, and expose retry events in `-p --output-format stream-json` output.
+- Retry provider 429, overload, and other transient errors more reliably, honoring the server Retry-After delay, and surface retries in `-p --output-format stream-json`.
 
 ### Bug Fixes
 
-- Fix unsupported image formats (AVIF, BMP, TIFF, ICO) corrupting the session; covers all ingestion paths including remote image URLs and mislabeled tools. Stuck sessions auto-recover by dropping the offending image and retrying; a single bad image no longer blocks all subsequent requests.
-- web: Fix "Turn finished" desktop notifications and completion sounds firing twice per turn.
-- web: Fix internal image compression notes being displayed as visible user message text.
+- Stop unsupported image formats (AVIF, BMP, TIFF, ICO, …) from breaking sessions at every entry point — including remote image URLs and images mislabeled by a tool — and recover an already-stuck session by dropping the offending image and retrying, so one such image can no longer make every later request fail.
+- web: Fix the "Turn finished" desktop notification and completion sound firing twice per turn.
+- web: Hide the internal image-compression note so it no longer renders as user message text.
 
 ## 0.23.4 (2026-07-10)
 
 ### Features
 
-- web: Add notifications for tools requiring approval and improve notification reliability.
+- web: Add notifications when a tool needs approval, and improve notification reliability.
 
 ### Polish
 
-- web: Polish the chat interface with Inter font, localized labels, and more compact input and menu styles.
+- web: Polish the chat UI with Inter typography, localized labels, and tighter composer and menu styling.
 - web: Polish the session sidebar layout, colors, icons, and typography.
-- `/usage` and `/status` commands now show Extra Usage (top-up) balance.
-- The `/plugins` panel Official tab now includes a Kimi WebBridge entry for installing WebBridge from the browser.
+- Display the Extra Usage (fuel pack) balance in the `/usage` and `/status` commands.
+- Add a Kimi WebBridge entry to the Official tab of the `/plugins` panel that opens the WebBridge install page in your browser.
 
 ### Bug Fixes
 
-- Control request volume for image-heavy sessions: oversized model-read and pasted images (including WebP) are auto-compressed and downscaled; HEIC/HEIF images show platform-specific conversion commands instead of corrupting the session; HTTP 413 request-too-large errors now auto-recover by replacing old media with text markers and retrying. Limits are configurable via `[image]` in `config.toml` (or `KIMI_IMAGE_*` env vars), and each core keeps its own settings so reloading one client's config no longer affects another client's image compression.
-- Fix sessions with a deleted original working directory failing to resume.
-- Fix prompt mode goals not running to completion; validate and warn about invalid goal commands before sending the prompt.
-- web: Fix the occasional "another turn is active" error when sending the first message in a new conversation; show the startup state during send.
+- Keep image-heavy sessions within provider request-size limits: oversized images (model-read and pasted, including WebP) are downscaled and compressed, HEIC/HEIF reads are refused with a platform-matched conversion command instead of poisoning the session, and an HTTP 413 request-too-large now recovers automatically — the request and `/compact` retry with older media replaced by text markers. The limits are configurable via `[image]` in `config.toml` (or `KIMI_IMAGE_*` env vars), and each core keeps its own settings so reloading one client's config no longer changes another client's compression.
+- Fix resuming sessions whose original working directory no longer exists.
+- Fix prompt-mode goals so they run until completion and report invalid goal commands before sending prompts.
+- web: Fix an occasional "another turn is active" error when sending the first message of a new conversation, and show a starting state while it is being sent.
 
 ## 0.23.3 (2026-07-08)
 
 ### Bug Fixes
 
-- Fix the current account incorrectly showing "OAuth login expired" when a model is unavailable.
+- Fix a misleading "OAuth login expired" message shown when a model is not available for the current account.
 
 ## 0.23.2 (2026-07-08)
 
 ### Features
 
-- The built-in plugin marketplace now includes a Vercel plugin; run `/plugins` and select Vercel Plugin to install.
+- Add the Vercel plugin to the bundled plugin marketplace. Run `/plugins` and select Vercel Plugin to install it.
 
 ### Bug Fixes
 
-- Fix `kimi -p` exiting with code 0 even when the turn failed.
-- Fix autonomous goals being paused by status updates reported by the model.
-- Fix autonomous goal turns not counting toward the goal's turn budget.
-- Raise the image downscale cap from 2000px to 3000px, and fix EXIF-rotated (portrait) photos having swapped width and height in compression notes and media read descriptions, so area read-back coordinates are correct.
-- web: Fix the connection error hint persisting after WebSocket reconnects from a backgrounded tab.
-- Fix a console window flashing on every hook run on Windows.
+- Fix `kimi -p` runs exiting with code 0 when a turn fails.
+- Prevent autonomous goals from being paused by model-reported status updates.
+- Count the turn that starts an autonomous goal toward its turn budget.
+- Raise the image downscale cap from 2000px to 3000px, and fix swapped width/height for EXIF-rotated (portrait) photos in compression captions and media read notes so region readback coordinates map correctly.
+- web: Fix the connection error toast lingering after the WebSocket reconnects when returning from the background.
+- Fix console windows flashing on Windows each time a hook runs.
 
 ### Polish
 
-- web: Redesign the scheduled reminder interface.
-- web: Show session skills as `/skill:<name>` in the slash menu to distinguish from built-in commands; typing the skill name directly still works.
-- web: Switching the model in the input box model picker also updates the global default model, so new sessions inherit the choice.
-- web: Support Enter to confirm in archive and other confirmation dialogs.
-- Polish goal mode guidance for blocked and completion status updates.
-- Progressive tool loading (`select_tools`, experimental): drop loaded tool schemas after compaction and let the model re-select which ones it still needs, keeping the post-compaction context lean. Calls to tools that were not re-loaded are rejected with a prompt to select them first. Only active when the `tool-select` experimental flag is on and the model supports `select_tools`.
+- web: Redesign the scheduled reminder UI.
+- web: Show session skills in the slash menu as `/skill:<name>` so they are distinguishable from built-in commands; typing the bare skill name still works.
+- web: The composer model switcher switches the active session's model as before and additionally bumps the global default model, so new sessions inherit the choice.
+- web: Press Enter to confirm in archive and other confirmation dialogs.
+- Tighten goal-mode guidance for blocked and complete status updates.
+- Progressive tool disclosure (`select_tools`, experimental): compaction now discards the loaded tool schemas instead of re-injecting them, and the model re-selects the tools it still needs afterward. A from-memory call to a no-longer-loaded tool is rejected with guidance to select it first. No effect unless the `tool-select` experimental flag and a `select_tools`-capable model are active.
 
 ### Refactors
 
-- web: Compile icons at build time so the bundled web UI only ships icons that are actually rendered.
+- web: Compile icons at build time so the bundled web UI only carries the icons it renders.
 
 ## 0.23.1 (2026-07-07)
 
 ### Bug Fixes
 
-- Fix `kimi -p` dropping late-starting or long-running background subagents, which prevented their results from returning to the main agent.
-- web: Fix the chat stream breaking when the WebSocket in a background tab becomes stale; now auto-recovers.
-- Fix some third-party models (e.g. Opus 4.8) incorrectly falling back to the series default max output tokens; unlisted minor versions now reuse the most recent known version's limit.
-- Fix an explicitly set Anthropic `max_output_size` being capped to the built-in limit; now respects the user's configured value.
-- Fix `<system>` metadata from tools leaking into tool output; failed tools now display their own error message.
-- Fix goal update behavior on completion or blocking; now generates a final user-facing result summary from the tool result.
-- Fix permission mode not being restored on goal startup failure, and queued goals not waiting for a new user message.
-- Fix goal token budget not accounting for model completion tokens; budget exhaustion now stops immediately without extra continuation steps.
-- Fix the main agent being unable to use goal tools; return clear guidance for invalid goal control calls.
-- Fix the `--skills-dir` option not taking effect in interactive mode.
-- web: Fix multiple slash commands and skill activations not working on the new session page: `/goal <objective>` and slash skill activations (e.g. `/pre-changelog`) had no effect, and `/btw [<question>]` opened an empty side chat.
+- Fix `kimi -p` abandoning background subagents that start late or run long, so their results reach the main agent.
+- web: Recover chat streaming after a stale background-tab WebSocket instead of requiring a page refresh.
+- Fix some third-party models (e.g. Opus 4.8) falling back to the family default max output tokens; an unrecognized minor now reuses the nearest earlier known version's limit.
+- Honor explicit Anthropic `max_output_size` settings instead of clamping them to built-in ceilings.
+- Stop showing tool-produced `<system>` metadata in tool outputs; failed tools now show their own error text.
+- Fix goal completion and blocked updates to produce one final user-facing outcome summary from the tool result.
+- Fix goal startup and queue handling so failed starts restore permission mode and queued goals wait behind new user messages.
+- Fix goal token budgets to count model completion tokens and stop without extra continuation steps when the budget is exhausted.
+- Fix goal tools being unavailable to the main agent, and return clear messages for invalid goal-control calls.
+- Respect the `--skills-dir` flag in interactive mode.
+- web: Fix several slash commands and skills not working on the new-session screen: `/goal <objective>` and slash skill activations (for example `/pre-changelog`) silently did nothing, and `/btw [<question>]` opened an empty side chat.
 
 ### Polish
 
-- Anthropic provider (Claude and Kimi in Anthropic-compatible mode) now preserves thinking content from historical turns by default, matching Kimi's default behavior; disable with `[thinking] keep = "off"` or `KIMI_MODEL_THINKING_KEEP=off`.
-- Polish the permission mode descriptions shown by `/permission`, `/auto`, and `/yolo`; reorder `/auto` and `/yolo` in the command list.
-- Long-running goal runtime budget reminders now display in hours.
-- Polish goal mode guidance so the agent continues working across turns within reason, without ending goals prematurely.
+- Preserve prior turns' thinking by default on the Anthropic provider (Claude and Kimi's Anthropic-compatible mode), matching the Kimi default. Disable with `[thinking] keep = "off"` or `KIMI_MODEL_THINKING_KEEP=off`.
+- Clarify the permission mode descriptions shown by `/permission`, `/auto`, and `/yolo`, and reorder `/auto` and `/yolo` in the command list.
+- Show long-running goal wall-clock budget reminders in hours.
+- Tighten goal-mode guidance so agents continue reasonable work across turns instead of ending goals prematurely.
 
 ### Refactors
 
-- Log trace information for each request in the session wire log so model requests can be reconstructed during debugging.
+- Record a per-request trace in the session wire log, so model requests can be reconstructed for debugging.
 
 ## 0.23.0 (2026-07-06)
 
 ### Features
 
-- web: Add an "Archived sessions" page in settings to browse and restore archived sessions; go to Settings > Archived sessions.
-- Add experimental on-demand tool loading (`select_tools`): when the `tool-select` flag is enabled, supported models load MCP tools on demand rather than sending every tool on every request, preserving the provider's prompt cache. Off by default, and only applies to models that declare `select_tools` capability.
+- web: Add an Archived sessions page in Settings to browse and restore archived sessions. Open Settings → Archived to find it.
+- Add experimental on-demand tool loading (`select_tools`) under the `tool-select` flag: a supporting model loads MCP tools only when needed instead of sending all of them in every request, preserving the provider prompt cache. Off by default and only active on models that declare the `select_tools` capability.
 
 ### Bug Fixes
 
-- Fix sessions that exist on disk being missing from the session list or returning 404 on direct access; the server now rebuilds the session index at startup.
-- Fix Bash and Edit tool cards collapsing, jumping, or flickering in height when results stream in or end with short output; visually separate Bash commands from their output.
+- Fix sessions that exist on disk but were missing from the session list or returned 404 on direct access, by rebuilding the session index at server startup.
+- Fix the Bash and Edit tool cards collapsing, jumping, or flickering in height when results stream in or finish with short output, and visually separate the Bash command from its output.
 - Fix the input box shifting upward after the slash command menu closes.
-- Fix Ctrl+E edit approval previews missing context lines; now consistent with the summary panel.
+- Fix the edit approval preview shown by Ctrl+E to include surrounding context lines, matching the summary panel.
 - Fix `@` file completion missing deeply nested files in large projects after adding extra workspace directories.
-- web: Fix multiple layout and display glitches: the collapsed sidebar now correctly hides, the chat history no longer replays its entrance animation when opening a session, and tool components no longer jump the conversation when expanded or collapsed.
-- web: Fix scheduled reminders (cron) being hidden when triggered; now show as notification cards in the chat.
-- web: Fix the end of replies still missing after re-opening a session.
-- web: Fix queued media messages not being re-loadable into the input box; preserve attachments on message undo.
-- web: Fix the input box toolbar controls being clipped on narrow windows and mobile; the context ring stays visible at any width.
-- web: Fix font size settings so chat text, input box text, and sidebar text all follow the selected size.
-- web: Fix the input cursor being barely visible and the completed-todo strikethrough being too dim.
-- web: Fix the session search shortcut showing incorrectly on Windows.
-- Fix Google Gemini model tool calls, including Gemini 3 thinking signature round-trips across turns.
+- web: Fix several web layout and animation glitches: the collapsed sidebar now hides correctly, the chat history no longer replays its entrance animation when opening a session, and tool components no longer jump the conversation when expanded or collapsed.
+- web: Fix scheduled-reminder (cron) fires being hidden; they now show as notice cards in the chat.
+- web: Fix the end of a reply staying missing after reopening a session.
+- web: Fix queued media messages not loading back into the composer and keep attachments when undoing a message.
+- web: Keep the composer toolbar from clipping its controls on narrow windows and phones, with the context ring staying visible at every width.
+- web: Fix the font size setting so chat text, composer text, and sidebar text follow the selected size.
+- web: Fix an almost-invisible composer input caret and a washed-out strikethrough on completed todos.
+- web: Show the correct session search shortcut on Windows.
+- Fix tool calling with Google Gemini models, including Gemini 3 thinking-signature round-trips across turns.
 
 ### Polish
 
-- web: Replace the swarm bottom bar with a single inline tool card showing real-time subagent progress and aggregated results; keep the swarm progress bar stable after page reload.
-- TUI shows a compaction summary after compaction; press Ctrl+O to toggle visibility.
-- web: Render AskUserQuestion answers as readable option lists with the selected option highlighted, replacing raw JSON.
-- web: Show available skills in the input box before a session is created.
-- web: Add an "Archived sessions" entry in the mobile settings panel, and explain in the archive confirmation prompt that sessions can be restored from settings.
-- web: Show the Kimi icon and a clearer title in desktop notifications.
-- web: Align Markdown diff code blocks with the design system: code text keeps normal text color, with symbols and soft row backgrounds indicating changes, consistent with the `~/diff` panel.
-- web: Prevent text from breaking at word boundaries on line wrap; render code without font ligatures.
-- web: Remove extra left indentation from tool call card bodies so expanded content aligns with the title.
-- AskUserQuestion answers are now sent back to the model as question text and option labels instead of positional IDs, so the model no longer needs to map them back to the original options. Question texts must be unique per call, option labels must be unique per question. Existing clients still answer with option IDs and require no changes.
-- Kimi models with Thinking enabled now preserve reasoning across turns by default; disable with `[thinking] keep = "off"`.
+- web: Replace the swarm footer with a single inline tool card that shows live subagent progress and the aggregated result, and keep the swarm progress bar stable after refresh.
+- Show compaction summaries in the TUI after compaction. Press Ctrl+O to show or hide the summary.
+- web: Render AskUserQuestion answers as a readable option list with the chosen option(s) highlighted, instead of raw JSON.
+- web: Show available skills in the composer before a session is created.
+- web: Add an Archived sessions entry to the mobile settings sheet and clarify the archive confirmation to mention restoring from Settings.
+- web: Show the Kimi icon and clearer titles in desktop notifications.
+- web: Align the markdown diff code block with the design system: code text keeps the normal ink colour while the sign and a soft row background carry the change, matching the `~/diff` panel.
+- web: Prevent chat text from hyphenating at line breaks and render code without font ligatures.
+- web: Drop the stray left indent in the tool-call card body so expanded content aligns with the header.
+- Feed AskUserQuestion answers back to the model as question text and option labels instead of positional ids, so the model no longer has to map them back. Question texts must now be unique per call and option labels unique per question; existing clients keep answering with option ids, so no client change is required.
+- Keep prior reasoning across turns for Kimi models by default when Thinking is on. Set `[thinking] keep = "off"` to disable.
 
 ## 0.22.3 (2026-07-04)
 
 ### Bug Fixes
 
-- `kimi -p` now waits for background subagents to complete and return their results before exiting, preventing the current turn from ending prematurely.
-- web: Fix uploaded videos not playing in the web chat.
-- Revert recent TUI conversation rendering changes, restoring upstream original behavior and fixing related rendering issues.
+- Wait for background subagents to finish and respond to their results before exiting in `kimi -p`, instead of ending the turn early.
+- web: Fix uploaded videos failing to play in the web chat.
+- Revert the recent TUI transcript rendering changes to the original upstream behavior and fix related rendering issues.
 
 ### Polish
 
-- `kimi server run` now has `--dangerous-bypass-auth` and `--keep-alive` options to skip token authentication on trusted networks and stay alive beyond the idle timeout.
-- web: Uploaded images in the web chat support click-to-expand; click an image in a message to open it in a preview panel.
+- Add `--dangerous-bypass-auth` and `--keep-alive` flags to `kimi server run`, so the server can run without a token on trusted networks and stay alive past the idle timeout.
+- web: Add click-to-enlarge for images uploaded in the web chat. Click an image in a message to open it.
 
 ## 0.22.2 (2026-07-03)
 
 ### Bug Fixes
 
-- Fix subsequent user messages being silently dropped when a turn is interrupted between a tool call and its result.
-- Fix strict providers rejecting requests when the model emits duplicate tool call IDs.
-- Fix `kimi upgrade` failing on Windows due to a spawn error when installing the new version.
-- Fix conversation content duplicating in the scroll history during streaming.
-- Fix image compression prompts leaking internal `<system>` compression notes into visible messages and session titles.
-- Fix automatic background updates popping a console window on Windows.
+- Fix sessions silently dropping later user messages after a turn was interrupted between a tool call and its result.
+- Fix requests being rejected by strict providers when the model emits duplicate tool call ids.
+- Fix `kimi upgrade` failing on Windows with a spawn error when installing the new version.
+- Fix duplicated transcript content appearing in scrollback during streaming.
+- Fix compressed-image prompts leaking an internal `<system>` compression note into the visible message and the session title.
+- Keep automatic background updates from flashing a console window on Windows.
 
 ### Polish
 
-- Polish compaction notes: now record a follow-up plan (next steps, decisions made, anticipated blockers) alongside the next action, so the agent continues more coherently after auto-compaction.
-- Supplement PATH from the user's login shell at startup, so shell commands can find user-installed tools (e.g. `gh` from Homebrew) even when kimi-code was started without the full profile PATH.
-- Promote the language-matching rule to a standalone section in the system prompt, so replies and reasoning stay in the user's language even after long stretches of English tool output, while repository artifacts still follow project conventions.
-- TUI preference: when bracketed paste is unavailable, prevent fast multi-line pastes from being submitted line by line. Set `disable_paste_burst = true` in `tui.toml` to disable this behavior.
-- Polish subagent cards: keep a fixed height and show a live status spinner in a compact two-line activity window.
-- `kimi -p` now waits for background subagents to finish before exiting when `background.keep_alive_on_exit` is enabled. Set `keep_alive_on_exit = true` to let concurrent background subagents execute.
+- Have context-compaction notes capture a forward plan for the remaining work — upcoming steps, settled decisions, and foreseeable obstacles — instead of only the immediate next step, so the agent continues more coherently after auto-compaction.
+- Enrich PATH from the user's login shell at startup, so shell commands find user-installed tools (e.g. Homebrew's `gh`) even when kimi-code was launched without the full profile PATH.
+- Promote the language-matching rule to a dedicated section in the system prompt, so replies and reasoning consistently follow the user's language through long English tool output, while repository artifacts keep project conventions.
+- Add a TUI preference to keep rapid multi-line pastes from submitting line by line when bracketed paste is unavailable. Set `disable_paste_burst = true` in `tui.toml` to turn it off.
+- Keep subagent cards at a stable height and show a live status spinner with a compact two-row activity window.
+- In `kimi -p` runs, wait for background subagents to finish before exiting when `background.keep_alive_on_exit` is enabled. Set `keep_alive_on_exit = true` to let concurrent background subagents complete.
 
 ### Refactors
 
-- Log the model response ID in the session wire log for tracing individual model requests.
+- Record model response ids in session wire logs to make individual model requests easier to trace.
 
 ## 0.22.1 (2026-07-02)
 
 ### Bug Fixes
 
-- Fix the TUI rendering error causing a blank screen and missing input box.
-- Fix the TUI crashing when the terminal is narrowed to a very small width while input contains CJK or emoji text.
-- Fix web UI becoming sluggish after opening multiple sessions.
-- Opening a new session via `/new`, `/clear`, or session switching now fully clears the screen.
-- Fix web tooltips staying on screen after the triggering element is removed.
-- Fix session rows in the sidebar having their title and status badge shift on hover.
-- Fix the session search box showing a horizontal scrollbar when the session title or summary is long.
+- Fix TUI rendering bugs that caused the screen to go blank and the input box to disappear.
+- Fix the TUI crashing when the terminal is resized to a very narrow width while the input contains CJK or emoji text.
+- Fix the web UI becoming sluggish after opening many sessions.
+- Clear the screen fully when starting a new session via /new, /clear, or a session switch.
+- Fix web tooltips that could get stuck on screen when their trigger element is removed while open.
+- Fix the sidebar session row shifting its title and status badges when hovered.
+- Fix the session search dialog showing a horizontal scrollbar for long session titles or snippets.
 
 ### Polish
 
-- Polish the compaction handover summary for more reliable session resume: now retains the latest intent, key tool results, decisions, open questions, and context that needs review.
-- Bash mode adds shell command history: executed commands are saved to the input history; on an empty `!` prompt, press Up to browse and recall past commands.
-- When compressing oversized images, explain to the model what was sent versus what was originally available, and keep the original image so fine-grained detail can still be read by cropping or at full resolution.
+- Improve compaction handoff summaries for more reliable resumed sessions. They now keep the latest intent, key tool results, decisions, open questions, and context to re-check.
+- Save shell commands to input history and recall them in bash mode. Press Up on an empty `!` prompt to browse previous shell commands.
+- When large images are compressed, tell the model the original and delivered image details. Keep the original image available, and support cropped or full-resolution reads for fine details.
 - Refresh the web UI icon set and unify the message copy and undo button hover states and tooltips.
-- The web sidebar now supports collapsing an expanded workspace's session list back to the first page.
-- Trim redundant and inaccurate tooltips from the web UI.
-- The web input box send button now shows an upward arrow.
+- Let the web sidebar collapse an expanded workspace session list back to its first page.
+- Trim redundant and incorrect tooltips in the web UI.
+- Show an up arrow on the web composer send button.
 
 ### Refactors
 
-- Remove the experimental micro compaction feature and its toggle in the experiments panel.
-- Remove duplicate Enter key handling logic in the prompt editor.
+- Remove the experimental micro compaction feature and its toggle from the experiments panel.
+- Remove duplicate newline-shortcut handling from the prompt editor.
 
 ## 0.22.0 (2026-07-02)
 
 ### Features
 
-- Auto-compress oversized images that exceed model limits: downscale and re-encode them before sending to the model, reducing vision token costs and preventing provider image-size errors.
-- Add model override configuration: set `[models."<alias>".overrides]` with model metadata to override provider refresh results.
+- Automatically compress oversized images before they reach the model, downsampling and re-encoding them to cut vision-token cost and avoid provider image-size errors.
+- Add model alias overrides, letting you set model metadata under `[models."<alias>".overrides]` to override provider catalog refresh results.
 
 ### Bug Fixes
 
-- Fix Plan, Swarm, and Goal modes in the web UI being shared across sessions; each session now has its own independent toggle.
-- Fix the transcript jumping back to the top when scrolling up through history during streaming.
-- Release pasted images and streaming timers after they are no longer displayed, preventing sustained memory growth in long sessions.
-- Fix the terminal staying in raw mode with a hidden cursor and disabled flow control after a crash or unexpected exit.
-- Fix the active workspace only showing the last five sessions on load; now loads earlier sessions from the past 12 hours.
-- Fix the default-thinking-on setting not taking effect; new sessions now correctly start with Thinking enabled.
-- Fix web question, approval, and task actions producing spurious errors when the operation is already complete; add loading feedback so every click gets immediate confirmation.
-- Draft pull requests now show a distinct draft status instead of being displayed as open.
-- Hide the conversation outline when there is not enough space to expand the labels, preventing it from being clipped by the window edge.
-- Hide the unsupported Off option in the /model thinking toggle for always-on models that already provide multiple thinking effort levels.
+- Fix plan, swarm, and goal modes being shared across sessions in the web UI; each session now keeps its own toggles.
+- Fix the transcript jumping to the top when scrolling up through history during streaming output.
+- Release pasted images and streaming timers once they are no longer shown, so memory stops growing in long sessions.
+- Fix the terminal being left in raw mode with a hidden cursor and disabled flow control after a crash or abrupt exit.
+- Fix an active workspace showing only its five most recent sessions on load, so it now keeps loading older sessions from the last 12 hours.
+- Fix the Thinking-by-default setting not taking effect, so new sessions correctly start with thinking enabled.
+- Fix spurious errors from the web question, approval, and task actions when the action was already complete, and add loading feedback so each click is acknowledged immediately.
+- Show draft pull requests with a distinct draft status instead of displaying them as open.
+- Hide the conversation outline when there is not enough room to expand its labels, so it no longer clips against the window edge.
+- Hide the unsupported Off option in the /model thinking switcher for always-on models that already expose multiple effort levels.
 
 ### Polish
 
-- Refresh the web UI with a new design system, including updated colors, typography, spacing, a light/dark palette, redesigned tooltips, and more refined enter/exit and expand/collapse animations.
-- Group consecutive tool calls into a collapsible stack with dedicated rendering per tool: edits show diff line counts, and image, video, and audio results support inline previews.
-- Improve session search with a new Cmd/Ctrl+K command palette that filters and highlights matches by title, workspace, and last prompt. Press Cmd+K or Ctrl+K to open it.
-- In the web chat, show queued prompts inline below the current turn, and separate Stop from Send so Send cannot interrupt by mistake.
-- The conversation outline now shows one item per user question, expanding to a labeled list on hover.
-- Replace the Explore and Native theme options with a single chat layout, plus a Blue or Black accent color setting.
-- The sidebar now supports workspace sorting (by manual order or last edited) and collapse-all/expand-all controls.
-- Web error and warning toasts now show the time, duration, connection, and stack details.
-- Web confirmation actions (archive session, delete workspace, delete provider, undo message, mode switch) now use a consistent modal dialog.
-- Shrink the default TUI transcript window to keep long sessions responsive.
-- Shrink the default web input box height for a more compact empty state; fix ArrowUp recalling the previous message when editing a multi-line draft — ArrowUp now only recalls at the very start of the text, and is disabled in the expanded editor.
-- Remove the fade-out animation on message undo in the web chat.
+- Refresh the web UI with a new design system, including updated colors, typography, spacing, light and dark palettes, restyled tooltips, and subtle enter/exit and expand/collapse animations.
+- Group consecutive tool calls into a collapsible stack with per-tool renderers, including diff line-count chips for edits and inline previews for image, video, and audio results.
+- Improve session search with a Cmd/Ctrl+K palette that filters by title, workspace, and last prompt with highlighted matches. Press Cmd+K or Ctrl+K to open it.
+- Show queued prompts inline below the running turn in the web chat, and split Stop into its own button so Send no longer interrupts.
+- Show the conversation outline as one entry per user query that expands into a labeled list on hover.
+- Replace the Explore and Native theme options with a single chat layout and a Blue or Black accent-color setting.
+- Add workspace sorting by manual order or last-edited time, plus collapse-all and expand-all controls, to the sidebar.
+- Show time, duration, connection, and stack details in web error and warning toasts.
+- Use one consistent modal dialog for confirmations in the web UI (archive session, delete workspace, delete provider, undo message, and mode toggles).
+- Reduce the default TUI transcript window to keep long sessions responsive.
+- Reduce the web composer's default height for a more compact empty state, and fix ArrowUp recalling the previous message while editing a multi-line draft; ArrowUp now recalls only from the very start of the text and is disabled in the expanded editor.
+- Remove the fade-out animation when undoing a message in the web chat.
 
 ## 0.21.1 (2026-07-01)
 
 ### Bug Fixes
 
-- Fix the encrypted thinking stream leaving a blank gap before the first response text appears while the waiting spinner disappears.
+- Keep the waiting spinner visible while encrypted reasoning streams, fixing a blank spinner-less gap before the first response text appears.
 
 ## 0.21.0 (2026-07-01)
 
 ### Features
 
-- Plugins can now declare slash commands in their manifest's `commands` field, registered as `<plugin>:<command>` and expanded with `$ARGUMENTS` when called.
-- web chat adds Mermaid diagram rendering; `mermaid` code blocks in assistant replies are now rendered as diagrams. KaTeX math and Mermaid diagram parsing move to Web Workers for better UI responsiveness during streaming.
+- Plugins can now provide slash commands via a `commands` field in their manifest, registered as `<plugin>:<command>` and invoked with `$ARGUMENTS` expansion.
+- Add Mermaid diagram rendering to the web chat. Fenced `mermaid` blocks in assistant responses now render as diagrams. KaTeX math and Mermaid diagram parsing also run in Web Workers to keep the UI responsive during live streaming.
 
 ### Bug Fixes
 
-- Fix malformed message history permanently hanging sessions on strict providers (Anthropic): fix the request before sending by closing orphaned tool calls, dropping blank or purely whitespace text blocks; if the provider still rejects the structure, rebuild it in wire-compliant format and retry once.
-- Force-exit headless runs (`kimi -p`) so lingering reference handles no longer keep completed runs alive until the external timeout; also add a deadline to prompt cleanup so a single stuck close step does not hold up the entire shutdown.
-- Fix `@` file mentions not opening when typed in slash command arguments.
-- Fix daemon path rejection failing silently when adding a workspace by path in the web UI; now shows the error instead of creating a non-functional workspace.
-- Fix duplicate workspace registrations for the same folder causing duplicate entries in the web sidebar.
-- Fix web workspace renames not persisting after a page refresh.
+- Stop a malformed message history from permanently bricking a session on strict providers (Anthropic). The request is repaired before sending — orphaned tool calls are closed and empty/whitespace-only text blocks dropped — and if the provider still rejects its structure, it is resent once with a wire-compliant rebuild.
+- Force-exit headless runs (`kimi -p`) so a stray ref'd handle left over from the run can't keep a completed run alive until an external timeout, and bound prompt cleanup so a wedged shutdown step can't hang shutdown.
+- Fix @ file mentions not opening when typed inside a slash command argument.
+- Fix adding a workspace by path in the web UI failing silently when the daemon rejects the path; it now shows an error instead of a broken workspace.
+- Fix duplicate workspaces showing in the web sidebar when the same folder is registered more than once.
+- Fix the web workspace rename not persisting after a page refresh.
 
 ### Polish
 
-- Add a double-Esc shortcut to open the undo picker: press Esc twice while idle to undo.
+- Add a double-Esc shortcut to open the undo selector. Press Esc twice while idle to undo.
 - Show file path completions when typing `/` in shell mode (`!`).
-- Always show the usage data opt-out toggle in web settings, with improved labels and description.
+- Always show the usage-data opt-out toggle in the web settings with a clearer label and description.
 
 ### Refactors
 
-- Refactor conversation compaction:
-  - Keep only the most recent user prompt and a single user-role summary; drop assistant and tool messages.
-  - Fix `tool_use`/`tool_result` adjacency before sending, so strict providers no longer return HTTP 400 when a tool call and its result are not adjacent.
-  - Merge consecutive user turns for strict providers (Gemini/Vertex) to fix HTTP 400 ("roles must alternate") after compaction or when a steer turn is inserted right after a tool result.
-  - Micro-compaction is now off by default.
-- Refactor the thinking effort system.
-- Add a server-side key-value store API for persisting web UI preferences to the user data directory.
+- Rework conversation compaction:
+  - Keep only recent user prompts plus a single user-role summary; drop assistant and tool messages.
+  - Repair tool_use/tool_result adjacency before sending, fixing a strict-provider HTTP 400 when a tool call and its result became non-adjacent.
+  - Merge consecutive user turns for strict providers (Gemini/Vertex), fixing an HTTP 400 ("roles must alternate") after compaction or when a turn is steered in right after a tool result.
+  - Micro-compaction now defaults off.
+- Refactor the thinking effort system
+- Add a server-side key-value store API for persisting web UI preferences to the user's data directory.
 
 ## 0.20.3 (2026-06-30)
 
 ### Bug Fixes
 
-- Fix provider error messages showing as blank lines in the TUI when the server returns an HTML error page.
-- Fix the web input box being obscured by the mobile Safari toolbar and the page auto-zooming when the input box is focused.
+- Fix provider error messages rendering as blank lines in the TUI when the server returns an HTML error page.
+- Fix the web composer being hidden behind the mobile Safari toolbar and the page auto-zooming when the composer is focused.
 
 ### Polish
 
-- Refresh the provider model list in the background instead of only at startup, so newly available models appear without a restart.
-- Glob now uses ripgrep, respects .gitignore by default, supports brace patterns, returns only files, and warns when some directories are unreadable while keeping results from readable ones.
+- Refresh provider model lists automatically in the background instead of only at startup, so newly available models appear without restarting.
+- Glob now uses ripgrep, so it respects .gitignore by default, supports brace patterns, returns only files, and keeps partial results with a warning when some directories are unreadable.
 
 ### Refactors
 
-- Align malformed tool call argument handling and schema validation fallback.
+- Align malformed tool call argument handling with schema validation fallback.
 
 ## 0.20.2 (2026-06-29)
 
 ### Features
 
-- Kimi Code now supports the Anthropic-compatible protocol and video input.
-- web UI adds completion sounds and question notifications, with individual toggles for completion, question, and sound in settings. Question notifications are off by default; only users who explicitly enable them receive question text on their desktop.
-- Add a `KIMI_CODE_CUSTOM_HEADERS` environment variable for custom outbound LLM request headers, and send a `User-Agent` header to non-Kimi providers. Set `KIMI_CODE_CUSTOM_HEADERS` to newline-separated `Name: Value` lines.
-- The session list API gains an optional `exclude_empty` parameter to omit sessions with no messages.
+- Support the Anthropic-compatible protocol for Kimi Code, including video input.
+- Add a completion sound and question notifications to the web UI, with separate Settings toggles for completion notifications, question notifications, and sound. Question notifications default off so question text only reaches your desktop after you opt in.
+- Add `KIMI_CODE_CUSTOM_HEADERS` for custom outbound LLM request headers, and send the `User-Agent` header to non-Kimi providers. Set `KIMI_CODE_CUSTOM_HEADERS` to newline-separated `Name: Value` lines.
+- Add an optional `exclude_empty` parameter to the session list API to omit sessions that have no messages.
 
 ### Bug Fixes
 
-- On provider 413 context overflow, compact first, then retry to recover.
-- Cap compaction output at 128k tokens by default to prevent provider `max_tokens` errors.
-- Fix compaction ignoring the configured max output length.
-- Fix unnecessary full-screen repaints when typing in the input box or switching slash panels.
-- Scope unsent input box attachments to the session they were created in; switching sessions no longer leaks them into the next session's message.
-- Fix the web input box occasionally retaining typed text after sending the first message in a new session.
+- Recover from provider 413 context overflows by compacting before retrying.
+- Cap compaction output at 128k tokens by default to avoid provider `max_tokens` errors.
+- Fix compaction ignoring the configured max output size.
+- Fix unnecessary full-screen redraws when typing in the input box or toggling the slash panel.
+- Keep unsent composer attachments scoped to their session in the web UI, so switching sessions no longer leaks them into another session's next message.
+- Fix the web composer occasionally keeping typed text after sending the first message of a new session.
 - Fix debug timing output lingering after undoing a turn.
-- Fix the running prompt being squeezed onto the Agent Swarm progress bar.
+- Fix working tips getting squeezed against the agent swarm progress bar.
 
 ### Polish
 
-- Redesign the web AskUserQuestion card as a step-by-step wizard for clearer multi-question navigation and a final Submit action.
-- In the built-in web UI, sessions are now created only when the first message is sent, so clicking `+ New` without selecting a workspace opens the input box instead of creating an empty session.
-- Restore the scroll position when switching back to a session in the web UI.
-- Keep an open side panel open when switching sessions in the web UI.
-- Scope the web input box's up/down arrow input history to the current session, no longer sharing it across sessions.
-- In the built-in web UI, `/new` and `/clear` now open the session guide input box and focus it as aliases; the input box font size stays at 16px to prevent iOS auto-zoom without disabling viewport zoom.
+- Rework the web ask-user-question card into a step-by-step wizard so multi-question navigation and the final Submit action are easier to see.
+- In the bundled web UI, a new session is now created only when the first message is sent, so `+ New` without a workspace opens the composer instead of making an empty session.
+- Restore each session's scroll position when switching back to it in the web UI.
+- Keep the open side panel when switching between sessions in the web UI.
+- Scope the web composer's up/down input history to the current session instead of sharing it across all sessions.
+- In the bundled web UI, `/new` and `/clear` are now aliases that open the session onboarding composer and focus the input. iOS auto-zoom is prevented by keeping text inputs at 16px instead of disabling viewport scaling.
 - Hide unused "New Session" entries from the web session list by default.
 - Remove the `/sessions` slash command from the web UI; the sidebar already covers session browsing.
-- Show the first five sessions per workspace in the web sidebar, down from ten.
-- Replace the web input box attachment button's plus icon with an image icon.
+- Show the first five sessions per workspace in the web sidebar instead of ten.
+- Replace the web composer attach button's plus icon with an image icon.
 
 ### Refactors
 
 - Route Kimi Code models on the Anthropic-compatible protocol through the beta Messages API.
-- Upgrade web Markdown rendering dependencies (katex, markstream-vue, shiki) for fixes and performance improvements.
+- Upgrade web markdown renderer dependencies (katex, markstream-vue, shiki) for bug fixes and performance improvements.
 - Add provider type and protocol attributes to turn and API error telemetry.
 
 ## 0.20.1 (2026-06-26)
 
 ### Features
 
-- Plugins can now declare lifecycle hooks in `kimi.plugin.json` that run scripts at specified phases. See [Plugin Hooks](../customization/plugins.md#hooks-in-plugins).
+- Plugins now support declaring lifecycle hooks in `kimi.plugin.json` to run scripts at specific stages. See [Hooks in Plugins](../customization/plugins.md#hooks-in-plugins).
 - `/feedback` now supports attaching diagnostic logs and codebase context.
-- Add `kimi update` command, equivalent to `kimi upgrade`, for upgrading to the latest version.
-- `kimi web` adds a `--allowed-host <host>` flag to add extra Host header values to the DNS-rebinding allowlist; the 403 error message now includes guidance on how to allow a host via `--allowed-host` or `KIMI_CODE_ALLOWED_HOSTS`, e.g. `kimi web --allowed-host example.com`.
+- Add the `kimi update` command, equivalent to `kimi upgrade`, for upgrading to the latest version.
+- `kimi web` adds the `--allowed-host <host>` option to add a specified Host to the DNS-rebinding allowlist; 403 errors now explain how to allow it via `--allowed-host` or `KIMI_CODE_ALLOWED_HOSTS`, e.g. `kimi web --allowed-host example.com`.
 
 ### Bug Fixes
 
-- Fix kimi server failing to start after the first run on Windows.
-- Fix the `/web` command not automatically logging in to the opened web UI; the terminal now prints the access token.
-- Chat-completions provider `max_tokens` now does not exceed the remaining context window, preventing context overflow and invalid parameter errors.
+- Fix kimi server failing to start on Windows after the first run.
+- Fix the Web UI opened by the `/web` command not signing in automatically; the terminal now prints the access token.
+- Cap chat-completions providers' `max_tokens` to the remaining context window, avoiding context overflow and invalid parameter errors.
 
 ### Polish
 
-- Polish the default system prompt and built-in tool descriptions: prevent the agent from blocking background tasks, unify tool guidance across profiles, and enhance tool result display (fetched-page mode, total Grep matches).
+- Optimize the default system prompt and built-in tool descriptions to stop the agent from blocking background tasks, unify tool guidance across profiles, and surface previously missing tool-result details (fetched-page mode, Grep match totals).
 - Cache rendered message lines to keep the terminal responsive in long conversations.
-- Keep only the most recent turns in the transcript and collapse early steps to keep long sessions responsive.
-- The web chat input box now auto-grows with content; long messages can use the expandable editor.
-- The collapsed todo panel now shows the status breakdown of hidden todos (done / in-progress / pending).
+- Retain only recent turns in the transcript and collapse older steps within each turn to keep long sessions responsive.
+- Make the web chat input grow with its content and add an expandable editor for longer messages.
+- Show the done / in progress / pending breakdown of hidden todos in the collapsed todo panel.
 
 ## 0.20.0 (2026-06-26)
 
 ### Features
 
-- TUI adds shell mode. Type `!` in the input box to enable it. For long-running commands, press `Ctrl+B` to move them to the background. For example, run `!gh auth login` to authenticate with GitHub CLI without opening a new terminal.
-- CLI adds a `--host` option to expose the server to the internet via `kimi web --host`, with hardened token auth, rate limiting, and other security measures.
-- Web UI supports rendering LaTeX display math (`$$…$$`).
+- Add shell mode to the TUI. Type `!` in the input box to enable it. For long-running commands, press Ctrl+B to move them to the background. For example, you can run `!gh auth login` to sign in to the GitHub CLI without opening a new terminal.
+- Add a `--host` CLI option so `kimi web --host` can expose the server to the internet, with hardened token authentication, rate limiting, and other security measures.
+- Render LaTeX display math (`$$…$$`) in the web UI.
 
 ### Bug Fixes
 
-- Fix the startup crash on Linux caused by an unhandled native clipboard error.
-- Fix `kimi web` and `/web` failing to start the background server daemon on Windows due to `spawn EFTYPE` when the CLI is installed via npm/pnpm or run from source. The official single-binary install script is unaffected.
-- Fix the terminal window repeatedly losing focus on Linux Wayland, breaking IME input.
-- No longer auto-close questions in the web UI after 60 seconds; wait for the user's answer.
-- Fix the explore subagent silently losing git context when a git command times out or the directory is not a repository.
-- Fix Ctrl-C behavior during compaction: now clears pending editor drafts first instead of immediately cancelling.
-- Fix the MCP server working directory when the session is hosted by the web server.
-- Fix the built-in web UI repeatedly reloading the session snapshot during resync.
-- Fix truncated skill descriptions in the model's skill list missing an ellipsis.
+- Fix a startup crash on Linux caused by an unhandled native clipboard error.
+- Fix `kimi web` and `/web` failing to start the background server daemon on Windows with `spawn EFTYPE` when the CLI is installed via npm/pnpm or run from source. The official single-binary install script was not affected.
+- Fix the terminal window repeatedly losing focus on Linux Wayland, which broke IME input.
+- Stop auto-dismissing questions in the web UI after 60 seconds so they wait for the user's answer.
+- Fix explore subagents silently losing git context when git commands time out or the directory is not a repository.
+- Fix Ctrl-C during compaction so it clears a pending editor draft first instead of cancelling immediately.
+- Fix MCP server working directories when sessions are hosted by the web server.
+- Fix duplicate session snapshot reloads in the bundled web UI during resync.
+- Fix truncated skill descriptions missing an ellipsis in the model's skill listing.
 
 ### Polish
 
-- Redesign `/plugins` as a single tabbed panel: **Installed** (manage installed plugins — toggle, remove, MCP, details, reload), **Official** (Kimi-maintained marketplace plugins), **Third-party** (marketplace plugins from other publishers), and **Custom** (install from GitHub URL, zip URL, or local path). Use `Tab` / `Shift-Tab` to switch tabs.
-- Show per-line diffs when the agent edits or writes files in the web chat.
-- Show the plan body and option choices in the plan review card when exiting Plan mode in the web UI.
-- Show the subagent's full cumulative progress in its detail panel, with a concise tool call summary replacing raw JSON.
-- `/reload` now refreshes the assistant's view of plugin skills, so plugin changes take effect in the current session without starting a new one.
-- Replace the silent AGENTS.md truncation with a visible warning in both the TUI status bar and the web UI.
+- Redesign `/plugins` as a single tabbed panel: **Installed** (manage installed plugins — toggle, remove, MCP, details, reload), **Official** (Kimi-maintained marketplace plugins), **Third-party** (marketplace plugins from other publishers), and **Custom** (install straight from a GitHub URL, zip URL, or local path). Use `Tab` / `Shift-Tab` to switch tabs.
+- Show a line-by-line diff when the agent edits or writes a file in the web chat.
+- Show the plan body and approach choices in the plan review card when exiting plan mode in the web UI.
+- Show the full accumulated progress of a subagent in its detail panel, with concise tool-call summaries instead of raw JSON.
+- `/reload` now refreshes the assistant's view of plugin skills, so plugin changes take effect in the current session instead of requiring a new one.
+- Replace silent AGENTS.md truncation with a visible warning in the TUI status bar and web UI.
 - Add a confirmation prompt before installing third-party plugins.
-- Show an update badge on the Installed tab of `/plugins`; press Enter to install available updates, I to open plugin details.
+- Show update badges on the `/plugins` Installed tab, where Enter now installs the available update and I opens plugin details.
 - Add a copy button to user messages in the web chat.
-- Preserve the full tool output log when the preview is truncated, and link background task completion notifications to the saved output.
-- Sync session title changes to all connected clients in server mode.
-- Add `Ctrl+U` and `Ctrl+D` as page-up and page-down shortcuts in the task output viewer.
-- Add a hint to check the `loop_control.max_steps_per_turn` config in the per-turn step limit error.
-- Reduce streaming repaint overhead for long assistant messages with code blocks.
-- Load the web session list per-workspace, so the initial page no longer fetches all sessions upfront.
-- Avoid re-rendering the web session sidebar on every streaming token for better rendering performance.
-- Auto-create missing parent directories when writing files.
+- Preserve full tool output logs when previews are truncated and link background task completion notifications to saved output.
+- Sync session title changes across all connected clients in server mode.
+- Add Ctrl+U and Ctrl+D as page up and page down shortcuts in the task output viewer.
+- Add a hint to the per-turn step limit error pointing users to the `loop_control.max_steps_per_turn` config option.
+- Reduce streaming redraw cost for long assistant messages with code blocks.
+- Page the web session list per workspace so the first screen no longer fetches every session up front.
+- Keep the web session sidebar from re-rendering on every streaming token to improve rendering performance.
+- Create missing parent directories automatically when writing a file.
 - Improve the image paste hint.
 
 ## 0.19.2 (2026-06-24)
 
 ### Features
 
-- Keep the web sidebar workspace order draggable and persist the order locally; sessions now also float to the top of their group when they receive a new message.
-- Add `Alt+S` as a shortcut in the model picker to switch the current session's model only, without saving it as the default.
-- Add `Ctrl+T` as a shortcut to expand and collapse the truncated todo list.
+- Keep drag-and-drop workspace reordering in the web sidebar, with sort order persisted locally; sessions now also float to the top of their group as soon as a new message arrives.
+- Add an Alt+S shortcut in the model picker to switch the model for the current session only, without saving it as the default.
+- Add a Ctrl+T shortcut to expand and collapse a truncated todo list.
 - Add `-c` as a shorthand for `--continue`.
 
 ### Bug Fixes
 
-- Fix YOLO mode in the web app auto-approving plan reviews and sensitive file access.
-- Fix session resume not realigning tool calls that were interrupted mid-history.
-- Fix `↑`/`↓` input history recall not working after the first message in a new session.
-- Fix occasional stale rows leaving a duplicate input box after taller content collapses.
-- Fix inline images being rendered as corrupted escape sequences in the conversation transcript.
-- Fix code blocks nested inside list items rendering as blank after a turn finishes in the web chat.
-- Fix Tab accidentally opening the file completion list.
-- Fix clipboard copy operations failing on the web UI when served over plain HTTP.
+- Fix yolo mode in the web app auto-approving plan reviews and sensitive file access.
+- Fix resume not realigning a tool call that was interrupted mid-history.
+- Fix the composer's ↑/↓ input-history recall doing nothing right after the first message of a new session.
+- Fix stale rows occasionally leaving duplicate input boxes after tall content shrinks.
+- Fix inline images being rendered as broken escape sequences in the transcript.
+- Fix code blocks nested inside list items rendering blank in the web chat after a turn finishes generating.
+- Fix the Tab key unexpectedly opening the file completion list.
+- Fix clipboard copy actions in the web UI when served over plain HTTP.
 - Fix the web question prompt missing the free-text Other option.
-- Fix the web stop operation so expired prompt IDs fall back to cancelling the current session.
+- Fix web chat stop actions so stale prompt ids fall back to cancelling the active session.
 
 ### Polish
 
-- Read large text files in bounded memory without scanning the entire file to read tail lines.
-- Show the command in a running Bash tool card, and allow Ctrl+O to expand it before the result returns.
-- Allow the web sidebar and detail panel to resize to the full available viewport width, and keep their resize handles reachable on narrow windows.
-- Show subcommand suggestions after tab-completing a slash command name.
-- Show a brief bottom hint with the platform-specific paste shortcut when an image is detected in the clipboard.
-- Persist workspace group collapsed states across page reloads in the web sidebar.
-- Add a dev-mode indicator in the web sidebar for local development.
-- Polish the loading hint display.
+- Read large text files in bounded memory and read tail lines without scanning whole files.
+- Show the command in running Bash tool cards and allow expanding it with Ctrl+O before the result arrives.
+- Allow the web sidebar and detail panel to be resized up to the available viewport width, keeping their resize handles reachable on narrow windows.
+- Show subcommand suggestions after Tab-completing a slash command name.
+- Show a transient footer hint when an image is detected in the clipboard, displaying the platform-appropriate paste shortcut.
+- Persist the collapsed state of workspace groups in the web sidebar across page reloads.
+- Add a development-mode indicator to the web sidebar for local development.
+- Optimize the loading tips display.
 
 ### Refactors
 
-- Reorganize web app components into domain subdirectories (chat/settings/dialogs/mobile) and refresh component path comments.
-- Extract several input box components into reusable composables.
-- Extract pure turn-rendering helpers from the conversation panel into a standalone module.
-- Extract the beta conversation outline (table of contents) into a standalone component.
-- Extract workspace group rendering from the sidebar into a standalone component.
+- Reorganize the web app's components into area subdirectories (chat/settings/dialogs/mobile) and refresh the component path comments.
+- Extract several composer pieces into reusable composables.
+- Extract pure turn-rendering helpers out of the chat pane into their own module.
+- Extract the beta conversation outline (table of contents) into its own component.
+- Extract the workspace group rendering out of the sidebar into its own component.
 
 ## 0.19.1 (2026-06-23)
 
 ### Bug Fixes
 
-- Fix ACP editors (e.g. Zed) failing to start new sessions.
-- Fix the web sidebar unread dot losing sync across browser tabs.
-- Clear all session state when a session is archived or removed, so archived sessions no longer leave orphaned data.
+- Fix ACP editors such as Zed failing to start a new thread.
+- Fix the web sidebar's unread dots getting out of sync across browser tabs.
+- Clear all per-session state when a session is archived or removed, so archived sessions no longer leave orphaned data behind.
 
 ### Refactors
 
-- Consolidate web client localStorage access and split the root state store from the app shell into single-responsibility composables.
+- Consolidate web client localStorage access and split the root state store and app shell into focused composables.
 
 ## 0.19.0 (2026-06-22)
 
 ### Features
 
-- Add the ability to add extra workspace directories:
-  - Use the `/add-dir <path>` command to add an extra working directory to the current session, or remember it for the project.
-  - Use `kimi --add-dir <path>` to add them at startup.
-  - Project-level local configuration is now managed by `.kimi-code/local.toml`; we recommend adding it to your `.gitignore`.
-- Allow moving long-running foreground commands and subagents to the background with `Ctrl+B`, and view them through the `/tasks` panel.
+- Added the ability to add extra workspace directories:
+  - Use the `/add-dir <path>` command to add extra working directories to the current session, or remember them for the project.
+  - Use `kimi --add-dir <path>` to add them on startup.
+  - Project-level local config is now managed in `.kimi-code/local.toml`; we recommend adding it to your `.gitignore`.
+- Allow long-running foreground commands and subagents to be moved into background tasks with `Ctrl+B`, and inspect them via the `/tasks` panel.
 
 ### Bug Fixes
 
-- Provider security policy blocks are now displayed instead of being silently treated as completed turns; prevent the context token count dropping to zero after a filtered response.
-- Fix provider request failure when a resumed session's history contains empty text content blocks.
-- Detect the real image format from file contents when reading media, so filename-extension mismatches no longer produce data URLs that the model API rejects.
-- Fix commands flashing a blank console window on Windows.
-- Stop showing unread dots for cancelled or failed sessions in the web sidebar.
+- Surface provider safety-policy blocks instead of silently treating them as completed turns, and prevent the context token count from dropping to zero after a filtered response.
+- Fix provider requests failing when restored conversation history contains empty text content blocks.
+- Detect the real image format from file contents when reading media, so a mismatched filename extension no longer produces a data URL the model API rejects.
+- Fix commands flashing an empty console window on Windows.
+- Stop showing unread dots on cancelled or failed sessions in the web sidebar.
 
 ### Polish
 
-- Speed up session snapshot loading with a direct disk reader and request timeout protection, while keeping the previous path as a legacy fallback.
-- Show longer branch names in the web chat title, with the full name on hover.
+- Speed up session snapshot loading with a direct disk reader and a request timeout safeguard, keeping the previous path as a legacy fallback.
+- Show longer branch names in the web chat header and expose the full name on hover.
 - Keep the web page title fixed instead of changing with the session or workspace name.
-- Polish the file mention experience.
+- Polish file mention UX.
 
 ### Refactors
 
-- Unify image format detection when format sniffing fails.
+- Unify image format detection when sniffing fails.
 - Consolidate web client localStorage access and decouple appearance/notification state into dedicated modules.
 
 ## 0.18.0 (2026-06-18)
 
 ### Features
 
-- Add session filtering in the web sidebar, filtering by title and last user prompt.
-- Add lazy loading of earlier messages when scrolling up in the web chat session view.
-- Add environment variables to limit AgentSwarm concurrency during the initial ramp phase, making large swarms less likely to trigger provider rate limits.
+- Add session filtering to the web sidebar, filtering by title and the last user prompt.
+- Add scroll-up lazy loading for older messages in the web chat session view.
+- Add an environment variable to cap AgentSwarm concurrency during the initial ramp, so large swarms do not trip provider rate limits as easily.
 
 ### Bug Fixes
 
-- Fix the web app only loading the most recent 20 sessions.
-- Fix the web slash skill selection sending immediately; allow slash search to match by substring.
-- Fix slash commands being visible when the highlight is on a longer slash menu.
-- Fix the last session archive showing an incorrect display failure.
+- Fix the web app only loading the 20 most recent sessions.
+- Fix web slash skill selection sending immediately and allow slash search to match skill names by substring.
+- Fix the highlighted web slash command not staying visible while navigating a long slash menu.
+- Fix incorrect display after archiving the last session.
 - Fix the web login slash command description to match the browser authorization flow.
 
 ### Polish
 
-- Redesign the web OAuth login dialog so the step order is no longer ambiguous.
-- The version can now be displayed in web settings.
-- Allow longer web slash command names and descriptions to wrap, preventing overflow of the slash menu.
-- Add a `/reload` hint in the plugin change prompt.
+- Redesign the web OAuth login dialog so the order of steps is unambiguous.
+- Show the current version in web settings.
+- Allow long web slash command names and descriptions to wrap without overflowing the slash menu.
+- Add `/reload` suggestion in plugin-change hints.
 
 ## 0.17.1 (2026-06-17)
 
 ### Bug Fixes
 
 - Fix the `kimi web` command failing to start in the background.
-- Prevent the background local server from locking the directory it was started in.
-- Prevent the web login dialog from closing when clicking the background.
+- Stop the background local server from locking the directory it was started in.
+- Prevent the web login dialog from closing when clicking the backdrop.
 
 ### Polish
 
-- Group the default model dropdown by provider in web settings.
+- Group the default model dropdown in web settings by provider.
 
 ## 0.17.0 (2026-06-17)
 
 ### Features
 
-- Add Kimi Code Web mode, started via `kimi web` or `/web` from within the CLI, to continue sessions in a browser chat interface.
+- Add Kimi Code Web mode, which you can start with `kimi web` or `/web` in the CLI, and continue sessions in a browser chat interface.
 
 ### Bug Fixes
 
-- Show the underlying connection error when OAuth token refresh fails after internal retries, instead of prompting to log in. Token refresh failures are no longer retried at the agent loop level.
-- Restore the turn counter from persisted loop events when resuming a session, preventing resumed turns from reusing turn IDs that already exist in the history.
+- Show the underlying connection error when OAuth token refresh fails after internal retries, instead of prompting for login. Token refresh failures are no longer re-retried at the agent loop level.
+- Restore the turn counter from persisted loop events on resume so post-resume turns no longer reuse turn ids that already appear in history.
 
 ### Polish
 
@@ -704,57 +701,57 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Add a built-in `kimi vis` command to launch the session visualizer in the browser, pointing at local sessions. Supports `--port`/`--host`, `--no-open`, and `kimi vis <sessionId>` deep links.
+- Add a built-in `kimi vis` command that launches the session visualizer in your browser, pointed at your local sessions. Supports `--port`/`--host`, `--no-open`, and `kimi vis <sessionId>` deep-links.
 
 ### Bug Fixes
 
-- Prevent Anthropic-compatible providers from reading ambient Anthropic shell credentials and custom headers.
-- Fix repeated compaction handling when the context still exceeds the blocking threshold.
-- Prevent session close from resuming the agent when stopping background tasks.
-- Session replay range is now built from the rendered replay records, not the raw persisted records.
-- Close the wrapped output stream when the buffered reader is destroyed.
+- Stop Anthropic-compatible providers from reading ambient Anthropic shell credentials and custom headers.
+- Fix repeated compaction handling when context remains over the blocking threshold.
+- Prevent session shutdown from resuming the agent when stopping background tasks.
+- Project session replay ranges over rendered replay records instead of raw persisted records.
+- Close wrapped output streams when buffered readers are destroyed.
 
 ### Polish
 
-- Reduce the `/btw` side panel max height from half the terminal to one third.
-- Polish the queue panel style.
-- Add configurable banner display frequency and maintain local display state.
+- Reduce the maximum height of the `/btw` side panel from half to one-third of the terminal.
+- Polish queue pane styling.
+- Add configurable banner display frequencies with local display state.
 
 ### Refactors
 
-- Remove redundant LLM request log context propagation.
+- Remove redundant LLM request logging context plumbing.
 
 ## 0.15.0 (2026-06-15)
 
 ### Features
 
-- Add a full session picker view with search by name, paginated browsing, and copyable resume commands for sessions in other working directories.
+- Add an all-sessions picker view with name search, paginated browsing, and clipboard-ready resume commands for sessions in other working directories.
 - Add support for legacy SSE MCP servers alongside stdio and streamable HTTP transports.
 
 ### Bug Fixes
 
-- Fix resumed sessions being unable to continue when interrupted tool call results were not recorded.
+- Recover resumed sessions when an interrupted tool call result was not recorded.
 - Stop writing resume version markers into persisted agent metadata.
-- Migrated config files no longer contain deprecated legacy loop, background, plan, yolo, or unknown experimental flags.
-- Fix Xcode 26.5 MCP server emitting JSON Schema types incompatible with Moonshot.
+- Do not carry obsolete legacy loop, background, plan, yolo, or unknown experimental flags into migrated config files.
+- Repair mismatched JSON Schema types emitted by Xcode 26.5 MCP server for Moonshot compatibility.
 
 ### Polish
 
-- Keep TUI components within narrow terminal widths by wrapping, compacting, or truncating lines that may exceed the render width.
-- Before calling more important tools, prompt the CLI to show a brief one-line status message in the user's current language.
-- Extend the same-language rule to the model's reasoning process, so thinking content follows the user's language while preserving code and technical terms in their original form.
-- When reading media files, prefer the type detected from the file header before falling back to the media extension.
-- Prioritize clearing draft editor text before cancelling the active stream on Ctrl-C.
-- Fold hidden directories in the workspace prompt and describe how to view them.
-- Include the skill's directory in the context block for loaded skills, so the agent can locate its packaged resources (scripts, templates) after invoking a skill.
-- Show the full session switch hint when the current working directory has no sessions.
-- Clarify that the compaction summary must be output in the final answer.
+- Keep TUI components within narrow terminal widths by wrapping, compacting, or truncating lines that could exceed the render width.
+- Prompt the CLI to show one brief same-language status sentence before non-trivial tool calls.
+- Extend the same-language rule to the model's reasoning, so thinking follows the user's language while keeping code and technical terms in their original form.
+- Read media files using header-detected types before falling back to media extensions.
+- Prioritize clearing draft editor text before Ctrl-C cancels an active stream.
+- Collapse hidden directories in the workspace prompt and explain how to inspect them.
+- Include the skill's directory on the loaded-skill context block so the agent can locate a skill's bundled resources (scripts, templates) after it is invoked.
+- Show the all-sessions toggle hint when the current working directory has no sessions.
+- Clarify that compaction summaries must be emitted in the final answer.
 - Clarify AGENTS.md prompt guidance and mark truncated instruction files.
 
 ### Refactors
 
-- Resolve model capabilities through static lookup instead of instantiating a temporary provider.
-- Decouple agent skill access from the session-specific registry implementation.
+- Resolve model capabilities through a static lookup instead of instantiating a temporary provider.
+- Decouple agent skill access from session-specific registry implementations.
 - Optimize the npm packaging system.
 
 ## 0.14.3 (2026-06-14)
@@ -767,151 +764,152 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Bug Fixes
 
-- Fix endless desktop notifications in iTerm2; only send terminal progress sequences to terminals that support them.
-- Correctly display completed and cancelled compaction records when resuming a session.
-- Discard invalid `config.toml` sections with a warning instead of failing to start.
+- Fix endless desktop notifications in iTerm2 by only sending terminal progress sequences to terminals that support them.
+- Show completed and cancelled compaction records correctly when resuming a session.
+- Drop invalid config.toml sections with a warning instead of failing to start.
 
 ### Polish
 
-- Stream stdout and stderr of foreground Bash commands while the command is still running.
-- Allow `--auto`, `--yolo`, and `--plan` to be combined with `--session` or `--continue`, applying the requested mode to the resumed session.
-- Add a parent prefix to sub-skill names and expose sub-skills as dotted slash commands in the TUI.
-- Sync custom registry provider additions, removals, and rotated registry keys during the startup refresh.
+- Stream foreground Bash stdout and stderr while commands are still running.
+- Allow `--auto`, `--yolo`, and `--plan` to be combined with `--session` or `--continue` by applying the requested mode to the resumed session.
+- Qualify sub-skill names with their parent prefix and expose sub-skills as dotted slash commands in the TUI.
+- Sync custom registry provider additions, removals, and rotated registry keys during startup refresh.
 
 ## 0.14.1 (2026-06-12)
 
 ### Bug Fixes
 
-- Cancel the active turn on session close, preventing foreground shell commands from continuing to run after prompt mode exits.
-- Stop background tasks by default on session close.
+- Cancel active turns during session shutdown so foreground shell commands do not outlive prompt-mode exits.
+- Stop background tasks by default when sessions close.
 - Prevent overlapping interactive agent requests from using the wrong active agent.
-- Fix a premature stream close error when a shell process times out or is killed.
-- Degrade unsupported audio/video to placeholder text and re-attach tool result media, instead of silently dropping them.
+- Fix premature stream close errors when shell processes time out or are killed.
+- Degrade unsupported audio/video to placeholder text and reattach tool result media instead of silently dropping them.
 - Send OpenAI Responses system prompts as request instructions.
-- Propagate configured execution environment overrides to spawned processes.
-- Fix ACP file read and edit issues on Windows workspaces opened through IDE clients.
-- Require AgentSwarm tool calls to run individually in the model response.
+- Propagate configured execution environment overrides across spawned processes.
+- Fix ACP file reads and edits for Windows workspaces opened through IDE clients.
+- Require AgentSwarm tool calls to run alone in a model response.
 
 ### Polish
 
 - Add runtime support for dynamic MCP server updates, reference skills, replay timestamps, and Node file uploads.
-- Add a YOLO option when starting a swarm task from Manual mode.
-- Polish built-in skills.
-- Look up slash commands by alias in autocomplete — typing `/clear` now suggests `new (clear)`.
-- Wrap long command and skill descriptions to a second line in the autocomplete menu instead of truncating.
-- Show a tip banner below the welcome panel at startup.
+- Add a YOLO choice when starting swarm tasks from Manual mode.
+- Polish builtin skills.
+- Find slash commands by their aliases in autocomplete — typing `/clear` now suggests `new (clear)`.
+- Wrap long command and skill descriptions in the autocomplete menu onto a second line instead of cutting them off.
+- Display a tips banner below the welcome panel on startup.
 
 ## 0.14.0 (2026-06-10)
 
 ### Features
 
-- Add an `Interrupt` hook event, triggered when the user interrupts a turn (e.g. by pressing Esc), so hooks can observe that the turn is stopping instead of being stuck in a working state.
+- Add an `Interrupt` hook event that fires when the user interrupts a turn (e.g. pressing Esc), letting hooks observe the turn stopping instead of getting stuck on a working state.
 
 ### Bug Fixes
 
-- Preserve tool output images when using OpenAI-compatible Chat Completions.
+- Preserve image outputs from tools when using OpenAI-compatible chat completions.
 
 ## 0.13.1 (2026-06-10)
 
 ### Bug Fixes
 
-- Prevent forking a session during an active turn; consolidate wire protocol definitions into a shared internal package.
-- Fix the Kimi Datasource to use matching OAuth credentials and service endpoints in the current Kimi Code environment.
-- Fix goal marker text overflowing the terminal width.
+- Prevent forking sessions during active turns and consolidate wire protocol definitions into a shared internal package.
+- Fix Kimi Datasource to use the matching OAuth credentials and service endpoint for the active Kimi Code environment.
+- Fix goal marker text overflowing terminal width.
 
 ### Polish
 
-- Add support for Claude Fable 5 on the Anthropic provider.
-- Add an interactive undo picker and clearer undo limit hint messages.
-- YOLO mode no longer asks when writing or editing files outside the working directory.
-- Polish the active skill prompt so loaded skills are no longer represented as system reminders.
-- Tighten file tool guidance so incremental edits are performed through the Edit tool.
+- Add Claude Fable 5 support to the Anthropic provider.
+- Add an interactive undo selector and clearer undo-limit messages.
+- YOLO mode no longer asks before writing or editing files outside the working directory.
+- Clarify active skill prompts so loaded skills are no longer represented as system reminders.
+- Tighten file tool guidance to route incremental edits through Edit.
 
 ## 0.13.0 (2026-06-10)
 
 ### Features
 
-- Add custom color themes. Define your own palette in a JSON file under `~/.kimi-code/themes/`, or use the built-in `/custom-theme` skill command to generate one.
-- Add the `/import-from-cc-codex` command to import selected Claude Code and Codex instructions, skills, and MCP settings.
+- Add custom color themes. Define your own palette as a JSON file in `~/.kimi-code/themes/`, or generate one with the built-in `/custom-theme` skill command.
+- Add `/import-from-cc-codex` to import selected Claude Code and Codex instructions, Skills, and MCP settings.
 - Show available plugin updates in the marketplace.
 
 ### Bug Fixes
 
-- Fix Windows build and dev starts potentially failing due to package binary resolving to a command shim.
-- Fix device login keeping the URL and code visible when the browser cannot be opened.
+- Fix Windows builds and development launches that could fail when package binaries resolve to command shims.
+- Fix device login to keep the URL and code visible when the browser cannot be opened.
 
 ### Polish
 
-- Show grouped subagent progress more clearly with active state breakdowns and elapsed time.
-- Truncate queued messages to a single line with an ellipsis when they exceed the terminal width.
+- Clarify grouped subagent progress with active status breakdowns and elapsed time.
+- Truncate queued message display to a single line with ellipsis when it exceeds terminal width.
 
 ## 0.12.1 (2026-06-09)
 
 ### Bug Fixes
 
-- Allow outdated experimental config entries to remain without blocking startup.
-- Pass through xhigh reasoning effort for OpenAI-compatible Chat Completions requests.
+- Allow obsolete experimental config entries to remain without blocking startup.
+- Pass through xhigh reasoning effort for OpenAI-compatible chat completions requests.
 
 ## 0.12.0 (2026-06-09)
 
 ### Features
 
-- Add the `/swarm` command to run an Agent Swarm with real-time progress display and rate-limit-aware retries.
-- Goals, background questions, and sub-skill discovery no longer require an experimental flag.
-- Support standard `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` environment variables (including SOCKS proxies) for all outbound traffic.
-- Support Homebrew installation.
-- Enable micro compaction by default; disable it in `/experiments`.
+- Add the `/swarm` command for running agent swarms with live progress and rate-limit-aware retries.
+- Make goals, background questions, and sub-skill discovery available without experimental opt-ins.
+- Honor the standard `HTTP_PROXY` / `HTTPS_PROXY` / `ALL_PROXY` / `NO_PROXY` environment variables, including SOCKS proxies, for all outbound traffic.
+- Support Homebrew installations.
+- Enable micro compaction by default. Disable via `/experiments`.
 
 ### Bug Fixes
 
-- Fix ACP slash skill routing, bootstrap context reading, file and permission edge cases, subagent event handling, and stale file edit messages.
-- Fix goal resume behavior by restoring the goal state from agent records.
-- Fix subagent thinking text and tool output display.
-- Fix session working directory mismatch caused by inconsistent path separators on Windows.
-- Fix the `/mcp` status panel border being broken by multi-line MCP server errors; now collapses to a single line.
-- Detect Git Bash installed via Scoop and other Git shims on Windows.
+- Fix ACP slash skill routing, bootstrap context reads, file and permission edge cases, subagent event handling, and stale-file edit messaging.
+- Fix goal resume behavior by restoring goal state from agent records.
+- Fix thinking text and tool output display for subagents.
+- Fix session workdir mismatch on Windows caused by inconsistent path separators.
+- Fix the `/mcp` status panel border being broken by multi-line MCP server errors, which are now folded onto a single row.
+- Detect Git Bash installed through Scoop and other Git shims on Windows.
 - Show the underlying error when migration fails.
-- Allow exiting the startup session picker by pressing Ctrl-C or Ctrl-D repeatedly.
+- Allow the startup session picker to exit with repeated Ctrl-C or Ctrl-D.
 
 ### Polish
 
-- Remove the per-turn auto-compaction cap, letting long conversations continue compacting instead of failing early.
-- Improve goal mode result handling, including follow-up messages, safer error pausing, and clearer TUI transcript display.
-- Show the full plan card directly and remove Plan card keyboard shortcuts.
-- Wrap long single-line shell commands in the approval prompt so the full command is always visible.
-- Refactor file reference completion in the TUI.
-- Load Kimi-specific user skills and global agent instructions from `KIMI_CODE_HOME` when set.
+- Remove the per-turn auto-compaction limit so long conversations can keep compacting instead of failing early.
+- Improve goal mode outcome handling with follow-up messages, safer error pauses, and clearer TUI transcript display.
+- Show full plan cards directly and remove the Plan card keyboard shortcut.
+- Wrap long single-line shell commands in approval prompts so the full command remains visible.
+- Rework file reference completion in the TUI.
+- Load Kimi-specific user Skills and global agent instructions from `KIMI_CODE_HOME` when it is set.
 
 ## 0.11.0 (2026-06-05)
 
 ### Features
 
-- Add experimental sub-skill discovery, gated by `KIMI_CODE_EXPERIMENTAL_SUB_SKILL`. Ships with a `sub-skill` builtin package (`sub-skill.review`, `sub-skill.consolidate`) for inventorying skills and organizing them into hierarchical groups.
+- Add experimental sub-skill discovery gated by the `KIMI_CODE_EXPERIMENTAL_SUB_SKILL` environment variable. Ships the `sub-skill` builtin bundle (`sub-skill.review`, `sub-skill.consolidate`) for inventorying and consolidating skills into hierarchical groups.
 - Add the following environment variables:
-  - `KIMI_MODEL_TEMPERATURE`, `KIMI_MODEL_TOP_P` — sampling parameters that apply globally to any `kimi` provider (not bound to `KIMI_MODEL_NAME`).
-  - `KIMI_MODEL_THINKING_KEEP` — Moonshot preserved-thinking passthrough (`thinking.keep`), only injected when Thinking is on.
-  - `KIMI_CODE_NO_AUTO_UPDATE` (old alias `KIMI_CLI_NO_AUTO_UPDATE`) — completely disable the update preflight (no check, no background install, no prompt).
-- Display built-in skills as direct slash commands, grouped before external skill commands.
+
+  - `KIMI_MODEL_TEMPERATURE`, `KIMI_MODEL_TOP_P` — sampling parameters applied globally to any `kimi` provider (not tied to `KIMI_MODEL_NAME`).
+  - `KIMI_MODEL_THINKING_KEEP` — Moonshot preserved-thinking passthrough (`thinking.keep`), injected only while Thinking is on.
+  - `KIMI_CODE_NO_AUTO_UPDATE` (legacy alias `KIMI_CLI_NO_AUTO_UPDATE`) — fully disables the update preflight (no check, background install, or prompt).
+- Show built-in skills as direct slash commands and group them ahead of external skill commands.
 
 ### Bug Fixes
 
-- Fix slash command autocomplete submitting the target text when the cursor is before existing text.
-- Fix queued goals being lost or duplicated when their promotion attempt fails.
-- Fix pending goal queue handling when editing or pasting a queued goal.
-- Ask before starting a goal in YOLO mode, so the user can switch to Auto for unattended work.
-- Show a concise provider filter error when the response is intercepted before producing visible output.
-- Show "unknown command" instead of "too many arguments" when entering an invalid subcommand.
-- Cap `xhigh` and `max` thinking effort at `high` for OpenAI Chat Completions, unless the model supports `xhigh` on `v1/chat/completions`.
+- Fix slash command autocomplete so goal text can be submitted when the cursor is before existing text.
+- Fix queued goals so failed promotion attempts do not lose or duplicate queued work.
+- Fix upcoming-goal queue handling while editing or pasting queued goals.
+- Ask before starting goals in YOLO mode so users can switch to Auto for unattended work.
+- Show concise provider filtering errors when responses are blocked before visible output.
+- Show "unknown command" instead of "too many arguments" when an invalid subcommand is entered.
+- Clamp OpenAI Chat Completions `xhigh` and `max` thinking effort to `high` unless the model supports `xhigh` on `v1/chat/completions`.
 - Preserve thinking effort when compacting long conversations.
-- Refresh provider model metadata when capabilities change but the model ID does not.
+- Refresh provider model metadata when capabilities change without model ID changes.
 
 ### Polish
 
-- Use the same emphasis treatment for pending goal confirmation styling as goal lifecycle messages.
-- Start a pending goal immediately when there is no active goal to wait for.
-- Support multi-line editing when managing pending goals.
-- Use a fixed 30-minute timeout for subagents, with a concise recovery hint after timeout.
-- Highlight goal queue subcommands when typing a slash command.
+- Show the upcoming-goal confirmation with the same accent treatment as goal lifecycle messages.
+- Start upcoming goals immediately when there is no active goal to wait for.
+  Support multiline edits when managing upcoming goals.
+- Use a fixed 30-minute timeout for subagents and show concise resume instructions when they time out.
+- Highlight goal queue subcommands while typing slash commands.
 
 ## 0.10.1 (2026-06-05)
 
@@ -923,147 +921,281 @@ This page documents the changes in each Kimi Code CLI release.
 
 ### Features
 
-- Users can now prepare multiple goals for the agent to process one after another. When the current goal completes, the agent automatically picks the next one from the queue. Use `/goal next <objective>` to queue a goal, and `/goal next manage` to interactively view and modify the queue.
-- Add a built-in `update-config` skill — you can now ask Kimi to edit its own config file.
-- Add persisted experimental feature toggles, plus a TUI panel that applies the changes by reloading the current session after confirmation.
-- Add `/reload` to reload the current session with updated config files, and `/reload-tui` to reload only TUI preferences.
-- Add a doctor command to validate the Kimi Code config file.
+- Users now can prepare several goals for the agent to work on sequentially. The agent will pick up the next goal from the queue once the current goal is completed. Use `/goal next <objective>` to queue a goal and `/goal next manage` to review and change the queue interactively.
+- Add the built-in `update-config` skill — you can now have Kimi edit its own config files.
+- Add persistent experimental feature toggles and a TUI panel that applies confirmed changes by reloading the current session.
+- Add `/reload` to reload the current session and apply updated config files, plus `/reload-tui` to reload only TUI preferences.
+- Add a doctor command for validating Kimi Code configuration files.
 
 ### Bug Fixes
 
-- Normalize malformed Responses throughput-limit errors into provider rate limit failures.
-- Keep hosted OAuth credentials scoped to their configured auth and API endpoints.
-- Prevent active and queued goals from being carried into forked sessions.
-- Fail early on Windows when Git Bash is missing before starting a CLI session.
-- Refresh the update target before showing the foreground update prompt, so the displayed version matches the installed version.
+- Normalize malformed Responses stream rate limit errors as provider rate limit failures.
+- Keep managed OAuth credentials scoped to their configured authentication and API endpoints.
+- Stop carrying active and queued goals into forked sessions.
+- Fail early when Git Bash is missing on Windows before starting CLI sessions.
+- Refresh the update target before showing foreground update prompts so the displayed version matches the install.
 - Point session error diagnostics to the `/export-debug-zip` command.
-- Stop renaming the running process when setting the terminal tab title.
+- Set terminal tab titles without renaming the running process.
 
 ### Polish
 
-- Start the automatic background update immediately once the startup check finds a new version.
-- Set the CLI process title to `kimi-code` during startup.
-- Lowercase stale file content hints in edit tool errors.
+- Start automatic background updates as soon as startup's fresh update check finds a newer version.
+- Set the CLI process title to kimi-code during startup.
+- Lowercase the stale file content message in edit tool errors.
 
 ### Refactors
 
-- Ensure the Nix-packaged CLI build can find ripgrep and fd.
+- Ensure Nix-packaged CLI builds can find ripgrep and fd.
 
 ### Other
 
-- Add the Git Bash prerequisite to the Windows installation guide.
+- Document the Git Bash prerequisite for Windows installs.
 
 ## 0.9.0 (2026-06-03)
 
 ### Features
 
-- Support `kimi acp` subcommand: kimi-code now speaks the [Agent Client Protocol 0.23](https://agentclientprotocol.com/) over stdio, so IDEs (Zed, JetBrains AI Chat, custom clients) can drive sessions directly; coverage matrix, Zed configuration, and breaking pre-release notes are on the [kimi acp subcommand page](https://moonshotai.github.io/kimi-code/zh/reference/kimi-acp.html).
-- Add `/btw` for side-channel conversations that do not steer the main turn, and allow `/btw` to open the side-channel panel before entering a question.
+- Add the `kimi acp` subcommand: kimi-code now speaks [Agent Client Protocol 0.23](https://agentclientprotocol.com/) over stdio so IDEs (Zed, JetBrains AI Chat, custom clients) can drive sessions directly — coverage matrix, Zed configuration and breaking pre-release notes are in [kimi acp Subcommand Page](https://moonshotai.github.io/kimi-code/en/reference/kimi-acp.html).
+- Add `/btw` for side-channel conversations without steering the active main turn, and allow `/btw` to open the side-channel panel before entering a question.
 
 ### Bug Fixes
 
-- Fix the external editor (Ctrl+G) on Windows by removing the dependency on `/bin/sh` and using platform-aware shell quoting for temporary file paths.
+- Fix external editor (Ctrl+G) on Windows by removing `/bin/sh` dependency and using platform-aware shell quoting for temp file paths.
 - Use the OpenAI completion token field required by newer Chat Completions models.
-- Use the configured model output cap as the completion token cap.
-- Fix the goal budget tool schema for OpenAI-compatible providers.
-- Lazily resume saved subagents only when they are accessed.
+- Use configured model output limits for completion token caps.
+- Fix goal budget tool schemas for OpenAI-compatible providers.
+- Resume saved subagents lazily when they are accessed.
 
 ### Polish
 
-- Unify TUI dialog and picker interaction and visuals.
+- Unify the interaction and visuals across TUI dialogs and selectors.
 - Log enabled experimental flags at startup.
 
 ### Refactors
 
-- Allow SDK runtime instances to use a separate RPC client while preserving the local CLI startup flow.
+- Allow SDK runtime creation to use a separate RPC client while preserving local CLI startup.
 
 ## 0.8.0 (2026-06-02)
 
 ### Features
 
-- Add experimental goal mode for longer tasks spanning multiple turns. Set `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` before starting Kimi to enable it.
-  Use `/goal <objective>` in the terminal interface to have Kimi focus on the same task across turns. For example:
+- Add experimental goal mode for longer tasks that need more than one turn. Turn it on with `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` before you start Kimi.
+
+  Use `/goal <objective>` in the TUI when you want Kimi to keep working on one task across turns. For example:
+
   ```text
   /goal Fix the failing checkout test
   ```
-  Kimi will show the goal in the terminal interface and keep progress visible as it works. Use `/goal status`, `/goal pause`, `/goal resume`, `/goal cancel`, and `/goal replace <objective>` to manage the goal. This feature is still experimental — feedback is welcome.
-- Add `kimi provider` CLI subcommand supporting `add`, `remove`, `list`, and `catalog list` / `catalog add` operations to import and manage providers from custom registries (api.json) or the public models.dev catalog without starting the terminal interface.
-- Add background structured questions, letting the agent continue working while waiting for the user's answer.
-- Add background automatic updates, disableable in tui.toml.
-- Add `/undo` slash command to retract the last prompt from the conversation history, keeping the replay log in sync on undo.
-- Add `kimi upgrade` command to manually check for and upgrade Kimi Code CLI.
+
+  Kimi shows the goal in the TUI and keeps progress visible while it works. Use `/goal status`, `/goal pause`, `/goal resume`, `/goal cancel`, and `/goal replace <objective>` to manage the goal. This feature is still experimental. Try it and tell us what would make it more useful.
+- Add `kimi provider` CLI subcommand with `add`, `remove`, `list`, and `catalog list` / `catalog add` actions, so providers from a custom registry (api.json) or the public models.dev catalog can be imported and managed without launching the TUI.
+- Add background structured questions so agents can continue while waiting for user answers.
+- Add background automatic upgrades, which can be disabled in tui.toml.
+- Add `/undo` slash command to withdraw the last prompt from conversation history, and keep replay records in sync when a prompt is undone.
+- Add a `kimi upgrade` command for manually checking and upgrade Kimi Code CLI.
 - Add approval lifecycle hook events for observing pending and completed permission prompts.
 - Allow subagents to use custom tools registered on their parent agent.
-- Support searching explicit absolute paths (outside the workspace) with glob.
+- Allow glob searches to target explicit absolute paths outside the workspace.
 
 ### Bug Fixes
 
-- Fix the edit preview tool showing an empty diff by always providing a contiguous context window.
-- Fix duplicate tool call IDs by regenerating them for each model request.
-- Fix task output not being available when the task exits before the agent reads it.
-- Fix the read tool not handling UTF-8 text files containing NUL bytes.
-- Fix the web search tool fetching the same URL twice.
-- Fix the agent getting stuck in an infinite loop when the tool result is rejected by the model.
+- Fix cross-provider replay failures from incompatible tool call IDs and unsigned Claude thinking history.
+- Fix custom registry provider handling during re-import. Prevent loss of multi-provider entries and remove stale providers along with their model aliases and default model references.
+- Fix tool output preview rendering: trim trailing empty lines, append ellipsis to multi-line Bash command headers, and truncate long single-line output by visual wrapped lines instead of raw newline count.
+- Fix slash-activated skills not being recognized by the model due to missing system reminder wrapper.
+- Fix a crash in the `/sessions` picker on very narrow terminals by clamping every rendered line to the terminal width.
+- Normalize glob patterns before brace expansion to prevent incorrect path matching.
+- Prevent modified keyboard release sequences from appearing after exiting the CLI.
+- Fix Git Bash path detection on Windows by also searching `usr\bin\bash.exe` locations, which is where bash lives in many Git for Windows installations where `bin\bash.exe` does not exist.
 
 ### Polish
 
-- Add a one-line status message before calling important tools, shown in the user's current language.
-- Show a line count summary in the edit tool result so the agent knows how many lines were changed.
-- Improve the agent's ability to describe the current working directory and its contents.
+- Show MCP server summary in the welcome panel and add configuration hints in the /mcp command output.
+- Point users to `/provider` instead of the removed `/connect` command in the welcome screen and the no-models-configured hint.
+- Append the current todo list as markdown to compaction summaries before writing them to history.
+- Show the full model name in the footer status bar instead of truncating the provider prefix.
+- Remind the model to refresh TodoList during long-running tasks and strengthen TodoList progress-tracking guidance.
+- Replace chalk named color with theme-aware hex in session-directory warning.
 
-## 0.7.0 (2026-06-01)
+### Refactors
+
+- Consolidate background task management under the agent background runtime.
+
+## 0.7.0 (2026-06-02)
 
 ### Features
 
-- Add the `kimi doctor` command to validate the Kimi Code configuration file.
-- Add the `kimi export` command to export a session as a portable JSON file.
-- Add support for the Claude 4 Opus model.
+- Add `/provider` command for managing AI providers, support custom registry imports, and introduce a tabbed model selector. It replaces the deprecated `/connect` command — use `/provider` instead.
+- Render scheduled reminders distinctly in the TUI, expose cron fired events to SDK clients, and report cron fire times with local timezone offsets.
+- Add `KIMI_MODEL_ADAPTIVE_THINKING` (and a matching `adaptive_thinking` model-alias field) to force adaptive thinking (`thinking: { type: 'adaptive' }`) on or off, overriding the Anthropic model-name version inference. This lets custom-named compatible endpoints that back an adaptive-capable model opt in even when the model name does not encode a parseable Claude version.
 
 ### Bug Fixes
 
-- Fix the TUI crashing when the terminal is resized to a very small width.
-- Fix the agent not being able to read files outside the workspace when the workspace is a symlink.
-- Fix the agent getting stuck in an infinite loop when the tool result is rejected by the model.
+- Report truncated compaction summaries clearly and apply valid completion token budgets across supported providers.
+- Fix glob pattern backslash escaping and include match count in truncation messages.
 
 ### Polish
 
-- Improve the agent's ability to describe the current working directory and its contents.
-- Show a line count summary in the edit tool result so the agent knows how many lines were changed.
+- Clarify Kimi Platform API key login labels and prompt details.
+- Polish a small TUI visual interaction.
 
-## 0.6.0 (2026-05-31)
+## 0.6.0 (2026-05-29)
 
 ### Features
 
-- Add the `kimi -p` (print/prompt) mode for non-interactive use.
-- Add the `kimi -y` (YOLO) mode for fully automatic operation.
-- Add the `kimi --plan` mode for planning before execution.
-- Add the `kimi --continue` flag to resume the last session.
-- Add the `kimi --model` flag to select a model at startup.
-- Add the `kimi --session` flag to resume a specific session.
+- Add a `KIMI_MODEL_*` environment-variable channel that lets you run Kimi Code against a specific model (provider type, base URL, API key, context size, capabilities, and thinking settings) without editing `config.toml`.
+- Install plugins directly from GitHub repository URLs, and surface each install's origin and trust level (kimi-official, curated, third-party) in the plugin manager.
 
 ### Bug Fixes
 
-- Fix the TUI not rendering correctly on Windows Terminal.
-- Fix the agent not being able to read files outside the workspace.
+- Show the real terminal status of background agents in the transcript so lost, failed, and killed ones no longer appear as completed, and include the resume agent id and recovery instructions in the failure notification so the model can resume reliably.
+- Recover from provider model token limit errors during long conversations.
+- Automatically retry when a model response stream is dropped mid-flight (a `terminated` error) instead of failing the turn.
+- Handle context overflow errors consistently across provider responses.
+- Back off failed compaction retries by a fixed slice of the model context window.
+- Fix the native self-updater reporting a successful update when the install command actually failed.
+- Project persisted hook and blocked prompt messages into model context.
+- Keep blocked prompt hook conversations available to subsequent model turns.
+- Fix footer leaking onto the terminal when resuming a non-existent session.
+- Fix automatic ripgrep installation when temporary files are on another filesystem.
 
-## 0.5.0 (2026-05-30)
+### Polish
+
+- Remove the default per-turn step limit of 1000. Users can still set `max_steps_per_turn` in config to enforce a custom limit.
+- Support querying sessions by sessionId or workDir in listSessions, and show a helpful cd command when resuming a session from a different working directory.
+- Expand the footer's rotating tips to surface more commands and shortcuts, featuring newer and important ones more prominently.
+- Improve the usage information display in the TUI.
+- Restrict plugin trust badges to Kimi-hosted plugin CDN URL patterns.
+- Clarify subagent and background task stop messages as user-initiated.
+- Align the datasource plugin with the generic two-tool workflow.
+
+### Refactors
+
+- Introduce `ModelProvider` interface and `SingleModelProvider` to decouple `Agent` from `ProviderManager`.
+- Split `RuntimeConfig` into `Kaos` and `ToolServices` and update all references accordingly.
+- Slim the LLM diagnostic logs with fewer, more compact fields.
+- Relocate shared tool service typing to the tool support layer.
+
+## 0.5.0 (2026-05-28)
 
 ### Features
 
-- Initial release of Kimi Code CLI.
-- Basic TUI with conversation transcript, input box, and slash commands.
-- Support for multiple LLM providers (Anthropic, OpenAI, Kimi, Google Gemini).
-- MCP server integration.
-- Subagent support (coder, explore, plan).
-- Session management (create, resume, list, fork, archive).
-- Plugin system with marketplace.
-- Skill system with built-in and custom skills.
-- Goal mode for multi-turn tasks.
-- Plan mode for planning before execution.
-- Swarm mode for parallel subagent execution.
-- Background tasks and cron jobs.
-- i18n support (English and Chinese).
-- Custom themes and color schemes.
-- OAuth authentication.
-- Telemetry and usage tracking.
-- Automatic updates.
+- Add scheduled tasks:
+
+  You can now ask the agent to remind you at a specific time, run a task on a recurring cron schedule (for example, check a deploy every 5 minutes or run a daily report every weekday at 9am), or come back on its own in a few minutes to continue what it was doing.
+
+  Schedules use the standard 5-field cron syntax.
+
+- Add `/auto` slash command and `--auto` CLI flag for auto permission mode.
+- Show file content and diff in Write and Edit approval prompts, and open them in a dedicated full-screen viewer on ctrl+e instead of expanding inline.
+
+### Bug Fixes
+
+- Fix compaction to handle edge cases where no messages are compactable and improve retry logic.
+- Fix official datasource tools to preserve complete responses and write returned result files.
+- Fix migration mapping the legacy `default_yolo` key to the dead `yolo` field instead of `default_permission_mode`.
+
+### Polish
+
+- Add a clickable changelog link to the update prompt.
+- Show the full Bash command when expanding a Bash tool card with `ctrl+o`. The header still truncates long commands at 60 chars, but the expanded view now reveals the complete multi-line command above the output.
+- Shorten the session title written to the terminal window/tab from 80 to 32 characters so long first messages and pasted content no longer stretch the tab bar past readable width.
+- Cap the inline todo panel at five rows and show a `+N more` indicator so long task lists no longer fill the screen.
+- Clarify plugin manager keyboard shortcuts and show plugin state changes inline.
+- Report discovered plugin skills in plugin manager summaries.
+- Offload large base64 media payloads from `wire.jsonl` into external blob files to reduce wire size and memory pressure during session replay. Includes an in-memory read-through cache on `BlobStore` so repeated rehydration avoids redundant disk reads.
+- Wrap long question, body, and option text in the AskUserQuestion dialog instead of truncating with an ellipsis. The question prompt, body description, option label, option description, and submit-tab review entries now flow onto multiple lines with a hanging indent.
+
+### Refactors
+
+- Refactor TUI code structure.
+
+## 0.4.0 (2026-05-27)
+
+### Features
+
+- Add user-global plugin installation, interactive plugin management, plugin-provided skills, and plugin-owned MCP servers.
+- Expand folded paste markers on second paste.
+- Rework tool permissions: reads outside cwd no longer prompt, session approvals match the exact call, and path-based rules are case-insensitive.
+- Add `/export-debug-zip` slash command to export the current session as a debug ZIP archive directly from the TUI.
+- Add `/export-md` slash command to export the current session as a Markdown file.
+
+### Bug Fixes
+
+- Prevent the TUI from crashing when pull request lookup fails during startup.
+- Fix thinking spinner leaking past turn end when an empty thinking delta creates an orphaned thinking component.
+- Show the original session resume command after forking a session.
+- Restrict plugin zip installs to manifests at the archive root or a single wrapper directory.
+- Route session-tagged log entries exclusively to the session sink instead of duplicating them to the global sink. Consistently omit stable main-agent context keys from all session log lines that carry `agentId=main`.
+
+### Refactors
+
+- Refactor TUI resume replay logic.
+- Use one retry classification for transient LLM failures across regular turns and compaction.
+
+### Other
+
+- Enhance `kimi export` to include more diagnostic information in the manifest.
+
+## 0.3.0 (2026-05-26)
+
+### Features
+
+- `/logout` now opens a picker so you can choose which provider to log out of, instead of always logging out the one tied to the current model. The current provider is highlighted by default, so pressing Enter matches the previous behavior. The command is also available as `/disconnect`.
+- The `openai` provider now works out of the box for OpenAI-compatible reasoner models: it auto-detects thinking fields in responses (`reasoning_content` / `reasoning_details` / `reasoning`) and auto-injects `reasoning_effort` when history contains prior thinking. DeepSeek, Qwen, One API and other gateway-fronted services no longer need a hand-set `reasoning_key`, which remains available as an explicit override for non-standard gateways.
+
+### Bug Fixes
+
+- Prevent running the `/model` and `/sessions` slash commands while streaming or compacting context.
+- Preserve catalog-declared interleaved reasoning fields for OpenAI-compatible models configured through `/connect`.
+- Fix API key input dialog showing a masked dot in empty state.
+- Fix user skills in `~/.agents/` not being loaded.
+- Restore real-time token display for running subagents in the TUI.
+- Hide the todo panel on resume when all todos are already completed.
+- Always emit a paired tool result when a tool returns a malformed or missing result, preventing the next request from failing with a missing tool_call_id error.
+- Fix Plan mode session resets so new sessions no longer fail after plan review rejection and continue receiving events after setup errors.
+- Exit promptly when the controlling terminal goes away. The TUI now handles `SIGHUP` / `SIGTERM` and stdout/stderr `EIO` / `EPIPE` / `ENOTCONN` errors, preventing leftover `kimi` processes that pin a CPU core after the parent shell or multiplexer dies unexpectedly.
+- Avoid overly small local completion caps that can truncate reasoning before summaries are produced.
+
+### Refactors
+
+- Make `AgentRecords` hold the `Agent` instance directly and inline the restore dispatch logic.
+
+### Other
+
+- Improve the Write tool UX.
+
+## 0.2.0 (2026-05-26)
+
+### Features
+
+- Add a `/connect` command that configures a provider and model from a model catalog.
+- The `/connect` provider and model pickers now support type-to-search filtering, and long lists are paginated. The `/model` picker is also paginated when many models are configured.
+- Add `Ctrl-J` as an additional shortcut for inserting new lines in the TUI prompt.
+- Add wire record migration handling during session replay.
+- Migrate user skills from `~/.kimi/skills/` to `~/.kimi-code/skills/` during the first-launch migration; existing target skills are kept.
+- Emit session resume hint as a structured meta message in stream-json output format.
+
+### Bug Fixes
+
+- Report the macOS product version in OAuth device information instead of the Darwin kernel version.
+- Correct the `X-Msh-Platform` header value to `kimi_code_cli`.
+- Clarify the prompt-mode error when no model is configured by pointing users to the login flow.
+- Hide the empty current session from the sessions picker while keeping other empty sessions visible.
+- Stop mentioning OAuth credentials in the migration UI — they are never migrated, so the previous "needs /login" notice misread as a failure. OAuth-only installs no longer trigger the migration screen.
+- Surface API-provided error messages during feedback, usage, login, and model setup failures.
+- Persist model selections from the terminal UI to the default configuration, and honor the configured default thinking state for new sessions.
+- Retry compaction responses that do not contain a summary before updating conversation history.
+- Avoid CPU spikes from large streamed tool arguments and coalesce high-frequency streaming UI updates.
+- Resume sessions with a newer wire protocol version instead of failing. A warning is now shown in the TUI and records are replayed without migration.
+- Warn tmux users when extended key settings may prevent modified Enter shortcuts from working.
+- Let Kimi requests use the remaining context window for completion tokens by default while keeping explicit environment limits as hard caps.
+
+### Refactors
+
+- Flatten tool call data by inlining tool names and arguments at the top level, and limit legacy record migration so it only rewrites matching tool call payloads.
+- Move wire metadata handling into the record layer and keep persistence backends limited to storage operations.
+
+### Other
+
+- When no models are configured, `/model` and the welcome panel now point users to `/login` (for Kimi) and `/connect` (for other providers).
