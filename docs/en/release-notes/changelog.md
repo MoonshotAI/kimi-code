@@ -6,6 +6,37 @@ outline: 2
 
 This page documents the changes in each Kimi Code CLI release.
 
+## 0.25.0 (2026-07-16)
+
+### Features
+
+- web: Attach any file type in chat: sent files, images, and videos show as chips in the message bubble, files can be attached by dropping them anywhere in the window, and files the model cannot consume inline (documents, SVG images, archives, …) are uploaded to the server and given to the model as a file path it can read on demand.
+
+### Polish
+
+- web: Show full diagnostics for model request failures — a semantic title, the provider's raw message, and expandable details (error code, HTTP status, request ID) with copy support — instead of a bare "Connection error" toast.
+- Apply official Anthropic effort profiles and a 128k output fallback for unknown models, and preserve compatible-provider thinking history across session resumes and model switches.
+- Report crash telemetry for unhandled promise rejections, so exits they cause are no longer invisible.
+
+### Bug Fixes
+
+- Fix the web server bearer-token check being bypassed by percent-encoded API paths (e.g. `/%61pi/v1/…`), which allowed unauthenticated access to every API route.
+- Fix the session filesystem API following symlinks that point outside the workspace, which allowed reading, listing, creating, and downloading host files beyond the session directory through a planted symlink.
+- web: Keep session activity indicators in sync with agent work and prevent duplicate streamed content after session activation races or LLM retries.
+- Fix custom-named models on Anthropic-compatible providers starting new sessions with thinking effort off instead of the model default, and not showing the thinking control in ACP clients.
+- Honor adaptive_thinking = false on Anthropic-compatible models by limiting thinking efforts to the legacy budget set and omitting the effort parameter from requests.
+- web: Fix the Content-Security-Policy on non-loopback server binds blocking the web UI's theme bootstrap script and bundled fonts, and tighten the policy with explicit form-action, base-uri, and frame-ancestors directives.
+- Fix sessions failing to be created when the workspace directory is given through a symlink, which the v2 engine rejected as "not a directory".
+- Fix the CLI exiting unexpectedly when reading an image from the clipboard fails; it now falls back to pasting text.
+- web: Fix completed background subagents losing their final output after a session reload, and retry the output backfill when a transient fetch failure occurs.
+- web: Fix Enter not confirming modal confirmation dialogs in dev builds, and keep the dialog open with a loading state until the confirmed action (such as archiving a session) completes.
+- web: Fix a background subagent showing up as two identical rows in the agents dock panel during streaming.
+- Fix the diagnostic log missing the actual error when the CLI exits unexpectedly.
+
+### Refactors
+
+- Move the server's v1 wire schema definitions into the engine domains and the server package, removing the shared schema package from the v2 server stack with no behavior change.
+
 ## 0.24.2 (2026-07-15)
 
 ### Features
