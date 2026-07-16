@@ -47,7 +47,10 @@ function currentTuiConfig(host: SlashCommandHost): TuiConfig {
 
 function effectiveModelForHost(host: SlashCommandHost, model: ModelAlias): ModelAlias {
   const providerType = host.state.appState.availableProviders[model.provider]?.type;
-  return effectiveModelAlias(model, providerType);
+  // Flat models (no named provider, e.g. inline base_url served by a v2
+  // backend) have no provider entry to look up; their own protocol declaration
+  // plays the provider-identity role, mirroring the resolver.
+  return effectiveModelAlias(model, providerType ?? model.protocol);
 }
 
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {

@@ -5254,6 +5254,32 @@ describe('/effort support_efforts override', () => {
     expect(picker.render(80).join('\n')).not.toContain('Max');
   });
 
+  it('offers the latest Opus efforts for a flat providerless Anthropic model', async () => {
+    const { driver } = await makeDriver(makeSession(), {
+      getConfig: vi.fn(async () => ({
+        providers: {},
+        models: {
+          // v2 flat model shape: no named provider, inline endpoint + protocol.
+          k2: {
+            model: 'compatible-model',
+            baseUrl: 'https://anthropic.example.test',
+            protocol: 'anthropic',
+            maxContextSize: 100,
+          },
+        },
+        defaultModel: 'k2',
+      })),
+    });
+
+    driver.handleUserInput('/effort');
+
+    await vi.waitFor(() => {
+      expect(driver.state.editorContainer.children[0]).toBeInstanceOf(EffortSelectorComponent);
+    });
+    const picker = driver.state.editorContainer.children[0] as EffortSelectorComponent;
+    expect(picker.render(80).join('\n')).toContain('Max');
+  });
+
   it('keeps rejecting efforts hidden by a Kimi support_efforts override', async () => {
     const session = makeSession();
     const { driver } = await makeDriver(session, {

@@ -83,6 +83,30 @@ describe('listModelsFromHarness', () => {
     ]);
   });
 
+  it('advertises thinking for a flat providerless model using the Anthropic protocol', async () => {
+    const harness = {
+      getConfig: async () => ({
+        models: {
+          custom: {
+            model: 'custom-anthropic-model',
+            maxContextSize: 200000,
+            protocol: 'anthropic',
+          },
+        },
+      }),
+    } as unknown as KimiHarness;
+
+    await expect(listModelsFromHarness(harness)).resolves.toEqual([
+      {
+        id: 'custom',
+        name: 'custom-anthropic-model',
+        thinkingSupported: true,
+        alwaysThinking: false,
+        defaultThinkingEffort: 'high',
+      },
+    ]);
+  });
+
   it('does not advertise thinking for an unknown model on a Kimi provider using the Anthropic protocol', async () => {
     const harness = {
       getConfig: async () => ({
