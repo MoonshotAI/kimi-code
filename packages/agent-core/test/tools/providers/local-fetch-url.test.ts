@@ -55,4 +55,51 @@ describe('LocalFetchURLProvider content kind', () => {
     expect(result.kind).toBe('extracted');
     expect(result.content).toContain('quick brown fox');
   });
+
+  it('returns image data for image content types', async () => {
+    const imageBuffer = Buffer.from('fake-png-data');
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(imageBuffer, {
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+      }),
+    );
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    const result = await provider.fetch('https://example.com/image.png');
+
+    expect(result.kind).toBe('image');
+    expect(result.imageData).toBeDefined();
+    expect(result.imageData?.mimeType).toBe('image/png');
+    expect(result.imageData?.base64).toBe(imageBuffer.toString('base64'));
+  });
+
+  it('returns image data for image/jpeg content type', async () => {
+    const imageBuffer = Buffer.from('fake-jpeg-data');
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(imageBuffer, {
+        status: 200,
+        headers: { 'content-type': 'image/jpeg' },
+      }),
+    );
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    const result = await provider.fetch('https://example.com/photo.jpg');
+
+    expect(result.kind).toBe('image');
+    expect(result.imageData?.mimeType).toBe('image/jpeg');
+  });
+
+  it('rejects oversized images', async () => {
+    const largeBuffer = Buffer.alloc(11 * 1024 * 1024); // 11MB, over default 10MB limit
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(largeBuffer, {
+        status: 200,
+        headers: { 'content-type': 'image/png', 'content-length': String(largeBuffer.length) },
+      }),
+    );
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    await expect(provider.fetch('https://example.com/huge.png')).rejects.toThrow('too large');
+  });
 });
