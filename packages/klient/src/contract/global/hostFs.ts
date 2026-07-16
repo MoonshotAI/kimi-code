@@ -12,8 +12,6 @@ export const fsBrowseEntrySchema = z.object({
   name: z.string().min(1),
   path: z.string().min(1),
   is_dir: z.literal(true),
-  is_git_repo: z.boolean(),
-  branch: z.string().optional(),
 });
 
 export const fsBrowseResponseSchema = z.object({

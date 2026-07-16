@@ -190,7 +190,7 @@ function installStorage(storage: Storage): void {
 }
 
 function workspace(id: string, root: string, name: string) {
-  return { id, root, name, isGitRepo: false, sessionCount: 0 };
+  return { id, root, name, sessionCount: 0 };
 }
 
 function questionRequest(questionId: string): AppQuestionRequest {
@@ -416,14 +416,12 @@ describe('mergeWorkspaces', () => {
       workspaces: [
         // Server orders by last_opened_at desc, so the most recently opened
         // (typically the canonical re-add) comes first.
-        { id: 'wd_current', root: '/agent/GEO', name: 'GEO', isGitRepo: false, sessionCount: 0 },
-        { id: 'wd_legacy', root: '/agent/GEO', name: 'GEO', isGitRepo: false, sessionCount: 0 },
+        { id: 'wd_current', root: '/agent/GEO', name: 'GEO', sessionCount: 0 },
+        { id: 'wd_legacy', root: '/agent/GEO', name: 'GEO', sessionCount: 0 },
       ],
       // A session whose daemon workspace_id points at the dropped (legacy) entry.
       sessions: [{ id: 's1', cwd: '/agent/GEO', workspaceId: 'wd_legacy' }],
       hiddenWorkspaceRoots: [],
-      activeRoot: undefined,
-      activeBranch: null,
       sessionsHasMoreByWorkspace: { wd_current: false },
     });
 
@@ -438,15 +436,13 @@ describe('mergeWorkspaces', () => {
   it('keeps distinct roots separate and appends derived cwds after real ones', () => {
     const result = mergeWorkspaces({
       workspaces: [
-        { id: 'wd_a', root: '/agent/A', name: 'A', isGitRepo: false, sessionCount: 1 },
+        { id: 'wd_a', root: '/agent/A', name: 'A', sessionCount: 1 },
       ],
       sessions: [
         { id: 's1', cwd: '/agent/A', workspaceId: 'wd_a' },
         { id: 's2', cwd: '/agent/B', workspaceId: 'wd_b' },
       ],
       hiddenWorkspaceRoots: [],
-      activeRoot: undefined,
-      activeBranch: null,
       sessionsHasMoreByWorkspace: {},
     });
 
@@ -457,12 +453,10 @@ describe('mergeWorkspaces', () => {
   it('hides workspaces whose root the user removed', () => {
     const result = mergeWorkspaces({
       workspaces: [
-        { id: 'wd_a', root: '/agent/A', name: 'A', isGitRepo: false, sessionCount: 1 },
+        { id: 'wd_a', root: '/agent/A', name: 'A', sessionCount: 1 },
       ],
       sessions: [{ id: 's1', cwd: '/agent/A', workspaceId: 'wd_a' }],
       hiddenWorkspaceRoots: ['/agent/A'],
-      activeRoot: undefined,
-      activeBranch: null,
       sessionsHasMoreByWorkspace: {},
     });
 
@@ -551,7 +545,6 @@ describe('useWorkspaceState — addWorkspaceByPath', () => {
       id: 'wd_abc',
       root: '/abs/path',
       name: 'path',
-      isGitRepo: false,
       sessionCount: 0,
     };
     apiMock.addWorkspace.mockResolvedValue(registered);
@@ -731,7 +724,7 @@ describe('useWorkspaceState — cancelTask', () => {
 });
 
 describe('useWorkspaceState — startSessionAndActivateSkill', () => {
-  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', isGitRepo: false, sessionCount: 0 };
+  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', sessionCount: 0 };
   const newSession = { ...createSession(), id: 'sess_new', workspaceId: 'wd_1', cwd: '/abs/path' };
 
   beforeEach(() => {
@@ -873,7 +866,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 });
 
 describe('useWorkspaceState — createGoal from an empty composer', () => {
-  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', isGitRepo: false, sessionCount: 0 };
+  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', sessionCount: 0 };
   const newSession = { ...createSession(), id: 'sess_new', workspaceId: 'wd_1', cwd: '/abs/path' };
 
   beforeEach(() => {
@@ -1047,7 +1040,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
 });
 
 describe('useWorkspaceState — startSessionAndOpenSideChat', () => {
-  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', isGitRepo: false, sessionCount: 0 };
+  const registered = { id: 'wd_1', root: '/abs/path', name: 'A', sessionCount: 0 };
   const newSession = { ...createSession(), id: 'sess_new', workspaceId: 'wd_1', cwd: '/abs/path' };
 
   beforeEach(() => {

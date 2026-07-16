@@ -243,16 +243,12 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     entry: WorkspaceRegistryEntry,
     sessionCount?: number,
   ): Promise<Workspace> {
-    const [{ is_git_repo, branch }, session_count] = await Promise.all([
-      detectGit(entry.root),
-      sessionCount ?? countActiveSessions(join(this.sessionsDir, workspaceId)),
-    ]);
+    const session_count =
+      sessionCount ?? (await countActiveSessions(join(this.sessionsDir, workspaceId)));
     return {
       id: workspaceId,
       root: entry.root,
       name: entry.name,
-      is_git_repo,
-      branch,
       created_at: entry.created_at,
       last_opened_at: entry.last_opened_at,
       session_count,
@@ -305,52 +301,6 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
     if (this._store.isDisposed) return;
     super.dispose();
   }
-}
-
-export interface GitInfo {
-  is_git_repo: boolean;
-  branch: string | null;
-}
-
-export async function detectGit(root: string): Promise<GitInfo> {
-  let dotGit: Stats;
-  try {
-    dotGit = await fsp.lstat(join(root, '.git'));
-  } catch {
-    return { is_git_repo: false, branch: null };
-  }
-
-  let gitDir: string;
-  if (dotGit.isDirectory()) {
-    gitDir = join(root, '.git');
-  } else if (dotGit.isFile()) {
-    let text: string;
-    try {
-      text = await fsp.readFile(join(root, '.git'), 'utf8');
-    } catch {
-      return { is_git_repo: false, branch: null };
-    }
-    const m = /^gitdir:\s*(.+)$/m.exec(text);
-    if (m === null) return { is_git_repo: false, branch: null };
-    const ref = m[1] ?? '';
-    if (ref === '') return { is_git_repo: false, branch: null };
-    gitDir = ref.trim();
-
-    if (!gitDir.startsWith('/')) {
-      gitDir = join(root, gitDir);
-    }
-  } else {
-    return { is_git_repo: false, branch: null };
-  }
-
-  let head: string;
-  try {
-    head = (await fsp.readFile(join(gitDir, 'HEAD'), 'utf8')).trim();
-  } catch {
-    return { is_git_repo: true, branch: null };
-  }
-  const ref = /^ref:\s*refs\/heads\/(.+)$/.exec(head);
-  return { is_git_repo: true, branch: ref ? (ref[1] ?? null) : null };
 }
 
 async function countActiveSessions(dir: string): Promise<number> {

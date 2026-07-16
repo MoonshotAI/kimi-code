@@ -19,8 +19,6 @@ interface BrowseEntryWire {
   name: string;
   path: string;
   is_dir: true;
-  is_git_repo: boolean;
-  branch?: string;
 }
 
 interface BrowseWire {
@@ -129,26 +127,7 @@ describe('server-v2 /api/v1 fs folder picker', () => {
     for (const entry of body.data.entries) {
       expect(entry.is_dir).toBe(true);
       expect(entry.path).toBe(join(await realpath(root), entry.name));
-      expect(typeof entry.is_git_repo).toBe('boolean');
     }
-  });
-
-  it('annotates git repositories with the current branch', async () => {
-    const root = home as string;
-    const repo = join(root, 'repo');
-    await mkdir(join(repo, '.git'), { recursive: true });
-    await writeFile(join(repo, '.git', 'HEAD'), 'ref: refs/heads/main\n');
-    await mkdir(join(root, 'plain'));
-
-    const { body } = await getJson<BrowseWire>(
-      `/api/v1/fs:browse?path=${encodeURIComponent(root)}`,
-    );
-    expect(body.code).toBe(0);
-    const byName = new Map(body.data.entries.map((e) => [e.name, e]));
-    expect(byName.get('repo')?.is_git_repo).toBe(true);
-    expect(byName.get('repo')?.branch).toBe('main');
-    expect(byName.get('plain')?.is_git_repo).toBe(false);
-    expect(byName.get('plain')?.branch).toBeUndefined();
   });
 
   it('sorts dot-directories after regular ones', async () => {

@@ -34,7 +34,6 @@ export default {
   searching: '搜索中…',
   noFilterMatch: '没有匹配「{q}」的子文件夹',
   noSubfolders: '此处没有子文件夹',
-  gitTag: 'git',
   browseHint: '点击文件夹进入，再点"打开此文件夹"将其添加为工作区。',
   // Path entry (absolute path typed into the same box)
   checkingPath: '检查路径…',
