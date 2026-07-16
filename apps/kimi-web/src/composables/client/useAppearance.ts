@@ -6,6 +6,7 @@
 
 import { ref, watch } from 'vue';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
+import { useHostColorScheme, type HostColorScheme } from '../hostColorScheme';
 
 /** Color scheme: 'light', 'dark', or follow the OS preference ('system'). */
 export type ColorScheme = 'light' | 'dark' | 'system';
@@ -70,7 +71,25 @@ const colorScheme = ref<ColorScheme>(loadColorScheme());
 const accent = ref<Accent>(loadAccent());
 const uiFontSize = ref<number>(loadUiFontSize());
 
-watch(colorScheme, applyColorScheme, { immediate: true });
+// Embedded-host (VS Code extension) theme push. 'system' resolves against the
+// host theme at the attribute level: with a host scheme present the
+// attribute becomes 'light'/'dark' outright, so every attribute-gated token
+// block applies and the `prefers-color-scheme` media blocks stay unused
+// (they would follow the OS — NOT VS Code's theme — inside the webview's
+// cross-origin iframe). The user's stored preference stays 'system'.
+const hostColorScheme = useHostColorScheme();
+
+function effectiveColorScheme(c: ColorScheme, host: HostColorScheme | null): ColorScheme {
+  return c === 'system' && host !== null ? host : c;
+}
+
+watch(
+  [colorScheme, hostColorScheme],
+  ([scheme, host]) => {
+    applyColorScheme(effectiveColorScheme(scheme, host));
+  },
+  { immediate: true },
+);
 watch(accent, applyAccent, { immediate: true });
 watch(uiFontSize, applyUiFontSize, { immediate: true });
 

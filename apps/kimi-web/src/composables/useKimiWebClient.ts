@@ -14,6 +14,11 @@ import {
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
+import {
+  focusWorkspacesForHint,
+  getWorkspaceHostRoots,
+  workspaceMatchesHostRoots,
+} from '../lib/workspaceHint';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { mergeSnapshotSubagents } from '../lib/taskMerge';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
@@ -2276,16 +2281,22 @@ function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string
  * sessions' cwds. Each distinct cwd with no matching real workspace becomes one
  * derived workspace (id = root = cwd). This makes the switcher + grouping work
  * immediately off existing sessions until /workspaces ships.
+ *
+ * With a host workspace hint (lib/workspaceHint.ts, e.g. the VS Code extension
+ * view) the list is focused on that single workspace: embedded hosts show no
+ * other workspaces in the sidebar / switchers.
  */
 const mergedWorkspaces = computed<AppWorkspace[]>(() =>
-  mergeWorkspaces({
-    workspaces: rawState.workspaces,
-    sessions: rawState.sessions,
-    hiddenWorkspaceRoots: rawState.hiddenWorkspaceRoots,
-    activeRoot: rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd,
-    activeBranch: gitInfo.value?.branch ?? null,
-    sessionsHasMoreByWorkspace: rawState.sessionsHasMoreByWorkspace,
-  }),
+  focusWorkspacesForHint(
+    mergeWorkspaces({
+      workspaces: rawState.workspaces,
+      sessions: rawState.sessions,
+      hiddenWorkspaceRoots: rawState.hiddenWorkspaceRoots,
+      activeRoot: rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd,
+      activeBranch: gitInfo.value?.branch ?? null,
+      sessionsHasMoreByWorkspace: rawState.sessionsHasMoreByWorkspace,
+    }),
+  ),
 );
 
 /**
@@ -2335,7 +2346,9 @@ watch(
  *  persisted/dragged order in `manual` mode, or most-recent-session-first in
  *  `recent` mode. The recent map is only built (and `rawState.sessions` only
  *  read) in the recent branch, so manual mode does not re-sort on every session
- *  update. */
+ *  update. When a host workspace binding is active (lib/workspaceHint.ts),
+ *  `mergedWorkspaces` is already focused and ordered by the host's folder
+ *  order (the VS Code extension folder list) — never re-sort it. */
 const workspacesView = computed<WorkspaceView[]>(() => {
   const views = mergedWorkspaces.value.map((w) => ({
     id: w.id,
@@ -2345,6 +2358,10 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     branch: w.branch,
     sessionCount: w.sessionCount,
   }));
+  const hostBound =
+    getWorkspaceHostRoots().length > 0 &&
+    mergedWorkspaces.value.some(workspaceMatchesHostRoots);
+  if (hostBound) return views;
   if (workspaceSortMode.value === 'recent') {
     const lastEditedAt = new Map<string, number>();
     for (const s of rawState.sessions) {

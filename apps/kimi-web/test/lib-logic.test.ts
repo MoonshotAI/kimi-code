@@ -43,6 +43,7 @@ import {
   traceToJsonl,
   traceWsIn,
 } from '../src/debug/trace';
+import { focusWorkspacesForHint, getWorkspaceHostFolders, getWorkspaceHostHint, getWorkspaceHostPin, getWorkspaceHostRoots } from '../src/lib/workspaceHint';
 
 // The trace tests exercise its exported recording/serialization contract:
 // session exports receive only bounded, explicitly selected metadata.
@@ -861,5 +862,138 @@ describe('keepLiveSubagents', () => {
     const [merged] = keepLiveSubagents(rest, [live]);
     expect(merged?.outputPreview).toBe('final result');
     expect(merged?.outputBytes).toBe(200);
+  });
+});
+
+// --- workspace host hint (?workspace= embedded-host binding) ----------------
+
+describe('workspaceHint', () => {
+  function memoryStorage(): Storage {
+    const data = new Map<string, string>();
+    return {
+      get length() {
+        return data.size;
+      },
+      clear: () => data.clear(),
+      getItem: (key: string) => data.get(key) ?? null,
+      key: (index: number) => [...data.keys()][index] ?? null,
+      removeItem: (key: string) => {
+        data.delete(key);
+      },
+      setItem: (key: string, value: string) => {
+        data.set(key, value);
+      },
+    };
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: memoryStorage(),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(globalThis, 'sessionStorage');
+  });
+
+  function stubSearch(search: string): void {
+    vi.stubGlobal('window', { location: { search } });
+  }
+
+  it('is null for the plain browser UI and leaves lists untouched', () => {
+    stubSearch('');
+    expect(getWorkspaceHostHint()).toBeNull();
+    const list = [{ id: 'a', root: '/a' }];
+    expect(focusWorkspacesForHint(list)).toBe(list);
+  });
+
+  it('reads the hint from the query and keeps it after the query is dropped', () => {
+    stubSearch('?workspace=%2Frepo');
+    expect(getWorkspaceHostHint()).toBe('/repo');
+    // In-app session routing rewrites the URL without the query string — the
+    // sessionStorage mirror keeps the host binding alive.
+    stubSearch('');
+    expect(getWorkspaceHostHint()).toBe('/repo');
+  });
+
+  it('focuses workspace lists on the hinted workspace, matched by id or root', () => {
+    const a = { id: 'a', root: '/a' };
+    const b = { id: 'b', root: '/repo' };
+    stubSearch('?workspace=b');
+    expect(focusWorkspacesForHint([a, b])).toEqual([b]);
+    stubSearch('?workspace=%2Frepo');
+    expect(focusWorkspacesForHint([a, b])).toEqual([b]);
+  });
+
+  it('falls back to the full list when the hint matches nothing', () => {
+    stubSearch('?workspace=%2Fmissing');
+    const list = [{ id: 'a', root: '/a' }];
+    expect(focusWorkspacesForHint(list)).toBe(list);
+  });
+});
+
+describe('workspaceHint — multi-folder host binding', () => {
+  function memoryStorage(): Storage {
+    const data = new Map<string, string>();
+    return {
+      get length() {
+        return data.size;
+      },
+      clear: () => data.clear(),
+      getItem: (key: string) => data.get(key) ?? null,
+      key: (index: number) => [...data.keys()][index] ?? null,
+      removeItem: (key: string) => {
+        data.delete(key);
+      },
+      setItem: (key: string, value: string) => {
+        data.set(key, value);
+      },
+    };
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: memoryStorage(),
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    Reflect.deleteProperty(globalThis, 'sessionStorage');
+  });
+
+  function stubSearch(search: string): void {
+    vi.stubGlobal('window', { location: { search } });
+  }
+
+  it('reads the ordered folder list from repeatable params and keeps it after the query is dropped', () => {
+    stubSearch('?workspace=%2Fmain&folder=%2Fmain&folder=%2Flib');
+    expect(getWorkspaceHostFolders()).toEqual(['/main', '/lib']);
+    expect(getWorkspaceHostRoots()).toEqual(['/main', '/lib']);
+    stubSearch('');
+    expect(getWorkspaceHostFolders()).toEqual(['/main', '/lib']);
+    expect(getWorkspaceHostRoots()).toEqual(['/main', '/lib']);
+  });
+
+  it('focuses and orders workspace lists by the host folder order', () => {
+    stubSearch('?folder=%2Flib&folder=%2Fmain');
+    const main = { id: 'wd_main', root: '/main' };
+    const lib = { id: 'wd_lib', root: '/lib' };
+    const other = { id: 'wd_other', root: '/other' };
+    expect(focusWorkspacesForHint([other, lib, main])).toEqual([lib, main]);
+  });
+
+  it('pins the initial selection to the first folder when no pin is given', () => {
+    stubSearch('?folder=%2Flib&folder=%2Fmain');
+    expect(getWorkspaceHostPin()).toBe('/lib');
+  });
+
+  it('keeps the explicit pin when both pin and folders are given', () => {
+    stubSearch('?workspace=wd_main&folder=%2Fmain&folder=%2Flib');
+    expect(getWorkspaceHostRoots()).toEqual(['/main', '/lib']);
+    expect(getWorkspaceHostPin()).toBe('wd_main');
   });
 });

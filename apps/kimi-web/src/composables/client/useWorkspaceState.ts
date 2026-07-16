@@ -36,6 +36,10 @@ import { parseDiff } from '../../lib/parseDiff';
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
+import {
+  focusWorkspacesForHint,
+  getWorkspaceHostPin,
+} from '../../lib/workspaceHint';
 import type {
   ActivityState,
   ConversationStatus,
@@ -621,7 +625,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    *  When every workspace request fails, returns undefined so the caller keeps
    *  the previously loaded sessions instead of committing a false empty list. */
   async function loadInitialSessionsByWorkspace(): Promise<AppSession[] | undefined> {
-    const workspaces = rawState.workspaces;
+    // With a host workspace hint, only load the hinted workspace's sessions —
+    // the UI is focused on that single workspace (lib/workspaceHint.ts), so
+    // other workspaces' pages would be fetched for nothing.
+    const workspaces = focusWorkspacesForHint(rawState.workspaces);
     if (workspaces.length === 0) {
       // /workspaces may be unavailable or empty on older / partially-failing
       // daemons while /sessions still works. Fall back to the legacy global
@@ -855,6 +862,25 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const sessions = loadedSessions ?? rawState.sessions;
       if (loadedSessions !== undefined) setSessionsPreservingLiveUsage(loadedSessions);
 
+      // Host-provided workspace hint (lib/workspaceHint.ts): embedded hosts
+      // (the VS Code extension) pass their own workspace as
+      // `?workspace=<id-or-root>` in the iframe URL (falling back to the first
+      // `&folder=` entry) so the UI binds to it on first load instead of the
+      // persisted or most-recent-session default. Unknown/empty hints fall
+      // through to the normal selection below; the /sessions/<id> deep link
+      // still wins.
+      let hintedWorkspaceId: string | null = null;
+      const hostPin = getWorkspaceHostPin();
+      if (hostPin !== null) {
+        const match = mergedWorkspaces.value.find(
+          (w) => w.id === hostPin || w.root === hostPin,
+        );
+        if (match !== undefined) {
+          hintedWorkspaceId = match.id;
+          selectWorkspace(match.id);
+        }
+      }
+
       // First load: pick the workspace of the most-recent session, unless the
       // user already has a persisted active workspace that still exists.
       const mostRecent = sessions[0];
@@ -883,7 +909,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Auto-select first session if none selected (also the fallback for a dead
       // deep link — 'replace' rewrites the URL to the session actually shown).
       if (!rawState.activeSessionId && sessions.length > 0) {
-        await selectSession(sessions[0]!.id, { urlMode: 'replace' });
+        // With a workspace hint, only auto-select within it: picking the
+        // globally most-recent session would undo the hint, since
+        // selectSession syncs the active workspace off the session.
+        const candidate =
+          hintedWorkspaceId !== null
+            ? sessions.find((s) => workspaceIdForSession(s) === hintedWorkspaceId)
+            : sessions[0];
+        if (candidate !== undefined) {
+          await selectSession(candidate.id, { urlMode: 'replace' });
+        }
       }
     } catch (err) {
       traceStatus = 'failed';

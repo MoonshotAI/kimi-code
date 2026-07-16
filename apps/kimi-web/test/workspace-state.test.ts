@@ -1249,6 +1249,19 @@ describe('useWorkspaceState — session list loading', () => {
       modelProvider: { loadModels: vi.fn().mockResolvedValue(undefined) },
       initialized: ref(false),
       connectIssue: ref<string | null>(null),
+      // Mirror the facade: registered + session-derived workspaces, so load()
+      // paths that consult mergedWorkspaces (workspace hint, persisted
+      // selection) see the same list the real app would.
+      mergedWorkspaces: computed(() =>
+        mergeWorkspaces({
+          workspaces: state.workspaces,
+          sessions: state.sessions,
+          hiddenWorkspaceRoots: [],
+          activeRoot: undefined,
+          activeBranch: null,
+          sessionsHasMoreByWorkspace: {},
+        }),
+      ),
       setSessions: vi.fn((next: AppSession[]) => {
         state.sessions = next;
       }),
@@ -1271,6 +1284,133 @@ describe('useWorkspaceState — session list loading', () => {
 
     expect(deps.pushOperationFailure).toHaveBeenCalledOnce();
     expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
+  });
+
+  // Host workspace hint (?workspace=<id-or-root>), used by embedded hosts like
+  // the VS Code extension to pin the UI to their own workspace on first load.
+  describe('workspace hint', () => {
+    const hintedWs = () => workspace('wd_current', '/workspace', 'Workspace');
+    const otherWs = () => workspace('wd_other', '/other-workspace', 'Other');
+    const otherSession = () => ({
+      ...createSession(),
+      id: 'sess_other',
+      title: 'Other workspace session',
+      workspaceId: 'wd_other',
+      cwd: '/other-workspace',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    });
+
+    function stubWindowWithSearch(search: string): void {
+      vi.stubGlobal('window', {
+        location: { search, pathname: '/', hash: '' },
+        addEventListener: () => {},
+        history: { replaceState: () => {}, pushState: () => {} },
+      });
+    }
+
+    it('binds first load to the hinted workspace instead of the most-recent session', async () => {
+      apiMock.listWorkspaces.mockResolvedValue([hintedWs(), otherWs()]);
+      apiMock.listSessions.mockImplementation(
+        async ({ workspaceId }: { workspaceId?: string }) =>
+          workspaceId === 'wd_other'
+            ? { items: [otherSession()], hasMore: false }
+            : { items: [], hasMore: false },
+      );
+      const { state, deps, workspaceState } = createSessionLoadRig([]);
+      stubWindowWithSearch('?workspace=%2Fworkspace');
+      try {
+        await workspaceState.load();
+        expect(state.activeWorkspaceId).toBe('wd_current');
+        // The hinted workspace is empty: no cross-workspace auto-select.
+        expect(deps.setActiveSessionId).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('auto-selects a session within the hinted workspace, not the global most-recent', async () => {
+      const current = {
+        ...createSession(),
+        id: 'sess_current',
+        title: 'Current workspace session',
+        workspaceId: 'wd_current',
+        cwd: '/workspace',
+        updatedAt: '2026-01-02T00:00:00.000Z',
+      };
+      apiMock.listWorkspaces.mockResolvedValue([hintedWs(), otherWs()]);
+      apiMock.listSessions.mockImplementation(
+        async ({ workspaceId }: { workspaceId?: string }) =>
+          workspaceId === 'wd_current'
+            ? { items: [current], hasMore: false }
+            : { items: [otherSession()], hasMore: false },
+      );
+      const { state, deps, workspaceState } = createSessionLoadRig([]);
+      stubWindowWithSearch('?workspace=wd_current');
+      try {
+        await workspaceState.load();
+        expect(state.activeWorkspaceId).toBe('wd_current');
+        expect(deps.setActiveSessionId).toHaveBeenCalledWith('sess_current');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('ignores an unknown hint and falls back to the normal selection', async () => {
+      apiMock.listWorkspaces.mockResolvedValue([hintedWs(), otherWs()]);
+      apiMock.listSessions.mockImplementation(
+        async ({ workspaceId }: { workspaceId?: string }) =>
+          workspaceId === 'wd_other'
+            ? { items: [otherSession()], hasMore: false }
+            : { items: [], hasMore: false },
+      );
+      const { state, deps, workspaceState } = createSessionLoadRig([]);
+      stubWindowWithSearch('?workspace=%2Fmissing');
+      try {
+        await workspaceState.load();
+        expect(state.activeWorkspaceId).toBe('wd_other');
+        expect(deps.setActiveSessionId).toHaveBeenCalledWith('sess_other');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('loads only the hinted workspace\'s sessions (single-workspace focus)', async () => {
+      apiMock.listWorkspaces.mockResolvedValue([hintedWs(), otherWs()]);
+      apiMock.listSessions.mockResolvedValue({ items: [], hasMore: false });
+      const { workspaceState } = createSessionLoadRig([]);
+      stubWindowWithSearch('?workspace=%2Fworkspace');
+      try {
+        await workspaceState.load();
+        const requestedWorkspaceIds = apiMock.listSessions.mock.calls.map(
+          ([arg]) => (arg as { workspaceId?: string }).workspaceId,
+        );
+        expect(requestedWorkspaceIds).toEqual(['wd_current']);
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('loads exactly the host folder workspaces, in folder order, and pins the pin', async () => {
+      apiMock.listWorkspaces.mockResolvedValue([
+        hintedWs(),
+        otherWs(),
+        workspace('wd_lib', '/lib', 'Lib'),
+      ]);
+      apiMock.listSessions.mockResolvedValue({ items: [], hasMore: false });
+      const { state, workspaceState } = createSessionLoadRig([]);
+      stubWindowWithSearch('?workspace=%2Flib&folder=%2Flib&folder=%2Fworkspace');
+      try {
+        await workspaceState.load();
+        const requestedWorkspaceIds = apiMock.listSessions.mock.calls.map(
+          ([arg]) => (arg as { workspaceId?: string }).workspaceId,
+        );
+        // Folder order, non-folder workspaces excluded from loading entirely.
+        expect(requestedWorkspaceIds).toEqual(['wd_lib', 'wd_current']);
+        expect(state.activeWorkspaceId).toBe('wd_lib');
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
   });
 
   it('keeps failed workspace sessions while replacing a successful shared-root workspace', async () => {

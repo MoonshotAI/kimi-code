@@ -19,7 +19,12 @@ plugins/cdn/
 .worktrees/
 .kimi-code/local.toml
 .kimi-sandbox/
-.vscode/
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+# kimi-vscode packaging artifacts (staged runtime + built vsix)
+apps/kimi-vscode/server/
+apps/kimi-vscode/artifacts/
 
 Dockerfile
 docker-compose.yml

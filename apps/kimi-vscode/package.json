@@ -1,0 +1,72 @@
+{
+  "name": "kimi-vscode",
+  "displayName": "Kimi Code",
+  "description": "Kimi Code for VS Code — an activity-bar webview that embeds the Kimi web UI, served by the local Kimi server.",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "publisher": "moonshot-ai",
+  "author": "Moonshot AI",
+  "homepage": "https://github.com/MoonshotAI/kimi-code",
+  "type": "module",
+  "main": "./dist/extension.cjs",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MoonshotAI/kimi-code",
+    "directory": "apps/kimi-vscode"
+  },
+  "icon": "media/kimi.png",
+  "engines": {
+    "node": ">=24.15.0",
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "AI",
+    "Chat"
+  ],
+  "activationEvents": [],
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "kimi-vscode",
+          "title": "Kimi Code",
+          "icon": "media/kimi.svg"
+        }
+      ]
+    },
+    "views": {
+      "kimi-vscode": [
+        {
+          "type": "webview",
+          "id": "kimi-vscode.sidebar",
+          "name": "Kimi",
+          "icon": "media/kimi.svg",
+          "contextualTitle": "Kimi Code"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "kimi-vscode.restart",
+        "title": "Restart Server",
+        "category": "Kimi Code"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsdown",
+    "dev": "tsdown && code --extensionDevelopmentPath=\"$(pwd)\" \"$(pwd)/../..\"",
+    "prepare:server": "node scripts/prepare-runtime.mjs",
+    "vscode:prepublish": "pnpm run build",
+    "package": "pnpm run build && mkdir -p artifacts && vsce package --out artifacts/",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist server artifacts"
+  },
+  "devDependencies": {
+    "@types/vscode": "~1.90.0",
+    "@vscode/vsce": "^3.6.2",
+    "tsdown": "0.22.0",
+    "typescript": "6.0.2"
+  }
+}

@@ -3,7 +3,9 @@
      name / inline rename, kebab, add button), the path line, and that group's
      session rows (with show-more truncation + empty state). State, menus,
      search and the header stay in Sidebar; this component renders a single
-     group and forwards every interaction back up. -->
+     group and forwards every interaction back up. With `hideHeader` (single-
+     workspace host binding, lib/workspaceHint.ts) the header is skipped and
+     the sessions render flat. -->
 <script setup lang="ts">
 import { computed, type ComponentPublicInstance, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -25,6 +27,9 @@ const props = defineProps<{
   pendingBySession: Record<string, { approvals: number; questions: number }>;
   unreadBySession: Record<string, boolean>;
   wsMenuOpenId: string | null;
+  /** Single-workspace host binding (lib/workspaceHint.ts): render the sessions
+   *  flat — no group header, no folding. */
+  hideHeader: boolean;
   /** True while this group is the active drag source (drag-to-reorder). */
   dragging: boolean;
   isCollapsed: (id: string) => boolean;
@@ -107,6 +112,7 @@ function onHeaderDragStart(event: DragEvent): void {
 <template>
   <div class="group" :class="{ dragging }">
     <div
+      v-if="!hideHeader"
       class="gh"
       :class="{ on: group.workspace.id === activeWorkspaceId, collapsed: isCollapsed(group.workspace.id) }"
       draggable="true"
@@ -169,8 +175,8 @@ function onHeaderDragStart(event: DragEvent): void {
     </div>
     <div
       class="group-sessions"
-      :class="{ collapsed: isCollapsed(group.workspace.id) }"
-      :inert="isCollapsed(group.workspace.id)"
+      :class="{ collapsed: !hideHeader && isCollapsed(group.workspace.id) }"
+      :inert="!hideHeader && isCollapsed(group.workspace.id)"
     >
       <SessionRow
         v-for="s in visibleSessions"

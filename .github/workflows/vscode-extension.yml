@@ -1,0 +1,112 @@
+name: vscode-extension
+
+# Builds the Kimi Code VS Code extension (apps/kimi-vscode) into a universal
+# vsix (self-contained: CLI server bundle + web UI; node-pty natives are
+# lifted from the user's own VS Code install at runtime, so no per-platform
+# packages are needed).
+#
+# STATUS: temporarily MANUAL-ONLY — runs solely via workflow_dispatch from the
+# Actions tab. Not wired into release.yml yet. To start publishing, set the
+# repository secret VSCE_PAT (Azure DevOps PAT for the `moonshot-ai`
+# publisher) and dispatch with `publish: true`; to automate later, add a
+# release trigger here or call this workflow from release.yml
+# (see desktop-build.yml's workflow_call pattern).
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish the vsix to the marketplace (needs VSCE_PAT)'
+        required: false
+        type: boolean
+        default: false
+      retention-days:
+        description: 'Artifact retention in days'
+        required: false
+        type: number
+        default: 7
+
+permissions:
+  contents: read
+
+jobs:
+  vsix:
+    name: Universal vsix
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Kimi web assets
+        # The server serves apps/kimi-code/dist-web; it is staged into the
+        # extension's server/ runtime by prepare:server below.
+        run: |
+          pnpm --filter @moonshot-ai/kimi-web run build
+          node apps/kimi-code/scripts/copy-web-assets.mjs
+
+      - name: Build the CLI server bundle
+        # Single-file JS bundle (dist-native/intermediates/main.cjs) — the
+        # same artifact the SEA build embeds, but here it runs under VS Code's
+        # own Electron Node.
+        run: pnpm --filter @moonshot-ai/kimi-code run build:native:js
+
+      - name: Stage the extension server runtime
+        run: pnpm --filter kimi-vscode run prepare:server
+
+      - name: Package the vsix
+        run: pnpm --filter kimi-vscode run package
+
+      - name: Upload vsix
+        uses: actions/upload-artifact@v7
+        with:
+          name: kimi-vscode-vsix
+          retention-days: ${{ inputs.retention-days }}
+          path: apps/kimi-vscode/artifacts/*.vsix
+          if-no-files-found: error
+
+  publish:
+    name: Publish to marketplace
+    needs: vsix
+    if: inputs.publish
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+          cache: 'pnpm'
+
+      - name: Install vsce only
+        run: pnpm install --frozen-lockfile --filter kimi-vscode
+
+      - name: Download vsix
+        uses: actions/download-artifact@v6
+        with:
+          name: kimi-vscode-vsix
+          path: apps/kimi-vscode/artifacts
+
+      - name: Publish
+        shell: bash
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        # --skip-duplicate makes re-runs idempotent after a half-published
+        # state. When platform-specific packages ever become necessary, build
+        # them in a matrix and pass all vsix files to --packagePath at once.
+        run: pnpm --filter kimi-vscode exec vsce publish --packagePath apps/kimi-vscode/artifacts/*.vsix --skip-duplicate

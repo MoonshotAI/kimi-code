@@ -1,0 +1,19 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build: kimi-vscode",
+      "type": "shell",
+      "command": "pnpm -C apps/kimi-vscode run build",
+      "problemMatcher": [],
+      "presentation": { "group": "kimi" }
+    },
+    {
+      "label": "watch: kimi-vscode",
+      "type": "shell",
+      "command": "pnpm -C apps/kimi-vscode exec tsdown --watch",
+      "isBackground": true,
+      "problemMatcher": []
+    }
+  ]
+}

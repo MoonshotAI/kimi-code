@@ -20,6 +20,7 @@ import {
   saveCollapsedWorkspaces,
 } from '../lib/storage';
 import { moveInOrder, type DropPosition, type WorkspaceSortMode } from '../lib/workspaceOrder';
+import { hasSingleWorkspaceHostBinding, hasWorkspaceHostBinding } from '../lib/workspaceHint';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
@@ -120,6 +121,16 @@ const emit = defineEmits<{
   collapse: [];
 }>();
 
+// Host-provided workspace binding (lib/workspaceHint.ts): an embedded host
+// (the VS Code extension view) fixes the workspace set, so remove-workspace
+// entries stay hidden. With a SINGLE bound workspace the group header is
+// redundant chrome — the sidebar renders that workspace's sessions flat,
+// with no header to fold and no WORKSPACES section label.
+const workspaceHostBound = hasWorkspaceHostBinding();
+const flatSingleWorkspace = computed(
+  () => hasSingleWorkspaceHostBinding() && props.groups.length === 1,
+);
+
 // ---------------------------------------------------------------------------
 // Session search dialog (Spotlight-style; filters title + last prompt)
 // ---------------------------------------------------------------------------
@@ -166,6 +177,12 @@ const collapsedIds = ref<Set<string>>(new Set(loadCollapsedWorkspaces()));
 
 function isCollapsed(id: string): boolean {
   return collapsedIds.value.has(id);
+}
+
+// The collapse getter handed to WorkspaceGroup: in flat single-workspace mode
+// the group header is hidden, so its sessions must always stay expanded.
+function groupCollapsed(id: string): boolean {
+  return !flatSingleWorkspace.value && isCollapsed(id);
 }
 
 function toggleCollapse(id: string): void {
@@ -722,7 +739,7 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-else>
-          <div class="side-section-label">
+          <div v-if="!flatSingleWorkspace" class="side-section-label">
             <span class="side-section-title">{{ t('sidebar.workspaces') }}</span>
             <div class="side-section-actions">
               <IconButton
@@ -768,7 +785,8 @@ onBeforeUnmount(() => {
               :unread-by-session="unreadBySession"
               :ws-menu-open-id="wsMenuOpenId"
               :dragging="draggingWsId === g.workspace.id"
-              :is-collapsed="isCollapsed"
+              :hide-header="flatSingleWorkspace"
+              :is-collapsed="groupCollapsed"
               :is-expanded="isExpanded"
               @group-click="handleGhClick"
               @group-contextmenu="openGhMenu"
@@ -810,7 +828,9 @@ onBeforeUnmount(() => {
     >
       <MenuItem @click="copyPathFromMenu">{{ t('sidebar.copyPath') }}</MenuItem>
       <MenuItem @click="startRenameFromMenu">{{ t('sidebar.rename') }}</MenuItem>
-      <MenuItem danger @click="deleteFromMenu">{{ t('sidebar.removeWorkspace') }}</MenuItem>
+      <!-- Delete stays hidden under a host workspace binding — the host owns
+           the workspace set. -->
+      <MenuItem v-if="!workspaceHostBound" danger @click="deleteFromMenu">{{ t('sidebar.removeWorkspace') }}</MenuItem>
     </Menu>
 
     <!-- Workspace kebab menu (position:fixed, anchored to the ⋯ button so the
@@ -825,8 +845,10 @@ onBeforeUnmount(() => {
       <MenuItem @click="copyWsPath(wsMenuTarget)">{{ t('sidebar.copyPath') }}</MenuItem>
       <MenuItem separator />
       <MenuItem @click="startRenameWs(wsMenuTarget)">{{ t('sidebar.rename') }}</MenuItem>
-      <MenuItem separator />
-      <MenuItem danger @click="deleteWs(wsMenuTarget)">{{ t('sidebar.removeWorkspace') }}</MenuItem>
+      <!-- Delete stays hidden under a host workspace binding — the host owns
+           the workspace set. -->
+      <MenuItem v-if="!workspaceHostBound" separator />
+      <MenuItem v-if="!workspaceHostBound" danger @click="deleteWs(wsMenuTarget)">{{ t('sidebar.removeWorkspace') }}</MenuItem>
     </Menu>
     <!-- Workspace sort menu (position:fixed, anchored to the sort button) -->
     <Menu

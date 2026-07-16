@@ -5,10 +5,11 @@
      Tapping a session selects it AND closes the sheet; tapping a group header
      folds it, same as the desktop sidebar. -->
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session, WorkspaceGroup, WorkspaceView } from '../../types';
 import { copyTextToClipboard } from '../../lib/clipboard';
+import { hasSingleWorkspaceHostBinding, hasWorkspaceHostBinding } from '../../lib/workspaceHint';
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
@@ -17,6 +18,15 @@ import MenuItem from '../ui/MenuItem.vue';
 import Tooltip from '../ui/Tooltip.vue';
 
 const { t } = useI18n();
+
+// Fixed by the host (e.g. the VS Code extension view): the workspace set comes
+// from the host, so the add/remove-workspace entries stay hidden.
+const workspaceHostBound = hasWorkspaceHostBinding();
+// With a SINGLE bound workspace the group header is redundant chrome — render
+// that workspace's sessions flat, with no header to fold (mirrors Sidebar).
+const flatSingleWorkspace = computed(
+  () => hasSingleWorkspaceHostBinding() && props.groups.length === 1,
+);
 
 const props = withDefaults(
   defineProps<{
@@ -187,7 +197,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
       <Icon name="message" size="sm" />
       {{ t('sidebar.newChat') }}
     </button>
-    <button type="button" class="newrow secondary" @click="onAddWorkspace">
+    <button v-if="!workspaceHostBound" type="button" class="newrow secondary" @click="onAddWorkspace">
       <Icon name="folder" size="sm" />
       {{ t('sidebar.newWorkspace') }}
     </button>
@@ -200,6 +210,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
 
       <div v-for="g in groups" :key="g.workspace.id" class="mgroup">
         <div
+          v-if="!flatSingleWorkspace"
           class="mgh"
           :class="{ on: g.workspace.id === activeWorkspaceId }"
           @click="toggleCollapse(g.workspace.id)"
@@ -238,16 +249,17 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
             <Icon name="plus" size="md" />
           </IconButton>
 
-          <!-- Workspace menu: copy path / delete (two-step confirm) -->
+          <!-- Workspace menu: copy path / delete (two-step confirm). Delete is
+               hidden under a host workspace binding — the host owns the set. -->
           <Menu v-if="wsMenuFor === g.workspace.id" class="kmenu wsmenu" @click.stop>
             <MenuItem size="lg" @click="onCopyWsPath(g.workspace)">
               {{ t('sidebar.copyPath') }}
             </MenuItem>
-            <MenuItem size="lg" danger @click="onDeleteWorkspace(g.workspace)">{{ t('sidebar.delete') }}</MenuItem>
+            <MenuItem v-if="!workspaceHostBound" size="lg" danger @click="onDeleteWorkspace(g.workspace)">{{ t('sidebar.delete') }}</MenuItem>
           </Menu>
         </div>
 
-        <div v-show="!isCollapsed(g.workspace.id)">
+        <div v-show="flatSingleWorkspace || !isCollapsed(g.workspace.id)">
           <div v-if="g.sessions.length === 0" class="mempty small">{{ t('sidebar.noSessions') }}</div>
           <div
             v-for="s in visibleSessions(g)"

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 22">
+  <!-- Kimi sprite mark, adapted (monochrome, eyes baked as cutouts) from the
+       brand logo in apps/kimi-web/src/components/Sidebar.vue. -->
+  <path fill="currentColor" fill-rule="evenodd" d="M7 1h18a6 6 0 0 1 6 6v8a6 6 0 0 1-6 6H7a6 6 0 0 1-6-6V7a6 6 0 0 1 6-6Zm6.2 6a1.4 1.4 0 0 0-1.4 1.4v5.2a1.4 1.4 0 0 0 2.8 0V8.4A1.4 1.4 0 0 0 13.2 7Zm5.6 0a1.4 1.4 0 0 0-1.4 1.4v5.2a1.4 1.4 0 0 0 2.8 0V8.4A1.4 1.4 0 0 0 18.8 7Z"/>
+</svg>

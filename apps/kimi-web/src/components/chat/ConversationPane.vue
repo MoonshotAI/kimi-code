@@ -15,9 +15,14 @@ import Icon from '../ui/Icon.vue';
 import Spinner from '../ui/Spinner.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
+import { hasWorkspaceHostBinding } from '../../lib/workspaceHint';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
 
 const { t } = useI18n();
+
+// Fixed by the host (e.g. the VS Code extension view): the workspace set comes
+// from the host, so the add-workspace entry points stay hidden.
+const workspaceHostBound = hasWorkspaceHostBinding();
 
 const props = defineProps<{
   turns: ChatTurn[];
@@ -1345,8 +1350,9 @@ defineExpose({ loadComposerForEdit, focusComposer });
                   >
                     <span>{{ t('conversation.moreWorkspaces', { count: hiddenWorkspaceCount }) }}</span>
                   </button>
-                  <div class="ws-pick-divider" />
+                  <div class="ws-pick-divider" v-if="!workspaceHostBound" />
                   <button
+                    v-if="!workspaceHostBound"
                     type="button"
                     class="ws-pick-action"
                     @click.stop="wsPickOpen = false; emit('addWorkspace')"
@@ -1357,7 +1363,7 @@ defineExpose({ loadComposerForEdit, focusComposer });
                 </div>
               </div>
               <button
-                v-else-if="!starting"
+                v-else-if="!starting && !workspaceHostBound"
                 type="button"
                 class="empty-add-workspace"
                 @click="emit('addWorkspace')"
