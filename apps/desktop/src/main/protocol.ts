@@ -51,6 +51,14 @@ export function registerRendererScheme(): void {
   ]);
 }
 
+async function isRegularFile(filePath: string): Promise<boolean> {
+  try {
+    return (await stat(filePath)).isFile();
+  } catch {
+    return false;
+  }
+}
+
 const DEFAULT_RENDERER_BASE = `${RENDERER_SCHEME}://${RENDERER_HOST}/index.html`;
 
 export function rendererUrl(
@@ -114,17 +122,24 @@ export async function handleRendererRequest(
   if (!filePath.startsWith(root)) {
     return new Response('forbidden', { status: 403 });
   }
-  try {
-    const info = await stat(filePath);
-    if (!info.isFile()) {
+  // SPA fallback (mirrors kap-server's webAssets): the renderer's history
+  // routing pushes extensionless navigation URLs (`/sessions/<id>`, `/login`)
+  // that have no file in desktop-dist — serve index.html so a native reload
+  // (cmd+r) lands back in the app. Asset misses with an extension keep their
+  // 404 instead of being fed HTML.
+  let target = filePath;
+  if (!(await isRegularFile(target))) {
+    if (extname(decodedPathname) !== '') {
       return new Response('not found', { status: 404 });
     }
-  } catch {
-    return new Response('not found', { status: 404 });
+    target = join(root, 'index.html');
+    if (!(await isRegularFile(target))) {
+      return new Response('not found', { status: 404 });
+    }
   }
-  const stream = createReadStream(filePath);
+  const stream = createReadStream(target);
   return new Response(stream as unknown as ResponseBody, {
-    headers: { 'content-type': mimeFor(filePath) },
+    headers: { 'content-type': mimeFor(target) },
   });
 }
 

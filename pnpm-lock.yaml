@@ -13,6 +13,12 @@ importers:
 
   .:
     devDependencies:
+      '@iconify-json/ri':
+        specifier: ^1.2.10
+        version: 1.2.10
+      '@iconify-json/tabler':
+        specifier: ^1.2.35
+        version: 1.2.35
       '@types/node':
         specifier: ^22.15.3
         version: 22.20.1
