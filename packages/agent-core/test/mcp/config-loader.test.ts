@@ -321,4 +321,62 @@ describe('loadMcpServers', () => {
       else process.env['KIMI_CODE_HOME'] = saved;
     }
   });
+
+  it('handles server names with special characters', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        'my server!': { transport: 'stdio', command: 'npx' },
+        'dev@team': { transport: 'http', url: 'https://dev.example.com/mcp' },
+      },
+    });
+    const servers = await loadMcpServers({ cwd, homeDir: home });
+    expect(servers['my server!']).toEqual({ transport: 'stdio', command: 'npx' });
+    expect(servers['dev@team']).toEqual({ transport: 'http', url: 'https://dev.example.com/mcp' });
+  });
+
+  it('ignores entries with empty server names', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        '': { transport: 'stdio', command: 'empty' },
+        valid: { transport: 'stdio', command: 'ok' },
+      },
+    });
+    const servers = await loadMcpServers({ cwd, homeDir: home });
+    // An empty-string key is technically valid JSON; the loader should handle it.
+    expect(servers['valid']).toEqual({ transport: 'stdio', command: 'ok' });
+  });
+
+  it('layers duplicate server names across files, closer scope winning', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        dup: { transport: 'stdio', command: 'user-version' },
+      },
+    });
+    await writeJson(join(cwd, '.kimi-code', 'mcp.json'), {
+      mcpServers: {
+        dup: { transport: 'http', url: 'https://project.example.com/mcp' },
+      },
+    });
+    const servers = await loadMcpServers({ cwd, homeDir: home });
+    // Project-local wins over user-global for the same server name.
+    expect(servers['dup']).toEqual({ transport: 'http', url: 'https://project.example.com/mcp' });
+  });
+
+  it('accepts a server with minimal fields (command only)', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeJson(join(home, 'mcp.json'), {
+      mcpServers: {
+        minimal: { command: 'echo' },
+      },
+    });
+    const servers = await loadMcpServers({ cwd, homeDir: home });
+    expect(servers['minimal']).toEqual({ transport: 'stdio', command: 'echo' });
+  });
 });

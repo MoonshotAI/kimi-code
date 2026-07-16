@@ -43,4 +43,20 @@ describe('ReadMediaFileTool description by capabilities', () => {
     // description must still point readers at the text-file tool.
     expect(tool.description).toContain('Read tool');
   });
+
+  it('mentions region support and full_resolution in the description', () => {
+    const tool = makeTool({ image_in: true, video_in: true });
+    expect(tool.description).toContain('region');
+    expect(tool.description).toContain('full_resolution');
+  });
+
+  it('mentions the 3.75 MB per-image byte limit in full_resolution guidance', () => {
+    const tool = makeTool({ image_in: true, video_in: false });
+    expect(tool.description).toMatch(/3\.7[56]\s*MB|3\s*750\s*KB/i);
+  });
+
+  it('mentions the decode guard in the description when both capabilities are present', () => {
+    const tool = makeTool({ image_in: true, video_in: true });
+    expect(tool.description).toMatch(/too large|decode guard|safe decode|67108864|64.*MB/i);
+  });
 });

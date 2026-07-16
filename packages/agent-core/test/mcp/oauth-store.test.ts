@@ -25,6 +25,22 @@ describe('sanitizeStoreKey', () => {
   it('rewrites a leading dot into a safe underscore-prefixed name', () => {
     expect(sanitizeStoreKey('.dot')).toBe('_dot');
   });
+
+  it('handles very long input without throwing', () => {
+    const long = 'a'.repeat(1000);
+    const result = sanitizeStoreKey(long);
+    expect(result).toHaveLength(1000);
+    expect(result).toBe(long);
+  });
+
+  it('replaces unicode characters with underscores', () => {
+    expect(sanitizeStoreKey('mcp😊server')).toBe('mcp_server');
+    expect(sanitizeStoreKey('中文名')).toBe('_');
+  });
+
+  it('collapses runs of dots and unsafe separators', () => {
+    expect(sanitizeStoreKey('a...b...c')).toBe('a_b_c');
+  });
 });
 
 describe('JsonFileStore', () => {
@@ -63,6 +79,24 @@ describe('JsonFileStore', () => {
     store.remove('keep.json');
     expect(store.read('keep.json')).toBeUndefined();
     store.remove('keep.json'); // no throw
+  });
+
+  it('read returns undefined for a file with non-JSON content', () => {
+    const store = new JsonFileStore(dir);
+    // Write non-JSON content directly (bypassing store.write which JSON-encodes).
+    store.write('bad.json', {});
+    // Remove then write raw text by overwriting via the filesystem.
+    store.remove('bad.json');
+    const fs = require('node:fs');
+    fs.writeFileSync(join(dir, 'bad.json'), '{not json}', 'utf-8');
+    expect(store.read('bad.json')).toBeUndefined();
+  });
+
+  it('read returns undefined for a file with JSON null', () => {
+    const store = new JsonFileStore(dir);
+    const fs = require('node:fs');
+    fs.writeFileSync(join(dir, 'null.json'), 'null', 'utf-8');
+    expect(store.read('null.json')).toBeNull();
   });
 });
 
@@ -155,6 +189,24 @@ describe('MCP OAuth credential identity', () => {
 
     expect(provider.redirectUrl).toBe('http://127.0.0.1:45678/callback');
     expect(provider.clientMetadata.redirect_uris).toEqual(['http://127.0.0.1:45678/callback']);
+  });
+
+  it('hasTokens returns false when no tokens were stored', () => {
+    const service = new McpOAuthService({ store: new JsonFileStore(dir) });
+    expect(service.hasTokens('unknown', 'https://unknown.example.com/mcp')).toBe(false);
+  });
+
+  it('invalidate is idempotent when no credentials exist', () => {
+    const service = new McpOAuthService({ store: new JsonFileStore(dir) });
+    // Must not throw.
+    service.invalidate('nonexistent', 'https://example.com/mcp');
+  });
+
+  it('saveTokens with empty access_token still persists the token record', () => {
+    const service = new McpOAuthService({ store: new JsonFileStore(dir) });
+    const provider = service.getProvider('mcp', 'https://mcp.example.com/mcp');
+    provider.saveTokens({ access_token: '', token_type: 'Bearer' });
+    expect(service.hasTokens('mcp', 'https://mcp.example.com/mcp')).toBe(true);
   });
 });
 

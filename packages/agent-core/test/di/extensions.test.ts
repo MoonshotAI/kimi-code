@@ -220,4 +220,32 @@ describe('registerSingleton / getSingletonServiceDescriptors', () => {
     expect(snap2).toHaveLength(2);
     expect(snap2).toBe(snap1);
   });
+
+  it('registers multiple distinct ids', () => {
+    interface IFoo { a: number; }
+    interface IBar { b: number; }
+    const IFoo = createDecorator<IFoo>('foo-multi');
+    const IBar = createDecorator<IBar>('bar-multi');
+    class Foo implements IFoo { a = 1; }
+    class Bar implements IBar { b = 2; }
+
+    registerSingleton(IFoo, Foo);
+    registerSingleton(IBar, Bar);
+
+    const snapshot = getSingletonServiceDescriptors();
+    expect(snapshot).toHaveLength(2);
+    const ids = snapshot.map(([id]) => id);
+    expect(ids).toContain(IFoo);
+    expect(ids).toContain(IBar);
+  });
+
+  it('registerSingleton with no explicit InstantiationType defaults to Eager', () => {
+    interface IFoo { a: number; }
+    const IFoo = createDecorator<IFoo>('foo-default-eager');
+    class Foo implements IFoo { a = 1; }
+    registerSingleton(IFoo, new SyncDescriptor(Foo));
+    const snapshot = getSingletonServiceDescriptors();
+    const [, descriptor] = snapshot[0]!;
+    expect(descriptor.supportsDelayedInstantiation).toBe(false);
+  });
 });

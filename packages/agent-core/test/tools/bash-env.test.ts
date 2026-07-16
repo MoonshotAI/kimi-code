@@ -103,4 +103,82 @@ describe('BashTool noninteractive env semantics', () => {
     expect(secondEnv['GIT_TERMINAL_PROMPT']).toBe('configured');
     expect(secondEnv['KIMI_CODE_ENV']).toBe('updated');
   });
+
+  it('preserves special characters in env values', async () => {
+    const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
+    const kaos = createFakeKaos({ execWithEnv, osEnv: posixEnv }).withEnv({
+      CUSTOM_PATH: '/usr/local/bin:/usr/bin:/bin',
+      SPECIAL_CHARS: 'hello world with spaces',
+      UNICODE_VAR: 'café 日本語',
+    });
+    const tool = new BashTool(kaos, '/workspace', createBackgroundManager().manager);
+
+    await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'tc_special_env',
+      args: { command: 'true', timeout: 1000 },
+      signal,
+    });
+
+    const env = execWithEnv.mock.calls[0]?.[1] as Record<string, string>;
+    expect(env['CUSTOM_PATH']).toBe('/usr/local/bin:/usr/bin:/bin');
+    expect(env['SPECIAL_CHARS']).toBe('hello world with spaces');
+    expect(env['UNICODE_VAR']).toBe('café 日本語');
+  });
+
+  it('survives an empty string env value', async () => {
+    const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
+    const kaos = createFakeKaos({ execWithEnv, osEnv: posixEnv }).withEnv({
+      EMPTY_VAR: '',
+    });
+    const tool = new BashTool(kaos, '/workspace', createBackgroundManager().manager);
+
+    await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'tc_empty_env',
+      args: { command: 'true', timeout: 1000 },
+      signal,
+    });
+
+    const env = execWithEnv.mock.calls[0]?.[1] as Record<string, string>;
+    expect(env['EMPTY_VAR']).toBe('');
+  });
+
+  it('removes env vars set to undefined', async () => {
+    const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
+    const kaos = createFakeKaos({ execWithEnv, osEnv: posixEnv }).withEnv({
+      REMOVED_VAR: undefined,
+    } as Record<string, string>);
+    const tool = new BashTool(kaos, '/workspace', createBackgroundManager().manager);
+
+    await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'tc_remove_env',
+      args: { command: 'true', timeout: 1000 },
+      signal,
+    });
+
+    const env = execWithEnv.mock.calls[0]?.[1] as Record<string, string>;
+    expect(Object.prototype.hasOwnProperty.call(env, 'REMOVED_VAR')).toBe(false);
+  });
+
+  it('combines kaos-level env with ambient process env', async () => {
+    const execWithEnv = vi.fn().mockResolvedValue(fakeProcess());
+    const kaos = createFakeKaos({ execWithEnv, osEnv: posixEnv }).withEnv({
+      KAOS_SPECIFIC: 'value',
+    });
+    const tool = new BashTool(kaos, '/workspace', createBackgroundManager().manager);
+
+    await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'tc_combined_env',
+      args: { command: 'true', timeout: 1000 },
+      signal,
+    });
+
+    const env = execWithEnv.mock.calls[0]?.[1] as Record<string, string>;
+    expect(env['KAOS_SPECIFIC']).toBe('value');
+    // PATH should still be inherited from the ambient process environment
+    expect(env['PATH']).toBe(process.env['PATH']);
+  });
 });

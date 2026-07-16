@@ -34,4 +34,19 @@ describe('parseFloatEnv', () => {
       expectConfigInvalid(() => parseFloatEnv(value, 'KIMI_MODEL_TEMPERATURE'));
     },
   );
+
+  it('parses negative float values', () => {
+    expect(parseFloatEnv('-0.5', 'KIMI_MODEL_TEMPERATURE')).toBe(-0.5);
+    expect(parseFloatEnv('-1', 'KIMI_MODEL_TEMPERATURE')).toBe(-1);
+  });
+
+  it('parses scientific notation', () => {
+    expect(parseFloatEnv('1e5', 'KIMI_MODEL_TEMPERATURE')).toBe(100000);
+    expect(parseFloatEnv('1.5e-2', 'KIMI_MODEL_TEMPERATURE')).toBe(0.015);
+  });
+
+  it('throws config.invalid for Infinity and -Infinity', () => {
+    expectConfigInvalid(() => parseFloatEnv('Infinity', 'KIMI_MODEL_TEMPERATURE'));
+    expectConfigInvalid(() => parseFloatEnv('-Infinity', 'KIMI_MODEL_TEMPERATURE'));
+  });
 });

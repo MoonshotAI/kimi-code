@@ -770,7 +770,47 @@ describe('ReadTool', () => {
     expect(result.note).toContain('Total lines in file: 5.');
     expect(result.note).toContain('Lines [4] were truncated.');
   });
-});
+
+  it('reads a file with a single line and no trailing newline', async () => {
+    const tool = toolWithContent('single line without newline');
+
+    const result = await execute(tool, { path: '/tmp/single.txt' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toBe('1\tsingle line without newline');
+    expect(result.note).toContain('1 line read');
+  });
+
+  it('reads a file with only newlines as content', async () => {
+    const tool = toolWithContent('\n\n\n');
+
+    const result = await execute(tool, { path: '/tmp/newlines.txt' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('1\t');
+    expect(result.note).toContain('3 lines read');
+  });
+
+  it('handles a path with spaces and special characters', async () => {
+    const { fs } = createSpiedFs('special path content');
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: '/tmp/my project/file (copy).txt' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('special path content');
+  });
+
+  it('reads a file with very long path (over 256 characters)', async () => {
+    const longPath = '/tmp/' + 'x'.repeat(300) + '/file.txt';
+    const { fs } = createSpiedFs('deep path content');
+    const tool = new ReadTool(fs, createTestEnv(), PERMISSIVE_WORKSPACE);
+
+    const result = await execute(tool, { path: longPath });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('deep path content');
+  });
 
 describe('ReadTool description and schema parity', () => {
   it('encourages reading multiple files in parallel', () => {

@@ -224,5 +224,61 @@ describe('resolveInstallSource', () => {
         ref: { kind: 'branch', value: 'bad%ZZname' },
       });
     });
+
+    it('strips query and fragment from bare github URL', () => {
+      const result = resolveInstallSource('https://github.com/owner/repo?tab=readme#section');
+      expect(result).toEqual({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'repo',
+      });
+    });
+
+    it('recognizes github URL with repo name containing dots', () => {
+      const result = resolveInstallSource('https://github.com/owner/my.plugin');
+      expect(result).toEqual({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'my.plugin',
+      });
+    });
+
+    it('recognizes github URL with repo name containing underscores', () => {
+      const result = resolveInstallSource('https://github.com/owner/my_plugin');
+      expect(result).toEqual({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'my_plugin',
+      });
+    });
+
+    it('recognizes /releases/ (without /tag/X) as a bare github URL', () => {
+      const result = resolveInstallSource('https://github.com/owner/repo/releases');
+      expect(result).toEqual({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'repo',
+      });
+    });
+
+    it('recognizes /releases/ (with trailing slash) as a bare github URL', () => {
+      const result = resolveInstallSource('https://github.com/owner/repo/releases/');
+      expect(result).toEqual({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'repo',
+      });
+    });
+
+    it('handles very long repo name', () => {
+      const longName = 'a'.repeat(100);
+      const url = `https://github.com/owner/${longName}`;
+      const result = resolveInstallSource(url);
+      expect(result).toEqual({
+        kind: 'github',
+        owner: 'owner',
+        repo: longName,
+      });
+    });
   });
 });

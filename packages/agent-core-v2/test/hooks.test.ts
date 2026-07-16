@@ -181,6 +181,115 @@ describe('OrderedHookSlot', () => {
     });
     expect(ctx.output).toBe(20);
   });
+
+  it('delete returns false for a non-existent handler id', () => {
+    const slot = new OrderedHookSlot<Record<string, never>>();
+    expect(slot.delete('nonexistent')).toBe(false);
+  });
+
+  it('registering the same id twice replaces the previous handler', async () => {
+    const slot = new OrderedHookSlot<Record<string, never>>();
+    const order: string[] = [];
+    slot.register('dup', async (_ctx, next) => {
+      order.push('first');
+      await next();
+    });
+    slot.register('dup', async (_ctx, next) => {
+      order.push('second');
+      await next();
+    });
+    await slot.run({});
+    expect(order).toEqual(['second']);
+  });
+
+  it('register with both before and after throws', () => {
+    const slot = new OrderedHookSlot<Record<string, never>>();
+    slot.register('a', async () => {});
+    expect(() =>
+      slot.register('b', async () => {}, { before: 'a', after: 'a' }),
+    ).toThrow('Hook registration cannot specify both before and after');
+  });
+
+  it('register with before referencing a non-existent target throws', () => {
+    const slot = new OrderedHookSlot<Record<string, never>>();
+    expect(() =>
+      slot.register('b', async () => {}, { before: 'nonexistent' }),
+    ).toThrow('Hook target "nonexistent" is not registered');
+  });
+
+  it('register with after referencing a non-existent target throws', () => {
+    const slot = new OrderedHookSlot<Record<string, never>>();
+    expect(() =>
+      slot.register('b', async () => {}, { after: 'nonexistent' }),
+    ).toThrow('Hook target "nonexistent" is not registered');
+  });
+
+  it('honors after ordering', async () => {
+    const slot = new OrderedHookSlot<Record<string, never>>();
+    const order: string[] = [];
+    const mk =
+      (id: string) =>
+      async (_ctx: Record<string, never>, next: () => Promise<void>) => {
+        order.push(id);
+        await next();
+      };
+    slot.register('a', mk('a'));
+    slot.register('c', mk('c'));
+    slot.register('b', mk('b'), { after: 'a' });
+    await slot.run({});
+    expect(order).toEqual(['a', 'b', 'c']);
+  });
+
+  it('a handler that throws does not prevent the terminal from running', async () => {
+    const slot = new OrderedHookSlot<Record<string, never>>();
+    slot.register('thrower', async () => {
+      throw new Error('handler error');
+    });
+    let terminalRan = false;
+    await expect(
+      slot.run({}, async () => {
+        terminalRan = true;
+      }),
+    ).rejects.toThrow('handler error');
+  });
+
+  it('asDisposable returns a disposable that removes the handler', async () => {
+    const slot = new OrderedHookSlot<Record<string, never>>();
+    const order: string[] = [];
+    const disposable = slot.asDisposable('to-remove');
+    slot.register('to-remove', async (_ctx, next) => {
+      order.push('to-remove');
+      await next();
+    });
+    slot.register('keeper', async (_ctx, next) => {
+      order.push('keeper');
+      await next();
+    });
+    disposable.dispose();
+    await slot.run({});
+    expect(order).toEqual(['keeper']);
+  });
+
+  it('register returns a disposable that removes the handler', async () => {
+    const slot = new OrderedHookSlot<Record<string, never>>();
+    const order: string[] = [];
+    const disposable = slot.register('removable', async (_ctx, next) => {
+      order.push('removable');
+      await next();
+    });
+    slot.register('keeper', async (_ctx, next) => {
+      order.push('keeper');
+      await next();
+    });
+    disposable.dispose();
+    await slot.run({});
+    expect(order).toEqual(['keeper']);
+  });
+
+  it('runs with no handlers and no terminal', async () => {
+    const slot = new OrderedHookSlot<Record<string, never>>();
+    await expect(slot.run({})).resolves.toBeUndefined();
+  });
 });
 
 describe('createHooks', () => {
@@ -189,5 +298,31 @@ describe('createHooks', () => {
     const hooks = createHooks<HookEvents, keyof HookEvents>(['start', 'stop']);
     expect(hooks.start).toBeInstanceOf(OrderedHookSlot);
     expect(hooks.stop).toBeInstanceOf(OrderedHookSlot);
+  });
+
+  it('creates an empty object when no keys are provided', () => {
+    const hooks = createHooks<Record<string, never>, never>([]);
+    expect(hooks).toEqual({});
+  });
+
+  it('creates independently functioning slots', async () => {
+    type HookEvents = { a: { value: number }; b: { value: number } };
+    const hooks = createHooks<HookEvents, keyof HookEvents>(['a', 'b']);
+    const orderA: number[] = [];
+    const orderB: number[] = [];
+    hooks.a.register('a1', async (ctx, next) => {
+      orderA.push(ctx.value);
+      await next();
+    });
+    hooks.b.register('b1', async (ctx, next) => {
+      orderB.push(ctx.value);
+      await next();
+    });
+    await Promise.all([
+      hooks.a.run({ value: 1 }),
+      hooks.b.run({ value: 2 }),
+    ]);
+    expect(orderA).toEqual([1]);
+    expect(orderB).toEqual([2]);
   });
 });

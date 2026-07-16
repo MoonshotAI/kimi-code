@@ -117,4 +117,68 @@ describe('plugin store', () => {
     expect(record?.source).toBe('zip-url');
     expect((record as { github?: unknown } | undefined)?.github).toBeUndefined();
   });
+
+  it('reads records with extra unknown fields (forward compat)', async () => {
+    const home = await makeKimiHome();
+    await writeInstalled(home, { version: 1, plugins: [] });
+    await writeFile(
+      path.join(home, 'plugins', 'installed.json'),
+      JSON.stringify({
+        version: 1,
+        plugins: [
+          {
+            id: 'demo',
+            root: '/tmp/demo',
+            source: 'local-path',
+            enabled: true,
+            installedAt: '2026-06-01T00:00:00Z',
+            originalSource: '/tmp/demo',
+            _futureField: 'should be ignored',
+          },
+        ],
+      }),
+      'utf8',
+    );
+    const result = await readInstalled(home);
+    expect(result.plugins).toHaveLength(1);
+    expect(result.plugins[0]?.id).toBe('demo');
+  });
+
+  it('writes and reads empty plugins array', async () => {
+    const home = await makeKimiHome();
+    await writeInstalled(home, { version: 1, plugins: [] });
+    const result = await readInstalled(home);
+    expect(result.plugins).toEqual([]);
+    expect(result.version).toBe(1);
+  });
+
+  it('round-trips multiple plugins', async () => {
+    const home = await makeKimiHome();
+    const data: InstalledFile = {
+      version: 1,
+      plugins: [
+        {
+          id: 'a',
+          root: '/tmp/a',
+          source: 'local-path',
+          enabled: true,
+          installedAt: '2026-01-01T00:00:00Z',
+          originalSource: '/tmp/a',
+        },
+        {
+          id: 'b',
+          root: '/tmp/b',
+          source: 'local-path',
+          enabled: false,
+          installedAt: '2026-01-02T00:00:00Z',
+          originalSource: '/tmp/b',
+        },
+      ],
+    };
+    await writeInstalled(home, data);
+    const result = await readInstalled(home);
+    expect(result.plugins).toHaveLength(2);
+    expect(result.plugins[0]?.id).toBe('a');
+    expect(result.plugins[1]?.id).toBe('b');
+  });
 });

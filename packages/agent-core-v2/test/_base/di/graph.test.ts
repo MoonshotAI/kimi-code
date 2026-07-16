@@ -67,4 +67,28 @@ describe('Graph', () => {
     graph.insertEdge('3', '1');
     expect(graph.findCycleSlow()).toBe('1 -> 2 -> 3 -> 1');
   });
+
+  it('removeNode on a non-existent node is a no-op', () => {
+    expect(() => graph.removeNode('nonexistent')).not.toThrow();
+  });
+
+  it('inserting a duplicate edge is idempotent', () => {
+    graph.insertEdge('a', 'b');
+    graph.insertEdge('a', 'b');
+    const a = graph.lookupOrInsertNode('a');
+    expect(a.outgoing.size).toBe(1);
+  });
+
+  it('isolated nodes with no edges are each roots', () => {
+    graph.lookupOrInsertNode('x');
+    graph.lookupOrInsertNode('y');
+    const roots = graph.roots();
+    expect(roots).toHaveLength(2);
+    expect(roots.map((n) => n.data).sort()).toEqual(['x', 'y']);
+  });
+
+  it('self-loop is detected as a cycle', () => {
+    graph.insertEdge('self', 'self');
+    expect(graph.findCycleSlow()).toBe('self -> self');
+  });
 });

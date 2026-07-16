@@ -114,6 +114,58 @@ describe('AgentPermissionRulesService (wire-backed)', () => {
     expect(records.every((record) => 'payload' in record === false)).toBe(true);
   });
 
+  it('treats empty rule arrays as a no-op and does not persist them', () => {
+    svc.addRules([]);
+    expect(svc.rules).toEqual([]);
+  });
+
+  it('handles rules with special characters in patterns', () => {
+    const specialPatternRule: PermissionRule = {
+      decision: 'allow',
+      scope: 'session-runtime',
+      pattern: 'Bash(cat /proc/$(echo $$)/status)',
+    };
+    svc.addRules([specialPatternRule]);
+    expect(svc.rules).toEqual([specialPatternRule]);
+  });
+
+  it('tolerates duplicate rules and does not deduplicate', () => {
+    svc.addRules([allowRule, allowRule]);
+    expect(svc.rules).toEqual([allowRule, allowRule]);
+  });
+
+  it('records a session approval pattern with a long tool call id', () => {
+    const approval = sessionApproval('Bash(rm *)');
+    const longIdApproval: PermissionApprovalResultRecord = {
+      ...approval,
+      toolCallId: 'call_'.repeat(50),
+    };
+    svc.recordApprovalResult(longIdApproval);
+    expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
+  });
+
+  it('records multiple distinct session approval patterns', () => {
+    svc.recordApprovalResult(sessionApproval('Bash(rm *)'));
+    svc.recordApprovalResult(sessionApproval('Bash(rm -rf *)'));
+    expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)', 'Bash(rm -rf *)']);
+  });
+
+  it('does not duplicate session approval patterns on re-record', () => {
+    svc.recordApprovalResult(sessionApproval('Bash(rm *)'));
+    svc.recordApprovalResult(sessionApproval('Bash(rm *)'));
+    expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
+  });
+
+  it('preserves live rules and session patterns across a flush cycle', async () => {
+    svc.addRules([allowRule]);
+    svc.recordApprovalResult(sessionApproval('Bash(rm *)'));
+
+    await ix.get(IWireService).flush();
+
+    expect(svc.rules).toEqual([allowRule]);
+    expect(svc.sessionApprovalRulePatterns).toEqual(['Bash(rm *)']);
+  });
+
   it('replay rebuilds session approval patterns only (rules are not persisted)', async () => {
     svc.addRules([allowRule, denyRule]);
     svc.recordApprovalResult(sessionApproval('Bash(rm *)'));

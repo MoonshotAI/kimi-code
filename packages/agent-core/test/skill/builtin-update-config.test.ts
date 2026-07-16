@@ -64,4 +64,17 @@ describe('builtin skill: check-kimi-code-docs', () => {
       registry.listInvocableSkills().some((skill) => skill.name === 'check-kimi-code-docs'),
     ).toBe(true);
   });
+
+  it('check-kimi-code-docs content contains the docs base URL', () => {
+    expect(CHECK_KIMI_CODE_DOCS_SKILL.content).toContain('https://www.kimi.com/code/docs/en/');
+  });
+
+  it('check-kimi-code-docs content references kimi-code-cli modules', () => {
+    expect(CHECK_KIMI_CODE_DOCS_SKILL.content).toContain('kimi-code-cli/configuration/');
+    expect(CHECK_KIMI_CODE_DOCS_SKILL.content).toContain('kimi-code-cli/customization/');
+  });
+
+  it('update-config skill references /reload endpoint', () => {
+    expect(UPDATE_CONFIG_SKILL.content).toContain('/reload');
+  });
 });

@@ -409,4 +409,83 @@ describe('WriteTool', () => {
     expect(result.isError).toBeFalsy();
     expect(writeText).toHaveBeenCalledWith('/workspace-sneaky/file.txt', 'content');
   });
+
+  it('rejects empty-string paths at the schema layer', () => {
+    expect(WriteInputSchema.safeParse({ path: '', content: 'data' }).success).toBe(false);
+  });
+
+  it('writes content with trailing newlines and reports the correct byte count', async () => {
+    const { tool, writeText } = makeTool();
+    const content = 'line1\nline2\nline3\n';
+
+    const result = await execute(tool, { path: '/tmp/trailing.txt', content });
+
+    expect(writeText).toHaveBeenCalledWith('/tmp/trailing.txt', content);
+    expect(result.output).toContain('Wrote 18 bytes');
+  });
+
+  it('handles a very long content string without crashing', async () => {
+    const { tool, writeText } = makeTool();
+    const content = 'x'.repeat(100_000);
+
+    const result = await execute(tool, { path: '/tmp/large.txt', content });
+
+    expect(result.isError).toBeFalsy();
+    expect(writeText).toHaveBeenCalledWith('/tmp/large.txt', content);
+    expect(result.output).toContain('Wrote 100000 bytes');
+  });
+
+  it('handles a path with special characters', async () => {
+    const { tool, writeText } = makeTool();
+    const path = '/tmp/my project (copy)/file with spaces.txt';
+
+    const result = await execute(tool, { path, content: 'data' });
+
+    expect(result.isError).toBeFalsy();
+    expect(writeText).toHaveBeenCalledWith(path, 'data');
+  });
+
+  it('append to a non-existent file with missing parent directory creates the parent', async () => {
+    const enoent = Object.assign(new Error('ENOENT: no such file or directory'), {
+      code: 'ENOENT',
+    });
+    const { tool, mkdir, appendText } = makeTool({
+      stat: vi.fn().mockRejectedValue(enoent),
+    });
+
+    const result = await execute(tool, {
+      path: '/tmp/new-dir/new-file.txt',
+      content: 'new content',
+      mode: 'append',
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(mkdir).toHaveBeenCalledWith('/tmp/new-dir', { recursive: true });
+    expect(appendText).toHaveBeenCalledWith('/tmp/new-dir/new-file.txt', 'new content');
+  });
+
+  it('write error when the file system is readonly surfaces the underlying error', async () => {
+    const { tool } = makeTool({
+      writeText: vi.fn().mockRejectedValue(
+        Object.assign(new Error('EROFS: read-only file system'), { code: 'EROFS' }),
+      ),
+    });
+
+    const result = await execute(tool, { path: '/readonly/file.txt', content: 'data' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('EROFS');
+  });
+
+  it('blocks writing to a path that is a directory itself', async () => {
+    const { tool, writeText } = makeTool({
+      stat: vi.fn().mockResolvedValue({ isFile: false, isDirectory: true, size: 0 }),
+    });
+
+    const result = await execute(tool, { path: '/tmp/existing-dir', content: 'data' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toMatch(/is a directory|not a file|already exists/i);
+    expect(writeText).not.toHaveBeenCalled();
+  });
 });

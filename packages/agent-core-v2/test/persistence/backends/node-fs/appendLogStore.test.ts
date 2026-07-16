@@ -680,4 +680,62 @@ describe('AppendLogStore', () => {
       { n: 2, s: '日本語' },
     ]);
   });
+
+  it('read returns empty for a scope that has never been written to', async () => {
+    expect(await collect<Rec>('never-written', KEY)).toEqual([]);
+  });
+
+  it('read returns empty for a key that has never been written to', async () => {
+    expect(await collect<Rec>(SCOPE, 'never-written.jsonl')).toEqual([]);
+  });
+
+  it('append with empty scope does not throw', async () => {
+    expect(() => record.append<Rec>('', KEY, { n: 1 })).not.toThrow();
+  });
+
+  it('handles a very deeply nested object record', async () => {
+    const deep: Record<string, unknown> = { n: 1 };
+    let cursor: Record<string, unknown> = deep;
+    for (let i = 0; i < 100; i++) {
+      cursor['next'] = { n: i };
+      cursor = cursor['next'] as Record<string, unknown>;
+    }
+    record.append<Record<string, unknown>>(SCOPE, KEY, deep);
+    await record.flush();
+    const out = await collect<Record<string, unknown>>(SCOPE, KEY);
+    expect(out).toHaveLength(1);
+    expect((out[0]!['next'] as Record<string, unknown>)['n']).toBe(0);
+  });
+
+  it('flush is a no-op on an empty log', async () => {
+    await expect(record.flush()).resolves.toBeUndefined();
+  });
+
+  it('close waits for in-flight flush before resolving', async () => {
+    let releaseFlush!: () => void;
+    const flushGate = new Promise<void>((resolve) => { releaseFlush = resolve; });
+    const originalAppend = storage.append.bind(storage);
+    storage.append = async (...args) => {
+      await flushGate;
+      return originalAppend(...args);
+    };
+    record.append<Rec>(SCOPE, KEY, { n: 1 });
+
+    const closed = record.close();
+    releaseFlush!();
+    await expect(closed).resolves.toBeUndefined();
+    expect(await collect<Rec>(SCOPE, KEY)).toEqual([{ n: 1 }]);
+  });
+
+  it('read returns results after close-and-reopen', async () => {
+    record.append<Rec>(SCOPE, KEY, { n: 42 });
+    await record.flush();
+    await record.close();
+
+    const secondIx = disposables.add(new TestInstantiationService());
+    secondIx.stub(IFileSystemStorageService, storage);
+    secondIx.set(IAppendLogStore, new SyncDescriptor(AppendLogStore));
+    const reopened = secondIx.get(IAppendLogStore);
+    expect(await collect<Rec>(reopened, SCOPE, KEY)).toEqual([{ n: 42 }]);
+  });
 });

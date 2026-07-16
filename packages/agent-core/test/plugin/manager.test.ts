@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -974,6 +974,83 @@ describe('PluginManager', () => {
     await manager.load();
     await manager.install(root);
     expect(manager.summaries()[0]?.commandCount).toBe(2);
+  });
+
+  it('install() with non-existent path throws', async () => {
+    const home = await makeKimiHome();
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await expect(manager.install('/nonexistent/plugin/path')).rejects.toThrow();
+  });
+
+  it('install() with a file path (not a directory) throws', async () => {
+    const home = await makeKimiHome();
+    const tmpFile = path.join(await mkdtemp(path.join(tmpdir(), 'plugin-file-')), 'not-a-dir');
+    await writeFile(tmpFile, 'not a plugin', 'utf8');
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await expect(manager.install(tmpFile)).rejects.toThrow();
+  });
+
+  it('setEnabled() on non-existent plugin throws', async () => {
+    const home = await makeKimiHome();
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await expect(manager.setEnabled('no-such-plugin', false)).rejects.toThrow();
+  });
+
+  it('remove() on non-existent plugin is a no-op', async () => {
+    const home = await makeKimiHome();
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await expect(manager.remove('no-such-plugin')).resolves.toBeUndefined();
+  });
+
+  it('info() on non-existent plugin returns undefined', async () => {
+    const home = await makeKimiHome();
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    expect(manager.info('no-such-plugin')).toBeUndefined();
+  });
+
+  it('summaries() returns empty array when no plugins installed', async () => {
+    const home = await makeKimiHome();
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    expect(manager.summaries()).toEqual([]);
+  });
+
+  it('reload() handles a plugin directory deleted from disk', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo');
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    const managedRoot = await managedPluginRoot(home, 'demo');
+    await fsRm(managedRoot, { recursive: true, force: true });
+    const summary = await manager.reload();
+    expect(summary.errors).toHaveLength(1);
+    expect(manager.get('demo')?.state).toBe('error');
+  });
+
+  it('concurrent install() of different plugins succeeds', async () => {
+    const home = await makeKimiHome();
+    const a = await makePlugin('plugin-a');
+    const b = await makePlugin('plugin-b');
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await expect(Promise.all([manager.install(a), manager.install(b)])).resolves.toHaveLength(2);
+    expect(manager.list()).toHaveLength(2);
+  });
+
+  it('multiple install() calls of the same plugin are idempotent', async () => {
+    const home = await makeKimiHome();
+    const root = await makePlugin('demo');
+    const manager = new PluginManager({ kimiHomeDir: home });
+    await manager.load();
+    await manager.install(root);
+    await manager.install(root);
+    expect(manager.list()).toHaveLength(1);
   });
 });
 

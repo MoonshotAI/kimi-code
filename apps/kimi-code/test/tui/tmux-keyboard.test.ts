@@ -68,4 +68,19 @@ describe('tmux keyboard setup detection', () => {
       ),
     ).resolves.toBeUndefined();
   });
+
+  it('handles a malformed TMUX environment variable', async () => {
+    await expect(
+      detectTmuxKeyboardWarning({ TMUX: 'garbage' }, optionReader({})),
+    ).resolves.toBeUndefined();
+  });
+
+  it('handles readOption rejection gracefully', async () => {
+    const readOption = vi.fn(async () => {
+      throw new Error('tmux disconnected');
+    });
+    await expect(
+      detectTmuxKeyboardWarning({ TMUX: '/tmp/tmux/default,123,0' }, readOption),
+    ).resolves.toBeUndefined();
+  });
 });

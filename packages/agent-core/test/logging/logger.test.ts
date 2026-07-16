@@ -200,6 +200,41 @@ describe('payload shapes', () => {
     await getRootLogger().flush();
     expect(await readGlobal()).not.toContain('proxy payload');
   });
+
+  it('accepts very long log messages', async () => {
+    await getRootLogger().configure(defaultConfig());
+    const longMsg = 'x'.repeat(10_000);
+    log.info(longMsg);
+    await getRootLogger().flush();
+    const text = await readGlobal();
+    expect(text).toContain('x'.repeat(100));
+  });
+
+  it('accepts unicode characters in log messages', async () => {
+    await getRootLogger().configure(defaultConfig());
+    log.info('你好世界 εὕρηκα ✓');
+    await getRootLogger().flush();
+    const text = await readGlobal();
+    expect(text).toContain('你好世界');
+    expect(text).toContain('εὕρηκα');
+    expect(text).toContain('✓');
+  });
+
+  it('accepts null payload without throwing', async () => {
+    await getRootLogger().configure(defaultConfig());
+    log.info('null payload', null);
+    await getRootLogger().flush();
+    const text = await readGlobal();
+    expect(text).toContain('null payload');
+  });
+
+  it('accepts undefined payload without throwing', async () => {
+    await getRootLogger().configure(defaultConfig());
+    log.info('undefined payload', undefined);
+    await getRootLogger().flush();
+    const text = await readGlobal();
+    expect(text).toContain('undefined payload');
+  });
 });
 
 describe('createChild', () => {
@@ -235,6 +270,19 @@ describe('createChild', () => {
     expect(text).toContain('sessionId=ses_a');
     expect(text).not.toContain('ses_FAKE');
     expect(text).toContain('extra=k');
+  });
+
+  it('handles deeply nested child loggers', async () => {
+    await getRootLogger().configure(defaultConfig());
+    const a = log.createChild({ a: '1' });
+    const b = a.createChild({ b: '2' });
+    const c = b.createChild({ c: '3' });
+    c.info('deep');
+    await getRootLogger().flush();
+    const text = await readGlobal();
+    expect(text).toContain('a=1');
+    expect(text).toContain('b=2');
+    expect(text).toContain('c=3');
   });
 });
 
@@ -429,6 +477,21 @@ describe('session routing', () => {
       await rm(sessionDir, { recursive: true, force: true });
     }
   });
+
+  it('logs after attachSession with empty sessionId', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'logger-session-empty-'));
+    try {
+      await getRootLogger().configure(defaultConfig());
+      const handle = getRootLogger().attachSession({ sessionId: '', sessionDir });
+      handle.logger.info('empty session');
+      await handle.flush();
+      const text = await readFile(join(sessionDir, 'logs', 'kimi-code.log'), 'utf-8');
+      expect(text).toContain('empty session');
+      await handle.close();
+    } finally {
+      await rm(sessionDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('flushDiagnosticLogsSync', () => {
@@ -451,6 +514,19 @@ describe('flushDiagnosticLogsSync', () => {
     expect(() => {
       flushDiagnosticLogsSync();
     }).not.toThrow();
+  });
+
+  it('flushes all pending entries including multiple levels', async () => {
+    await getRootLogger().configure(defaultConfig());
+    log.warn('warn marker');
+    log.error('error marker', { error: new Error('multi') });
+    log.info('info marker');
+    flushDiagnosticLogsSync();
+    const content = readFileSync(resolveGlobalLogPath(homeDir), 'utf-8');
+    expect(content).toContain('warn marker');
+    expect(content).toContain('error marker');
+    expect(content).toContain('info marker');
+    expect(content).toMatch(/Error: multi/);
   });
 });
 
@@ -481,5 +557,20 @@ describe('redact helper', () => {
     const out = redact(input);
 
     expect(out[0]).toBe('[REDACTED:cycle]');
+  });
+
+  it('redacts deeply nested sensitive fields', () => {
+    const out = redact({ a: { b: { c: { token: 'deep' } } } });
+    expect(out).toEqual({ a: { b: { c: { token: '[REDACTED]' } } } });
+  });
+
+  it('preserves non-sensitive fields in nested objects', () => {
+    const out = redact({ config: { apiKey: 'secret', timeout: 5000 } });
+    expect(out.config.apiKey).toBe('[REDACTED]');
+    expect(out.config.timeout).toBe(5000);
+  });
+
+  it('handles undefined input', () => {
+    expect(redact(undefined)).toBe(undefined);
   });
 });

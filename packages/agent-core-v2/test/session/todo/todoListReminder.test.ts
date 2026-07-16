@@ -111,4 +111,25 @@ describe('todoListStaleReminder', () => {
 
     expect(result).toContain('The TodoList tool has not been updated recently');
   });
+
+  it('does not inject a reminder when there are no todos', async () => {
+    const history = [todoListWrite([]), ...Array.from({ length: 10 }, () => assistantMessage())];
+    const result = todoListStaleReminder({ history, todos: [], active: true });
+    expect(result).toBeUndefined();
+  });
+
+  it('injects a reminder when the history is exactly at the threshold', async () => {
+    const todos: TodoItem[] = [{ id: 'T1', parentId: null, title: 'At threshold', status: 'open', createdAt: Date.now(), updatedAt: Date.now() }];
+    const history = [todoListWrite(todos), ...Array.from({ length: 10 }, () => assistantMessage())];
+    const result = todoListStaleReminder({ history, todos, active: true });
+    expect(result).not.toBeUndefined();
+    expect(result).toContain('The TodoList tool has not been updated recently');
+  });
+
+  it('does not inject a reminder when the history is one below the threshold', async () => {
+    const todos: TodoItem[] = [{ id: 'T1', parentId: null, title: 'Below threshold', status: 'open', createdAt: Date.now(), updatedAt: Date.now() }];
+    const history = [todoListWrite(todos), ...Array.from({ length: 9 }, () => assistantMessage())];
+    const result = todoListStaleReminder({ history, todos, active: true });
+    expect(result).toBeUndefined();
+  });
 });

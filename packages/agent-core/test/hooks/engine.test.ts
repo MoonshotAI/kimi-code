@@ -396,4 +396,79 @@ describe('HookEngine', () => {
     const results = await engine.trigger('Stop', { inputData: {} });
     expect(results).toHaveLength(2);
   });
+
+  it('returns empty results when the hook engine has no hooks defined', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([]);
+    const results = await engine.trigger('PreToolUse', {
+      matcherValue: 'Shell',
+      inputData: {},
+    });
+    expect(results).toEqual([]);
+  });
+
+  it('handles a pre-aborted signal without starting the hook process', async () => {
+    const { HookEngine } = await importEngine();
+    const abortController = new AbortController();
+    abortController.abort();
+    const engine = new HookEngine([
+      { event: 'PreToolUse', matcher: 'Shell', command: 'node -e "setTimeout(()=>{},9999)"', timeout: 5 },
+    ]);
+    const results = await engine.trigger('PreToolUse', {
+      matcherValue: 'Shell',
+      inputData: {},
+      signal: abortController.signal,
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.timedOut).toBeUndefined();
+  });
+
+  it('handles regex-special characters in the matcher value', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      { event: 'PreToolUse', matcher: 'Bash\\(.*\\)', command: 'exit 0', timeout: 5 },
+    ]);
+    const results = await engine.trigger('PreToolUse', {
+      matcherValue: 'Bash(foo)',
+      inputData: {},
+    });
+    expect(results).toHaveLength(1);
+  });
+
+  it('returns no results when the hook command is an empty string', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      { event: 'PreToolUse', matcher: 'Shell', command: '', timeout: 5 },
+    ]);
+    const results = await engine.trigger('PreToolUse', {
+      matcherValue: 'Shell',
+      inputData: {},
+    });
+    expect(results).toHaveLength(0);
+  });
+
+  it('produces a summary with zero counts for events that never fired', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      { event: 'PreToolUse', matcher: 'Shell', command: 'exit 0', timeout: 5 },
+    ]);
+    expect(engine.summary).toEqual({ PreToolUse: 1 });
+    await engine.trigger('PreToolUse', { matcherValue: 'Shell', inputData: {} });
+    await engine.trigger('PreToolUse', { matcherValue: 'Shell', inputData: {} });
+    // Summary is registration-time, not call-time — count stays 1.
+    expect(engine.summary).toEqual({ PreToolUse: 1 });
+  });
+
+  it('fires a hook with a timeout of 0 and does not time out instantly', async () => {
+    const { HookEngine } = await importEngine();
+    const engine = new HookEngine([
+      { event: 'PreToolUse', matcher: 'Shell', command: 'exit 0', timeout: 0 },
+    ]);
+    const results = await engine.trigger('PreToolUse', {
+      matcherValue: 'Shell',
+      inputData: {},
+    });
+    expect(results).toHaveLength(1);
+    expect(results[0]?.action).toBe('allow');
+  });
 });

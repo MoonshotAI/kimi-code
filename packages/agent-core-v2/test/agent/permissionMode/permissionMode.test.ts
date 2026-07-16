@@ -220,4 +220,17 @@ describe('AgentPermissionModeService (wire-backed)', () => {
     expect(written[0]).toMatchObject({ type: 'metadata' });
     expect(written.slice(1)).toEqual([{ type: 'permission.set_mode', mode: 'auto' }]);
   });
-});
+
+  it('setMode with yolo mode persists and fires onDidChangeMode', () => {
+    const changes: { mode: PermissionMode; previousMode: PermissionMode }[] = [];
+    disposables.add(
+      svc.onDidChangeMode((ctx) => {
+        changes.push({ mode: ctx.mode, previousMode: ctx.previousMode });
+      }),
+    );
+    svc.setMode('yolo');
+    expect(svc.mode).toBe('yolo');
+    expect(changes).toEqual([{ mode: 'yolo', previousMode: 'manual' }]);
+  });
+
+  it('multiple setMode calls to the same mode fire only one event', () => {

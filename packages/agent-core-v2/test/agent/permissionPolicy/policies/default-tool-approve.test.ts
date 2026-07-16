@@ -81,4 +81,14 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
       policy.evaluate(policyContext(toolName, args)),
     ).toBeUndefined();
   });
+
+  it('does not approve an unknown tool name', () => {
+    expect(policy.evaluate(policyContext('UnknownTool', {}))).toBeUndefined();
+  });
+
+  it('approves Goal tools (GetGoal, SetGoalBudget, UpdateGoal)', () => {
+    expect(policy.evaluate(policyContext('GetGoal', {}))).toEqual({ kind: 'approve' });
+    expect(policy.evaluate(policyContext('SetGoalBudget', { tokenBudget: 1000 }))).toEqual({ kind: 'approve' });
+    expect(policy.evaluate(policyContext('UpdateGoal', { status: 'complete' }))).toEqual({ kind: 'approve' });
+  });
 });

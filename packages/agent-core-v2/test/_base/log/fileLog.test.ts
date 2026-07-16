@@ -106,6 +106,21 @@ describe('RotatingFileWriter', () => {
     stderrSpy.mockRestore();
   });
 
+  it('flush with empty pending queue returns true', async () => {
+    const path = join(workDir, 'empty.log');
+    const sink = new RotatingFileWriter({ path, maxBytes: 1024, files: 2 });
+    expect(await sink.flush()).toBe(true);
+  });
+
+  it('close after flush does not throw', async () => {
+    const path = join(workDir, 'close.log');
+    const sink = new RotatingFileWriter({ path, maxBytes: 1024, files: 2 });
+    sink.enqueue('closing\n');
+    await sink.flush();
+    await sink.close();
+    expect(true).toBe(true);
+  });
+
   it('keeps restored pending bounded after repeated write failures', async () => {
     const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     const badWriter = new RotatingFileWriter({
@@ -196,6 +211,27 @@ describe('FileLogWriter (ILogWriter)', () => {
     const text = await readFile(path, 'utf-8');
     expect(text).not.toContain('sessionId');
     expect(text).toContain('requestId=r1');
+    await sink.close();
+  });
+
+  it('writes an entry with no ctx fields', async () => {
+    const path = join(workDir, 'noctx.log');
+    const sink = new FileLogWriter({ path, maxBytes: 1_000_000, files: 2 });
+    sink.write(entry());
+    await sink.flush();
+    const text = await readFile(path, 'utf-8');
+    expect(text).toContain('INFO  hello');
+    await sink.close();
+  });
+
+  it('writes an error-level entry with stack trace', async () => {
+    const path = join(workDir, 'error.log');
+    const sink = new FileLogWriter({ path, maxBytes: 1_000_000, files: 2 });
+    sink.write(entry({ level: 'error', msg: 'fail', error: { message: 'boom', stack: 'Error: boom\n    at fn (t.ts:1)' } }));
+    await sink.flush();
+    const text = await readFile(path, 'utf-8');
+    expect(text).toContain('ERROR fail');
+    expect(text).toContain('Error: boom');
     await sink.close();
   });
 });

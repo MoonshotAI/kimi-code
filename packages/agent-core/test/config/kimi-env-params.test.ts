@@ -237,4 +237,60 @@ describe('applyAnthropicThinkingKeep', () => {
     const stub = { name: 'stub' } as unknown as ChatProvider;
     expect(applyAnthropicThinkingKeep(stub, 'high', { KIMI_MODEL_THINKING_KEEP: 'all' })).toBe(stub);
   });
+
+  it('accepts temperature at boundary values (0.0 and 2.0)', () => {
+    const outLow = applyKimiEnvSamplingParams(kimi(), { KIMI_MODEL_TEMPERATURE: '0.0' });
+    expect(genState(outLow).temperature).toBe(0);
+    const outHigh = applyKimiEnvSamplingParams(kimi(), { KIMI_MODEL_TEMPERATURE: '2.0' });
+    expect(genState(outHigh).temperature).toBe(2);
+  });
+
+  it('accepts top_p at boundary values (0.0 and 1.0)', () => {
+    const outLow = applyKimiEnvSamplingParams(kimi(), { KIMI_MODEL_TOP_P: '0.0' });
+    expect(genState(outLow).top_p).toBe(0);
+    const outHigh = applyKimiEnvSamplingParams(kimi(), { KIMI_MODEL_TOP_P: '1.0' });
+    expect(genState(outHigh).top_p).toBe(1);
+  });
+
+  it('rejects negative temperature', () => {
+    expectConfigInvalid(() =>
+      applyKimiEnvSamplingParams(kimi(), { KIMI_MODEL_TEMPERATURE: '-0.5' }),
+    );
+  });
+
+  it('rejects an invalid thinking effort value', () => {
+    expect(() =>
+      resolveKimiEnvThinkingEffort('invalid_value', true, {}),
+    ).toThrow();
+  });
+
+  it('applies resolveKimiEnvThinkingEffort with an explicit off effort', () => {
+    expect(
+      resolveKimiEnvThinkingEffort('off', true, {
+        KIMI_MODEL_THINKING_EFFORT: 'max',
+      }),
+    ).toBeUndefined();
+  });
+
+  it('applies both temperature and top_p simultaneously', () => {
+    const out = applyKimiEnvSamplingParams(kimi(), {
+      KIMI_MODEL_TEMPERATURE: '0.7',
+      KIMI_MODEL_TOP_P: '0.85',
+    });
+    expect(genState(out).temperature).toBe(0.7);
+    expect(genState(out).top_p).toBe(0.85);
+  });
+
+  it('does not duplicate context-management beta when multiple providers share the same instance', () => {
+    const provider = anthropic();
+    const first = applyAnthropicThinkingKeep(provider, 'high', {});
+    const second = applyAnthropicThinkingKeep(first, 'high', {});
+    const state = anthropicState(second);
+    expect(state.betaFeatures?.filter((b) => b === 'context-management-2025-06-27')).toHaveLength(1);
+  });
+
+  it('handles applyKimiEnvThinkingKeep with blank env and no config', () => {
+    const out = applyKimiEnvThinkingKeep(kimi(), 'high', { KIMI_MODEL_THINKING_KEEP: '  ' });
+    expect(genState(out).extra_body?.thinking?.keep).toBe('all');
+  });
 });

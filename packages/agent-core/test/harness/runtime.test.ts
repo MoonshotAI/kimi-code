@@ -1145,6 +1145,123 @@ base_url = "https://search.example.test/v1"
     expect(reminders).toHaveLength(1);
     expect(reminders[0]).toContain('no active plugin session starts');
   });
+
+  it('rejects createSession with an empty workDir', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    await mkdir(homeDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    void new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    await expect(rpc.createSession({ workDir: '' })).rejects.toThrow();
+  });
+
+  it('handles a very long session ID', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const longId = 'ses_' + 'x'.repeat(300);
+    const created = await rpc.createSession({ id: longId, workDir, model: 'default-mock' });
+    expect(created.id).toBe(longId);
+    expect(core.sessions.get(created.id)).toBeDefined();
+  });
+
+  it('rejects resumeSession with a non-existent session ID', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    await mkdir(homeDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    void new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    await expect(rpc.resumeSession({ sessionId: 'session_nonexistent' })).rejects.toThrow();
+  });
+
+  it('handles resumeSession with a corrupted wire.jsonl', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    const core = new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const created = await rpc.createSession({ id: 'ses_runtime_corrupt_wire', workDir, model: 'default-mock' });
+    await rpc.closeSession({ sessionId: created.id });
+
+    // Corrupt the wire.jsonl
+    const wirePath = join(created.sessionDir, 'agents', 'main', 'wire.jsonl');
+    await writeFile(wirePath, 'not valid json\n');
+
+    const freshRpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+    await expect(freshRpc.resumeSession({ sessionId: created.id })).rejects.toThrow();
+  });
+
+  it('handles multiple concurrent createSession calls', async () => {
+    tmp = await mkdtemp(join(tmpdir(), 'kimi-core-runtime-'));
+    const homeDir = join(tmp, 'home');
+    const workDir = join(tmp, 'work');
+    await mkdir(homeDir, { recursive: true });
+    await mkdir(workDir, { recursive: true });
+    await writeFile(join(homeDir, 'config.toml'), baseModelConfig());
+
+    const [coreRpc, sdkRpc] = createRPC<CoreAPI, SDKAPI>();
+    void new KimiCore(coreRpc, { homeDir });
+    const rpc = await sdkRpc({
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(async (): Promise<ApprovalResponse> => ({ decision: 'rejected' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '' })),
+    });
+
+    const promises = Array.from({ length: 5 }, (_, i) =>
+      rpc.createSession({ id: `ses_runtime_concurrent_${i}`, workDir, model: 'default-mock' }),
+    );
+    const results = await Promise.allSettled(promises);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled').length;
+    expect(fulfilled).toBeGreaterThanOrEqual(1);
+  }, 30_000);
 });
 
 describe('KimiCore print-mode defaults', () => {

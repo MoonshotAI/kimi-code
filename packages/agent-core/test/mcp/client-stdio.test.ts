@@ -27,6 +27,14 @@ describe('stdio MCP working directory resolution', () => {
       resolveStdioCwd('工具\\server', 'C:\\Users\\Example User\\项目'),
     ).toBe('C:/Users/Example User/项目/工具/server');
   });
+
+  it('returns the workspace root when the relative path is empty', () => {
+    expect(resolveStdioCwd('', '/home/user/project')).toBe('/home/user/project');
+  });
+
+  it('returns the workspace root when the relative path is a dot', () => {
+    expect(resolveStdioCwd('.', '/home/user/project')).toBe('/home/user/project');
+  });
 });
 
 describe('StdioMcpClient', () => {
@@ -312,6 +320,41 @@ describe('StdioMcpClient', () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(closes).toEqual([]);
   }, 15000);
+
+  it('throws on empty command at construction', () => {
+    expect(
+      () =>
+        new StdioMcpClient({
+          transport: 'stdio',
+          command: '',
+        }),
+    ).toThrow();
+  });
+
+  it('close() is a no-op when connect was never called', async () => {
+    const client = new StdioMcpClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [fixture],
+    });
+    // Must not throw.
+    await client.close();
+  });
+
+  it('handles args with special characters', async () => {
+    const client = new StdioMcpClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [fixture, '--name=test server', '--path=/tmp/test dir'],
+    });
+    try {
+      await client.connect();
+      const tools = await client.listTools();
+      expect(tools.map((t) => t.name)).toContain('echo');
+    } finally {
+      await client.close();
+    }
+  }, 15000);
 });
 
 describe('mergeStdioEnv', () => {
@@ -349,5 +392,55 @@ describe('mergeStdioEnv', () => {
     expect(merged['DB_PASSWORD']).toBeUndefined();
     expect(merged['NPM_CREDENTIALS']).toBeUndefined();
     expect(merged['OPENAI_API_KEY']).toBeUndefined();
+  });
+
+  it('filters additional sensitive keys including npm tokens and CI credentials', () => {
+    const merged = mergeStdioEnv(undefined, {
+      PATH: '/usr/bin',
+      NPM_TOKEN: 'npm-secret',
+      CI_JOB_TOKEN: 'ci-token',
+      GITLAB_ACCESS_TOKEN: 'glpat-xxx',
+      BITBUCKET_ACCESS_TOKEN: 'bb-token',
+      DATABASE_URL: 'postgres://user:pass@localhost/db',
+      REDIS_URL: 'redis://:password@localhost',
+    });
+    expect(merged['NPM_TOKEN']).toBeUndefined();
+    expect(merged['CI_JOB_TOKEN']).toBeUndefined();
+    expect(merged['GITLAB_ACCESS_TOKEN']).toBeUndefined();
+    expect(merged['BITBUCKET_ACCESS_TOKEN']).toBeUndefined();
+    expect(merged['DATABASE_URL']).toBeUndefined();
+    expect(merged['REDIS_URL']).toBeUndefined();
+    expect(merged['PATH']).toBe('/usr/bin');
+  });
+
+  it('filters proxy env vars that would break the child process', () => {
+    const merged = mergeStdioEnv(undefined, {
+      ALL_PROXY: 'http://proxy:8080',
+      HTTP_PROXY: 'http://proxy:8080',
+      HTTPS_PROXY: 'http://proxy:8080',
+      NO_PROXY: 'localhost',
+      PATH: '/usr/bin',
+    });
+    expect(merged['ALL_PROXY']).toBeUndefined();
+    expect(merged['HTTP_PROXY']).toBeUndefined();
+    expect(merged['HTTPS_PROXY']).toBeUndefined();
+    expect(merged['NO_PROXY']).toBeUndefined();
+    expect(merged['PATH']).toBe('/usr/bin');
+  });
+
+  it('allows proxy vars when explicitly set in config.env', () => {
+    const merged = mergeStdioEnv(
+      { HTTP_PROXY: 'http://corp:3128', NO_PROXY: '.corp.com' },
+      { PATH: '/usr/bin' },
+    );
+    expect(merged['HTTP_PROXY']).toBe('http://corp:3128');
+    expect(merged['NO_PROXY']).toBe('.corp.com');
+    expect(merged['NODE_USE_ENV_PROXY']).toBe('1');
+  });
+
+  it('returns only the parent env when config.env is undefined', () => {
+    const merged = mergeStdioEnv(undefined, { PATH: '/usr/bin', HOME: '/home/user' });
+    expect(merged['PATH']).toBe('/usr/bin');
+    expect(merged['HOME']).toBe('/home/user');
   });
 });

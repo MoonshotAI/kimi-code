@@ -2129,4 +2129,91 @@ describe('GrepTool', () => {
     expect(result).toEqual({ isError: true, output: 'Aborted before search started' });
     expect(exec).not.toHaveBeenCalled();
   });
+
+  it('handles a very long pattern string without crashing', async () => {
+    const longPattern = 'a'.repeat(5000);
+    const exec = vi.fn().mockResolvedValue(processWithOutput('', '', 1));
+    const tool = new GrepTool(createFakeKaos({ exec }), workspace);
+
+    const result = await executeTool(tool, context({ pattern: longPattern }));
+
+    expect(result.isError).toBeFalsy();
+    expect(exec).toHaveBeenCalled();
+  });
+
+  it('handles patterns with special regex characters as literal strings', async () => {
+    const exec = vi.fn().mockResolvedValue(processWithOutput('/workspace/src/a.ts\n'));
+    const tool = new GrepTool(createFakeKaos({ exec }), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '.*+?^${}()|[]\\' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(exec).toHaveBeenCalled();
+  });
+
+  it('handles the glob parameter with a sensitive file pattern', async () => {
+    const exec = vi.fn().mockResolvedValue(processWithOutput('/workspace/src/main.ts\n'));
+    const tool = new GrepTool(createFakeKaos({ exec }), workspace);
+
+    const result = await executeTool(tool, context({ pattern: 'TODO', glob: '!**/test/**' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(exec).toHaveBeenCalled();
+    const args = exec.mock.calls[0] as string[];
+    const globIdx = args.indexOf('--glob');
+    expect(globIdx).toBeGreaterThanOrEqual(0);
+  });
+
+  it('handles output_mode files_with_matches with head_limit and offset together', async () => {
+    const paths = Array.from({ length: 10 }, (_, i) => `/workspace/f${String(i)}.ts`);
+    const stdout = [...paths, ''].join('\n');
+    const exec = vi.fn().mockResolvedValue(processWithOutput(stdout));
+    const tool = new GrepTool(createFakeKaos({ exec }), workspace);
+
+    const result = await executeTool(tool, context({ pattern: 'hit', offset: 2, head_limit: 3 }));
+
+    const output = toolContentString(result);
+    const lines = output.split('\n').filter((l) => l.startsWith('f'));
+    expect(lines).toEqual(['f2.ts', 'f3.ts', 'f4.ts']);
+    expect(output).toContain('Use offset=5 to see more');
+  });
+
+  it('handles content output with offset and head_limit', async () => {
+    const lines = Array.from({ length: 10 }, (_, i) => `/workspace/f${String(i)}.ts:${i + 1}:line`);
+    const stdout = [...lines, ''].join('\n');
+    const exec = vi.fn().mockResolvedValue(processWithOutput(stdout));
+    const tool = new GrepTool(createFakeKaos({ exec }), workspace);
+
+    const result = await executeTool(tool, context({ pattern: 'line', output_mode: 'content', offset: 1, head_limit: 2 }));
+
+    const output = toolContentString(result);
+    expect(output).toContain('f1.ts:2:line');
+    expect(output).toContain('f2.ts:3:line');
+    expect(output).not.toContain('f0.ts:1:line');
+  });
+
+  it('handles count_matches with offset and head_limit', async () => {
+    const lines = Array.from({ length: 10 }, (_, i) => `/workspace/f${String(i)}.ts:${i + 1}`);
+    const stdout = [...lines, ''].join('\n');
+    const exec = vi.fn().mockResolvedValue(processWithOutput(stdout));
+    const tool = new GrepTool(createFakeKaos({ exec }), { workspaceDir: '/workspace', additionalDirs: [] });
+
+    const result = await executeTool(tool, context({ pattern: 'hit', output_mode: 'count_matches', offset: 2, head_limit: 3 }));
+
+    const output = toolContentString(result);
+    expect(output).toContain('Found 55 total occurrences across 10 files.');
+    expect(output).toContain('f2.ts:3');
+    expect(output).toContain('f3.ts:4');
+    expect(output).toContain('f4.ts:5');
+  });
+
+  it('handles a pattern with leading/trailing whitespace', async () => {
+    const exec = vi.fn().mockResolvedValue(processWithOutput('/workspace/src/a.ts\n'));
+    const tool = new GrepTool(createFakeKaos({ exec }), workspace);
+
+    const result = await executeTool(tool, context({ pattern: '  hit  ' }));
+
+    expect(result.isError).toBeFalsy();
+    expect(exec).toHaveBeenCalled();
+  });
 });

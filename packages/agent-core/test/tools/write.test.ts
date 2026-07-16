@@ -389,4 +389,40 @@ describe('WriteTool', () => {
     expect(result.isError).toBeFalsy();
     expect(writeText).toHaveBeenCalledWith('/workspace-sneaky/file.txt', 'content');
   });
+
+  it('round-trips content with newlines and special characters through kaos.writeText', async () => {
+    const writeText = vi.fn().mockResolvedValue(0);
+    const tool = new WriteTool(createFakeKaos({ writeText }), PERMISSIVE_WORKSPACE);
+    const content = 'tab\there\nnewline\n\rreturn\0nul';
+
+    const result = await executeTool(tool, context({ path: '/tmp/special.txt', content }));
+
+    expect(result.isError).toBeFalsy();
+    expect(writeText).toHaveBeenCalledWith('/tmp/special.txt', content);
+  });
+
+  it('writes a very long content string without truncation in the kaos call', async () => {
+    const longContent = 'x'.repeat(100_000);
+    const writeText = vi.fn().mockResolvedValue(longContent.length);
+    const tool = new WriteTool(createFakeKaos({ writeText }), PERMISSIVE_WORKSPACE);
+
+    const result = await executeTool(tool, context({ path: '/tmp/large.txt', content: longContent }));
+
+    expect(result.isError).toBeFalsy();
+    expect(writeText).toHaveBeenCalledWith('/tmp/large.txt', longContent);
+    expect(result.output).toContain(`Wrote ${String(longContent.length)} bytes`);
+  });
+
+  it('rejects writing to a path with only special characters', async () => {
+    const writeText = vi.fn().mockResolvedValue(1);
+    const tool = new WriteTool(createFakeKaos({ writeText }), {
+      workspaceDir: '/workspace',
+      additionalDirs: [],
+    });
+
+    const result = await executeTool(tool, context({ path: '../\0null.txt', content: 'data' }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(writeText).not.toHaveBeenCalled();
+  });
 });

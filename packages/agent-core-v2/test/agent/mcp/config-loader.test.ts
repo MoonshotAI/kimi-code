@@ -211,6 +211,20 @@ describe('loadMcpServers', () => {
     });
   });
 
+  it('throws Error2 on a JSON file with a top-level array instead of object', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeFile(join(home, 'mcp.json'), JSON.stringify([{ transport: 'stdio' }]), 'utf-8');
+    await expect(loadMcpServers({ cwd, homeDir: home })).rejects.toBeInstanceOf(Error2);
+  });
+
+  it('throws Error2 on a JSON file with null top-level value', async () => {
+    const home = makeTempDir();
+    const cwd = makeTempDir();
+    await writeFile(join(home, 'mcp.json'), 'null', 'utf-8');
+    await expect(loadMcpServers({ cwd, homeDir: home })).rejects.toBeInstanceOf(Error2);
+  });
+
   it('infers transport=stdio when an entry omits transport but has command', async () => {
     const home = makeTempDir();
     const cwd = makeTempDir();

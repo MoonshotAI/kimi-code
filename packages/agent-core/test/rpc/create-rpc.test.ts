@@ -200,4 +200,85 @@ describe('createRPC', () => {
     });
     await expect(remoteProxy.misbehave({})).rejects.toBeInstanceOf(KimiError);
   });
+
+  it('handles a remote method that returns undefined', async () => {
+    interface RemoteSide {
+      noop(payload: {}): Promise<void>;
+    }
+    const [connectCaller, connectRemote] = createRPC<{}, RemoteSide>();
+    const remoteProxyPromise = connectCaller({});
+    await connectRemote({
+      async noop() {
+        return undefined;
+      },
+    });
+    const remoteProxy = await remoteProxyPromise;
+
+    await expect(remoteProxy.noop({})).resolves.toBeUndefined();
+  });
+
+  it('handles very large payloads across the wire', async () => {
+    interface RemoteSide {
+      echo(payload: { data: string }): Promise<{ data: string }>;
+    }
+    interface CallerSide {
+      echo(payload: { data: string }): Promise<{ data: string }>;
+    }
+    const [connectCaller, connectRemote] = createRPC<CallerSide, RemoteSide>();
+    const callerProxyPromise = connectCaller({
+      async echo({ data }) {
+        return { data };
+      },
+    });
+    await connectRemote({
+      async echo({ data }) {
+        return { data };
+      },
+    });
+    const callerProxy = await callerProxyPromise;
+
+    const largeData = 'x'.repeat(100_000);
+    const result = await callerProxy.echo({ data: largeData });
+    expect(result.data).toBe(largeData);
+    expect(result.data.length).toBe(100_000);
+  });
+
+  it('multiple concurrent remote calls all resolve correctly', async () => {
+    interface RemoteSide {
+      add(payload: { a: number; b: number }): Promise<{ sum: number }>;
+    }
+    const [connectCaller, connectRemote] = createRPC<{}, RemoteSide>();
+    const remoteProxyPromise = connectCaller({});
+    await connectRemote({
+      async add({ a, b }) {
+        return { sum: a + b };
+      },
+    });
+    const remoteProxy = await remoteProxyPromise;
+
+    const results = await Promise.all([
+      remoteProxy.add({ a: 1, b: 2 }),
+      remoteProxy.add({ a: 10, b: 20 }),
+      remoteProxy.add({ a: 100, b: 200 }),
+    ]);
+    expect(results[0].sum).toBe(3);
+    expect(results[1].sum).toBe(30);
+    expect(results[2].sum).toBe(300);
+  });
+
+  it('handles connectCore before connectHost gracefully', async () => {
+    const [connectCore, connectHost] = createRPC<CoreSide, HostSide>();
+    const hostProxyPromise = connectCore({
+      getConfig: ({ sessionId }) => ({ model: `model:${sessionId}` }),
+    });
+    // hostProxyPromise should not resolve until connectHost is called
+    const hostImpl = {
+      emitEvent: vi.fn(),
+      requestApproval: vi.fn(),
+      fail: vi.fn(),
+    };
+    await connectHost(hostImpl);
+    const hostProxy = await hostProxyPromise;
+    expect(typeof hostProxy.emitEvent).toBe('function');
+  });
 });

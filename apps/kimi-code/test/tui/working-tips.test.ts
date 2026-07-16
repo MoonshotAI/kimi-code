@@ -20,6 +20,26 @@ describe('currentWorkingTip', () => {
     const second = currentWorkingTip(now);
     expect(first).toBe(second);
   });
+
+  it('returns a different tip for a different timestamp', () => {
+    const tip1 = currentWorkingTip(0);
+    const tip2 = currentWorkingTip(1_000_000_000);
+    // The timestamp-based rotation should produce a deterministic
+    // but different result when the input changes significantly.
+    if (WORKING_TIPS.length > 1) {
+      expect(tip1).not.toBe(tip2);
+    }
+  });
+
+  it('handles the epoch timestamp (0) without throwing', () => {
+    const tip = currentWorkingTip(0);
+    expect(tip).toBeDefined();
+  });
+
+  it('handles a very large future timestamp without throwing', () => {
+    const tip = currentWorkingTip(Number.MAX_SAFE_INTEGER);
+    expect(tip).toBeDefined();
+  });
 });
 
 describe('pickRandomWorkingTip', () => {
@@ -49,6 +69,15 @@ describe('pickRandomWorkingTip', () => {
     const onlyTip = WORKING_TIPS[0];
     if (onlyTip !== undefined && WORKING_TIPS.every((t) => t.text === onlyTip.text)) {
       expect(pickRandomWorkingTip(onlyTip.text)).toBeDefined();
+    }
+  });
+
+  it('returns a tip with a single-element array', () => {
+    const tip = pickRandomWorkingTip();
+    expect(tip).toBeDefined();
+    if (tip !== undefined) {
+      expect(typeof tip.text).toBe('string');
+      expect(tip.text.length).toBeGreaterThan(0);
     }
   });
 });

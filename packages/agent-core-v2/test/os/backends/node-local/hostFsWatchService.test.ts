@@ -86,4 +86,64 @@ describe('HostFsWatchService', () => {
 
     expect(events).toHaveLength(0);
   });
+
+  it('reports creation inside a nested subdirectory', async () => {
+    root = await mkdtemp(join(tmpdir(), 'hostfswatch-'));
+    const events = await start();
+
+    await mkdir(join(root, 'sub', 'deep'), { recursive: true });
+    await writeFile(join(root, 'sub', 'deep', 'nested.txt'), 'content');
+    await wait(300);
+
+    expect(events.some((e) => e.action === 'created' && e.path.endsWith('nested.txt'))).toBe(true);
+    expect(events.some((e) => e.path.includes('/sub/'))).toBe(true);
+  });
+
+  it('does not report events in non-recursive mode outside the root', async () => {
+    root = await mkdtemp(join(tmpdir(), 'hostfswatch-'));
+    const events = await start(false);
+
+    await mkdir(join(root, 'subdir'));
+    await writeFile(join(root, 'subdir', 'hidden.txt'), 'x');
+    await wait(300);
+
+    expect(events.some((e) => e.path.endsWith('hidden.txt'))).toBe(false);
+  });
+
+  it('handles rapid successive file modifications without losing events', async () => {
+    root = await mkdtemp(join(tmpdir(), 'hostfswatch-'));
+    const events = await start();
+
+    const file = join(root, 'rapid.txt');
+    for (let i = 0; i < 10; i++) {
+      await writeFile(file, `v${i}`);
+    }
+    await wait(500);
+
+    const fileEvents = events.filter((e) => e.path === file);
+    expect(fileEvents.length).toBeGreaterThanOrEqual(1);
+    expect(fileEvents.some((e) => e.action === 'created')).toBe(true);
+    expect(fileEvents.some((e) => e.action === 'modified')).toBe(true);
+  });
+
+  it('reports a file creation when the root already contains a subdirectory', async () => {
+    root = await mkdtemp(join(tmpdir(), 'hostfswatch-'));
+    await mkdir(join(root, 'existing-dir'));
+
+    const events = await start();
+    await writeFile(join(root, 'existing-dir', 'new.txt'), 'data');
+    await wait(300);
+
+    expect(events.some((e) => e.action === 'created' && e.path.endsWith('new.txt'))).toBe(true);
+  });
+
+  it('exposes the watch service contract without crashing for an empty root', async () => {
+    root = await mkdtemp(join(tmpdir(), 'hostfswatch-'));
+    const svc = new HostFsWatchService();
+    handle = svc.watch(root, { recursive: true });
+    expect(handle).toBeDefined();
+    expect(typeof handle.dispose).toBe('function');
+    expect(typeof handle.onDidChange).toBe('function');
+    await wait(200);
+  });
 });

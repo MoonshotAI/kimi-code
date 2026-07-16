@@ -140,4 +140,90 @@ describe('createMcpAuthTool', () => {
     expect(final.isError).toBe(true);
     expect(final.output).toMatch(/reconnect failed/);
   });
+
+  it('returns isError when the signal is already aborted before execution', async () => {
+    const oauthService = fakeOAuthService(async () => ({
+      authorizationUrl: new URL('https://example.com/authorize?state=abc'),
+      complete: async () => undefined,
+      cancel: async () => undefined,
+    }));
+    const controller = new AbortController();
+    controller.abort();
+    const { result } = runTool({
+      oauthService,
+      reconnect: async () => undefined,
+      signal: controller.signal,
+    });
+    const final = await result;
+    expect(final.isError).toBe(true);
+    expect(final.output).toMatch(/aborted/);
+  });
+
+  it('handles serverName with special characters in the qualified tool name', () => {
+    const tool = createMcpAuthTool({
+      serverName: 'My Server!@#',
+      serverUrl: 'https://example.com/mcp',
+      oauthService: fakeOAuthService(async () => ({
+        authorizationUrl: new URL('https://example.com/authorize?state=abc'),
+        complete: async () => undefined,
+        cancel: async () => undefined,
+      })),
+      reconnect: async () => undefined,
+      timeoutMs: 100,
+    });
+    // The tool name must be sanitized to a valid identifier.
+    expect(tool.name).toBe('mcp__My_Server___authenticate');
+    expect(tool.description).toContain('My Server!@#');
+  });
+
+  it('includes the authorization URL in the error output when complete() throws after producing a URL', async () => {
+    const oauthService = fakeOAuthService(async () => ({
+      authorizationUrl: new URL('https://example.com/authorize?state=abc'),
+      complete: async () => {
+        throw new Error('User cancelled the flow');
+      },
+      cancel: async () => undefined,
+    }));
+    const { result, updates } = runTool({
+      oauthService,
+      reconnect: async () => undefined,
+    });
+    const final = await result;
+    expect(final.isError).toBe(true);
+    // The URL must appear in the error output so the user can retry manually.
+    expect(final.output).toMatch(/https:\/\/example\.com\/authorize/);
+    // The status update with the URL must have been emitted before the error.
+    expect(updates.some((u) => u.text?.includes('https://example.com/authorize'))).toBe(true);
+  });
+
+  it('cancels the OAuth flow when the AbortSignal fires mid-complete', async () => {
+    let cancelCalled = false;
+    const oauthService = fakeOAuthService(async () => ({
+      authorizationUrl: new URL('https://example.com/authorize?state=abc'),
+      complete: async ({ signal }) => {
+        // Wait for the signal to be aborted.
+        await new Promise<void>((resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new DOMException('The operation was aborted', 'AbortError'));
+            return;
+          }
+          signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted', 'AbortError'));
+          }, { once: true });
+        });
+      },
+      cancel: async () => {
+        cancelCalled = true;
+      },
+    }));
+    const { result, controller } = runTool({
+      oauthService,
+      reconnect: async () => undefined,
+    });
+    // Abort mid-flow.
+    controller.abort();
+    const final = await result;
+    expect(final.isError).toBe(true);
+    expect(final.output).toMatch(/aborted/);
+  });
 });

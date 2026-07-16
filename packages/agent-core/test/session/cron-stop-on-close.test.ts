@@ -68,6 +68,54 @@ describe('Session.close stops cron', () => {
     await session.close();
     expect(process.listenerCount('SIGUSR1')).toBe(before);
   });
+
+  it('does not throw when closing a session without a main agent', async () => {
+    const { sessionDir, workDir } = await sessionFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-cron-no-main',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+
+    await expect(session.close()).resolves.toBeUndefined();
+  });
+
+  it('handles close being called multiple times', async () => {
+    const { sessionDir, workDir } = await sessionFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-cron-double-close',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+    await session.createMain();
+
+    await expect(session.close()).resolves.toBeUndefined();
+    await expect(session.close()).resolves.toBeUndefined();
+  });
+
+  it('stops cron even when the session has multiple agents', async () => {
+    const { sessionDir, workDir } = await sessionFixture();
+    const session = new Session({
+      kaos: testKaos.withCwd(workDir),
+      id: 'session-cron-multi-agent',
+      homedir: sessionDir,
+      rpc: createSessionRpc(),
+      skills: { explicitDirs: [join(workDir, 'missing-skills')] },
+    });
+    const main = await session.createMain();
+    await session.createAgent(
+      { type: 'sub' },
+      { parentAgentId: 'main', profile: { name: 'sub', systemPrompt: () => '', tools: [] } },
+    );
+    const stopSpy = vi.spyOn(main.cron!, 'stop');
+
+    await session.close();
+    expect(stopSpy).toHaveBeenCalledTimes(1);
+  });
 });
 
 async function sessionFixture(): Promise<{

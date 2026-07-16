@@ -86,6 +86,56 @@ describe('AskUserQuestionTool', () => {
     ).toBe(false);
   });
 
+  it('rejects questions with empty option arrays', () => {
+    expect(
+      AskUserQuestionInputSchema.safeParse({
+        questions: [{ question: 'Which?', options: [], multi_select: false }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects questions with more than 8 options', () => {
+    expect(
+      AskUserQuestionInputSchema.safeParse({
+        questions: [
+          {
+            question: 'Which?',
+            options: Array.from({ length: 9 }, (_, i) => ({
+              label: `Option ${i + 1}`,
+              description: `Description ${i + 1}`,
+            })),
+            multi_select: false,
+          },
+        ],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('accepts exactly 8 options', () => {
+    expect(
+      AskUserQuestionInputSchema.safeParse({
+        questions: [
+          {
+            question: 'Which?',
+            options: Array.from({ length: 8 }, (_, i) => ({
+              label: `Option ${i + 1}`,
+              description: `Description ${i + 1}`,
+            })),
+            multi_select: false,
+          },
+        ],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('rejects questions with extremely long question text', () => {
+    expect(
+      AskUserQuestionInputSchema.safeParse({
+        questions: [{ question: 'x'.repeat(2001), options: [{ label: 'A', description: 'B' }], multi_select: false }],
+      }).success,
+    ).toBe(false);
+  });
+
   it('rejects empty question text and empty option labels at the schema layer', () => {
     expect(
       AskUserQuestionInputSchema.safeParse(input({ question: '' })).success,

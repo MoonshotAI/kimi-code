@@ -564,6 +564,25 @@ describe('AgentPermissionGate', () => {
       }),
     });
   });
+
+  it('blocks a tool when the mode is manual and the policy denies with no message', async () => {
+    mode = 'manual';
+    policyResult = { policyName: 'custom-deny', result: { kind: 'deny' } };
+    const svc = make();
+    const result = await svc.authorize(makeContext('CustomTool'));
+    expect(result).toMatchObject({
+      block: true,
+      reason: 'Tool "CustomTool" was denied by permission policy.',
+    });
+  });
+
+  it('passes through when no policy matches and no rules apply', async () => {
+    mode = 'manual';
+    rules = [];
+    policyResult = undefined;
+    const svc = make();
+    expect(await svc.authorize(makeContext('Bash'))).toBeUndefined();
+  });
 });
 
 interface MutableRulesOptions {

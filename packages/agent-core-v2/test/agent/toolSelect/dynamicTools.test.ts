@@ -142,4 +142,45 @@ describe('predicates and ledger scan', () => {
     const history = [schemaMessage(['a', 'b']), userMessage('x'), schemaMessage(['b', 'c'])];
     expect([...collectLoadedDynamicToolNames(history)].toSorted()).toEqual(['a', 'b', 'c']);
   });
+
+  it('returns an empty set when there are no schema messages in history', () => {
+    const history = [userMessage('a'), userMessage('b')];
+    expect([...collectLoadedDynamicToolNames(history)]).toEqual([]);
+  });
+
+  it('handles empty tool name arrays in schema messages', () => {
+    const history = [schemaMessage(), userMessage('x')];
+    expect([...collectLoadedDynamicToolNames(history)]).toEqual([]);
+  });
+
+  it('stripDynamicToolContext returns the identical array when there are no tools or announcements', () => {
+    const history = [userMessage('keep')];
+    expect(stripDynamicToolContext(history)).toBe(history);
+  });
+
+  it('isDynamicToolSchemaMessage returns false for messages with missing variant', () => {
+    const msg: ContextMessage = {
+      role: 'system',
+      content: [],
+      toolCalls: [],
+      tools: [{ name: 't', description: 't desc', parameters: {} }],
+      origin: { kind: 'injection' },
+    };
+    expect(isDynamicToolSchemaMessage(msg)).toBe(false);
+  });
+
+  it('isLoadableToolsAnnouncement returns false for messages with different origin kind', () => {
+    const msg: ContextMessage = {
+      role: 'user',
+      content: [{ type: 'text', text: '<tools_added>\nx\n</tools_added>' }],
+      toolCalls: [],
+      origin: { kind: 'user' },
+    };
+    expect(isLoadableToolsAnnouncement(msg)).toBe(false);
+  });
+
+  it('foldAnnouncedToolNames ignores duplicate names within a single announcement', () => {
+    const history = [announcement(['a', 'a'], ['b', 'b'])];
+    expect([...foldAnnouncedToolNames(history)]).toEqual(['a']);
+  });
 });

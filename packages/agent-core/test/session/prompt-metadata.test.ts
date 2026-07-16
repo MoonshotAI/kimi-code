@@ -52,4 +52,64 @@ describe('promptMetadataTextFromPayload', () => {
     expect(text).not.toContain('<system>');
     expect(text).not.toContain('Image compressed');
   });
+
+  it('renders an [audio] placeholder for audio input', () => {
+    const text = promptMetadataTextFromPayload({
+      input: [
+        { type: 'text', text: 'transcribe this' },
+        { type: 'audio_url', audioUrl: { url: 'data:audio/mp3;base64,AAAA' } },
+      ],
+    });
+    expect(text).toBe('transcribe this [audio]');
+  });
+
+  it('renders a [video] placeholder for video input', () => {
+    const text = promptMetadataTextFromPayload({
+      input: [
+        { type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } },
+      ],
+    });
+    expect(text).toBe('[video]');
+  });
+
+  it('renders multiple media placeholders in order', () => {
+    const text = promptMetadataTextFromPayload({
+      input: [
+        { type: 'text', text: 'compare' },
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        { type: 'text', text: 'and' },
+        { type: 'audio_url', audioUrl: { url: 'data:audio/mp3;base64,BBBB' } },
+      ],
+    });
+    expect(text).toBe('compare [image] and [audio]');
+  });
+
+  it('returns an empty string for empty input', () => {
+    const text = promptMetadataTextFromPayload({ input: [] });
+    expect(text).toBe('');
+  });
+
+  it('returns an empty string for input with only media and no text', () => {
+    const text = promptMetadataTextFromPayload({
+      input: [
+        { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+      ],
+    });
+    expect(text).toBe('[image]');
+  });
+
+  it('handles very long input text gracefully', () => {
+    const longText = 'a'.repeat(10_000);
+    const text = promptMetadataTextFromPayload({
+      input: [{ type: 'text', text: longText }],
+    });
+    expect(text).toBe(longText);
+  });
+
+  it('strips the caption when it is the only text and there are no images', () => {
+    const text = promptMetadataTextFromPayload({
+      input: [{ type: 'text', text: CAPTION }],
+    });
+    expect(text).toBe('');
+  });
 });

@@ -99,3 +99,38 @@ describe('estimateTokensForMessage — message.tools', () => {
     expect(estimateTokensForMessage(message)).toBe(expected);
   });
 });
+
+describe('estimateTokens — edge cases', () => {
+  it('returns 1 for an empty string', () => {
+    expect(estimateTokens('')).toBe(1);
+  });
+
+  it('returns positive for a single character', () => {
+    expect(estimateTokens('a')).toBeGreaterThan(0);
+    expect(estimateTokens('😀')).toBeGreaterThan(0);
+  });
+
+  it('estimates zero tools as 0', () => {
+    expect(estimateTokensForTools([])).toBe(0);
+  });
+
+  it('estimates text-only content parts correctly', () => {
+    const text: ContentPart = { type: 'text', text: 'hello world' };
+    expect(estimateTokensForContentPart(text)).toBe(estimateTokens('hello world'));
+  });
+
+  it('estimateTokensForMessage with empty content array returns just role overhead', () => {
+    const roleCost = estimateTokens('user');
+    expect(estimateTokensForMessage({ role: 'user', content: [] })).toBe(roleCost);
+  });
+
+  it('estimateTokensForMessage with null tools returns baseline', () => {
+    const baseline = estimateTokensForMessage({ role: 'assistant', content: [{ type: 'text', text: 'hi' }] });
+    const withNull = estimateTokensForMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'hi' }],
+      tools: undefined,
+    } as never);
+    expect(withNull).toBe(baseline);
+  });
+});

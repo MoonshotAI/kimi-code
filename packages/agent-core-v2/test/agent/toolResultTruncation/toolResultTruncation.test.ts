@@ -138,6 +138,61 @@ describe('ToolResultTruncationService', () => {
     await expect(readFile(firstPath, 'utf8')).resolves.toContain('first');
     await expect(readFile(secondPath, 'utf8')).resolves.toContain('second');
   });
+
+  it('preserves output that is exactly at the boundary of the truncation limit', async () => {
+    const exactlyAtLimit = 'x'.repeat(50_000);
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Boundary',
+      toolCallId: 'call_boundary',
+      result: { output: exactlyAtLimit },
+    });
+
+    expect(result.truncated).toBeUndefined();
+    expect(result.output).toBe(exactlyAtLimit);
+  });
+
+  it('handles empty output strings without truncation', async () => {
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'Empty',
+      toolCallId: 'call_empty',
+      result: { output: '' },
+    });
+
+    expect(result.truncated).toBeUndefined();
+    expect(result.output).toBe('');
+  });
+
+  it('handles output that is exactly one byte over the limit', async () => {
+    const oneOver = 'x'.repeat(50_001);
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'OneOver',
+      toolCallId: 'call_one_over',
+      result: { output: oneOver },
+    });
+
+    expect(result.truncated).toBe(true);
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    if (typeof rendered !== 'string') throw new Error('expected string output');
+    expect(rendered).toContain('Tool output exceeded 50000 characters');
+  });
+
+  it('uses a tool name with special characters in the output path', async () => {
+    const fullOutput = 'y'.repeat(50_001);
+
+    const result = await truncation.truncateForModel<ExecutableToolResult>({
+      toolName: 'My Super Tool!@#$%',
+      toolCallId: 'call_special',
+      result: { output: fullOutput },
+    });
+
+    expect(result.truncated).toBe(true);
+    const rendered = result.output;
+    expect(typeof rendered).toBe('string');
+    expect(rendered).toContain('tool_name: My Super Tool!@#$%');
+  });
 });
 
 function renderedOutputPath(output: unknown): string {

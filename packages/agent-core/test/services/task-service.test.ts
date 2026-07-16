@@ -295,4 +295,30 @@ describe('TaskService.cancel', () => {
     expect(state.stopCalls[0]!.taskId).toBe('t1');
     expect(state.stopCalls[0]!.sessionId).toBe('s1');
   });
+
+  it('throws TaskAlreadyFinishedError when status is timed_out (terminal)', async () => {
+    const state = fresh();
+    state.sessions.push(session('s1'));
+    state.tasksBySession.set('s1', [bashTask('t1', 'timed_out')]);
+    const svc = new TaskService(makeBridge(state));
+    await expect(svc.cancel('s1', 't1')).rejects.toBeInstanceOf(TaskAlreadyFinishedError);
+  });
+
+  it('throws TaskAlreadyFinishedError when status is lost (terminal)', async () => {
+    const state = fresh();
+    state.sessions.push(session('s1'));
+    state.tasksBySession.set('s1', [bashTask('t1', 'lost')]);
+    const svc = new TaskService(makeBridge(state));
+    await expect(svc.cancel('s1', 't1')).rejects.toBeInstanceOf(TaskAlreadyFinishedError);
+  });
+
+  it('throws SessionNotFoundError when the session is missing', async () => {
+    const svc = new TaskService(makeBridge(fresh()));
+    await expect(svc.cancel('unknown', 't1')).rejects.toBeInstanceOf(SessionNotFoundError);
+  });
+
+  it('get throws SessionNotFoundError when the session is missing', async () => {
+    const svc = new TaskService(makeBridge(fresh()));
+    await expect(svc.get('unknown', 't1')).rejects.toBeInstanceOf(SessionNotFoundError);
+  });
 });

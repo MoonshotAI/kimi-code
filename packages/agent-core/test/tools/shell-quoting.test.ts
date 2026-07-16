@@ -182,3 +182,25 @@ describe('BashTool streaming output updates', () => {
     expect(onUpdate).toHaveBeenCalledWith({ kind: 'stderr', text: 'err-1\n' });
   });
 });
+
+describe('shell command quoting edge cases', () => {
+  it('preserves single-quoted arguments in the command', async () => {
+    const { rewritten } = await captureCommandRewrite(linuxEnv, "echo 'hello world'");
+    expect(rewritten).toBe("echo 'hello world'");
+  });
+
+  it('preserves double-quoted strings with special characters', async () => {
+    const { rewritten } = await captureCommandRewrite(linuxEnv, 'echo "path with spaces"');
+    expect(rewritten).toBe('echo "path with spaces"');
+  });
+
+  it('preserves environment variable references', async () => {
+    const { rewritten } = await captureCommandRewrite(linuxEnv, 'echo $HOME && ls $PWD');
+    expect(rewritten).toBe('echo $HOME && ls $PWD');
+  });
+
+  it('preserves command substitution syntax', async () => {
+    const { rewritten } = await captureCommandRewrite(linuxEnv, 'echo $(date)');
+    expect(rewritten).toBe('echo $(date)');
+  });
+});

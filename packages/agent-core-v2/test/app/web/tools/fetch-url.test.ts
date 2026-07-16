@@ -76,6 +76,75 @@ describe('FetchURLTool abort signal', () => {
     }
     expect(result.output).toContain('boom');
   });
+
+  it('returns an error result when fetch throws a non-Error value', async () => {
+    const controller = new AbortController();
+    const fetch = vi.fn<UrlFetcher['fetch']>().mockRejectedValue('string error');
+    const tool = new FetchURLTool({ fetch });
+
+    const result = await execute(tool, 'https://example.com', controller.signal);
+
+    expect(result.isError).toBe(true);
+    if (typeof result.output !== 'string') throw new Error('expected string');
+    expect(result.output).toContain('string error');
+  });
+
+  it('returns an error result when the URL is invalid', async () => {
+    const controller = new AbortController();
+    const fetch = vi.fn<UrlFetcher['fetch']>().mockRejectedValue(new Error('Invalid URL'));
+    const tool = new FetchURLTool({ fetch });
+
+    const result = await execute(tool, 'not-a-valid-url', controller.signal);
+
+    expect(result.isError).toBe(true);
+    if (typeof result.output !== 'string') throw new Error('expected string');
+    expect(result.output).toContain('Invalid URL');
+  });
+
+  it('returns an empty-content result when fetcher returns empty content', async () => {
+    const controller = new AbortController();
+    const fetch = vi
+      .fn<UrlFetcher['fetch']>()
+      .mockResolvedValue({ content: '', kind: 'passthrough' } satisfies UrlFetchResult);
+    const tool = new FetchURLTool({ fetch });
+
+    const result = await execute(tool, 'https://example.com', controller.signal);
+
+    expect(result.isError).toBe(false);
+    if (typeof result.output !== 'string') throw new Error('expected string');
+    expect(result.output).toBe('The response body is empty.');
+  });
+
+  it('returns an error with HttpFetchError code and status', async () => {
+    const controller = new AbortController();
+    const { HttpFetchError } = await import('#/app/web/tools/fetch-url-types');
+    const fetch = vi.fn<UrlFetcher['fetch']>().mockRejectedValue(
+      new HttpFetchError(403, 'Forbidden'),
+    );
+    const tool = new FetchURLTool({ fetch });
+
+    const result = await execute(tool, 'https://example.com', controller.signal);
+
+    expect(result.isError).toBe(true);
+    if (typeof result.output !== 'string') throw new Error('expected string');
+    expect(result.output).toContain('Status: 403');
+    expect(result.output).toContain('Forbidden');
+  });
+
+  it('resolveExecution returns a short preview for a long URL', () => {
+    const fetch = vi.fn<UrlFetcher['fetch']>();
+    const tool = new FetchURLTool({ fetch });
+    const longUrl = 'https://example.com/' + 'a'.repeat(100);
+    const execution = tool.resolveExecution({ url: longUrl });
+    expect(execution.description).toBe('Fetching: ' + longUrl.slice(0, 50) + '…');
+  });
+
+  it('resolveExecution returns a direct preview for a short URL', () => {
+    const fetch = vi.fn<UrlFetcher['fetch']>();
+    const tool = new FetchURLTool({ fetch });
+    const execution = tool.resolveExecution({ url: 'https://short.url' });
+    expect(execution.description).toBe('Fetching: https://short.url');
+  });
 });
 
 describe('FetchURLTool output note', () => {
@@ -123,5 +192,88 @@ describe('LocalFetchURLProvider abort signal', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     const [, init] = fetchImpl.mock.calls[0]!;
     expect((init as RequestInit | undefined)?.signal).toBe(controller.signal);
+  });
+
+  it('throws on private IP addresses by default', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    await expect(provider.fetch('http://127.0.0.1:8080/secret')).rejects.toThrow(
+      'Refusing to fetch private',
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('throws on localhost by default', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    await expect(provider.fetch('http://localhost:3000/')).rejects.toThrow(
+      'Refusing to fetch private host',
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('throws on unsupported URL scheme', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    await expect(provider.fetch('ftp://files.example.com/readme')).rejects.toThrow(
+      'Unsupported URL scheme',
+    );
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('throws on a malformed URL', async () => {
+    const fetchImpl = vi.fn<typeof fetch>();
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    await expect(provider.fetch('not a valid url at all')).rejects.toThrow('Invalid URL');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('throws on 400+ status codes as HttpFetchError', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('Not Found', {
+        status: 404,
+        statusText: 'Not Found',
+        headers: { 'content-type': 'text/plain' },
+      }),
+    );
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    await expect(provider.fetch('https://example.com/missing')).rejects.toThrow(
+      'HTTP 404 Not Found',
+    );
+  });
+
+  it('throws on content-length exceeding maxBytes', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('x'.repeat(100), {
+        status: 200,
+        headers: {
+          'content-type': 'text/plain',
+          'content-length': String(11 * 1024 * 1024),
+        },
+      }),
+    );
+    const provider = new LocalFetchURLProvider({ fetchImpl, maxBytes: 1024 * 1024 });
+
+    await expect(provider.fetch('https://example.com/large')).rejects.toThrow(
+      'exceeds maxBytes',
+    );
+  });
+
+  it('allows private addresses when allowPrivateAddresses is true', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('local', {
+        status: 200,
+        headers: { 'content-type': 'text/plain' },
+      }),
+    );
+    const provider = new LocalFetchURLProvider({ fetchImpl, allowPrivateAddresses: true });
+
+    const result = await provider.fetch('http://127.0.0.1:8080/health', {});
+    expect(result.content).toBe('local');
   });
 });

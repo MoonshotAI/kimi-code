@@ -102,6 +102,43 @@ describe('JsonAtomicDocumentStore', () => {
       return true;
     });
   });
+
+  it('list on a non-existent scope returns empty array', async () => {
+    expect(await config.list('no-such-scope')).toEqual([]);
+  });
+
+  it('list with prefix matching no keys returns empty array', async () => {
+    await config.set('session', 'aaa.json', {});
+    expect(await config.list('session', 'zzz-')).toEqual([]);
+  });
+
+  it('delete on a non-existent key is a no-op', async () => {
+    await expect(config.delete('session', 'never-existed.json')).resolves.toBeUndefined();
+  });
+
+  it('set with empty object value', async () => {
+    await config.set('session', 'empty.json', {});
+    expect(await config.get('session', 'empty.json')).toEqual({});
+  });
+
+  it('handles deeply nested objects', async () => {
+    const deep = { level1: { level2: { level3: { value: 'deep' } } } };
+    await config.set('session', 'nested.json', deep);
+    expect(await config.get('session', 'nested.json')).toEqual(deep);
+  });
+
+  it('watch fires on subsequent set after initial watch registration', async () => {
+    const events: number[] = [];
+    const sub = config.watch('session', 'counter.json')(() => {
+      events.push(events.length);
+    });
+    await config.set('session', 'counter.json', { v: 1 });
+    await new Promise((r) => setTimeout(r, 50));
+    await config.set('session', 'counter.json', { v: 2 });
+    await new Promise((r) => setTimeout(r, 50));
+    sub.dispose();
+    expect(events).toHaveLength(2);
+  });
 });
 
 describe('TomlAtomicDocumentStore', () => {
@@ -160,5 +197,27 @@ describe('TomlAtomicDocumentStore', () => {
       code: 'storage.decode_failed',
       details: { scope: 'session', key: 'bad.toml', format: 'toml' },
     });
+  });
+
+  it('delete removes a TOML key; missing delete is a no-op', async () => {
+    await config.set<State>('session', 'config.toml', { title: 'x' });
+    await config.delete('session', 'config.toml');
+    expect(await config.get('session', 'config.toml')).toBeUndefined();
+    await expect(config.delete('session', 'config.toml')).resolves.toBeUndefined();
+  });
+
+  it('list returns TOML keys, optionally filtered by prefix', async () => {
+    await config.set('session', 'cfg-a.toml', {});
+    await config.set('session', 'cfg-b.toml', {});
+    await config.set('session', 'other.toml', {});
+    expect((await config.list('session')).toSorted()).toEqual(['cfg-a.toml', 'cfg-b.toml', 'other.toml']);
+    expect((await config.list('session', 'cfg-')).toSorted()).toEqual(['cfg-a.toml', 'cfg-b.toml']);
+  });
+
+  it('scopes are isolated in TOML store', async () => {
+    await config.set<State>('scope-a', 'c.toml', { title: 'A' });
+    await config.set<State>('scope-b', 'c.toml', { title: 'B' });
+    expect(await config.get<State>('scope-a', 'c.toml')).toEqual({ title: 'A' });
+    expect(await config.get<State>('scope-b', 'c.toml')).toEqual({ title: 'B' });
   });
 });

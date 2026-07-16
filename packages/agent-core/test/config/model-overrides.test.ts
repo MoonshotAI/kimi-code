@@ -170,4 +170,61 @@ describe('effectiveModelAlias', () => {
       defaultEffort: 'max',
     });
   });
+
+  it('returns maxOutputSize from the top-level alias when no overrides exist', () => {
+    const model: ModelAlias = {
+      provider: 'managed:kimi-code',
+      model: 'kimi-k2',
+      maxContextSize: 262144,
+      maxOutputSize: 32768,
+    };
+    expect(effectiveModelAlias(model)?.maxOutputSize).toBe(32768);
+  });
+
+  it('allows overriding maxOutputSize via overrides', () => {
+    const model = alias({ maxOutputSize: 16000 });
+    expect(effectiveModelAlias(model).maxOutputSize).toBe(16000);
+  });
+
+  it('drops defaultEffort when supportEfforts is overridden to an empty array', () => {
+    const model = alias({ supportEfforts: [] });
+    expect(effectiveModelAlias(model).supportEfforts).toEqual([]);
+    expect(effectiveModelAlias(model).defaultEffort).toBeUndefined();
+  });
+
+  it('infers low/medium/high efforts for a non-Claude Anthropic model with adaptiveThinking=false', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+      adaptiveThinking: false,
+    };
+    expect(effectiveModelAlias(model, 'anthropic')).toMatchObject({
+      supportEfforts: ['low', 'medium', 'high'],
+      defaultEffort: 'high',
+      capabilities: ['thinking'],
+    });
+  });
+
+  it('does not infer capabilities for a model with no protocol or provider context', () => {
+    const model: ModelAlias = {
+      provider: 'unknown',
+      model: 'my-model',
+      maxContextSize: 100000,
+    };
+    expect(effectiveModelAlias(model)).toEqual(model);
+  });
+
+  it('preserves user-declared capabilities when they overlap with inferred ones', () => {
+    const model: ModelAlias = {
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-6',
+      maxContextSize: 200000,
+      capabilities: ['image_in', 'tool_use'],
+    };
+    expect(effectiveModelAlias(model)).toMatchObject({
+      capabilities: expect.arrayContaining(['image_in', 'tool_use', 'thinking']),
+    });
+  });
 });

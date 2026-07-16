@@ -132,6 +132,37 @@ describe('buildMcpHttpHeaders', () => {
     ).toEqual({ Authorization: 'Bearer secret' });
   });
 
+  it('handles headers with empty values', () => {
+    expect(
+      buildMcpHttpHeaders(
+        { transport: 'http', url: 'https://x.example.com', headers: { 'X-Empty': '' } },
+        () => undefined,
+      ),
+    ).toEqual({ 'X-Empty': '' });
+  });
+
+  it('handles multiple headers with mixed case keys', () => {
+    expect(
+      buildMcpHttpHeaders(
+        {
+          transport: 'http',
+          url: 'https://x.example.com',
+          headers: { 'x-custom': 'v1', 'X-Custom-Trace': 'trace-123' },
+        },
+        () => undefined,
+      ),
+    ).toEqual({ 'x-custom': 'v1', 'X-Custom-Trace': 'trace-123' });
+  });
+
+  it('throws config.invalid when bearerTokenEnvVar resolves to a whitespace-only string', () => {
+    expectConfigInvalid(() =>
+      buildMcpHttpHeaders(
+        { transport: 'http', url: 'https://x.example.com', bearerTokenEnvVar: 'SPACE' },
+        () => '   ',
+      ),
+    );
+  });
+
   it('flags errors the SDK uses to signal a dead HTTP transport as terminal', () => {
     const unauthorized = new Error('Unauthorized');
     unauthorized.name = 'UnauthorizedError';
@@ -145,6 +176,18 @@ describe('buildMcpHttpHeaders', () => {
     expect(isTerminalTransportError(new Error('SSE stream disconnected: ECONNRESET'))).toBe(false);
     expect(isTerminalTransportError(new Error('fetch failed'))).toBe(false);
     expect(isTerminalTransportError(new Error('Connection closed'))).toBe(false);
+  });
+
+  it('returns false for null, undefined, or plain objects', () => {
+    expect(isTerminalTransportError(null as unknown as Error)).toBe(false);
+    expect(isTerminalTransportError(undefined as unknown as Error)).toBe(false);
+    expect(isTerminalTransportError({} as unknown as Error)).toBe(false);
+  });
+
+  it('returns false for a generic Error with no terminal message', () => {
+    expect(isTerminalTransportError(new Error('socket hang up'))).toBe(false);
+    expect(isTerminalTransportError(new Error('ETIMEDOUT'))).toBe(false);
+    expect(isTerminalTransportError(new Error('connect ECONNREFUSED 127.0.0.1:8080'))).toBe(false);
   });
 });
 
@@ -230,5 +273,25 @@ describe('HttpMcpClient', () => {
     } finally {
       await client.close();
     }
+  }, 15000);
+
+  it('double close is safe (no throw)', async () => {
+    const server = await startInProcessHttpMcpServer();
+    cleanups.push(server.close);
+
+    const client = new HttpMcpClient({ transport: 'http', url: server.url });
+    await client.connect();
+    await client.close();
+    await expect(client.close()).resolves.toBeUndefined();
+  }, 15000);
+
+  it('rejects connect with an unreachable URL', async () => {
+    const client = new HttpMcpClient({
+      transport: 'http',
+      url: 'http://127.255.255.255:1/mcp',
+      startupTimeoutMs: 500,
+    });
+    await expect(client.connect()).rejects.toThrow();
+    await client.close();
   }, 15000);
 });

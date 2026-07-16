@@ -206,6 +206,18 @@ describe('formatter — auto-redact', () => {
     expect(tokens[1]?.['token']).toBe('[REDACTED]');
   });
 
+  it('redacts null values in ctx gracefully without throwing', () => {
+    const out = redactCtx({ token: null, user: 'x' });
+    expect(out['token']).toBe('[REDACTED]');
+    expect(out['user']).toBe('x');
+  });
+
+  it('redacts undefined values in ctx gracefully', () => {
+    const out = redactCtx({ token: undefined, user: 'x' });
+    expect(out['token']).toBe('[REDACTED]');
+    expect(out['user']).toBe('x');
+  });
+
   it('collapses cycles to [REDACTED:cycle]', () => {
     const a: Record<string, unknown> = { name: 'a' };
     a['self'] = a;

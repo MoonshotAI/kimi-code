@@ -99,6 +99,64 @@ describe('runHook process runner', () => {
     const result = await runHook(cmd, { tool_name: 'WriteFile' }, { timeout: 5 });
     expect(result.stdout?.trim()).toBe('WriteFile');
   });
+
+  it('returns allow with empty stdout when the hook produces no output at all', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook('node -e "process.exit(0)"', {}, { timeout: 5 });
+    expect(result.action).toBe('allow');
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toBe('');
+  });
+
+  it('returns allow with stdout captured when the hook exits non-zero with exit code 3', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook(
+      'node -e "process.stdout.write(\'custom err\');process.exit(3)"',
+      {},
+      { timeout: 5 },
+    );
+    expect(result.action).toBe('allow');
+    expect(result.stdout?.trim()).toBe('custom err');
+  });
+
+  it('captures both stdout and stderr when the hook produces both on exit 2', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook(
+      'node -e "process.stdout.write(\'stdout msg\');process.stderr.write(\'stderr reason\');process.exit(2)"',
+      {},
+      { timeout: 5 },
+    );
+    expect(result.action).toBe('block');
+    expect(result.stdout?.trim()).toBe('stdout msg');
+    expect(result.reason).toContain('stderr reason');
+  });
+
+  it('handles empty input payload gracefully', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook('echo ok', {}, { timeout: 5 });
+    expect(result.action).toBe('allow');
+    expect(result.stdout?.trim()).toBe('ok');
+  });
+
+  it('parses JSON stdout with permissionDecision but no permissionDecisionReason', async () => {
+    const runHook = await importRunHook();
+    const cmd =
+      "node -e \"process.stdout.write(JSON.stringify({hookSpecificOutput:{permissionDecision:'deny'}}))\"";
+    const result = await runHook(cmd, {}, { timeout: 5 });
+    expect(result.action).toBe('block');
+    expect(result.reason).toBeUndefined();
+  });
+
+  it('handles very large stdout output without crashing', async () => {
+    const runHook = await importRunHook();
+    const result = await runHook(
+      'node -e "process.stdout.write(\\"x\\".repeat(100000))"',
+      {},
+      { timeout: 5 },
+    );
+    expect(result.action).toBe('allow');
+    expect(result.stdout?.length).toBe(100000);
+  });
 });
 
 // Regression coverage for the "every hook flashes an empty console window on
@@ -122,5 +180,28 @@ describe('buildHookSpawnOptions (Windows console-window regression)', () => {
     const options = buildHookSpawnOptions({ cwd: '/repo', env: { FOO: 'bar' } });
     expect(options.cwd).toBe('/repo');
     expect(options.env).toMatchObject({ FOO: 'bar' });
+  });
+
+  it('preserves inherited PATH when hook env is set', () => {
+    const savedPath = process.env['PATH'];
+    try {
+      process.env['PATH'] = '/usr/bin:/bin';
+      const options = buildHookSpawnOptions({ env: { CUSTOM: 'val' } });
+      expect(options.env).toMatchObject({ PATH: '/usr/bin:/bin', CUSTOM: 'val' });
+    } finally {
+      process.env['PATH'] = savedPath;
+    }
+  });
+
+  it('does not mutate the original process.env when merging', () => {
+    const originalKeys = Object.keys(process.env).length;
+    buildHookSpawnOptions({ env: { TEST_MUTATION: 'val' } });
+    expect(Object.keys(process.env).length).toBe(originalKeys);
+    expect(process.env['TEST_MUTATION']).toBeUndefined();
+  });
+
+  it('forwards cwd even when no hook env is provided', () => {
+    const options = buildHookSpawnOptions({ cwd: '/workspace' });
+    expect(options.cwd).toBe('/workspace');
   });
 });

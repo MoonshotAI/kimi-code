@@ -395,6 +395,35 @@ describe('goal tools', () => {
     expect(resumedResult.output).toBe('Goal not resumed: no current goal.');
   });
 
+  it('GetGoal returns the current goal snapshot', async () => {
+    await goals.createGoal({ objective: 'test goal for GetGoal' });
+    const tool = ctx.get(IAgentToolRegistryService).resolve('GetGoal');
+    if (tool === undefined) throw new Error('GetGoal should be registered');
+    const execution = await tool.resolveExecution({});
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    const result = await execution.execute({ turnId: 0, toolCallId: 'call_get', signal });
+    expect(result.output).toContain('test goal for GetGoal');
+  });
+
+  it('GetGoal returns no-goal message when there is no current goal', async () => {
+    const tool = ctx.get(IAgentToolRegistryService).resolve('GetGoal');
+    if (tool === undefined) throw new Error('GetGoal should be registered');
+    const execution = await tool.resolveExecution({});
+    if (execution.isError === true) throw new Error('execution should not be an error');
+    const result = await execution.execute({ turnId: 0, toolCallId: 'call_get_none', signal });
+    expect(result.output).toContain('null');
+    expect(result.output).toContain('goal');
+  });
+
+  it('SetGoalBudget clamps negative values to a positive budget', async () => {
+    await goals.createGoal({ objective: 'work' });
+    const negative = setGoalBudgetTool.resolveExecution({ value: -1, unit: 'turns' });
+    if (negative.isError === true) throw new Error('execution should not be an error');
+    const negativeResult = await negative.execute({ turnId: 0, toolCallId: 'call_neg', signal });
+    expect(negativeResult.output).toContain('Goal budget set');
+    expect(negativeResult.isError).toBeFalsy();
+  });
+
   async function countGoalTurn(turnId: number): Promise<void> {
     const abortController = new AbortController();
     eventBus.publish({ type: 'turn.started', turnId, origin: USER_PROMPT_ORIGIN });

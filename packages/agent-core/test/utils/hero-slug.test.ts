@@ -22,4 +22,35 @@ describe('generateHeroSlug', () => {
     const slug = generateHeroSlug('sess_abcdefgh_XXXX', universal as unknown as Set<string>);
     expect(slug).toMatch(/-sess_abc$/);
   });
+
+  it('produces unique slugs for different session ids with an empty collision set', () => {
+    const slug1 = generateHeroSlug('sess_0001', new Set());
+    const slug2 = generateHeroSlug('sess_0002', new Set());
+    expect(slug1).not.toBe(slug2);
+  });
+
+  it('does not produce a slug that already exists in the collision set', () => {
+    const slug = generateHeroSlug('sess_0001', new Set());
+    const existing = new Set([slug]);
+    // A second call with the same session id and the slug in the set
+    // must produce a different slug (or fall back to the suffixed form).
+    const slug2 = generateHeroSlug('sess_0001', existing);
+    expect(slug2).not.toBe(slug);
+  });
+
+  it('produces a deterministic slug when the collision set is empty (no RNG conflict)', () => {
+    const slug = generateHeroSlug('sess_fixed_id', new Set());
+    expect(slug.split('-')).toHaveLength(3);
+    expect(slug).not.toMatch(/-$/);
+    expect(slug).not.toMatch(/^-/);
+  });
+
+  it('HERO_NAMES is a non-empty array of strings', () => {
+    expect(Array.isArray(HERO_NAMES)).toBe(true);
+    expect(HERO_NAMES.length).toBeGreaterThan(0);
+    for (const name of HERO_NAMES) {
+      expect(typeof name).toBe('string');
+      expect(name.length).toBeGreaterThan(0);
+    }
+  });
 });

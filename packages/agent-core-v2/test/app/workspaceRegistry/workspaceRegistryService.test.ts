@@ -365,6 +365,80 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     expect(await restart().get(created.id)).toBeUndefined();
   });
 
+  it('get returns undefined for a non-existent workspace id', async () => {
+    expect(await build().get('wd_nonexistent')).toBeUndefined();
+  });
+
+  it('get returns the workspace after createOrTouch', async () => {
+    const dir = join(homeDir, 'get-test');
+    await fsp.mkdir(dir);
+    const registry = build();
+    const created = await registry.createOrTouch(dir);
+    expect(await registry.get(created.id)).toMatchObject({ id: created.id, root: dir });
+  });
+
+  it('get returns undefined for a deleted workspace id', async () => {
+    const dir = join(homeDir, 'get-deleted');
+    await fsp.mkdir(dir);
+    const registry = build();
+    const created = await registry.createOrTouch(dir);
+    await registry.delete(created.id);
+    expect(await registry.get(created.id)).toBeUndefined();
+  });
+
+  it('update returns undefined for a non-existent workspace id', async () => {
+    expect(await build().update('wd_nonexistent', { name: 'whatever' })).toBeUndefined();
+  });
+
+  it('update with an empty name updates the workspace', async () => {
+    const dir = join(homeDir, 'update-empty-name');
+    await fsp.mkdir(dir);
+    const registry = build();
+    const created = await registry.createOrTouch(dir, 'original');
+    const updated = await registry.update(created.id, { name: '' });
+    expect(updated?.name).toBe('');
+  });
+
+  it('update with a very long name is persisted', async () => {
+    const dir = join(homeDir, 'update-long-name');
+    await fsp.mkdir(dir);
+    const registry = build();
+    const created = await registry.createOrTouch(dir, 'short');
+    const longName = 'a'.repeat(1000);
+    await registry.update(created.id, { name: longName });
+    expect((await restart().get(created.id))?.name).toBe(longName);
+  });
+
+  it('delete on a non-existent id is a no-op', async () => {
+    await expect(build().delete('wd_nonexistent')).resolves.toBeUndefined();
+  });
+
+  it('delete on an already-deleted id is a no-op', async () => {
+    const dir = join(homeDir, 'double-delete');
+    await fsp.mkdir(dir);
+    const registry = build();
+    const created = await registry.createOrTouch(dir);
+    await registry.delete(created.id);
+    await expect(registry.delete(created.id)).resolves.toBeUndefined();
+    expect(await registry.get(created.id)).toBeUndefined();
+  });
+
+  it('list returns empty when no workspaces exist', async () => {
+    expect(await build().list()).toEqual([]);
+  });
+
+  it('list returns workspaces in a deterministic order', async () => {
+    const dirA = join(homeDir, 'list-a');
+    const dirB = join(homeDir, 'list-b');
+    await fsp.mkdir(dirA);
+    await fsp.mkdir(dirB);
+    const registry = build();
+    await registry.createOrTouch(dirA, 'A');
+    await registry.createOrTouch(dirB, 'B');
+    const list = await registry.list();
+    expect(list.map((w) => w.name).toSorted()).toEqual(['A', 'B']);
+  });
+
   it('rejects createOrTouch when the root directory does not exist', async () => {
     const missing = join(homeDir, 'never-created');
     await expect(build().createOrTouch(missing)).rejects.toMatchObject({

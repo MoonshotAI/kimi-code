@@ -21,6 +21,72 @@ max_context_size = 1000000
 `;
 
 describe('plan-mode bootstrap from config.defaultPlanMode', () => {
+  it('activates plan mode when explicitly toggled via setPlanMode', async () => {
+    await writeFile(configPath, BASE_CONFIG);
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir });
+
+    await rpc.setPlanMode({ sessionId: created.id, agentId: 'main', enabled: true });
+    await rpc.closeSession({ sessionId: created.id });
+
+    expect(await countPlanModeEnters()).toBe(1);
+  });
+
+  it('deactivates plan mode when explicitly toggled off after activation', async () => {
+    await writeFile(configPath, `default_plan_mode = true\n${BASE_CONFIG}`);
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir });
+
+    await rpc.setPlanMode({ sessionId: created.id, agentId: 'main', enabled: false });
+    await rpc.closeSession({ sessionId: created.id });
+
+    // One enter from creation, one exit from toggle — net plan_mode.enter should be 1.
+    expect(await countPlanModeEnters()).toBe(1);
+  });
+
+  it('handles setPlanMode on a session with no model configured', async () => {
+    await writeFile(configPath, '');
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir });
+
+    // Should not throw even when there is no model configured.
+    await expect(
+      rpc.setPlanMode({ sessionId: created.id, agentId: 'main', enabled: true }),
+    ).resolves.not.toThrow();
+  });
+
+  it('toggle setPlanMode multiple times does not leak plan mode enters', async () => {
+    await writeFile(configPath, BASE_CONFIG);
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir });
+
+    for (let i = 0; i < 3; i++) {
+      await rpc.setPlanMode({ sessionId: created.id, agentId: 'main', enabled: true });
+      await rpc.setPlanMode({ sessionId: created.id, agentId: 'main', enabled: false });
+    }
+    await rpc.closeSession({ sessionId: created.id });
+
+    // Each enable toggle produces exactly one enter record. With 3 cycles = 3 enters.
+    expect(await countPlanModeEnters()).toBe(3);
+  }, 15_000);
+
+  it('does not fail when resuming a session with an empty wire file', async () => {
+    await writeFile(configPath, BASE_CONFIG);
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir });
+    await rpc.closeSession({ sessionId: created.id });
+
+    // Corrupt the wire file by emptying it
+    const suffix = join('agents', 'main', 'wire.jsonl');
+    const entries = await readdir(homeDir, { recursive: true });
+    const match = entries.find((entry) => entry.replaceAll('\\', '/').endsWith(suffix));
+    if (match) {
+      await writeFile(join(homeDir, match), '');
+    }
+
+    const freshRpc = await createTestRpc();
+    await expect(freshRpc.resumeSession({ sessionId: created.id })).resolves.toBeDefined();
+  });
   let tmp: string;
   let homeDir: string;
   let workDir: string;

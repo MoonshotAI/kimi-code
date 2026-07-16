@@ -553,4 +553,68 @@ describe('native-tools integration', () => {
     expect(result.isError).toBe(true);
     expect(result.output).toContain('not readable');
   });
+
+  it('read correctly reports total lines for a single-line file without newline', async () => {
+    writeFileSync(join(tmpDir, 'oneline.txt'), 'just one line');
+
+    const tool = new NativeReadTool(makeKaos(), workspace, 'Read a text file.');
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_read_1line',
+      args: { path: join(tmpDir, 'oneline.txt') },
+      signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('1\tjust one line');
+    expect(result.output).toContain('Total lines in file: 1.');
+  });
+
+  it('read handles empty file with no error', async () => {
+    writeFileSync(join(tmpDir, 'empty.txt'), '');
+
+    const tool = new NativeReadTool(makeKaos(), workspace, 'Read a text file.');
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_read_empty',
+      args: { path: join(tmpDir, 'empty.txt') },
+      signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('Total lines in file: 0.');
+  });
+
+  it('write handles content with unicode (CJK) and reports correct byte size', async () => {
+    const content = '你好世界';
+    const expectedBytes = Buffer.byteLength(content, 'utf8');
+    expect(expectedBytes).toBe(12);
+
+    const tool = new NativeWriteTool(makeKaos(), workspace, 'Write a file.');
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_write_cjk',
+      args: { path: join(tmpDir, 'cjk.txt'), content },
+      signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain(`Wrote ${String(expectedBytes)} bytes`);
+  });
+
+  it('glob returns empty for pattern matching nothing', async () => {
+    writeFileSync(join(tmpDir, 'a.ts'), '');
+
+    const kaos = makeKaos();
+    const tool = new NativeGlobTool(kaos, workspace, 'Find files.', new GlobTool(kaos, workspace));
+    const result = await executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_glob_empty',
+      args: { pattern: join(tmpDir, '*.py') },
+      signal,
+    });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('No results');
+  });
 });

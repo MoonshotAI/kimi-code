@@ -72,6 +72,41 @@ describe('event bus (full-stream and per-type delivery, dispose and empty-publis
     expect(() => bus.publish({ type: 'test.a', x: 1 })).not.toThrow();
   });
 
+  it('handles multiple subscribers for the same event type', () => {
+    const bus = new EventBusService();
+    const seenA: number[] = [];
+    const seenB: number[] = [];
+    bus.subscribe('test.a', (e) => seenA.push(e.x));
+    bus.subscribe('test.a', (e) => seenB.push(e.x));
+    bus.publish({ type: 'test.a', x: 42 });
+    expect(seenA).toEqual([42]);
+    expect(seenB).toEqual([42]);
+  });
+
+  it('tolerates a subscriber that throws without affecting other subscribers', () => {
+    const bus = new EventBusService();
+    const seen: string[] = [];
+    bus.subscribe('test.a', () => {
+      throw new Error('subscriber error');
+    });
+    bus.subscribe('test.a', (e) => seen.push(e.type));
+    expect(() => bus.publish({ type: 'test.a', x: 1 })).not.toThrow();
+    expect(seen).toEqual(['test.a']);
+  });
+
+  it('supports disposing one subscriber while others remain active', () => {
+    const bus = new EventBusService();
+    const seenA: number[] = [];
+    const seenB: number[] = [];
+    const subA = bus.subscribe('test.a', (e) => seenA.push(e.x));
+    bus.subscribe('test.a', (e) => seenB.push(e.x));
+    bus.publish({ type: 'test.a', x: 1 });
+    subA.dispose();
+    bus.publish({ type: 'test.a', x: 2 });
+    expect(seenA).toEqual([1]);
+    expect(seenB).toEqual([1, 2]);
+  });
+
   it('accepts full event types in the domain event map', () => {
     const bus = new EventBusService();
     const seen: boolean[] = [];

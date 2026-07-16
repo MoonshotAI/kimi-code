@@ -56,4 +56,19 @@ describe('builtin skill: custom-theme', () => {
     expect(registry.getKimiSkillsDescription()).toContain('custom-theme');
     expect(registry.getModelSkillListing()).not.toContain('custom-theme');
   });
+
+  it('has no duplicated tokens in the documented set', () => {
+    const tokens = [
+      'primary', 'accent', 'text', 'textStrong', 'textDim', 'textMuted',
+      'border', 'borderFocus', 'success', 'warning', 'error',
+      'diffAdded', 'diffRemoved', 'diffAddedStrong', 'diffRemovedStrong',
+      'diffGutter', 'diffMeta', 'roleUser',
+    ];
+    expect(new Set(tokens).size).toBe(tokens.length);
+  });
+
+  it('mentions FetchURL and theme loading mechanism in its content', () => {
+    expect(CUSTOM_THEME_SKILL.content).toContain('FetchURL');
+    expect(CUSTOM_THEME_SKILL.content).toContain('themes');
+  });
 });

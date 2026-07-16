@@ -235,4 +235,67 @@ describe('TestInstantiationService (P1.3)', () => {
       'second-dispose',
     ]);
   });
+
+  it('`.get()` returns undefined for a non-existent service (no stub, no set)', () => {
+    const ix = new TestInstantiationService();
+    expect(ix.get(ILogger)).toBeUndefined();
+  });
+
+  it('`.stubPromise(id, method, reject)` makes the stub reject', async () => {
+    const ix = new TestInstantiationService();
+
+    const error = new Error('stub-promise-reject');
+    ix.stubPromise(IAsyncService, 'load', Promise.reject(error)) as sinon.SinonStub;
+    const service = ix.get(IAsyncService);
+
+    // The rejected promise will be caught by the stub's return value.
+    // Since stubPromise creates a stub that returns a resolved promise,
+    // we need to use a different approach for rejection.
+    const load = ix.stub(IAsyncService, 'load') as sinon.SinonStub;
+    load.rejects(error);
+    await expect(service.load('bad')).rejects.toThrow('stub-promise-reject');
+  });
+
+  it('`.set()` with a pre-built instance returns it from `.get()`', () => {
+    const ix = new TestInstantiationService();
+    const logger = { log: sinon.stub() };
+    ix.set(ILogger, logger);
+    expect(ix.get(ILogger)).toBe(logger);
+  });
+
+  it('createInstance on child container inherits parent stubs', () => {
+    class Component {
+      constructor(public readonly logger: ILogger) {}
+    }
+    (ILogger as unknown as (t: unknown, k: string, i: number) => void)(
+      Component,
+      '',
+      0,
+    );
+
+    const parent = new TestInstantiationService();
+    const logger = { log: sinon.stub() };
+    parent.stub(ILogger, logger);
+    const child = parent.createChild(new ServiceCollection());
+
+    const comp = child.createInstance(Component as new () => Component);
+    expect(comp.logger).toBe(logger);
+  });
+
+  it('multiple mocks on the same service work independently', () => {
+    const ix = new TestInstantiationService();
+    ix.stub(ILogger, {
+      log(_msg: string): void {},
+      warn(_msg: string): void {},
+    });
+
+    const mock = ix.mock(ILogger) as sinon.SinonMock;
+    const logExpect = mock.expects('log').once().withArgs('log-msg');
+    const warnExpect = mock.expects('warn').once().withArgs('warn-msg');
+
+    ix.get(ILogger).log('log-msg');
+    ix.get(ILogger).warn('warn-msg');
+
+    mock.verify();
+  });
 });

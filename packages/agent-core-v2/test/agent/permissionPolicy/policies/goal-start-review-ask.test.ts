@@ -105,4 +105,35 @@ describe('GoalStartReviewAskPermissionPolicyService', () => {
     expect(result.resolveApproval?.({ decision: 'cancelled', selectedLabel: 'cancel' })).toBeUndefined();
     expect(mode.mode).toBe('manual');
   });
+
+  it('ignores CreateGoal with no goal_start display', () => {
+    const mode = fakeModeService('manual');
+    const policy = new GoalStartReviewAskPermissionPolicyService(mode);
+    const result = policy.evaluate(policyContext('CreateGoal', undefined));
+    expect(result).toBeUndefined();
+  });
+
+  it('asks for CreateGoal in yolo mode with a goal_start display', () => {
+    const mode = fakeModeService('yolo');
+    const policy = new GoalStartReviewAskPermissionPolicyService(mode);
+    const result = policy.evaluate(policyContext('CreateGoal', GOAL_DISPLAY));
+    expect(result?.kind).toBe('ask');
+  });
+
+  it('does not ask for tools other than CreateGoal in manual mode', () => {
+    const mode = fakeModeService('manual');
+    const policy = new GoalStartReviewAskPermissionPolicyService(mode);
+    expect(policy.evaluate(policyContext('Bash', undefined))).toBeUndefined();
+    expect(policy.evaluate(policyContext('Write', undefined))).toBeUndefined();
+    expect(policy.evaluate(policyContext('Read', undefined))).toBeUndefined();
+  });
+
+  it('switches to yolo mode when the user selects yolo on approval', () => {
+    const mode = fakeModeService('manual');
+    const policy = new GoalStartReviewAskPermissionPolicyService(mode);
+    const result = policy.evaluate(policyContext('CreateGoal', GOAL_DISPLAY));
+    if (result?.kind !== 'ask') throw new Error('expected ask');
+    expect(result.resolveApproval?.({ decision: 'approved', selectedLabel: 'yolo' })).toBeUndefined();
+    expect(mode.mode).toBe('yolo');
+  });
 });

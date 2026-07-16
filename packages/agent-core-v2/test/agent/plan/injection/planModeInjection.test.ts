@@ -202,6 +202,58 @@ describe('PlanModeService dynamic injection cadence', () => {
     expect(text).not.toContain('Plan mode still active');
   });
 
+  it('does not inject anything when plan mode was entered and immediately exited before any injection', async () => {
+    await enterPlan(plan);
+    plan.exit();
+
+    await injectDynamic(injector);
+
+    expect(planReminderMessages(context)).toHaveLength(0);
+  });
+
+  it('injects the sparse reminder correctly after the exact threshold of assistant turns', async () => {
+    await enterPlan(plan);
+
+    await injectDynamic(injector);
+    appendAssistantTurn(ctx, context, 'assistant one');
+    // One assistant turn keeps the sparse reminder suppressed
+    await injectDynamic(injector);
+
+    expect(planReminderMessages(context)).toHaveLength(1);
+
+    // Two total assistant turns triggers the sparse reminder
+    appendAssistantTurn(ctx, context, 'assistant two');
+    await injectDynamic(injector);
+
+    expect(planReminderMessages(context)).toHaveLength(2);
+    expect(lastPlanReminder(context)).toContain('Plan mode still active');
+  });
+
+  it('does not inject when plan file path is missing and plan mode is active', async () => {
+    readText = async () => '';
+    await ctx.dispatch({
+      type: 'plan_mode.enter',
+      id: 'plan-without-file',
+    });
+
+    await injectDynamic(injector);
+
+    // Should still inject the full reminder because the plan is active
+    const text = lastPlanReminder(context);
+    expect(text).toContain('Plan mode is active');
+  });
+
+  it('handles very long plan ids gracefully', async () => {
+    const longId = 'a'.repeat(500);
+    await enterPlan(plan, longId);
+
+    await injectDynamic(injector);
+
+    const text = lastPlanReminder(context);
+    expect(text).toContain('Plan mode is active');
+    expect(text).toContain(longId);
+  });
+
   it('refreshes the full reminder if a user message appears after the last injection', async () => {
     await enterPlan(plan);
 

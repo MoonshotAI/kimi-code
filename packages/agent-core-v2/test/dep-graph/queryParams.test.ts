@@ -81,4 +81,101 @@ describe('readQueryParams', () => {
       focus: 'Session::ISessionMetadata',
     });
   });
+
+  it('ignores unknown query parameters', () => {
+    expect(readQueryParams('?unknown=value&another=test')).toEqual({});
+  });
+
+  it('handles URL-encoded characters in search', () => {
+    expect(readQueryParams('?search=hello%20world%21')).toEqual({
+      search: 'hello world!',
+    });
+  });
+
+  it('handles URL-encoded characters in focus', () => {
+    expect(readQueryParams('?focus=Session%3A%3AIMyService')).toEqual({
+      focus: 'Session::IMyService',
+    });
+  });
+
+  it('handles groupByScope with true, 1, yes values', () => {
+    expect(readQueryParams('?groupByScope=true')).toEqual({ groupByScope: true });
+    expect(readQueryParams('?groupByScope=1')).toEqual({ groupByScope: true });
+    expect(readQueryParams('?groupByScope=yes')).toEqual({ groupByScope: true });
+  });
+
+  it('handles groupByScope with false, 0, no, off values', () => {
+    expect(readQueryParams('?groupByScope=false')).toEqual({ groupByScope: false });
+    expect(readQueryParams('?groupByScope=0')).toEqual({ groupByScope: false });
+    expect(readQueryParams('?groupByScope=no')).toEqual({ groupByScope: false });
+    expect(readQueryParams('?groupByScope=off')).toEqual({ groupByScope: false });
+  });
+
+  it('handles hideOrphans with explicit true value', () => {
+    expect(readQueryParams('?hideOrphans=true')).toEqual({ hideOrphans: true });
+  });
+
+  it('handles unicode characters in search', () => {
+    expect(readQueryParams('?search=中文测试')).toEqual({
+      search: '中文测试',
+    });
+  });
+
+  it('handles unicode characters in focus', () => {
+    expect(readQueryParams('?focus=Session::测试Service')).toEqual({
+      focus: 'Session::测试Service',
+    });
+  });
+
+  it('handles a search string with just a question mark', () => {
+    expect(readQueryParams('?')).toEqual({});
+  });
+
+  it('handles multiple values for the same parameter by taking the first', () => {
+    // URLSearchParams keeps the first value when duplicate keys exist
+    expect(readQueryParams('?domain=a&domain=b')).toEqual({ domains: ['a'] });
+  });
+
+  it('handles scope with mixed case, only exact matches are kept', () => {
+    // The vocabulary check is case-sensitive; "agent" ≠ "Agent"
+    expect(readQueryParams('?scope=  Session  ,  agent  ')).toEqual({
+      scopes: ['Session'],
+    });
+  });
+
+  it('handles kind with mixed case, only exact matches are kept', () => {
+    // The vocabulary check is case-sensitive; "Publish" ≠ "publish"
+    expect(readQueryParams('?kind=ctor,UNKNOWN')).toEqual({
+      kinds: ['ctor'],
+    });
+  });
+
+  it('drops a focus value that is an empty string', () => {
+    expect(readQueryParams('?focus=')).toEqual({});
+  });
+
+  it('drops a search value that is an empty string', () => {
+    expect(readQueryParams('?search=')).toEqual({});
+  });
+
+  it('handles a very long domain value', () => {
+    const longDomain = 'a'.repeat(5000);
+    expect(readQueryParams(`?domain=${longDomain}`)).toEqual({
+      domains: [longDomain],
+    });
+  });
+
+  it('handles fragment in the search string', () => {
+    expect(readQueryParams('?search=test#fragment')).toEqual({
+      search: 'test#fragment',
+    });
+  });
+
+  it('empty scope list after filtering returns empty object', () => {
+    expect(readQueryParams('?scope=bogus1,bogus2')).toEqual({});
+  });
+
+  it('empty kind list after filtering returns empty object', () => {
+    expect(readQueryParams('?kind=bogus1,bogus2')).toEqual({});
+  });
 });

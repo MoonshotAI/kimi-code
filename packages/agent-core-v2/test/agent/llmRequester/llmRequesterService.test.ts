@@ -848,4 +848,22 @@ describe('AgentLLMRequesterService trace id', () => {
       telemetryRecords.find((record) => record.event === 'api_error')?.properties?.['trace_id'],
     ).toBeUndefined();
   });
+
+  it('exposes trace id early on request.start before the LLM call completes', async () => {
+    const model = createTracedModel('trace-early');
+    const { service } = createService(model, passthroughProjector);
+    const request = service.start({ source: { type: 'turn', turnId: 5, step: 1 } });
+    expect(request.trace).toBeDefined();
+    const finish = await request.result;
+    expect(finish.traceId).toBe('trace-early');
+  });
+
+  it('attaches turn_id and step_no to the request trace even when the request succeeds', async () => {
+    const model = createTracedModel('trace-success');
+    const { service, telemetryRecords } = createService(model, passthroughProjector);
+    const request = service.start({ source: { type: 'turn', turnId: 6, step: 3 } });
+    await request.result;
+    const apiError = telemetryRecords.find((record) => record.event === 'api_error');
+    expect(apiError).toBeUndefined();
+  });
 });

@@ -119,6 +119,34 @@ describe('sniffMediaFromMagic', () => {
     });
   });
 
+  it('recognises BMP magic bytes', () => {
+    const header = Buffer.from([0x42, 0x4d, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(sniffMediaFromMagic(header)).toEqual<FileType>({
+      kind: 'image',
+      mimeType: 'image/bmp',
+    });
+  });
+
+  it('recognises TIFF (little-endian and big-endian) magic bytes', () => {
+    expect(sniffMediaFromMagic(Buffer.from([0x49, 0x49, 0x2a, 0x00]))).toEqual<FileType>({
+      kind: 'image',
+      mimeType: 'image/tiff',
+    });
+    expect(sniffMediaFromMagic(Buffer.from([0x4d, 0x4d, 0x00, 0x2a]))).toEqual<FileType>({
+      kind: 'image',
+      mimeType: 'image/tiff',
+    });
+  });
+
+  it('returns null for empty buffer', () => {
+    expect(sniffMediaFromMagic(Buffer.alloc(0))).toBeNull();
+  });
+
+  it('returns null for buffer shorter than any magic pattern', () => {
+    expect(sniffMediaFromMagic(Buffer.from([0x89]))).toBeNull();
+    expect(sniffMediaFromMagic(Buffer.from([0xff, 0xd8]))).toBeNull();
+  });
+
   it('returns null for unrecognised magic bytes', () => {
     expect(sniffMediaFromMagic(Buffer.from('plain text content'))).toBeNull();
   });

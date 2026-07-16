@@ -532,6 +532,55 @@ max_context_size = 1000000
     });
   });
 
+  it('handles an empty model name gracefully', async () => {
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir, model: '' });
+    expect(created.id.startsWith('session_')).toBe(true);
+    expect(await rpc.getModel({ sessionId: created.id, agentId: 'main' })).toBe('');
+  });
+
+  it('handles a very long session ID', async () => {
+    const longId = 'session_' + 'x'.repeat(200);
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ id: longId, workDir });
+    expect(created.id).toBe(longId);
+    expect(await rpc.getModel({ sessionId: created.id, agentId: 'main' })).toBe('kimi-code/kimi-for-coding');
+  });
+
+  it('handles special characters in session ID', async () => {
+    const specialId = 'session_<script>&"quotes"';
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ id: specialId, workDir });
+    expect(created.id).toBe(specialId);
+  });
+
+  it('rejects resume of a non-existent session', async () => {
+    const freshRpc = await createTestRpc();
+    await expect(freshRpc.resumeSession({ sessionId: 'session_nonexistent' })).rejects.toThrow();
+  });
+
+  it('handles resume with a corrupted state.json', async () => {
+    const rpc = await createTestRpc();
+    const created = await rpc.createSession({ workDir, model: 'kimi-code/kimi-for-coding' });
+    await rpc.closeSession({ sessionId: created.id });
+
+    // Write invalid JSON to state.json
+    await writeFile(join(created.sessionDir, 'state.json'), '{bad json', 'utf-8');
+
+    const freshRpc = await createTestRpc();
+    await expect(freshRpc.resumeSession({ sessionId: created.id })).rejects.toThrow();
+  });
+
+  it('handles concurrent createSession calls', async () => {
+    const rpc = await createTestRpc();
+    const promises = Array.from({ length: 5 }, (_, i) =>
+      rpc.createSession({ id: `ses_concurrent_${i}`, workDir, model: 'kimi-code/kimi-for-coding' }),
+    );
+    const results = await Promise.allSettled(promises);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled').length;
+    expect(fulfilled).toBeGreaterThanOrEqual(1);
+  });
+
   it('adds web client metadata to new-session telemetry', async () => {
     const records: TelemetryContextRecord[] = [];
     const rpc = await createTestRpc({ telemetry: recordingContextTelemetry(records) });

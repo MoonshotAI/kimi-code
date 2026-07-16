@@ -349,4 +349,39 @@ describe('touchWorkspaceRegistry', () => {
     const file = await readRegistryFile();
     expect(file.workspaces[result.workspaceId]?.root).toBe(root);
   });
+
+  it('touches a workspace with a trailing slash root does not duplicate entries', async () => {
+    const root = await makeProjectRoot('trailing');
+    const first = await touchWorkspaceRegistry(homeDir, root);
+    const second = await touchWorkspaceRegistry(homeDir, `${root}/`);
+    expect(second.workspaceId).toBe(first.workspaceId);
+    expect(second.created).toBe(false);
+  });
+
+  it('WorkspaceRegistryService.list returns [] when the registry file is empty', async () => {
+    const { ctx: localCtx } = await setupEmptyRegistry();
+    const list = await localCtx.registry.list();
+    expect(list).toEqual([]);
+  });
+
+  it('WorkspaceRegistryService.delete of a non-existent id is a no-op', async () => {
+    const { ctx: localCtx } = await setupEmptyRegistry();
+    await expect(localCtx.registry.delete('wd_nonexistent')).resolves.toBeUndefined();
+  });
+
+  it('WorkspaceRegistryService throws on createOrTouch with an empty root', async () => {
+    const { ctx: localCtx } = await setupEmptyRegistry();
+    await expect(localCtx.registry.createOrTouch('')).rejects.toThrow();
+  });
 });
+
+async function setupEmptyRegistry(): Promise<{ ctx: TestContext }> {
+  const homeDir = await mkdtemp(join(tmpdir(), 'kimi-ws-empty-'));
+  const env: IEnvironmentService = {
+    _serviceBrand: undefined,
+    homeDir,
+    configPath: join(homeDir, 'config.toml'),
+  };
+  const reg = new WorkspaceRegistryService(env, makeLogger(), makeEventService());
+  return { ctx: { homeDir, registry: reg } };
+}

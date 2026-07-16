@@ -221,4 +221,35 @@ describe('AgentUserToolService (wire-backed)', () => {
     expect(written[0]).toMatchObject({ type: 'metadata' });
     expect(written.slice(1)).toEqual(records);
   });
+
+  it('unregistering a non-existent tool is a no-op', () => {
+    expect(() => {
+      svc.unregister('NonExistentTool');
+    }).not.toThrow();
+  });
+
+  it('list returns an empty array when no tools are registered', () => {
+    expect(svc.list()).toEqual([]);
+  });
+
+  it('re-registering a tool with different parameters updates the registration', () => {
+    const updated: UserToolRegistration = {
+      name: 'Lookup',
+      description: 'Updated description',
+      parameters: { type: 'object', properties: { q: { type: 'string' } } },
+    };
+    svc.register(toolA);
+    svc.register(updated);
+
+    expect(svc.list()).toEqual([updated]);
+    expect(modelOf(wire).get('Lookup')).toEqual(updated);
+  });
+
+  it('register persists a flat record without a payload key', async () => {
+    svc.register(toolA);
+
+    const records = await readRecords();
+    expect(records).toHaveLength(1);
+    expect('payload' in records[0]!).toBe(false);
+  });
 });

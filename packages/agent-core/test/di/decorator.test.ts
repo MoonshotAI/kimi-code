@@ -110,4 +110,53 @@ describe('createDecorator (P0.3)', () => {
     // 3 args: still records metadata (smoke).
     expect(() => fn(class Ok {}, '', 0)).not.toThrow();
   });
+
+  it('decorator with an empty name string creates a valid identifier', () => {
+    const IEmpty = createDecorator<{}>('');
+    expect(IEmpty.toString()).toBe('');
+    expect(String(IEmpty)).toBe('');
+  });
+
+  it('decorator with a very long name does not truncate', () => {
+    const longName = 'x'.repeat(500);
+    const ILong = createDecorator<{}>(longName);
+    const another = createDecorator<{}>(longName);
+    // Singleton per name still applies.
+    expect(ILong).toBe(another);
+    expect(ILong.toString()).toBe(longName);
+  });
+
+  it('decorator with special characters in the name is still a valid identifier', () => {
+    const ISpecial = createDecorator<{}>('my-service-v2.0@beta!');
+    expect(ISpecial.toString()).toBe('my-service-v2.0@beta!');
+  });
+
+  it('calling getServiceDependencies on a class with no decorators returns empty array', () => {
+    class NoDeps {
+      constructor() {}
+    }
+    const deps = _util.getServiceDependencies(NoDeps as unknown as _util.DI_TARGET_OBJ);
+    expect(deps).toEqual([]);
+  });
+
+  it('three decorators on the same ctor record all with correct indexes', () => {
+    const IA = createDecorator<{ a: 1 }>('deco-IA');
+    const IB = createDecorator<{ b: 1 }>('deco-IB');
+    const IC = createDecorator<{ c: 1 }>('deco-IC');
+    class Target {
+      constructor(a: { a: 1 }, b: { b: 1 }, c: { c: 1 }) {}
+    }
+    // Apply in any order; resolved by index.
+    (IC as unknown as (t: unknown, k: string, i: number) => void)(Target, '', 2);
+    (IA as unknown as (t: unknown, k: string, i: number) => void)(Target, '', 0);
+    (IB as unknown as (t: unknown, k: string, i: number) => void)(Target, '', 1);
+
+    const deps = _util.getServiceDependencies(Target as unknown as _util.DI_TARGET_OBJ);
+    const sorted = [...deps].sort((a, b) => a.index - b.index);
+    expect(sorted).toEqual([
+      { id: IA, index: 0 },
+      { id: IB, index: 1 },
+      { id: IC, index: 2 },
+    ]);
+  });
 });

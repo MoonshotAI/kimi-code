@@ -551,4 +551,66 @@ describe('ConfigState.provider applies global KIMI_MODEL_* request config', () =
       thinkingEffort: 'max',
     });
   });
+
+  it('works with model that has no capabilities set', () => {
+    kimiConfig = {
+      providers: { custom: { type: 'openai', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' } },
+      models: {
+        'custom/minimal': {
+          provider: 'custom',
+          model: 'minimal-model',
+          maxContextSize: 8_000,
+        },
+      },
+    };
+    ctx = createTestAgent(
+      configServices(() => kimiConfig),
+    );
+    profile = ctx.get(IAgentProfileService);
+    profile.update({ modelAlias: 'custom/minimal' });
+
+    const caps = profile.getModelCapabilities();
+    expect(caps.image_in).toBe(false);
+    expect(caps.video_in).toBe(false);
+    expect(caps.thinking).toBeUndefined();
+    expect(caps.max_context_tokens).toBe(8_000);
+  });
+
+  it('uses config max output size even when very small', async () => {
+    let requestMaxTokens: unknown;
+    kimiConfig = {
+      providers: { openai: { type: 'openai', apiKey: 'test-key', baseUrl: 'https://api.example.test/v1' } },
+      models: {
+        'openai/tiny': {
+          provider: 'openai',
+          model: 'tiny-model',
+          maxContextSize: 4_000,
+          maxOutputSize: 100,
+        },
+      },
+    };
+    generate = async (provider) => {
+      requestMaxTokens = (
+        provider as unknown as { readonly modelParameters: Record<string, unknown> }
+      ).modelParameters['max_tokens'];
+      return {
+        id: 'response-1',
+        message: { role: 'assistant', content: [], toolCalls: [] },
+        usage: emptyUsage(),
+        finishReason: 'completed',
+        rawFinishReason: 'stop',
+      };
+    };
+    ctx = createTestAgent(
+      configServices(() => kimiConfig),
+      llmGenerateServices((...args) => generate(...args)),
+    );
+    profile = ctx.get(IAgentProfileService);
+    requester = ctx.get(IAgentLLMRequesterService);
+
+    profile.update({ modelAlias: 'openai/tiny', systemPrompt: 'sys', thinkingLevel: 'off' });
+    await requester.request({}, undefined, new AbortController().signal);
+
+    expect(requestMaxTokens).toBe(100);
+  });
 });

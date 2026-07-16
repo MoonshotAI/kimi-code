@@ -17,6 +17,28 @@ describe('sanitizeMcpNamePart', () => {
     expect(sanitizeMcpNamePart('a   b')).toBe('a_b');
     expect(sanitizeMcpNamePart('list..__issues')).toBe('list_issues');
   });
+
+  it('handles empty string', () => {
+    expect(sanitizeMcpNamePart('')).toBe('');
+  });
+
+  it('handles strings with only special characters', () => {
+    expect(sanitizeMcpNamePart('!@#$%^&*()')).toBe('_');
+  });
+
+  it('passes numeric-only strings through', () => {
+    expect(sanitizeMcpNamePart('12345')).toBe('12345');
+  });
+
+  it('handles unicode characters', () => {
+    expect(sanitizeMcpNamePart('服务端')).toBe('服务端');
+    expect(sanitizeMcpNamePart('中文 server')).toBe('中文_server');
+  });
+
+  it('strips leading/trailing underscores after collapsing', () => {
+    expect(sanitizeMcpNamePart('__hello__')).toBe('hello');
+    expect(sanitizeMcpNamePart('___')).toBe('');
+  });
 });
 
 describe('qualifyMcpToolName', () => {
@@ -52,5 +74,16 @@ describe('isMcpToolName', () => {
     expect(isMcpToolName('mcp__github__list')).toBe(true);
     expect(isMcpToolName('Read')).toBe(false);
     expect(isMcpToolName('mcp_one_underscore__no')).toBe(false);
+  });
+
+  it('returns false for empty string or null-like values', () => {
+    expect(isMcpToolName('')).toBe(false);
+    expect(isMcpToolName('mcp__')).toBe(false);
+    expect(isMcpToolName('mcp____')).toBe(false);
+  });
+
+  it('returns false for names with only prefix and no parts', () => {
+    expect(isMcpToolName('mcp')).toBe(false);
+    expect(isMcpToolName('mcp__')).toBe(false);
   });
 });

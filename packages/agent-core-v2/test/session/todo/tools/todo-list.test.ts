@@ -170,4 +170,47 @@ describe('TodoListTool', () => {
     expect(clearExecution.description).toBe('Clearing todo list');
     expect(updateExecution.description).toBe('Updating todo list');
   });
+
+  it('query mode on an empty list returns a meaningful message', async () => {
+    const { tool } = makeTool();
+    const result = await executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: {},
+      signal,
+    });
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain('No tasks');
+  });
+
+  it('write mode with multiple in_progress todos still succeeds', async () => {
+    const { tool, getTodos } = makeTool();
+    const todos: TodoItem[] = [
+      { id: 'T1', parentId: null, title: 'first', status: 'in_progress', createdAt: Date.now(), updatedAt: Date.now() },
+      { id: 'T2', parentId: null, title: 'second', status: 'in_progress', createdAt: Date.now(), updatedAt: Date.now() },
+    ];
+    const result = await executeTool(tool, {
+      turnId: 1,
+      toolCallId: 'call_1',
+      args: { todos },
+      signal,
+    });
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain('Todo list updated');
+    expect(getTodos()).toHaveLength(2);
+  });
+
+  it('schema rejects a todo with an invalid status string', () => {
+    expect(TodoListInputSchema.safeParse({ todos: [{ title: 'x', status: 'invalid' }] }).success).toBe(false);
+  });
+
+  it('schema rejects a todo missing a title', () => {
+    expect(TodoListInputSchema.safeParse({ todos: [{ status: 'open' }] }).success).toBe(false);
+  });
+
+  it('schema accepts a valid single todo', () => {
+    expect(
+      TodoListInputSchema.safeParse({ todos: [{ title: 'valid task', status: 'open' }] }).success,
+    ).toBe(true);
+  });
 });

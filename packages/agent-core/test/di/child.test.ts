@@ -296,6 +296,83 @@ describe('InstantiationService.createChild', () => {
       ix.createChild(new ServiceCollection());
     }).toThrowError(/disposed/);
   });
+
+  it('deep nesting: grandchild inherits parent and grandparent services', () => {
+    const events: string[] = [];
+    interface ISvc { tag: string; }
+    const ISvc = createDecorator<ISvc>('deep-svc');
+    class Svc implements ISvc, IDisposable {
+      tag = 'root-svc';
+      dispose(): void { events.push('root-svc'); }
+    }
+    const root = new InstantiationService(
+      new ServiceCollection([ISvc, new SyncDescriptor(Svc)]),
+    );
+    const child = root.createChild(new ServiceCollection());
+    const grandchild = child.createChild(new ServiceCollection());
+
+    // Grandchild can resolve parent-defined service.
+    const resolved = grandchild.invokeFunction((a) => a.get(ISvc));
+    expect(resolved).toBeInstanceOf(Svc);
+    expect(resolved.tag).toBe('root-svc');
+
+    // Dispose grandchild only — parent and root remain.
+    grandchild.dispose();
+    expect(events).toEqual(['root-svc']);
+    // Child still works.
+    expect(child.invokeFunction((a) => a.get(ISvc))).toBeInstanceOf(Svc);
+    root.dispose();
+  });
+
+  it('child shadowing partial: child overrides one service but inherits another', () => {
+    interface ILogger { tag: string; }
+    interface IStorage { tag: string; }
+    const ILogger = createDecorator<ILogger>('partial-logger');
+    const IStorage = createDecorator<IStorage>('partial-storage');
+    class ConsoleLogger implements ILogger, IDisposable {
+      tag = 'console';
+      dispose(): void {}
+    }
+    class FileLogger implements ILogger, IDisposable {
+      tag = 'file';
+      dispose(): void {}
+    }
+    class DiskStorage implements IStorage, IDisposable {
+      tag = 'disk';
+      dispose(): void {}
+    }
+
+    const parent = new InstantiationService(
+      new ServiceCollection(
+        [ILogger, new SyncDescriptor(ConsoleLogger)],
+        [IStorage, new SyncDescriptor(DiskStorage)],
+      ),
+    );
+    const child = parent.createChild(
+      new ServiceCollection([ILogger, new SyncDescriptor(FileLogger)]),
+    );
+
+    // Child overrides ILogger but inherits IStorage.
+    expect(child.invokeFunction((a) => a.get(ILogger).tag)).toBe('file');
+    expect(child.invokeFunction((a) => a.get(IStorage).tag)).toBe('disk');
+    // Parent is unaffected.
+    expect(parent.invokeFunction((a) => a.get(ILogger).tag)).toBe('console');
+  });
+
+  it('child scope: services registered in child do not leak to parent', () => {
+    interface IChildOnly { tag: string; }
+    const IChildOnly = createDecorator<IChildOnly>('child-only');
+    class ChildOnlySvc implements IChildOnly { tag = 'child-only'; }
+
+    const parent = new InstantiationService();
+    const child = parent.createChild(
+      new ServiceCollection([IChildOnly, new SyncDescriptor(ChildOnlySvc)]),
+    );
+
+    expect(child.invokeFunction((a) => a.get(IChildOnly).tag)).toBe('child-only');
+    // Parent should not have access.
+    expect(parent.invokeFunction((a) => a.get(IChildOnly))).toBeUndefined();
+  });
 });
 
 describe('Disposable base class', () => {

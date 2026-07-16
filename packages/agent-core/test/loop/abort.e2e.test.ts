@@ -281,4 +281,71 @@ describe('runTurn — abort handling', () => {
     expect(callIds).toEqual(['tc-1', 'tc-2', 'tc-3']);
     expect(resultIds).toEqual(callIds);
   });
+
+  it('aborts during afterStep hook and returns cleanly', async () => {
+    const controller = new AbortController();
+    const hooks = {
+      afterStep: async () => {
+        controller.abort();
+        const err = new Error('aborted from afterStep');
+        err.name = 'AbortError';
+        throw err;
+      },
+    };
+
+    const { result, sink, llm } = await runTurn({
+      hooks,
+      responses: [makeEndTurnResponse('never')],
+      signal: controller.signal,
+    });
+
+    expect(result.stopReason).toBe('aborted');
+    expect(llm.callCount).toBe(0);
+    expect(sink.byType('turn.interrupted')[0]?.reason).toBe('aborted');
+  });
+
+  it('aborts during finalizeToolResult hook and returns cleanly', async () => {
+    const controller = new AbortController();
+    const echo = new EchoTool();
+    const hooks = {
+      finalizeToolResult: async () => {
+        controller.abort();
+        const err = new Error('aborted from finalizeToolResult');
+        err.name = 'AbortError';
+        throw err;
+      },
+    };
+
+    const { result, sink } = await runTurn({
+      hooks,
+      tools: [echo],
+      responses: [
+        makeToolUseResponse([makeToolCall('echo', { text: 'hi' }, 'tc-1')]),
+        makeEndTurnResponse('never'),
+      ],
+      signal: controller.signal,
+    });
+
+    expect(result.stopReason).toBe('aborted');
+    expect(sink.byType('turn.interrupted')[0]?.reason).toBe('aborted');
+  });
+
+  it('handles an already-aborted signal being passed to a second runTurn', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const { result: firstResult } = await runTurn({
+      responses: [makeEndTurnResponse('never')],
+      signal: controller.signal,
+    });
+    expect(firstResult.stopReason).toBe('aborted');
+
+    const secondController = new AbortController();
+    secondController.abort();
+    const { result: secondResult } = await runTurn({
+      responses: [makeEndTurnResponse('never')],
+      signal: secondController.signal,
+    });
+    expect(secondResult.stopReason).toBe('aborted');
+  });
 });

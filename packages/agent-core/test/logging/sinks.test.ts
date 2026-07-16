@@ -153,4 +153,73 @@ describe('RotatingFileSink', () => {
       expect(line).toMatch(/^line\d{4}$/);
     }
   });
+
+  it('handles maxBytes=0 by rotating on every write', async () => {
+    const path = join(workDir, 'zero.log');
+    const sink = new RotatingFileSink({ path, maxBytes: 0, files: 3 });
+    sink.enqueue('a\n');
+    await sink.flush();
+    sink.enqueue('b\n');
+    await sink.flush();
+    sink.enqueue('c\n');
+    await sink.flush();
+    const files = await listLogs(workDir);
+    // Should have at least 2 archives after 3 writes with maxBytes=0
+    expect(files.filter((f) => f.startsWith('zero.log'))).toHaveLength(3);
+  });
+
+  it('handles files=1 without rotation', async () => {
+    const path = join(workDir, 'single.log');
+    const sink = new RotatingFileSink({ path, maxBytes: 32, files: 1 });
+    for (let i = 0; i < 10; i++) {
+      sink.enqueue(`${i} ${'x'.repeat(20)}\n`);
+      await sink.flush();
+    }
+    const files = await listLogs(workDir);
+    expect(files).toEqual(['single.log']);
+  });
+
+  it('handles a very long line gracefully', async () => {
+    const path = join(workDir, 'long.log');
+    const sink = new RotatingFileSink({ path, maxBytes: 1_000_000, files: 2 });
+    const longLine = 'x'.repeat(50_000) + '\n';
+    sink.enqueue(longLine);
+    await sink.flush();
+    const text = await readFile(path, 'utf-8');
+    expect(text.length).toBe(50_001);
+  });
+
+  it('handles empty enqueue gracefully', async () => {
+    const path = join(workDir, 'empty.log');
+    const sink = new RotatingFileSink({ path, maxBytes: 1024, files: 2 });
+    await sink.flush();
+    // No file should have been created
+    const files = await listLogs(workDir);
+    expect(files).not.toContain('empty.log');
+  });
+
+  it('handles unicode characters in lines', async () => {
+    const path = join(workDir, 'unicode.log');
+    const sink = new RotatingFileSink({ path, maxBytes: 1024, files: 2 });
+    sink.enqueue('你好世界 εὕρηκα ✓\n');
+    await sink.flush();
+    const text = await readFile(path, 'utf-8');
+    expect(text).toContain('你好世界');
+    expect(text).toContain('εὕρηκα');
+    expect(text).toContain('✓');
+  });
+
+  it('handles multiple rapid flushes', async () => {
+    const path = join(workDir, 'rapid.log');
+    const sink = new RotatingFileSink({ path, maxBytes: 1024, files: 2 });
+    for (let i = 0; i < 100; i++) {
+      sink.enqueue(`${i}\n`);
+      await sink.flush();
+    }
+    const text = await readFile(path, 'utf-8');
+    const lines = text.split('\n').filter((l) => l.length > 0);
+    expect(lines.length).toBe(100);
+    expect(lines[0]).toBe('0');
+    expect(lines[99]).toBe('99');
+  });
 });

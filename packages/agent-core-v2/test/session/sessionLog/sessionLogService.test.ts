@@ -127,6 +127,56 @@ describe('SessionLogService', () => {
       expect(text).toContain('on-dispose');
     });
   });
+
+  it('writes error level entries', async () => {
+    const host = buildHost();
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
+    const log = session.accessor.get(ILogService);
+    log.error('fatal error', { errCode: 500 });
+    await log.flush();
+    const text = await readSessionLog();
+    expect(text).toContain('fatal error');
+    expect(text).toContain('errCode=500');
+    host.dispose();
+  });
+
+  it('writes debug level entries', async () => {
+    const host = buildHost();
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
+    const log = session.accessor.get(ILogService);
+    log.debug('verbose debug');
+    await log.flush();
+    const text = await readSessionLog();
+    expect(text).toContain('verbose debug');
+    host.dispose();
+  });
+
+  it('handles a large log entry without crashing', async () => {
+    const host = buildHost();
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
+    const log = session.accessor.get(ILogService);
+    const big = 'x'.repeat(10000);
+    log.info('big entry', { data: big });
+    await log.flush();
+    const text = await readSessionLog();
+    expect(text).toContain('big entry');
+    host.dispose();
+  });
+
+  it('multiple child loggers all write to the same file', async () => {
+    const host = buildHost();
+    const session = host.child(LifecycleScope.Session, 's1', testSessionSeed());
+    const log = session.accessor.get(ILogService);
+    log.child({ agentId: 'a' }).info('from a');
+    log.child({ agentId: 'b' }).info('from b');
+    log.child({ agentId: 'c' }).info('from c');
+    await log.flush();
+    const text = await readSessionLog();
+    expect(text).toContain('agentId=a');
+    expect(text).toContain('agentId=b');
+    expect(text).toContain('agentId=c');
+    host.dispose();
+  });
 });
 
 describe('ILogService cross-scope resolution', () => {

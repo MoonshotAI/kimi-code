@@ -267,6 +267,42 @@ describe('SkillRegistry.renderSkillPrompt', () => {
         '</kimi-plugin-instructions>\n\nBrainstorm body.',
     );
   });
+
+  it('renderSkillPrompt handles empty arguments string', () => {
+    const rendered = new SessionSkillRegistry({ sessionId: 's1' }).renderSkillPrompt(
+      testSkill({ content: 'Do the thing.' }),
+      '',
+    );
+    expect(rendered).toBe('Do the thing.');
+  });
+
+  it('renderSkillPrompt appends ARGUMENTS when arguments are provided and no placeholders exist', () => {
+    const rendered = new SessionSkillRegistry({ sessionId: 's1' }).renderSkillPrompt(
+      testSkill({ content: 'Do the thing.' }),
+      'src/app.ts',
+    );
+    expect(rendered).toContain('ARGUMENTS: src/app.ts');
+  });
+
+  it('expandSkillParameters with empty arguments string yields empty raw', () => {
+    const out = expandSkillParameters('prefix=$ARGUMENTS', '', {
+      skillDir: '/x',
+      sessionId: 's',
+      argumentNames: [],
+    });
+    expect(out).toBe('prefix=');
+  });
+
+  it('expandSkillParameters with very long arguments does not throw', () => {
+    const long = '-m ' + '"' + 'a'.repeat(10_000) + '"';
+    const out = expandSkillParameters('text=$ARGUMENTS', long, {
+      skillDir: '/x',
+      sessionId: 's',
+      argumentNames: ['target'],
+    });
+    expect(out.length).toBeGreaterThan(0);
+    expect(out).toContain('a'.repeat(10_000));
+  });
 });
 
 async function makeSkillsRoot(): Promise<string> {

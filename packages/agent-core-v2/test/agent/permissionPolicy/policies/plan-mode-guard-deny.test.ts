@@ -231,4 +231,28 @@ describe('PlanModeGuardDenyPermissionPolicyService', () => {
     expect(await evaluate(policy, 'Bash', { command: 'rm foo.txt' })).toBeUndefined();
     expect(await evaluate(policy, 'TaskStop', { task_id: 'bash-abc12345' })).toBeUndefined();
   });
+
+  it('allows Bash regardless of plan mode', async () => {
+    const policy = new PlanModeGuardDenyPermissionPolicyService(planService(true));
+    expect(await evaluate(policy, 'Bash', { command: 'echo hello' })).toBeUndefined();
+    expect(await evaluate(policy, 'Bash', { command: 'rm -rf /tmp/test' })).toBeUndefined();
+  });
+
+  it('blocks Write when plan mode is active and the path is not the plan file', async () => {
+    const policy = new PlanModeGuardDenyPermissionPolicyService(planService(true));
+    const result = await evaluate(
+      policy,
+      'Write',
+      { path: '/workspace/random.txt', content: 'x' },
+      ToolAccesses.writeFile('/workspace/random.txt'),
+    );
+    expect(result).toMatchObject({ kind: 'deny' });
+  });
+
+  it('allows Read, Grep, and Glob regardless of plan mode', async () => {
+    const policy = new PlanModeGuardDenyPermissionPolicyService(planService(true));
+    expect(await evaluate(policy, 'Read', { path: '/workspace/src/main.ts' })).toBeUndefined();
+    expect(await evaluate(policy, 'Grep', { pattern: 'TODO', path: '/workspace' })).toBeUndefined();
+    expect(await evaluate(policy, 'Glob', { pattern: '**/*.ts', path: '/workspace' })).toBeUndefined();
+  });
 });

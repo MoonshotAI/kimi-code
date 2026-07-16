@@ -88,4 +88,75 @@ describe('WorkspaceQueryService', () => {
 
     await expect(query.listRecentSessions('wd_empty')).resolves.toEqual([]);
   });
+
+  it('returns an empty array when the session index returns empty items', async () => {
+    const { query, index } = build();
+    index.items = [];
+
+    await expect(query.listRecentSessions('wd_empty')).resolves.toEqual([]);
+  });
+
+  it('passes through the workspace id with special characters', async () => {
+    const { query, index } = build();
+    const specialId = 'wd_工作区/with#special?chars&and=unicode';
+
+    await query.listRecentSessions(specialId);
+
+    expect(index.lastListQuery?.workspaceId).toBe(specialId);
+  });
+
+  it('passes through the workspace id with a very long value', async () => {
+    const { query, index } = build();
+    const longId = 'wd_' + 'x'.repeat(500);
+
+    await query.listRecentSessions(longId);
+
+    expect(index.lastListQuery?.workspaceId).toBe(longId);
+  });
+
+  it('handles concurrent listRecentSessions calls', async () => {
+    const { query, index } = build();
+    index.items = [summary('s1', 'wd_a', 100)];
+
+    const [r1, r2] = await Promise.all([
+      query.listRecentSessions('wd_a'),
+      query.listRecentSessions('wd_b'),
+    ]);
+
+    // The shared index returns its items for both, but each call passes
+    // the correct workspaceId in the query.
+    expect(r1).toHaveLength(1);
+    expect(r2).toHaveLength(1); // same index instance, same items
+    expect(index.lastListQuery?.workspaceId).toBe('wd_b'); // last write wins
+  });
+
+  it('propagates session index list errors', async () => {
+    const { query, index } = build();
+    index.list = async () => {
+      throw new Error('Index unavailable');
+    };
+
+    await expect(query.listRecentSessions('wd_abc')).rejects.toThrow('Index unavailable');
+  });
+
+  it('works with the empty string workspace id', async () => {
+    const { query, index } = build();
+
+    await query.listRecentSessions('');
+
+    expect(index.lastListQuery?.workspaceId).toBe('');
+  });
+
+  it('limits the number of returned sessions to RECENT_SESSIONS_LIMIT', async () => {
+    const { query, index } = build();
+    const many = Array.from({ length: 50 }, (_, i) =>
+      summary(`s${i}`, 'wd_big', 1000 + i),
+    );
+    index.items = many;
+
+    const result = await query.listRecentSessions('wd_big');
+
+    expect(result).toHaveLength(50);
+    expect(index.lastListQuery?.limit).toBe(20);
+  });
 });

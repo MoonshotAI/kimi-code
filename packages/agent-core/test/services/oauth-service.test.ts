@@ -336,4 +336,73 @@ describe('OAuthService.logout', () => {
     expect(impl.getFlow()!.status).toBe('cancelled');
     expect(mock.loginCalls[0]!.signal!.aborted).toBe(true);
   });
+
+  it('cancels a pending flow with onDeviceCode that throws', async () => {
+    const { impl, mock } = makeImpl();
+    impl.startLogin();
+    await flushMicrotasks();
+    // Simulate onDeviceCode rejecting
+    mock.loginCalls[0]!.onDeviceCode?.(fakeDeviceAuth()).catch(() => {});
+    await flushMicrotasks();
+
+    await impl.cancelLogin();
+    expect(impl.getFlow()!.status).toBe('cancelled');
+  });
+
+  it('returns denied for a generic string error (not Error)', async () => {
+    const { impl, mock } = makeImpl();
+    const startPromise = impl.startLogin();
+    await flushMicrotasks();
+    await mock.loginCalls[0]!.onDeviceCode?.(fakeDeviceAuth());
+    await startPromise;
+
+    mock.loginCalls[0]!.reject('string error');
+    await flushMicrotasks();
+
+    const snap = impl.getFlow()!;
+    expect(snap.status).toBe('denied');
+    expect(snap.error_message).toBe('string error');
+  });
+
+  it('returns cancelled=false when cancelLogin is called on a denied flow', async () => {
+    const { impl, mock } = makeImpl();
+    const startPromise = impl.startLogin();
+    await flushMicrotasks();
+    await mock.loginCalls[0]!.onDeviceCode?.(fakeDeviceAuth());
+    await startPromise;
+    mock.loginCalls[0]!.reject(new OAuthError('Authorization denied'));
+    await flushMicrotasks();
+
+    const result = await impl.cancelLogin();
+    expect(result.cancelled).toBe(false);
+    expect(result.status).toBe('denied');
+  });
+
+  it('getFlow returns undefined when no flow has been started', () => {
+    const { impl } = makeImpl();
+    expect(impl.getFlow()).toBeUndefined();
+  });
+
+  it('getFlow returns undefined after a completed flow is superseded by a cancelled one', async () => {
+    const { impl, mock } = makeImpl();
+    const first = impl.startLogin();
+    await flushMicrotasks();
+    await mock.loginCalls[0]!.onDeviceCode?.(fakeDeviceAuth());
+    await first;
+    mock.loginCalls[0]!.resolve({ providerName: 'managed:kimi-code', ok: true });
+    await flushMicrotasks();
+    expect(impl.getFlow()!.status).toBe('authenticated');
+
+    await impl.cancelLogin();
+    // After cancel on a terminal flow, status stays as-is.
+    expect(impl.getFlow()!.status).toBe('authenticated');
+  });
+
+  it('logout with no pending flow does not throw', async () => {
+    const { impl } = makeImpl();
+    await expect(impl.logout()).resolves.toEqual({
+      logged_out: true,
+      provider: 'managed:kimi-code',
+    });
+  });
 });

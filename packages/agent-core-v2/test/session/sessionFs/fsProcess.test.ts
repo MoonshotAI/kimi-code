@@ -75,4 +75,26 @@ describe('runCommand', () => {
     await promise;
     expect(killed).toBe(true);
   });
+
+  it('captures stderr separately from stdout', async () => {
+    const proc = fakeProcess({ stdout: 'out', stderr: 'err', exitCode: 1 });
+    const result = await runCommand(fakeRunner(proc), ['cmd']);
+    expect(result.stdout).toBe('out');
+    expect(result.stderr).toBe('err');
+    expect(result.exitCode).toBe(1);
+  });
+
+  it('handles empty stdout and stderr', async () => {
+    const proc = fakeProcess({ stdout: '', stderr: '', exitCode: 0 });
+    const result = await runCommand(fakeRunner(proc), ['cmd']);
+    expect(result).toEqual({ exitCode: 0, stdout: '', stderr: '' });
+  });
+
+  it('propagates a runner exec failure', async () => {
+    const runner: ISessionProcessRunner = {
+      _serviceBrand: undefined,
+      exec: () => Promise.reject(new Error('spawn ENOENT')),
+    };
+    await expect(runCommand(runner, ['missing'])).rejects.toThrow('spawn ENOENT');
+  });
 });

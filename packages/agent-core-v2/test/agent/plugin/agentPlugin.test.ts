@@ -272,4 +272,74 @@ describe('AgentPluginService plugin session-start wiring', () => {
     expect(findPluginSessionStartMessages(ctx)).toHaveLength(2);
     sinkChange.dispose();
   });
+
+  it('handles plugins with very long instructions gracefully', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register({
+      ...pluginSkill(),
+      content: 'x'.repeat(50_000),
+      metadata: { plugin: { id: 'verbose', instructions: 'y'.repeat(10_000) } },
+    } as unknown as SkillDefinition);
+
+    ctx = createTestAgent(
+      { autoConfigure: true },
+      appService(
+        IPluginService,
+        pluginServiceStub({ sessionStarts: [{ pluginId: 'verbose', skillName: 'demo-skill' }] }),
+      ),
+      skillServices(catalog),
+      agentService(
+        IAgentPluginService,
+        new SyncDescriptor(AgentPluginService),
+      ),
+    );
+
+    ctx.get(IAgentPluginService);
+
+    await injectRegistered(ctx);
+
+    const injected = findPluginSessionStartMessages(ctx).at(-1);
+    expect(injected).toBeDefined();
+    const text = injected === undefined ? '' : messageText(injected);
+    expect(text.length).toBeGreaterThan(50_000);
+  });
+
+  it('injects multiple plugin session-start reminders when multiple plugins are enabled', async () => {
+    const catalog = new InMemorySkillCatalog();
+    catalog.register(pluginSkill());
+    catalog.register({
+      ...pluginSkill(),
+      name: 'another-skill',
+      content: 'Another skill content.',
+      metadata: { plugin: { id: 'another', instructions: 'Be helpful.' } },
+    } as unknown as SkillDefinition);
+
+    ctx = createTestAgent(
+      { autoConfigure: true },
+      appService(
+        IPluginService,
+        pluginServiceStub({
+          sessionStarts: [
+            { pluginId: 'demo', skillName: 'demo-skill' },
+            { pluginId: 'another', skillName: 'another-skill' },
+          ],
+        }),
+      ),
+      skillServices(catalog),
+      agentService(
+        IAgentPluginService,
+        new SyncDescriptor(AgentPluginService),
+      ),
+    );
+
+    ctx.get(IAgentPluginService);
+
+    await injectRegistered(ctx);
+
+    const messages = findPluginSessionStartMessages(ctx);
+    expect(messages).toHaveLength(1); // Single combined injection
+    const text = messageText(messages[0]!);
+    expect(text).toContain('demo');
+    expect(text).toContain('another');
+  });
 });

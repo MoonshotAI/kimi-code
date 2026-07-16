@@ -327,6 +327,15 @@ describe('path access policy', () => {
     ).toBe(true);
   });
 
+  it('resolves the root path "/" as within itself', () => {
+    expect(isWithinDirectory('/', '/')).toBe(true);
+    expect(isWithinWorkspace('/', { workspaceDir: '/', additionalDirs: [] })).toBe(true);
+  });
+
+  it('rejects an empty path in isWithinDirectory', () => {
+    expect(isWithinDirectory('', '/workspace')).toBe(false);
+  });
+
   describe('normalizeUserPath on win32', () => {
     it('rewrites MSYS-style drive paths to native form', () => {
       expect(normalizeUserPath('/c/Users/foo/file.txt', 'win32')).toBe('C:/Users/foo/file.txt');

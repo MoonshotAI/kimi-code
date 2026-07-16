@@ -192,4 +192,54 @@ describe('FsGitService pull request lookup', () => {
     expect(result.pullRequest).toBeNull();
     expect(spawned[2]?.kill).toHaveBeenCalled();
   });
+
+  it('returns null pull request when gh returns unexpected JSON', async () => {
+    ghResponse = {
+      out: 'not json at all',
+      code: 0,
+    };
+    const service = new FsGitService(sessions);
+    const result = await driveStatus(service);
+    expect(result.branch).toBe('main');
+    expect(result.pullRequest).toBeNull();
+  });
+
+  it('returns null pull request when gh returns empty JSON', async () => {
+    ghResponse = {
+      out: '',
+      code: 0,
+    };
+    const service = new FsGitService(sessions);
+    const result = await driveStatus(service);
+    expect(result.branch).toBe('main');
+    expect(result.pullRequest).toBeNull();
+  });
+
+  it('handles a CLOSED pull request state', async () => {
+    ghResponse = {
+      out: '{\"number\":42,\"url\":\"https://github.com/acme/repo/pull/42\",\"state\":\"CLOSED\"}\n',
+      code: 0,
+    };
+    const service = new FsGitService(sessions);
+    const result = await driveStatus(service);
+    expect(result.pullRequest).toEqual({
+      number: 42,
+      state: 'closed',
+      url: 'https://github.com/acme/repo/pull/42',
+    });
+  });
+
+  it('handles a MERGED pull request state', async () => {
+    ghResponse = {
+      out: '{\"number\":99,\"url\":\"https://github.com/acme/repo/pull/99\",\"state\":\"MERGED\"}\n',
+      code: 0,
+    };
+    const service = new FsGitService(sessions);
+    const result = await driveStatus(service);
+    expect(result.pullRequest).toEqual({
+      number: 99,
+      state: 'merged',
+      url: 'https://github.com/acme/repo/pull/99',
+    });
+  });
 });

@@ -136,4 +136,26 @@ describe('createMcpAuthTool', () => {
     expect(final.isError).toBe(true);
     expect(final.output).toMatch(/reconnect failed/);
   });
+
+  it('aborts before authorization when signal is already aborted', async () => {
+    let beginCalled = false;
+    const oauthService = fakeOAuthService(async () => {
+      beginCalled = true;
+      return {
+        authorizationUrl: new URL('https://example.com/authorize?state=abc'),
+        complete: async () => undefined,
+        cancel: async () => undefined,
+      };
+    });
+    const controller = new AbortController();
+    controller.abort();
+    const { result } = runTool({
+      oauthService,
+      reconnect: async () => undefined,
+      signal: controller.signal,
+    });
+    const final = await result;
+    expect(final.isError).toBe(true);
+    expect(beginCalled).toBe(false);
+  });
 });

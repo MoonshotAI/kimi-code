@@ -175,4 +175,36 @@ describe('MiniDbQueryStore', () => {
     const second = build();
     expect(await second.get(COLLECTION, 'a')).toBeUndefined();
   });
+
+  it('delete on a non-existent key is a no-op', async () => {
+    const store = build();
+    await expect(store.delete(COLLECTION, 'never-existed')).resolves.toBeUndefined();
+  });
+
+  it('overwrites an existing value on put', async () => {
+    const store = build();
+    await store.put(COLLECTION, 'a', { v: 1 });
+    await store.put(COLLECTION, 'a', { v: 99 });
+    expect(await store.get(COLLECTION, 'a')).toEqual({ v: 99 });
+  });
+
+  it('query with no matching documents returns empty results', async () => {
+    const store = build();
+    await store.ensureIndex(COLLECTION, { kind: 'value', name: 'byWs', field: 'ws' });
+    const page = await store.query(COLLECTION).where({ ws: 'nonexistent' }).execute();
+    expect(page.items).toEqual([]);
+    expect(page.nextCursor).toBeUndefined();
+  });
+
+  it('handles special characters in keys', async () => {
+    const store = build();
+    await store.put(COLLECTION, 'key:with/slash es', { id: 'special' });
+    expect(await store.get(COLLECTION, 'key:with/slash es')).toEqual({ id: 'special' });
+  });
+
+  it('close can be called multiple times', async () => {
+    const store = build();
+    await store.close();
+    await expect(store.close()).resolves.toBeUndefined();
+  });
 });

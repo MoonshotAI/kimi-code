@@ -190,4 +190,59 @@ describe('op-uniqueness', () => {
     expect(dupes.has('fixture.planted')).toBe(true);
     expect(dupes.get('fixture.planted')).toHaveLength(2);
   });
+
+  it('the same op name in different models is still a global duplicate', () => {
+    const model1 = defineModel('model1', () => ({}));
+    const model2 = defineModel('model2', () => ({}));
+    model1.defineOp('lint.shared.op', { schema: z.object({}), apply: (s) => s });
+    expect(() =>
+      model2.defineOp('lint.shared.op', { schema: z.object({}), apply: (s) => s }),
+    ).toThrow(DuplicateOpError);
+    OP_REGISTRY.delete('lint.shared.op');
+  });
+
+  it('defineOp registers in OP_REGISTRY with type, schema, and persist properties', () => {
+    const model = defineModel('lint.check.model', () => ({}));
+    const op = model.defineOp('lint.check.registry', {
+      schema: z.object({ value: z.number() }),
+      apply: (s, _p: { value: number }) => s,
+    });
+    expect(OP_REGISTRY.has('lint.check.registry')).toBe(true);
+    const entry = OP_REGISTRY.get('lint.check.registry');
+    expect(entry?.type).toBe('lint.check.registry');
+    expect(entry?.persist).toBeUndefined(); // default is persisted
+    OP_REGISTRY.delete('lint.check.registry');
+  });
+
+  it('defines a transient op with persist: false in the registry', () => {
+    const model = defineModel('lint.check.transient', () => ({}));
+    model.defineOp('lint.check.transient.op', {
+      schema: z.object({}),
+      persist: false,
+      apply: (s) => s,
+    });
+    const entry = OP_REGISTRY.get('lint.check.transient.op');
+    expect(entry?.persist).toBe(false);
+    OP_REGISTRY.delete('lint.check.transient.op');
+  });
+
+  it('defines a persisted op with persist: true in the registry', () => {
+    const model = defineModel('lint.check.persisted', () => ({}));
+    model.defineOp('lint.check.persisted.op', {
+      schema: z.object({}),
+      persist: true,
+      apply: (s) => s,
+    });
+    const entry = OP_REGISTRY.get('lint.check.persisted.op');
+    expect(entry?.persist).toBe(true);
+    OP_REGISTRY.delete('lint.check.persisted.op');
+  });
+
+  it('duplicates returns empty map when there are no duplicates', () => {
+    const seen = new Map<string, string[]>();
+    seen.set('unique.op.one', ['/file1.ts']);
+    seen.set('unique.op.two', ['/file2.ts']);
+    const dupes = duplicates(seen);
+    expect(dupes.size).toBe(0);
+  });
 });

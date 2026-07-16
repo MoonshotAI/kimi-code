@@ -155,7 +155,24 @@ describe('FlagResolver', () => {
     expect(second.enabled('b-off-default' as FlagId)).toBe(false);
   });
 
-  it('explains the source of the effective value', () => {
+  it('setConfigOverrides with empty object clears all config overrides', () => {
+    const resolver = new FlagResolver({}, DEFS, { 'b-off-default': true } as never);
+    expect(resolver.enabled('b-off-default' as FlagId)).toBe(true);
+
+    resolver.setConfigOverrides({});
+    expect(resolver.enabled('b-off-default' as FlagId)).toBe(false);
+    expect(resolver.explain('b-off-default' as FlagId)?.source).toBe('default');
+  });
+
+  it('setConfigOverrides with undefined clears all config overrides', () => {
+    const resolver = new FlagResolver({}, DEFS, { 'b-off-default': true } as never);
+    expect(resolver.enabled('b-off-default' as FlagId)).toBe(true);
+
+    resolver.setConfigOverrides(undefined);
+    expect(resolver.enabled('b-off-default' as FlagId)).toBe(false);
+  });
+
+  it('explain() returns correct source for each precedence level', () => {
     const defaulted = new FlagResolver({}, DEFS);
     expect(defaulted.explain('b-off-default' as FlagId)).toMatchObject({
       id: 'b-off-default',
@@ -181,6 +198,13 @@ describe('FlagResolver', () => {
       source: 'env',
       configValue: true,
     });
+  });
+
+  it('explainAll() returns entries in registry order', () => {
+    const resolver = new FlagResolver({ KIMI_CODE_EXPERIMENTAL_B: '1' }, DEFS);
+    const all = resolver.explainAll();
+    expect(all.map((f) => f.id)).toEqual(['a-on-default', 'b-off-default']);
+    expect(all.map((f) => f.enabled)).toEqual([true, true]);
   });
 });
 

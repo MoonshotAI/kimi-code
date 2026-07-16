@@ -68,4 +68,49 @@ describe('ReadTool — total-lines message channel', () => {
     expect(result.output).toContain('3\tc');
     expect(result.note).toContain('Total lines in file: 5.');
   });
+
+  it('reports Total lines: 0 for an empty file with a negative offset', async () => {
+    const tool = toolWithContent('');
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_empty_tail',
+      args: { path: '/tmp/empty.txt', line_offset: -10 },
+      signal,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.note).toContain('Total lines in file: 0.');
+  });
+
+  it('reports the correct total for a single-line file without trailing newline', async () => {
+    const tool = toolWithContent('just one line');
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_single',
+      args: { path: '/tmp/one-line.txt' },
+      signal,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.note).toContain('Total lines in file: 1.');
+    expect(result.note).toContain('End of file reached');
+  });
+
+  it('reports the correct total when n_lines reads exactly the last line', async () => {
+    const tool = toolWithContent('alpha\nbeta\ncharlie\n');
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c_last',
+      args: { path: '/tmp/last.txt', line_offset: 3, n_lines: 1 },
+      signal,
+    });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toBe('3\tcharlie');
+    expect(result.note).toContain('1 line read from file starting from line 3. Total lines in file: 3.');
+    expect(result.note).toContain('End of file reached');
+  });
 });

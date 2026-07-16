@@ -242,6 +242,26 @@ describe('convertMCPContentBlock', () => {
     const block: MCPContentBlock = { type: 'image', mimeType: 'image/png' };
     expect(convertMCPContentBlock(block)).toBeNull();
   });
+
+  test('returns null for audio block missing data field', () => {
+    const block: MCPContentBlock = { type: 'audio', mimeType: 'audio/wav' };
+    expect(convertMCPContentBlock(block)).toBeNull();
+  });
+
+  test('returns null for resource block with empty resource object', () => {
+    const block = { type: 'resource', resource: {} } as MCPContentBlock;
+    expect(convertMCPContentBlock(block)).toBeNull();
+  });
+
+  test('returns null for resource_link with empty uri', () => {
+    const block = assertValidMcpBlock({
+      type: 'resource_link',
+      name: 'empty',
+      uri: '',
+      mimeType: 'image/png',
+    });
+    expect(convertMCPContentBlock(block)).toBeNull();
+  });
 });
 
 describe('mcpResultToExecutableOutput', () => {
@@ -267,6 +287,14 @@ describe('mcpResultToExecutableOutput', () => {
 
   test('returns an empty output array when the content array is empty', async () => {
     const out = await mcpResultToExecutableOutput(result([]), 'mcp__s__t');
+    expect(out).toEqual({ output: [], isError: false });
+  });
+
+  test('handles only null/undefined content gracefully', async () => {
+    const out = await mcpResultToExecutableOutput(
+      result([null as unknown as MCPContentBlock, undefined as unknown as MCPContentBlock]),
+      'mcp__s__t',
+    );
     expect(out).toEqual({ output: [], isError: false });
   });
 
@@ -555,5 +583,62 @@ describe('createMcpTool', () => {
 
     expect(result).toEqual({ output: 'ok' });
     expect(result).not.toHaveProperty('truncated');
+  });
+
+  test('propagates MCP tool errors as isError on the tool result', async () => {
+    const client = {
+      async connect() {},
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return { content: [{ type: 'text', text: 'server error' }], isError: true };
+      },
+    } satisfies MCPClient;
+    const tool = createMcpTool(
+      'mcp__server__tool',
+      { name: 'tool', description: 'Tool', parameters: {} },
+      client,
+    );
+    const resolved = tool.resolveExecution({});
+    const execution = isPromiseLike(resolved) ? await resolved : resolved;
+    if (execution.isError === true) throw new Error('expected executable tool call');
+
+    const result = await execution.execute({
+      turnId: 1,
+      toolCallId: 'call_mcp',
+      signal: new AbortController().signal,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.output).toBe('server error');
+  });
+
+  test('rejects execution when the tool call throws in the client', async () => {
+    const client = {
+      async connect() {},
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        throw new Error('connection refused');
+      },
+    } satisfies MCPClient;
+    const tool = createMcpTool(
+      'mcp__server__tool',
+      { name: 'tool', description: 'Tool', parameters: {} },
+      client,
+    );
+    const resolved = tool.resolveExecution({});
+    const execution = isPromiseLike(resolved) ? await resolved : resolved;
+    if (execution.isError === true) throw new Error('expected executable tool call');
+
+    await expect(
+      execution.execute({
+        turnId: 1,
+        toolCallId: 'call_mcp',
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow('connection refused');
   });
 });

@@ -272,4 +272,41 @@ describe('Event.any', () => {
       'second-dispose',
     ]);
   });
+
+  it('Emitter.fire with no subscribers does not throw', () => {
+    const emitter = new Emitter<number>();
+    expect(() => emitter.fire(42)).not.toThrow();
+    emitter.dispose();
+  });
+
+  it('Emitter.fire with undefined and null values delivers them', () => {
+    const emitter = new Emitter<number | undefined | null>();
+    const seen: (number | undefined | null)[] = [];
+    emitter.event((v) => seen.push(v));
+    emitter.fire(undefined);
+    emitter.fire(null);
+    expect(seen).toEqual([undefined, null]);
+    emitter.dispose();
+  });
+
+  it('Event.any with a single source works like a passthrough', () => {
+    const a = new Emitter<string>();
+    const seen: string[] = [];
+    Event.any(a.event)((value) => seen.push(value));
+    a.fire('X');
+    expect(seen).toEqual(['X']);
+    a.dispose();
+  });
+
+  it('multiple dispose calls on the same emitter subscription are safe', () => {
+    const emitter = new Emitter<number>();
+    const seen: number[] = [];
+    const sub = emitter.event((v) => seen.push(v));
+    emitter.fire(1);
+    sub.dispose();
+    sub.dispose();
+    emitter.fire(2);
+    expect(seen).toEqual([1]);
+    emitter.dispose();
+  });
 });

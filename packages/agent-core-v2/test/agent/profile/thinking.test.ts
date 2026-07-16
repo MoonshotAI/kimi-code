@@ -171,4 +171,23 @@ describe('resolveThinkingEffort', () => {
       supportsThinkingEffort('ultra', { ...effortModel, providerType: 'openai' }),
     ).toBe(true);
   });
+
+  it('normalizes a whitespace-only effort to the model default', () => {
+    expect(resolveThinkingEffort(undefined, { effort: '   ' }, effortModel)).toBe('medium');
+  });
+
+  it('returns on for always-thinking models without supportEfforts', () => {
+    expect(
+      resolveThinkingEffort('off', undefined, {
+        capabilities: ['thinking', 'always_thinking'],
+        alwaysThinking: true,
+        protocol: 'kimi',
+      }),
+    ).toBe('on');
+  });
+
+  it('handles request with undefined model gracefully', () => {
+    expect(resolveThinkingEffort('off', undefined, undefined)).toBe('off');
+    expect(resolveThinkingEffort(undefined, undefined, undefined)).toBe('off');
+  });
 });

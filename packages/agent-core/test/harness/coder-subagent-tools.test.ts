@@ -251,6 +251,243 @@ async function createCoderSession(
 }
 
 describe('coder subagent aligned tools (real Session e2e)', () => {
+  it('rejects spawn with an empty prompt', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-coder-tools-empty-'));
+
+    const rpc: SDKSessionRPC = {
+      emitEvent: vi.fn(async () => {}),
+      requestApproval: vi.fn(async () => ({ decision: 'approved', selectedLabel: 'approve' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '', isError: true })),
+    } as unknown as SDKSessionRPC;
+
+    const session = new Session({
+      id: 'coder-tools-empty-prompt',
+      kaos: testKaos.withCwd(sessionDir),
+      homedir: sessionDir,
+      rpc,
+      skills: { explicitDirs: [join(sessionDir, 'no-such-skills-dir')] },
+      providerManager: new ProviderManager({
+        config: {
+          providers: { test: { type: MOCK_PROVIDER.type, apiKey: MOCK_PROVIDER.apiKey } },
+          models: {
+            [MOCK_PROVIDER.model]: { provider: 'test', model: MOCK_PROVIDER.model, maxContextSize: 1_000_000 },
+          },
+        },
+      }),
+    });
+    openSessions.push(session);
+
+    const mainProfile: ResolvedAgentProfile = {
+      name: 'agent',
+      systemPrompt: () => '<system-prompt>',
+      tools: [],
+    };
+    const { agent: mainAgent } = await session.createAgent(
+      { type: 'main', generate: async () => {
+        await new Promise<void>(delay(1_000_000));
+        throw new Error('should not be reached');
+      } },
+      { profile: mainProfile },
+    );
+    mainAgent.config.update({ modelAlias: MOCK_PROVIDER.model, thinkingEffort: 'off' });
+    mainAgent.permission.setMode('auto');
+
+    await expect(
+      mainAgent.subagentHost!.spawn({
+        profileName: 'coder',
+        parentToolCallId: 'e2e-empty-call',
+        prompt: '',
+        description: 'empty prompt',
+        runInBackground: false,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow();
+    await rm(sessionDir, { recursive: true, force: true }).catch(() => {});
+  }, 15_000);
+
+  it('rejects spawn when the signal is already aborted', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-coder-tools-aborted-'));
+
+    const rpc: SDKSessionRPC = {
+      emitEvent: vi.fn(async () => {}),
+      requestApproval: vi.fn(async () => ({ decision: 'approved', selectedLabel: 'approve' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '', isError: true })),
+    } as unknown as SDKSessionRPC;
+
+    const session = new Session({
+      id: 'coder-tools-aborted',
+      kaos: testKaos.withCwd(sessionDir),
+      homedir: sessionDir,
+      rpc,
+      skills: { explicitDirs: [join(sessionDir, 'no-such-skills-dir')] },
+      providerManager: new ProviderManager({
+        config: {
+          providers: { test: { type: MOCK_PROVIDER.type, apiKey: MOCK_PROVIDER.apiKey } },
+          models: {
+            [MOCK_PROVIDER.model]: { provider: 'test', model: MOCK_PROVIDER.model, maxContextSize: 1_000_000 },
+          },
+        },
+      }),
+    });
+    openSessions.push(session);
+
+    const mainProfile: ResolvedAgentProfile = {
+      name: 'agent',
+      systemPrompt: () => '<system-prompt>',
+      tools: [],
+    };
+    const { agent: mainAgent } = await session.createAgent(
+      { type: 'main', generate: async () => {
+        await new Promise<void>(delay(1_000_000));
+        throw new Error('should not be reached');
+      } },
+      { profile: mainProfile },
+    );
+    mainAgent.config.update({ modelAlias: MOCK_PROVIDER.model, thinkingEffort: 'off' });
+    mainAgent.permission.setMode('auto');
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      mainAgent.subagentHost!.spawn({
+        profileName: 'coder',
+        parentToolCallId: 'e2e-aborted-call',
+        prompt: 'Do something.',
+        description: 'pre-aborted',
+        runInBackground: false,
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/abort/i);
+    await rm(sessionDir, { recursive: true, force: true }).catch(() => {});
+  }, 15_000);
+
+  it('handles an extremely long prompt without crashing', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-coder-tools-long-'));
+
+    const rpc: SDKSessionRPC = {
+      emitEvent: vi.fn(async () => {}),
+      requestApproval: vi.fn(async () => ({ decision: 'approved', selectedLabel: 'approve' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '', isError: true })),
+    } as unknown as SDKSessionRPC;
+
+    const session = new Session({
+      id: 'coder-tools-long-prompt',
+      kaos: testKaos.withCwd(sessionDir),
+      homedir: sessionDir,
+      rpc,
+      skills: { explicitDirs: [join(sessionDir, 'no-such-skills-dir')] },
+      providerManager: new ProviderManager({
+        config: {
+          providers: { test: { type: MOCK_PROVIDER.type, apiKey: MOCK_PROVIDER.apiKey } },
+          models: {
+            [MOCK_PROVIDER.model]: { provider: 'test', model: MOCK_PROVIDER.model, maxContextSize: 1_000_000 },
+          },
+        },
+      }),
+    });
+    openSessions.push(session);
+
+    const scripted = createScriptedGenerate();
+    scripted.mockNextResponse({ type: 'text', text: 'Acknowledged the long prompt.' });
+
+    const mainProfile: ResolvedAgentProfile = {
+      name: 'agent',
+      systemPrompt: () => '<system-prompt>',
+      tools: [],
+    };
+    const { agent: mainAgent } = await session.createAgent(
+      { type: 'main', generate: scripted.generate },
+      { profile: mainProfile },
+    );
+    mainAgent.config.update({ modelAlias: MOCK_PROVIDER.model, thinkingEffort: 'off' });
+    mainAgent.permission.setMode('auto');
+
+    const longPrompt = 'Do the following: ' + 'x'.repeat(10_000);
+
+    const handle = await mainAgent.subagentHost!.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'e2e-long-call',
+      prompt: longPrompt,
+      description: 'long prompt',
+      runInBackground: false,
+      signal: new AbortController().signal,
+    });
+
+    const completion = await handle.completion;
+    expect(completion.result).toContain('Acknowledged the long prompt.');
+    await rm(sessionDir, { recursive: true, force: true }).catch(() => {});
+  }, 30_000);
+
+  it('serializes concurrent subagent spawns on the same host', async () => {
+    const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-coder-tools-concurrent-'));
+
+    const rpc: SDKSessionRPC = {
+      emitEvent: vi.fn(async () => {}),
+      requestApproval: vi.fn(async () => ({ decision: 'approved', selectedLabel: 'approve' })),
+      requestQuestion: vi.fn(async () => null),
+      toolCall: vi.fn(async () => ({ output: '', isError: true })),
+    } as unknown as SDKSessionRPC;
+
+    const session = new Session({
+      id: 'coder-tools-concurrent',
+      kaos: testKaos.withCwd(sessionDir),
+      homedir: sessionDir,
+      rpc,
+      skills: { explicitDirs: [join(sessionDir, 'no-such-skills-dir')] },
+      providerManager: new ProviderManager({
+        config: {
+          providers: { test: { type: MOCK_PROVIDER.type, apiKey: MOCK_PROVIDER.apiKey } },
+          models: {
+            [MOCK_PROVIDER.model]: { provider: 'test', model: MOCK_PROVIDER.model, maxContextSize: 1_000_000 },
+          },
+        },
+      }),
+    });
+    openSessions.push(session);
+
+    const scripted = createScriptedGenerate();
+    scripted.mockNextResponse({ type: 'text', text: 'FIRST-DONE' });
+    scripted.mockNextResponse({ type: 'text', text: 'SECOND-DONE' });
+
+    const mainProfile: ResolvedAgentProfile = {
+      name: 'agent',
+      systemPrompt: () => '<system-prompt>',
+      tools: [],
+    };
+    const { agent: mainAgent } = await session.createAgent(
+      { type: 'main', generate: scripted.generate },
+      { profile: mainProfile },
+    );
+    mainAgent.config.update({ modelAlias: MOCK_PROVIDER.model, thinkingEffort: 'off' });
+    mainAgent.permission.setMode('auto');
+
+    const first = mainAgent.subagentHost!.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'e2e-concurrent-1',
+      prompt: 'First concurrent task',
+      description: 'concurrent 1',
+      runInBackground: false,
+      signal: new AbortController().signal,
+    });
+
+    const second = mainAgent.subagentHost!.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'e2e-concurrent-2',
+      prompt: 'Second concurrent task',
+      description: 'concurrent 2',
+      runInBackground: false,
+      signal: new AbortController().signal,
+    });
+
+    const results = await Promise.allSettled([first, second]);
+    // At least one should succeed (the first one that acquires the lock);
+    // the other may be rejected if the host serializes access.
+    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+    await rm(sessionDir, { recursive: true, force: true }).catch(() => {});
+  }, 30_000);
   it('runs every newly aligned tool to success inside a real coder subagent', async () => {
     const sessionDir = await mkdtemp(join(tmpdir(), 'kimi-coder-tools-e2e-'));
     tempDirs.push(sessionDir);

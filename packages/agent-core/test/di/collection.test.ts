@@ -70,4 +70,39 @@ describe('ServiceCollection', () => {
     const names = seen.map(([n]) => n).sort();
     expect(names).toEqual(['clock', 'logger']);
   });
+
+  it('forEach on empty collection produces zero entries', () => {
+    const c = new ServiceCollection();
+    const seen: Array<[string, unknown]> = [];
+    c.forEach((id, value) => {
+      seen.push([id.toString(), value]);
+    });
+    expect(seen).toHaveLength(0);
+  });
+
+  it('set() with the same key multiple times updates and returns the latest previous', () => {
+    const c = new ServiceCollection();
+    const a = new ConsoleLogger();
+    const b = new ConsoleLogger();
+    const c2 = new ConsoleLogger();
+    expect(c.set(ILogger, a)).toBeUndefined();
+    expect(c.set(ILogger, b)).toBe(a);
+    expect(c.set(ILogger, c2)).toBe(b);
+    expect(c.get(ILogger)).toBe(c2);
+  });
+
+  it('set() overrides a constructor-provided entry', () => {
+    const original = new ConsoleLogger();
+    const replacement = new ConsoleLogger();
+    const c = new ServiceCollection([ILogger, original]);
+    expect(c.set(ILogger, replacement)).toBe(original);
+    expect(c.get(ILogger)).toBe(replacement);
+  });
+
+  it('has() returns false for an unknown id even after other registrations', () => {
+    const c = new ServiceCollection([ILogger, new ConsoleLogger()]);
+    expect(c.has(ILogger)).toBe(true);
+    // IClock was never registered.
+    expect(c.has(IClock)).toBe(false);
+  });
 });

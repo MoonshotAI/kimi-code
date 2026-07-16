@@ -517,5 +517,50 @@ describe('AskUserQuestionTool', () => {
 
       expect(settlements).toEqual([{ status: 'killed' }]);
     });
+
+    it('tracks individual question answer counts correctly', async () => {
+      const { tool, telemetryTrack } = makeTool({
+        request: async () => ({} as QuestionResult),
+      });
+
+      const result = await executeTool(tool, {
+        turnId: 0,
+        toolCallId: 'call_no_answers',
+        args: input(),
+        signal,
+      });
+
+      expect(result.isError).toBe(false);
+      expect(telemetryTrack).toHaveBeenCalledWith('question_answered', {
+        answered: 0,
+        trace_id: undefined,
+      });
+    });
+
+    it('rejects questions with labels exceeding 100 characters', async () => {
+      const longLabel = 'a'.repeat(200);
+      expect(
+        AskUserQuestionInputSchema.safeParse(
+          input({
+            options: [
+              { label: longLabel, description: 'Very long label' },
+              { label: 'B', description: 'Normal' },
+            ],
+          }),
+        ).success,
+      ).toBe(false);
+    });
+
+    it('rejects questions with more than 10 options', async () => {
+      const manyOptions = Array.from({ length: 15 }, (_, i) => ({
+        label: `Option ${String(i)}`,
+        description: `Description ${String(i)}`,
+      }));
+      expect(
+        AskUserQuestionInputSchema.safeParse(
+          input({ options: manyOptions }),
+        ).success,
+      ).toBe(false);
+    });
   });
 });

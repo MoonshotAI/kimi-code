@@ -69,4 +69,26 @@ describe('scoped test container', () => {
 
     host.dispose();
   });
+
+  it('multiple stubs can be injected via a single host', () => {
+    interface IOther {
+      value: number;
+    }
+    const IOther = createDecorator<IOther>('container-other');
+    const host = createScopedTestHost([
+      stubPair(IGreeter, { greet: () => 'multi' }),
+      stubPair(IOther, { value: 7 }),
+    ]);
+    const session = host.child(LifecycleScope.Session, 's1');
+    expect(session.accessor.get(IGreeter).greet()).toBe('multi');
+    expect(session.accessor.get(IOther).value).toBe(7);
+    host.dispose();
+  });
+
+  it('empty host with no stubs still creates a valid scope', () => {
+    const host = createScopedTestHost();
+    const session = host.child(LifecycleScope.Session, 's1');
+    expect(session.accessor).toBeDefined();
+    host.dispose();
+  });
 });

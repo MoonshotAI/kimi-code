@@ -277,5 +277,65 @@ describe('writeConfigFile never persists the env model', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('throws when KIMI_MODEL_NAME is an empty string', () => {
+    expectConfigInvalid(() => apply({ ...MIN, KIMI_MODEL_NAME: '' }));
+  });
+
+  it('rejects KIMI_MODEL_MAX_CONTEXT_SIZE with leading zeros that parse to a smaller number', () => {
+    expectConfigInvalid(() => apply({ ...MIN, KIMI_MODEL_MAX_CONTEXT_SIZE: '0128' }));
+  });
+
+  it('handles KIMI_MODEL_BASE_URL with trailing slash without doubling', () => {
+    const config = apply({ ...MIN, KIMI_MODEL_BASE_URL: 'https://api.example.com/v1/' });
+    expect(config.providers[ENV_MODEL_PROVIDER_KEY]?.baseUrl).toBe('https://api.example.com/v1/');
+  });
+
+  it('applies all env vars simultaneously without losing any value', () => {
+    const config = apply({
+      KIMI_MODEL_NAME: 'my-custom-model',
+      KIMI_MODEL_API_KEY: 'sk-all',
+      KIMI_MODEL_MAX_CONTEXT_SIZE: '65536',
+      KIMI_MODEL_PROVIDER_TYPE: 'openai',
+      KIMI_MODEL_BASE_URL: 'https://custom.example.com/v1',
+      KIMI_MODEL_CAPABILITIES: 'tool_use, thinking',
+      KIMI_MODEL_DISPLAY_NAME: 'My Custom Model',
+      KIMI_MODEL_MAX_OUTPUT_SIZE: '16384',
+      KIMI_MODEL_REASONING_KEY: 'thinking',
+      KIMI_MODEL_THINKING_EFFORT: 'high',
+      KIMI_MODEL_ADAPTIVE_THINKING: 'true',
+    });
+    expect(config.providers[ENV_MODEL_PROVIDER_KEY]?.type).toBe('openai');
+    expect(config.providers[ENV_MODEL_PROVIDER_KEY]?.baseUrl).toBe('https://custom.example.com/v1');
+    expect(config.models?.[ENV_MODEL_ALIAS_KEY]?.model).toBe('my-custom-model');
+    expect(config.models?.[ENV_MODEL_ALIAS_KEY]?.maxContextSize).toBe(65536);
+    expect(config.models?.[ENV_MODEL_ALIAS_KEY]?.maxOutputSize).toBe(16384);
+    expect(config.models?.[ENV_MODEL_ALIAS_KEY]?.reasoningKey).toBe('thinking');
+    expect(config.models?.[ENV_MODEL_ALIAS_KEY]?.capabilities).toEqual(['tool_use', 'thinking']);
+    expect(config.models?.[ENV_MODEL_ALIAS_KEY]?.displayName).toBe('My Custom Model');
+    expect(config.models?.[ENV_MODEL_ALIAS_KEY]?.adaptiveThinking).toBe(true);
+    expect(config.thinking?.effort).toBe('high');
+  });
+
+  it('stripEnvModelConfig leaves config unchanged when there are no env entries', () => {
+    const config = getDefaultConfig();
+    config.providers['kimi'] = { type: 'kimi', apiKey: 'sk-test' };
+    config.models = {
+      'my-model': { provider: 'kimi', model: 'm', maxContextSize: 1000 },
+    };
+    config.defaultModel = 'my-model';
+    const stripped = stripEnvModelConfig(config);
+    expect(stripped.providers['kimi']).toBeDefined();
+    expect(stripped.models?.['my-model']).toBeDefined();
+    expect(stripped.defaultModel).toBe('my-model');
+  });
+
+  it('stripEnvModelConfig handles config with only env entries', () => {
+    const runtime = applyEnvModelConfig(getDefaultConfig(), { ...MIN });
+    const stripped = stripEnvModelConfig(runtime);
+    expect(Object.keys(stripped.providers)).toHaveLength(0);
+    expect(stripped.models).toBeUndefined();
+    expect(stripped.defaultModel).toBeUndefined();
+  });
 });
 

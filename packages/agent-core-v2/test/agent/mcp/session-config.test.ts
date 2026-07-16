@@ -55,4 +55,20 @@ describe('mergeCallerMcpServers', () => {
       },
     });
   });
+
+  it('handles caller servers with null/undefined config values', () => {
+    const base: SessionMcpConfig = { servers: { fs: stdio('fs') } };
+    const callerServers = { fs: null as unknown as McpServerConfig, extra: undefined as unknown as McpServerConfig };
+    const result = mergeCallerMcpServers(base, callerServers);
+    expect(result?.servers['fs']).toBeDefined();
+    expect(result?.servers['extra']).toBeDefined();
+  });
+
+  it('preserves caller servers with duplicate names when caller wins', () => {
+    const base: SessionMcpConfig = { servers: { dup: stdio('base-dup') } };
+    const callerServers = { dup: http('https://caller-dup.example.com') };
+    const result = mergeCallerMcpServers(base, callerServers);
+    expect(result?.servers['dup']).toEqual(http('https://caller-dup.example.com'));
+    expect(Object.keys(result?.servers ?? {})).toHaveLength(1);
+  });
 });

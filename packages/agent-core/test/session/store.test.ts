@@ -4,7 +4,7 @@
  * Wiring: real temporary session storage; no stubbed collaborators.
  * Run: pnpm exec vitest run test/session/store.test.ts
  */
-import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, access, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -271,6 +271,48 @@ describe('SessionStore', () => {
       await appendSessionIndexEntry(homeDir, entry);
 
       expect((await readSessionIndex(homeDir, store.sessionsDir)).get(sessionId)).toEqual(entry);
+    });
+  });
+
+  describe('delete', () => {
+    it('removes the session directory and adds a deletion record to the index', async () => {
+      const workDir = await trackWorkDir('delete-me');
+      const sessionId = 'session_delete_me';
+      await store.create({ id: sessionId, workDir });
+
+      expect((await store.list({})).some((s) => s.id === sessionId)).toBe(true);
+
+      const beforeDir = join(homeDir, 'sessions', encodeWorkDirKey(workDir), sessionId);
+      const dirExistsBefore = await access(beforeDir).then(() => true, () => false);
+      expect(dirExistsBefore).toBe(true);
+
+      await store.delete(sessionId);
+
+      const afterList = await store.list({});
+      expect(afterList.some((s) => s.id === sessionId)).toBe(false);
+      const dirExistsAfter = await access(beforeDir).then(() => true, () => false);
+      expect(dirExistsAfter).toBe(false);
+    });
+
+    it('returns false when deleting a non-existent session', async () => {
+      const result = await store.delete('session_nonexistent');
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('list edge cases', () => {
+    it('returns an empty list when there are no sessions', async () => {
+      const sessions = await store.list({});
+      expect(sessions).toEqual([]);
+    });
+
+    it('filters by workDir correctly with special characters', async () => {
+      const workDir = await trackWorkDir('special');
+      await store.create({ id: 'session_special', workDir: join(workDir, '项目 (1)') });
+
+      const sessions = await store.list({ workDir: join(workDir, '项目 (1)') });
+      expect(sessions).toHaveLength(1);
+      expect(sessions[0]?.id).toBe('session_special');
     });
   });
 });

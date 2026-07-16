@@ -960,3 +960,80 @@ describe('applyPrintModeConfigDefaults', () => {
     expect(config.subagent?.timeoutMs).toBe(5000);
   });
 });
+
+describe('config edge cases', () => {
+  it('handles providers with special characters in names', () => {
+    const config = parseConfigString(`
+[providers."my-provider/with-slashes"]
+type = "openai"
+base_url = "https://api.example.com/v1"
+api_key = "sk-test"
+
+[providers."provider.with.dots"]
+type = "openai"
+base_url = "https://dots.example.com/v1"
+api_key = "sk-test"
+
+[providers."provider-with-unicode-\\u00e9"]
+type = "openai"
+base_url = "https://unicode.example.com/v1"
+api_key = "sk-test"
+`);
+    expect(config.providers['my-provider/with-slashes']).toBeDefined();
+    expect(config.providers['provider.with.dots']).toBeDefined();
+    expect(config.providers['provider-with-unicode-\u00e9']).toBeDefined();
+  });
+
+  it('rejects a provider with missing type field', () => {
+    expectKimiErrorCode(
+      () =>
+        parseConfigString(
+          `[providers.note]\napi_key = "sk-missing-type"\n`,
+          'partial.toml',
+        ),
+      ErrorCodes.CONFIG_INVALID,
+    );
+  });
+
+  it('accepts a model with maxContextSize of 1 (minimum boundary)', () => {
+    const config = parseConfigString(`
+[providers.tiny]
+type = "openai"
+api_key = "sk-tiny"
+
+[models.tiny]
+provider = "tiny"
+model = "gpt-tiny"
+max_context_size = 1
+`);
+    expect(config.models?.['tiny']?.maxContextSize).toBe(1);
+  });
+
+  it('loads empty additionalDirs config as empty array when local.toml has empty array', async () => {
+    const dir = makeTempDir();
+    const configPath = join(dir, 'config.toml');
+    await writeFile(configPath, `extra_skill_dirs = []\n`, 'utf-8');
+    const config = readConfigFile(configPath);
+    expect(config.extraSkillDirs).toEqual([]);
+  });
+
+  it('supports unicode characters in defaultModel', () => {
+    const config = parseConfigString(
+      'default_model = "kimi-code/kimi-\u592a\u5ea6"',
+    );
+    expect(config.defaultModel).toBe('kimi-code/kimi-\u592a\u5ea6');
+  });
+
+  it('preserves known services when an unknown service section is present', () => {
+    const config = parseConfigString(`
+[services.moonshot_search]
+base_url = "https://search.example.com"
+api_key = "sk-search"
+
+[services.unknown_service]
+unknown_key = "value"
+`);
+    expect(config.services?.moonshotSearch).toBeDefined();
+    expect(config.services?.moonshotSearch?.baseUrl).toBe('https://search.example.com');
+  });
+});

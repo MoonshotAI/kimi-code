@@ -86,4 +86,29 @@ describe('FileStorageService — error translation', () => {
       details: { op: 'write', errno: expect.any(String) },
     });
   });
+
+  it('append on a non-existent key creates it', async () => {
+    const svc = new FileStorageService(dir);
+    await svc.append('scope', 'created-by-append.json', encoder.encode('hello'));
+    expect(new TextDecoder().decode(await svc.read('scope', 'created-by-append.json'))).toBe('hello');
+  });
+
+  it('read returns undefined for a missing scope', async () => {
+    const svc = new FileStorageService(dir);
+    expect(await svc.read('no-such-scope', 'k.json')).toBeUndefined();
+  });
+
+  it('delete on a non-existent key is a no-op', async () => {
+    const svc = new FileStorageService(dir);
+    await expect(svc.delete('scope', 'never-existed.json')).resolves.toBeUndefined();
+  });
+
+  it('flush and close are idempotent', async () => {
+    const svc = new FileStorageService(dir);
+    await svc.write('scope', 'k.json', encoder.encode('{}'));
+    await expect(svc.flush()).resolves.toBeUndefined();
+    await expect(svc.flush()).resolves.toBeUndefined();
+    await expect(svc.close()).resolves.toBeUndefined();
+    await expect(svc.close()).resolves.toBeUndefined();
+  });
 });

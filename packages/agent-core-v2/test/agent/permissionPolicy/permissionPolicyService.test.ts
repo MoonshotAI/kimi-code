@@ -554,6 +554,20 @@ describe('AgentPermissionPolicyService git cwd write approval', () => {
       result: { kind: 'ask' },
     });
   });
+
+  it('does not apply git-cwd approval when the workspace is not inside a git repo', async () => {
+    const nonGitDir = await mkdtemp(join(tmpdir(), 'kimi-non-git-'));
+    cleanupDirs.push(nonGitDir);
+    workspace.setWorkDir(nonGitDir);
+    await expect(evaluate({
+      toolName: 'Write',
+      args: { path: 'src/a.ts', content: 'x' },
+      accesses: ToolAccesses.writeFile(join(nonGitDir, 'src/a.ts')),
+    })).resolves.toMatchObject({
+      policyName: 'fallback-ask',
+      result: { kind: 'ask' },
+    });
+  });
 });
 
 describe('AgentSwarm permission policies', () => {

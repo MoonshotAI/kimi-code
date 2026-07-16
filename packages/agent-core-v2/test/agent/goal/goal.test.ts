@@ -345,6 +345,23 @@ describe('AgentGoalService', () => {
       });
     });
 
+    it('rejects an objective consisting only of special characters and newlines', async () => {
+      await expect(goals.createGoal({ objective: '\n\t\r\n  \n' })).rejects.toMatchObject({
+        code: ErrorCodes.GOAL_OBJECTIVE_EMPTY,
+      });
+    });
+
+    it('accepts an objective at the exact 4000-character boundary', async () => {
+      const snapshot = await goals.createGoal({ objective: 'a'.repeat(4000) });
+      expect(snapshot.objective).toBe('a'.repeat(4000));
+      expect(snapshot.status).toBe('active');
+    });
+
+    it('accepts an objective with unicode and emoji characters', async () => {
+      const snapshot = await goals.createGoal({ objective: '翻译中文 → English 🎯 fix bug #42' });
+      expect(snapshot.objective).toBe('翻译中文 → English 🎯 fix bug #42');
+    });
+
     it('rejects duplicate active, paused, and blocked goals without replace', async () => {
       await goals.createGoal({ objective: 'first' });
       await expect(goals.createGoal({ objective: 'second' })).rejects.toMatchObject({
@@ -380,6 +397,11 @@ describe('AgentGoalService', () => {
       const removed = await goals.cancelGoal({});
       expect(removed.status).toBe('active');
       expect(goals.getGoal().goal).toBeNull();
+    });
+
+    it('accepts an objective with unicode and emoji characters', async () => {
+      const snapshot = await goals.createGoal({ objective: '翻译中文 → English 🎯 fix bug #42' });
+      expect(snapshot.objective).toBe('翻译中文 → English 🎯 fix bug #42');
     });
   });
 
@@ -496,6 +518,20 @@ describe('AgentGoalService', () => {
       });
       expect(goals.getGoal().goal?.status).toBe('active');
     });
+
+    it('cancelling a non-existent goal emits the expected error code', async () => {
+      await expect(goals.cancelGoal()).rejects.toMatchObject({ code: ErrorCodes.GOAL_NOT_FOUND });
+    });
+
+    it('pausing a non-existent goal throws GOAL_NOT_FOUND', async () => {
+      await expect(goals.pauseGoal()).rejects.toMatchObject({ code: ErrorCodes.GOAL_NOT_FOUND });
+    });
+
+    it('resuming an active goal that was never paused returns active with no error', async () => {
+      await goals.createGoal({ objective: 'work' });
+      const resumed = await goals.resumeGoal();
+      expect(resumed.status).toBe('active');
+    });
   });
 
   describe('AgentGoalService accounting and budgets', () => {
@@ -543,6 +579,16 @@ describe('AgentGoalService', () => {
           overBudget: true,
         },
       });
+    });
+
+    it('does not block when token usage is under the budget', async () => {
+      await goals.createGoal({ objective: 'work' });
+      await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 100 } }, 'model');
+
+      const snapshot = await goals.recordTokenUsage(50);
+
+      expect(snapshot.status).toBe('active');
+      expect(snapshot.budget.overBudget).toBe(false);
     });
 
     it('blocks when a newly set budget is already exhausted', async () => {

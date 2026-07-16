@@ -201,4 +201,58 @@ describe('workspace local config', () => {
       normalizeAdditionalDirs(['shared', './shared', 'nested//dir', 'nested/dir/../final']),
     ).toEqual(['shared', 'nested/dir', 'nested/final']);
   });
+
+  it('returns empty arrays when project has no .git directory', async () => {
+    // A project root without .git should still resolve gracefully.
+    const root = await mkdtemp(join(tmpdir(), 'kimi-no-git-'));
+    tempDirs.push(root);
+    await mkdir(join(root, 'subdir'), { recursive: true });
+    const result = await loadWorkspaceLocalConfig(testKaos, join(root, 'subdir'));
+    expect(result.projectRoot).toBe(root);
+    expect(result.additionalDirs).toEqual([]);
+  });
+
+  it('handles an empty additional_dir array in the config file', async () => {
+    const root = await makeProject();
+    await mkdir(join(root, '.kimi-code'), { recursive: true });
+    await writeFile(
+      join(root, '.kimi-code', 'local.toml'),
+      '[workspace]\nadditional_dir = []\n',
+      'utf-8',
+    );
+    const result = await readWorkspaceAdditionalDirs(testKaos, join(root, 'packages', 'app'));
+    expect(result.additionalDirs).toEqual([]);
+  });
+
+  it('normalizeAdditionalDirs handles empty input', () => {
+    expect(normalizeAdditionalDirs([])).toEqual([]);
+  });
+
+  it('normalizeAdditionalDirs removes trailing slashes', () => {
+    expect(normalizeAdditionalDirs(['shared/', 'other//'])).toEqual(['shared', 'other']);
+  });
+
+  it('appends a directory when no local.toml exists yet', async () => {
+    const root = await makeProject();
+    const sharedDir = join(root, 'shared');
+    await mkdir(sharedDir, { recursive: true });
+
+    const result = await appendWorkspaceAdditionalDir(testKaos, root, 'shared', []);
+    expect(result.additionalDirs).toEqual([sharedDir]);
+    // Config file should have been created.
+    const configPath = join(root, '.kimi-code', 'local.toml');
+    const content = await readFile(configPath, 'utf-8');
+    expect(content).toContain('additional_dir');
+  });
+
+  it('rejects absolute paths that point outside the workspace', async () => {
+    const root = await makeProject();
+    const outsideDir = await mkdtemp(join(tmpdir(), 'outside-'));
+    tempDirs.push(outsideDir);
+
+    await expectConfigInvalid(
+      appendWorkspaceAdditionalDir(testKaos, root, outsideDir, []),
+      'workspace.additional_dir must exist and be a directory',
+    );
+  });
 });

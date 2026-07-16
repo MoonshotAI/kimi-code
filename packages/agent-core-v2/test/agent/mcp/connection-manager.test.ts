@@ -635,4 +635,30 @@ describe('McpConnectionManager', () => {
       await closeServer(server);
     }
   }, 15000);
+
+  it('returns undefined for get() of a non-existent server', () => {
+    const cm = new McpConnectionManager();
+    expect(cm.get('nonexistent')).toBeUndefined();
+  });
+
+  it('returns undefined for resolved() of a non-existent server', () => {
+    const cm = new McpConnectionManager();
+    expect(cm.resolved('nonexistent')).toBeUndefined();
+  });
+
+  it('handles an empty config in connectAll without error', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      await cm.connectAll({});
+      expect(cm.list()).toEqual([]);
+    } finally {
+      await cm.shutdown();
+    }
+  });
+
+  it('shutdown is idempotent when called before any connect', async () => {
+    const cm = new McpConnectionManager();
+    await cm.shutdown();
+    await cm.shutdown();
+  });
 });

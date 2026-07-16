@@ -724,6 +724,40 @@ describe('McpConnectionManager', () => {
       await rm(storeDir, { recursive: true, force: true });
     }
   }, 15000);
+
+  it('list() returns empty array on a fresh manager', () => {
+    const cm = new McpConnectionManager();
+    expect(cm.list()).toEqual([]);
+  });
+
+  it('get() returns undefined for unknown server names', () => {
+    const cm = new McpConnectionManager();
+    expect(cm.get('nope')).toBeUndefined();
+  });
+
+  it('reconnect on a connected server is idempotent', async () => {
+    const cm = new McpConnectionManager();
+    try {
+      await cm.connectAll({ alpha: stdioConfig() });
+      expect(cm.get('alpha')?.status).toBe('connected');
+      // Reconnecting an already-connected server should succeed.
+      await cm.reconnect('alpha');
+      expect(cm.get('alpha')?.status).toBe('connected');
+    } finally {
+      await cm.shutdown();
+    }
+  }, 20000);
+
+  it('shutdown clears entries and subsequent operations are safe', async () => {
+    const cm = new McpConnectionManager();
+    await cm.connectAll({ alpha: stdioConfig() });
+    expect(cm.list().length).toBe(1);
+    await cm.shutdown();
+    expect(cm.list().length).toBe(0);
+    // All methods must be safe after shutdown.
+    expect(cm.get('alpha')).toBeUndefined();
+    expect(cm.list()).toEqual([]);
+  }, 15000);
 });
 
 describe('Session MCP startup', () => {

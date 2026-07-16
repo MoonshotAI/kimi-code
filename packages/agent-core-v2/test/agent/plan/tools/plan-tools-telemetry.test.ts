@@ -419,4 +419,38 @@ describe('ExitPlanModeTool telemetry', () => {
       outcome: 'auto_approved',
     });
   });
+
+  it('tracks yolo mode as auto_approved', async () => {
+    const { telemetry, track2 } = recordingTelemetry();
+
+    const result = await executeTool(new ExitPlanModeTool(planService(), permissionMode('yolo'), telemetry), {
+      turnId: 7,
+      toolCallId: 'call_exit_plan_yolo',
+      args: {},
+      signal: new AbortController().signal,
+    });
+
+    expect(result.isError).toBe(false);
+    expect(track2).toHaveBeenCalledWith('plan_submitted', { has_options: false });
+    expect(track2).toHaveBeenCalledWith('plan_resolved', { outcome: 'auto_approved' });
+  });
+
+  it('returns an error when plan status returns null even though plan mode is expected active', async () => {
+    const { telemetry } = recordingTelemetry();
+
+    const result = await executeTool(
+      new ExitPlanModeTool(planService({ status: null }), permissionMode(), telemetry),
+      {
+        turnId: 7,
+        toolCallId: 'call_exit_plan_null',
+        args: {},
+        signal: new AbortController().signal,
+      },
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'ExitPlanMode can only be called while plan mode is active. Use EnterPlanMode (or /plan) first.',
+    });
+  });
 });

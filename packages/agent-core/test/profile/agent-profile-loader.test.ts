@@ -152,6 +152,75 @@ tools:
       }),
     ).toThrow(/Embedded agent profile source missing: profile\/default\/missing\.md/);
   });
+
+  it('reports multiple missing embedded sources', () => {
+    expect(() =>
+      loadAgentProfilesFromSources(
+        ['profile/default/a.yaml', 'profile/default/b.yaml'],
+        {
+          'profile/default/a.yaml': 'name: a\nsystemPromptPath: ./a-missing.md\n',
+          'profile/default/b.yaml': 'name: b\nsystemPromptPath: ./b-missing.md\n',
+        },
+      ),
+    ).toThrow(/Embedded agent profile source missing/);
+  });
+
+  it('loads an empty array of profiles without error', async () => {
+    const profiles = await loadAgentProfilesFromDir([]);
+    expect(profiles).toEqual({});
+  });
+
+  it('throws on invalid YAML syntax', async () => {
+    const invalidPath = join(workDir, 'bad.yaml');
+    await writeFile(invalidPath, 'name: agent\n[[[invalid', 'utf-8');
+
+    await expect(loadAgentProfilesFromDir([invalidPath])).rejects.toThrow();
+  });
+
+  it('loads a profile with no tools and no system prompt path', async () => {
+    const minimalPath = join(workDir, 'minimal.yaml');
+    await writeFile(minimalPath, 'name: minimal\ndescription: minimal agent\n', 'utf-8');
+
+    const profiles = await loadAgentProfilesFromDir([minimalPath]);
+    expect(profiles['minimal']?.description).toBe('minimal agent');
+    expect(profiles['minimal']?.tools).toEqual([]);
+  });
+
+  it('handles special characters in profile names and paths', async () => {
+    const specialPath = join(workDir, 'special-名称.yaml');
+    await writeFile(
+      specialPath,
+      'name: spécial-agent\ndescription: Agent with unicode name\n',
+      'utf-8',
+    );
+
+    const profiles = await loadAgentProfilesFromDir([specialPath]);
+    expect(profiles['spécial-agent']?.description).toBe('Agent with unicode name');
+  });
+
+  it('resolves a profile with empty promptVars', async () => {
+    const systemPath = await write('empty-vars.md', 'no vars here');
+    await write(
+      'empty-vars.yaml',
+      `name: empty-vars
+systemPromptPath: ./${fileName(systemPath)}
+promptVars: {}
+`,
+    );
+
+    const profiles = await loadAgentProfilesFromDir([join(workDir, 'empty-vars.yaml')]);
+    const prompt = profiles['empty-vars']?.systemPrompt(promptContext);
+    expect(prompt).toContain('no vars here');
+  });
+
+  it('rejects a profile with an empty name', () => {
+    expect(() => resolveAgentProfiles([{ name: '' }])).toThrow();
+  });
+
+  it('throws when resolveAgentProfiles receives an empty array', () => {
+    const profiles = resolveAgentProfiles([]);
+    expect(profiles).toEqual({});
+  });
 });
 
 describe('default agent profiles', () => {

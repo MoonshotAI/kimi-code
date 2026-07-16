@@ -301,4 +301,69 @@ describe('singleton registry composition', () => {
       ix.dispose();
     }
   });
+
+  it('multiple dispose calls after ready are safe', async () => {
+    const { eventService, approvalService, questionService, logService } = makePeers();
+    const core = new CoreProcessService(
+      {},
+      makeEnv(tmpHome),
+      eventService,
+      approvalService,
+      questionService,
+      logService,
+    );
+    await core.ready();
+    core.dispose();
+    core.dispose();
+    core.dispose();
+    // Should not throw
+    expect(true).toBe(true);
+  });
+
+  it('BridgeClientAPI handles empty event gracefully', () => {
+    const { eventService, approvalService, questionService, logService } = makePeers();
+    const api = new BridgeClientAPI({ eventService, approvalService, questionService, logService });
+    const emptyEvent = {} as Event;
+    api.emitEvent(emptyEvent);
+    expect(eventService.events).toEqual([emptyEvent]);
+  });
+
+  it('BridgeClientAPI toolCall with empty args returns error', async () => {
+    const { eventService, approvalService, questionService, logService } = makePeers();
+    const api = new BridgeClientAPI({ eventService, approvalService, questionService, logService });
+
+    const toolResp = await api.toolCall({
+      toolCallId: 'tc-empty',
+      args: {},
+      sessionId: 'sess-1',
+      agentId: 'main',
+    });
+    expect(toolResp.isError).toBe(true);
+  });
+
+  it('CoreProcessService rpc call before ready() is queued and resolves', async () => {
+    const { eventService, approvalService, questionService, logService } = makePeers();
+    const core = new CoreProcessService(
+      {},
+      makeEnv(tmpHome),
+      eventService,
+      approvalService,
+      questionService,
+      logService,
+    );
+    try {
+      const rpcPromise = core.rpc.getCoreInfo({});
+      await core.ready();
+      const info = await rpcPromise;
+      expect(info).toHaveProperty('version');
+    } finally {
+      core.dispose();
+    }
+  });
+
+  it('_defaultOAuthTokenResolver returns undefined for unknown provider', () => {
+    const resolver = CoreProcessService._defaultOAuthTokenResolver(tmpHome, join(tmpHome, 'config.toml'));
+    const tokenProvider = resolver('nonexistent-provider');
+    expect(tokenProvider).toBeUndefined();
+  });
 });

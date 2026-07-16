@@ -29,6 +29,22 @@ describe('sanitizeStoreKey', () => {
   it('rewrites a leading dot into a safe underscore-prefixed name', () => {
     expect(sanitizeStoreKey('.dot')).toBe('_dot');
   });
+
+  it('handles a very long name without throwing', () => {
+    const long = 'x'.repeat(1000);
+    const result = sanitizeStoreKey(long);
+    expect(result.length).toBe(1000);
+    expect(result).toBe(long);
+  });
+
+  it('handles Unicode characters in store keys', () => {
+    expect(sanitizeStoreKey('服务器/节点')).toBe('节点');
+    expect(sanitizeStoreKey('日本語!test')).toBe('日本語_test');
+  });
+
+  it('rejects names that are entirely slashes', () => {
+    expect(() => sanitizeStoreKey('///')).toThrow(/Invalid/);
+  });
 });
 
 describe('createMcpOAuthStore', () => {
@@ -69,6 +85,33 @@ describe('createMcpOAuthStore', () => {
     } as unknown as IAtomicDocumentStore);
 
     await expect(store.read('bad.json')).resolves.toBeUndefined();
+  });
+
+  it('returns undefined when the underlying document store read returns undefined', async () => {
+    const store = createMcpOAuthStore({
+      get: async () => undefined,
+      set: async () => {},
+      delete: async () => {},
+    } as unknown as IAtomicDocumentStore);
+
+    await expect(store.read('missing.json')).resolves.toBeUndefined();
+  });
+
+  it('write and remove operations are idempotent', async () => {
+    const calls: Array<{ op: string }> = [];
+    const docs: Pick<IAtomicDocumentStore, 'get' | 'set' | 'delete'> = {
+      async get() { return undefined; },
+      async set() { calls.push({ op: 'set' }); },
+      async delete() { calls.push({ op: 'delete' }); },
+    };
+    const store = createMcpOAuthStore(docs as unknown as IAtomicDocumentStore);
+
+    await store.write('key.json', { data: 1 });
+    await store.write('key.json', { data: 2 });
+    await store.remove('key.json');
+    await store.remove('key.json');
+
+    expect(calls).toHaveLength(4);
   });
 });
 

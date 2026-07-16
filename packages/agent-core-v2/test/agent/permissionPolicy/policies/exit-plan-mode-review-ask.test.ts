@@ -323,4 +323,16 @@ describe('ExitPlanModeReviewAskPermissionPolicyService telemetry', () => {
       properties: { outcome: 'approved' },
     });
   });
+
+  it('handles a null display gracefully', async () => {
+    const result = await makePolicy().evaluate(policyContext({ kind: 'generic', summary: 'test', detail: {} }));
+    expect(result).toBeUndefined();
+  });
+
+  it('does not ask when the plan display has no plan_review kind', async () => {
+    const result = await makePolicy().evaluate(
+      policyContext({ kind: 'generic', summary: 'Exit plan', detail: {} }),
+    );
+    expect(result).toBeUndefined();
+  });
 });

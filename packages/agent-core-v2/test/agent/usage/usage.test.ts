@@ -240,4 +240,48 @@ describe('AgentUsageService (wire-backed)', () => {
       byModel: { 'model-a': a1 },
     });
   });
+
+  it('handles usage records with all-zero values', () => {
+    const zero = { inputOther: 0, output: 0, inputCacheRead: 0, inputCacheCreation: 0 };
+    svc.record('model-zero', zero);
+
+    expect(svc.status()).toEqual({
+      byModel: { 'model-zero': zero },
+      total: zero,
+      currentTurn: undefined,
+    });
+  });
+
+  it('accumulates correctly when the same model is recorded in multiple turns', () => {
+    svc.record('model-a', a1, { type: 'turn', turnId: 1 });
+    svc.record('model-a', a2, { type: 'turn', turnId: 2 });
+
+    expect(svc.status()).toMatchObject({
+      byModel: { 'model-a': { inputOther: 11, output: 22, inputCacheRead: 33, inputCacheCreation: 44 } },
+      total: { inputOther: 11, output: 22, inputCacheRead: 33, inputCacheCreation: 44 },
+    });
+  });
+
+  it('replay with an empty record list produces an empty usage model', async () => {
+    const { fresh, freshLog } = createFreshWire('usage-replay-empty');
+
+    await restoreTestAgentWire(
+      fresh,
+      freshLog,
+      testWireScope(SCOPE, 'usage-replay-empty'),
+      [],
+    );
+
+    expect(fresh.getModel(UsageModel)).toEqual({
+      byModel: {},
+    });
+  });
+
+  it('dispatch persists only flat records without a payload key', async () => {
+    svc.record('model-a', a1);
+
+    const records = await readRecords();
+    expect(records).toHaveLength(1);
+    expect('payload' in records[0]!).toBe(false);
+  });
 });

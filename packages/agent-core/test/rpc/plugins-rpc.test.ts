@@ -206,6 +206,73 @@ oauth = { storage = "file", key = "oauth/kimi-code-env-1234", oauth_host = "http
       expect.objectContaining({ id: 'demo' }),
     );
   });
+
+  it('lists empty plugins when none are installed', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
+    const core = new KimiCore(async () => ({}) as never, { homeDir: home });
+    await new Promise((r) => setImmediate(r));
+
+    const list = await core.listPlugins({});
+    expect(list).toEqual([]);
+  });
+
+  it('rejects removePlugin with a non-existent id', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
+    const core = new KimiCore(async () => ({}) as never, { homeDir: home });
+    await new Promise((r) => setImmediate(r));
+
+    await expect(core.removePlugin({ id: 'nonexistent' })).rejects.toThrow();
+  });
+
+  it('rejects setPluginEnabled with a non-existent id', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
+    const core = new KimiCore(async () => ({}) as never, { homeDir: home });
+    await new Promise((r) => setImmediate(r));
+
+    await expect(core.setPluginEnabled({ id: 'nonexistent', enabled: false })).rejects.toThrow();
+  });
+
+  it('rejects getPluginInfo with a non-existent id', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
+    const core = new KimiCore(async () => ({}) as never, { homeDir: home });
+    await new Promise((r) => setImmediate(r));
+
+    await expect(core.getPluginInfo({ id: 'nonexistent' })).rejects.toThrow();
+  });
+
+  it('installPlugin rejects when the source directory has no kimi.plugin.json', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
+    const emptyDir = await mkdtemp(path.join(tmpdir(), 'empty-plugin-'));
+    const core = new KimiCore(async () => ({}) as never, { homeDir: home });
+    await new Promise((r) => setImmediate(r));
+
+    await expect(core.installPlugin({ source: emptyDir })).rejects.toThrow();
+  });
+
+  it('installPlugin rejects invalid plugin JSON', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
+    const pluginRoot = await mkdtemp(path.join(tmpdir(), 'bad-plugin-'));
+    await writeFile(path.join(pluginRoot, 'kimi.plugin.json'), '{not json}', 'utf8');
+    const core = new KimiCore(async () => ({}) as never, { homeDir: home });
+    await new Promise((r) => setImmediate(r));
+
+    await expect(core.installPlugin({ source: pluginRoot })).rejects.toThrow();
+  });
+
+  it('handles special characters in plugin names', async () => {
+    const home = await mkdtemp(path.join(tmpdir(), 'kimi-home-'));
+    const pluginRoot = await mkdtemp(path.join(tmpdir(), 'plugin-'));
+    await writeFile(
+      path.join(pluginRoot, 'kimi.plugin.json'),
+      JSON.stringify({ name: 'spécial-plügin', version: '1.0.0' }),
+      'utf8',
+    );
+    const core = new KimiCore(async () => ({}) as never, { homeDir: home });
+    await new Promise((r) => setImmediate(r));
+
+    const installed = await core.installPlugin({ source: pluginRoot });
+    expect(installed.name).toBe('spécial-plügin');
+  });
 });
 
 function restoreEnv(name: string, value: string | undefined): void {

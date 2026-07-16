@@ -64,6 +64,68 @@ describe('isSensitiveFile', () => {
       expect(isSensitiveFile(path), path).toBe(false);
     }
   });
+
+  it('matches SSH private key patterns in the .ssh directory', () => {
+    for (const path of [
+      '/home/user/.ssh/id_rsa',
+      '/home/user/.ssh/id_ed25519',
+      '/home/user/.ssh/id_ecdsa',
+      '/home/user/.ssh/id_ed25519_sk',
+      '/home/user/.ssh/id_ecdsa_sk',
+      '.ssh/id_rsa',
+      '/home/user/.ssh/id_rsa-backup',
+      '.ssh/id_rsa.old',
+    ]) {
+      expect(isSensitiveFile(path), path).toBe(true);
+    }
+  });
+
+  it('does not flag SSH public key files', () => {
+    for (const path of [
+      '/home/user/.ssh/id_rsa.pub',
+      '/home/user/.ssh/id_ed25519.pub',
+      '/home/user/.ssh/authorized_keys',
+      '/home/user/.ssh/known_hosts',
+    ]) {
+      expect(isSensitiveFile(path), path).toBe(false);
+    }
+  });
+
+  it('flags paths with mixed-case sensitive patterns on posix systems', () => {
+    expect(isSensitiveFile('/home/user/.SSH/ID_RSA')).toBe(true);
+    expect(isSensitiveFile('/home/user/.Ssh/Id_Ed25519')).toBe(true);
+    expect(isSensitiveFile('/app/.Env.Production')).toBe(true);
+  });
+
+  it('rejects extremely long paths gracefully', () => {
+    const longBase = '/'.repeat(10_000) + '.env';
+    expect(isSensitiveFile(longBase)).toBe(true);
+    const longSafe = '/'.repeat(10_000) + 'README.md';
+    expect(isSensitiveFile(longSafe)).toBe(false);
+  });
+
+  it('handles paths with special characters like spaces and parentheses', () => {
+    expect(isSensitiveFile('/home/user/my project/.env')).toBe(true);
+    expect(isSensitiveFile('/home/user/project (copy)/config.yml')).toBe(false);
+    expect(isSensitiveFile('/home/user/.aws/credentials (backup)')).toBe(true);
+  });
+
+  it('flags .git-credentials in any directory', () => {
+    expect(isSensitiveFile('/home/user/.git-credentials')).toBe(true);
+    expect(isSensitiveFile('.git-credentials')).toBe(true);
+  });
+
+  it('does not flag .gitignore or .gitattributes', () => {
+    expect(isSensitiveFile('/repo/.gitignore')).toBe(false);
+    expect(isSensitiveFile('/repo/.gitattributes')).toBe(false);
+    expect(isSensitiveFile('.gitignore')).toBe(false);
+  });
+
+  it('flags .npmrc and .yarnrc files', () => {
+    expect(isSensitiveFile('/home/user/.npmrc')).toBe(true);
+    expect(isSensitiveFile('/home/user/.yarnrc')).toBe(true);
+    expect(isSensitiveFile('.npmrc')).toBe(true);
+  });
 });
 
 describe('extendWorkspaceWithSkillRoots', () => {
@@ -100,5 +162,36 @@ describe('extendWorkspaceWithSkillRoots', () => {
         'win32',
       ).additionalDirs,
     ).toEqual([]);
+  });
+
+  it('handles a large number of skill roots without performance issues', () => {
+    const manyRoots = Array.from({ length: 100 }, (_, i) => `/skills/root-${String(i)}`);
+    const result = extendWorkspaceWithSkillRoots(workspace, manyRoots);
+    expect(result.additionalDirs).toHaveLength(100 + 1); // original + 100 new
+    expect(result.additionalDirs[0]).toBe('/extra');
+  });
+
+  it('dedupes a root that is an exact match of the workspace dir', () => {
+    const result = extendWorkspaceWithSkillRoots(
+      { workspaceDir: '/repo', additionalDirs: [] },
+      ['/repo'],
+    );
+    expect(result.additionalDirs).toEqual([]);
+  });
+
+  it('does not add a root that is already a parent of the workspace dir', () => {
+    const result = extendWorkspaceWithSkillRoots(
+      { workspaceDir: '/repo/sub', additionalDirs: [] },
+      ['/repo'],
+    );
+    expect(result.additionalDirs).toEqual([]);
+  });
+
+  it('handles empty additionalDirs and empty skill roots', () => {
+    const result = extendWorkspaceWithSkillRoots(
+      { workspaceDir: '/repo', additionalDirs: [] },
+      [],
+    );
+    expect(result.additionalDirs).toEqual([]);
   });
 });

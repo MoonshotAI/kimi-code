@@ -280,6 +280,30 @@ describe('Plan mode permission policy', () => {
     expect(evaluatePlanPolicy(agent, 'Bash', { command: 'rm foo.txt' })).toBeUndefined();
     expect(evaluatePlanPolicy(agent, 'TaskStop', { task_id: 'bash-abc12345' })).toBeUndefined();
   });
+
+  it('does not block Glob tool calls while plan mode is active', async () => {
+    const { agent } = await activePlanAgent();
+
+    expect(evaluatePlanPolicy(agent, 'Glob', { pattern: '**/*.ts' })).toBeUndefined();
+  });
+
+  it('does not block ListDirectory tool calls while plan mode is active', async () => {
+    const { agent } = await activePlanAgent();
+
+    expect(evaluatePlanPolicy(agent, 'ListDirectory', { path: '/workspace' })).toBeUndefined();
+  });
+
+  it('denies Write with a path outside the plan file even when content is empty', async () => {
+    const { agent } = await activePlanAgent();
+
+    const result = evaluatePlanPolicy(agent, 'Write', {
+      path: '/workspace/other.txt',
+      content: '',
+    });
+
+    const deny = expectDeny(result);
+    expect(deny.message ?? '').toContain('current plan file');
+  });
 });
 
 function toolAccesses(toolName: string, args: unknown) {

@@ -395,4 +395,123 @@ describe('nativeGrepStructured — behavior verification', () => {
     expect(result.error).toBeDefined();
     expect(result.files.length).toBe(0);
   });
+
+  it('empty pattern in literal mode — returns all lines', async () => {
+    writeFile('a.ts', 'line one\nline two\n');
+    const result = await grep({
+      pattern: '',
+      path: tmpDir,
+      literal: true,
+      caseInsensitive: false,
+      contextLines: 0,
+      maxFiles: 50,
+      maxMatchesPerFile: 10,
+      maxTotalMatches: 100,
+      timeoutMs: 5000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.files.length).toBe(1);
+  });
+
+  it('search in nested directories', async () => {
+    writeFile('src/a.ts', 'TODO: nested\n');
+    writeFile('src/sub/b.ts', 'FIXME: deeper\n');
+    const result = await grep({
+      pattern: 'TODO|FIXME',
+      path: tmpDir,
+      literal: false,
+      caseInsensitive: false,
+      contextLines: 0,
+      maxFiles: 50,
+      maxMatchesPerFile: 10,
+      maxTotalMatches: 100,
+      timeoutMs: 5000,
+    });
+    expect(result.files.length).toBe(2);
+  });
+
+  it('zero maxFiles returns empty result', async () => {
+    writeFile('a.ts', 'TODO\n');
+    const result = await grep({
+      pattern: 'TODO',
+      path: tmpDir,
+      literal: true,
+      caseInsensitive: false,
+      contextLines: 0,
+      maxFiles: 0,
+      maxMatchesPerFile: 10,
+      maxTotalMatches: 100,
+      timeoutMs: 5000,
+    });
+    expect(result.files.length).toBe(0);
+  });
+
+  it('context lines at file boundary — beginning of file', async () => {
+    writeFile('a.ts', 'MATCH\nline2\nline3\n');
+    const result = await grep({
+      pattern: 'MATCH',
+      path: tmpDir,
+      literal: true,
+      caseInsensitive: false,
+      contextLines: 2,
+      maxFiles: 50,
+      maxMatchesPerFile: 10,
+      maxTotalMatches: 100,
+      timeoutMs: 5000,
+    });
+    const m = result.files[0]!.matches[0]!;
+    expect(m.before).toEqual([]);
+    expect(m.after).toEqual(['line2', 'line3']);
+  });
+
+  it('context lines at file boundary — end of file', async () => {
+    writeFile('a.ts', 'line1\nline2\nMATCH\n');
+    const result = await grep({
+      pattern: 'MATCH',
+      path: tmpDir,
+      literal: true,
+      caseInsensitive: false,
+      contextLines: 2,
+      maxFiles: 50,
+      maxMatchesPerFile: 10,
+      maxTotalMatches: 100,
+      timeoutMs: 5000,
+    });
+    const m = result.files[0]!.matches[0]!;
+    expect(m.before).toEqual(['line1', 'line2']);
+    expect(m.after).toEqual([]);
+  });
+
+  it('handles unicode content in search', async () => {
+    writeFile('a.ts', 'const greeting = \"\u4f60\u597d\u4e16\u754c\"; // hello world\n');
+    const result = await grep({
+      pattern: '\u4f60\u597d\u4e16\u754c',
+      path: tmpDir,
+      literal: true,
+      caseInsensitive: false,
+      contextLines: 0,
+      maxFiles: 50,
+      maxMatchesPerFile: 10,
+      maxTotalMatches: 100,
+      timeoutMs: 5000,
+    });
+    expect(result.files.length).toBe(1);
+  });
+
+  it('glob with unicode characters', async () => {
+    writeFile('\u6587\u4ef6.ts', 'TODO\n');
+    const result = await grep({
+      pattern: 'TODO',
+      path: tmpDir,
+      literal: true,
+      caseInsensitive: false,
+      includeGlobs: ['*.ts'],
+      contextLines: 0,
+      maxFiles: 50,
+      maxMatchesPerFile: 10,
+      maxTotalMatches: 100,
+      timeoutMs: 5000,
+    });
+    expect(result.files.length).toBe(1);
+  });
 });

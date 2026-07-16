@@ -113,4 +113,43 @@ describe('task ops (wire-backed)', () => {
     expect(model.get('t2')?.status).toBe('running');
     expect(emissions).toEqual([]);
   });
+
+  it('replay with an empty record list produces an empty model', async () => {
+    const host = buildHost('task-replay-empty');
+    const emissions: string[] = [];
+    host.eventBus.subscribe((e) => {
+      emissions.push(e.type);
+    });
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'task-replay-empty'),
+      [],
+    );
+    const model = host.wire.getModel(TaskModel);
+    expect(model.size).toBe(0);
+    expect(emissions).toEqual([]);
+  });
+
+  it('replay ignores a terminated record for a task that was never started', async () => {
+    const records: WireRecord[] = [
+      { type: 'task.terminated', info: info('ghost', 'completed') },
+    ] as unknown as WireRecord[];
+
+    const host = buildHost('task-replay-ghost');
+    await restoreTestAgentWire(
+      host.wire,
+      host.log,
+      testWireScope(SCOPE, 'task-replay-ghost'),
+      records,
+    );
+    const model = host.wire.getModel(TaskModel);
+    expect(model.size).toBe(0);
+  });
+
+  it('dispatch of a terminated event for a non-existent task does not crash', () => {
+    expect(() => {
+      wire.dispatch(taskTerminated({ info: info('phantom', 'completed') }));
+    }).not.toThrow();
+  });
 });

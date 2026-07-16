@@ -55,4 +55,18 @@ describe('SessionBtwService', () => {
     expect(registerPolicy).toHaveBeenCalledTimes(1);
     expect(registerPolicy.mock.calls[0]![0]).toBeInstanceOf(DenyAllPermissionPolicyService);
   });
+
+  it('calling start twice returns the same child agent id', async () => {
+    const svc = ix.get(ISessionBtwService);
+    const first = await svc.start();
+    const second = await svc.start();
+    expect(first).toBe(second);
+    expect(fork).toHaveBeenCalledTimes(1);
+  });
+
+  it('propagates a fork failure', async () => {
+    fork.mockRejectedValueOnce(new Error('fork failed'));
+    const svc = ix.get(ISessionBtwService);
+    await expect(svc.start()).rejects.toThrow('fork failed');
+  });
 });

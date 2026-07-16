@@ -840,6 +840,59 @@ describe('AgentTool', () => {
     expect(result.output).toContain('wait for the user');
   });
 
+  it('rejects empty prompt strings at the schema layer', () => {
+    expect(AgentToolInputSchema.safeParse({ prompt: '', description: 'test' }).success).toBe(false);
+  });
+
+  it('rejects whitespace-only prompts at the schema layer', () => {
+    expect(AgentToolInputSchema.safeParse({ prompt: '   ', description: 'test' }).success).toBe(false);
+  });
+
+  it('accepts maximum-length prompt strings', () => {
+    const longPrompt = 'x'.repeat(10000);
+    const parsed = AgentToolInputSchema.safeParse({
+      prompt: longPrompt,
+      description: 'very long prompt test',
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.prompt).toBe(longPrompt);
+    }
+  });
+
+  it('rejects resume with an empty string', () => {
+    expect(AgentToolInputSchema.safeParse({
+      prompt: 'Continue',
+      description: 'test',
+      resume: '',
+    }).success).toBe(false);
+  });
+
+  it('aborts during resume propagates the abort signal', async () => {
+    const controller = new AbortController();
+    const host = mockSubagentHost({
+      spawn: vi.fn(),
+      resume: vi.fn(
+        (_agentId: string, options: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            options.signal?.addEventListener('abort', () => {
+              reject(new DOMException('Aborted', 'AbortError'));
+            }, { once: true });
+          }),
+      ),
+    });
+    const tool = agentTool(host);
+
+    const resultPromise = executeTool(tool, {
+      turnId: '0',
+      toolCallId: 'call_resume_abort',
+      args: { prompt: 'Continue', description: 'Test abort', resume: 'agent-existing' },
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(resultPromise).rejects.toHaveProperty('name', 'AbortError');
+  });
+
   it('returns the spawned agent id when a foreground subagent times out', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     try {

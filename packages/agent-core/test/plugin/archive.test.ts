@@ -104,6 +104,10 @@ describe('downloadZip', () => {
     expect(result.length).toBeGreaterThan(0);
   });
 
+  it('throws on connection refused', async () => {
+    await expect(downloadZip('http://127.0.0.1:1/nonexistent.zip')).rejects.toThrow();
+  });
+
   it('throws on HTTP error', async () => {
     const { createServer } = await import('node:http');
     const url = await new Promise<string>((resolve) => {
@@ -233,5 +237,32 @@ describe('extractZip', () => {
     await extractZip(zipBuffer, destDir);
     expect(await readFile(path.join(destDir, 'foo..bar.txt'), 'utf8')).toBe('ok');
     expect(await readFile(path.join(destDir, 'dir', '..hidden.md'), 'utf8')).toBe('ok');
+  });
+
+  it('extracts files with unicode names', async () => {
+    const destDir = await mkdtemp(path.join(tmpdir(), 'archive-test-'));
+    const zipBuffer = await createZipBuffer([
+      { name: '中文文件名.txt', data: 'unicode' },
+      { name: 'dir/日本語.md', data: 'nihongo' },
+    ]);
+
+    await extractZip(zipBuffer, destDir);
+    expect(await readFile(path.join(destDir, '中文文件名.txt'), 'utf8')).toBe('unicode');
+    expect(await readFile(path.join(destDir, 'dir', '日本語.md'), 'utf8')).toBe('nihongo');
+  });
+
+  it('handles empty zip buffer gracefully', async () => {
+    const destDir = await mkdtemp(path.join(tmpdir(), 'archive-test-'));
+    await expect(extractZip(Buffer.alloc(0), destDir)).rejects.toThrow();
+  });
+
+  it('handles zip with a single entry and no directories', async () => {
+    const destDir = await mkdtemp(path.join(tmpdir(), 'archive-test-'));
+    const zipBuffer = await createZipBuffer([
+      { name: 'single-file.txt', data: 'just me' },
+    ]);
+
+    await extractZip(zipBuffer, destDir);
+    expect(await readFile(path.join(destDir, 'single-file.txt'), 'utf8')).toBe('just me');
   });
 });

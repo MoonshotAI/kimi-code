@@ -115,6 +115,59 @@ describe('collectGitContext', () => {
     expect(await collectGitContext(kaos, '/project')).toBe('');
   });
 
+  it('handles paths with special characters in the working directory', async () => {
+    const kaos = gitKaos({
+      'rev-parse': { stdout: 'true' },
+      remote: { stdout: 'https://github.com/acme/my-project.git' },
+      'symbolic-ref --short HEAD': { stdout: 'feat/краткое-описание' },
+      status: { stdout: '' },
+      log: { stdout: 'abc123 commit with unicode: 日本語' },
+    });
+    const block = await collectGitContext(kaos, '/project/with spaces and 中文');
+    expect(block).toContain('feat/краткое-описание');
+    expect(block).toContain('with spaces and 中文');
+    expect(block).toContain('commit with unicode: 日本語');
+  });
+
+  it('handles a branch name with slashes and special characters', async () => {
+    const kaos = gitKaos({
+      'rev-parse': { stdout: 'true' },
+      remote: { stdout: 'https://github.com/acme/widgets.git' },
+      'symbolic-ref --short HEAD': { stdout: 'feature/JIRA-123/some-description' },
+      status: { stdout: '' },
+      log: { stdout: '' },
+    });
+    const block = await collectGitContext(kaos, '/project');
+    expect(block).toContain('Branch: feature/JIRA-123/some-description');
+  });
+
+  it('sanitizes a remote URL with credentials on an allowed host', async () => {
+    const kaos = gitKaos({
+      'rev-parse': { stdout: 'true' },
+      remote: { stdout: 'https://token:x-oauth-basic@github.com/acme/private.git' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
+      status: { stdout: '' },
+      log: { stdout: '' },
+    });
+    const block = await collectGitContext(kaos, '/project');
+    expect(block).toContain('Remote: https://github.com/acme/private.git');
+    expect(block).not.toContain('token');
+    expect(block).not.toContain('x-oauth-basic');
+  });
+
+  it('omits the Remote section when remote output is empty', async () => {
+    const kaos = gitKaos({
+      'rev-parse': { stdout: 'true' },
+      remote: { stdout: '' },
+      'symbolic-ref --short HEAD': { stdout: 'main' },
+      status: { stdout: '' },
+      log: { stdout: '' },
+    });
+    const block = await collectGitContext(kaos, '/project');
+    expect(block).not.toContain('Remote:');
+    expect(block).toContain('Branch: main');
+  });
+
   it('omits both Remote and Project for a disallowed remote host', async () => {
     const kaos = gitKaos({
       'rev-parse': { stdout: 'true' },
@@ -249,6 +302,28 @@ describe('sanitizeRemoteUrl', () => {
   it('passes through the SourceHut git host', () => {
     expect(sanitizeRemoteUrl('git@git.sr.ht:~user/repo')).toBe('git@git.sr.ht:~user/repo');
   });
+
+  it('passes through the GitLab HTTPS host', () => {
+    expect(sanitizeRemoteUrl('https://gitlab.com/acme/widgets.git')).toBe(
+      'https://gitlab.com/acme/widgets.git',
+    );
+  });
+
+  it('passes through the Gitee SSH host', () => {
+    expect(sanitizeRemoteUrl('git@gitee.com:acme/widgets.git')).toBe(
+      'git@gitee.com:acme/widgets.git',
+    );
+  });
+
+  it('strips credentials from an allowed SSH host', () => {
+    expect(sanitizeRemoteUrl('ssh://git@github.com/acme/widgets.git')).toBe(
+      'ssh://git@github.com/acme/widgets.git',
+    );
+  });
+
+  it('rejects an empty string', () => {
+    expect(sanitizeRemoteUrl('')).toBeNull();
+  });
 });
 
 describe('parseProjectName', () => {
@@ -272,5 +347,21 @@ describe('parseProjectName', () => {
 
   it('keeps the full namespace for nested GitLab groups (SSH)', () => {
     expect(parseProjectName('git@gitlab.com:group/subgroup/repo.git')).toBe('group/subgroup/repo');
+  });
+
+  it('returns null for a URL without an owner/repo pattern', () => {
+    expect(parseProjectName('https://github.com/')).toBeNull();
+  });
+
+  it('returns null for a bare domain', () => {
+    expect(parseProjectName('git@github.com:')).toBeNull();
+  });
+
+  it('handles URLs with trailing slashes', () => {
+    expect(parseProjectName('https://github.com/owner/repo/')).toBe('owner/repo');
+  });
+
+  it('handles URLs with .git suffix and trailing slash', () => {
+    expect(parseProjectName('https://github.com/owner/repo.git/')).toBe('owner/repo');
   });
 });

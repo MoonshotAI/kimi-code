@@ -70,4 +70,22 @@ describe('abortable', () => {
       message: 'Aborted',
     });
   });
+
+  it('abortable with a resolved promise returns the value when signal never fires', async () => {
+    const controller = new AbortController();
+    await expect(abortable(Promise.resolve('done'), controller.signal)).resolves.toBe('done');
+  });
+
+  it('abortable with a rejected promise propagates the rejection', async () => {
+    const controller = new AbortController();
+    await expect(abortable(Promise.reject(new Error('fail')), controller.signal)).rejects.toThrow('fail');
+  });
+
+  it('isAbortError returns true only for AbortError-like objects', () => {
+    expect(isAbortError(new DOMException('', 'AbortError'))).toBe(true);
+    expect(isAbortError({ name: 'AbortError' })).toBe(true);
+    expect(isAbortError(new Error('boom'))).toBe(false);
+    expect(isAbortError(null)).toBe(false);
+    expect(isAbortError('string')).toBe(false);
+  });
 });

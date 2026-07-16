@@ -112,6 +112,29 @@ describe('BoundLogger', () => {
     leaf.info('evt');
     expect(sink.entries[0]?.ctx).toEqual({ a: 1, b: 2 });
   });
+
+  it('BoundLogger with off level suppresses all entries', () => {
+    const offLogger = new BoundLogger(sink, { level: 'off' });
+    offLogger.error('hidden');
+    offLogger.warn('hidden');
+    offLogger.info('hidden');
+    offLogger.debug('hidden');
+    expect(sink.entries).toHaveLength(0);
+  });
+
+  it('BoundLogger with error-only level only passes error entries', () => {
+    const errorLogger = new BoundLogger(sink, { level: 'error' });
+    errorLogger.debug('hidden');
+    errorLogger.info('hidden');
+    errorLogger.warn('hidden');
+    errorLogger.error('shown');
+    expect(sink.entries.map((e) => e.msg)).toEqual(['shown']);
+  });
+
+  it('BoundLogger with empty ctx writes entry without ctx field', () => {
+    logger.info('no context');
+    expect(sink.entries[0]?.ctx).toBeUndefined();
+  });
 });
 
 describe('levelEnabled', () => {
@@ -200,6 +223,18 @@ describe('AppLogService (scoped)', () => {
     const text = await readFile(resolveGlobalLogPath(homeDir), 'utf-8');
     expect(text).toContain('shown');
     expect(text).not.toContain('hidden');
+    host.dispose();
+  });
+
+  it('multiple writes accumulate in the log file', async () => {
+    const host = buildHost();
+    const log = host.app.accessor.get(ILogService);
+    log.info('first event');
+    log.warn('second event');
+    await log.flush();
+    const text = await readFile(resolveGlobalLogPath(homeDir), 'utf-8');
+    expect(text).toContain('first event');
+    expect(text).toContain('second event');
     host.dispose();
   });
 });

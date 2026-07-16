@@ -120,6 +120,16 @@ describe('detectTarget', () => {
     setPlatform('mips', 'linux');
     expect(detectTarget()).toBeUndefined();
   });
+
+  it('win32 arm64 → aarch64-pc-windows-msvc', () => {
+    setPlatform('arm64', 'win32');
+    expect(detectTarget()).toBe('aarch64-pc-windows-msvc');
+  });
+
+  it('freebsd x64 → undefined (unsupported platform)', () => {
+    setPlatform('x64', 'freebsd');
+    expect(detectTarget()).toBeUndefined();
+  });
 });
 
 describe('rgUnavailableMessage', () => {

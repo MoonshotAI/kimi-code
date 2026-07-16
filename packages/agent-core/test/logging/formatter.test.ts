@@ -60,13 +60,68 @@ describe('formatter — logfmt rendering', () => {
 
   it('does not include ANSI when ansi=false', () => {
     const { text } = formatEntry(baseEntry({ level: 'error' }), { ansi: false });
-    expect(text).not.toMatch(/\[/);
+    expect(text).not.toMatch(/\u001b\[/);
   });
 
   it('includes ANSI when ansi=true', () => {
     const { text } = formatEntry(baseEntry({ level: 'error' }), { ansi: true });
-    expect(text).toMatch(/\[31m/);
-    expect(text).toMatch(/\[0m/);
+    expect(text).toMatch(/\u001b\[31m/);
+    expect(text).toMatch(/\u001b\[0m/);
+  });
+
+  it('handles empty ctx gracefully', () => {
+    const { text } = formatEntry(baseEntry({ ctx: {} }));
+    expect(text).toBe('2026-05-19T10:12:30.123Z INFO  diagnostic event');
+  });
+
+  it('handles null ctx values', () => {
+    const { text } = formatEntry(baseEntry({ ctx: { key: null } }));
+    expect(text).toContain('key=null');
+  });
+
+  it('handles undefined ctx values', () => {
+    const { text } = formatEntry(baseEntry({ ctx: { key: undefined } }));
+    expect(text).toContain('key=undefined');
+  });
+
+  it('handles numeric ctx values', () => {
+    const { text } = formatEntry(baseEntry({ ctx: { count: 42, ratio: 3.14 } }));
+    expect(text).toContain('count=42');
+    expect(text).toContain('ratio=3.14');
+  });
+
+  it('handles boolean ctx values', () => {
+    const { text } = formatEntry(baseEntry({ ctx: { enabled: true, active: false } }));
+    expect(text).toContain('enabled=true');
+    expect(text).toContain('active=false');
+  });
+
+  it('handles unicode characters in msg', () => {
+    const { text } = formatEntry(baseEntry({ msg: '你好世界 εὕρηκα ✓' }));
+    expect(text).toContain('你好世界');
+    expect(text).toContain('εὕρηκα');
+    expect(text).toContain('✓');
+  });
+
+  it('handles newlines in ctx values', () => {
+    const { text } = formatEntry(baseEntry({ ctx: { multiline: 'line1\nline2\nline3' } }));
+    expect(text).toContain('multiline=');
+    expect(text).toContain('line1');
+    expect(text).toContain('line2');
+    expect(text).toContain('line3');
+  });
+
+  it('handles empty string msg', () => {
+    const { text } = formatEntry(baseEntry({ msg: '' }));
+    expect(text).toContain('2026-05-19T10:12:30.123Z INFO  ');
+  });
+
+  it('handles a very large number of ctx keys', () => {
+    const ctx: Record<string, number> = {};
+    for (let i = 0; i < 500; i++) ctx[`key${i}`] = i;
+    const { text } = formatEntry(baseEntry({ ctx }));
+    expect(text).toContain('key0=0');
+    expect(text).toContain('key499=499');
   });
 });
 
@@ -114,6 +169,16 @@ describe('formatter — error extraction', () => {
     const { text } = formatEntry(baseEntry({ error: { message: 'x', stack: longStack } }));
     expect(text).toContain('…truncated');
     expect(Buffer.byteLength(text, 'utf-8')).toBeLessThan(STACK_MAX_BYTES + 4096);
+  });
+
+  it('handles error with null message', () => {
+    const { text } = formatEntry(baseEntry({ level: 'error', error: { message: null } }));
+    expect(text).toContain('ERROR');
+  });
+
+  it('handles error with empty stack', () => {
+    const { text } = formatEntry(baseEntry({ level: 'error', error: { message: 'msg', stack: '' } }));
+    expect(text).toMatch(/\n  Error: msg$/);
   });
 });
 
@@ -219,6 +284,18 @@ describe('formatter — auto-redact', () => {
     const json = JSON.stringify(out);
     expect(json).toContain('[REDACTED:depth]');
   });
+
+  it('redacts empty string values for sensitive keys', () => {
+    const out = redactCtx({ token: '', apiKey: '' });
+    expect(out['token']).toBe('[REDACTED]');
+    expect(out['apiKey']).toBe('[REDACTED]');
+  });
+
+  it('redacts numeric values for sensitive keys', () => {
+    const out = redactCtx({ token: 12345, apiKey: 67890 });
+    expect(out['token']).toBe('[REDACTED]');
+    expect(out['apiKey']).toBe('[REDACTED]');
+  });
 });
 
 describe('extractError', () => {
@@ -227,5 +304,26 @@ describe('extractError', () => {
     const result = extractError(e);
     expect(result.message).toBe('boom');
     expect(result.stack).toMatch(/Error: boom/);
+  });
+
+  it('extracts message from string error', () => {
+    const result = extractError('string error');
+    expect(result.message).toBe('string error');
+    expect(result.stack).toBeUndefined();
+  });
+
+  it('extracts message from object error', () => {
+    const result = extractError({ message: 'obj error', code: 'E123' });
+    expect(result.message).toBe('obj error');
+  });
+
+  it('extracts message from null error', () => {
+    const result = extractError(null);
+    expect(result.message).toBe('null');
+  });
+
+  it('extracts message from undefined error', () => {
+    const result = extractError(undefined);
+    expect(result.message).toBe('undefined');
   });
 });

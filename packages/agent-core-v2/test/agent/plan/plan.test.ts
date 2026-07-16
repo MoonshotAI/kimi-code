@@ -762,6 +762,32 @@ describe('Plan service', () => {
 
       expect(lastUserText(context.get())).toContain('Plan mode is active');
     });
+
+    it('handles enter plan mode with empty plan file content', async () => {
+      const { fakes } = createPlanFileFakes();
+      useFakes(fakes);
+      await plan.enter('empty-plan', false);
+
+      const status = await planStatus();
+      expect(status).not.toBeNull();
+      expect(status!.content).toBe('');
+    });
+
+    it('handles rapid enter/exit without crashing', async () => {
+      await plan.enter('rapid-plan', false);
+      plan.exit();
+      await plan.enter('rapid-plan-2', false);
+      plan.exit();
+
+      const status = await planStatus();
+      expect(status).toBeNull();
+    });
+
+    it('is not affected by undoing nonexistent history', async () => {
+      await plan.enter('test-plan', false);
+      ctx.undoHistory(999);
+      await expectPlanActive(true);
+    });
   });
 
   function delay(ms: number): Promise<void> {

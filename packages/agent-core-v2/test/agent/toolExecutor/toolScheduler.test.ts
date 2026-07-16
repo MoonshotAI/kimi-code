@@ -231,6 +231,70 @@ describe('ToolScheduler', () => {
 
     expect(drained).toEqual(['first', 'second']);
   });
+
+  it('handles tasks with no access declarations', async () => {
+    const started: string[] = [];
+    const drained: string[] = [];
+    const scheduler = makeScheduler(drained);
+    const task = makeControlledTask('no-access', ToolAccesses.none(), started);
+
+    scheduler.add(task.task);
+    task.resolve();
+    await scheduler.collectResults();
+
+    expect(drained).toEqual(['no-access']);
+  });
+
+  it('does not block a read access by a different path that shares a prefix', async () => {
+    const started: string[] = [];
+    const drained: string[] = [];
+    const scheduler = makeScheduler(drained);
+    const writer = makeControlledTask('writer', writePath('/repo/a.ts'), started);
+    const reader = makeControlledTask('reader', readPath('/repo/a.ts.bak'), started);
+
+    scheduler.add(writer.task);
+    scheduler.add(reader.task);
+
+    expect(started).toEqual(['writer', 'reader']);
+    reader.resolve();
+    writer.resolve();
+    await scheduler.collectResults();
+    expect(drained).toEqual(['writer', 'reader']);
+  });
+
+  it('serializes recursive read against write to a descendant', async () => {
+    const started: string[] = [];
+    const drained: string[] = [];
+    const scheduler = makeScheduler(drained);
+    const writer = makeControlledTask('writer', writePath('/repo/src/a.ts'), started);
+    const treeReader = makeControlledTask('tree-reader', readTree('/repo/src'), started);
+
+    scheduler.add(writer.task);
+    scheduler.add(treeReader.task);
+    await waitOneMacrotask();
+
+    expect(started).toEqual(['writer']);
+    writer.resolve();
+    await waitOneMacrotask();
+    expect(started).toEqual(['writer', 'tree-reader']);
+
+    treeReader.resolve();
+    await scheduler.collectResults();
+    expect(drained).toEqual(['writer', 'tree-reader']);
+  });
+
+  it('collectResults after allSettled does not throw', async () => {
+    const started: string[] = [];
+    const drained: string[] = [];
+    const scheduler = makeScheduler(drained);
+    const task = makeControlledTask('task', ToolAccesses.none(), started);
+
+    scheduler.add(task.task);
+    task.reject(new Error('planned fail'));
+    await scheduler.allSettled();
+
+    await expect(scheduler.collectResults()).rejects.toThrow('planned fail');
+  });
 });
 
 interface ControlledTask {

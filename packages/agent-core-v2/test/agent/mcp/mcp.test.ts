@@ -527,6 +527,55 @@ describe('AgentMcpService', () => {
     expect(receivedSignal).toBe(controller.signal);
   });
 
+  it('aborts tool execution when the signal is aborted before execution', async () => {
+    const manager = new FakeMcpManager();
+    let callToolCalled = false;
+    const client: MCPClient = {
+      async connect() {},
+      async listTools() {
+        return [
+          {
+            name: 'echo',
+            description: 'Echoes back',
+            inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+          },
+        ];
+      },
+      async callTool() {
+        callToolCalled = true;
+        return { content: [{ type: 'text', text: 'ok' }], isError: false };
+      },
+    };
+    manager.setResolved('s', client, await discoverTools(client));
+    createService(manager);
+    manager.connect('s');
+
+    const controller = new AbortController();
+    controller.abort();
+    const echo = ix.get(IAgentToolRegistryService).resolve('mcp__s__echo');
+    const result = await executeTool(echo!, {
+      turnId: 1,
+      toolCallId: 'tc-aborted',
+      args: { text: 'hi' },
+      signal: controller.signal,
+    });
+
+    expect(result.isError).toBe(true);
+    expect(callToolCalled).toBe(false);
+  });
+
+  it('handles a server with zero tools gracefully', async () => {
+    const manager = new FakeMcpManager();
+    const client = fakeMcpClient([]);
+    manager.setResolved('empty', client, await discoverTools(client));
+    createService(manager);
+
+    manager.connect('empty');
+
+    const mcpTools = ix.get(IAgentToolRegistryService).list().filter((tool) => tool.source === 'mcp');
+    expect(mcpTools).toHaveLength(0);
+  });
+
   it('registers a synthetic authenticate tool when a server needs auth', () => {
     const oauthService = {
       beginAuthorization: async () => ({

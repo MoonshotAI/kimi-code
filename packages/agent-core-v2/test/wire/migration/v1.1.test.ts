@@ -77,4 +77,50 @@ describe('1.0 to 1.1', () => {
       [wire] context.append_loop_event   { "event": { "type": "tool.call", "uuid": "call_payload", "turnId": "0", "step": 1, "stepUuid": "step_1", "toolCallId": "call_payload", "name": "PayloadTool", "args": { "payload": { "type": "function", "id": "user_payload", "function": { "name": "do-not-migrate", "arguments": "{\\"keep\\":true}" } } } } }
     `);
   });
+
+  it('handles an empty record list', () => {
+    expect(runMigration(migrateV1_0ToV1_1, [])).toMatchInlineSnapshot(`[]`);
+  });
+
+  it('passes through already-migrated v1.1 records', () => {
+    expect(
+      runMigration(migrateV1_0ToV1_1, [
+        {
+          type: 'metadata',
+          protocol_version: '1.1',
+          created_at: 1,
+        },
+        {
+          type: 'context.append_message',
+          message: {
+            role: 'assistant',
+            content: [],
+            toolCalls: [{ type: 'function', id: 'call_ok', name: 'Bash', arguments: '{}' }],
+          },
+        },
+      ]),
+    ).toMatchInlineSnapshot(`
+      [wire] metadata                    { "protocol_version": "1.1", "created_at": "<time>" }
+      [wire] context.append_message      { "message": { "role": "assistant", "content": [], "toolCalls": [ { "type": "function", "id": "call_ok", "name": "Bash", "arguments": "{}" } ] } }
+    `);
+  });
+
+  it('handles records with no toolCalls', () => {
+    expect(
+      runMigration(migrateV1_0ToV1_1, [
+        {
+          type: 'metadata',
+          protocol_version: '1.0',
+          created_at: 1,
+        },
+        {
+          type: 'context.append_message',
+          message: { role: 'user', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+        },
+      ]),
+    ).toMatchInlineSnapshot(`
+      [wire] metadata                    { "protocol_version": "1.1", "created_at": "<time>" }
+      [wire] context.append_message      { "message": { "role": "user", "content": [ { "type": "text", "text": "hello" } ], "toolCalls": [] } }
+    `);
+  });
 });

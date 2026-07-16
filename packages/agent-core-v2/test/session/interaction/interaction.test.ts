@@ -142,4 +142,27 @@ describe('SessionInteractionService', () => {
     expect(() => svc.cancelPendingForTurn(99)).not.toThrow();
     expect(svc.listPending()).toHaveLength(1);
   });
+
+  it('respond to an already resolved interaction is a no-op', async () => {
+    const svc = ix.get(ISessionInteractionService);
+    const pending = svc.request({ id: 'r1', kind: 'question', payload: {} });
+    svc.respond('r1', 'first');
+    await pending;
+    expect(() => svc.respond('r1', 'second')).not.toThrow();
+  });
+
+  it('cancelPendingForTurn handles interactions from multiple agents', () => {
+    const svc = ix.get(ISessionInteractionService);
+    svc.enqueue({ id: 'a1', kind: 'approval', payload: {}, origin: { agentId: 'main', turnId: 1 } });
+    svc.enqueue({ id: 'a2', kind: 'approval', payload: {}, origin: { agentId: 'sub', turnId: 1 } });
+    svc.cancelPendingForTurn(1);
+    expect(svc.listPending()).toHaveLength(0);
+    expect(svc.isRecentlyResolved('a1')).toBe(true);
+    expect(svc.isRecentlyResolved('a2')).toBe(true);
+  });
+
+  it('isRecentlyResolved returns false for an unknown id', () => {
+    const svc = ix.get(ISessionInteractionService);
+    expect(svc.isRecentlyResolved('unknown')).toBe(false);
+  });
 });

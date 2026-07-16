@@ -134,4 +134,51 @@ describe('SubagentTask — timeoutMs', () => {
     resolveFn({ result: 'finished' });
     await expect(background.wait(taskId)).resolves.toMatchObject({ status: 'completed' });
   });
+
+  it('timeoutMs=1 arms an immediate deadline that fires on next tick', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const hangForever = new Promise<{ result: string }>(() => {});
+    const taskId = background.registerTask(agentTask(hangForever, 'instant timeout'), {
+      timeoutMs: 1,
+    });
+
+    const terminalPromise = background.wait(taskId);
+    await vi.advanceTimersByTimeAsync(10);
+    const info = await terminalPromise;
+
+    expect(info?.status).toBe('timed_out');
+    vi.useRealTimers();
+  });
+
+  it('multiple concurrent tasks each get their own independent deadline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const hang1 = new Promise<{ result: string }>(() => {});
+    const hang2 = new Promise<{ result: string }>(() => {});
+    const taskId1 = background.registerTask(agentTask(hang1, 'hang 1'), { timeoutMs: 100 });
+    const taskId2 = background.registerTask(agentTask(hang2, 'hang 2'), { timeoutMs: 500 });
+
+    await vi.advanceTimersByTimeAsync(200);
+    expect(background.getTask(taskId1)?.status).toBe('timed_out');
+    expect(background.getTask(taskId2)?.status).toBe('running');
+
+    await vi.advanceTimersByTimeAsync(400);
+    expect(background.getTask(taskId2)?.status).toBe('timed_out');
+    vi.useRealTimers();
+  });
+
+  it('a task that completes before its deadline does not time out', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let resolveFn!: (r: { result: string }) => void;
+    const completion = new Promise<{ result: string }>((res) => {
+      resolveFn = res;
+    });
+    const taskId = background.registerTask(agentTask(completion, 'fast'), { timeoutMs: 10_000 });
+
+    resolveFn({ result: 'done early' });
+    await background.wait(taskId);
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(background.getTask(taskId)?.status).toBe('completed');
+    vi.useRealTimers();
+  });
 });

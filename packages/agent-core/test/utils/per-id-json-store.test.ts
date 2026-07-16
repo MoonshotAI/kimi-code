@@ -173,4 +173,33 @@ describe('createPerIdJsonStore', () => {
     const top = await readdir(rootDir);
     expect(top.includes('things')).toBe(false);
   });
+
+  it('write with a very large payload does not corrupt the file', async () => {
+    const store = newStore();
+    const large = 'x'.repeat(100_000);
+    await store.write('aaaa', { id: 'aaaa', payload: large });
+    const read = await store.read('aaaa');
+    expect(read?.payload).toBe(large);
+  });
+
+  it('remove of a non-existent id is idempotent', async () => {
+    const store = newStore();
+    await expect(store.remove('aaaa')).resolves.toBeUndefined();
+  });
+
+  it('list on an empty store returns []', async () => {
+    const store = newStore();
+    const all = await store.list();
+    expect(all).toEqual([]);
+  });
+
+  it('rejects ids longer than the regex max on write', async () => {
+    const store = newStore();
+    await expect(store.write('toolong', { id: 'toolong', payload: 'x' })).rejects.toThrow(/Invalid/);
+  });
+
+  it('rejects non-lowercase ids', async () => {
+    const store = newStore();
+    await expect(store.write('AAAA', { id: 'AAAA', payload: 'x' })).rejects.toThrow(/Invalid/);
+  });
 });

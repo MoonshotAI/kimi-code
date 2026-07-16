@@ -392,4 +392,41 @@ describe('LifecycleMachine', () => {
       machine.switch({ operation: 'start', from: 'idle', to: 'running' }),
     ).toThrow(LifecycleTransitionError);
   });
+
+  it('switch to the same state (no-op) still validates from state', () => {
+    const machine = new LifecycleMachine<State>('idle');
+    machine.switch({ operation: 'stay', from: 'idle', to: 'idle' });
+    expect(machine.state).toBe('idle');
+  });
+
+  it('transaction with no enter state still completes', async () => {
+    const machine = new LifecycleMachine<State>('idle');
+    await machine.transaction(
+      { operation: 'run', from: 'idle', commit: 'completed', rollback: 'failed' },
+      async () => 'done',
+    );
+    expect(machine.state).toBe('completed');
+  });
+
+  it('rollback with no registered rollback actions still succeeds', async () => {
+    const machine = new LifecycleMachine<State>('idle');
+    await expect(
+      machine.transaction(
+        { operation: 'run', from: 'idle', enter: 'running', commit: 'completed', rollback: 'failed' },
+        async () => {
+          throw new Error('fail');
+        },
+      ),
+    ).rejects.toThrow('fail');
+    expect(machine.state).toBe('failed');
+  });
+
+  it('transaction with enter state equal to from state transitions immediately', async () => {
+    const machine = new LifecycleMachine<State>('idle');
+    await machine.transaction(
+      { operation: 'nop', from: 'idle', enter: 'idle', commit: 'completed', rollback: 'failed' },
+      async () => 99,
+    );
+    expect(machine.state).toBe('completed');
+  });
 });

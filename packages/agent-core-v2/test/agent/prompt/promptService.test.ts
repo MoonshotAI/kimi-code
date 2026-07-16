@@ -177,4 +177,51 @@ describe('AgentPromptService', () => {
       parts.some((part) => part.type === 'text' && part.text.includes('image/avif')),
     ).toBe(true);
   });
+
+  it('aborts an already completed prompt gracefully', async () => {
+    const { prompt, context, loop } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    loop.drainNextBatch(context);
+
+    expect(prompt.abort(active.id)).toBe(false);
+  });
+
+  it('rejects steer for an already completed prompt', async () => {
+    const { prompt, context, loop } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    const queued = await prompt.enqueue({ message: message('one') });
+    loop.drainNextBatch(context);
+
+    await expect(prompt.steer([queued.id])).rejects.toMatchObject({ code: 'prompt.not_found' });
+  });
+
+  it('handles a large number of consecutive prompts without errors', async () => {
+    const { prompt, context, loop } = harness();
+    const ids: string[] = [];
+    for (let i = 0; i < 10; i++) {
+      const handle = await prompt.enqueue({ message: message(`prompt-${String(i)}`) });
+      ids.push(handle.id);
+    }
+    expect(prompt.list().pending).toHaveLength(9);
+
+    const active = prompt.list().active;
+    expect(active).toBeDefined();
+    loop.drainNextBatch(context);
+
+    for (const id of ids) {
+      prompt.abort(id);
+    }
+  });
+
+  it('injecting after drain does not affect the pending queue', async () => {
+    const { prompt, context, loop } = harness();
+    const active = await prompt.enqueue({ message: message('active') });
+    await active.launched;
+    await prompt.inject({ ...message('injection'), origin: { kind: 'injection', variant: 'test' } });
+
+    expect(prompt.list()).toEqual({ active: undefined, pending: [] });
+    loop.drainNextBatch(context);
+  });
 });

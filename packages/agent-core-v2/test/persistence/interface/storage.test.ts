@@ -127,6 +127,28 @@ function storageServiceSuite(
       await service.delete('s', 'k');
       await expect(fired).resolves.toBeUndefined();
     });
+
+    it('write with empty bytes stores an empty value', async () => {
+      await service.write('s', 'empty', enc.encode(''));
+      expect(dec.decode(await service.read('s', 'empty'))).toBe('');
+    });
+
+    it('read after delete returns undefined', async () => {
+      await service.write('s', 'k', enc.encode('x'));
+      await service.delete('s', 'k');
+      await service.write('s', 'k', enc.encode('y'));
+      expect(dec.decode(await service.read('s', 'k'))).toBe('y');
+    });
+
+    it('append with empty bytes does not change the value', async () => {
+      await service.write('s', 'k', enc.encode('base'));
+      await service.append('s', 'k', enc.encode(''));
+      expect(dec.decode(await service.read('s', 'k'))).toBe('base');
+    });
+
+    it('list on an empty scope returns []', async () => {
+      expect(await service.list('empty-scope')).toEqual([]);
+    });
   });
 }
 

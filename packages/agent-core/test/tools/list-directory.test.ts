@@ -287,4 +287,67 @@ describe('listDirectory', () => {
     expect(collapsed).not.toContain('HEAD');
     expect(seenDirs).toEqual(['/w', '/w/src']);
   });
+
+  it('renders a three-level deep directory tree', async () => {
+    const kaos = createFakeKaos({
+      iterdir: async function* (p: string) {
+        if (p === '/w') {
+          yield '/w/level1';
+        } else if (p === '/w/level1') {
+          yield '/w/level1/level2';
+        } else if (p === '/w/level1/level2') {
+          yield '/w/level1/level2/file.txt';
+        }
+      } as unknown as Kaos['iterdir'],
+      stat: (async (p: string) => ({
+        stMode: p.endsWith('.txt') ? 0o100_644 : 0o040_755,
+        stIno: 1,
+        stDev: 1,
+        stNlink: 1,
+        stUid: 0,
+        stGid: 0,
+        stSize: 1,
+        stAtime: 0,
+        stMtime: 0,
+        stCtime: 0,
+      })) as unknown as Kaos['stat'],
+    });
+
+    const tree = await listDirectory(kaos, '/w');
+    expect(tree).toContain('level1/');
+    expect(tree).toContain('level2/');
+    expect(tree).toContain('file.txt');
+  });
+
+  it('handles file and directory names with special characters', async () => {
+    const kaos = createFakeKaos({
+      iterdir: async function* (p: string) {
+        if (p === '/w') {
+          yield '/w/[test] dir';
+          yield '/w/file (1).txt';
+          yield '/w/foo$bar';
+        } else if (p === '/w/[test] dir') {
+          yield '/w/[test] dir/nested file.js';
+        }
+      } as unknown as Kaos['iterdir'],
+      stat: (async (p: string) => ({
+        stMode: p.includes('[test]') ? 0o040_755 : 0o100_644,
+        stIno: 1,
+        stDev: 1,
+        stNlink: 1,
+        stUid: 0,
+        stGid: 0,
+        stSize: 1,
+        stAtime: 0,
+        stMtime: 0,
+        stCtime: 0,
+      })) as unknown as Kaos['stat'],
+    });
+
+    const tree = await listDirectory(kaos, '/w');
+    expect(tree).toContain('[test] dir/');
+    expect(tree).toContain('file (1).txt');
+    expect(tree).toContain('foo$bar');
+    expect(tree).toContain('nested file.js');
+  });
 });

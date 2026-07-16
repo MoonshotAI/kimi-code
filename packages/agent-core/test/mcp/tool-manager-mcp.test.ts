@@ -610,4 +610,111 @@ describe('ToolManager MCP integration', () => {
 
     expect(tm.loopTools.map((t) => t.name)).toEqual(['mcp__s__echo']);
   });
+
+  it('registers an empty tool list without error', async () => {
+    const tm = new ToolManager(fakeAgent());
+    tm.setActiveTools(['mcp__*']);
+    const emptyClient: MCPClient = {
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return { content: [], isError: false };
+      },
+    };
+    tm.registerMcpServer('empty', emptyClient, await discoverTools(emptyClient));
+    const mcpInfos = [...tm.toolInfos()].filter((i) => i.source === 'mcp');
+    expect(mcpInfos).toEqual([]);
+  });
+
+  it('setActiveTools with empty array hides all MCP tools', async () => {
+    const tm = new ToolManager(fakeAgent());
+    tm.setActiveTools(['mcp__*']);
+    const client = fakeClient();
+    tm.registerMcpServer('s', client, await discoverTools(client));
+    expect(tm.loopTools.length).toBe(2);
+
+    tm.setActiveTools([]);
+    expect(tm.loopTools.filter((t) => t.name.startsWith('mcp__'))).toEqual([]);
+    // MCP tools still registered but inactive.
+    const active = [...tm.toolInfos()]
+      .filter((i) => i.source === 'mcp')
+      .every((i) => i.active === false);
+    expect(active).toBe(true);
+  });
+
+  it('executes a tool that returns isError from the MCP server', async () => {
+    const tm = new ToolManager(fakeAgent());
+    tm.setActiveTools(['mcp__*']);
+    const errorClient: MCPClient = {
+      async listTools() {
+        return [
+          {
+            name: 'fail',
+            description: 'Always fails',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ];
+      },
+      async callTool() {
+        return {
+          content: [{ type: 'text', text: 'server error' }],
+          isError: true,
+        };
+      },
+    };
+    tm.registerMcpServer('s', errorClient, await discoverTools(errorClient));
+    const fail = tm.loopTools.find((t) => t.name === 'mcp__s__fail');
+    expect(fail).toBeDefined();
+
+    const result = await executeTool(fail!, {
+      turnId: '1',
+      toolCallId: 'tc-fail',
+      args: {},
+      signal: new AbortController().signal,
+    });
+    expect(result.isError).toBe(true);
+    expect(result.output).toBe('server error');
+  });
+
+  it('registerMcpServer with enabledTools that selects nothing registers zero tools', async () => {
+    const tm = new ToolManager(fakeAgent());
+    tm.setActiveTools(['mcp__*']);
+    const client = fakeClient();
+    const result = tm.registerMcpServer('s', client, await discoverTools(client), new Set(['nonexistent']));
+    expect(result.registered).toEqual([]);
+    expect(result.collisions).toEqual([]);
+    expect(tm.loopTools.filter((t) => t.name.startsWith('mcp__'))).toEqual([]);
+  });
+
+  it('tool name with special characters in MCP server is sanitized', async () => {
+    const tm = new ToolManager(fakeAgent());
+    tm.setActiveTools(['mcp__*']);
+    const specialClient: MCPClient = {
+      async listTools() {
+        return [
+          {
+            name: 'list files',
+            description: 'Lists files',
+            inputSchema: { type: 'object', properties: {} },
+          },
+          {
+            name: 'find@tag',
+            description: 'Finds by tag',
+            inputSchema: { type: 'object', properties: {} },
+          },
+        ];
+      },
+      async callTool() {
+        return { content: [], isError: false };
+      },
+    };
+    tm.registerMcpServer('my server', specialClient, await discoverTools(specialClient));
+    const mcpNames = [...tm.toolInfos()]
+      .filter((i) => i.source === 'mcp')
+      .map((i) => i.name)
+      .toSorted();
+    expect(mcpNames).toContain('mcp__my_server__list_files');
+    expect(mcpNames).toContain('mcp__my_server__find_tag');
+  });
 });

@@ -96,4 +96,40 @@ describe('probeHostEnvironment', () => {
     expect(env.shellName).toBe('bash');
     expect(env.shellPath).toBe('C:\\msys64\\usr\\bin\\bash.exe');
   });
+
+  it('returns undefined shell when no git is found on darwin', async () => {
+    const env = await probeHostEnvironment(
+      stubDeps({
+        platform: 'darwin',
+        env: {},
+        existingPaths: [],
+      }),
+    );
+    expect(env.shellName).toBeUndefined();
+    expect(env.shellPath).toBeUndefined();
+  });
+
+  it('returns undefined shell when no git is found on linux', async () => {
+    const env = await probeHostEnvironment(
+      stubDeps({
+        platform: 'linux',
+        env: {},
+        existingPaths: [],
+      }),
+    );
+    expect(env.shellName).toBeUndefined();
+    expect(env.shellPath).toBeUndefined();
+  });
+
+  it('returns undefined shell on win32 when no msys2 paths are found', async () => {
+    const env = await probeHostEnvironment(
+      stubDeps({
+        platform: 'win32',
+        env: { PATH: 'C:\\Windows\\system32' },
+        existingPaths: [],
+      }),
+    );
+    expect(env.shellName).toBeUndefined();
+    expect(env.shellPath).toBeUndefined();
+  });
 });

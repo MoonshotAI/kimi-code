@@ -99,4 +99,80 @@ describe('approval-adapter · toAgentCoreResponse (protocol → in-process)', ()
     expect(inProcResp.decision).toBe('cancelled');
     expect(inProcResp.feedback).toBe('user closed');
   });
+
+  it('handles very long action text', () => {
+    const longAction = 'A'.repeat(10_000);
+    const protoReq = toBrokerRequest(
+      { ...inProc, action: longAction },
+      {
+        approvalId: 'a',
+        sessionId: 's',
+        createdAt: '2026-06-04T10:30:00.000Z',
+        expiresAt: '2026-06-04T10:31:00.000Z',
+      },
+    );
+    expect(protoReq.action).toBe(longAction);
+    expect(protoReq.action.length).toBe(10_000);
+  });
+
+  it('handles empty action text', () => {
+    const protoReq = toBrokerRequest(
+      { ...inProc, action: '' },
+      {
+        approvalId: 'a',
+        sessionId: 's',
+        createdAt: '2026-06-04T10:30:00.000Z',
+        expiresAt: '2026-06-04T10:31:00.000Z',
+      },
+    );
+    expect(protoReq.action).toBe('');
+  });
+
+  it('handles special characters in action and feedback', () => {
+    const protoReq = toBrokerRequest(
+      { ...inProc, action: 'rm -rf /tmp/ \"test\" && echo $HOME' },
+      {
+        approvalId: 'a',
+        sessionId: 's',
+        createdAt: '2026-06-04T10:30:00.000Z',
+        expiresAt: '2026-06-04T10:31:00.000Z',
+      },
+    );
+    expect(protoReq.action).toContain('rm -rf');
+    expect(protoReq.action).toContain('$HOME');
+
+    const inProcResp = toAgentCoreResponse({ decision: 'rejected', feedback: 'N/A: <script>alert(1)</script>' });
+    expect(inProcResp.feedback).toBe('N/A: <script>alert(1)</script>');
+  });
+
+  it('handles a very long approvalId', () => {
+    const longId = 'app_' + 'x'.repeat(100);
+    const protoReq = toBrokerRequest(inProc, {
+      approvalId: longId,
+      sessionId: 's',
+      createdAt: '2026-06-04T10:30:00.000Z',
+      expiresAt: '2026-06-04T10:31:00.000Z',
+    });
+    expect(protoReq.approval_id).toBe(longId);
+  });
+
+  it('handles a null display value', () => {
+    const protoReq = toBrokerRequest(
+      { ...inProc, display: null as unknown as typeof inProc.display },
+      {
+        approvalId: 'a',
+        sessionId: 's',
+        createdAt: '2026-06-04T10:30:00.000Z',
+        expiresAt: '2026-06-04T10:31:00.000Z',
+      },
+    );
+    expect(protoReq.tool_input_display).toBeNull();
+  });
+
+  it('handles all decision values', () => {
+    for (const decision of ['approved', 'rejected', 'cancelled', 'error'] as const) {
+      const inProcResp = toAgentCoreResponse({ decision });
+      expect(inProcResp.decision).toBe(decision);
+    }
+  });
 });

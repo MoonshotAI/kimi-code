@@ -80,4 +80,24 @@ describe('registerScopedService / getScopedServiceDescriptors', () => {
     expect(getScopedServiceDescriptors(LifecycleScope.App)[0]?.id).toBe(IDual);
     expect(getScopedServiceDescriptors(LifecycleScope.Session)[0]?.id).toBe(IDual);
   });
+
+  it('register without domain still records the service', () => {
+    registerScopedService(LifecycleScope.App, IApp, AppSvc);
+    const entries = getScopedServiceDescriptors(LifecycleScope.App);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]?.id).toBe(IApp);
+  });
+
+  it('register with Eager vs Delayed both work', () => {
+    registerScopedService(LifecycleScope.App, IApp, AppSvc, InstantiationType.Eager);
+    registerScopedService(LifecycleScope.Session, ISession, SessionSvc, InstantiationType.Delayed);
+    const appEntries = getScopedServiceDescriptors(LifecycleScope.App);
+    const sessionEntries = getScopedServiceDescriptors(LifecycleScope.Session);
+    expect(appEntries[0]?.descriptor.supportsDelayedInstantiation).toBe(false);
+    expect(sessionEntries[0]?.descriptor.supportsDelayedInstantiation).toBe(true);
+  });
+
+  it('getScopedServiceDescriptors for a scope with no registrations returns empty', () => {
+    expect(getScopedServiceDescriptors(LifecycleScope.Agent)).toEqual([]);
+  });
 });

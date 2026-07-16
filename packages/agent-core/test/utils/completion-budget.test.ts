@@ -1,4 +1,4 @@
-import type { ChatProvider, ModelCapability } from '@moonshot-ai/kosong';
+import type { ChatProvider, ModelCapability, GenerateOptions } from '@moonshot-ai/kosong';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -246,5 +246,55 @@ describe('resolveCompletionBudget', () => {
     });
     expect(budget?.hardCap).toBeUndefined();
     expect(budget?.fallback).toBe(32000);
+  });
+
+  it('computeCompletionBudgetCap returns 1 when capability is 0 context and no fallback', () => {
+    const cap = computeCompletionBudgetCap({
+      budget: {},
+      capability: makeCapability(0),
+    });
+    expect(cap).toBe(1);
+  });
+
+  it('computeCompletionBudgetCap returns 1 when both hardCap and context are 0', () => {
+    const cap = computeCompletionBudgetCap({
+      budget: { hardCap: 0 },
+      capability: makeCapability(0),
+    });
+    expect(cap).toBe(1);
+  });
+
+  it('applyCompletionBudget returns the original provider when withMaxCompletionTokens throws', () => {
+    const badFn = vi.fn(() => {
+      throw new Error('not supported');
+    });
+    const badProvider = {
+      ...original,
+      withMaxCompletionTokens: badFn as unknown as (n: number) => ChatProvider,
+    };
+    const result = applyCompletionBudget({
+      provider: badProvider,
+      budget: { hardCap: 8192 },
+      capability: makeCapability(10000),
+    });
+    expect(result).toBe(badProvider);
+  });
+
+  it('resolveCompletionBudget returns undefined when both env vars are empty strings', () => {
+    const budget = resolveCompletionBudget({
+      env: { KIMI_MODEL_MAX_COMPLETION_TOKENS: '', KIMI_MODEL_MAX_TOKENS: '' },
+    });
+    expect(budget?.hardCap).toBeUndefined();
+    expect(budget?.fallback).toBe(32000);
+  });
+
+  it('resolveCompletionBudget uses model max output size even when reservedContextSize is provided', () => {
+    const budget = resolveCompletionBudget({
+      maxOutputSize: 128000,
+      reservedContextSize: 1000,
+      env: {},
+    });
+    expect(budget?.hardCap).toBe(128000);
+    expect(budget?.fallback).toBeUndefined();
   });
 });

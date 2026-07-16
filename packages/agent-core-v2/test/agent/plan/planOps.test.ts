@@ -121,6 +121,37 @@ describe('plan ops (wire-backed)', () => {
     expect(wire.getModel(PlanModel)).toBe(active);
   });
 
+  it('cancel without an active plan is a no-op on the model', () => {
+    const initial = wire.getModel(PlanModel);
+    wire.dispatch(planModeCancel({}));
+    expect(wire.getModel(PlanModel)).toBe(initial);
+  });
+
+  it('exit without an active plan is a no-op on the model', () => {
+    const initial = wire.getModel(PlanModel);
+    wire.dispatch(planModeExit({}));
+    expect(wire.getModel(PlanModel)).toBe(initial);
+  });
+
+  it('persists the plan file path in the enter record', async () => {
+    wire.dispatch(planModeEnter({ id: 'p1', planFilePath: '/tmp/plans/p1.md' }));
+
+    const records = await readRecords();
+    expect(records[0]).toMatchObject({
+      type: 'plan_mode.enter',
+      id: 'p1',
+      planFilePath: '/tmp/plans/p1.md',
+    });
+  });
+
+  it('double enter with different ids updates the active id', () => {
+    wire.dispatch(planModeEnter({ id: 'p1' }));
+    expect(wire.getModel(PlanModel)).toEqual({ active: true, id: 'p1' });
+
+    wire.dispatch(planModeEnter({ id: 'p2' }));
+    expect(wire.getModel(PlanModel)).toEqual({ active: true, id: 'p2' });
+  });
+
   it('replay rebuilds active state silently', async () => {
     wire.dispatch(planModeEnter({ id: 'p1' }));
     const records = await readRecords();

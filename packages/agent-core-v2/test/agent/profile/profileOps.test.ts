@@ -342,6 +342,36 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     });
   });
 
+  it('update with an empty modelAlias clears the model alias', () => {
+    svc.update({ modelAlias: 'kimi-code' });
+    expect(modelOf(wire).modelAlias).toBe('kimi-code');
+
+    svc.update({ modelAlias: '' });
+    expect(modelOf(wire).modelAlias).toBe('');
+  });
+
+  it('update with null systemPrompt does not reset it', () => {
+    svc.update({ systemPrompt: 'You are helpful.' });
+    svc.update({ systemPrompt: undefined as unknown as string });
+
+    expect(modelOf(wire).systemPrompt).toBe('You are helpful.');
+  });
+
+  it('update with empty activeToolNames clears the tool list', () => {
+    svc.update({ activeToolNames: ['Read', 'Write'] });
+    expect(modelOf(wire).activeToolNames).toEqual(['Read', 'Write']);
+
+    svc.update({ activeToolNames: [] });
+    expect(modelOf(wire).activeToolNames).toEqual([]);
+  });
+
+  it('update with a non-existent model alias does not throw', () => {
+    expect(() => {
+      svc.update({ modelAlias: 'non-existent-model' });
+    }).not.toThrow();
+    expect(modelOf(wire).modelAlias).toBe('non-existent-model');
+  });
+
   it('applies thinking.keep model override when thinking is enabled', () => {
     const generationKwargs: GenerationKwargs[] = [];
     const thinkingEfforts: ThinkingEffort[] = [];

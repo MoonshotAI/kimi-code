@@ -233,6 +233,42 @@ describe('GoalInjection content', () => {
     expect(text).toMatch(/Progress: [^\n]*\.\nBudgets: /);
     expect(text).toMatch(/Budgets: [^\n]*\.\nBudget guidance: /);
   });
+
+  it('includes only the budget line for wall-clock budgets', async () => {
+    const text = (await readGoalReminder(async (goals) => {
+      await goals.createGoal({ objective: 'work' });
+      await goals.setBudgetLimits({ budgetLimits: { wallClockBudgetMs: 60_000 } }, 'model');
+    }))!;
+    expect(text).toContain('Budgets:');
+    expect(text).toContain('time 0s/1m00s');
+    expect(text).not.toContain('tokens');
+    expect(text).not.toContain('turns');
+  });
+
+  it('shows both token and turn budgets when both are set', async () => {
+    const text = (await readGoalReminder(async (goals) => {
+      await goals.createGoal({ objective: 'work' });
+      await goals.setBudgetLimits({ budgetLimits: { tokenBudget: 500, turnBudget: 10 } }, 'model');
+    }))!;
+    expect(text).toContain('tokens 0/500');
+    expect(text).toContain('turns 0/10');
+  });
+
+  it('produces no injection for a completed goal', async () => {
+    const text = await readGoalReminder(async (goals) => {
+      await goals.createGoal({ objective: 'work' });
+      await goals.markComplete({ reason: 'done' }, 'model');
+    });
+    expect(text).toBeUndefined();
+  });
+
+  it('escapes XML-like special characters in the objective', async () => {
+    const text = (await readGoalReminder(async (goals) => {
+      await goals.createGoal({ objective: 'a < b > c & d " e' });
+    }))!;
+    expect(text).toContain('a &lt; b &gt; c &amp; d');
+    expect(text).toContain('" e');
+  });
 });
 
 function goalReminderRecords(persistence: InMemoryWireRecordPersistence) {

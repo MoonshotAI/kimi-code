@@ -543,4 +543,64 @@ describe('runTurn — shouldContinueAfterStop hook', () => {
     // Hook is only consulted at the final non-tool step
     expect(shouldContinueAfterStop).toHaveBeenCalledTimes(1);
   });
+
+  it('continue:true allows another step after max_tokens', async () => {
+    const shouldContinueAfterStop = vi
+      .fn()
+      .mockResolvedValueOnce({ continue: true })
+      .mockResolvedValueOnce({ continue: false });
+    const { result, llm } = await runTurn({
+      hooks: { shouldContinueAfterStop },
+      responses: [
+        makeMaxTokensResponse('partial', { inputOther: 1, output: 1 }),
+        makeEndTurnResponse('recovered', { inputOther: 2, output: 2 }),
+      ],
+    });
+    expect(llm.callCount).toBe(2);
+    expect(result.steps).toBe(2);
+    expect(result.stopReason).toBe('end_turn');
+  });
+
+  it('afterStep receives correct usage after a multi-step turn', async () => {
+    const captured: Array<{ stepNumber: number; usageInput: number }> = [];
+    const hooks: LoopHooks = {
+      afterStep: async (ctx) => {
+        captured.push({ stepNumber: ctx.stepNumber, usageInput: inputTotal(ctx.usage) });
+      },
+    };
+    await runTurn({
+      hooks,
+      responses: [
+        makeEndTurnResponse('first', { inputOther: 10, output: 5 }),
+      ],
+    });
+    expect(captured).toEqual([{ stepNumber: 1, usageInput: 10 }]);
+  });
+
+  it('prepareToolExecution receives toolCalls in the same batch from the provider', async () => {
+    const capturedToolCalls: Array<Array<{ id: string; name: string }>> = [];
+    const hooks: LoopHooks = {
+      prepareToolExecution: async (ctx) => {
+        capturedToolCalls.push(
+          ctx.toolCalls?.map((tc) => ({ id: tc.id, name: tc.name })) ?? [],
+        );
+      },
+    };
+    await runTurn({
+      hooks,
+      tools: [new EchoTool()],
+      responses: [
+        makeToolUseResponse([
+          makeToolCall('echo', { text: 'a' }, 'tc-1'),
+          makeToolCall('echo', { text: 'b' }, 'tc-2'),
+        ]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+    expect(capturedToolCalls.length).toBeGreaterThan(0);
+    expect(capturedToolCalls[0]).toEqual([
+      { id: 'tc-1', name: 'echo' },
+      { id: 'tc-2', name: 'echo' },
+    ]);
+  });
 });

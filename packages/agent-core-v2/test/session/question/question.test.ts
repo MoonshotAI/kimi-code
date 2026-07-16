@@ -158,4 +158,43 @@ describe('ISessionQuestionService (Session scope facade over the interaction ker
     questionsB.answer('q1', { answers: { q_0: 'Yes' } });
     expect(questionsA.listPending().map((r) => r.id)).toEqual(['q1']);
   });
+
+  it('dismiss on an unknown id is a no-op', async () => {
+    const questions = session.accessor.get(ISessionQuestionService);
+    expect(() => questions.dismiss('nope')).not.toThrow();
+  });
+
+  it('handles multiple pending questions and resolves them independently', async () => {
+    const questions = session.accessor.get(ISessionQuestionService);
+    const p1 = questions.request(makeRequest('q1'));
+    const p2 = questions.request(makeRequest('q2'));
+    expect(questions.listPending()).toHaveLength(2);
+
+    questions.dismiss('q1');
+    await expect(p1).resolves.toBeNull();
+    expect(questions.listPending()).toHaveLength(1);
+
+    questions.answer('q2', { answers: { q_0: 'Yes' } });
+    await expect(p2).resolves.toEqual({ answers: { q_0: 'Yes' } });
+    expect(questions.listPending()).toEqual([]);
+  });
+
+  it('answer with an unexpected method still resolves the request', async () => {
+    const questions = session.accessor.get(ISessionQuestionService);
+    const pending = questions.request(makeRequest('q1'));
+    questions.answer('q1', { answers: { q_0: 'Maybe' }, method: 'unknown_method' });
+    await expect(pending).resolves.toEqual({ answers: { q_0: 'Maybe' }, method: 'unknown_method' });
+  });
+
+  it('request with a pre-aborted signal does not enqueue an interaction', async () => {
+    const interaction = session.accessor.get(ISessionInteractionService);
+    const questions = session.accessor.get(ISessionQuestionService);
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      questions.request(makeRequest('q1'), { signal: controller.signal }),
+    ).resolves.toBeNull();
+    expect(interaction.listPending()).toHaveLength(0);
+  });
 });

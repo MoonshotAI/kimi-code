@@ -638,6 +638,91 @@ describe('HarnessAPI session skills', () => {
     });
   });
 
+  it('handles a skill with an empty name', async () => {
+    const { rpc } = await createTestRpc();
+    const created = await rpc.createSession({ id: 'ses_skill_empty_name', workDir });
+
+    await expect(
+      rpc.activateSkill({ sessionId: created.id, agentId: 'main', name: '' }),
+    ).rejects.toThrow();
+  });
+
+  it('handles a skill with a very long name', async () => {
+    const longName = 'a'.repeat(500);
+    await writeSkill(longName, [
+      '---',
+      `name: ${longName}`,
+      'description: Very long name',
+      '---',
+      '',
+      'Body text.',
+    ]);
+    const { rpc } = await createTestRpc();
+    const created = await rpc.createSession({ id: 'ses_skill_long_name', workDir });
+
+    const skills = await rpc.listSkills({ sessionId: created.id });
+    const listed = skills.find((skill) => skill.name === longName);
+    expect(listed).toBeDefined();
+  });
+
+  it('handles a skill with special characters in its name', async () => {
+    const specialName = 'skill-<script>-&-test';
+    await writeSkill(specialName, [
+      '---',
+      `name: ${specialName}`,
+      'description: Special name',
+      '---',
+      '',
+      'Body.',
+    ]);
+    const { rpc } = await createTestRpc();
+    const created = await rpc.createSession({ id: 'ses_skill_special_name', workDir });
+
+    const skills = await rpc.listSkills({ sessionId: created.id });
+    expect(skills.some((skill) => skill.name === specialName)).toBe(true);
+  });
+
+  it('handles activating a skill with extremely long args', async () => {
+    await writeSkill('long-args-skill', [
+      '---',
+      'name: long-args-skill',
+      'description: Long args test',
+      '---',
+      '',
+      'Args: $ARGUMENTS',
+    ]);
+    const { core, rpc } = await createTestRpc({ homeDir });
+    const created = await rpc.createSession({ id: 'ses_skill_long_args', workDir });
+
+    const longArgs = 'x'.repeat(10_000);
+    await rpc.activateSkill({
+      sessionId: created.id,
+      agentId: 'main',
+      name: 'long-args-skill',
+      args: longArgs,
+    });
+    await core.sessions.get(created.id)?.flushMetadata();
+
+    const records = await readMainWire(created.sessionDir);
+    const prompt = records.find((record) => record['type'] === 'turn.prompt');
+    expect(prompt).toBeDefined();
+    expect(JSON.stringify(prompt)).toContain(longArgs);
+  });
+
+  it('handles a skill with empty body (frontmatter only)', async () => {
+    await writeSkill('empty-body', [
+      '---',
+      'name: empty-body',
+      'description: Empty body',
+      '---',
+    ]);
+    const { rpc } = await createTestRpc();
+    const created = await rpc.createSession({ id: 'ses_skill_empty_body', workDir });
+
+    const skills = await rpc.listSkills({ sessionId: created.id });
+    expect(skills.some((skill) => skill.name === 'empty-body')).toBe(true);
+  });
+
   async function writeSkill(name: string, lines: readonly string[]): Promise<void> {
     const dir = join(workDir, '.kimi-code', 'skills', name);
     await mkdir(dir, { recursive: true });

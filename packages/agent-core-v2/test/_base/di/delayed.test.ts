@@ -126,7 +126,7 @@ describe('Delayed instantiation', () => {
     dispose(d1);
   });
 
-  it('disposing an early listener before/after init stops delivery', () => {
+  it('disposing the early listener before init stops delivery', () => {
     interface IA {
       readonly onDidDoIt: Event<unknown>;
       doIt(): void;
@@ -180,5 +180,105 @@ describe('Delayed instantiation', () => {
 
     c.a.doIt();
     expect(eventCount).toBe(1);
+  });
+
+  it('multiple delayed services in the same consumer both defer instantiation', () => {
+    interface IA {
+      readonly onEv: Event<unknown>;
+      fire(): void;
+    }
+    interface IB {
+      readonly onEv: Event<unknown>;
+      fire(): void;
+    }
+    const IA = createDecorator<IA>('delayed-multi-A');
+    const IB = createDecorator<IB>('delayed-multi-B');
+
+    let aCreated = false;
+    let bCreated = false;
+    class AImpl implements IA {
+      private readonly _onEv = new Emitter<this>();
+      readonly onEv: Event<this> = this._onEv.event;
+      constructor() { aCreated = true; }
+      fire(): void { this._onEv.fire(this); }
+    }
+    class BImpl implements IB {
+      private readonly _onEv = new Emitter<this>();
+      readonly onEv: Event<this> = this._onEv.event;
+      constructor() { bCreated = true; }
+      fire(): void { this._onEv.fire(this); }
+    }
+
+    const insta = new InstantiationService(
+      new ServiceCollection(
+        [IA, new SyncDescriptor(AImpl, [], true)],
+        [IB, new SyncDescriptor(BImpl, [], true)],
+      ),
+      true,
+      undefined,
+      true,
+    );
+
+    class Consumer {
+      constructor(
+        @IA public readonly a: IA,
+        @IB public readonly b: IB,
+      ) {}
+    }
+
+    const c = insta.createInstance(Consumer);
+    const aSeen: number[] = [];
+    const bSeen: number[] = [];
+    c.a.onEv(() => aSeen.push(1));
+    c.b.onEv(() => bSeen.push(1));
+    expect(aCreated).toBe(false);
+    expect(bCreated).toBe(false);
+
+    c.a.fire();
+    expect(aCreated).toBe(true);
+    expect(bCreated).toBe(false);
+    expect(aSeen).toEqual([1]);
+
+    c.b.fire();
+    expect(bCreated).toBe(true);
+    expect(aSeen).toEqual([1]);
+    expect(bSeen).toEqual([1]);
+
+    dispose(c);
+  });
+
+  it('delayed service in a child container defers until invoked', () => {
+    interface IA {
+      readonly onEv: Event<unknown>;
+      fire(): void;
+    }
+    const IA = createDecorator<IA>('delayed-child-A');
+
+    let created = false;
+    class AImpl implements IA {
+      private readonly _onEv = new Emitter<this>();
+      readonly onEv: Event<this> = this._onEv.event;
+      constructor() { created = true; }
+      fire(): void { this._onEv.fire(this); }
+    }
+
+    const parent = new InstantiationService(
+      new ServiceCollection([IA, new SyncDescriptor(AImpl, [], true)]),
+      true,
+      undefined,
+      true,
+    );
+    const child = parent.createChild(new ServiceCollection());
+
+    class Consumer {
+      constructor(@IA public readonly a: IA) {}
+    }
+    const c = child.createInstance(Consumer);
+
+    expect(created).toBe(false);
+    c.a.fire();
+    expect(created).toBe(true);
+
+    parent.dispose();
   });
 });

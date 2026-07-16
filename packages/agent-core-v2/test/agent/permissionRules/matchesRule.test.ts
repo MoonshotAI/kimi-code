@@ -156,6 +156,17 @@ describe('permissionRules/matchPermissionRule', () => {
         }),
     })).toBe(true);
   });
+
+  it('rejects a pattern with only whitespace', () => {
+    expect(() => parsePattern('   ')).toThrow(/empty/);
+  });
+
+  it('parses tool name with glob args pattern', () => {
+    expect(parsePattern('bash(src/**)')).toEqual({
+      toolName: 'bash',
+      argPattern: 'src/**',
+    });
+  });
 });
 
 function matches(

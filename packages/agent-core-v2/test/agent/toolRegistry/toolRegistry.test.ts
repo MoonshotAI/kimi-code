@@ -126,4 +126,44 @@ describe('AgentToolRegistryService', () => {
     expect(info?.description).toBe('Search files');
     expect(info?.parameters).toEqual({ type: 'object', additionalProperties: true });
   });
+
+  it('registering a tool with an empty name does not crash', () => {
+    expect(() => {
+      registry.register(new StubTool(''));
+    }).not.toThrow();
+  });
+
+  it('disposing a registration handle twice is safe', () => {
+    const tool = new StubTool('DoubleDispose');
+    const handle = registry.register(tool);
+    handle.dispose();
+    handle.dispose();
+    expect(registry.resolve('DoubleDispose')).toBeUndefined();
+  });
+
+  it('registering the same tool instance twice does not throw', () => {
+    const tool = new StubTool('Dupe');
+    registry.register(tool);
+    expect(() => {
+      registry.register(tool);
+    }).not.toThrow();
+  });
+
+  it('list returns an empty array when no tools are registered', () => {
+    expect(registry.list()).toEqual([]);
+  });
+
+  it('calling unregister on a disposable handle from a replaced registration is safe', () => {
+    const original = new StubTool('A', 'original');
+    const replacement = new StubTool('A', 'replacement');
+
+    const originalHandle = registry.register(original);
+    const replacementHandle = registry.register(replacement);
+
+    originalHandle.dispose();
+    expect(registry.resolve('A')).toBe(replacement);
+
+    replacementHandle.dispose();
+    expect(registry.resolve('A')).toBeUndefined();
+  });
 });

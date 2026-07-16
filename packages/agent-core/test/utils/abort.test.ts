@@ -73,4 +73,30 @@ describe('abortable', () => {
       message: 'Aborted',
     });
   });
+
+  it('resolves with the value when the promise settles before the signal fires', async () => {
+    const controller = new AbortController();
+    const result = abortable(Promise.resolve('fast value'), controller.signal);
+    // Delay the abort so the promise already resolved.
+    controller.abort(userCancellationReason());
+    await expect(result).resolves.toBe('fast value');
+  });
+
+  it('rejects with the promise rejection when the promise rejects before the signal fires', async () => {
+    const controller = new AbortController();
+    const result = abortable(Promise.reject(new Error('early failure')), controller.signal);
+    controller.abort(userCancellationReason());
+    await expect(result).rejects.toThrow('early failure');
+  });
+
+  it('abortError with no message defaults to "Aborted"', () => {
+    expect(abortError()).toMatchObject({ name: 'AbortError', message: 'Aborted' });
+  });
+
+  it('isAbortError returns false for non-abort errors', () => {
+    expect(isAbortError(new Error('generic'))).toBe(false);
+    expect(isAbortError(null)).toBe(false);
+    expect(isAbortError(undefined)).toBe(false);
+    expect(isAbortError('string')).toBe(false);
+  });
 });

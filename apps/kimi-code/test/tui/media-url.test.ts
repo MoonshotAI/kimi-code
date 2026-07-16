@@ -21,6 +21,30 @@ describe('mediaUrlPartToText', () => {
       '[video video/mp4, 1.0 KB]',
     );
   });
+
+  it('handles unknown MIME types gracefully', () => {
+    expect(mediaUrlPartToText('image', 'data:application/octet-stream;base64,AA==')).toBe(
+      '[image application/octet-stream, 1 B]',
+    );
+  });
+
+  it('handles empty base64 payload', () => {
+    expect(mediaUrlPartToText('image', 'data:image/png;base64,')).toBe(
+      '[image image/png, 0 B]',
+    );
+  });
+
+  it('handles very large payload sizes with MB formatting', () => {
+    const tenMb = 'A'.repeat(14_000_000);
+    const result = mediaUrlPartToText('audio', `data:audio/wav;base64,${tenMb}`);
+    expect(result).toMatch(/\[audio audio\/wav, [\d.]+ MB\]/);
+  });
+
+  it('escapes special characters in non-data URLs', () => {
+    expect(mediaUrlPartToText('image', 'file:///tmp/a<b>c&d\'.png')).toBe(
+      '<image url="file:///tmp/a&lt;b&gt;c&amp;d&apos;.png">',
+    );
+  });
 });
 
 describe('summarizeDataUrl', () => {
@@ -33,5 +57,13 @@ describe('summarizeDataUrl', () => {
       mime: 'image/png',
       bytes: 4,
     });
+  });
+
+  it('returns undefined for empty data URL', () => {
+    expect(summarizeDataUrl('data:')).toBeUndefined();
+  });
+
+  it('returns undefined for data URL without base64', () => {
+    expect(summarizeDataUrl('data:text/plain,hello')).toBeUndefined();
   });
 });

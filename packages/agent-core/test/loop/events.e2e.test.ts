@@ -186,4 +186,64 @@ describe('runTurn — LoopEventDispatcher live event containment', () => {
     expect(result.stopReason).toBe('end_turn');
     expect(custom.events.length).toBeGreaterThan(0);
   });
+
+  it('emits events for a turn with no tool calls', async () => {
+    const { sink } = await runTurn({
+      responses: [makeEndTurnResponse('just text')],
+    });
+    expect(sink.count('step.begin')).toBe(1);
+    expect(sink.count('step.end')).toBe(1);
+    // No tool events
+    expect(sink.count('tool.call')).toBe(0);
+    expect(sink.count('tool.result')).toBe(0);
+    expect(sink.count('turn.interrupted')).toBe(0);
+  });
+
+  it('emits tool.progress during a multi-progress tool execution', async () => {
+    const progress = new ProgressTool([
+      { kind: 'stdout', text: 'step 1' },
+      { kind: 'progress', percent: 50 },
+      { kind: 'progress', percent: 75 },
+      { kind: 'stdout', text: 'done' },
+    ]);
+    const { sink } = await runTurn({
+      tools: [progress],
+      responses: [
+        makeToolUseResponse([makeToolCall('progress', {}, 'tc-progress')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+    const progressEvents = sink.byType('tool.progress');
+    expect(progressEvents.length).toBe(4);
+    expect(progressEvents.map((e) => e.update.kind)).toEqual([
+      'stdout',
+      'progress',
+      'progress',
+      'stdout',
+    ]);
+  });
+
+  it('emits events in the correct order for a multi-step turn', async () => {
+    const echo = markReadFileAccesses(new EchoTool());
+    const { sink } = await runTurn({
+      tools: [echo],
+      responses: [
+        makeToolUseResponse([makeToolCall('echo', { text: 'a' }, 'tc-1')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+    const types = sink.typesIn();
+    const step1Begin = types.indexOf('step.begin');
+    const toolCall = types.indexOf('tool.call');
+    const toolResult = types.indexOf('tool.result');
+    const step1End = types.indexOf('step.end');
+    const step2Begin = types.lastIndexOf('step.begin');
+    const step2End = types.lastIndexOf('step.end');
+
+    expect(step1Begin).toBeLessThan(toolCall);
+    expect(toolCall).toBeLessThan(toolResult);
+    expect(toolResult).toBeLessThan(step1End);
+    expect(step1End).toBeLessThan(step2Begin);
+    expect(step2Begin).toBeLessThan(step2End);
+  });
 });

@@ -931,4 +931,38 @@ describe('current builtin background tool schemas', () => {
     expect(TaskStopInputSchema.safeParse({ task_id: 'bash-1' }).success).toBe(true);
     expect(manager.list()).toEqual([]);
   });
+
+  it('rejects a TaskOutput call with an empty task_id', () => {
+    expect(TaskOutputInputSchema.safeParse({ task_id: '' }).success).toBe(false);
+  });
+
+  it('rejects a TaskStop call with an empty task_id', () => {
+    expect(TaskStopInputSchema.safeParse({ task_id: '' }).success).toBe(false);
+  });
+
+  it('rejects a Read call with an empty path', () => {
+    expect(ReadInputSchema.safeParse({ path: '' }).success).toBe(false);
+  });
+
+  it('rejects a Write call with an empty path', () => {
+    expect(WriteInputSchema.safeParse({ path: '', content: 'hello' }).success).toBe(false);
+  });
+
+  it('rejects a Write call with an empty content', () => {
+    expect(WriteInputSchema.safeParse({ path: '/tmp/a.txt', content: '' }).success).toBe(false);
+  });
+
+  it('rejects a Glob call with an empty pattern', () => {
+    expect(GlobInputSchema.safeParse({ pattern: '' }).success).toBe(false);
+  });
+
+  it('rejects a Grep call with an empty pattern', () => {
+    expect(GrepInputSchema.safeParse({ pattern: '' }).success).toBe(false);
+  });
+
+  it('rejects an Edit call with an empty new_string when old_string is non-empty', () => {
+    // Empty new_string is allowed (deletion mode), but empty old_string is not
+    expect(EditInputSchema.safeParse({ path: '/tmp/a.txt', old_string: 'old', new_string: '' }).success).toBe(true);
+    expect(EditInputSchema.safeParse({ path: '/tmp/a.txt', old_string: '', new_string: 'new' }).success).toBe(false);
+  });
 });

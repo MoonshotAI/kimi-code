@@ -48,6 +48,36 @@ describe('parseCommandText', () => {
     expect(def.description).toBe('No description provided.');
     expect(def.body).toBe('');
   });
+
+  it('derives name from hyphenated filename', () => {
+    const def = parseCommandText({
+      text: '---\ndescription: My command\n---\nbody',
+      commandPath: '/p/commands/my-command.md',
+      pluginId: 'p',
+    });
+    expect(def.name).toBe('my-command');
+  });
+
+  it('handles malformed frontmatter gracefully', () => {
+    const def = parseCommandText({
+      text: '---\nno closing delimiter\nbody',
+      commandPath: '/p/commands/invalid.md',
+      pluginId: 'p',
+    });
+    expect(def.name).toBe('invalid');
+    expect(def.description).toBe('no closing delimiter');
+    expect(def.body).toBe('no closing delimiter');
+  });
+
+  it('accepts unicode and special characters in description and body', () => {
+    const def = parseCommandText({
+      text: '---\ndescription: Déployer 部署 🚀\n---\nBody with $pecial chars & more.',
+      commandPath: '/p/commands/deploy.md',
+      pluginId: 'p',
+    });
+    expect(def.description).toBe('Déployer 部署 🚀');
+    expect(def.body).toBe('Body with $pecial chars & more.');
+  });
 });
 
 describe('expandCommandArguments', () => {
@@ -61,5 +91,19 @@ describe('expandCommandArguments', () => {
 
   it('leaves the body unchanged when there is no placeholder and no args', () => {
     expect(expandCommandArguments('Deploy now', '')).toBe('Deploy now');
+  });
+
+  it('replaces $ARGUMENTS in the middle of the body', () => {
+    expect(expandCommandArguments('Run $ARGUMENTS now', 'npm test')).toBe('Run npm test now');
+  });
+
+  it('replaces multiple $ARGUMENTS occurrences', () => {
+    expect(expandCommandArguments('$ARGUMENTS and $ARGUMENTS', 'x')).toBe('x and x');
+  });
+
+  it('preserves args with special characters when no placeholder', () => {
+    expect(expandCommandArguments('Exec', '--flag="value" --path=/a/b')).toBe(
+      'Exec\n\nARGUMENTS: --flag="value" --path=/a/b',
+    );
   });
 });

@@ -1480,4 +1480,53 @@ describe('BashTool prompt / runtime consistency', () => {
     // (`Command failed with exit code: N`), never via a system tag.
     expect(tool.description).not.toMatch(/exit code will be provided in a system tag/);
   });
+
+  it('rejects a command with only whitespace characters', () => {
+    expect(BashInputSchema.safeParse({ command: '   ' }).success).toBe(false);
+  });
+
+  it('handles a command with special characters in the cwd path', async () => {
+    const execWithEnv = vi.fn().mockResolvedValue(processWithOutput({ stdout: 'ok\n' }));
+    const tool = bashTool(
+      createFakeKaos({ execWithEnv, osEnv: posixEnv }),
+      '/workspace',
+      createBackgroundManager().manager,
+    );
+
+    await executeTool(tool, context({ command: 'pwd', cwd: '/workspace/my project/v2', timeout: 60 }));
+
+    const argv = execWithEnv.mock.calls[0]?.[0] as readonly string[];
+    expect(argv[2]).toBe("cd '/workspace/my project/v2' && pwd");
+  });
+
+  it('handles a command with unicode characters in the output', async () => {
+    const unicode = 'café 日本語 ✓';
+    const tool = bashTool(
+      createFakeKaos({
+        execWithEnv: vi.fn().mockResolvedValue(processWithOutput({ stdout: unicode })),
+        osEnv: posixEnv,
+      }),
+      '/workspace',
+    );
+
+    const result = await executeTool(tool, context({ command: 'echo unicode', timeout: 60 }));
+
+    expect(result.isError).toBe(false);
+    expect(result.output).toContain('café 日本語 ✓');
+  });
+
+  it('handles a command with trailing newlines in output', async () => {
+    const tool = bashTool(
+      createFakeKaos({
+        execWithEnv: vi.fn().mockResolvedValue(processWithOutput({ stdout: 'line1\n\nline3\n\n\n' })),
+        osEnv: posixEnv,
+      }),
+      '/workspace',
+    );
+
+    const result = await executeTool(tool, context({ command: 'printf multi', timeout: 60 }));
+
+    expect(result.isError).toBe(false);
+    expect(result.output).toBe('line1\n\nline3\n\n\n');
+  });
 });

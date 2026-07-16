@@ -254,4 +254,56 @@ describe('@moonshot-ai/agent-core · services interfaces', () => {
     expect(typeof parsePorcelain).toBe('function');
     expect(typeof resolveSafePath).toBe('function');
   });
+
+  it('FakeEventService handles multiple events', () => {
+    const events = new FakeEventService();
+    const e1 = makeFakeEvent();
+    const e2 = { ...e1, sessionId: 'sess-2' };
+    events.publish(e1);
+    events.publish(e2);
+    expect(events.events).toHaveLength(2);
+  });
+
+  it('FakeApprovalService handles multiple approvals', async () => {
+    const approvals = new FakeApprovalService();
+    const a1 = makeFakeApproval();
+    const a2 = { ...a1, toolCallId: 'tc-2' };
+    const r1 = await approvals.request(a1);
+    expect(r1).toEqual({ decision: 'approved' });
+    const r2 = await approvals.request(a2);
+    expect(r2).toEqual({ decision: 'approved' });
+    expect(approvals.received).toHaveLength(2);
+  });
+
+  it('FakeQuestionService handles a question with no options', async () => {
+    const questions = new FakeQuestionService();
+    const q = { ...makeFakeQuestion(), questions: [{ question: 'Just type?', options: [] }] };
+    const resp = await questions.request(q);
+    expect(resp).toBeNull();
+  });
+
+  it('resolveSafePath is a function', () => {
+    expect(typeof resolveSafePath).toBe('function');
+  });
+
+  it('parsePorcelain is a function', () => {
+    expect(typeof parsePorcelain).toBe('function');
+  });
+
+  it('FakeEventService subscription fires on publish', () => {
+    const events = new FakeEventService();
+    const listener = vi.fn();
+    events.onDidPublish(listener);
+    const e = makeFakeEvent();
+    events.publish(e);
+    expect(listener).toHaveBeenCalledWith(e);
+  });
+
+  it('FakeQuestionService dismiss tracks all calls', () => {
+    const questions = new FakeQuestionService();
+    questions.dismiss('q-1');
+    questions.dismiss('q-2');
+    questions.dismiss('q-3');
+    expect(questions.dismissCalls).toEqual(['q-1', 'q-2', 'q-3']);
+  });
 });

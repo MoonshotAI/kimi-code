@@ -85,6 +85,42 @@ describe('Cyclic dependency detection', () => {
     expect(() => ix.invokeFunction((a) => a.get(IA))).not.toThrow();
   });
 
+  it('cycle with three nodes A→B→C→A is detected', () => {
+    interface IA { tag: string; }
+    interface IB { tag: string; }
+    interface IC { tag: string; }
+    const IA = createDecorator<IA>('A');
+    const IB = createDecorator<IB>('B');
+    const IC = createDecorator<IC>('C');
+    class A implements IA {
+      tag = 'A';
+      constructor(@IB _b: IB) {}
+    }
+    class B implements IB {
+      tag = 'B';
+      constructor(@IC _c: IC) {}
+    }
+    class C implements IC {
+      tag = 'C';
+      constructor(@IA _a: IA) {}
+    }
+    const ix = new InstantiationService(
+      new ServiceCollection(
+        [IA, new SyncDescriptor(A)],
+        [IB, new SyncDescriptor(B)],
+        [IC, new SyncDescriptor(C)],
+      ),
+    );
+    let captured: CyclicDependencyError | undefined;
+    try {
+      ix.invokeFunction((a) => a.get(IA));
+    } catch (e) {
+      captured = e as CyclicDependencyError;
+    }
+    expect(captured).toBeInstanceOf(CyclicDependencyError);
+    expect(captured!.path).toEqual(['A', 'B', 'C', 'A']);
+  });
+
   it('cycle across parent/child boundary is detected', () => {
     interface IA {
       tag: 'A';

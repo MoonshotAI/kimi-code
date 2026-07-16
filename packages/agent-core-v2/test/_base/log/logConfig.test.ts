@@ -71,6 +71,34 @@ describe('path resolution', () => {
   it('resolves the session log path under sessionDir/logs', () => {
     expect(resolveSessionLogPath('/sessions/s1')).toBe('/sessions/s1/logs/kimi-code.log');
   });
+
+  it('handles zero and negative env values by falling back to defaults', () => {
+    const cfg = resolveLoggingConfig({
+      homeDir: '/h',
+      env: {
+        KIMI_LOG_GLOBAL_MAX_BYTES: '0',
+        KIMI_LOG_GLOBAL_FILES: '-1',
+        KIMI_LOG_SESSION_MAX_BYTES: '0',
+        KIMI_LOG_SESSION_FILES: '-1',
+      },
+    });
+    expect(cfg.globalMaxBytes).toBe(DEFAULT_GLOBAL_MAX_BYTES);
+    expect(cfg.globalFiles).toBe(DEFAULT_GLOBAL_FILES);
+    expect(cfg.sessionMaxBytes).toBe(DEFAULT_SESSION_MAX_BYTES);
+    expect(cfg.sessionFiles).toBe(DEFAULT_SESSION_FILES);
+  });
+
+  it('handles empty env values for size configs', () => {
+    const cfg = resolveLoggingConfig({
+      homeDir: '/h',
+      env: {
+        KIMI_LOG_GLOBAL_MAX_BYTES: '',
+        KIMI_LOG_GLOBAL_FILES: '',
+      },
+    });
+    expect(cfg.globalMaxBytes).toBe(DEFAULT_GLOBAL_MAX_BYTES);
+    expect(cfg.globalFiles).toBe(DEFAULT_GLOBAL_FILES);
+  });
 });
 
 describe('logSeed', () => {

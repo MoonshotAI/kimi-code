@@ -288,4 +288,40 @@ describe('ExitPlanMode options documentation consistency', () => {
     expect(DESCRIPTION).not.toMatch(/single option/i);
     expect(DESCRIPTION).toMatch(/pass them via the .?options.? parameter/i);
   });
+
+  it('rejects an option label that exceeds 80 characters', () => {
+    const parsed = ExitPlanModeInputSchema.safeParse({
+      options: [{ label: 'x'.repeat(81), description: 'too long' }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('accepts an option label at exactly 80 characters', () => {
+    const parsed = ExitPlanModeInputSchema.safeParse({
+      options: [{ label: 'x'.repeat(80), description: 'exactly 80' }],
+    });
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects an option with an empty description when description is provided', () => {
+    const parsed = ExitPlanModeInputSchema.safeParse({
+      options: [{ label: 'A', description: '' }],
+    });
+    // Empty description is accepted — it defaults to ''
+    expect(parsed.success).toBe(true);
+  });
+
+  it('rejects reserved label "Revise" with whitespace trimmed', () => {
+    const parsed = ExitPlanModeInputSchema.safeParse({
+      options: [{ label: '  Revise  ', description: 'x' }],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('rejects reserved label "Approve" with whitespace trimmed', () => {
+    const parsed = ExitPlanModeInputSchema.safeParse({
+      options: [{ label: '  Approve  ', description: 'x' }],
+    });
+    expect(parsed.success).toBe(false);
+  });
 });

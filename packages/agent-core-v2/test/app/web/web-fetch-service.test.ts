@@ -102,6 +102,64 @@ describe('WebFetchService', () => {
     });
   });
 
+  it('builds a Moonshot fetcher from the managed provider oauth ref without a trailing slash on baseUrl', () => {
+    providers = {
+      [OAUTH_PROVIDER]: {
+        type: 'kimi',
+        baseUrl: 'https://api.example.com/v1',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    };
+    const moonshot = fetcher() as MoonshotFetchURLProvider;
+    expect(moonshot).toBeInstanceOf(MoonshotFetchURLProvider);
+  });
+
+  it('falls back to local when the managed provider has no oauth config even with type kimi', () => {
+    providers = {
+      [OAUTH_PROVIDER]: { type: 'kimi', apiKey: 'sk-test' },
+    };
+    expect(fetcher()).toBeInstanceOf(LocalFetchURLProvider);
+  });
+
+  it('falls back to local when no providers exist at all', () => {
+    providers = {};
+    expect(fetcher()).toBeInstanceOf(LocalFetchURLProvider);
+  });
+
+  it('returns the same local instance on every call when OAuth is unavailable', () => {
+    providers = {};
+    const first = fetcher();
+    const second = fetcher();
+    expect(first).toBe(second);
+  });
+
+  it('creates a new Moonshot instance on each call when OAuth is configured', () => {
+    providers = {
+      [OAUTH_PROVIDER]: {
+        type: 'kimi',
+        baseUrl: 'https://api.example.com/v1',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    };
+    const first = fetcher();
+    const second = fetcher();
+    expect(first).not.toBe(second);
+  });
+
+  it('propagates the error when the token provider throws', () => {
+    providers = {
+      [OAUTH_PROVIDER]: {
+        type: 'kimi',
+        baseUrl: 'https://api.example.com/v1',
+        oauth: { storage: 'file', key: 'oauth/kimi-code' },
+      },
+    };
+    resolveTokenProvider.mockImplementation(() => {
+      throw new Error('OAuth resolution failure');
+    });
+    expect(() => fetcher()).toThrow('OAuth resolution failure');
+  });
+
   it('fetches against /fetch with the OAuth access token, host identity headers, and custom headers', async () => {
     providers = {
       [OAUTH_PROVIDER]: {

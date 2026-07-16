@@ -292,4 +292,69 @@ describe('TerminalService streams', () => {
       TerminalNotFoundError,
     );
   });
+
+  it('throws SessionNotFoundError when creating a terminal for an unknown session', async () => {
+    const backend = new FakeTerminalBackend();
+    const svc = new TerminalService({ backend }, makeSessionService(new Map()));
+    await expect(svc.create('unknown', {})).rejects.toBeInstanceOf(SessionNotFoundError);
+  });
+
+  it('throws TerminalNotFoundError when writing to a non-existent terminal', async () => {
+    const root = join(tmpDir, 'workspace-h');
+    mkdirSync(root, { recursive: true });
+    const backend = new FakeTerminalBackend();
+    const svc = new TerminalService({ backend }, makeSessionService(new Map([
+      ['sess_h', session('sess_h', root)],
+    ])));
+    await expect(svc.write('sess_h', 'no-such-terminal', 'data')).rejects.toBeInstanceOf(
+      TerminalNotFoundError,
+    );
+  });
+
+  it('throws TerminalNotFoundError when resizing a non-existent terminal', async () => {
+    const root = join(tmpDir, 'workspace-i');
+    mkdirSync(root, { recursive: true });
+    const backend = new FakeTerminalBackend();
+    const svc = new TerminalService({ backend }, makeSessionService(new Map([
+      ['sess_i', session('sess_i', root)],
+    ])));
+    await expect(svc.resize('sess_i', 'no-such-terminal', 80, 24)).rejects.toBeInstanceOf(
+      TerminalNotFoundError,
+    );
+  });
+
+  it('throws TerminalNotFoundError when closing a non-existent terminal', async () => {
+    const root = join(tmpDir, 'workspace-j');
+    mkdirSync(root, { recursive: true });
+    const backend = new FakeTerminalBackend();
+    const svc = new TerminalService({ backend }, makeSessionService(new Map([
+      ['sess_j', session('sess_j', root)],
+    ])));
+    await expect(svc.close('sess_j', 'no-such-terminal')).rejects.toBeInstanceOf(
+      TerminalNotFoundError,
+    );
+  });
+
+  it('list returns [] for a session with no terminals', async () => {
+    const root = join(tmpDir, 'workspace-k');
+    mkdirSync(root, { recursive: true });
+    const backend = new FakeTerminalBackend();
+    const svc = new TerminalService({ backend }, makeSessionService(new Map([
+      ['sess_k', session('sess_k', root)],
+    ])));
+    expect(await svc.list('sess_k')).toEqual([]);
+  });
+
+  it('throws TerminalNotFoundError when attaching to a non-existent terminal', async () => {
+    const root = join(tmpDir, 'workspace-l');
+    mkdirSync(root, { recursive: true });
+    const backend = new FakeTerminalBackend();
+    const svc = new TerminalService({ backend }, makeSessionService(new Map([
+      ['sess_l', session('sess_l', root)],
+    ])));
+    const sink = new Sink('conn');
+    await expect(svc.attach('sess_l', 'no-such-terminal', sink)).rejects.toBeInstanceOf(
+      TerminalNotFoundError,
+    );
+  });
 });

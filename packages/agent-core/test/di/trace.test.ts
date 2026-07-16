@@ -50,4 +50,31 @@ describe('InstantiationService Trace installation (P0.2)', () => {
     // stop() should not throw on a real Trace either.
     expect(() => t.stop()).not.toThrow();
   });
+
+  it('Trace.branch() on the noop sentinel does not throw', () => {
+    const t = Trace.traceCreation(false, class Foo {});
+    const branch = t.branch();
+    expect(branch).toBeDefined();
+    expect(() => branch.stop()).not.toThrow();
+  });
+
+  it('Trace.traceInvocation with tracing=true returns a real Trace with timing info', () => {
+    const t = Trace.traceInvocation(true, function example() {});
+    expect(t).toBeInstanceOf(Trace);
+    expect(() => t.stop()).not.toThrow();
+  });
+
+  it('Trace.stop() on a real Trace can be called multiple times', () => {
+    const t = Trace.traceCreation(true, class Foo {});
+    expect(() => t.stop()).not.toThrow();
+    // Second stop should also not throw (idempotent).
+    expect(() => t.stop()).not.toThrow();
+  });
+
+  it('tracing is inherited by child containers', () => {
+    const parent = new ExposedInstantiationService(new ServiceCollection(), false, undefined, true);
+    expect(parent.tracingEnabled).toBe(true);
+    const child = parent.createChild(new ServiceCollection()) as ExposedInstantiationService;
+    expect(child.tracingEnabled).toBe(true);
+  });
 });

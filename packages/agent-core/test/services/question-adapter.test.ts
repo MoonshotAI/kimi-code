@@ -281,6 +281,60 @@ describe('question-adapter · toAgentCoreResponse · id → text translation', (
     // Distinct from dismissedResult() which returns null.
     expect(inProc).not.toBeNull();
   });
+
+  it('handles a single question with no options gracefully', () => {
+    const req = toBrokerRequest(
+      { questions: [{ question: 'Enter value?', options: [] }] },
+      { questionId: 'q1', sessionId: 's', createdAt: '2026-01-01T00:00:00.000Z' },
+    );
+    expect(req.questions[0]?.options).toEqual([]);
+    const inProc = toAgentCoreResponse(
+      { answers: { q_0: { kind: 'other', text: 'custom' } } },
+      req,
+    );
+    expect(inProc.answers).toEqual({ 'Enter value?': 'custom' });
+  });
+
+  it('handles empty questions array', () => {
+    const req = toBrokerRequest(
+      { questions: [] },
+      { questionId: 'q1', sessionId: 's', createdAt: '2026-01-01T00:00:00.000Z' },
+    );
+    expect(req.questions).toEqual([]);
+  });
+
+  it('handles multi-select with empty option_ids', () => {
+    const inProc = toAgentCoreResponse(
+      { answers: { q_0: { kind: 'multi', option_ids: [] } } },
+      request,
+    );
+    expect(inProc.answers).toEqual({ 'Which animal?': '' });
+  });
+
+  it('resolves multi_with_other with empty option_ids and only other_text', () => {
+    const inProc = toAgentCoreResponse(
+      { answers: { q_1: { kind: 'multi_with_other', option_ids: [], other_text: 'Custom' } } },
+      request,
+    );
+    expect(inProc.answers).toEqual({ 'Which colors?': 'Custom' });
+  });
+
+  it('handles special characters in question text and option labels', () => {
+    const specialReq = toBrokerRequest(
+      {
+        questions: [{
+          question: 'Price > $10? (yes/no)',
+          options: [{ label: 'Yes, it\'s > $10' }, { label: 'No, it\'s < $10' }],
+        }],
+      },
+      { questionId: 'q2', sessionId: 's', createdAt: '2026-01-01T00:00:00.000Z' },
+    );
+    const inProc = toAgentCoreResponse(
+      { answers: { q_0: { kind: 'single', option_id: 'opt_0_1' } } },
+      specialReq,
+    );
+    expect(inProc.answers).toEqual({ 'Price > $10? (yes/no)': "No, it's < $10" });
+  });
 });
 
 describe('question-adapter · dismissedResult helper', () => {

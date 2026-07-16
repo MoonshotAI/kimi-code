@@ -52,6 +52,27 @@ describe('onUnexpectedError + setUnexpectedErrorHandler', () => {
     onUnexpectedError(new Error('after-reset'));
     expect(seen).toHaveLength(0);
   });
+
+  it('onUnexpectedError passes non-Error values through to the handler', () => {
+    const captured: unknown[] = [];
+    setUnexpectedErrorHandler((err) => captured.push(err));
+    onUnexpectedError('string error');
+    onUnexpectedError(null);
+    onUnexpectedError(42);
+    expect(captured).toHaveLength(3);
+    expect(captured[0]).toBe('string error');
+    expect(captured[1]).toBeNull();
+    expect(captured[2]).toBe(42);
+  });
+
+  it('multiple onUnexpectedError calls each reach the handler', () => {
+    const captured: unknown[] = [];
+    setUnexpectedErrorHandler((err) => captured.push(err));
+    onUnexpectedError(new Error('first'));
+    onUnexpectedError(new Error('second'));
+    onUnexpectedError(new Error('third'));
+    expect(captured).toHaveLength(3);
+  });
 });
 
 describe('safelyCallListener', () => {
@@ -77,5 +98,28 @@ describe('safelyCallListener', () => {
     ).not.toThrow();
     expect(captured).toHaveLength(1);
     expect((captured[0] as Error).message).toBe('listener-boom');
+  });
+
+  it('does not throw for a non-Error thrown value', () => {
+    const captured: unknown[] = [];
+    setUnexpectedErrorHandler((err) => captured.push(err));
+    expect(() =>
+      safelyCallListener(() => {
+        throw 'string-thrown';
+      }),
+    ).not.toThrow();
+    expect(captured).toHaveLength(1);
+    expect(captured[0]).toBe('string-thrown');
+  });
+
+  it('multiple listeners each route independently', () => {
+    const captured: unknown[] = [];
+    setUnexpectedErrorHandler((err) => captured.push(err));
+    safelyCallListener(() => { throw new Error('first'); });
+    safelyCallListener(() => { /* no error */ });
+    safelyCallListener(() => { throw new Error('third'); });
+    expect(captured).toHaveLength(2);
+    expect((captured[0] as Error).message).toBe('first');
+    expect((captured[1] as Error).message).toBe('third');
   });
 });

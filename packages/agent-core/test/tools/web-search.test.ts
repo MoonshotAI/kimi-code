@@ -296,6 +296,57 @@ describe('WebSearchTool', () => {
     expect(tool.description.toLowerCase()).toMatch(/internet|search the web/);
     expect(tool.description.toLowerCase()).toContain('search');
   });
+
+  it('handles an empty query string gracefully', async () => {
+    const provider = fakeProvider([]);
+    const tool = new WebSearchTool(provider);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-empty-query',
+      args: { query: '' },
+      signal,
+    });
+    expect(result.isError).toBe(false);
+    expect(toolContentString(result)).toContain('No search results found');
+  });
+
+  it('handles a query with special characters', async () => {
+    const provider = fakeProvider([
+      { title: 'Special Result', url: 'https://example.com/special', snippet: 'C++ & C# tutorial' },
+    ]);
+    const tool = new WebSearchTool(provider);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-special',
+      args: { query: 'C++ & C# tutorial' },
+      signal,
+    });
+    expect(result.isError).toBe(false);
+    const content = toolContentString(result);
+    expect(content).toContain('C++ & C# tutorial');
+    expect(content).toContain('Special Result');
+  });
+
+  it('renders multiple results with correct formatting', async () => {
+    const results = Array.from({ length: 5 }, (_, i) => ({
+      title: `Result ${i + 1}`,
+      url: `https://example.com/${i + 1}`,
+      snippet: `Snippet ${i + 1}`,
+    }));
+    const provider = fakeProvider(results);
+    const tool = new WebSearchTool(provider);
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'c-multi',
+      args: { query: 'multi results' },
+      signal,
+    });
+    const content = toolContentString(result);
+    for (let i = 0; i < 5; i++) {
+      expect(content).toContain(`Result ${i + 1}`);
+      expect(content).toContain(`Snippet ${i + 1}`);
+    }
+  });
 });
 
 describe('MoonshotWebSearchProvider', () => {

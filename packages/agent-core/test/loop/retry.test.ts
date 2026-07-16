@@ -140,6 +140,69 @@ describe('chatWithRetry: terminated stream drops', () => {
     expect(chatCalls).toBe(1);
     expect(tokenCalls).toBe(1);
   });
+
+  it('does not retry when the signal is aborted during backoff', async () => {
+    let calls = 0;
+    const ac = new AbortController();
+    const llm: LLM = {
+      systemPrompt: '',
+      modelName: 'mock',
+      isRetryableError: (e) => isRetryableGenerateError(e),
+      async chat(_params: LLMChatParams): Promise<LLMChatResponse> {
+        calls += 1;
+        if (calls === 1) throw new APIConnectionError('terminated');
+        return okResponse();
+      },
+    };
+
+    const promise = chatWithRetry(makeInput(llm, ac.signal));
+    // Abort during the backoff delay between retries.
+    ac.abort();
+
+    await expect(promise).rejects.toMatchObject({ name: 'AbortError' });
+    expect(calls).toBe(1);
+  });
+
+  it('exhausts all retries and surfaces the last error', async () => {
+    let calls = 0;
+    const llm: LLM = {
+      systemPrompt: '',
+      modelName: 'mock',
+      isRetryableError: (e) => isRetryableGenerateError(e),
+      async chat(): Promise<LLMChatResponse> {
+        calls += 1;
+        throw new APIConnectionError('persistent connection failure');
+      },
+    };
+
+    await expect(
+      chatWithRetry(makeInput(llm, new AbortController().signal)),
+    ).rejects.toMatchObject({
+      name: 'APIConnectionError',
+      message: 'persistent connection failure',
+    });
+    expect(calls).toBe(DEFAULT_MAX_RETRY_ATTEMPTS);
+  });
+
+  it('retries with a mixed sequence of transient and rate-limit errors', async () => {
+    let calls = 0;
+    const llm: LLM = {
+      systemPrompt: '',
+      modelName: 'mock',
+      isRetryableError: (e) => isRetryableGenerateError(e),
+      async chat(): Promise<LLMChatResponse> {
+        calls += 1;
+        if (calls === 1) throw new APIConnectionError('connection reset');
+        if (calls === 2) throw new APIProviderRateLimitError('rate limited', null, 10);
+        if (calls === 3) throw new APIConnectionError('socket hang up');
+        return okResponse();
+      },
+    };
+
+    const response = await chatWithRetry(makeInput(llm, new AbortController().signal));
+    expect(calls).toBe(4);
+    expect(response).toEqual(okResponse());
+  });
 });
 
 describe('retryBackoffDelays', () => {

@@ -125,4 +125,40 @@ describe('default agent profiles', () => {
       expect(prompt).toContain('premature abstraction'); // MINIMAL-changes counterexample
     }
   });
+
+  it('renders a prompt with an empty cwd', () => {
+    const emptyCwdContext = { ...promptContext, cwd: '' };
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(emptyCwdContext) ?? '';
+    expect(prompt).toContain('You are Kimi Code CLI');
+    expect(prompt).not.toContain('undefined');
+  });
+
+  it('renders a prompt with a very long agentsMd content', () => {
+    const longAgentsContext = { ...promptContext, agentsMd: 'instruction\n'.repeat(500) };
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(longAgentsContext) ?? '';
+    expect(prompt).toContain('instruction');
+    expect(prompt.length).toBeGreaterThan(1000);
+  });
+
+  it('renders a prompt with unicode characters in cwd', () => {
+    const unicodeContext = { ...promptContext, cwd: '/home/用户/projects/プロジェクト' };
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(unicodeContext) ?? '';
+    expect(prompt).toContain('/home/用户/projects/プロジェクト');
+  });
+
+  it('handles undefined skills gracefully', () => {
+    const noSkillsContext = { ...promptContext, skills: undefined as unknown as string };
+    const prompt = DEFAULT_AGENT_PROFILES['agent']?.systemPrompt(noSkillsContext) ?? '';
+    expect(prompt).toContain('You are Kimi Code CLI');
+  });
+
+  it('renders system prompt for all known profile names without throwing', () => {
+    for (const name of ['agent', 'coder', 'explore', 'plan']) {
+      const profile = DEFAULT_AGENT_PROFILES[name];
+      expect(profile).toBeDefined();
+      const prompt = profile?.systemPrompt(promptContext);
+      expect(prompt).toBeTruthy();
+      expect(prompt).toContain('You are');
+    }
+  });
 });

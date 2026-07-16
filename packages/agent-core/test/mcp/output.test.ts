@@ -220,6 +220,54 @@ describe('convertMCPContentBlock', () => {
     const block: MCPContentBlock = { type: 'image', mimeType: 'image/png' };
     expect(convertMCPContentBlock(block)).toBeNull();
   });
+
+  test('returns null for audio block missing data field', () => {
+    const block: MCPContentBlock = { type: 'audio', mimeType: 'audio/mpeg' };
+    expect(convertMCPContentBlock(block)).toBeNull();
+  });
+
+  test('converts video block with default mimeType to VideoURLPart', () => {
+    const block: MCPContentBlock = { type: 'video', data: 'VID', mimeType: 'video/mp4' };
+    expect(convertMCPContentBlock(block)).toEqual({
+      type: 'video_url',
+      videoUrl: { url: 'data:video/mp4;base64,VID' },
+    });
+  });
+
+  test('returns null for resource_link with file:// URI', () => {
+    const block = assertValidMcpBlock({
+      type: 'resource_link',
+      name: 'local.txt',
+      uri: 'file:///home/user/data.txt',
+      mimeType: 'text/plain',
+    });
+    expect(convertMCPContentBlock(block)).toBeNull();
+  });
+
+  test('returns null for resource_link with no mimeType', () => {
+    const block = assertValidMcpBlock({
+      type: 'resource_link',
+      name: 'data.bin',
+      uri: 'https://example.com/data.bin',
+    });
+    expect(convertMCPContentBlock(block)).toBeNull();
+  });
+
+  test('returns null for resource with no text and no blob', () => {
+    const block = assertValidMcpBlock({
+      type: 'resource',
+      resource: { uri: 'file:///empty', mimeType: 'text/plain' },
+    });
+    expect(convertMCPContentBlock(block)).toBeNull();
+  });
+
+  test('returns null for resource with blob but no mimeType (defaults to octet-stream)', () => {
+    const block = assertValidMcpBlock({
+      type: 'resource',
+      resource: { uri: 'file:///unknown', blob: 'BLOB' },
+    });
+    expect(convertMCPContentBlock(block)).toBeNull();
+  });
 });
 
 describe('mcpResultToExecutableOutput', () => {
@@ -694,5 +742,53 @@ describe('mcpResultToExecutableOutput', () => {
     const joined = parts.map((p) => (p.type === 'text' ? p.text : '')).join('');
     expect(joined).not.toContain('Output truncated');
     await rm(dir, { recursive: true, force: true });
+  });
+
+  test('empty content array with isError=true still returns an empty output', async () => {
+    const out = await mcpResultToExecutableOutput(result([], true), 'mcp__s__t');
+    expect(out).toEqual({ output: [], isError: true });
+  });
+
+  test('drops multiple unsupported binary parts in favor of per-part notices', async () => {
+    const out = await mcpResultToExecutableOutput(
+      result([
+        { type: 'image', data: 'QUJD', mimeType: 'image/heic' },
+        { type: 'image', data: 'QUJD', mimeType: 'image/heif' },
+      ]),
+      'mcp__s__photos',
+    );
+    const parts = out.output as ContentPart[];
+    expect(parts[0]).toEqual({ type: 'text', text: '<mcp_tool_result name="mcp__s__photos">' });
+    expect(parts[1]?.type).toBe('text');
+    expect((parts[1] as { text: string }).text).toContain('image/heic');
+    expect(parts[2]?.type).toBe('text');
+    expect((parts[2] as { text: string }).text).toContain('image/heif');
+    expect(parts[3]).toEqual({ type: 'text', text: '</mcp_tool_result>' });
+  });
+
+  test('handles text block with tab and newline characters', async () => {
+    const out = await mcpResultToExecutableOutput(
+      result([{ type: 'text', text: 'line1\n\tindented\nline3' }]),
+      'mcp__s__t',
+    );
+    expect(out.output).toBe('line1\n\tindented\nline3');
+  });
+
+  test('single resource_link with accepted type passes through', async () => {
+    const out = await mcpResultToExecutableOutput(
+      result([
+        assertValidMcpBlock({
+          type: 'resource_link',
+          name: 'img.png',
+          uri: 'https://example.com/img.png',
+          mimeType: 'image/png',
+        }),
+      ]),
+      'mcp__s__t',
+    );
+    expect((out.output as ContentPart[])[0]).toEqual({
+      type: 'image_url',
+      imageUrl: { url: 'https://example.com/img.png' },
+    });
   });
 });

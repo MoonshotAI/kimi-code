@@ -121,6 +121,53 @@ describe('AgentProfileService.applyProfile', () => {
 
     expect(svc.getAgentsMdWarning()).toBeUndefined();
   });
+
+  it('handles an empty AGENTS.md file gracefully', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), '', 'utf-8');
+    const { profile: svc } = buildContext();
+
+    await svc.applyProfile(profile);
+
+    expect(svc.data().systemPrompt).not.toContain('<!-- From:');
+    expect(svc.getAgentsMdWarning()).toBeUndefined();
+  });
+
+  it('handles AGENTS.md with only whitespace and newlines', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), '   \n\n  \n  ', 'utf-8');
+    const { profile: svc } = buildContext();
+
+    await svc.applyProfile(profile);
+
+    expect(svc.getAgentsMdWarning()).toBeUndefined();
+  });
+
+  it('refreshes the system prompt without a working directory AGENTS.md', async () => {
+    const { profile: svc } = buildContext();
+    svc.update({ cwd: workDir });
+    await svc.applyProfile(exactProfile);
+    svc.update({ activeToolNames: ['Read'] });
+
+    await svc.refreshSystemPrompt();
+
+    expect(svc.getActiveToolNames()).toEqual(['Read']);
+    expect(svc.getAgentsMdWarning()).toBeUndefined();
+  });
+
+  it('handles multiple consecutive refreshSystemPrompt calls', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), 'v1', 'utf-8');
+    const { profile: svc } = buildContext();
+
+    await svc.applyProfile(profile);
+    expect(svc.data().systemPrompt).toContain('v1');
+
+    await writeFile(join(workDir, 'AGENTS.md'), 'v2', 'utf-8');
+    await svc.refreshSystemPrompt();
+    expect(svc.data().systemPrompt).toContain('v2');
+
+    await writeFile(join(workDir, 'AGENTS.md'), 'v3', 'utf-8');
+    await svc.refreshSystemPrompt();
+    expect(svc.data().systemPrompt).toContain('v3');
+  });
 });
 
 function exactSystemPrompt(workDir: string, agentsMd: string): string {

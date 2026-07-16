@@ -301,6 +301,26 @@ describe('StdioMcpClient', () => {
     await new Promise((r) => setTimeout(r, 100));
     expect(closes).toEqual([]);
   }, 15000);
+
+  it('rejects callTool after close with a clear error', async () => {
+    const client = new StdioMcpClient({
+      transport: 'stdio',
+      command: process.execPath,
+      args: [stdioFixture],
+    });
+    await client.connect();
+    await client.close();
+    await expect(client.callTool('echo', { text: 'after close' })).rejects.toThrow();
+  }, 15000);
+
+  it('rejects connect with a non-existent command', async () => {
+    const client = new StdioMcpClient({
+      transport: 'stdio',
+      command: '/this/command/does/not/exist/anywhere',
+    });
+    await expect(client.connect()).rejects.toThrow();
+    await client.close();
+  }, 15000);
 });
 
 describe('mergeStdioEnv', () => {
@@ -316,6 +336,19 @@ describe('mergeStdioEnv', () => {
     const merged = mergeStdioEnv(undefined, { PATH: '/usr/bin' });
     expect(merged['NODE_USE_ENV_PROXY']).toBeUndefined();
     expect(merged['PATH']).toBe('/usr/bin');
+  });
+
+  it('injects NODE_USE_ENV_PROXY for uppercase and lowercase proxy config', () => {
+    const upper = mergeStdioEnv({ HTTP_PROXY: 'http://corp:3128' }, {});
+    expect(upper['NODE_USE_ENV_PROXY']).toBe('1');
+    const lower = mergeStdioEnv({ http_proxy: 'http://corp:3128' }, {});
+    expect(lower['NODE_USE_ENV_PROXY']).toBe('1');
+  });
+
+  it('treats null/undefined parent env gracefully', () => {
+    const merged = mergeStdioEnv({ FOO: 'bar' }, null as unknown as Record<string, string>);
+    expect(merged['FOO']).toBe('bar');
+    expect(merged['NODE_USE_ENV_PROXY']).toBeUndefined();
   });
 
   it('lets config.env override the parent env', () => {

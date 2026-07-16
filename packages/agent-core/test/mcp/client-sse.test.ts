@@ -139,4 +139,59 @@ describe('SseMcpClient', () => {
     ).toBe(false);
     expect(isTerminalSseTransportError(new Error('fetch failed'))).toBe(false);
   });
+
+  it('isTerminalSseTransportError: classifies 4xx and 5xx SseErrors as terminal', () => {
+    expect(
+      isTerminalSseTransportError(
+        new SseError(403, 'Forbidden', {} as ConstructorParameters<typeof SseError>[2]),
+      ),
+    ).toBe(true);
+    expect(
+      isTerminalSseTransportError(
+        new SseError(500, 'Internal Server Error', {} as ConstructorParameters<typeof SseError>[2]),
+      ),
+    ).toBe(true);
+  });
+
+  it('isTerminalSseTransportError: does not flag 2xx/3xx SseErrors as terminal', () => {
+    expect(
+      isTerminalSseTransportError(
+        new SseError(200, 'OK', {} as ConstructorParameters<typeof SseError>[2]),
+      ),
+    ).toBe(false);
+    expect(
+      isTerminalSseTransportError(
+        new SseError(302, 'Redirect', {} as ConstructorParameters<typeof SseError>[2]),
+      ),
+    ).toBe(false);
+  });
+
+  it('isTerminalSseTransportError: does not flag generic errors as terminal', () => {
+    expect(isTerminalSseTransportError(new Error('random error'))).toBe(false);
+    expect(isTerminalSseTransportError(new Error(''))).toBe(false);
+  });
+
+  it('close() is a no-op when connect was never called', async () => {
+    const client = new SseMcpClient({ transport: 'sse', url: 'http://127.0.0.1:1/mcp' });
+    // Must not throw.
+    await client.close();
+  });
+
+  it('onUnexpectedClose does not throw when no listener is registered', async () => {
+    const server = await startInProcessSseMcpServer();
+    cleanups.push(server.close);
+
+    const client = new SseMcpClient({ transport: 'sse', url: server.url });
+    try {
+      await client.connect();
+      // No listener — terminal error must be silently buffered.
+      const internal = (client as unknown as {
+        client: { onerror?: (error: Error) => void };
+      }).client;
+      internal.onerror?.(new Error('Unauthorized'));
+      await new Promise((r) => setTimeout(r, 25));
+    } finally {
+      await client.close();
+    }
+  }, 15000);
 });

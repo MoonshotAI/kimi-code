@@ -52,4 +52,56 @@ describe('toHostFsError', () => {
     const first = toHostFsError(errnoError('ENOENT'), CTX);
     expect(toHostFsError(first, { path: '/other', op: 'write' })).toBe(first);
   });
+
+  it('preserves extra error properties in details when the ErrnoException has them', () => {
+    const raw = errnoError('EACCES', 'unlink');
+    const error = toHostFsError(raw, { path: '/tmp/locked', op: 'delete' });
+    expect(error.details).toMatchObject({
+      path: '/tmp/locked',
+      op: 'delete',
+      errno: 'EACCES',
+      syscall: 'unlink',
+    });
+  });
+
+  it('produces a user-friendly message that does not leak the path', () => {
+    const raw = errnoError('EACCES', 'open');
+    const error = toHostFsError(raw, { path: '/etc/shadow', op: 'read' });
+    expect(error.message).toBeTruthy();
+    expect(error.message).not.toContain('/etc/shadow');
+    expect(error.message).toMatch(/error|fail|denied/i);
+  });
+
+  it('handles a null-ish original error gracefully', () => {
+    expect(toHostFsError(null, CTX).code).toBe('os.fs.unknown');
+    expect(toHostFsError(undefined, CTX).code).toBe('os.fs.unknown');
+  });
+
+  it('contains a stack trace pointing to the call site', () => {
+    const error = toHostFsError(errnoError('ENOENT'), CTX);
+    expect(error.stack).toBeTruthy();
+    expect(error.stack).toContain('toHostFsError');
+  });
+
+  it('serializes HostFsError details to JSON without circular references', () => {
+    const raw = errnoError('EACCES', 'stat');
+    const error = toHostFsError(raw, { path: '/data/file', op: 'stat' });
+    const serialized = JSON.parse(JSON.stringify(error.details));
+    expect(serialized).toEqual({
+      path: '/data/file',
+      op: 'stat',
+      errno: 'EACCES',
+      syscall: 'stat',
+    });
+  });
+
+  it('maps EBUSY to os.fs.unknown (not a recognized errno)', () => {
+    const error = toHostFsError(errnoError('EBUSY'), CTX);
+    expect(error.code).toBe('os.fs.unknown');
+  });
+
+  it('maps EROFS to os.fs.unknown (read-only filesystem)', () => {
+    const error = toHostFsError(errnoError('EROFS'), CTX);
+    expect(error.code).toBe('os.fs.unknown');
+  });
 });

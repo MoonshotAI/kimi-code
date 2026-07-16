@@ -216,4 +216,53 @@ describe('TodoListTool', () => {
     expect(clearExecution.description).toBe('Clearing todo list');
     expect(updateExecution.description).toBe('Updating todo list');
   });
+
+  it('renders a large list of todos without error', async () => {
+    const items: TodoItem[] = Array.from({ length: 50 }, (_, i) => ({
+      title: `Task ${String(i + 1).padStart(2, '0')}`,
+      status: i === 0 ? 'in_progress' : 'pending',
+    }));
+    const { tool } = makeTool(items);
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_large',
+      args: {},
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain('[in_progress] Task 01');
+    expect(result.output).toContain('[pending] Task 50');
+  });
+
+  it('handles an empty title in a todo item', async () => {
+    const { tool, getTodos } = makeTool();
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_empty_title',
+      args: { todos: [{ title: '', status: 'pending' }] },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain('Todo list updated');
+    expect(getTodos()).toEqual([{ title: '', status: 'pending' }]);
+  });
+
+  it('accepts a single-item write with the done status', async () => {
+    const { tool, getTodos } = makeTool();
+
+    const result = await executeTool(tool, {
+      turnId: 't1',
+      toolCallId: 'call_done_item',
+      args: { todos: [{ title: 'completed task', status: 'done' }] },
+      signal,
+    });
+
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain('[done] completed task');
+    expect(getTodos()).toEqual([{ title: 'completed task', status: 'done' }]);
+  });
 });

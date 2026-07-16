@@ -201,4 +201,61 @@ describe('prepareSystemPromptContext additional directories', () => {
     expect(agentsMd).not.toContain('extra A instructions');
     expect(agentsMd).not.toContain('extra B instructions');
   });
+
+  it('returns empty strings when no AGENTS.md files exist anywhere', async () => {
+    const result = await loadAgentsMd(testKaos);
+    expect(result).toBe('');
+  });
+
+  it('handles AGENTS.md with only whitespace content', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), '   \n\n  \n', 'utf-8');
+    const result = await loadAgentsMd(testKaos);
+    expect(result.trim()).toBe('');
+  });
+
+  it('handles special characters in AGENTS.md content', async () => {
+    await writeFile(join(workDir, 'AGENTS.md'), 'füñky châracters: 你好世界\n', 'utf-8');
+    const result = await loadAgentsMd(testKaos);
+    expect(result).toContain('füñky châracters: 你好世界');
+  });
+
+  it('returns a warning when agentsMd has extremely large content', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-brand-'));
+    extraDirs.push(brandHome);
+    const hugeContent = 'x'.repeat(200 * 1024);
+    await writeFile(join(workDir, 'AGENTS.md'), hugeContent, 'utf-8');
+
+    const result = await prepareSystemPromptContext(testKaos, brandHome);
+    expect(result.agentsMdWarning).toBeDefined();
+    expect(result.agentsMd).toContain(hugeContent);
+  });
+
+  it('handles multiple additionalDirs with one empty directory', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-brand-'));
+    extraDirs.push(brandHome);
+    const emptyDir = await mkdtemp(join(tmpdir(), 'kimi-agents-empty-extra-'));
+    const realDir = await mkdtemp(join(tmpdir(), 'kimi-agents-real-extra-'));
+    extraDirs.push(emptyDir, realDir);
+
+    await writeFile(join(realDir, 'useful.txt'), 'content', 'utf-8');
+
+    const result = await prepareSystemPromptContext(testKaos, brandHome, {
+      additionalDirs: [emptyDir, realDir],
+    });
+
+    expect(result.additionalDirsInfo).toContain(`### ${emptyDir}`);
+    expect(result.additionalDirsInfo).toContain(`### ${realDir}`);
+    expect(result.additionalDirsInfo).toContain('useful.txt');
+  });
+
+  it('brand home without AGENTS.md falls back to real-home branded', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-brand-empty-'));
+    extraDirs.push(brandHome);
+
+    await mkdir(join(homeDir, '.kimi-code'), { recursive: true });
+    await writeFile(join(homeDir, '.kimi-code', 'AGENTS.md'), 'fallback branded', 'utf-8');
+
+    const result = await loadAgentsMd(testKaos, brandHome);
+    expect(result).toContain('fallback branded');
+  });
 });

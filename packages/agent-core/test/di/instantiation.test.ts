@@ -325,4 +325,54 @@ describe('InstantiationService (basic)', () => {
       'dispose-a',
     ]);
   });
+
+  it('invokeFunction with zero additional args still works', () => {
+    const ix = new InstantiationService();
+    const result = ix.invokeFunction((_a) => 'no-extra-args');
+    expect(result).toBe('no-extra-args');
+  });
+
+  it('error in invokeFunction callback propagates to the caller', () => {
+    const ix = new InstantiationService();
+    expect(() =>
+      ix.invokeFunction(() => {
+        throw new Error('callback-error');
+      }),
+    ).toThrowError(/callback-error/);
+  });
+
+  it('nested invokeFunction calls have independent accessor lifetimes', () => {
+    const ix = new InstantiationService();
+    let innerAccessor: ServicesAccessor | undefined;
+    const result = ix.invokeFunction((outer) => {
+      return outer.invokeFunction((inner) => {
+        innerAccessor = inner;
+        return 'nested-ok';
+      });
+    });
+    expect(result).toBe('nested-ok');
+    // Inner accessor is invalid after its callback returns.
+    expect(() => innerAccessor!.get(ILogger)).toThrowError(
+      /service accessor is only valid/,
+    );
+  });
+
+  it('createInstance with a class that has no constructor args', () => {
+    class Empty {
+      tag = 'empty';
+    }
+    const ix = new InstantiationService();
+    const inst = ix.createInstance(Empty);
+    expect(inst.tag).toBe('empty');
+  });
+
+  it('invokeFunction callback can return undefined', () => {
+    const ix = new InstantiationService();
+    expect(ix.invokeFunction(() => undefined)).toBeUndefined();
+  });
+
+  it('invokeFunction callback can return null', () => {
+    const ix = new InstantiationService();
+    expect(ix.invokeFunction(() => null)).toBeNull();
+  });
 });

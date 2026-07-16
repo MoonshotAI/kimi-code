@@ -120,4 +120,49 @@ describe('SkillTool dispatch edges', () => {
 
     await expect(execute(tool, { skill: 'loop' })).rejects.toBeInstanceOf(NestedSkillTooDeepError);
   });
+
+  it('returns an error when the skill does not exist in the registry', async () => {
+    const methods = skillToolMethods();
+    const tool = skillTool(registry(), methods);
+
+    const result = await execute(tool, { skill: 'nonexistent' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('not found');
+    expect(methods.recordSkillActivation).not.toHaveBeenCalled();
+  });
+
+  it('returns an error for non-inline skill types (fork)', async () => {
+    const methods = skillToolMethods();
+    const tool = skillTool(registry([skill('forked', { type: 'fork' })]), methods);
+
+    const result = await execute(tool, { skill: 'forked' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('not an inline skill');
+    expect(methods.recordSkillActivation).not.toHaveBeenCalled();
+  });
+
+  it('returns an error for skills that disable model invocation', async () => {
+    const methods = skillToolMethods();
+    const tool = skillTool(registry([skill('protected', { disableModelInvocation: true })]), methods);
+
+    const result = await execute(tool, { skill: 'protected' });
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('can only be triggered by the user');
+    expect(methods.recordSkillActivation).not.toHaveBeenCalled();
+  });
+
+  it('executes a skill with empty args string', async () => {
+    const methods = skillToolMethods();
+    const tool = skillTool(registry([skill('noargs')]), methods);
+
+    const result = await execute(tool, { skill: 'noargs', args: '' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.output).toContain('loaded inline');
+    expect(methods.recordSkillActivation).toHaveBeenCalledTimes(1);
+    expect(methods.recordUserMessage).toHaveBeenCalledTimes(1);
+  });
 });

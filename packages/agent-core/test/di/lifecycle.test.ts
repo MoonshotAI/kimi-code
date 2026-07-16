@@ -487,6 +487,30 @@ describe('RefCountedDisposable', () => {
     counted.release();
     expect(order).toEqual(['a']);
   });
+
+  it('releasing more times than acquired does not double-dispose', () => {
+    const order: string[] = [];
+    const counted = new RefCountedDisposable(makeRecorder('a', order));
+
+    counted.release();
+    expect(order).toEqual(['a']);
+    // Extra release is a no-op.
+    counted.release();
+    expect(order).toEqual(['a']);
+  });
+
+  it('acquire after final release still returns the counter but is already disposed', () => {
+    const order: string[] = [];
+    const counted = new RefCountedDisposable(makeRecorder('a', order));
+
+    counted.release();
+    expect(order).toEqual(['a']);
+    // acquire after disposal returns the counter but the inner value is already gone.
+    const result = counted.acquire();
+    expect(result).toBe(counted);
+    counted.release();
+    expect(order).toEqual(['a']);
+  });
 });
 
 describe('ReferenceCollection', () => {
@@ -672,6 +696,23 @@ describe('DisposableMap', () => {
 
     expectErrorMessage(error, 'map-delete');
     expect(map.has('a')).toBe(true);
+  });
+
+  it('set with a numeric key works', () => {
+    const map = new DisposableMap<number>();
+    map.set(1, makeRecorder('a', []));
+    expect(map.size).toBe(1);
+    map.deleteAndDispose(1);
+    expect(map.size).toBe(0);
+  });
+
+  it('set with an object key works', () => {
+    const map = new DisposableMap<object>();
+    const key = { id: 1 };
+    map.set(key, makeRecorder('a', []));
+    expect(map.size).toBe(1);
+    map.deleteAndDispose(key);
+    expect(map.size).toBe(0);
   });
 });
 

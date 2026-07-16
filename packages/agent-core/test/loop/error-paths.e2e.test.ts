@@ -158,6 +158,50 @@ describe('runTurn — error paths', () => {
     expect(sink.count('step.end')).toBe(0);
     expect(sink.count('turn.interrupted')).toBe(1);
   });
+
+  it('propagates a tool execution error without breaking the turn', async () => {
+    const { error, sink } = await runTurnExpectingThrow({
+      responses: [makeEndTurnResponse('never')],
+      llmThrowOnIndex: { index: 0, error: new Error('tool execution failed') },
+    });
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe('tool execution failed');
+    const interrupted = sink.byType('turn.interrupted');
+    expect(interrupted.length).toBe(1);
+    expect(interrupted[0]?.reason).toBe('error');
+  });
+
+  it('emits turn.interrupted exactly once after a max_steps error', async () => {
+    const echo = new EchoTool();
+    const { sink } = await runTurnExpectingThrow({
+      maxSteps: 2,
+      tools: [echo],
+      responses: [
+        makeToolUseResponse([makeToolCall('echo', { text: '1' }, 'a')]),
+        makeToolUseResponse([makeToolCall('echo', { text: '2' }, 'b')]),
+      ],
+    });
+    expect(sink.byType('turn.interrupted').length).toBe(1);
+    expect(sink.byType('turn.interrupted')[0]?.reason).toBe('max_steps');
+  });
+
+  it('does not emit turn.interrupted for a normal end_turn', async () => {
+    const { sink } = await runTurn({
+      responses: [makeEndTurnResponse('ok')],
+    });
+    expect(sink.byType('turn.interrupted').length).toBe(0);
+  });
+
+  it('emits turn.interrupted with attemptedSteps and activeStep for a mid-step error', async () => {
+    const { sink } = await runTurnExpectingThrow({
+      responses: [makeEndTurnResponse('never')],
+      llmThrowOnIndex: { index: 0, error: new Error('mid-step error') },
+    });
+    const interrupted = sink.byType('turn.interrupted')[0];
+    expect(interrupted?.attemptedSteps).toBe(1);
+    expect(interrupted?.activeStep).toBe(1);
+  });
 });
 
 function captureLogs(): { readonly logger: Logger; readonly entries: CapturedLogEntry[] } {

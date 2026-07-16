@@ -697,6 +697,39 @@ describe('GlobTool', () => {
     expect(result.output).toContain('config.yml');
   });
 
+  it('handles patterns with leading or trailing whitespace', async () => {
+    const exec = execReturning('/workspace/src/a.ts\n');
+    const { tool, withCwd } = makeTool(workspace, { exec });
+
+    await execute(tool, { pattern: '  *.ts ', path: '/workspace' });
+
+    expect(exec).toHaveBeenCalled();
+    expect(execArgs(exec).at(-1)).toBe('.');
+    withCwd.toHaveBeenCalledWith('/workspace');
+  });
+
+  it('handles a single-character file name pattern', async () => {
+    const exec = execReturning('/workspace/a.ts\n');
+    const { tool } = makeTool(workspace, { exec });
+
+    const result = await execute(tool, { pattern: 'a.ts' });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.output).toContain('a.ts');
+  });
+
+  it('handles include_ignored with sensitive file filtering', async () => {
+    const exec = execReturning('/workspace/.env\n/workspace/src/app.ts\n/workspace/dist/bundle.js\n');
+    const { tool } = makeTool(workspace, { exec });
+
+    const result = await execute(tool, { pattern: '**', include_ignored: true });
+
+    expect(result.output).toContain('src/app.ts');
+    expect(result.output).toContain('dist/bundle.js');
+    expect(result.output).not.toContain('.env');
+    expect(result.output).toContain('Filtered');
+  });
+
   it('descends into hidden directories under a recursive pattern', async () => {
     const exec = execReturning('/workspace/src/.config/settings.yml\n');
     const { tool } = makeTool(workspace, { exec });

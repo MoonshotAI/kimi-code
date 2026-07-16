@@ -435,4 +435,70 @@ describe('EditTool', () => {
     expect(result.isError).toBeFalsy();
     expect(writeText).toHaveBeenCalledWith('/workspace-sneaky/test.txt', 'new');
   });
+
+  it('handles new_string longer than old_string (file grows)', async () => {
+    const writeText = vi.fn().mockResolvedValue(0);
+    const tool = new EditTool(
+      createFakeKaos({
+        readText: vi.fn().mockResolvedValue('short'),
+        writeText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool,
+      context({ path: '/tmp/a.txt', old_string: 'short', new_string: 'a much longer replacement string' }),
+    );
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'a much longer replacement string');
+  });
+
+  it('replaces text with special regex characters in new_string', async () => {
+    const writeText = vi.fn().mockResolvedValue(0);
+    const tool = new EditTool(
+      createFakeKaos({
+        readText: vi.fn().mockResolvedValue('original text'),
+        writeText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool,
+      context({ path: '/tmp/a.txt', old_string: 'original', new_string: 'replaced with $1.00 and \\backslash' }),
+    );
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'replaced with $1.00 and \\backslash text');
+  });
+
+  it('replaces multiline old_string', async () => {
+    const writeText = vi.fn().mockResolvedValue(0);
+    const tool = new EditTool(
+      createFakeKaos({
+        readText: vi.fn().mockResolvedValue('line1\nline2\nline3'),
+        writeText,
+      }),
+      PERMISSIVE_WORKSPACE,
+    );
+
+    const result = await executeTool(tool,
+      context({ path: '/tmp/a.txt', old_string: 'line1\nline2', new_string: 'replaced' }),
+    );
+
+    expect(result.output).toContain('Replaced 1 occurrence');
+    expect(writeText).toHaveBeenCalledWith('/tmp/a.txt', 'replaced\nline3');
+  });
+
+  it('rejects a path with null bytes', async () => {
+    const readText = vi.fn();
+    const tool = new EditTool(createFakeKaos({ readText }), PERMISSIVE_WORKSPACE);
+
+    const result = await executeTool(tool,
+      context({ path: '/tmp/na\0ughty.txt', old_string: 'old', new_string: 'new' }),
+    );
+
+    expect(result).toMatchObject({ isError: true });
+    expect(readText).not.toHaveBeenCalled();
+  });
 });

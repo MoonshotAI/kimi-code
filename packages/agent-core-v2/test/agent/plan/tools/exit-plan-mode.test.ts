@@ -80,6 +80,31 @@ describe('ExitPlanMode options schema', () => {
     expect(ExitPlanModeInputSchema.safeParse({ plan: 'Plan' }).success).toBe(false);
   });
 
+  it('rejects options with empty descriptions', () => {
+    expect(
+      ExitPlanModeInputSchema.safeParse({
+        options: [{ label: 'A', description: '' }],
+      }).success,
+    ).toBe(true); // empty description is allowed
+  });
+
+  it('rejects options with only whitespace in the label', () => {
+    expect(
+      ExitPlanModeInputSchema.safeParse({
+        options: [{ label: '   ', description: 'spaces only' }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('rejects options with Unicode reserved-matching labels', () => {
+    // "Ｒeject" uses fullwidth Latin letters
+    expect(
+      ExitPlanModeInputSchema.safeParse({
+        options: [{ label: 'Ｒeject', description: 'fullwidth R' }],
+      }).success,
+    ).toBe(true); // not matched by case-insensitive comparison
+  });
+
   it('rejects too many options, duplicate labels, reserved labels, and invalid labels', () => {
     expect(
       ExitPlanModeInputSchema.safeParse({

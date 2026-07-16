@@ -220,4 +220,180 @@ describe('Cyclic dependency detection', () => {
     // No false cycle: Boom is fully unwound from the in-progress stack.
     expect(() => ix.invokeFunction((a) => a.get(IFine))).not.toThrow();
   });
+
+  it('longer chain A → B → C → D constructs cleanly', () => {
+    interface ITagged {
+      tag: string;
+    }
+    const IA = createDecorator<ITagged>('A-chain');
+    const IB = createDecorator<ITagged>('B-chain');
+    const IC = createDecorator<ITagged>('C-chain');
+    const ID = createDecorator<ITagged>('D-chain');
+    let accessorRef: ServicesAccessor | undefined;
+    class D implements ITagged {
+      tag = 'D';
+    }
+    class C implements ITagged {
+      tag = 'C';
+      constructor() {
+        accessorRef!.get(ID);
+      }
+    }
+    class B implements ITagged {
+      tag = 'B';
+      constructor() {
+        accessorRef!.get(IC);
+      }
+    }
+    class A implements ITagged {
+      tag = 'A';
+      constructor() {
+        accessorRef!.get(IB);
+      }
+    }
+    const ix = new InstantiationService(
+      new ServiceCollection(
+        [IA, new SyncDescriptor(A)],
+        [IB, new SyncDescriptor(B)],
+        [IC, new SyncDescriptor(C)],
+        [ID, new SyncDescriptor(D)],
+      ),
+    );
+    expect(() =>
+      ix.invokeFunction((a) => {
+        accessorRef = a;
+        return a.get(IA);
+      }),
+    ).not.toThrow();
+  });
+
+  it('longer cycle A → B → C → D → A is detected', () => {
+    interface ITagged {
+      tag: string;
+    }
+    const IA = createDecorator<ITagged>('A-long');
+    const IB = createDecorator<ITagged>('B-long');
+    const IC = createDecorator<ITagged>('C-long');
+    const ID = createDecorator<ITagged>('D-long');
+    let accessorRef: ServicesAccessor | undefined;
+    class A implements ITagged {
+      tag = 'A';
+      constructor() {
+        accessorRef!.get(IB);
+      }
+    }
+    class B implements ITagged {
+      tag = 'B';
+      constructor() {
+        accessorRef!.get(IC);
+      }
+    }
+    class C implements ITagged {
+      tag = 'C';
+      constructor() {
+        accessorRef!.get(ID);
+      }
+    }
+    class D implements ITagged {
+      tag = 'D';
+      constructor() {
+        accessorRef!.get(IA);
+      }
+    }
+    const ix = new InstantiationService(
+      new ServiceCollection(
+        [IA, new SyncDescriptor(A)],
+        [IB, new SyncDescriptor(B)],
+        [IC, new SyncDescriptor(C)],
+        [ID, new SyncDescriptor(D)],
+      ),
+    );
+
+    let captured: CyclicDependencyError | undefined;
+    try {
+      ix.invokeFunction((a) => {
+        accessorRef = a;
+        return a.get(IA);
+      });
+    } catch (e) {
+      captured = e as CyclicDependencyError;
+    }
+    expect(captured).toBeInstanceOf(CyclicDependencyError);
+    expect(captured!.path).toEqual(['A-long', 'B-long', 'C-long', 'D-long', 'A-long']);
+  });
+
+  it('deeply nested cross-container cycle is detected across three levels', () => {
+    interface IA { tag: 'A'; }
+    interface IB { tag: 'B'; }
+    interface IC { tag: 'C'; }
+    const IA = createDecorator<IA>('A-deep');
+    const IB = createDecorator<IB>('B-deep');
+    const IC = createDecorator<IC>('C-deep');
+    let accessorRef: ServicesAccessor | undefined;
+
+    class A implements IA {
+      tag = 'A' as const;
+      constructor() { accessorRef!.get(IB); }
+    }
+    class B implements IB {
+      tag = 'B' as const;
+      constructor() { accessorRef!.get(IC); }
+    }
+    class C implements IC {
+      tag = 'C' as const;
+      constructor() { accessorRef!.get(IA); }
+    }
+
+    const root = new InstantiationService(new ServiceCollection([IA, new SyncDescriptor(A)]));
+    const child = root.createChild(new ServiceCollection([IB, new SyncDescriptor(B)]));
+    const grandchild = child.createChild(new ServiceCollection([IC, new SyncDescriptor(C)]));
+
+    let captured: CyclicDependencyError | undefined;
+    try {
+      grandchild.invokeFunction((a) => {
+        accessorRef = a;
+        return a.get(IA);
+      });
+    } catch (e) {
+      captured = e as CyclicDependencyError;
+    }
+    expect(captured).toBeInstanceOf(CyclicDependencyError);
+    expect(captured!.path).toContain('A-deep');
+    expect(captured!.path).toContain('B-deep');
+    expect(captured!.path).toContain('C-deep');
+  });
+
+  it('accessor.get() called with a cycle via a different starting point still detects the same cycle', () => {
+    interface IA { tag: 'A'; }
+    interface IB { tag: 'B'; }
+    const IA = createDecorator<IA>('A-alt');
+    const IB = createDecorator<IB>('B-alt');
+    let accessorRef: ServicesAccessor | undefined;
+
+    class A implements IA {
+      tag = 'A' as const;
+      constructor() { accessorRef!.get(IB); }
+    }
+    class B implements IB {
+      tag = 'B' as const;
+      constructor() { accessorRef!.get(IA); }
+    }
+
+    const ix = new InstantiationService(
+      new ServiceCollection([IA, new SyncDescriptor(A)], [IB, new SyncDescriptor(B)]),
+    );
+
+    // Starting from B instead of A should still detect the same cycle.
+    let captured: CyclicDependencyError | undefined;
+    try {
+      ix.invokeFunction((a) => {
+        accessorRef = a;
+        return a.get(IB);
+      });
+    } catch (e) {
+      captured = e as CyclicDependencyError;
+    }
+    expect(captured).toBeInstanceOf(CyclicDependencyError);
+    expect(captured!.path).toEqual(['B-alt', 'A-alt', 'B-alt']);
+  });
 });

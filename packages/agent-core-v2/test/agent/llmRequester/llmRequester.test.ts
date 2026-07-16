@@ -556,6 +556,38 @@ describe('LLMRequester service migration coverage', () => {
       expect(timing?.requestBuildMs).toBeUndefined();
       expect(timing?.serverFirstTokenMs).toBeUndefined();
     });
+
+    it('applies the default model output budget when no maxOutputSize is set', async () => {
+      profile.update({ systemPrompt: 'system', thinkingLevel: 'off' });
+      const { finish } = await collectLLMRequest((onPart) =>
+        llmRequester.request(undefined, onPart),
+      );
+      expect(requestMaxTokens).toBe(384_000);
+      expect(finish).toMatchObject({ model: 'deepseek/deepseek-v4-flash' });
+    });
+
+    it('sends a request with no messages when called without arguments', async () => {
+      const { finish } = await collectLLMRequest((onPart) =>
+        llmRequester.request(undefined, onPart),
+      );
+      expect(finish.model).toBe('deepseek/deepseek-v4-flash');
+      expect(finish.providerMessageId).toBe('response-1');
+    });
+
+    it('emits wire events with correct turnStep and droppedCount from logFields', async () => {
+      await llmRequester.request({
+        source: {
+          type: 'operation',
+          requestKind: 'direct_test',
+          logFields: { turnStep: '1.5', droppedCount: 7 },
+        },
+      });
+      const requests = wireEvents(ctx, 'llm.request');
+      expect(requests[0]?.args).toMatchObject({
+        turnStep: '1.5',
+        droppedCount: 7,
+      });
+    });
   });
 
 });

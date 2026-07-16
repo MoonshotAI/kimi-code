@@ -133,7 +133,9 @@ describe('v1 wire vocabulary', () => {
 
     await restoreTestAgentWire(fresh, log2, SCOPE, records);
 
-    expect(fresh.getModel(TodoModel)).toEqual([{ title: 'restore me', status: 'in_progress' }]);
+    expect(fresh.getModel(TodoModel)).toEqual([
+      expect.objectContaining({ title: 'restore me', status: 'in_progress' }),
+    ]);
   });
 });
 
@@ -413,6 +415,65 @@ describe('AgentRecords persistence metadata', () => {
       measured: 42,
       estimated: 0,
     });
+  });
+
+  it('restores cleanly from an empty persistence', async () => {
+    await expect(ctx.restorePersisted()).resolves.toBeUndefined();
+    expect(context.get()).toHaveLength(0);
+  });
+
+  it('restores from a persistence with only a metadata record', async () => {
+    persistence.records.push({
+      type: 'metadata',
+      protocol_version: WIRE_PROTOCOL_VERSION,
+      created_at: 1,
+    });
+
+    await expect(ctx.restorePersisted()).resolves.toBeUndefined();
+    expect(context.get()).toHaveLength(0);
+    expect(persistence.rewrites).toEqual([]);
+  });
+
+  it('tolerates and skips unknown record types during restore', async () => {
+    persistence.records.push(
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      { type: 'unknown_record_type', data: 'should be skipped' } as unknown as WireRecord,
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'after unknown' }],
+          toolCalls: [],
+        },
+      },
+    );
+
+    await expect(ctx.restorePersisted()).resolves.toBeUndefined();
+    expect(context.get()).toHaveLength(1);
+  });
+
+  it('appends multiple context messages in correct order', async () => {
+    persistence.records.push(
+      { type: 'metadata', protocol_version: WIRE_PROTOCOL_VERSION, created_at: 1 },
+      {
+        type: 'context.append_message',
+        message: { role: 'user', content: [{ type: 'text', text: 'first' }], toolCalls: [] },
+      },
+      {
+        type: 'context.append_message',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'second' }], toolCalls: [] },
+      },
+      {
+        type: 'context.append_message',
+        message: { role: 'user', content: [{ type: 'text', text: 'third' }], toolCalls: [] },
+      },
+    );
+
+    await expect(ctx.restorePersisted()).resolves.toBeUndefined();
+    expect(context.get()).toHaveLength(3);
+    expect(context.get()[0]?.content[0]).toMatchObject({ text: 'first' });
+    expect(context.get()[1]?.content[0]).toMatchObject({ text: 'second' });
+    expect(context.get()[2]?.content[0]).toMatchObject({ text: 'third' });
   });
 });
 

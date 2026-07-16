@@ -132,4 +132,47 @@ describe('AgentProfileService.bind', () => {
 
     expect(svc.data().profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
   });
+
+  it('bind with an empty profile name falls back gracefully', async () => {
+    const { ctx: context, profile: svc } = buildContext();
+
+    const catalog = context.get(IAgentProfileCatalogService);
+    expect(catalog.get(DEFAULT_AGENT_PROFILE_NAME)).toBeDefined();
+
+    await svc.bind({ profile: '', model: MOCK_MODEL });
+
+    expect(svc.isRunnable()).toBe(true);
+    expect(svc.data().profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
+  });
+
+  it('bind with whitespace-only profile name uses the default profile', async () => {
+    const { profile: svc } = buildContext();
+
+    await svc.bind({ profile: '   ', model: MOCK_MODEL });
+
+    expect(svc.isRunnable()).toBe(true);
+    expect(svc.data().profileName).toBe(DEFAULT_AGENT_PROFILE_NAME);
+  });
+
+  it('bind with undefined thinking does not throw', async () => {
+    const { profile: svc } = buildContext();
+
+    await expect(
+      svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL, thinking: undefined }),
+    ).resolves.not.toThrow();
+    expect(svc.isRunnable()).toBe(true);
+  });
+
+  it('re-binding with the same profile and model is idempotent', async () => {
+    const { profile: svc } = buildContext();
+
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    const dataBefore = svc.data();
+
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    expect(svc.data().profileName).toBe(dataBefore.profileName);
+    expect(svc.data().modelAlias).toBe(dataBefore.modelAlias);
+    expect(svc.isRunnable()).toBe(true);
+  });
 });

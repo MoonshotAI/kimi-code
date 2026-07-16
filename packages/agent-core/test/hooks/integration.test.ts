@@ -333,4 +333,100 @@ timeout = 5
     expect(triggered).toEqual([['PreToolUse', 'Shell', 1]]);
     expect(resolved).toEqual([['PreToolUse', 'Shell', 'allow']]);
   });
+
+  it('fails gracefully when the hook script throws an uncaught exception', async () => {
+    const HookEngine = await importEngine();
+    const engine = new HookEngine([
+      {
+        event: 'PreToolUse',
+        matcher: 'Shell',
+        command: 'node -e "throw new Error(\'unhandled\')"',
+        timeout: 5,
+      },
+    ]);
+    const results = await engine.trigger('PreToolUse', {
+      matcherValue: 'Shell',
+      inputData: {},
+    });
+    expect(results).toHaveLength(1);
+    // A crashed script that exits 1 is treated as allow (fail-open).
+    expect(results[0]?.action).toBe('allow');
+  });
+
+  it('returns empty summary when no hooks are registered', async () => {
+    const HookEngine = await importEngine();
+    const engine = new HookEngine([]);
+    expect(engine.summary).toEqual({});
+  });
+
+  it('does not trigger hooks for an event that has no matching matchers among multiple events', async () => {
+    const HookEngine = await importEngine();
+    const engine = new HookEngine([
+      { event: 'PreToolUse', matcher: 'Shell', command: 'echo shell', timeout: 5 },
+      { event: 'PreToolUse', matcher: 'WriteFile', command: 'echo write', timeout: 5 },
+      { event: 'Notification', matcher: 'task_done', command: 'echo notified', timeout: 5 },
+    ]);
+    const results = await engine.trigger('Notification', {
+      matcherValue: 'unknown_type',
+      inputData: {},
+    });
+    expect(results).toHaveLength(0);
+    // But notification for a matching matcher still fires.
+    const matched = await engine.trigger('Notification', {
+      matcherValue: 'task_done',
+      inputData: {},
+    });
+    expect(matched).toHaveLength(1);
+  });
+
+  it('handles large stdin payloads without truncation', async () => {
+    const HookEngine = await importEngine();
+    const largePayload = { data: 'x'.repeat(50000), toolName: 'Shell' };
+    const engine = new HookEngine([
+      {
+        event: 'PreToolUse',
+        matcher: 'Shell',
+        command:
+          'node -e "let s=\\\"\\\";process.stdin.on(\\\"data\\\",d=>s+=d);process.stdin.on(\\\"end\\\",()=>{const o=JSON.parse(s);process.stdout.write(o.data.length.toString())})"',
+        timeout: 5,
+      },
+    ]);
+    const results = await engine.trigger('PreToolUse', {
+      matcherValue: 'Shell',
+      inputData: largePayload,
+    });
+    expect(results[0]?.stdout?.trim()).toBe('50000');
+  });
+
+  it('runs multiple concurrent triggers without interference', async () => {
+    const HookEngine = await importEngine();
+    const engine = new HookEngine([
+      { event: 'PreToolUse', matcher: 'Shell', command: 'echo concurrent', timeout: 5 },
+    ]);
+    const promises = Array.from({ length: 5 }, () =>
+      engine.trigger('PreToolUse', {
+        matcherValue: 'Shell',
+        inputData: {},
+      }),
+    );
+    const results = await Promise.all(promises);
+    for (const result of results) {
+      expect(result).toHaveLength(1);
+      expect(result[0]?.stdout?.trim()).toBe('concurrent');
+    }
+  });
+
+  it('reports the exit code as block when exit 2 has no stderr output', async () => {
+    const HookEngine = await importEngine();
+    const engine = new HookEngine([
+      { event: 'PreToolUse', matcher: 'Shell', command: 'node -e "process.exit(2)"', timeout: 5 },
+    ]);
+    const results = await engine.trigger('PreToolUse', {
+      matcherValue: 'Shell',
+      inputData: {},
+    });
+    expect(results[0]?.action).toBe('block');
+    // Falls back to the default reason when stderr is empty.
+    expect(results[0]?.reason).toContain('Blocked by PreToolUse hook');
+  });
 });

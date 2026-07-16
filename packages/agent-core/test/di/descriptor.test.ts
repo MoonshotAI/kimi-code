@@ -36,6 +36,36 @@ describe('SyncDescriptor', () => {
     const d = new SyncDescriptor(MyClass, [], true);
     expect(d.supportsDelayedInstantiation).toBe(true);
   });
+
+  it('accepts empty staticArguments explicitly', () => {
+    const d = new SyncDescriptor(MyClass, []);
+    expect(d.staticArguments).toEqual([]);
+  });
+
+  it('accepts a single-element staticArguments', () => {
+    const d = new SyncDescriptor(MyClass, ['singleton']);
+    expect(d.staticArguments).toEqual(['singleton']);
+  });
+
+  it('preserves staticArguments order', () => {
+    const d = new SyncDescriptor(MyClass, ['first', 'second', 'third']);
+    expect(d.staticArguments).toEqual(['first', 'second', 'third']);
+  });
+
+  it('distinguishes delayed vs eager instances', () => {
+    const eager = new SyncDescriptor(MyClass);
+    const delayed = new SyncDescriptor(MyClass, [], true);
+    expect(eager.supportsDelayedInstantiation).toBe(false);
+    expect(delayed.supportsDelayedInstantiation).toBe(true);
+  });
+
+  it('two descriptors with same ctor but different args are distinct instances', () => {
+    const d1 = new SyncDescriptor(MyClass, ['a']);
+    const d2 = new SyncDescriptor(MyClass, ['b']);
+    expect(d1).not.toBe(d2);
+    expect(d1.ctor).toBe(d2.ctor);
+    expect(d1.staticArguments).not.toEqual(d2.staticArguments);
+  });
 });
 
 describe('SyncDescriptor0 (P0.4)', () => {

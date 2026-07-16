@@ -145,6 +145,14 @@ describe('detectTarget', () => {
     setPlatform('mips', 'linux');
     expect(detectTarget()).toBeUndefined();
   });
+  it('darwin arm32 -> undefined (unsupported)', () => {
+    setPlatform('arm', 'darwin');
+    expect(detectTarget()).toBeUndefined();
+  });
+  it('win32 arm64 -> aarch64-pc-windows-msvc', () => {
+    setPlatform('arm64', 'win32');
+    expect(detectTarget()).toBe('aarch64-pc-windows-msvc');
+  });
 });
 
 describe('rgUnavailableMessage', () => {
@@ -161,6 +169,18 @@ describe('rgUnavailableMessage', () => {
     expect(a).toContain('boom');
     const b = rgUnavailableMessage(42);
     expect(b).toContain('unknown error');
+  });
+
+  it('handles Error causes with no message', () => {
+    const msg = rgUnavailableMessage(new Error());
+    expect(msg).toContain('automatic bootstrap failed');
+    expect(msg).toContain('brew');
+  });
+
+  it('includes the object message for Error-like thrown values', () => {
+    const like = { message: 'disk full' };
+    const msg = rgUnavailableMessage(like);
+    expect(msg).toContain('disk full');
   });
 });
 

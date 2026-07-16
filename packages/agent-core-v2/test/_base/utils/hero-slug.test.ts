@@ -22,4 +22,31 @@ describe('generateHeroSlug', () => {
 
     expect(slug).toMatch(/-sess_abc$/);
   });
+
+  it('same id generates different slugs when no collision', () => {
+    const existing = new Set<string>();
+    const slug1 = generateHeroSlug('ses_001', existing);
+    existing.add(slug1);
+    const slug2 = generateHeroSlug('ses_001', existing);
+    expect(slug1).not.toBe(slug2);
+    expect(slug1.split('-')).toHaveLength(3);
+    expect(slug2.split('-')).toHaveLength(3);
+  });
+
+  it('very long id still produces a valid slug on collision', () => {
+    const universal = new (class extends Set<string> {
+      override has(): boolean {
+        return true;
+      }
+    })();
+    const longId = 'session_' + 'x'.repeat(100) + '_extra';
+    const slug = generateHeroSlug(longId, universal as unknown as Set<string>);
+    expect(slug.length).toBeGreaterThan(0);
+    expect(slug).toMatch(/[a-z0-9_-]+$/);
+  });
+
+  it('empty id still produces a slug', () => {
+    const slug = generateHeroSlug('', new Set());
+    expect(slug.split('-')).toHaveLength(3);
+  });
 });

@@ -204,4 +204,74 @@ describe('Delayed instantiation Proxy (P1.2)', () => {
     expect(a.doIt()).toBe(true);
     expect(ix.cycle()).toBe('delayed-graph-A -> delayed-graph-B -> delayed-graph-A');
   });
+
+  it('a delayed service with static arguments materialises correctly', () => {
+    let ctorCount = 0;
+    interface IGreeter {
+      greet(name: string): string;
+    }
+    class Greeter implements IGreeter {
+      constructor(public readonly prefix: string) {
+        ctorCount += 1;
+      }
+      greet(name: string): string {
+        return `${this.prefix} ${name}`;
+      }
+    }
+    const IGreeter = createDecorator<IGreeter>('p1.2-delayed-static');
+    const ix = new InstantiationService(
+      new ServiceCollection([IGreeter, new SyncDescriptor(Greeter, ['Hello'], true)]),
+    );
+    const proxy = ix.invokeFunction((a) => a.get(IGreeter));
+    expect(ctorCount).toBe(0);
+    expect(proxy.greet('World')).toBe('Hello World');
+    expect(ctorCount).toBe(1);
+  });
+
+  it('multiple delayed services can be resolved independently', () => {
+    interface IA { tag: 'A'; }
+    interface IB { tag: 'B'; }
+    const IA = createDecorator<IA>('p1.2-multi-A');
+    const IB = createDecorator<IB>('p1.2-multi-B');
+    class AImpl implements IA { tag = 'A' as const; }
+    class BImpl implements IB { tag = 'B' as const; }
+    const ix = new InstantiationService(
+      new ServiceCollection(
+        [IA, new SyncDescriptor(AImpl, [], true)],
+        [IB, new SyncDescriptor(BImpl, [], true)],
+      ),
+    );
+    const proxyA = ix.invokeFunction((a) => a.get(IA));
+    const proxyB = ix.invokeFunction((a) => a.get(IB));
+    expect(proxyA.tag).toBe('A');
+    expect(proxyB.tag).toBe('B');
+  });
+
+  it('materialisation error propagates to the caller', () => {
+    interface IFoo { go(): void; }
+    const IFoo = createDecorator<IFoo>('p1.2-delayed-error');
+    class Foo implements IFoo {
+      go(): void {
+        throw new Error('materialisation-boom');
+      }
+    }
+    const ix = new InstantiationService(
+      new ServiceCollection([IFoo, new SyncDescriptor(Foo, [], true)]),
+    );
+    const proxy = ix.invokeFunction((a) => a.get(IFoo));
+    expect(() => proxy.go()).toThrowError(/materialisation-boom/);
+  });
+
+  it('reading a property returns the real value after materialisation', () => {
+    interface ICounter { count: number; }
+    const ICounter = createDecorator<ICounter>('p1.2-delayed-prop');
+    class Counter implements ICounter {
+      count = 42;
+    }
+    const ix = new InstantiationService(
+      new ServiceCollection([ICounter, new SyncDescriptor(Counter, [], true)]),
+    );
+    const proxy = ix.invokeFunction((a) => a.get(ICounter));
+    expect(proxy.count).toBe(42);
+  });
 });

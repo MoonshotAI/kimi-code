@@ -156,6 +156,135 @@ describe('TelemetryService (unit)', () => {
     await expect(svc.flush()).resolves.toBeUndefined();
     await expect(svc.shutdown()).resolves.toBeUndefined();
   });
+
+  it('track with undefined properties still fires with bound context only', () => {
+    const appender = new CapturingAppender();
+    const svc = telemetryWithAppenders(appender);
+    svc.setContext({ ref: 'r1' });
+    svc.track('evt', undefined);
+    expect(appender.events[0]).toEqual({ event: 'evt', properties: { ref: 'r1' } });
+  });
+
+  it('track omitting properties still fires with bound context only', () => {
+    const appender = new CapturingAppender();
+    const svc = telemetryWithAppenders(appender);
+    svc.setContext({ ref: 'r1' });
+    svc.track('evt');
+    expect(appender.events[0]).toEqual({ event: 'evt', properties: { ref: 'r1' } });
+  });
+
+  it('setContext merges over previous context and replaces overlapping keys', () => {
+    const appender = new CapturingAppender();
+    const svc = telemetryWithAppenders(appender);
+    svc.setContext({ a: '1', b: '2' });
+    svc.setContext({ b: 'changed', c: '3' });
+    svc.track('evt');
+    expect(appender.events[0]?.properties).toEqual({ a: '1', b: 'changed', c: '3' });
+  });
+
+  it('setContext with empty object is a no-op on properties', () => {
+    const appender = new CapturingAppender();
+    const svc = telemetryWithAppenders(appender);
+    svc.setContext({ existing: 'keep' });
+    svc.setContext({});
+    svc.track('evt');
+    expect(appender.events[0]?.properties).toEqual({ existing: 'keep' });
+  });
+
+  it('withContext with empty patch creates a child that shares bound context', () => {
+    const appender = new CapturingAppender();
+    const root = telemetryWithAppenders(appender);
+    root.setContext({ sessionId: 's1' });
+    const child = root.withContext({});
+    child.track('evt');
+    expect(appender.events[0]?.properties).toEqual({ sessionId: 's1' });
+  });
+
+  it('removeAppender for a non-registered appender is a no-op', () => {
+    const a = new CapturingAppender();
+    const b = new CapturingAppender();
+    const svc = telemetryWithAppenders(a);
+    expect(() => svc.removeAppender(b)).not.toThrow();
+    svc.track('evt');
+    expect(a.events).toHaveLength(1);
+  });
+
+  it('setAppender replaces all appenders including the default null appender', () => {
+    const a = new CapturingAppender();
+    const svc = new TelemetryService();
+    svc.setAppender(a);
+    svc.track('evt');
+    expect(a.events).toHaveLength(1);
+  });
+
+  it('calling setEnabled multiple times only tracks when enabled', () => {
+    const appender = new CapturingAppender();
+    const svc = telemetryWithAppenders(appender);
+    svc.setEnabled(false);
+    svc.setEnabled(false);
+    svc.track('still-dropped');
+    expect(appender.events).toHaveLength(0);
+    svc.setEnabled(true);
+    svc.setEnabled(true);
+    svc.track('sent');
+    expect(appender.events).toHaveLength(1);
+  });
+
+  it('withContext on a disabled root produces a disabled child; re-enabling root does not affect child', () => {
+    const appender = new CapturingAppender();
+    const root = telemetryWithAppenders(appender);
+    root.setEnabled(false);
+    const child = root.withContext({});
+    root.setEnabled(true);
+    child.track('evt');
+    expect(appender.events).toHaveLength(0);
+  });
+
+  it('nested withContext chains accumulate context from all ancestors', () => {
+    const appender = new CapturingAppender();
+    const root = telemetryWithAppenders(appender);
+    root.setContext({ app: 'test' });
+    const mid = root.withContext({ layer: 'mid' });
+    const leaf = mid.withContext({ layer: 'leaf', extra: 'x' });
+    leaf.track('evt', { call: '1' });
+    expect(appender.events[0]?.properties).toEqual({
+      app: 'test',
+      layer: 'leaf',
+      extra: 'x',
+      call: '1',
+    });
+  });
+
+  it('track with numeric and boolean property values', () => {
+    const appender = new CapturingAppender();
+    const svc = telemetryWithAppenders(appender);
+    svc.track('metric', { count: 42, active: true, ratio: 3.14 });
+    expect(appender.events[0]?.properties).toEqual({ count: 42, active: true, ratio: 3.14 });
+  });
+
+  it('track with event name containing special characters', () => {
+    const appender = new CapturingAppender();
+    const svc = telemetryWithAppenders(appender);
+    svc.track('custom:event_with_underscores.dots_and-dashes', {});
+    expect(appender.events[0]?.event).toBe('custom:event_with_underscores.dots_and-dashes');
+  });
+
+  it('flush and shutdown when disabled still flush underlying appenders', async () => {
+    const appender = new CapturingAppender();
+    const svc = telemetryWithAppenders(appender);
+    svc.setEnabled(false);
+    await svc.flush();
+    expect(appender.flushCalls).toBe(1);
+    await svc.shutdown();
+    expect(appender.shutdownCalls).toBe(1);
+  });
+
+  it('track with null property value', () => {
+    const appender = new CapturingAppender();
+    const svc = telemetryWithAppenders(appender);
+    svc.track('evt', { nullable: null });
+    expect(appender.events[0]?.properties).toEqual({ nullable: null });
+  });
 });
 
 describe('TelemetryService (error isolation)', () => {

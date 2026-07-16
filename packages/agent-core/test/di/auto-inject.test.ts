@@ -194,4 +194,76 @@ describe('@IFoo auto-injection (P1.1)', () => {
       child.invokeFunction((a) => a.get(IA)),
     ).toThrowError(CyclicDependencyError);
   });
+
+  it('single DI parameter resolves correctly', () => {
+    interface ISingle {
+      val: number;
+    }
+    const ISingle = createDecorator<ISingle>('p1.1-single');
+    class SingleImpl implements ISingle {
+      val = 99;
+    }
+    class Consumer {
+      constructor(public readonly svc: ISingle) {}
+    }
+    param(ISingle, Consumer, 0);
+    const ix = new InstantiationService(
+      new ServiceCollection([ISingle, new SyncDescriptor(SingleImpl)]),
+    );
+    const instance = ix.invokeFunction((a) => a.get(createDecorator<Consumer>('consumer')));
+    // Use createInstance to verify DI injection.
+    const c = ix.createInstance(Consumer as new () => Consumer);
+    expect(c.svc).toBeInstanceOf(SingleImpl);
+    expect(c.svc.val).toBe(99);
+  });
+
+  it('service with no DI params and no static args constructs cleanly', () => {
+    class Simple {
+      tag = 'simple';
+    }
+    const ISimple = createDecorator<Simple>('p1.1-simple');
+    const ix = new InstantiationService(
+      new ServiceCollection([ISimple, new SyncDescriptor(Simple)]),
+    );
+    const instance = ix.invokeFunction((a) => a.get(ISimple));
+    expect(instance.tag).toBe('simple');
+  });
+
+  it('multiple static args plus multiple DI params', () => {
+    interface ILogger {
+      log(m: string): void;
+    }
+    const ILogger = createDecorator<ILogger>('p1.1-multi-logger');
+    class ConsoleLogger implements ILogger {
+      log(_m: string): void {}
+    }
+    class Worker {
+      constructor(
+        public readonly id: string,
+        public readonly priority: number,
+        public readonly logger: ILogger,
+      ) {}
+    }
+    param(ILogger, Worker, 2);
+    const ix = new InstantiationService(
+      new ServiceCollection([ILogger, new SyncDescriptor(ConsoleLogger)]),
+    );
+    const w = ix.createInstance(Worker as new (id: string, priority: number) => Worker, 'w1', 10);
+    expect(w.id).toBe('w1');
+    expect(w.priority).toBe(10);
+    expect(w.logger).toBeInstanceOf(ConsoleLogger);
+  });
+
+  it('a service with only static args and no DI params works', () => {
+    class StaticOnly {
+      constructor(
+        public readonly a: string,
+        public readonly b: number,
+      ) {}
+    }
+    const ix = new InstantiationService();
+    const instance = ix.createInstance(StaticOnly, 'hello', 42);
+    expect(instance.a).toBe('hello');
+    expect(instance.b).toBe(42);
+  });
 });

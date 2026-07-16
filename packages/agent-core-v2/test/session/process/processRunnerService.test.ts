@@ -92,4 +92,27 @@ describe('SessionProcessRunner', () => {
     expect(out).toBe('bar');
     expect(await proc.wait()).toBe(0);
   });
+
+  it('captures stderr from a command', async () => {
+    const runner = await makeRunner();
+    const proc = await runner.exec(['node', '-e', 'process.stderr.write("error-msg")']);
+    const chunks: Buffer[] = [];
+    for await (const chunk of proc.stderr) {
+      chunks.push(chunk as Buffer);
+    }
+    expect(Buffer.concat(chunks).toString('utf8')).toBe('error-msg');
+    expect(await proc.wait()).toBe(0);
+  });
+
+  it('reports a non-zero exit code', async () => {
+    const runner = await makeRunner();
+    const proc = await runner.exec(['node', '-e', 'process.exit(42)']);
+    expect(await proc.wait()).toBe(42);
+    expect(proc.exitCode).toBe(42);
+  });
+
+  it('exec rejects when the command cannot be spawned', async () => {
+    const runner = await makeRunner();
+    await expect(runner.exec(['no-such-command-xyz'])).rejects.toThrow();
+  });
 });

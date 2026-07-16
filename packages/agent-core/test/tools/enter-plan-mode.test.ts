@@ -164,4 +164,41 @@ describe('EnterPlanModeTool', () => {
     if (execution.isError === true) throw new Error('expected runnable execution');
     expect(execution.description).toContain('plan mode');
   });
+
+  it('propagates abort without entering plan mode', async () => {
+    let active = false;
+    const controller = new AbortController();
+    const enter = vi.fn(async () => {
+      active = true;
+    });
+    const agent = {
+      planMode: {
+        get isActive() { return active; },
+        get planFilePath() { return null; },
+        enter: async () => {
+          controller.abort();
+          await enter();
+        },
+      },
+      permission: { mode: 'yolo' },
+      rpc: { requestApproval: vi.fn() },
+      telemetry: { track: vi.fn() },
+      emit: vi.fn(),
+    } as unknown as Agent;
+
+    const result = await executeTool(new EnterPlanModeTool(agent), {
+      turnId: '0',
+      toolCallId: 'tc_abort',
+      args: {},
+      signal: controller.signal,
+    });
+
+    expect(result).toMatchObject({ isError: true });
+  });
+
+  it('describes the tool as having no parameters', () => {
+    const { agent } = makeAgent();
+    const tool = new EnterPlanModeTool(agent);
+    expect(Object.keys((tool.parameters as { properties: Record<string, unknown> }).properties)).toHaveLength(0);
+  });
 });

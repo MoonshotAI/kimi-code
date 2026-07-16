@@ -283,6 +283,17 @@ describe('TaskListTool', () => {
     );
   });
 
+  it('returns empty all-tasks message when no tasks exist', async () => {
+    const result = await executeTool(
+      new TaskListTool(new FakeTaskService()),
+      context('task_list_empty_all', { active_only: false }),
+    );
+
+    expect(outputString(result)).toContain(
+      'background_tasks: 0\nNo background tasks found.',
+    );
+  });
+
   it('lists active process tasks', async () => {
     const tasks = new FakeTaskService();
     tasks.add(

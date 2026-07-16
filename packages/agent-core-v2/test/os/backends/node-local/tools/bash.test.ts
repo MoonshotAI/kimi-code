@@ -1790,4 +1790,48 @@ describe('BashTool prompt / runtime consistency', () => {
 
     expect(tool.description).not.toMatch(/exit code will be provided in a system tag/);
   });
+
+  it('handles a very long command string gracefully', async () => {
+    const longCommand = 'echo ' + 'x'.repeat(50_000);
+    const proc = processWithOutput({ stdout: 'x'.repeat(50_000) });
+    const { runner, exec } = createTestRunner(proc);
+    const tool = bashTool(runner);
+
+    const result = await executeTool(tool, context({ command: longCommand, timeout: 60 }));
+
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(result.isError).toBeFalsy();
+  });
+
+  it('handles a command containing special characters (quotes, backticks, dollars)', async () => {
+    const proc = processWithOutput({ stdout: "hello 'world' `pwd` $HOME\n" });
+    const { runner, exec } = createTestRunner(proc);
+    const tool = bashTool(runner);
+
+    const result = await executeTool(tool, context({ command: "echo hello 'world'", timeout: 60 }));
+
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(result.isError).toBeFalsy();
+  });
+
+  it('handles very large stderr output without breaking', async () => {
+    const huge = Buffer.alloc(5 * 1024 * 1024, 'E');
+    const { runner } = createTestRunner(processWithOutput({ stderr: huge, exitCode: 1 }));
+    const tool = bashTool(runner);
+
+    const result = await executeTool(tool, context({ command: 'fail-large', timeout: 60 }));
+
+    expect(result).toMatchObject({ isError: true });
+    expect(result.output).toContain('[...truncated]');
+  });
+
+  it('handles a command that produces only stderr with exit code 0', async () => {
+    const { runner } = createTestRunner(processWithOutput({ stderr: 'warning message\n', exitCode: 0 }));
+    const tool = bashTool(runner);
+
+    const result = await executeTool(tool, context({ command: 'emit-warning', timeout: 60 }));
+
+    expect(result).toMatchObject({ isError: false });
+    expect(result.output).toContain('warning message');
+  });
 });

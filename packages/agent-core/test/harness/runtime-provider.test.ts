@@ -1088,3 +1088,86 @@ describe('resolveRuntimeProvider model overrides', () => {
     expect(resolved.provider).not.toHaveProperty('supportEfforts');
   });
 });
+
+describe('resolveRuntimeProvider edge cases', () => {
+  it('handles empty apiKey for non-OAuth providers', () => {
+    expect(() =>
+      resolveRuntimeProvider({
+        config: {
+          defaultModel: 'empty-key',
+          providers: {
+            test: { type: 'kimi', apiKey: '', baseUrl: 'https://api.example/v1' },
+          },
+          models: {
+            'empty-key': { provider: 'test', model: 'm', maxContextSize: 1000 },
+          },
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it('handles maximal values for maxContextSize', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'big',
+        providers: { test: { type: 'kimi', apiKey: 'key', baseUrl: 'https://api.example/v1' } },
+        models: {
+          big: { provider: 'test', model: 'm', maxContextSize: Number.MAX_SAFE_INTEGER },
+        },
+      },
+    });
+    expect(resolved.modelCapabilities?.max_context_tokens).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it('handles provider with both env and config base_url', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          gemini: {
+            type: 'google-genai',
+            apiKey: 'g-key',
+            baseUrl: 'https://config.example/v1beta',
+            env: { GOOGLE_GEMINI_BASE_URL: 'https://env.example/v1beta' },
+          },
+        },
+        models: {
+          gemini: { provider: 'gemini', model: 'gemini-2.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+    // Config base_url takes precedence
+    expect(resolved.provider).toMatchObject({
+      baseUrl: 'https://config.example/v1beta',
+    });
+  });
+
+  it('handles vertexai provider with no apiKey and no baseUrl (ADC only)', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'gemini',
+        providers: {
+          vertex: { type: 'vertexai' },
+        },
+        models: {
+          gemini: { provider: 'vertex', model: 'gemini-1.5-pro', maxContextSize: 1_000_000 },
+        },
+      },
+    });
+    expect(resolved.provider).toMatchObject({ type: 'vertexai' });
+    expect(resolved.providerName).toBe('vertex');
+  });
+
+  it('handles provider model name with whitespace', () => {
+    const resolved = resolveRuntimeProvider({
+      config: {
+        defaultModel: 'whitespace model',
+        providers: { test: { type: 'kimi', apiKey: 'key', baseUrl: 'https://api.example/v1' } },
+        models: {
+          'whitespace model': { provider: 'test', model: '  my model  ', maxContextSize: 100_000 },
+        },
+      },
+    });
+    expect(resolved.provider).toMatchObject({ model: '  my model  ' });
+  });
+});

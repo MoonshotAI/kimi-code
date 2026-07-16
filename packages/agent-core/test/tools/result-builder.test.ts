@@ -107,7 +107,7 @@ describe('ToolResultBuilder', () => {
     expect(builder.nChars).toBe(0);
   });
 
-  it('returns the accumulated output with the supplied message and brief', () => {
+  it('returns the accumulated output with the supplied message and brief', async () => {
     const builder = new ToolResultBuilder({ maxChars: 20 });
 
     builder.write('Some output');
@@ -119,7 +119,7 @@ describe('ToolResultBuilder', () => {
     expect(result.brief).toBe('Error occurred');
   });
 
-  it('preserves an explicitly empty brief', () => {
+  it('preserves an explicitly empty brief', async () => {
     const builder = new ToolResultBuilder({ maxChars: 20 });
 
     const result = builder.ok('Done', { brief: '' });
@@ -127,7 +127,7 @@ describe('ToolResultBuilder', () => {
     expect(result.brief).toBe('');
   });
 
-  it('preserves the truncation hint and brief together on error', () => {
+  it('preserves the truncation hint and brief together on error', async () => {
     const builder = new ToolResultBuilder({ maxChars: 10 });
 
     builder.write('Very long output that exceeds limit');
@@ -139,7 +139,7 @@ describe('ToolResultBuilder', () => {
     expect(result.brief).toBe('Failed');
   });
 
-  it('returns executable output with critical messages included', () => {
+  it('returns executable output with critical messages included', async () => {
     const builder = new ToolResultBuilder({ maxChars: 10 });
 
     builder.write('Very long output that exceeds limit');
@@ -150,7 +150,7 @@ describe('ToolResultBuilder', () => {
     expect(result.message).toContain('Output is truncated');
   });
 
-  it('keeps normal success messages out of non-empty output', () => {
+  it('keeps normal success messages out of non-empty output', async () => {
     const builder = new ToolResultBuilder({ maxChars: 100 });
 
     builder.write('ok\n');
@@ -158,5 +158,36 @@ describe('ToolResultBuilder', () => {
 
     expect(result.output).toBe('ok\n');
     expect(result.message).toBe('Command executed successfully.');
+  });
+
+  it('handles zero maxChars by truncating everything immediately', async () => {
+    const builder = new ToolResultBuilder({ maxChars: 0 });
+
+    expect(builder.write('anything')).toBe(0);
+    expect(builder.nChars).toBe(0);
+
+    const result = builder.ok('done');
+    expect(result.output).toContain('[...truncated]');
+    expect(result.truncated).toBe(true);
+  });
+
+  it('truncates a single line at maxLineLength=0', async () => {
+    const builder = new ToolResultBuilder({ maxChars: 100, maxLineLength: 0 });
+
+    expect(builder.write('short line')).toBe(0);
+
+    const result = builder.ok();
+    expect(result.output).toContain('[...truncated]');
+    expect(result.truncated).toBe(true);
+  });
+
+  it('reports truncated=false when the output fits exactly within maxChars', async () => {
+    const builder = new ToolResultBuilder({ maxChars: 11 });
+
+    builder.write('Hello world');
+    const result = builder.ok('Done');
+
+    expect(result.output).toBe('Hello world');
+    expect(result.truncated).toBe(false);
   });
 });

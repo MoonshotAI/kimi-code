@@ -75,4 +75,25 @@ describe('fromErrorPayload', () => {
     expect(revived.cause).toBeInstanceOf(Error2);
     expect((revived.cause as Error2).code).toBe('provider.connection_error');
   });
+
+  it('round-trips an Error2 with no details', () => {
+    const original = new Error2('internal', 'simple');
+    const revived = fromErrorPayload(toErrorPayload(original));
+    expect(revived).toBeInstanceOf(Error2);
+    expect(revived.code).toBe('internal');
+    expect(revived.message).toBe('simple');
+  });
+
+  it('round-trips an Error2 with null cause', () => {
+    const original = new Error2('internal', 'no cause', { cause: null });
+    const revived = fromErrorPayload(toErrorPayload(original));
+    expect(revived.cause).toBeUndefined();
+  });
+
+  it('fromErrorPayload handles a plain Error gracefully', () => {
+    const revived = fromErrorPayload({ code: 'internal', message: 'plain', name: 'Error' });
+    expect(revived).toBeInstanceOf(Error2);
+    expect(revived.code).toBe('internal');
+    expect(revived.message).toBe('plain');
+  });
 });

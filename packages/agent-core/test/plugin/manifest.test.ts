@@ -488,4 +488,93 @@ describe('parseManifest', () => {
     expect(result.manifest?.commands).toBeUndefined();
     expect(result.diagnostics).toContainEqual(expect.objectContaining({ severity: 'warn' }));
   });
+
+  it('handles empty manifest object', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': '{}',
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest).toBeUndefined();
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'error',
+        message: expect.stringContaining('"name"'),
+      }),
+    );
+  });
+
+  it('accepts version as number (coerced by JSON.parse)', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: 'demo', version: 1 }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.name).toBe('demo');
+    expect(result.manifest?.version).toBe(1);
+  });
+
+  it('accepts unicode plugin name', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({ name: '插件测试', version: '1.0.0' }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.name).toBe('插件测试');
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('emits info diagnostics for unknown extra fields beyond the known set', async () => {
+    const root = await makePlugin({
+      'kimi.plugin.json': JSON.stringify({
+        name: 'demo',
+        _unknownField: 'value',
+        nested: { a: 1 },
+      }),
+    });
+    const result = await parseManifest(root);
+    expect(result.manifest?.name).toBe('demo');
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'info',
+        message: expect.stringContaining('"_unknownField"'),
+      }),
+    );
+    expect(result.diagnostics).toContainEqual(
+      expect.objectContaining({
+        severity: 'info',
+        message: expect.stringContaining('"nested"'),
+      }),
+    );
+  });
+
+  it('warns when commands directory is empty', async () => {
+    const root = await makePlugin(
+      {
+        'kimi.plugin.json': JSON.stringify({ name: 'demo', commands: ['./commands'] }),
+      },
+      { dirs: ['commands'] },
+    );
+    const result = await parseManifest(root);
+    expect(result.manifest?.commands).toEqual([]);
+  });
+
+  it('accepts explicit stdio transport in MCP server config', async () => {
+    const root = await makePlugin(
+      {
+        'kimi.plugin.json': JSON.stringify({
+          name: 'demo',
+          mcpServers: {
+            mytool: {
+              transport: 'stdio',
+              command: './bin/tool',
+            },
+          },
+        }),
+      },
+      { dirs: ['bin'] },
+    );
+    await writeFile(path.join(root, 'bin', 'tool'), '#!/bin/sh\n', 'utf8');
+    const result = await parseManifest(root);
+    expect(result.manifest?.mcpServers?.['mytool']).toEqual(
+      expect.objectContaining({ transport: 'stdio' }),
+    );
+  });
 });

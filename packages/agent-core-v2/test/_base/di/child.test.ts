@@ -287,6 +287,49 @@ describe('InstantiationService.createChild', () => {
     }).toThrowError(/disposed/);
   });
 
+  it('deep child chain: grandchild inherits from grandparent', () => {
+    interface IDeep {
+      tag: string;
+    }
+    const IDeep = createDecorator<IDeep>('deep-chain');
+    class DeepSvc implements IDeep {
+      tag = 'deep';
+    }
+
+    const root = new InstantiationService(
+      new ServiceCollection([IDeep, new SyncDescriptor(DeepSvc)]),
+    );
+    const child = root.createChild(new ServiceCollection());
+    const grandchild = child.createChild(new ServiceCollection());
+    expect(grandchild.invokeFunction((a) => a.get(IDeep))).toBeInstanceOf(DeepSvc);
+    expect(grandchild.invokeFunction((a) => a.get(IDeep))).toBe(
+      root.invokeFunction((a) => a.get(IDeep)),
+    );
+    root.dispose();
+  });
+
+  it('empty ServiceCollection child inherits parent services', () => {
+    interface IEmptyChild {
+      tag: string;
+    }
+    const IEmptyChild = createDecorator<IEmptyChild>('empty-child');
+    class Svc implements IEmptyChild {
+      tag = 'svc';
+    }
+
+    const parent = new InstantiationService(
+      new ServiceCollection([IEmptyChild, new SyncDescriptor(Svc)]),
+    );
+    const child = parent.createChild(new ServiceCollection());
+    expect(child.invokeFunction((a) => a.get(IEmptyChild))).toBeInstanceOf(Svc);
+    parent.dispose();
+  });
+
+  it('dispose with no services registered does not throw', () => {
+    const ix = new InstantiationService();
+    expect(() => ix.dispose()).not.toThrow();
+  });
+
   it('parent singleton is created once regardless of parent/child resolution order', () => {
     interface ISvc {
       tag: string;

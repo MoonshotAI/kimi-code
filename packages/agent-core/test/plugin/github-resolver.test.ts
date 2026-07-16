@@ -310,4 +310,36 @@ describe('resolveGithubSource', () => {
     await resolveGithubSource({ kind: 'github', owner: 'obra', repo: 'superpowers' });
     expect(calls.every((u) => !u.startsWith('https://api.github.com'))).toBe(true);
   });
+
+  it('throws on network failure (fetch rejects)', async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError('fetch failed');
+    }) as typeof fetch;
+
+    await expect(
+      resolveGithubSource({ kind: 'github', owner: 'obra', repo: 'superpowers' }),
+    ).rejects.toThrow(/fetch failed/i);
+  });
+
+  it('throws when ref value is empty', async () => {
+    await expect(
+      resolveGithubSource({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'repo',
+        ref: { kind: 'branch', value: '' },
+      }),
+    ).rejects.toThrow();
+  });
+
+  it('throws on unsupported ref kind', async () => {
+    await expect(
+      resolveGithubSource({
+        kind: 'github',
+        owner: 'owner',
+        repo: 'repo',
+        ref: { kind: 'unknown' as any, value: 'x' },
+      }),
+    ).rejects.toThrow();
+  });
 });

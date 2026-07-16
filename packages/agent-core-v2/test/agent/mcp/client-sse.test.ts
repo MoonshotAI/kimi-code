@@ -68,4 +68,25 @@ describe('SseMcpClient', () => {
     ).toBe(false);
     expect(isTerminalSseTransportError(new Error('fetch failed'))).toBe(false);
   });
-});
+
+  it('treats null, undefined, and plain objects as non-terminal', () => {
+    expect(isTerminalSseTransportError(null as unknown as Error)).toBe(false);
+    expect(isTerminalSseTransportError(undefined as unknown as Error)).toBe(false);
+    expect(isTerminalSseTransportError({} as unknown as Error)).toBe(false);
+  });
+
+  it('classifies connection-closed errors as non-terminal for SSE', () => {
+    expect(isTerminalSseTransportError(new Error('Connection closed'))).toBe(false);
+    expect(isTerminalSseTransportError(new Error('SSE stream disconnected: ECONNRESET'))).toBe(false);
+    expect(isTerminalSseTransportError(new Error('socket hang up'))).toBe(false);
+  });
+
+  it('double close is safe', async () => {
+    const server = await startInProcessSseMcpServer();
+    cleanups.push(server.close);
+
+    const client = new SseMcpClient({ transport: 'sse', url: server.url });
+    await client.connect();
+    await client.close();
+    await expect(client.close()).resolves.toBeUndefined();
+  }, 15000);

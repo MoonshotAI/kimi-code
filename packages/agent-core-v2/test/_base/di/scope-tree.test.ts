@@ -182,4 +182,27 @@ describe('Scope tree', () => {
     expect(() => session.createChild(LifecycleScope.Agent, 'a1')).toThrow(/disposed/);
     app.dispose();
   });
+
+  it('multiple extra seeds all resolvable from the scope', () => {
+    interface ICtxA { value: string; }
+    interface ICtxB { count: number; }
+    const ICtxA = createDecorator<ICtxA>('tree-extra-a');
+    const ICtxB = createDecorator<ICtxB>('tree-extra-b');
+
+    const app = createAppScope();
+    const session = app.createChild(LifecycleScope.Session, 's1', {
+      extra: [
+        [ICtxA as ServiceIdentifier<unknown>, { value: 'hello' }],
+        [ICtxB as ServiceIdentifier<unknown>, { count: 99 }],
+      ],
+    });
+    expect(session.accessor.get(ICtxA).value).toBe('hello');
+    expect(session.accessor.get(ICtxB).count).toBe(99);
+    app.dispose();
+  });
+
+  it('disposing a scope with no children does not throw', () => {
+    const app = createAppScope();
+    expect(() => app.dispose()).not.toThrow();
+  });
 });

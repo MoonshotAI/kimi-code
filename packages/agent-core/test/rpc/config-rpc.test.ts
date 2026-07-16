@@ -170,4 +170,49 @@ read_byte_budget = 131072
     expect(core.imageLimits.maxEdgePx()).toBe(2000);
     expect(core.imageLimits.readByteBudget()).toBe(256 * 1024);
   });
+
+  it('starts with an empty config (no providers, no models)', async () => {
+    const core = makeCore(await makeHome(''));
+    const config = await core.getKimiConfig({});
+    expect(config.providers).toBeDefined();
+    expect(config.models).toBeDefined();
+  });
+
+  it('handles config with special unicode characters', async () => {
+    const core = makeCore(
+      await makeHome(`${VALID_TOML}
+[providers.custom]
+type = "openai"
+api_key = "sk-\u4f60\u597d"
+base_url = "https://\u5929\u6c14.example.test/api"
+`),
+    );
+    const config = await core.getKimiConfig({});
+    const custom = config.providers['custom'];
+    expect(custom).toBeDefined();
+    if (custom) {
+      expect(custom.apiKey).toBe('sk-\u4f60\u597d');
+    }
+  });
+
+  it('multiple writes in sequence work correctly', async () => {
+    const home = await makeHome(VALID_TOML);
+    const core = makeCore(home);
+
+    await core.setKimiConfig({ thinking: { enabled: true } });
+    const config1 = await core.getKimiConfig({ reload: true });
+    expect(config1.thinking?.enabled).toBe(true);
+
+    await core.setKimiConfig({ thinking: { enabled: false } });
+    const config2 = await core.getKimiConfig({ reload: true });
+    expect(config2.thinking?.enabled).toBe(false);
+  });
+
+  it('reloads gracefully when no config file exists', async () => {
+    const home = await makeHome();
+    const core = makeCore(home);
+    const config = await core.getKimiConfig({ reload: true });
+    expect(config.providers).toBeDefined();
+    expect(config.models).toBeDefined();
+  });
 });

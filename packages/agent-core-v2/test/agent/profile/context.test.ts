@@ -174,6 +174,29 @@ describe('prepareSystemPromptContext AGENTS.md size warning', () => {
 
     expect(result.agentsMdWarning).toBeUndefined();
   });
+
+  it('handles empty workDir gracefully', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-empty-brand-'));
+    extraDirs.push(brandHome);
+
+    const result = await prepareSystemPromptContext({ fs, homeDir }, '', brandHome);
+
+    expect(result.agentsMd).toBeDefined();
+    expect(result.agentsMdWarning).toBeUndefined();
+  });
+
+  it('serves the AGENTS.md content alongside the size warning', async () => {
+    const brandHome = await mkdtemp(join(tmpdir(), 'kimi-agents-brand-'));
+    extraDirs.push(brandHome);
+    const largeContent = 'x'.repeat(40 * 1024);
+    await writeFile(join(workDir, 'AGENTS.md'), largeContent, 'utf-8');
+
+    const result = await prepareSystemPromptContext({ fs, homeDir }, workDir, brandHome);
+
+    expect(result.agentsMd).toContain(largeContent);
+    expect(result.agentsMdWarning).toBeDefined();
+    expect(result.agentsMdWarning).toContain('exceeds the recommended');
+  });
 });
 
 describe('prepareSystemPromptContext additional directories', () => {

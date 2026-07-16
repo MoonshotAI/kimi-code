@@ -241,4 +241,31 @@ describe('McpService.restart', () => {
     expect(state.reconnectCalls).toHaveLength(1);
     expect(state.reconnectCalls[0]!.name).toBe('lark');
   });
+
+  it('McpService.list returns [] when rpc.listMcpServers throws', async () => {
+    const state = freshState();
+    state.sessions.push(fakeSession('s', 1));
+    const bridge = makeFakeBridge(state);
+    (bridge.rpc.listMcpServers as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('server error'),
+    );
+    const svc = new McpService(bridge);
+    expect(await svc.list()).toEqual([]);
+  });
+
+  it('toProtocolTool passes input_schema through when present', () => {
+    const out = toProtocolTool({
+      name: 'Bash',
+      description: 'd',
+      source: 'builtin',
+      inputSchema: { type: 'object', properties: { cmd: { type: 'string' } } },
+    });
+    expect(out.input_schema).toEqual({ type: 'object', properties: { cmd: { type: 'string' } } });
+  });
+
+  it('toProtocolTool handles mcp tool with mcp: prefix and empty name segment', () => {
+    const out = toProtocolTool({ name: 'mcp::', description: 'd', source: 'mcp' });
+    expect(out.source).toBe('mcp');
+    expect(out.mcp_server_id).toBeUndefined();
+  });
 });

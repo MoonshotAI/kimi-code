@@ -943,4 +943,123 @@ describe('goal session end-to-end', () => {
     await api.cancelGoal({ agentId: 'main' });
     expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
   });
+
+  it('cancelling a non-existent goal does not throw', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent } = await setupSession(sessionDir, events, ['GetGoal']);
+    const api = new SessionAPIImpl(session);
+
+    await expect(api.cancelGoal({ agentId: 'main' })).resolves.not.toThrow();
+  });
+
+  it('handles an empty objective string', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, ['GetGoal', 'UpdateGoal']);
+    const api = new SessionAPIImpl(session);
+
+    await api.createGoal({ agentId: 'main', objective: '' });
+    scripted.mockNextResponse({ type: 'text', text: 'Working on empty objective.' });
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = (await api.getGoal({ agentId: 'main' })).goal;
+    expect(goal?.objective).toBe('');
+  });
+
+  it('handles a very long objective string', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const longObjective = 'x'.repeat(10_000);
+    const { session, agent, scripted } = await setupSession(sessionDir, events, ['GetGoal', 'UpdateGoal']);
+    const api = new SessionAPIImpl(session);
+
+    await api.createGoal({ agentId: 'main', objective: longObjective });
+    scripted.mockNextResponse({ type: 'text', text: 'Working on long objective.' });
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = (await api.getGoal({ agentId: 'main' })).goal;
+    expect(goal?.objective).toBe(longObjective);
+  });
+
+  it('handles special characters in objective', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, ['GetGoal', 'UpdateGoal']);
+    const api = new SessionAPIImpl(session);
+
+    await api.createGoal({ agentId: 'main', objective: 'special <script> & "quotes" \'and\' `backticks`' });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'c1',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'Done with special chars.' });
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+
+    const goal = (await api.getGoal({ agentId: 'main' })).goal;
+    expect(goal).toBeNull();
+  });
+
+  it('handles concurrent createGoal calls on the same agent', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent } = await setupSession(sessionDir, events, ['GetGoal', 'UpdateGoal']);
+    const api = new SessionAPIImpl(session);
+
+    const first = api.createGoal({ agentId: 'main', objective: 'first' });
+    const second = api.createGoal({ agentId: 'main', objective: 'second' });
+    const results = await Promise.allSettled([first, second]);
+    // At least one should succeed; the second may be rejected if concurrent
+    // creation is not allowed.
+    expect(results.some((r) => r.status === 'fulfilled')).toBe(true);
+  });
+
+  it('sets budget limits to 0 without throwing', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { agent } = await setupSession(sessionDir, events, ['GetGoal']);
+    await expect(
+      agent.goal.setBudgetLimits({ budgetLimits: { turnBudget: 0, tokenBudget: 0 } }, 'model'),
+    ).resolves.not.toThrow();
+  });
+
+  it('drives sequential goals without interference', async () => {
+    const sessionDir = await makeTempDir();
+    const events: Array<Record<string, unknown>> = [];
+    const { session, agent, scripted } = await setupSession(sessionDir, events, ['GetGoal', 'UpdateGoal']);
+    const api = new SessionAPIImpl(session);
+
+    // First goal
+    await api.createGoal({ agentId: 'main', objective: 'first goal' });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'c1',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'First done.' });
+    agent.turn.prompt([{ type: 'text', text: 'work' }]);
+    await agent.turn.waitForCurrentTurn();
+    expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
+
+    // Second goal after first completed
+    await api.createGoal({ agentId: 'main', objective: 'second goal' });
+    scripted.mockNextResponse({
+      type: 'function',
+      id: 'c2',
+      name: 'UpdateGoal',
+      arguments: JSON.stringify({ status: 'complete' }),
+    });
+    scripted.mockNextResponse({ type: 'text', text: 'Second done.' });
+    agent.turn.prompt([{ type: 'text', text: 'work more' }]);
+    await agent.turn.waitForCurrentTurn();
+    expect((await api.getGoal({ agentId: 'main' })).goal).toBeNull();
+
+    expect(scripted.calls.length).toBeGreaterThanOrEqual(4);
+  });
 });

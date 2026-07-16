@@ -38,4 +38,49 @@ describe('IInstantiationService self-registration (P0.5)', () => {
     expect(a.invokeFunction((acc) => acc.get(IInstantiationService))).toBe(a);
     expect(b.invokeFunction((acc) => acc.get(IInstantiationService))).toBe(b);
   });
+
+  it('grandchild container resolves to itself, not the parent or root', () => {
+    const root = new InstantiationService();
+    const child = root.createChild(new ServiceCollection());
+    const grandchild = child.createChild(new ServiceCollection());
+    const resolved = grandchild.invokeFunction((a) => a.get(IInstantiationService));
+    expect(resolved).toBe(grandchild);
+    expect(resolved).not.toBe(child);
+    expect(resolved).not.toBe(root);
+  });
+
+  it('use-after-dispose: get(IInstantiationService) throws after disposal', () => {
+    const ix = new InstantiationService();
+    ix.dispose();
+    expect(() => ix.invokeFunction((a) => a.get(IInstantiationService))).toThrowError(
+      /disposed/,
+    );
+  });
+
+  it('nested invokeFunction resolves to the same container', () => {
+    const ix = new InstantiationService();
+    const resolved = ix.invokeFunction((a) =>
+      a.invokeFunction((b) => b.get(IInstantiationService)),
+    );
+    expect(resolved).toBe(ix);
+  });
+
+  it('createInstance receives the owning container via IInstantiationService', () => {
+    interface IOwner {
+      ix: IInstantiationService;
+    }
+    class ContainerAware {
+      constructor(public readonly ix: IInstantiationService) {}
+    }
+    (IInstantiationService as unknown as (t: unknown, k: string, i: number) => void)(
+      ContainerAware,
+      '',
+      0,
+    );
+
+    const parent = new InstantiationService();
+    const child = parent.createChild(new ServiceCollection());
+    const instance = child.createInstance(ContainerAware as new () => ContainerAware);
+    expect(instance.ix).toBe(child);
+  });
 });

@@ -37,6 +37,23 @@ describe('BootstrapService (scoped)', () => {
     expect(svc.getEnv('MISSING')).toBeUndefined();
     host.dispose();
   });
+
+  it('getEnv returns empty string for an explicitly empty value', () => {
+    const host = createScopedTestHost(bootstrapSeed({ env: { EMPTY_VAR: '' } }));
+    const svc = host.app.accessor.get(IBootstrapService);
+    expect(svc.getEnv('EMPTY_VAR')).toBe('');
+    host.dispose();
+  });
+
+  it('getEnv handles special characters in env values', () => {
+    const host = createScopedTestHost(
+      bootstrapSeed({ env: { PATH: '/usr/bin:/bin', SPECIAL: 'a=b&c<d>e|f' } }),
+    );
+    const svc = host.app.accessor.get(IBootstrapService);
+    expect(svc.getEnv('PATH')).toBe('/usr/bin:/bin');
+    expect(svc.getEnv('SPECIAL')).toBe('a=b&c<d>e|f');
+    host.dispose();
+  });
 });
 
 describe('resolveBootstrapOptions', () => {
@@ -44,6 +61,26 @@ describe('resolveBootstrapOptions', () => {
     expect(resolveBootstrapOptions({ homeDir: '/a', osHomeDir: '/b', env: {} }).homeDir).toBe('/a');
     expect(resolveBootstrapOptions({ osHomeDir: '/b', env: { KIMI_CODE_HOME: '/c' } }).homeDir).toBe('/c');
     expect(resolveBootstrapOptions({ osHomeDir: '/b', env: {} }).homeDir).toBe('/b/.kimi-code');
+  });
+
+  it('uses explicit homeDir even when KIMI_CODE_HOME is also set', () => {
+    expect(
+      resolveBootstrapOptions({
+        homeDir: '/explicit',
+        osHomeDir: '/home/user',
+        env: { KIMI_CODE_HOME: '/env/kimi' },
+      }).homeDir,
+    ).toBe('/explicit');
+  });
+
+  it('falls through to osHomeDir/.kimi-code when nothing is provided', () => {
+    expect(resolveBootstrapOptions({ osHomeDir: '/home/user', env: {} }).homeDir).toBe(
+      '/home/user/.kimi-code',
+    );
+  });
+
+  it('handles empty osHomeDir gracefully', () => {
+    expect(resolveBootstrapOptions({ osHomeDir: '', env: {} }).homeDir).toBe('/.kimi-code');
   });
 });
 
@@ -56,5 +93,21 @@ describe('bootstrap() storage seeding', () => {
     } finally {
       app.dispose();
     }
+  });
+
+  it('passes the env bag through to the bootstrap context', () => {
+    const { app, context } = bootstrap({
+      homeDir: '/tmp/kimi-env',
+      env: { MY_VAR: 'my-value' },
+    });
+    try {
+      expect(context.env).toEqual({ MY_VAR: 'my-value' });
+    } finally {
+      app.dispose();
+    }
+  });
+
+  it('rejects bootstrap with an empty homeDir', () => {
+    expect(() => bootstrap({ homeDir: '' })).toThrow();
   });
 });

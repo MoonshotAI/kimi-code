@@ -58,4 +58,29 @@ describe('token estimates for media content parts', () => {
 
     expect(estimate).toBeGreaterThan(100);
   });
+
+  it('estimates tokens for a text-only content part', () => {
+    const textPart: ContentPart = { type: 'text', text: 'hello world' };
+    const estimate = estimateTokensForContentPart(textPart);
+    expect(estimate).toBeGreaterThan(0);
+    expect(estimate).toBeLessThan(10);
+  });
+
+  it('estimates tokens for a message with tool calls', () => {
+    const estimate = estimateTokensForMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'I will call a tool' }],
+      toolCalls: [{ id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '{}' } }],
+    });
+    expect(estimate).toBeGreaterThan(0);
+  });
+
+  it('estimates tokens for a message with empty content', () => {
+    const estimate = estimateTokensForMessage({
+      role: 'user',
+      content: [],
+      toolCalls: [],
+    });
+    expect(estimate).toBeGreaterThanOrEqual(0);
+  });
 });

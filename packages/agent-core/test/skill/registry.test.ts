@@ -161,3 +161,31 @@ function sectionFor(rendered: string, header: string): string {
   const next = rendered.indexOf('### ', start + header.length);
   return next === -1 ? rendered.slice(start) : rendered.slice(start, next);
 }
+
+describe('SkillRegistry edge cases', () => {
+  it('returns empty string for an empty registry in getModelSkillListing', () => {
+    const registry = new SessionSkillRegistry();
+    expect(registry.getModelSkillListing()).toBe('');
+  });
+
+  it('renders the full skill list with empty registry shows a placeholder', () => {
+    const registry = new SessionSkillRegistry();
+    const desc = registry.getKimiSkillsDescription();
+    expect(desc).toBeTruthy();
+    expect(/no skills/i.test(desc)).toBe(true);
+  });
+
+  it('includes builtin skills in kimiSkillsDescription', () => {
+    const registry = makeRegistry([makeSkill('review', 'builtin')]);
+    const desc = registry.getKimiSkillsDescription();
+    expect(desc).toContain('review');
+    expect(desc).toContain('### Built-in');
+  });
+
+  it('does not include disabled-model-invocation skills in model listing', () => {
+    const skill = makeSkill('hidden', 'user');
+    skill.metadata.disableModelInvocation = true;
+    const registry = makeRegistry([skill]);
+    expect(registry.getModelSkillListing()).not.toContain('hidden');
+  });
+});

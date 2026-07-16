@@ -127,6 +127,45 @@ describe('buildMcpHttpHeaders', () => {
       ),
     ).toEqual({ Authorization: 'Bearer fresh', 'X-Trace': '1' });
   });
+
+  it('returns undefined when headers is an empty object and no bearer token', () => {
+    expect(
+      buildMcpHttpHeaders(
+        { transport: 'http', url: 'https://x', headers: {} },
+        () => undefined,
+      ),
+    ).toBeUndefined();
+  });
+
+  it('handles a URL with special characters in the path', () => {
+    expect(
+      buildMcpHttpHeaders(
+        { transport: 'http', url: 'https://example.com/mcp/server?version=1&locale=zh-CN' },
+        () => undefined,
+      ),
+    ).toBeUndefined();
+  });
+});
+
+describe('isTerminalTransportError', () => {
+  it('classifies SDK terminal errors correctly', () => {
+    expect(isTerminalTransportError(new Error('Maximum reconnection attempts (3) exceeded.'))).toBe(true);
+
+    const unauthorized = new Error('Unauthorized');
+    unauthorized.name = 'UnauthorizedError';
+    expect(isTerminalTransportError(unauthorized)).toBe(true);
+  });
+
+  it('does not flag generic errors as terminal', () => {
+    expect(isTerminalTransportError(new Error('Generic error'))).toBe(false);
+    expect(isTerminalTransportError(new Error(''))).toBe(false);
+  });
+
+  it('does not flag errors with unrelated names as terminal', () => {
+    const err = new Error('Not authorized');
+    err.name = 'SyntaxError';
+    expect(isTerminalTransportError(err)).toBe(false);
+  });
 });
 
 async function startInProcessHttpMcpServer(opts?: {
@@ -264,6 +303,46 @@ describe('HttpMcpClient', () => {
       await client.connect();
       const tools = await client.listTools();
       expect(tools.map((t) => t.name)).toEqual(['echo']);
+    } finally {
+      await client.close();
+    }
+  }, 15000);
+
+  it('close() is a no-op when connect was never called', async () => {
+    const client = new HttpMcpClient({ transport: 'http', url: 'https://example.invalid/mcp' });
+    // Must not throw.
+    await client.close();
+  });
+
+  it('onUnexpectedClose does not throw when no listener is registered', async () => {
+    const server = await startInProcessHttpMcpServer();
+    cleanups.push(server.close);
+
+    const client = new HttpMcpClient({ transport: 'http', url: server.url });
+    try {
+      await client.connect();
+      // No listener registered — the terminal error must be silently buffered.
+      const internal = (client as unknown as {
+        client: { onerror?: (error: Error) => void };
+      }).client;
+      internal.onerror?.(new Error('Maximum reconnection attempts (3) exceeded.'));
+      await new Promise((r) => setTimeout(r, 25));
+    } finally {
+      await client.close();
+    }
+  }, 15000);
+
+  it('callTool with empty args still round-trips', async () => {
+    const server = await startInProcessHttpMcpServer();
+    cleanups.push(server.close);
+
+    const client = new HttpMcpClient({ transport: 'http', url: server.url });
+    try {
+      await client.connect();
+      const result = await client.callTool('echo', {});
+      expect(result.isError).toBe(false);
+      // The server echoes the text, which is undefined for empty args.
+      expect(result.content).toEqual([{ type: 'text', text: 'undefined' }]);
     } finally {
       await client.close();
     }

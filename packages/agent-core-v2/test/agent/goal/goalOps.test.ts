@@ -413,4 +413,25 @@ describe('AgentGoalService (wire-backed)', () => {
       resetUnexpectedErrorHandler();
     }
   });
+
+  it('survives a goal.create followed immediately by goal.clear without an update', async () => {
+    await svc.createGoal({ objective: 'ephemeral' });
+    await svc.cancelGoal();
+    expect(modelOf(wire)).toBeNull();
+    expect(svc.getGoal().goal).toBeNull();
+  });
+
+  it('handles replay with a goal.create that has no goalId field', async () => {
+    const unexpected: unknown[] = [];
+    setUnexpectedErrorHandler((error) => unexpected.push(error));
+    try {
+      await restoreTestAgentWire(wire, log, testWireScope(SCOPE, KEY), [
+        { type: 'goal.create', objective: 'no-id' } as unknown as WireRecord,
+      ]);
+      expect(modelOf(wire)).toBeNull();
+      expect(unexpected.length).toBeGreaterThanOrEqual(1);
+    } finally {
+      resetUnexpectedErrorHandler();
+    }
+  });
 });

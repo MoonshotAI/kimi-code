@@ -208,4 +208,50 @@ describe('SessionFsWatchService', () => {
     vi.advanceTimersByTime(200);
     expect(events).toHaveLength(0);
   });
+
+  it('replaces watched paths and re-uses the same os handle', () => {
+    const { svc, watch } = makeSession();
+    svc.setWatchedPaths(['src']);
+    svc.setWatchedPaths(['lib']);
+    expect(watch.watchCalls).toEqual([WORK_DIR]);
+    expect(svc.watchedPaths).toEqual(['lib']);
+  });
+
+  it('fires separate events for changes in different coalesce windows', () => {
+    const { svc, watch, events } = makeSession();
+    svc.setWatchedPaths(['.']);
+
+    watch.fire('a.ts', 'created');
+    vi.advanceTimersByTime(200);
+    expect(events).toHaveLength(1);
+
+    watch.fire('b.ts', 'modified');
+    vi.advanceTimersByTime(200);
+    expect(events).toHaveLength(2);
+  });
+
+  it('handles directory kind events', () => {
+    const { svc, watch, events } = makeSession();
+    svc.setWatchedPaths(['.']);
+
+    watch.fire('newdir', 'created', 'directory');
+    vi.advanceTimersByTime(200);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.changes[0]).toEqual({ path: 'newdir', change: 'created', kind: 'directory' });
+  });
+
+  it('keeps filtering after gitignore is loaded with a second window', async () => {
+    const { svc, watch, events } = makeSession('node_modules/\n');
+    svc.setWatchedPaths(['.']);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    watch.fire('node_modules/pkg/x.js', 'modified');
+    watch.fire('src/keep.ts', 'modified');
+    vi.advanceTimersByTime(200);
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.changes.map((c) => c.path)).toEqual(['src/keep.ts']);
+  });
 });

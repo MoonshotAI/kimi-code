@@ -104,4 +104,13 @@ describe('builtin skill: sub-skill.consolidate', () => {
       registry.listInvocableSkills().some((skill) => skill.name === 'sub-skill.consolidate'),
     ).toBe(false);
   });
+
+  it('review skill mentions code review in its content', () => {
+    expect(SUB_SKILL_REVIEW.content.toLowerCase()).toContain('review');
+  });
+
+  it('consolidate skill mentions both backup and documentation in its content', () => {
+    expect(SUB_SKILL_CONSOLIDATE.content).toContain('back up');
+    expect(SUB_SKILL_CONSOLIDATE.content).toContain('documentation');
+  });
 });
