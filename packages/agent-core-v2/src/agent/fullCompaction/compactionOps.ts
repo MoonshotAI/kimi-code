@@ -38,14 +38,28 @@
 import { z } from 'zod';
 
 import { defineModel } from '#/wire/model';
-import type {
-  CompactionBlockedEvent,
-  CompactionCancelledEvent,
-  CompactionCompletedEvent,
-  CompactionStartedEvent,
-} from '@moonshot-ai/protocol';
 
-import type { CompactionBeginData } from './types';
+import type { CompactionBeginData, CompactionResult } from './types';
+
+export interface CompactionStartedEvent {
+  readonly type: 'compaction.started';
+  readonly trigger: 'manual' | 'auto';
+  readonly instruction?: string;
+}
+
+export interface CompactionBlockedEvent {
+  readonly type: 'compaction.blocked';
+  readonly turnId?: number;
+}
+
+export interface CompactionCancelledEvent {
+  readonly type: 'compaction.cancelled';
+}
+
+export interface CompactionCompletedEvent {
+  readonly type: 'compaction.completed';
+  readonly result: CompactionResult;
+}
 
 export type CompactionPhase = 'idle' | 'running' | 'cancelled' | 'completed';
 

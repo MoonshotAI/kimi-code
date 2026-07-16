@@ -47,6 +47,21 @@ function createMockProvider(stream: StreamedMessage): ChatProvider {
   };
 }
 describe('generate()', () => {
+  it('omits trace metadata when the provider does not expose it', async () => {
+    const onTraceId = vi.fn();
+    const result = await generate(
+      createMockProvider(createMockStream([{ type: 'text', text: 'ok' }])),
+      '',
+      [],
+      [],
+      undefined,
+      { onTraceId },
+    );
+
+    expect(onTraceId).not.toHaveBeenCalled();
+    expect(Object.hasOwn(result, 'traceId')).toBe(false);
+  });
+
   it('merges consecutive TextParts and filters empty ones', async () => {
     const stream = createMockStream([
       { type: 'text', text: 'Hello, ' },

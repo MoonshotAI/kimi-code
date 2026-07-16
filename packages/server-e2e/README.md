@@ -138,7 +138,7 @@ Override the namespace with `KIMI_SERVER_E2E_RUN_ID`, or override paths with
 | `EnvelopeError` | Thrown by `unwrap()` / HTTP helpers when `envelope.code !== 0`. |
 | `fetchWithReport` / `writeHtmlReport` | Capture direct fetch calls and render the JSONL trace as a single HTML report. |
 | `installReverseRpcHandler` | Uniform helper powering `onApprovalRequested` / `onQuestionAsked`. |
-| `waitForFrame` / `waitForSessionStatus` | Standalone wait helpers reused by scenarios. |
+| `waitForFrame` / `waitForSessionBusy` | Standalone wait helpers reused by scenarios. |
 
 See `scenarios/README.md` for the executable script catalog and conventions.
 

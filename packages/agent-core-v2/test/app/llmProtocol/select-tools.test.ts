@@ -74,7 +74,14 @@ async function captureRequestBody(
     .fn()
     .mockImplementation((params: unknown) => {
       capturedBody = params as Record<string, unknown>;
-      return Promise.resolve(makeChatCompletionResponse());
+      return {
+        withResponse: () =>
+          Promise.resolve({
+            data: makeChatCompletionResponse(),
+            response: new Response(null),
+            request_id: null,
+          }),
+      };
     });
   const stream = await provider.generate('system prompt', tools, history);
   for await (const part of stream) {
@@ -160,6 +167,60 @@ describe('Kimi messages[].tools serialization', () => {
   });
 });
 
+describe('Kimi x-trace-id capture', () => {
+  function mockKimiCreate(headers: Record<string, string>) {
+    const provider = new KimiChatProvider({
+      model: 'kimi-test',
+      apiKey: 'test-key',
+      stream: false,
+    });
+    (provider as any)._client.chat.completions.create = vi.fn().mockImplementation(() => ({
+      withResponse: () =>
+        Promise.resolve({
+          data: makeChatCompletionResponse(),
+          response: new Response(null, { headers }),
+          request_id: null,
+        }),
+    }));
+    return provider;
+  }
+
+  it('reads the trace id from the x-trace-id response header', async () => {
+    const stream = await mockKimiCreate({ 'x-trace-id': 'trace-abc-123' }).generate(
+      'system prompt',
+      [],
+      [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] }],
+    );
+    expect(stream.traceId).toBe('trace-abc-123');
+    for await (const part of stream) void part;
+  });
+
+  it('returns null when the response has no x-trace-id header', async () => {
+    const stream = await mockKimiCreate({}).generate(
+      'system prompt',
+      [],
+      [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] }],
+    );
+    expect(stream.traceId).toBeNull();
+    for await (const part of stream) void part;
+  });
+
+  it('surfaces the trace id through generate() via onTraceId and the result', async () => {
+    const provider = mockKimiCreate({ 'x-trace-id': 'trace-xyz' });
+    let captured: string | null | undefined;
+    const result = await generate(
+      provider,
+      'system prompt',
+      [],
+      [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] }],
+      undefined,
+      { onTraceId: (traceId) => (captured = traceId) },
+    );
+    expect(captured).toBe('trace-xyz');
+    expect(result.traceId).toBe('trace-xyz');
+  });
+});
+
 describe('generate() deferred tool stripping', () => {
   function createCapturingProvider(): { provider: ChatProvider; seenTools: () => Tool[] } {
     let captured: Tool[] = [];
@@ -193,6 +254,16 @@ describe('generate() deferred tool stripping', () => {
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
     ]);
     expect(seenTools()).toEqual([ADD_TOOL]);
+  });
+
+  it('omits trace metadata when the provider does not expose it', async () => {
+    const { provider } = createCapturingProvider();
+    const onTraceId = vi.fn();
+
+    const result = await generate(provider, 'sys', [], [], undefined, { onTraceId });
+
+    expect(onTraceId).not.toHaveBeenCalled();
+    expect(Object.hasOwn(result, 'traceId')).toBe(false);
   });
 
   it('passes the identical array through when nothing is deferred', async () => {

@@ -496,7 +496,7 @@ describe('DaemonClient session action helpers', () => {
       }),
     ).resolves.toEqual(child);
     await expect(
-      client.listChildren('sess_parent', { page_size: 5, status: 'idle' }),
+      client.listChildren('sess_parent', { page_size: 5, busy: false }),
     ).resolves.toEqual({ items: [child], has_more: false });
     await expect(client.listPendingApprovals('sess_parent')).resolves.toEqual({ items: [] });
     await expect(client.listPendingQuestions('sess_parent')).resolves.toEqual({ items: [] });
@@ -508,7 +508,7 @@ describe('DaemonClient session action helpers', () => {
     log('fetch calls', calls);
     expect(calls.map((call) => [call.init.method, call.url])).toEqual([
       ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/children'],
-      ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/children?page_size=5&status=idle'],
+      ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/children?page_size=5&busy=false'],
       ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/approvals?status=pending'],
       ['GET', 'http://server.example.test/api/v1/sessions/sess_parent/questions?status=pending'],
       ['POST', 'http://server.example.test/api/v1/sessions/sess_parent/questions/question_1:dismiss'],
@@ -635,7 +635,7 @@ function testSession(overrides: Partial<Session> = {}): Session {
     title: 'Example session',
     created_at: '2026-06-09T00:00:00.000Z',
     updated_at: '2026-06-09T00:00:00.000Z',
-    status: 'idle',
+    busy: false,
     metadata: { cwd: '/tmp/example-server-e2e' },
     agent_config: { model: '' },
     usage: {
@@ -706,7 +706,7 @@ function testMessage(overrides: Partial<Message> = {}): Message {
 
 function testSessionStatus(): SessionStatusResponse {
   return {
-    status: 'idle',
+    busy: false,
     model: 'kimi-code/kimi-for-coding',
     thinking_level: 'off',
     permission: 'manual',

@@ -166,6 +166,7 @@ export class PermissionManager {
           duration_ms: Date.now() - startedAt,
           session_cache_written: false,
           has_feedback: false,
+          trace_id: context.traceId,
         });
         void this.agent.hooks?.fireAndForgetTrigger?.('PermissionResult', {
           matcherValue: name,
@@ -230,6 +231,7 @@ export class PermissionManager {
       duration_ms: Date.now() - startedAt,
       session_cache_written: sessionApprovalRule !== undefined,
       has_feedback: response.feedback !== undefined && response.feedback.length > 0,
+      trace_id: context.traceId,
     });
 
     const resolved = result.resolveApproval?.(response);

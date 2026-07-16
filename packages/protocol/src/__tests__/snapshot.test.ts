@@ -14,7 +14,7 @@ const SESSION = {
   title: 'demo',
   created_at: TS,
   updated_at: TS,
-  status: 'running',
+  busy: true,
   metadata: { cwd: '/tmp/demo' },
   agent_config: { model: 'kimi' },
   usage: {

@@ -19,7 +19,13 @@ import type { Logger } from '#/logging/types';
 
 import type { LoopEventDispatcher } from './events';
 import { errorMessage } from './errors';
-import type { LLM, LLMChatParams, LLMChatResponse } from './llm';
+import {
+  LLMRequestTraceState,
+  type LLM,
+  type LLMChatParams,
+  type LLMChatResponse,
+  type LLMRequestTrace,
+} from './llm';
 import { chatWithRetry } from './retry';
 import { runToolCallBatch, type ToolCallStepContext } from './tool-call';
 import type {
@@ -67,6 +73,7 @@ export interface ExecuteLoopStepDeps {
   readonly currentStep: number;
   readonly maxRetryAttempts?: number;
   readonly recordUsage: (usage: TokenUsage) => RecordStepUsageResult | void | Promise<RecordStepUsageResult | void>;
+  readonly onRequestTrace?: (trace: LLMRequestTrace) => void;
 }
 
 export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
@@ -105,6 +112,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     currentStep,
     maxRetryAttempts,
     recordUsage,
+    onRequestTrace,
   } = deps;
 
   if (hooks?.beforeStep !== undefined) {
@@ -130,6 +138,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
   signal.throwIfAborted();
 
   const stepUuid = randomUUID();
+  const trace = new LLMRequestTraceState();
 
   const step: ToolCallStepContext = {
     tools: stepTools,
@@ -142,6 +151,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     turnId,
     currentStep,
     stepUuid,
+    trace,
   };
 
   await dispatchEvent({
@@ -150,6 +160,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     turnId,
     step: currentStep,
   });
+  onRequestTrace?.(trace);
 
   const chatParams: LLMChatParams = {
     messages,
@@ -159,6 +170,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
       initialMediaProjection === 'normal'
         ? undefined
         : { projection: initialMediaProjection },
+    trace,
     ...createChatStreamingCallbacks({
       dispatchEvent,
       turnId,
@@ -411,6 +423,7 @@ export async function executeLoopStep(deps: ExecuteLoopStepDeps): Promise<{
     llmServerDecodeMs: response.streamTiming?.serverDecodeMs,
     llmClientConsumeMs: response.streamTiming?.clientConsumeMs,
     messageId: response.messageId,
+    traceId: response.traceId,
     ...stepEndProviderDiagnostics(response, effectiveStopReason),
   });
 

@@ -30,10 +30,8 @@ import Kbd from './ui/Kbd.vue';
 import Menu from './ui/Menu.vue';
 import MenuItem from './ui/MenuItem.vue';
 import Pill from './ui/Pill.vue';
-import { useConfirmDialog } from '../composables/useConfirmDialog';
 
 const { t } = useI18n();
-const { confirm } = useConfirmDialog();
 
 // Dev-only affordance: when the page is served by the Vite dev server, the
 // logo turns yellow and a backend pill next to the brand shows the engine
@@ -371,19 +369,12 @@ function startRenameFromMenu(): void {
   closeGhMenu();
 }
 
-async function deleteFromMenu(): Promise<void> {
+function deleteFromMenu(): void {
   const ws = ghMenuTarget.value;
   if (!ws) return;
   closeGhMenu();
-  if (
-    await confirm({
-      title: t('sidebar.removeWorkspace'),
-      message: t('workspace.removeWorkspaceConfirm', { name: ws.name }),
-      variant: 'danger',
-    })
-  ) {
-    emit('deleteWorkspace', ws.id);
-  }
+  // The modal confirm + async delete live in App.vue (confirmDeleteWorkspace).
+  emit('deleteWorkspace', ws.id);
 }
 
 // ---------------------------------------------------------------------------
@@ -449,17 +440,10 @@ function startRenameWs(ws: WorkspaceView): void {
   closeWsMenu();
 }
 
-async function deleteWs(ws: WorkspaceView): Promise<void> {
+function deleteWs(ws: WorkspaceView): void {
   closeWsMenu();
-  if (
-    await confirm({
-      title: t('sidebar.removeWorkspace'),
-      message: t('workspace.removeWorkspaceConfirm', { name: ws.name }),
-      variant: 'danger',
-    })
-  ) {
-    emit('deleteWorkspace', ws.id);
-  }
+  // The modal confirm + async delete live in App.vue (confirmDeleteWorkspace).
+  emit('deleteWorkspace', ws.id);
 }
 
 // ---------------------------------------------------------------------------

@@ -15,9 +15,10 @@
  */
 
 import type { Scope } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode, okEnvelope } from '@moonshot-ai/protocol';
 
 import { requestLog } from '../lib/requestLog';
+import { okEnvelope } from '../protocol/envelope';
+import { ErrorCode } from '../protocol/error-codes';
 import type { ScopeKind } from './channel';
 import { describeChannels } from './channelRegistry';
 import { dispatch } from './dispatcher';

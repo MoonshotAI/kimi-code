@@ -20,7 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { join } from 'pathe';
 import { open as openZip } from 'yauzl';
 
-import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
+import { Disposable, DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import {
   createServices,
   type ServiceRegistration,

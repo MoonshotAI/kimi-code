@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { Disposable, DisposableStore } from '#/_base/di/lifecycle';
 import type { ISessionScopeHandle } from '#/_base/di/scope';
 import {
   createServices,

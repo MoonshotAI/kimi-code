@@ -6,6 +6,46 @@ outline: 2
 
 本页记录 Kimi Code CLI 每个版本的变更内容。
 
+## 0.24.2（2026-07-15）
+
+### 新功能
+
+- 新增内置 `/check-kimi-code-docs` Skill，自动基于官方文档回答 Kimi Code 产品问题并附来源链接。
+
+### 优化
+
+- 对齐 `kimi -p` 在各引擎的行为：`print_background_mode` 与 `print_max_turns` 生效，`/goal` 会运行到目标结束。
+- `kimi -p` 默认在后台任务未完成时保持运行，等待与轮次实际上不设上限，并把完成结果反馈给主 Agent。如需恢复旧的一轮后退出，可设置 `print_background_mode = "exit"` 或 `"drain"`。
+- `kimi -p` 后台任务和子 Agent 默认不再超时（交互模式不变）；如需恢复限制，可设置 `[background] bash_task_timeout_s` 或 `[subagent] timeout_ms`。
+- 子 Agent 超时统一默认为 2 小时，可通过 `[subagent] timeout_ms` 或 `KIMI_SUBAGENT_TIMEOUT_MS` 覆盖。
+- 每步 LLM 重试上限从 3 次提高到 10 次，供应商临时失败（429 / 过载）会在轮次失败前自动重试；可通过 `loop_control.max_retries_per_step` 调整。
+- 工作区现在自动保持同步：新会话自动注册，缺失工作区启动时补全，已移除的不再重现。
+- `kimi web` 现在会记录失败请求和关键操作，便于诊断服务问题。
+- web: AgentSwarm 卡片在子 Agent 运行时保持展开。
+- web: 最小化的计划审阅与问题卡片改用向上的 chevron 作为展开图标。
+
+### 修复
+
+- web: 修复 iOS 移动端布局问题，包括 composer、安全区和 toast。
+- 修复新会话无法在旧版 CLI 中打开的问题。
+- 修复子 Agent 完成时过早触发完成通知的问题。
+- 修复 Web UI 显示错误 CLI 版本的问题。
+- 修复 Gemini 模型的 tool call id 跨轮次冲突，导致 swarm 运行被合并到一张卡片的问题。
+- web: 操作（如停止或归档会话）失败时现在会展示服务器错误详情。
+- web: 修复标签页切换到后台后长响应卡住的问题。
+- web: 修复纯 HTTP 下代码块复制按钮不可用的问题。
+- web: 修复会话列表刷新失败时会话被清空的问题。
+- web: 修复刷新页面后 AgentSwarm 成员列表丢失的问题。
+- web: 修复首条消息为斜杠命令时会话标题不生成的问题。
+- web: 修复重新加载会话后消息时间显示为会话创建时间的问题。
+- 修复多个 `/goal` 模式问题，涉及预算与轮次上限、暂停与恢复、崩溃恢复、最终状态消息和无效的持久化目标记录。
+- 修复被替换目标仍可能影响新目标预算的问题，并统一拒绝无效的子 Agent 目标。
+- 修正目标无法暂停或恢复时显示的引导文案。
+
+### 重构
+
+- 将动态工具加载能力从 `select_tools` 重命名为 `dynamically_loaded_tools`，行为不变。
+
 ## 0.24.1（2026-07-14）
 
 ### 修复

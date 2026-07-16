@@ -16,16 +16,18 @@ import {
   oauthFlowSnapshotSchema,
   oauthFlowStartSchema,
   oauthLoginCancelResponseSchema,
-  oauthLoginQuerySchema,
-  oauthLoginStartRequestSchema,
-  oauthLogoutRequestSchema,
   oauthLogoutResponseSchema,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
 import { z } from 'zod';
 
 import { okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import {
+  oauthLoginQuerySchema,
+  oauthLoginStartRequestSchema,
+  oauthLogoutRequestSchema,
+} from '../protocol/rest-oauth';
 
 interface RouteHost {
   get(

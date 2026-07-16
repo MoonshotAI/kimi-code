@@ -50,6 +50,7 @@ export type LLMEvent =
       readonly providerFinishReason?: FinishReason;
       readonly rawFinishReason?: string;
       readonly id?: string;
+      readonly traceId?: string;
     }
   | {
       readonly type: 'timing';
@@ -60,6 +61,14 @@ export type LLMEvent =
       readonly serverDecodeMs?: number;
       readonly clientConsumeMs?: number;
     };
+
+export interface ModelRequestOptions {
+  /**
+   * Called as soon as the response headers arrive (before the stream body),
+   * with the provider's trace id — `null` when the protocol has none.
+   */
+  readonly onTraceId?: (traceId: string | null) => void;
+}
 
 export interface Model {
   readonly id: string;
@@ -94,7 +103,11 @@ export interface Model {
 
   withThinkingKeep(keep: string): Model;
 
-  request(input: LLMRequestInput, signal?: AbortSignal): AsyncIterable<LLMEvent>;
+  request(
+    input: LLMRequestInput,
+    signal?: AbortSignal,
+    options?: ModelRequestOptions,
+  ): AsyncIterable<LLMEvent>;
 
   uploadVideo?(
     input: string | VideoUploadInput,

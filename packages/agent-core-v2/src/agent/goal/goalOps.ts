@@ -32,7 +32,6 @@ import { z } from 'zod';
 import { defineModel } from '#/wire/model';
 
 import type {
-  GoalActor,
   GoalBudgetLimits,
   GoalChange,
   GoalSnapshot,
@@ -56,6 +55,18 @@ export type GoalModelState = GoalState | null;
 
 export const GoalModel = defineModel<GoalModelState>('goal', () => null);
 
+const GoalStatusSchema = z.enum(['active', 'paused', 'blocked', 'complete']);
+
+const GoalActorSchema = z.enum(['user', 'model', 'runtime', 'system']);
+
+const GoalBudgetLimitsSchema = z
+  .object({
+    tokenBudget: z.number().finite().nonnegative().optional(),
+    turnBudget: z.number().finite().nonnegative().optional(),
+    wallClockBudgetMs: z.number().finite().nonnegative().optional(),
+  })
+  .strict();
+
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     'goal.updated': {
@@ -75,12 +86,17 @@ declare module '#/wire/types' {
 }
 
 export const createGoal = GoalModel.defineOp('goal.create', {
-  schema: z.object({
-    goalId: z.string(),
-    objective: z.string(),
-    completionCriterion: z.string().optional(),
-    wallClockResumedAt: z.number().optional(),
-  }),
+  schema: z
+    .object({
+      goalId: z.string(),
+      objective: z.string(),
+      completionCriterion: z.string().optional(),
+      wallClockResumedAt: z.number().finite().nonnegative().optional(),
+      status: GoalStatusSchema.optional(),
+      actor: GoalActorSchema.optional(),
+      budgetLimits: GoalBudgetLimitsSchema.optional(),
+    })
+    .strip(),
   apply: (_s, p) => ({
     goalId: p.goalId,
     objective: p.objective,
@@ -95,16 +111,19 @@ export const createGoal = GoalModel.defineOp('goal.create', {
 });
 
 export const updateGoal = GoalModel.defineOp('goal.update', {
-  schema: z.object({
-    status: z.custom<GoalStatus>().optional(),
-    reason: z.string().optional(),
-    turnsUsed: z.number().optional(),
-    tokensUsed: z.number().optional(),
-    wallClockMs: z.number().optional(),
-    wallClockResumedAt: z.number().optional(),
-    budgetLimits: z.custom<GoalBudgetLimits>().optional(),
-    actor: z.custom<GoalActor>().optional(),
-  }),
+  schema: z
+    .object({
+      goalId: z.string().optional(),
+      status: GoalStatusSchema.optional(),
+      reason: z.string().optional(),
+      turnsUsed: z.number().finite().nonnegative().optional(),
+      tokensUsed: z.number().finite().nonnegative().optional(),
+      wallClockMs: z.number().finite().nonnegative().optional(),
+      wallClockResumedAt: z.number().finite().nonnegative().optional(),
+      budgetLimits: GoalBudgetLimitsSchema.optional(),
+      actor: GoalActorSchema.optional(),
+    })
+    .strip(),
   apply: (s, p) => {
     if (s === null) return null;
     let next: GoalState | undefined;

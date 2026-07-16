@@ -63,7 +63,6 @@ export type {
 
 export type {
   SessionMeta,
-  SessionActivityStatus,
   WorkspaceInfo,
   ListResult,
   PromptSubmitArg,

@@ -120,6 +120,8 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   ) {
     const log = options?.log;
     this.allowBackground = options?.allowBackground ?? true;
+    // `0` is preserved (not normalized): `0 ?? DEFAULT_SUBAGENT_TIMEOUT_MS`
+    // stays `0`, and the BackgroundManager arms no timer for it.
     this.subagentTimeoutMs = options?.subagentTimeoutMs;
     const typeLines = buildSubagentDescriptions(subagents);
     const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${

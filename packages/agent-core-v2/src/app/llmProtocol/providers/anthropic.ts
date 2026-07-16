@@ -1,3 +1,7 @@
+/**
+ * `llmProtocol` domain (L0) — Anthropic-compatible chat request and response adapter.
+ */
+
 import {
   APIConnectionError,
   APITimeoutError,
@@ -41,6 +45,14 @@ import type {
   ToolUseBlockParam,
 } from '@anthropic-ai/sdk/resources/messages/messages.js';
 
+import {
+  BUDGET_THINKING_EFFORTS,
+  inferAnthropicModelProfile,
+  matchKnownAnthropicModelProfile,
+  parseAnthropicModelVersion,
+  type AnthropicModelProfile,
+  type AnthropicModelVersion,
+} from './anthropic-profile';
 import { mergeConsecutiveUserMessages } from './merge-user-messages';
 import { mergeRequestHeaders, resolveAuthBackedClient } from './request-auth';
 import {
@@ -82,6 +94,7 @@ export interface AnthropicOptions {
   metadata?: Record<string, string> | undefined;
   stream?: boolean | undefined;
   adaptiveThinking?: boolean | undefined;
+  supportEfforts?: readonly string[] | undefined;
   kimiThinking?: boolean | undefined;
   betaApi?: boolean | undefined;
   clientFactory?: (auth: ProviderRequestAuth) => Anthropic;
@@ -102,13 +115,9 @@ interface AnthropicContextManagement {
   edits: Array<{ type: string; keep?: unknown }>;
 }
 
-type AnthropicEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
 const CONTEXT_MANAGEMENT_BETA = 'context-management-2025-06-27';
 const CLEAR_THINKING_EDIT = 'clear_thinking_20251015';
-const OPUS_VERSION_RE = /opus[.-](\d+)[.-](\d{1,2})(?!\d)/;
-const ADAPTIVE_MIN_VERSION = { major: 4, minor: 6 } as const;
 const ANTHROPIC_TOOL_CALL_ID_POLICY: ToolCallIdPolicy = {
   normalize: (id) => sanitizeToolCallId(id, 64),
   maxLength: 64,
@@ -137,6 +146,7 @@ function applyResponseFormat(
 
 const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   'fable-5': 128000,
+  'mythos-5': 128000,
   'opus-4-8': 128000,
   'opus-4-7': 128000,
   'opus-4-6': 128000,
@@ -144,7 +154,8 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   'opus-4-1': 32000,
   'opus-4-0': 32000,
   'opus-4': 32000,
-  'sonnet-4-6': 64000,
+  'sonnet-5': 128000,
+  'sonnet-4-6': 128000,
   'sonnet-4-5': 64000,
   'sonnet-4-0': 64000,
   'sonnet-4': 64000,
@@ -159,61 +170,9 @@ const CEILING_BY_FAMILY_VERSION: Readonly<Record<string, number>> = {
   'haiku-3': 4096,
 };
 
-const FALLBACK_MAX_TOKENS = 32000;
+const FALLBACK_MAX_TOKENS = 128000;
 
-type ClaudeFamily = 'opus' | 'sonnet' | 'haiku' | 'fable';
-
-interface ClaudeVersion {
-  family: ClaudeFamily;
-  major: number;
-  minor: number | null;
-}
-
-const FAMILY_FIRST_RE =
-  /(opus|sonnet|haiku|fable)[-._](\d{1,2})(?!\d)(?:[-._](\d{1,2})(?!\d))?/;
-const VERSION_FIRST_RE = /(\d{1,2})[-._](\d{1,2})[-._](opus|sonnet|haiku)/;
-const BARE_FAMILY_RE = /(\d{1,2})[-._](opus|sonnet|haiku)/;
-
-function parseClaudeVersion(model: string): ClaudeVersion | null {
-  return parseClaudeFamilyVersion(model, true);
-}
-
-function parseClaudeAliasVersion(model: string): ClaudeVersion | null {
-  return parseClaudeFamilyVersion(model, false);
-}
-
-function parseClaudeFamilyVersion(model: string, requireClaudeMarker: boolean): ClaudeVersion | null {
-  const normalized = model.toLowerCase();
-  if (requireClaudeMarker && !normalized.includes('claude')) return null;
-
-  const familyFirst = FAMILY_FIRST_RE.exec(normalized);
-  if (familyFirst !== null) {
-    return {
-      family: familyFirst[1] as ClaudeFamily,
-      major: Number.parseInt(familyFirst[2]!, 10),
-      minor: familyFirst[3] !== undefined ? Number.parseInt(familyFirst[3], 10) : null,
-    };
-  }
-  const versionFirst = VERSION_FIRST_RE.exec(normalized);
-  if (versionFirst !== null) {
-    return {
-      major: Number.parseInt(versionFirst[1]!, 10),
-      minor: Number.parseInt(versionFirst[2]!, 10),
-      family: versionFirst[3] as ClaudeFamily,
-    };
-  }
-  const bare = BARE_FAMILY_RE.exec(normalized);
-  if (bare !== null) {
-    return {
-      major: Number.parseInt(bare[1]!, 10),
-      minor: null,
-      family: bare[2] as ClaudeFamily,
-    };
-  }
-  return null;
-}
-
-function lookupClaudeCeiling(version: ClaudeVersion): number | undefined {
+function lookupClaudeCeiling(version: AnthropicModelVersion): number | undefined {
   const { family, major, minor } = version;
   if (minor !== null) {
     for (let candidate = minor; candidate >= 0; candidate--) {
@@ -225,7 +184,7 @@ function lookupClaudeCeiling(version: ClaudeVersion): number | undefined {
 }
 
 export function resolveDefaultMaxTokens(model: string, override?: number): number {
-  const parsed = parseClaudeVersion(model);
+  const parsed = parseAnthropicModelVersion(model, true);
   const ceiling = parsed === null ? undefined : lookupClaudeCeiling(parsed);
   if (ceiling === undefined) {
     return override ?? FALLBACK_MAX_TOKENS;
@@ -233,93 +192,53 @@ export function resolveDefaultMaxTokens(model: string, override?: number): numbe
   return override === undefined ? ceiling : Math.min(override, ceiling);
 }
 
-function parseVersion(match: RegExpExecArray): { major: number; minor: number } {
-  const majorRaw = match[1];
-  const minorRaw = match[2];
-  if (majorRaw === undefined || minorRaw === undefined) {
-    throw new Error('Model version regex did not capture major and minor versions.');
-  }
-  return { major: Number.parseInt(majorRaw, 10), minor: Number.parseInt(minorRaw, 10) };
-}
-
-function versionAtLeast(
-  version: { major: number; minor: number },
-  minimum: { major: number; minor: number },
-): boolean {
-  return (
-    version.major > minimum.major ||
-    (version.major === minimum.major && version.minor >= minimum.minor)
+function requiresAdaptiveThinking(efforts: readonly string[]): boolean {
+  return efforts.some(
+    (effort) => effort !== 'low' && effort !== 'medium' && effort !== 'high',
   );
 }
 
-function supportsAdaptiveThinking(model: string): boolean {
-  const version = parseClaudeAliasVersion(model);
-  if (version === null) {
-    return false;
+function resolveThinkingProfile(
+  model: string,
+  supportEfforts: readonly string[] | undefined,
+  adaptiveThinking: boolean | undefined,
+): AnthropicModelProfile {
+  const inferred = inferAnthropicModelProfile(model);
+  if (adaptiveThinking === false) {
+    return {
+      ...inferred,
+      mode: 'budget',
+      efforts: supportEfforts ?? BUDGET_THINKING_EFFORTS,
+      supportsEffortParam: false,
+    };
   }
-  return versionAtLeast(
-    { major: version.major, minor: version.minor ?? 0 },
-    ADAPTIVE_MIN_VERSION,
-  );
+
+  if (adaptiveThinking === true) {
+    return {
+      ...inferred,
+      mode: 'adaptive',
+      efforts: supportEfforts ?? inferred.efforts,
+      supportsEffortParam: true,
+    };
+  }
+
+  if (supportEfforts === undefined) {
+    return inferred;
+  }
+  return {
+    ...inferred,
+    mode: requiresAdaptiveThinking(supportEfforts) ? 'adaptive' : inferred.mode,
+    efforts: supportEfforts,
+    supportsEffortParam:
+      requiresAdaptiveThinking(supportEfforts) || inferred.supportsEffortParam,
+  };
 }
 
-function isOpus47(model: string): boolean {
-  const match = OPUS_VERSION_RE.exec(model.toLowerCase());
-  if (match === null) {
-    return false;
-  }
-  const version = parseVersion(match);
-  return version.major === 4 && version.minor === 7;
-}
-
-function isFableModel(model: string): boolean {
-  return parseClaudeAliasVersion(model)?.family === 'fable';
-}
-
-function supportsEffortParam(model: string, adaptive: boolean): boolean {
-  if (adaptive) {
-    return true;
-  }
-  const normalized = model.toLowerCase();
-  return normalized.includes('opus-4-5') || normalized.includes('opus-4.5');
-}
-
-function clampEffort(effort: ThinkingEffort, model: string, adaptive: boolean): ThinkingEffort {
-  if (effort === 'off') {
-    return effort;
-  }
-  if (effort === 'xhigh' && !isOpus47(model) && !isFableModel(model)) {
-    return 'high';
-  }
-  if (effort === 'max' && !adaptive) {
-    return 'high';
-  }
-  if (
-    effort !== 'low' &&
-    effort !== 'medium' &&
-    effort !== 'high' &&
-    effort !== 'xhigh' &&
-    effort !== 'max'
-  ) {
-    return 'high';
-  }
-  return effort;
-}
-
-function budgetTokensForEffort(effort: ThinkingEffort): number {
-  switch (effort) {
-    case 'low':
-      return 1024;
-    case 'medium':
-      return 4096;
-    case 'high':
-      return 32_000;
-    case 'off':
-    case 'xhigh':
-    case 'max':
-      throw new Error(`Unsupported budget-based thinking effort: ${effort}`);
-  }
-  throw new Error(`Unknown thinking effort: ${String(effort)}`);
+function budgetTokensForEffort(effort: ThinkingEffort): number | undefined {
+  if (effort === 'low') return 1024;
+  if (effort === 'medium') return 4096;
+  if (effort === 'on' || effort === 'high') return 32_000;
+  return undefined;
 }
 
 const CACHE_CONTROL = { type: 'ephemeral' as const };
@@ -327,7 +246,24 @@ const CACHE_CONTROL = { type: 'ephemeral' as const };
 type CacheableBlock = ContentBlockParam & { cache_control?: { type: 'ephemeral' } };
 
 function shouldPreserveUnsignedThinking(model: string): boolean {
-  return parseClaudeAliasVersion(model) === null;
+  return (
+    parseAnthropicModelVersion(model) === null &&
+    matchKnownAnthropicModelProfile(model) === undefined
+  );
+}
+
+function shouldBackfillPreservedThinking(
+  model: string,
+  thinking: MessageCreateParams['thinking'] | undefined,
+  contextManagement: AnthropicContextManagement | undefined,
+): boolean {
+  return (
+    shouldPreserveUnsignedThinking(model) &&
+    thinking?.type !== 'disabled' &&
+    contextManagement?.edits.some(
+      (edit) => edit.type === CLEAR_THINKING_EDIT && edit.keep === 'all',
+    ) === true
+  );
 }
 
 const CACHEABLE_TYPES = new Set([
@@ -475,7 +411,11 @@ function toolResultToBlock(toolCallId: string, content: ContentPart[]): ToolResu
     content: blocks,
   } as ToolResultBlockParam;
 }
-function convertMessage(message: Message, model: string): MessageParam {
+function convertMessage(
+  message: Message,
+  model: string,
+  backfillPreservedThinking: boolean,
+): MessageParam {
   const role = message.role;
 
   if (role === 'system') {
@@ -498,19 +438,26 @@ function convertMessage(message: Message, model: string): MessageParam {
   }
 
   const blocks: ContentBlockParam[] = [];
+  let hasThinkingPart = false;
+  let lastUnsignedThinkingBlockIndex: number | undefined;
+  let hasNonEmptyEmittedThinking = false;
   for (const part of message.content) {
     if (part.type === 'text') {
       blocks.push({ type: 'text', text: part.text } satisfies TextBlockParam);
     } else if (part.type === 'image_url') {
       blocks.push(imageUrlPartToAnthropic(part.imageUrl.url) as unknown as ContentBlockParam);
     } else if (part.type === 'think') {
+      hasThinkingPart = true;
       if (part.encrypted !== undefined) {
+        hasNonEmptyEmittedThinking ||= part.think.length > 0;
         blocks.push({
           type: 'thinking',
           thinking: part.think,
           signature: part.encrypted,
         } satisfies ThinkingBlockParam);
       } else if (shouldPreserveUnsignedThinking(model)) {
+        lastUnsignedThinkingBlockIndex = blocks.length;
+        hasNonEmptyEmittedThinking ||= part.think.length > 0;
         blocks.push({ type: 'thinking', thinking: part.think } as unknown as ThinkingBlockParam);
       }
     } else if (part.type === 'video_url') {
@@ -521,6 +468,20 @@ function convertMessage(message: Message, model: string): MessageParam {
       if (!(last?.type === 'text' && last.text === placeholder)) {
         blocks.push({ type: 'text', text: placeholder } satisfies TextBlockParam);
       }
+    }
+  }
+
+  if (role === 'assistant' && backfillPreservedThinking) {
+    if (!hasThinkingPart) {
+      blocks.unshift({ type: 'thinking', thinking: ' ' } as unknown as ThinkingBlockParam);
+    } else if (
+      lastUnsignedThinkingBlockIndex !== undefined &&
+      !hasNonEmptyEmittedThinking
+    ) {
+      blocks[lastUnsignedThinkingBlockIndex] = {
+        type: 'thinking',
+        thinking: ' ',
+      } as unknown as ThinkingBlockParam;
     }
   }
 
@@ -551,6 +512,11 @@ function convertMessage(message: Message, model: string): MessageParam {
 
   return { role: role, content: blocks };
 }
+
+function shouldKeepConvertedMessage(message: MessageParam): boolean {
+  return message.role !== 'assistant' || message.content.length > 0;
+}
+
 export function convertAnthropicError(error: unknown): ChatProviderError {
   if (error instanceof AnthropicTimeoutError) {
     return new APITimeoutError(error.message);
@@ -740,7 +706,7 @@ class AnthropicStreamedMessage implements StreamedMessage {
               yield { type: 'text', text: block.text };
               break;
             case 'thinking':
-              yield { type: 'think', think: block.thinking };
+              yield { type: 'think', think: block.thinking ?? '' };
               break;
             case 'redacted_thinking':
               yield {
@@ -770,7 +736,7 @@ class AnthropicStreamedMessage implements StreamedMessage {
               yield { type: 'text', text: delta.text };
               break;
             case 'thinking_delta':
-              yield { type: 'think', think: delta.thinking };
+              yield { type: 'think', think: delta.thinking ?? '' };
               break;
             case 'input_json_delta':
               yield {
@@ -830,6 +796,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private _defaultHeaders: Record<string, string | null> | undefined;
   private _clientFactory: ((auth: ProviderRequestAuth) => Anthropic) | undefined;
   private _adaptiveThinking: boolean | undefined;
+  private readonly _supportEfforts: readonly string[] | undefined;
   private readonly _kimiThinking: boolean;
   private _betaApi: boolean;
   private _explicitMaxTokens: boolean;
@@ -839,6 +806,7 @@ export class AnthropicChatProvider implements ChatProvider {
     this._stream = options.stream ?? true;
     this._metadata = options.metadata;
     this._adaptiveThinking = options.adaptiveThinking;
+    this._supportEfforts = options.supportEfforts;
     this._kimiThinking = options.kimiThinking ?? false;
     this._betaApi = options.betaApi ?? false;
     this._apiKey =
@@ -913,13 +881,19 @@ export class AnthropicChatProvider implements ChatProvider {
         ]
       : undefined;
 
+    const backfillPreservedThinking = shouldBackfillPreservedThinking(
+      this._model,
+      this._generationKwargs.thinking,
+      this._generationKwargs.contextManagement,
+    );
+
     const messages = mergeConsecutiveUserMessages(
       normalizeToolCallIdsForProvider(
         history.filter((msg) => !isToolDeclarationOnlyMessage(msg)),
         ANTHROPIC_TOOL_CALL_ID_POLICY,
-      ).map((msg) =>
-        convertMessage(msg, this._model),
-      ),
+      )
+        .map((msg) => convertMessage(msg, this._model, backfillPreservedThinking))
+        .filter(shouldKeepConvertedMessage),
       {
         isUser: (message) => message.role === 'user',
         isToolResultOnly,
@@ -949,7 +923,7 @@ export class AnthropicChatProvider implements ChatProvider {
       kwargs['top_p'] = this._generationKwargs.top_p;
     }
     const thinking = this._generationKwargs.thinking;
-    if (thinking !== undefined && !(thinking.type === 'disabled' && isFableModel(this._model))) {
+    if (thinking !== undefined) {
       kwargs['thinking'] = thinking;
     }
     if (this._generationKwargs.output_config !== undefined) {
@@ -1096,11 +1070,15 @@ export class AnthropicChatProvider implements ChatProvider {
   }
 
   withThinking(effort: ThinkingEffort): AnthropicChatProvider {
-    const adaptive = this._adaptiveThinking ?? supportsAdaptiveThinking(this._model);
+    const profile = resolveThinkingProfile(
+      this._model,
+      this._supportEfforts,
+      this._kimiThinking ? true : this._adaptiveThinking,
+    );
 
     if (effort === 'off') {
       let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
-      if (adaptive) {
+      if (profile.mode === 'adaptive') {
         newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
       }
       const clone = this._withGenerationKwargs({
@@ -1112,7 +1090,7 @@ export class AnthropicChatProvider implements ChatProvider {
     }
 
     let newBetas = [...(this._generationKwargs.betaFeatures ?? [])];
-    if (adaptive) {
+    if (profile.mode === 'adaptive') {
       newBetas = newBetas.filter((b) => b !== INTERLEAVED_THINKING_BETA);
     }
     if (this._kimiThinking) {
@@ -1130,31 +1108,32 @@ export class AnthropicChatProvider implements ChatProvider {
       return clone;
     }
 
-    const clamped = clampEffort(effort, this._model, adaptive);
-    if (clamped === 'off') {
-      throw new Error('Non-off thinking effort unexpectedly clamped to off.');
-    }
-    const effectiveEffort = clamped as AnthropicEffort;
-
-    if (adaptive) {
+    if (profile.mode === 'adaptive') {
       return this._withGenerationKwargs({
         thinking: { type: 'adaptive', display: 'summarized' },
-        output_config: { effort: effectiveEffort },
+        output_config:
+          effort === 'on'
+            ? undefined
+            : ({ effort } as MessageCreateParams['output_config']),
         betaFeatures: newBetas,
       });
     }
 
+    const budgetTokens = budgetTokensForEffort(effort);
     const kwargs: Partial<AnthropicGenerationKwargs> = {
-      thinking: { type: 'enabled', budget_tokens: budgetTokensForEffort(effectiveEffort) },
+      thinking:
+        budgetTokens === undefined
+          ? ({ type: 'enabled' } as MessageCreateParams['thinking'])
+          : { type: 'enabled', budget_tokens: budgetTokens },
       betaFeatures: newBetas,
     };
-    if (supportsEffortParam(this._model, adaptive)) {
-      kwargs.output_config = { effort: effectiveEffort };
+    if ((profile.supportsEffortParam || budgetTokens === undefined) && effort !== 'on') {
+      kwargs.output_config = { effort } as MessageCreateParams['output_config'];
     } else {
       kwargs.output_config = undefined;
     }
     const clone = this._withGenerationKwargs(kwargs);
-    if (!supportsEffortParam(this._model, adaptive)) {
+    if (!profile.supportsEffortParam && budgetTokens !== undefined) {
       delete clone._generationKwargs.output_config;
     }
     return clone;

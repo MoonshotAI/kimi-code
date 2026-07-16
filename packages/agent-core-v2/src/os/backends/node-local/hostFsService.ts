@@ -8,11 +8,11 @@
 import {
   appendFile,
   lstat,
-  mkdir,
   open,
   readFile,
   readdir,
-  realpath,
+  mkdir,
+  realpath as nodeRealpath,
   rm,
   writeFile,
 } from 'node:fs/promises';
@@ -187,14 +187,6 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async realpath(path: string): Promise<string> {
-    try {
-      return await realpath(path);
-    } catch (error) {
-      throw toHostFsError(error, { path, op: 'realpath' });
-    }
-  }
-
   async stat(path: string): Promise<HostFileStat> {
     try {
       const s = await lstat(path);
@@ -238,6 +230,14 @@ export class HostFileSystem implements IHostFileSystem {
       await rm(path, { recursive: true, force: true });
     } catch (error) {
       throw toHostFsError(error, { path, op: 'remove' });
+    }
+  }
+
+  async realpath(path: string): Promise<string> {
+    try {
+      return await nodeRealpath(path);
+    } catch (error) {
+      throw toHostFsError(error, { path, op: 'realpath' });
     }
   }
 }

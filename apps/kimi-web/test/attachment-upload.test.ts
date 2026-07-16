@@ -53,17 +53,63 @@ describe('useAttachmentUpload', () => {
     expect(createObjectURL).toHaveBeenCalledOnce();
   });
 
-  it('ignores non-media files', () => {
+  it('accepts a non-media file as a file attachment without a thumbnail object URL', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue({ fileId: 'f1', name: 'a.pdf', mediaType: 'application/pdf' });
+    const att = setup(uploadImage);
+    att.handleFileInputChange(inputEvent([{ name: 'a.pdf', type: 'application/pdf' } as unknown as File]));
+
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0]).toMatchObject({
+      name: 'a.pdf',
+      kind: 'file',
+      mediaType: 'application/pdf',
+      uploading: true,
+    });
+    // No thumbnail for generic files — the chip renders an icon instead.
+    expect(att.attachments.value[0].previewUrl).toBeUndefined();
+    expect(createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('accepts a file with an empty MIME type as a file attachment', () => {
     const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
     const att = setup(uploadImage);
-    att.handleFileInputChange(inputEvent([{ name: 'a.txt', type: 'text/plain' } as unknown as File]));
-    expect(att.attachments.value).toHaveLength(0);
+    att.handleFileInputChange(inputEvent([{ name: 'Makefile', type: '' } as unknown as File]));
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0].kind).toBe('file');
+    // The wire schema requires a non-empty media_type — '' must be normalized.
+    expect(att.attachments.value[0].mediaType).toBe('application/octet-stream');
   });
 
   it('is a no-op when uploadImage is not provided', () => {
     const att = setup(undefined);
     att.handleFileInputChange(inputEvent([imageFile('a.png')]));
     expect(att.attachments.value).toHaveLength(0);
+  });
+
+  it('removeAttachment on a file chip has no object URL to revoke', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const att = setup(uploadImage);
+    att.handleFileInputChange(inputEvent([{ name: 'a.pdf', type: 'application/pdf' } as unknown as File]));
+    const localId = att.attachments.value[0].localId;
+
+    att.removeAttachment(localId);
+    expect(att.attachments.value).toHaveLength(0);
+    expect(revokeObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('loadAttachments refills a file attachment without fetching a thumbnail', () => {
+    const att = setup(undefined);
+    att.loadAttachments([
+      { fileId: 'f_pdf', kind: 'file', url: 'https://example.test/api/v1/files/f_pdf', name: 'a.pdf' },
+    ]);
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0]).toMatchObject({
+      fileId: 'f_pdf',
+      kind: 'file',
+      name: 'a.pdf',
+      uploading: false,
+    });
+    expect(att.attachments.value[0].previewUrl).toBeUndefined();
   });
 
   it('removeAttachment drops the entry and revokes its object URL', () => {
@@ -214,5 +260,57 @@ describe('useAttachmentUpload', () => {
 
     // B's attachment is gone from A's view.
     expect(att.attachments.value.map((a) => a.name)).not.toContain('b.png');
+  });
+
+  it('adds dropped files once and stops the drop from bubbling to document handlers', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const att = setup(uploadImage);
+    const file = { name: 'd.txt', type: 'text/plain' } as unknown as File;
+    const preventDefault = vi.fn();
+    const stopPropagation = vi.fn();
+
+    att.handleDrop({
+      dataTransfer: { files: [file] },
+      preventDefault,
+      stopPropagation,
+    } as unknown as DragEvent);
+
+    // The document-level drop listener must not see the same drop again —
+    // otherwise the file would be attached twice.
+    expect(preventDefault).toHaveBeenCalled();
+    expect(stopPropagation).toHaveBeenCalled();
+    expect(att.attachments.value).toHaveLength(1);
+    expect(att.attachments.value[0]).toMatchObject({ name: 'd.txt', kind: 'file' });
+  });
+
+  it('ignores a dragover that carries no files (e.g. text drag)', () => {
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const att = setup(uploadImage);
+    const preventDefault = vi.fn();
+
+    att.handleDragOver({
+      dataTransfer: { items: [{ kind: 'string' }] },
+      preventDefault,
+      stopPropagation: vi.fn(),
+    } as unknown as DragEvent);
+
+    expect(preventDefault).not.toHaveBeenCalled();
+    expect(att.isDragOver.value).toBe(false);
+  });
+
+  it('skips a file attachment with no fileId and an empty URL instead of fetching it', async () => {
+    // The non-clickable chip rebuilt from an inline-base64 notice has neither —
+    // fetch('') would resolve to the current page and upload the web app HTML.
+    const uploadImage = vi.fn<UploadImage>().mockResolvedValue(null);
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    const att = setup(uploadImage);
+
+    att.loadAttachments([{ kind: 'file', url: '', name: 'image.avif' }]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(att.attachments.value).toHaveLength(0);
+    // No fetch with the empty URL (a same-document fetch would upload the page).
+    expect(fetchSpy.mock.calls.every((call) => call[0] !== '')).toBe(true);
+    fetchSpy.mockRestore();
   });
 });

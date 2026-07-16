@@ -48,6 +48,11 @@ export interface StreamedMessage {
   readonly usage: TokenUsage | null;
   readonly finishReason: FinishReason | null;
   readonly rawFinishReason: string | null;
+  /**
+   * Trace id from the provider's `x-trace-id` response header (Kimi only;
+   * `null` for every other protocol and for headerless responses).
+   */
+  readonly traceId?: string | null;
 }
 
 export interface ProviderRequestAuth {
@@ -62,6 +67,11 @@ export interface GenerateOptions {
   onRequestStart?: () => void;
   onRequestSent?: () => void;
   onStreamEnd?: (stats?: StreamDecodeStats) => void;
+  /**
+   * Called as soon as the response headers arrive (before the stream body),
+   * with the provider's trace id — `null` when the protocol has none.
+   */
+  onTraceId?: (traceId: string | null) => void;
 }
 
 export interface StreamDecodeStats {

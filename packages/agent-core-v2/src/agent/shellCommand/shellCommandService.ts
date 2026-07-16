@@ -9,8 +9,6 @@
  * scope.
  */
 
-import type { ShellOutputEvent, ShellStartedEvent } from '@moonshot-ai/protocol';
-
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { userCancellationReason } from '#/_base/utils/abort';
@@ -26,6 +24,28 @@ import {
   type RunShellCommandInput,
   type RunShellCommandResult,
 } from './shellCommand';
+
+/**
+ * Live stdout/stderr chunk from a user-initiated `!` shell command. Transient
+ * (never persisted, never replayed) — the final output is still recorded once
+ * via `context.append_message` on completion. `commandId` lets the TUI route
+ * chunks to the matching live entry and drop stale events from a prior run.
+ */
+export interface ShellOutputEvent {
+  readonly type: 'shell.output';
+  readonly commandId: string;
+  readonly update: ToolUpdate;
+}
+
+/**
+ * Fired once when a `!` shell command's foreground process task is registered,
+ * carrying the task id so the client can detach (ctrl+b) it. Transient.
+ */
+export interface ShellStartedEvent {
+  readonly type: 'shell.started';
+  readonly commandId: string;
+  readonly taskId: string;
+}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {

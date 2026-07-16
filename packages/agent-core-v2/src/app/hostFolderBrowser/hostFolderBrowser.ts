@@ -6,17 +6,42 @@
  * folder. Distinct from the Session-side `sessionFs`, which is sandboxed and may
  * be remote. App-scoped.
  *
- * The wire shapes (`FsBrowseResponse` / `FsHomeResponse`) are sourced from
- * `@moonshot-ai/protocol` so the `/api/v1` and `/api/v2` transports share one
- * contract. Domain errors (`HostFolder*Error`) carry the failing path and are
- * translated to protocol error codes at the transport boundary.
+ * The wire shapes (`FsBrowseResponse` / `FsHomeResponse`) are defined here as
+ * zod schemas so the `/api/v1` and `/api/v2` transports share one contract.
+ * Domain errors (`HostFolder*Error`) carry the failing path and are
+ * translated to wire error codes at the transport boundary.
  */
+
+import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
-import type { FsBrowseResponse, FsHomeResponse } from '@moonshot-ai/protocol';
+export const fsBrowseQuerySchema = z.object({
+  path: z.string().min(1).optional(),
+});
+export type FsBrowseQuery = z.infer<typeof fsBrowseQuerySchema>;
 
-export type { FsBrowseResponse, FsHomeResponse };
+export const fsBrowseEntrySchema = z.object({
+  name: z.string().min(1),
+  path: z.string().min(1),
+  is_dir: z.literal(true),
+  is_git_repo: z.boolean(),
+  branch: z.string().optional(),
+});
+export type FsBrowseEntry = z.infer<typeof fsBrowseEntrySchema>;
+
+export const fsBrowseResponseSchema = z.object({
+  path: z.string().min(1),
+  parent: z.string().min(1).nullable(),
+  entries: z.array(fsBrowseEntrySchema),
+});
+export type FsBrowseResponse = z.infer<typeof fsBrowseResponseSchema>;
+
+export const fsHomeResponseSchema = z.object({
+  home: z.string().min(1),
+  recent_roots: z.array(z.string().min(1)),
+});
+export type FsHomeResponse = z.infer<typeof fsHomeResponseSchema>;
 
 export class HostFolderNotAbsoluteError extends Error {
   readonly path: string;

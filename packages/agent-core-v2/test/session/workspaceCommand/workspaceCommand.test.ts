@@ -111,10 +111,6 @@ class MemoryHostFs implements IHostFileSystem {
     throw new Error('not implemented');
   }
 
-  async realpath(path: string): Promise<string> {
-    return path;
-  }
-
   async stat(path: string): Promise<HostFileStat> {
     const error = this.statErrors.get(path);
     if (error !== undefined) throw error;
@@ -136,6 +132,11 @@ class MemoryHostFs implements IHostFileSystem {
   async remove(path: string): Promise<void> {
     this.files.delete(path);
     this.dirs.delete(path);
+  }
+
+  async realpath(path: string): Promise<string> {
+    if (this.files.has(path) || this.dirs.has(path)) return path;
+    throw enoent(path);
   }
 }
 

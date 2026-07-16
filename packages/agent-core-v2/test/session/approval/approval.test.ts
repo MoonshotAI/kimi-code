@@ -1,4 +1,4 @@
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';

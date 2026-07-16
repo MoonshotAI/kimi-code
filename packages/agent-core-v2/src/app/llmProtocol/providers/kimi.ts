@@ -30,6 +30,7 @@ import {
   type OpenAIToolParam,
   toolToOpenAI,
 } from './openai-common';
+import { parseTraceId } from '../errors';
 import {
   mergeRequestHeaders,
   requireProviderApiKey,
@@ -156,7 +157,10 @@ function convertMessage(message: Message, preservedThinkingEnabled: boolean): Op
   }
 
   if (hasReasoningPart || (preservedThinkingEnabled && message.role === 'assistant')) {
-    result.reasoning_content = reasoningContent;
+    result.reasoning_content =
+      preservedThinkingEnabled && message.role === 'assistant' && reasoningContent.length === 0
+        ? ' '
+        : reasoningContent;
   }
 
   if (message.tools !== undefined && message.tools.length > 0) {
@@ -232,6 +236,7 @@ class KimiStreamedMessage implements StreamedMessage {
   constructor(
     response: OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
     isStream: boolean,
+    private readonly _traceId: string | null,
   ) {
     if (isStream) {
       this._iter = this._convertStreamResponse(
@@ -256,6 +261,10 @@ class KimiStreamedMessage implements StreamedMessage {
 
   get rawFinishReason(): string | null {
     return this._rawFinishReason;
+  }
+
+  get traceId(): string | null {
+    return this._traceId;
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<StreamedMessagePart> {
@@ -483,11 +492,21 @@ export class KimiChatProvider implements ChatProvider {
     try {
       const client = this._createClient(options?.auth);
       options?.onRequestSent?.();
-      const response = (await client.chat.completions.create(
-        createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
-        options?.signal ? { signal: options.signal } : undefined,
-      )) as unknown as OpenAI.Chat.ChatCompletion | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
-      return new KimiStreamedMessage(response, this._stream);
+      // `withResponse()` resolves as soon as the response headers arrive
+      // (before the stream body), so the trace id is available mid-stream.
+      const { data, response } = await client.chat.completions
+        .create(
+          createParams as unknown as OpenAI.Chat.ChatCompletionCreateParamsNonStreaming,
+          options?.signal ? { signal: options.signal } : undefined,
+        )
+        .withResponse();
+      return new KimiStreamedMessage(
+        data as unknown as
+          | OpenAI.Chat.ChatCompletion
+          | AsyncIterable<OpenAI.Chat.ChatCompletionChunk>,
+        this._stream,
+        parseTraceId(response.headers),
+      );
     } catch (error: unknown) {
       throw convertOpenAIError(error);
     }

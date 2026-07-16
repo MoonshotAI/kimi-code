@@ -92,7 +92,11 @@ export function translateProviderError(error: unknown): Error2 {
     return new Error2(code, sanitizeStatusErrorMessage(error.message), {
       name: error.name,
       cause: error,
-      details: { statusCode: error.statusCode, requestId: error.requestId },
+      details: {
+        statusCode: error.statusCode,
+        requestId: error.requestId,
+        traceId: error.traceId,
+      },
     });
   }
   if (error instanceof APIConnectionError || error instanceof APITimeoutError) {

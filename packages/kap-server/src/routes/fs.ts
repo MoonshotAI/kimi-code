@@ -5,7 +5,8 @@
  * so existing v1 clients keep working against server-v2. Backed by the v2
  * Session-scoped `ISessionFsService` (`agent-core-v2/src/sessionFs`): the route resolves
  * the session from the URL, then dispatches `fs:<action>` to the matching
- * `ISessionFsService` method. The wire schema is reused from `@moonshot-ai/protocol`.
+ * `ISessionFsService` method. The wire schema comes from the engine's own
+ * `sessionFs` domain contract (`agent-core-v2`).
  */
 
 import { createReadStream } from 'node:fs';
@@ -19,21 +20,17 @@ import {
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
-  ErrorCode,
   fsDiffRequestSchema,
   fsGitStatusRequestSchema,
   fsGrepRequestSchema,
   fsListManyRequestSchema,
   fsListRequestSchema,
   fsMkdirRequestSchema,
-  fsOpenInRequestSchema,
-  fsOpenRequestSchema,
   fsReadRequestSchema,
-  fsRevealRequestSchema,
   fsSearchRequestSchema,
   fsStatManyRequestSchema,
   fsStatRequestSchema,
-} from '@moonshot-ai/protocol';
+} from '@moonshot-ai/agent-core-v2/session/sessionFs/fs';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -45,6 +42,12 @@ import {
 } from '../lib/fileLaunch';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
+import { ErrorCode } from '../protocol/error-codes';
+import {
+  fsOpenInRequestSchema,
+  fsOpenRequestSchema,
+  fsRevealRequestSchema,
+} from '../protocol/rest-fs';
 
 interface FsRouteHost {
   post(

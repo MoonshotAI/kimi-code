@@ -23,7 +23,7 @@ import {
   MAIN_AGENT_ID,
   type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
-import { sessionWarningsResponseSchema } from '@moonshot-ai/protocol';
+import { sessionWarningsResponseSchema } from '@moonshot-ai/agent-core-v2/app/sessionLegacy/sessionProtocol';
 
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
@@ -43,7 +43,10 @@ interface SessionWire {
   title: string;
   created_at: string;
   updated_at: string;
-  status: string;
+  busy: boolean;
+  main_turn_active: boolean;
+  pending_interaction: 'none' | 'approval' | 'question';
+  last_turn_reason?: 'completed' | 'cancelled' | 'failed';
   archived?: boolean;
   metadata: { cwd: string } & Record<string, unknown>;
   agent_config: { model: string };
@@ -272,7 +275,9 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(typeof body.data.workspace_id).toBe('string');
     expect(body.data.title).toBe('hello');
     expect(body.data.metadata.cwd).toBe(cwd);
-    expect(body.data.status).toBe('idle');
+    expect(body.data.busy).toBe(false);
+    expect(body.data.main_turn_active).toBe(false);
+    expect(body.data.pending_interaction).toBe('none');
     expect(body.data.agent_config).toEqual({ model: '' });
     expect(body.data.permission_rules).toEqual([]);
     expect(body.data.message_count).toBe(0);
@@ -450,15 +455,13 @@ describe('server-v2 /api/v1/sessions', () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const { body } = await getJson<{
-      status: string;
+      busy: boolean;
       thinking_level: string;
       plan_mode: boolean;
       context_tokens: number;
     }>(`/api/v1/sessions/${created.body.data.id}/status`);
     expect(body.code).toBe(0);
-    expect(['idle', 'running', 'awaiting_approval', 'awaiting_question']).toContain(
-      body.data.status,
-    );
+    expect(body.data.busy).toBe(false);
     expect(typeof body.data.thinking_level).toBe('string');
     expect(typeof body.data.plan_mode).toBe('boolean');
     expect(body.data.context_tokens).toBe(0);
@@ -793,7 +796,7 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(40001);
   });
 
-  it('returns a terminal empty page when archived_only status filtering finds no match', async () => {
+  it('returns a terminal empty page when archived_only busy filtering finds no match', async () => {
     const cwd = home as string;
     const first = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const second = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
@@ -802,7 +805,7 @@ describe('server-v2 /api/v1/sessions', () => {
     await postJson<{ archived: boolean }>(`/api/v1/sessions/${second.body.data.id}:archive`);
 
     const page = await getJson<PageWire>(
-      '/api/v1/sessions?archived_only=true&status=running&page_size=1',
+      '/api/v1/sessions?archived_only=true&busy=true&page_size=1',
     );
     expect(page.body.code).toBe(0);
     expect(page.body.data).toEqual({ items: [], has_more: false });
@@ -818,36 +821,36 @@ describe('server-v2 /api/v1/sessions', () => {
     expect(body.code).toBe(40410);
   });
 
-  it('filters listed sessions by the status query (post-page, like v1)', async () => {
+  it('filters listed sessions by the busy query (post-page, like v1)', async () => {
     const cwd = home as string;
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const id = created.body.data.id;
-    // A freshly-created session has no turn, so the live activity is `idle` —
-    // the wire status is the resolved activity, not a constant placeholder.
-    expect(created.body.data.status).toBe('idle');
+    // A freshly-created session has no work, so it is not busy — the wire
+    // fact is the resolved drain-registry read, not a constant placeholder.
+    expect(created.body.data.busy).toBe(false);
 
-    const idle = await getJson<PageWire>('/api/v1/sessions?status=idle');
+    const idle = await getJson<PageWire>('/api/v1/sessions?busy=false');
     expect(idle.body.code).toBe(0);
     expect(idle.body.data.items.some((s) => s.id === id)).toBe(true);
 
-    const running = await getJson<PageWire>('/api/v1/sessions?status=running');
+    const running = await getJson<PageWire>('/api/v1/sessions?busy=true');
     expect(running.body.code).toBe(0);
     expect(running.body.data.items.some((s) => s.id === id)).toBe(false);
   });
 
-  it('filters child sessions by the status query', async () => {
+  it('filters child sessions by the busy query', async () => {
     const cwd = home as string;
     const parent = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const parentId = parent.body.data.id;
     const child = await postJson<SessionWire>(`/api/v1/sessions/${parentId}/children`, {});
     const childId = child.body.data.id;
-    expect(child.body.data.status).toBe('idle');
+    expect(child.body.data.busy).toBe(false);
 
-    const idle = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children?status=idle`);
+    const idle = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children?busy=false`);
     expect(idle.body.code).toBe(0);
     expect(idle.body.data.items.some((s) => s.id === childId)).toBe(true);
 
-    const running = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children?status=running`);
+    const running = await getJson<PageWire>(`/api/v1/sessions/${parentId}/children?busy=true`);
     expect(running.body.code).toBe(0);
     expect(running.body.data.items.some((s) => s.id === childId)).toBe(false);
   });

@@ -38,31 +38,30 @@ import type {
   IDisposable,
   Interaction,
   InteractionKind,
-  ISessionActivity,
   ISessionScopeHandle,
   Scope,
 } from '@moonshot-ai/agent-core-v2';
 import {
   IAgentLifecycleService,
+  IAgentActivityView,
   IEventBus,
   IEventService,
-  ISessionActivity as ISessionActivityService,
   ISessionInteractionService,
   ISessionIndex,
   ISessionLifecycleService,
   MAIN_AGENT_ID,
 } from '@moonshot-ai/agent-core-v2';
+import type { TurnEndReason } from '@moonshot-ai/agent-core-v2/agent/loop/turnEvents';
 import type {
-  Event,
-  InFlightTurn,
   ModelCatalogChangedEvent,
   SessionCreatedEvent,
-  SessionCursor,
   SessionMetaUpdatedEvent,
-  SessionStatus,
-  SnapshotSubagent,
-} from '@moonshot-ai/protocol';
-import { isVolatileEventType } from '@moonshot-ai/protocol';
+  Event,
+} from './events';
+import { isVolatileEventType } from './events';
+import type { SessionCursor } from '../../../protocol/ws-control';
+import type { InFlightTurn, SnapshotSubagent } from '../../../protocol/rest-snapshot';
+import type { SessionPendingInteraction } from '../../../protocol/session';
 
 import { toWireApproval } from '../../../routes/approvals';
 import { toWireQuestion } from '../../../routes/questions';
@@ -111,9 +110,21 @@ interface SessionState {
   readonly journal: SessionEventJournal;
   readonly tracker: InFlightTurnTracker;
   readonly roster: SubagentRosterTracker;
-  readonly activity?: ISessionActivity;
-  /** Last status emitted (initialized from live session activity). */
-  lastStatus?: SessionStatus;
+  /**
+   * Per-agent fold of `agent.activity.updated` — the only input to the
+   * session's `work_changed` fact: `busy` = any agent with an active turn or
+   * background task, `last_turn_reason` = the main agent's latest outcome
+   * (`blocked` folds into `failed`). Session level stores nothing of its own;
+   * this map is a pure, discardable aggregate of agent-level state. Seeded
+   * once from the live views at activation.
+   */
+  readonly activityByAgent: Map<string, AgentWorkFold>;
+  /** Last emitted work-fact tuple, for dedup. */
+  emittedBusy: boolean;
+  emittedMainTurnActive: boolean;
+  emittedPendingInteraction: SessionPendingInteraction;
+  emittedTurnOutcome?: 'completed' | 'cancelled' | 'failed';
+  pendingInteraction: SessionPendingInteraction;
   /** Recent durable envelopes for in-memory replay. */
   readonly tail: Array<{ seq: number; envelope: EventEnvelope }>;
   /** Connections subscribed to this session, each with its optional agent allowlist. */
@@ -127,6 +138,13 @@ interface SessionState {
   readonly knownInteractions: Map<string, InteractionKind>;
 }
 
+/** The aggregate-relevant slice of one agent's activity state. */
+interface AgentWorkFold {
+  turnActive: boolean;
+  background: number;
+  lastTurnReason?: 'completed' | 'cancelled' | 'failed';
+}
+
 export const DEFAULT_MAX_BUFFER_SIZE = 1000;
 const GLOBAL_SESSION_ID = '__global__';
 
@@ -138,6 +156,18 @@ async function disposeSessionState(state: SessionState): Promise<void> {
 
 export class SessionEventBroadcaster {
   private readonly sessions = new Map<string, SessionState>();
+  /**
+   * Single-flight guard for session activation: without it, two concurrent
+   * activations (WS subscribe racing a REST snapshot / replay / resync) each
+   * built their own SessionState, bus subscriptions, and journal writer. The
+   * leaked listeners all route through `onAgentEvent`, which looks up the
+   * current state by session id, so they advance the SAME tracker and journal:
+   * one source delta is emitted at consecutive offsets and adjacent durable
+   * events receive distinct consecutive seqs. WS coalescing then folds the
+   * adjacent delta copies into one doubled payload, producing the observed
+   * per-chunk `AABBCC` stream while every seq and offset still looks valid.
+   */
+  private readonly pendingStates = new Map<string, Promise<SessionState | undefined>>();
   private readonly maxBufferSize: number;
   private readonly coreEventSubscription: IDisposable;
   private closed = false;
@@ -280,10 +310,24 @@ export class SessionEventBroadcaster {
     this.sessions.clear();
   }
 
-  private async ensureState(sessionId: string): Promise<SessionState | undefined> {
+  private ensureState(sessionId: string): Promise<SessionState | undefined> {
+    if (this.closed) return Promise.resolve(undefined);
+    const existing = this.sessions.get(sessionId);
+    if (existing !== undefined) return Promise.resolve(existing);
+    let pending = this.pendingStates.get(sessionId);
+    if (pending === undefined) {
+      pending = this.createSessionState(sessionId).finally(() => {
+        if (this.pendingStates.get(sessionId) === pending) {
+          this.pendingStates.delete(sessionId);
+        }
+      });
+      this.pendingStates.set(sessionId, pending);
+    }
+    return pending;
+  }
+
+  private async createSessionState(sessionId: string): Promise<SessionState | undefined> {
     if (this.closed) return undefined;
-    let state = this.sessions.get(sessionId);
-    if (state !== undefined) return state;
 
     const session = this.opts.core.accessor.get(ISessionLifecycleService).get(sessionId);
     if (session === undefined) return undefined;
@@ -296,14 +340,24 @@ export class SessionEventBroadcaster {
       await journal.close();
       return undefined;
     }
-    const activity = session.accessor.get(ISessionActivityService);
-    state = {
+    const activityByAgent = new Map<string, AgentWorkFold>();
+    for (const handle of session.accessor.get(IAgentLifecycleService).list()) {
+      activityByAgent.set(handle.id, readAgentWorkFold(handle));
+    }
+    const pendingInteraction = resolvePendingInteraction(
+      session.accessor.get(ISessionInteractionService).listPending(),
+    );
+    const state: SessionState = {
       sessionId,
       journal,
       tracker: new InFlightTurnTracker(),
       roster: new SubagentRosterTracker(),
-      activity,
-      lastStatus: activity.status(),
+      activityByAgent,
+      emittedBusy: aggregateBusy(activityByAgent),
+      emittedMainTurnActive: activityByAgent.get(MAIN_AGENT_ID)?.turnActive ?? false,
+      emittedPendingInteraction: pendingInteraction,
+      emittedTurnOutcome: activityByAgent.get(MAIN_AGENT_ID)?.lastTurnReason,
+      pendingInteraction,
       tail: [],
       targets: new Map(),
       queue: Promise.resolve(),
@@ -324,19 +378,36 @@ export class SessionEventBroadcaster {
     return state;
   }
 
-  private async ensureGlobalState(): Promise<SessionState> {
-    let state = this.sessions.get(GLOBAL_SESSION_ID);
-    if (state !== undefined) return state;
+  private ensureGlobalState(): Promise<SessionState> {
+    const existing = this.sessions.get(GLOBAL_SESSION_ID);
+    if (existing !== undefined) return Promise.resolve(existing);
+    let pending = this.pendingStates.get(GLOBAL_SESSION_ID);
+    if (pending === undefined) {
+      pending = this.createGlobalState().finally(() => {
+        if (this.pendingStates.get(GLOBAL_SESSION_ID) === pending) {
+          this.pendingStates.delete(GLOBAL_SESSION_ID);
+        }
+      });
+      this.pendingStates.set(GLOBAL_SESSION_ID, pending);
+    }
+    return pending as Promise<SessionState>;
+  }
 
+  private async createGlobalState(): Promise<SessionState> {
     const journal = await SessionEventJournal.open(
       sessionJournalPath(this.opts.eventsDir, GLOBAL_SESSION_ID),
       this.opts.logger,
     );
-    state = {
+    const state: SessionState = {
       sessionId: GLOBAL_SESSION_ID,
       journal,
       tracker: new InFlightTurnTracker(),
       roster: new SubagentRosterTracker(),
+      activityByAgent: new Map(),
+      emittedBusy: false,
+      emittedMainTurnActive: false,
+      emittedPendingInteraction: 'none',
+      pendingInteraction: 'none',
       tail: [],
       targets: new Map(),
       queue: Promise.resolve(),
@@ -444,6 +515,10 @@ export class SessionEventBroadcaster {
     const agents = session.accessor.get(IAgentLifecycleService);
     const subscribeAgent = (handle: IAgentScopeHandle): void => {
       if (state.agentDisposables.has(handle.id)) return;
+      if (!state.activityByAgent.has(handle.id)) {
+        state.activityByAgent.set(handle.id, readAgentWorkFold(handle));
+        this.enqueueWorkChanged(state);
+      }
       state.agentDisposables.set(handle.id, this.attachAgent(sessionId, handle));
     };
     for (const handle of agents.list()) subscribeAgent(handle);
@@ -455,6 +530,10 @@ export class SessionEventBroadcaster {
           d.dispose();
           state.agentDisposables.delete(agentId);
         }
+        // A removed agent can no longer contribute work; drop its fold and
+        // re-evaluate the aggregate (its turn.ended normally lands first, but
+        // the delete keeps the map honest either way).
+        if (state.activityByAgent.delete(agentId)) this.enqueueWorkChanged(state);
       }),
     );
   }
@@ -476,11 +555,7 @@ export class SessionEventBroadcaster {
     const disposables: IDisposable[] = [
       eventBus.subscribe((event) => {
         let projected = event;
-        if (
-          handle.id === MAIN_AGENT_ID &&
-          event.type === 'agent.status.updated' &&
-          event.phase === undefined
-        ) {
+        if (handle.id === MAIN_AGENT_ID && event.type === 'agent.status.updated') {
           const snapshot = readLegacyStatus(handle);
           if (snapshot !== undefined) {
             lastLegacyStatus = JSON.stringify(snapshot);
@@ -506,9 +581,11 @@ export class SessionEventBroadcaster {
     // semantics (approval-set, idle-after-ended) without the core engine
     // carrying v1 compatibility. The core's own `agent.status.updated` phase
     // slice is dropped here to avoid duplicate phase events; other slices
-    // (usage / context / plan / swarm) flow through unchanged.
+    // (usage / context / plan / swarm) flow through unchanged. The same event
+    // also feeds the session's work-fold aggregate (busy / last_turn_reason).
     if (event.type === 'agent.activity.updated') {
-      const phase = toLegacyPhase(event as unknown as AgentActivityState);
+      const snapshot = event as unknown as AgentActivityState;
+      const phase = toLegacyPhase(snapshot);
       if (phase !== undefined) {
         const wireEvent = {
           type: 'agent.status.updated',
@@ -519,6 +596,29 @@ export class SessionEventBroadcaster {
         state.queue = state.queue
           .then(() => this.dispatch(state, wireEvent, true))
           .catch((error: unknown) => this.logDispatchDropped(state.sessionId, wireEvent.type, error));
+      }
+      // Fold into the aggregate. A turnActive flip always rides a
+      // turn.started/turn.ended boundary that fires right after this event
+      // (the view publishes synchronously inside it), so emission is left to
+      // that trigger to keep the busy:true-before / busy:false-after frame
+      // order. Everything else (background tasks, agent teardown) emits here.
+      const previous = state.activityByAgent.get(agentId);
+      const next = {
+        turnActive: snapshot.turn !== undefined,
+        background: snapshot.background?.length ?? 0,
+        lastTurnReason:
+          agentId === MAIN_AGENT_ID
+            ? mapTurnReason(snapshot.lastTurn?.reason)
+            : previous?.lastTurnReason,
+      };
+      state.activityByAgent.set(agentId, next);
+      if (
+        previous !== undefined &&
+        previous.turnActive === next.turnActive &&
+        (previous.background !== next.background ||
+          (agentId === MAIN_AGENT_ID && previous.lastTurnReason !== next.lastTurnReason))
+      ) {
+        this.enqueueWorkChanged(state);
       }
       return;
     }
@@ -534,31 +634,23 @@ export class SessionEventBroadcaster {
     // `DomainEventMap` payload types are deliberately wider than the protocol
     // contract, hence the assertion via `unknown`.
     const wireEvent = { ...event, agentId, sessionId } as unknown as Event;
-    // Session status transitions are synthesized only from the MAIN agent's turn
-    // boundaries. Subagents share the session channel (their frames carry their
-    // own agentId and clients route them to the task view), so a subagent's
-    // turn.ended would otherwise emit a bogus `status_changed(idle)` mid-turn:
-    // the client reads that as "the turn finished" (driving notifications,
-    // sounds, unread dots and the queued-message drain), and the real turn end
-    // is then swallowed by dedup. Same main-only rule as InFlightTurnTracker.
-    if (agentId === MAIN_AGENT_ID && event.type === 'turn.started') {
-      // Status is authoritative protocol state: emit it before the turn event so
-      // clients enter running first. A pending interaction remains higher
-      // priority than running.
-      this.enqueueStatusChanged(state, pendingStatus(state.activity?.status()) ?? 'running');
+    // Turn boundaries are the emission TRIGGERS for `work_changed` (ordering:
+    // busy:true lands before the turn.started frame, busy:false after the
+    // turn.ended frame). The payload is computed from the per-agent fold —
+    // the view's activity update for this same boundary has already been
+    // folded in (it publishes synchronously inside the boundary dispatch,
+    // ahead of this handler). Every agent triggers: busy counts all agents'
+    // turns and background tasks; only the main agent feeds last_turn_reason.
+    if (event.type === 'turn.started') {
+      this.enqueueWorkChanged(state);
     }
     const volatile = isVolatileSignal(event.type);
     state.queue = state.queue
       .then(() => this.dispatch(state, wireEvent, volatile))
       .catch((error: unknown) => this.logDispatchDropped(state.sessionId, wireEvent.type, error));
-    if (agentId === MAIN_AGENT_ID && event.type === 'turn.ended') {
-      // Emit completion after the turn event. Pending interactions remain higher
-      // priority; otherwise failed/cancelled/blocked turns abort and all others
-      // become idle.
-      const reason = (event as { reason?: unknown }).reason;
-      const terminalStatus =
-        reason === 'cancelled' || reason === 'failed' || reason === 'blocked' ? 'aborted' : 'idle';
-      this.enqueueStatusChanged(state, pendingStatus(state.activity?.status()) ?? terminalStatus);
+    if (event.type === 'turn.ended') {
+      // Emit completion after the turn event.
+      this.enqueueWorkChanged(state);
     }
     // v1 wire compat: fan the legacy `background.task.*` spelling out next to
     // the native `task.*` event (see `legacyTaskEvent`) so unchanged v1 clients
@@ -575,8 +667,8 @@ export class SessionEventBroadcaster {
   /**
    * Bridge the session's interaction kernel (approvals / questions) onto the
    * v1 event stream. The kernel only emits in-process notifications
-   * (`onDidChangePending` / `onDidResolve`), so the v1 protocol events and their
-   * authoritative session status transitions are synthesized here.
+   * (`onDidChangePending` / `onDidResolve`), so the v1 protocol events are
+   * synthesized here.
    */
   private attachInteractions(
     sessionId: string,
@@ -585,20 +677,21 @@ export class SessionEventBroadcaster {
   ): void {
     const interactions = session.accessor.get(ISessionInteractionService);
     // Seed silently: interactions already pending at activation are surfaced
-    // by the snapshot route (`pending_questions` / `pending_approvals`), and
-    // lastStatus was initialized from the same live activity state.
+    // by the snapshot route (`pending_questions` / `pending_approvals`).
     for (const i of interactions.listPending()) {
       state.knownInteractions.set(i.id, i.kind);
     }
     state.lifecycleDisposables.push(
       interactions.onDidChangePending(() => {
-        for (const i of interactions.listPending()) {
+        const pending = interactions.listPending();
+        state.pendingInteraction = resolvePendingInteraction(pending);
+        this.enqueueWorkChanged(state);
+        for (const i of pending) {
           if (state.knownInteractions.has(i.id)) continue;
           state.knownInteractions.set(i.id, i.kind);
           const event = interactionRequestedEvent(i, sessionId);
           if (event !== undefined) {
             this.enqueueDurable(state, event);
-            this.enqueueStatusChanged(state, state.activity!.status());
           }
         }
       }),
@@ -609,7 +702,6 @@ export class SessionEventBroadcaster {
         const event = interactionResolvedEvent(kind, id, response, sessionId);
         if (event !== undefined) {
           this.enqueueDurable(state, event);
-          this.enqueueStatusChanged(state, state.activity!.status());
         }
       }),
     );
@@ -621,18 +713,37 @@ export class SessionEventBroadcaster {
       .catch((error: unknown) => this.logDispatchDropped(state.sessionId, event.type, error));
   }
 
-  private enqueueStatusChanged(state: SessionState, status: SessionStatus): void {
+  /**
+   * Emit `event.session.work_changed` when its orthogonal work-fact tuple
+   * actually changed. Activity facts come from the per-agent fold and pending
+   * interaction facts come from the session interaction kernel.
+   */
+  private enqueueWorkChanged(state: SessionState): void {
     state.queue = state.queue
       .then(async () => {
-        const previousStatus = state.lastStatus;
-        if (previousStatus === undefined || status === previousStatus) return;
-        state.lastStatus = status;
+        const busy = aggregateBusy(state.activityByAgent);
+        const mainTurnActive = state.activityByAgent.get(MAIN_AGENT_ID)?.turnActive ?? false;
+        const outcome = state.activityByAgent.get(MAIN_AGENT_ID)?.lastTurnReason;
+        if (
+          busy === state.emittedBusy &&
+          mainTurnActive === state.emittedMainTurnActive &&
+          state.pendingInteraction === state.emittedPendingInteraction &&
+          outcome === state.emittedTurnOutcome
+        ) {
+          return;
+        }
+        state.emittedBusy = busy;
+        state.emittedMainTurnActive = mainTurnActive;
+        state.emittedPendingInteraction = state.pendingInteraction;
+        state.emittedTurnOutcome = outcome;
         await this.dispatch(
           state,
           {
-            type: 'event.session.status_changed',
-            status,
-            previous_status: previousStatus,
+            type: 'event.session.work_changed',
+            busy,
+            main_turn_active: mainTurnActive,
+            pending_interaction: state.pendingInteraction,
+            last_turn_reason: outcome,
             agentId: 'main',
             sessionId: state.sessionId,
           } as Event,
@@ -640,7 +751,7 @@ export class SessionEventBroadcaster {
         );
       })
       .catch((error: unknown) =>
-        this.logDispatchDropped(state.sessionId, 'event.session.status_changed', error),
+        this.logDispatchDropped(state.sessionId, 'event.session.work_changed', error),
       );
   }
 
@@ -761,6 +872,43 @@ function isVolatileSignal(type: string): boolean {
 }
 
 /**
+ * Fold one agent's live activity view into the aggregate slice. Defensive:
+ * a missing view (never ignited) folds to not-busy.
+ */
+function readAgentWorkFold(handle: IAgentScopeHandle): AgentWorkFold {
+  const view = handle.accessor.get(IAgentActivityView) as IAgentActivityView | undefined;
+  const state = view?.state();
+  return {
+    turnActive: state?.turn !== undefined,
+    background: state?.background.length ?? 0,
+    lastTurnReason: mapTurnReason(state?.lastTurn?.reason),
+  };
+}
+
+function mapTurnReason(
+  reason: TurnEndReason | undefined,
+): 'completed' | 'cancelled' | 'failed' | undefined {
+  if (reason === undefined) return undefined;
+  return reason === 'completed' ? 'completed' : reason === 'cancelled' ? 'cancelled' : 'failed';
+}
+
+/** `busy` = any agent has an active turn or live background tasks. */
+function aggregateBusy(map: ReadonlyMap<string, AgentWorkFold>): boolean {
+  for (const fold of map.values()) {
+    if (fold.turnActive || fold.background > 0) return true;
+  }
+  return false;
+}
+
+function resolvePendingInteraction(
+  pending: readonly Interaction[],
+): SessionPendingInteraction {
+  if (pending.some((interaction) => interaction.kind === 'approval')) return 'approval';
+  if (pending.some((interaction) => interaction.kind === 'question')) return 'question';
+  return 'none';
+}
+
+/**
  * v1 wire compatibility: map a native v2 background-task lifecycle event to its
  * pre-v2 spelling, returning `undefined` for every other event. The pre-v2
  * engine emitted `background.task.started`/`background.task.terminated`; v2
@@ -778,10 +926,6 @@ function legacyTaskEvent(event: DomainEvent, agentId: string, sessionId: string)
   const legacyType =
     event.type === 'task.started' ? 'background.task.started' : 'background.task.terminated';
   return { ...event, type: legacyType, agentId, sessionId } as unknown as Event;
-}
-
-function pendingStatus(status: SessionStatus | undefined): SessionStatus | undefined {
-  return status === 'awaiting_approval' || status === 'awaiting_question' ? status : undefined;
 }
 
 /** Session/workspace/config/model-catalog events are broadcast to every connection. */

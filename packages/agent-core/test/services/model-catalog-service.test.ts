@@ -165,6 +165,20 @@ describe('model catalog adapters', () => {
     expect(toProtocolModel('turbo', alias).display_name).toBe('kimi-turbo');
   });
 
+  it('projects official Anthropic effort metadata inferred from the model name', () => {
+    expect(
+      toProtocolModel('opus', {
+        provider: 'anthropic',
+        model: 'claude-opus-4-6',
+        maxContextSize: 200000,
+      }),
+    ).toMatchObject({
+      capabilities: ['thinking'],
+      support_efforts: ['low', 'medium', 'high', 'max'],
+      default_effort: 'high',
+    });
+  });
+
   it('maps provider model ids and global default', () => {
     const config = catalogConfig();
     expect(
@@ -193,6 +207,25 @@ describe('ModelCatalogService', () => {
     expect(await svc.listModels()).toHaveLength(3);
     expect(await svc.listProviders()).toHaveLength(2);
     expect(getCalls).toEqual([{ reload: true }, { reload: true }]);
+  });
+
+  it('projects latest Opus efforts for unknown Anthropic-compatible models', async () => {
+    const configRef = { current: catalogConfig() };
+    configRef.current.models!['compatible'] = {
+      provider: 'kimi',
+      protocol: 'anthropic',
+      model: 'compatible-model',
+      maxContextSize: 128000,
+    };
+    const { core } = makeCore(configRef);
+    const svc = new ModelCatalogService(makeEnv(), core, makeEventService().svc);
+
+    const compatible = (await svc.listModels()).find((model) => model.model === 'compatible');
+    expect(compatible).toMatchObject({
+      capabilities: ['thinking'],
+      support_efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      default_effort: 'high',
+    });
   });
 
   it('gets one provider or throws ProviderNotFoundError', async () => {

@@ -45,6 +45,11 @@ function currentTuiConfig(host: SlashCommandHost): TuiConfig {
   };
 }
 
+function effectiveModelForHost(host: SlashCommandHost, model: ModelAlias): ModelAlias {
+  const providerType = host.state.appState.availableProviders[model.provider]?.type;
+  return effectiveModelAlias(model, (model.protocol ?? providerType) === 'anthropic');
+}
+
 export async function handlePlanCommand(host: SlashCommandHost, args: string): Promise<void> {
   const session = host.session;
   if (session === undefined) {
@@ -234,7 +239,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     host.showError('No model selected. Run /model to select one first.');
     return;
   }
-  const effective = effectiveModelAlias(model);
+  const effective = effectiveModelForHost(host, model);
   const segments = segmentsFor(effective);
   const arg = args.trim().toLowerCase();
   if (arg.length === 0) {
@@ -242,10 +247,19 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     return;
   }
   if (!segments.includes(arg)) {
-    host.showError(
-      `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
+    const providerType = host.state.appState.availableProviders[effective.provider]?.type;
+    const protocol = effective.protocol ?? providerType;
+    if (protocol !== 'anthropic') {
+      host.showError(
+        `Unsupported thinking effort "${arg}" for ${alias}. Available: ${segments.join(', ')}`,
+      );
+      return;
+    }
+    const knownEfforts = effective.supportEfforts?.join(', ') ?? 'none declared';
+    host.showStatus(
+      `Thinking effort "${arg}" is not listed for ${alias} (known: ${knownEfforts}). Sending "${arg}" unchanged; the configured provider will validate it.`,
+      'warning',
     );
-    return;
   }
   await performModelSwitch(host, alias, arg, true);
 }
@@ -358,7 +372,13 @@ async function applyEditorChoice(host: SlashCommandHost, value: string): Promise
 }
 
 export function showModelPicker(host: SlashCommandHost, selectedValue: string = host.state.appState.model): void {
-  const entries = Object.entries(host.state.appState.availableModels);
+  const models = Object.fromEntries(
+    Object.entries(host.state.appState.availableModels).map(([alias, model]) => [
+      alias,
+      effectiveModelForHost(host, model),
+    ]),
+  );
+  const entries = Object.entries(models);
   if (entries.length === 0) {
     host.showNotice(
       'No models configured',
@@ -368,7 +388,7 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
   }
   host.mountEditorReplacement(
     new TabbedModelSelectorComponent({
-      models: host.state.appState.availableModels,
+      models,
       currentValue: host.state.appState.model,
       selectedValue,
       currentThinkingEffort: host.state.appState.thinkingEffort,

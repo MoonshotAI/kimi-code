@@ -31,10 +31,8 @@ import { ICronTaskPersistence } from '#/app/cron/cronTaskPersistence';
 import { CRON_SESSION_TAG, type CronTask } from '#/app/cron/cronTask';
 import { ISessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycle';
 import { SessionLifecycleService } from '#/app/sessionLifecycle/sessionLifecycleService';
-import { ISessionActivityKernel } from '#/activity/activity';
-import { SessionActivityKernel } from '#/activity/sessionActivityKernel';
+import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
-import { ISessionActivity } from '#/session/sessionActivity/sessionActivity';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
@@ -49,7 +47,6 @@ import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { Error2, ErrorCodes } from '#/errors';
-import { stubSessionActivityKernel } from '../../activity/stubs';
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
 
 function bootstrapStub(): IBootstrapService {
@@ -432,13 +429,6 @@ describe('SessionLifecycleService', () => {
       'externalHooks',
     );
     registerScopedService(
-      LifecycleScope.Session,
-      ISessionActivityKernel,
-      SessionActivityKernel,
-      InstantiationType.Delayed,
-      'activity',
-    );
-    registerScopedService(
       LifecycleScope.App,
       IHostFileSystem,
       HostFileSystem,
@@ -469,7 +459,6 @@ describe('SessionLifecycleService', () => {
       stubPair(ISessionMcpService, sessionMcpServiceStub()),
       stubPair(IConfigService, configStub()),
       stubPair(ISessionCronService, { _serviceBrand: undefined } as unknown as ISessionCronService),
-      stubPair(ISessionActivityKernel, stubSessionActivityKernel()),
       stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub()),
       stubPair(ITelemetryService, recordingTelemetry(telemetryRecords)),
       stubPair(ICronTaskPersistence, cronStoreStub()),
@@ -685,6 +674,52 @@ describe('SessionLifecycleService', () => {
 
     expect(restored?.id).toBe('s1');
     expect(archived).toBe(false);
+  });
+
+  it('forks successfully even while the source has a busy agent (crash-equivalent copy)', async () => {
+    const busyAgent = {
+      id: MAIN_AGENT_ID,
+      kind: LifecycleScope.Agent,
+      accessor: {
+        get: (token: unknown) => {
+          if (token === IAgentActivityView) {
+            return {
+              state: () => ({
+                lifecycle: 'ready',
+                turn: { turnId: 0 },
+                background: [],
+              }),
+            };
+          }
+          throw new Error('unexpected service access');
+        },
+      },
+      dispose: () => {},
+    } as unknown as IAgentScopeHandle;
+    const svc = build([
+      stubPair(IWorkspaceRegistry, {
+        ...workspaceRegistryStub(),
+        get: () =>
+          Promise.resolve({
+            id: 'wd_stub',
+            root: '/tmp/proj',
+            name: 'stub',
+            createdAt: 0,
+            lastOpenedAt: 0,
+          }),
+      }),
+      stubPair(IAgentLifecycleService, {
+        ...agentLifecycleStub(),
+        list: () => [busyAgent],
+      }),
+    ]);
+
+    await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+
+    // Fork never gates on activity: a mid-work copy is crash-equivalent, and
+    // replay already normalizes that on restore.
+    const target = await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+    expect(target.id).toBe('dst');
   });
 
   it('fires onDidCreateSession with the new handle', async () => {
@@ -938,11 +973,6 @@ describe('SessionLifecycleService', () => {
     it('fork inherits project-local dirs', async () => {
       const svc = build([
         stubPair(IWorkspaceLocalConfigService, workspaceLocalConfigStub(['/tmp/extra'])),
-        stubPair(ISessionActivity, {
-          _serviceBrand: undefined,
-          status: () => 'idle' as const,
-          isIdle: () => true,
-        }),
         stubPair(IWorkspaceRegistry, {
           ...workspaceRegistryStub(),
           get: () =>
@@ -973,11 +1003,6 @@ describe('SessionLifecycleService', () => {
 
     it('fork mints a session_-prefixed lowercase id when newSessionId is omitted', async () => {
       const svc = build([
-        stubPair(ISessionActivity, {
-          _serviceBrand: undefined,
-          status: () => 'idle' as const,
-          isIdle: () => true,
-        }),
         stubPair(IWorkspaceRegistry, {
           ...workspaceRegistryStub(),
           get: () =>

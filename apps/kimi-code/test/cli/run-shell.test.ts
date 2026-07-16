@@ -58,6 +58,7 @@ const mocks = vi.hoisted(() => {
       track: lifecycleTrack,
     })),
     resolveKimiHome: vi.fn((homeDir?: string) => homeDir ?? '/tmp/kimi-code-test-home'),
+    flushDiagnosticLogsSync: vi.fn(),
     harnessCreatesDeviceIdOnConstruction: false,
     execSync: vi.fn(),
     TuiConfigParseError,
@@ -69,6 +70,7 @@ vi.mock('@moonshot-ai/kimi-code-sdk', async (importOriginal) => {
   return {
     ...actual,
     resolveKimiHome: mocks.resolveKimiHome,
+    flushDiagnosticLogsSync: mocks.flushDiagnosticLogsSync,
     createKimiHarness: (...args: unknown[]) => {
       const options = args[0] as { readonly homeDir?: string } | undefined;
       const homeDir = options?.homeDir ?? '/tmp/kimi-code-test-home';
@@ -522,6 +524,105 @@ describe('runShell', () => {
     expect(startupInput).toMatchObject({
       startupNotice: 'Ignored invalid config in config.toml: loop_control.',
     });
+  });
+
+  it('flushes diagnostic logs synchronously before exiting on a runtime crash', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    const processOnSpy = vi.spyOn(process, 'on');
+    const stdout = captureProcessWrite('stdout');
+    const exitSpy = mockProcessExit();
+
+    try {
+      await runShell(
+        {
+          session: undefined,
+          continue: false,
+          yolo: false,
+          auto: false,
+          plan: false,
+          model: undefined,
+          outputFormat: undefined,
+          prompt: undefined,
+          skillsDirs: [],
+          agent: undefined,
+          agentFiles: [],
+        },
+        '1.2.3-test',
+      );
+
+      const handler = processOnSpy.mock.calls.find(
+        ([event]) => event === 'uncaughtException',
+      )?.[1] as ((error: unknown) => void) | undefined;
+      expect(handler).toBeDefined();
+
+      // The async log sink cannot flush before process.exit() runs, so the
+      // crash handler must force a synchronous flush or the crash reason is
+      // lost (regression: uncaughtException logs never reached disk).
+      expect(() => handler?.(new Error('boom'))).toThrow(ExitCalled);
+      expect(mocks.flushDiagnosticLogsSync).toHaveBeenCalledOnce();
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(mocks.flushDiagnosticLogsSync.mock.invocationCallOrder[0]!).toBeLessThan(
+        exitSpy.mock.invocationCallOrder[0]!,
+      );
+    } finally {
+      processOnSpy.mockRestore();
+      exitSpy.mockRestore();
+      stdout.restore();
+    }
+  });
+
+  it('flushes diagnostic logs synchronously before exiting on an unhandled rejection', async () => {
+    mocks.loadTuiConfig.mockResolvedValue({
+      theme: 'dark',
+      editorCommand: null,
+      notifications: { enabled: true, condition: 'unfocused' },
+    });
+    mocks.tuiStart.mockResolvedValue(undefined);
+
+    const processOnSpy = vi.spyOn(process, 'on');
+    const stdout = captureProcessWrite('stdout');
+    const exitSpy = mockProcessExit();
+
+    try {
+      await runShell(
+        {
+          session: undefined,
+          continue: false,
+          yolo: false,
+          auto: false,
+          plan: false,
+          model: undefined,
+          outputFormat: undefined,
+          prompt: undefined,
+          skillsDirs: [],
+          agent: undefined,
+          agentFiles: [],
+        },
+        '1.2.3-test',
+      );
+
+      const handler = processOnSpy.mock.calls.find(
+        ([event]) => event === 'unhandledRejection',
+      )?.[1] as ((reason: unknown) => void) | undefined;
+      expect(handler).toBeDefined();
+
+      expect(() => handler?.(new Error('boom'))).toThrow(ExitCalled);
+      expect(mocks.flushDiagnosticLogsSync).toHaveBeenCalledOnce();
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(mocks.flushDiagnosticLogsSync.mock.invocationCallOrder[0]!).toBeLessThan(
+        exitSpy.mock.invocationCallOrder[0]!,
+      );
+    } finally {
+      processOnSpy.mockRestore();
+      exitSpy.mockRestore();
+      stdout.restore();
+    }
   });
 
   it('closes the harness when TUI startup fails', async () => {

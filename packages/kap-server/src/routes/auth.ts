@@ -13,7 +13,7 @@
  */
 
 import { IAuthLegacyService, type Scope } from '@moonshot-ai/agent-core-v2';
-import { authSummarySchema } from '@moonshot-ai/protocol';
+import { authSummarySchema } from '@moonshot-ai/agent-core-v2/app/authLegacy/authLegacy';
 
 import { okEnvelope } from '../envelope';
 import { defineRoute } from '../middleware/defineRoute';

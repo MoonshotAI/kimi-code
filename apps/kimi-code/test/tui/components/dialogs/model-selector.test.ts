@@ -338,6 +338,55 @@ describe('ModelSelectorComponent', () => {
     expect(out).toContain('Thinking  (←→ to switch)');
   });
 
+  it('derives official Anthropic effort segments from the model name', () => {
+    const onSelect = vi.fn();
+    const picker = new ModelSelectorComponent({
+      models: {
+        opus: {
+          provider: 'anthropic',
+          model: 'claude-opus-4-6',
+          maxContextSize: 200000,
+        },
+      },
+      currentValue: 'opus',
+      currentThinkingEffort: 'high',
+      onSelect,
+      onCancel: vi.fn(),
+    });
+
+    const out = text(picker);
+    expect(out).toContain('Low');
+    expect(out).toContain('[ High ]');
+    expect(out).toContain('Max');
+    expect(out).toContain('Off');
+    expect(out).not.toContain('Xhigh');
+
+    picker.handleInput(RIGHT);
+    picker.handleInput('\r');
+    expect(onSelect).toHaveBeenCalledWith({ alias: 'opus', thinking: 'max' });
+  });
+
+  it('derives official always-on Anthropic models without an Off segment', () => {
+    const picker = new ModelSelectorComponent({
+      models: {
+        fable: {
+          provider: 'anthropic',
+          model: 'claude-fable-5',
+          maxContextSize: 200000,
+        },
+      },
+      currentValue: 'fable',
+      currentThinkingEffort: 'high',
+      onSelect: vi.fn(),
+      onCancel: vi.fn(),
+    });
+
+    const out = text(picker);
+    expect(out).toContain('Xhigh');
+    expect(out).toContain('Max');
+    expect(out).not.toContain('Off');
+  });
+
   it('cycles efforts with Left/Right and clamps at the ends', () => {
     const onSelect = vi.fn();
     const picker = new ModelSelectorComponent({

@@ -138,11 +138,11 @@ function createTestFs(kaos: FakeKaos): IHostFileSystem {
     writeBytes: () => notImplemented('writeBytes'),
     readLines: () => notImplemented('readLines'),
     createExclusive: () => notImplemented('createExclusive'),
-    realpath: async (path) => path,
     stat: (path) => kaos.stat(path),
     readdir: () => notImplemented('readdir'),
     mkdir: () => notImplemented('mkdir'),
     remove: () => notImplemented('remove'),
+    realpath: () => notImplemented('realpath'),
   };
 }
 

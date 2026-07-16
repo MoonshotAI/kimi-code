@@ -97,7 +97,6 @@ export class ProviderManager implements ModelProvider {
       );
     }
 
-    const effectiveAlias = effectiveModelAlias(alias);
     const providerName = alias.provider ?? this.config.defaultProvider;
     if (providerName === undefined) {
       throw new KimiError(
@@ -114,6 +113,9 @@ export class ProviderManager implements ModelProvider {
       );
     }
 
+    const protocol = alias.protocol ?? providerConfig.type;
+    const effectiveAlias = effectiveModelAlias(alias, protocol === 'anthropic');
+
     if (!Number.isInteger(effectiveAlias.maxContextSize) || effectiveAlias.maxContextSize <= 0) {
       throw new KimiError(
         ErrorCodes.CONFIG_INVALID,
@@ -129,6 +131,7 @@ export class ProviderManager implements ModelProvider {
       effectiveAlias.maxOutputSize,
       effectiveAlias.reasoningKey,
       this.options.promptCacheKey,
+      effectiveAlias.supportEfforts,
       effectiveAlias.adaptiveThinking,
       alias.betaApi,
     );
@@ -254,6 +257,7 @@ function toKosongProviderConfig(
   maxOutputSize: number | undefined,
   reasoningKey: string | undefined,
   promptCacheKey: string | undefined,
+  supportEfforts: readonly string[] | undefined,
   adaptiveThinking: boolean | undefined,
   betaApi: boolean | undefined,
 ): KosongProviderConfig {
@@ -271,6 +275,7 @@ function toKosongProviderConfig(
             : baseUrl,
         apiKey: providerApiKey(provider),
         ...(maxOutputSize !== undefined ? { defaultMaxTokens: maxOutputSize } : {}),
+        supportEfforts,
         ...(adaptiveThinking !== undefined ? { adaptiveThinking } : {}),
         ...(provider.type === 'kimi' ? { kimiThinking: true } : {}),
         ...(betaApi !== undefined ? { betaApi } : {}),

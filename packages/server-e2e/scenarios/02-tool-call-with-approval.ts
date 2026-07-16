@@ -88,8 +88,8 @@ async function main() {
     );
 
     // Session should be quiescent after prompt.completed.
-    const final = await client.waitForSessionStatus(sid, 'idle', { timeoutMs: 10_000 });
-    assert.equal(final.status, 'idle');
+    const final = await client.waitForSessionBusy(sid, false, { timeoutMs: 10_000 });
+    assert.equal(final.busy, false);
 
     console.log(`✓ 02-tool-call-with-approval: canary round-tripped end-to-end`);
   } finally {

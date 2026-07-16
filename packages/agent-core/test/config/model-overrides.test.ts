@@ -45,4 +45,105 @@ describe('effectiveModelAlias', () => {
 
     expect(effectiveModelAlias(model).defaultEffort).toBe('high');
   });
+
+  it('derives the official effort list and thinking capability from a Claude model name', () => {
+    const model: ModelAlias = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-6',
+      maxContextSize: 200000,
+    };
+
+    expect(effectiveModelAlias(model)).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('infers Anthropic effort metadata for an unknown model with an explicit Anthropic protocol', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+    };
+
+    expect(effectiveModelAlias(model)).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('limits an adaptive_thinking=false model to budget efforts', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+      adaptiveThinking: false,
+    };
+
+    expect(effectiveModelAlias(model)).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'medium', 'high'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('keeps a declared supportEfforts list authoritative when adaptive_thinking=false', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+      protocol: 'anthropic',
+      adaptiveThinking: false,
+      supportEfforts: ['low', 'high'],
+    };
+
+    expect(effectiveModelAlias(model)).toMatchObject({
+      capabilities: ['thinking'],
+      supportEfforts: ['low', 'high'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('does not infer Anthropic effort metadata for an unknown model without an Anthropic protocol', () => {
+    const model: ModelAlias = {
+      provider: 'custom',
+      model: 'custom-anthropic-model',
+      maxContextSize: 200000,
+    };
+
+    expect(effectiveModelAlias(model)).toEqual(model);
+  });
+
+  it('marks official always-on models and does not surface off', () => {
+    const model: ModelAlias = {
+      provider: 'anthropic',
+      model: 'claude-fable-5',
+      maxContextSize: 200000,
+    };
+
+    expect(effectiveModelAlias(model)).toMatchObject({
+      capabilities: ['always_thinking'],
+      supportEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+      defaultEffort: 'high',
+    });
+  });
+
+  it('keeps an explicit supportEfforts list authoritative over the official profile', () => {
+    const model: ModelAlias = {
+      provider: 'anthropic',
+      model: 'claude-opus-4-7',
+      maxContextSize: 200000,
+      supportEfforts: ['low', 'max'],
+      defaultEffort: 'max',
+    };
+
+    expect(effectiveModelAlias(model)).toMatchObject({
+      supportEfforts: ['low', 'max'],
+      defaultEffort: 'max',
+    });
+  });
 });

@@ -37,14 +37,14 @@ import {
   type Interaction,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { ErrorCode } from '../protocol/error-codes';
 import {
   approvalAlreadyResolvedDataSchema,
   approvalResolveRequestSchema,
   approvalResolveResultSchema,
-  ErrorCode,
   listPendingApprovalsQuerySchema,
   listPendingApprovalsResponseSchema,
-} from '@moonshot-ai/protocol';
+} from '../protocol/rest-approval';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';

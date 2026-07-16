@@ -28,7 +28,7 @@ import { isUserCancellation } from '../utils/abort';
 import { errorMessage, isAbortError } from './errors';
 import type { LoopEventDispatcher, LoopToolCallEvent } from './events';
 import { parseToolCallArguments } from './tool-args-parse';
-import type { LLM, LLMChatResponse } from './llm';
+import type { LLM, LLMChatResponse, LLMRequestTrace } from './llm';
 import { ToolAccesses } from './tool-access';
 import { ToolScheduler, type ToolCallTask } from './tool-scheduler';
 import type {
@@ -73,6 +73,7 @@ export interface ToolCallStepContext {
   readonly turnId: string;
   readonly currentStep: number;
   readonly stepUuid: string;
+  readonly trace: LLMRequestTrace;
 }
 
 interface ToolCallBatchContext extends ToolCallStepContext {
@@ -160,6 +161,7 @@ export async function runToolCallBatch(
         parentUuid: result.toolCall.id,
         toolCallId: result.toolCall.id,
         result: result.result,
+        traceId: step.trace.traceId,
       });
     }
   } finally {
@@ -368,6 +370,7 @@ async function runPrepareToolExecutionHook(
       args,
       turnId,
       stepNumber: currentStep,
+      traceId: step.trace.traceId,
       signal,
       llm,
     });
@@ -422,6 +425,7 @@ async function runAuthorizeToolExecutionHook(
       execution,
       turnId,
       stepNumber: currentStep,
+      traceId: step.trace.traceId,
       signal,
       llm,
     });
@@ -504,6 +508,7 @@ async function finalizePendingToolResult(
       result: pendingResult.result,
       turnId,
       stepNumber: currentStep,
+      traceId: step.trace.traceId,
       signal,
       llm,
     });
@@ -552,6 +557,7 @@ async function executeTool(
   const executePromise = execution.execute({
     turnId,
     toolCallId: toolCall.id,
+    traceId: step.trace.traceId,
     metadata,
     signal,
     onUpdate: (update) => {
@@ -723,5 +729,6 @@ async function dispatchToolCall(
     description: displayFields?.description,
     display: displayFields?.display,
     extras: toolCall.extras,
+    traceId: step.trace.traceId,
   });
 }

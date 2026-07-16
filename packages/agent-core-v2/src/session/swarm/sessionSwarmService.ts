@@ -23,7 +23,6 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentUserToolService } from '#/agent/userTool/userTool';
-import type { SubagentSuspendedEvent } from '@moonshot-ai/protocol';
 import { IEventBus } from '#/app/event/eventBus';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
@@ -55,6 +54,12 @@ import {
   type AgentRunBatchLauncher,
   type AgentRunAttemptHandle,
 } from './agentRunBatch';
+
+export interface SubagentSuspendedEvent {
+  readonly type: 'subagent.suspended';
+  readonly subagentId: string;
+  readonly reason: string;
+}
 
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {

@@ -5,6 +5,7 @@
  * Run: pnpm exec vitest run packages/agent-core-v2/test/app/llmProtocol/providers/empty-thinking-roundtrip.test.ts
  */
 import type { Message, StreamedMessagePart } from '#/app/llmProtocol/message';
+import { generate } from '#/app/llmProtocol/generate';
 import { AnthropicChatProvider } from '#/app/llmProtocol/providers/anthropic';
 import {
   GoogleGenAIChatProvider,
@@ -26,6 +27,16 @@ const EMPTY_THINKING_TOOL_HISTORY: Message[] = [
       { type: 'function', id: 'call_1', name: 'lookup', arguments: '{"q":"test"}' },
     ],
   },
+];
+
+const UNSIGNED_THINKING_ONLY_HISTORY: Message[] = [
+  { role: 'user', content: [{ type: 'text', text: 'Start' }], toolCalls: [] },
+  {
+    role: 'assistant',
+    content: [{ type: 'think', think: 'Partial reasoning' }],
+    toolCalls: [],
+  },
+  { role: 'user', content: [{ type: 'text', text: 'Continue' }], toolCalls: [] },
 ];
 
 function chatCompletionResponse(message: Record<string, unknown>) {
@@ -54,7 +65,14 @@ async function captureKimiMessages(
   let captured: Record<string, unknown> | undefined;
   const create = vi.fn().mockImplementation((params: unknown) => {
     captured = params as Record<string, unknown>;
-    return Promise.resolve(chatCompletionResponse({ role: 'assistant', content: 'done' }));
+    return {
+      withResponse: () =>
+        Promise.resolve({
+          data: chatCompletionResponse({ role: 'assistant', content: 'done' }),
+          response: new Response(null),
+          request_id: null,
+        }),
+    };
   });
   let provider = new KimiChatProvider({
     model: 'kimi-k2',
@@ -73,6 +91,64 @@ async function captureKimiMessages(
     throw new Error('Expected Kimi provider to send a request.');
   }
   return captured['messages'] as Array<Record<string, unknown>>;
+}
+
+async function captureAnthropicMessages(
+  model: string,
+  history: Message[],
+  configure?: (provider: AnthropicChatProvider) => AnthropicChatProvider,
+): Promise<Array<{ role: string; content: unknown[] }>> {
+  let captured: Record<string, unknown> | undefined;
+  const create = vi.fn().mockImplementation((params: unknown) => {
+    captured = params as Record<string, unknown>;
+    return Promise.resolve({
+      id: 'msg_test',
+      content: [{ type: 'text', text: 'done' }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    });
+  });
+  let provider = new AnthropicChatProvider({
+    model,
+    apiKey: '',
+    defaultMaxTokens: 1024,
+    stream: false,
+    clientFactory: () => ({
+      messages: { create },
+      beta: { messages: { create } },
+    }) as never,
+  });
+  if (configure !== undefined) {
+    provider = configure(provider);
+  }
+
+  const response = await provider.generate('', [], history);
+  await collectParts(response);
+
+  if (captured === undefined) {
+    throw new Error('Expected Anthropic provider to send a request.');
+  }
+  return captured['messages'] as Array<{ role: string; content: unknown[] }>;
+}
+
+function createStreamingAnthropicProvider(
+  events: readonly Record<string, unknown>[],
+) {
+  async function* responseStream() {
+    yield* events;
+  }
+  const create = vi.fn().mockResolvedValue(responseStream());
+  return new AnthropicChatProvider({
+    model: 'compatible-model',
+    apiKey: '',
+    defaultMaxTokens: 1024,
+    clientFactory: () => ({ messages: { create } }) as never,
+  });
+}
+
+async function collectAnthropicStreamParts(
+  events: readonly Record<string, unknown>[],
+): Promise<StreamedMessagePart[]> {
+  return collectParts(await createStreamingAnthropicProvider(events).generate('', [], []));
 }
 
 describe('empty thinking round-trip', () => {
@@ -96,7 +172,7 @@ describe('empty thinking round-trip', () => {
       provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
     );
 
-    expect(messages[0]).toHaveProperty('reasoning_content', '');
+    expect(messages[0]).toHaveProperty('reasoning_content', ' ');
   });
 
   it('Kimi backfills a text assistant message when keep=all omits thinking.type', async () => {
@@ -112,30 +188,36 @@ describe('empty thinking round-trip', () => {
       provider.withExtraBody({ thinking: { keep: 'all' } }),
     );
 
-    expect(messages[0]).toHaveProperty('reasoning_content', '');
+    expect(messages[0]).toHaveProperty('reasoning_content', ' ');
   });
 
-  it.each([
-    ['empty', ''],
-    ['non-empty', 'reasoning text'],
-  ])(
-    'Kimi sends an existing %s ThinkPart verbatim when preserved thinking is active',
-    async (_kind, think) => {
-      const history: Message[] = [
-        {
-          role: 'assistant',
-          content: [{ type: 'think', think }],
-          toolCalls: [],
-        },
-      ];
+  it('Kimi replaces an existing empty ThinkPart when preserved thinking is active', async () => {
+    const messages = await captureKimiMessages(EMPTY_THINKING_TOOL_HISTORY, (provider) =>
+      provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+    );
 
-      const messages = await captureKimiMessages(history, (provider) =>
-        provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
-      );
+    expect(messages[0]).toHaveProperty('reasoning_content', ' ');
+  });
 
-      expect(messages[0]).toHaveProperty('reasoning_content', think);
-    },
-  );
+  it('Kimi sends existing non-empty thinking verbatim when preserved thinking is active', async () => {
+    const history: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: '' },
+          { type: 'think', think: 'reasoning text' },
+          { type: 'think', think: '' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureKimiMessages(history, (provider) =>
+      provider.withExtraBody({ thinking: { type: 'enabled', keep: 'all' } }),
+    );
+
+    expect(messages[0]).toHaveProperty('reasoning_content', 'reasoning text');
+  });
 
   it.each([
     ['missing', undefined],
@@ -181,6 +263,14 @@ describe('empty thinking round-trip', () => {
     expect(messages[0]).not.toHaveProperty('reasoning_content');
   });
 
+  it('Kimi leaves explicit empty thinking unchanged when thinking is disabled', async () => {
+    const messages = await captureKimiMessages(EMPTY_THINKING_TOOL_HISTORY, (provider) =>
+      provider.withExtraBody({ thinking: { type: 'disabled', keep: 'all' } }),
+    );
+
+    expect(messages[0]).toHaveProperty('reasoning_content', '');
+  });
+
   it('Kimi does not backfill reasoning_content on non-assistant messages', async () => {
     const history: Message[] = [
       { role: 'system', content: [{ type: 'text', text: 'System.' }], toolCalls: [] },
@@ -203,13 +293,18 @@ describe('empty thinking round-trip', () => {
   });
 
   it('Kimi keeps an explicitly empty response reasoning_content as a ThinkPart', async () => {
-    const create = vi.fn().mockResolvedValue(
-      chatCompletionResponse({
-        role: 'assistant',
-        content: null,
-        reasoning_content: '',
-      }),
-    );
+    const create = vi.fn().mockImplementation(() => ({
+      withResponse: () =>
+        Promise.resolve({
+          data: chatCompletionResponse({
+            role: 'assistant',
+            content: null,
+            reasoning_content: '',
+          }),
+          response: new Response(null),
+          request_id: null,
+        }),
+    }));
     const provider = new KimiChatProvider({
       model: 'kimi-k2',
       apiKey: '',
@@ -317,28 +412,269 @@ describe('empty thinking round-trip', () => {
   });
 
   it('Anthropic-compatible providers send unsigned empty thinking blocks back', async () => {
-    let captured: Record<string, unknown> | undefined;
-    const create = vi.fn().mockImplementation((params: unknown) => {
-      captured = params as Record<string, unknown>;
-      return Promise.resolve({
-        id: 'msg_test',
-        content: [{ type: 'text', text: 'done' }],
-        usage: { input_tokens: 1, output_tokens: 1 },
-      });
-    });
-    const provider = new AnthropicChatProvider({
-      model: 'compatible-model',
-      apiKey: '',
-      defaultMaxTokens: 1024,
-      stream: false,
-      clientFactory: () => ({ messages: { create } }) as never,
-    });
-
-    const response = await provider.generate('', [], EMPTY_THINKING_TOOL_HISTORY);
-    await collectParts(response);
-
-    const messages = captured?.['messages'] as Array<{ content: unknown[] }>;
+    const messages = await captureAnthropicMessages(
+      'compatible-model',
+      EMPTY_THINKING_TOOL_HISTORY,
+    );
     expect(messages[0]!.content[0]).toEqual({ type: 'thinking', thinking: '' });
+  });
+
+  it('Anthropic-compatible providers preserve an unsigned-only assistant message', async () => {
+    const messages = await captureAnthropicMessages(
+      'compatible-model',
+      UNSIGNED_THINKING_ONLY_HISTORY,
+    );
+
+    expect(messages[1]).toEqual({
+      role: 'assistant',
+      content: [{ type: 'thinking', thinking: 'Partial reasoning' }],
+    });
+  });
+
+  it('Anthropic-compatible providers replace only the last empty unsigned thinking block', async () => {
+    const history: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: '' },
+          { type: 'think', think: '' },
+          { type: 'text', text: 'Done.' },
+        ],
+        toolCalls: [],
+      },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'Continue.' }],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      history,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
+
+    expect(messages[0]!.content).toEqual([
+      { type: 'thinking', thinking: '' },
+      { type: 'thinking', thinking: ' ' },
+      { type: 'text', text: 'Done.' },
+    ]);
+  });
+
+  it('Anthropic-compatible providers preserve unsigned blocks when any thinking is non-empty', async () => {
+    const history: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: 'reasoning text' },
+          { type: 'think', think: '' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      history,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
+
+    expect(messages[0]!.content).toEqual([
+      { type: 'thinking', thinking: 'reasoning text' },
+      { type: 'thinking', thinking: '' },
+    ]);
+  });
+
+  it('Anthropic-compatible providers preserve empty signed thinking byte-for-byte', async () => {
+    const history: Message[] = [
+      {
+        role: 'assistant',
+        content: [{ type: 'think', think: '', encrypted: 'signed-thinking' }],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      history,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
+
+    expect(messages[0]!.content).toEqual([
+      { type: 'thinking', thinking: '', signature: 'signed-thinking' },
+    ]);
+  });
+
+  it('Anthropic-compatible providers replace the last empty unsigned block after empty signed thinking', async () => {
+    const history: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: '', encrypted: 'signed-thinking' },
+          { type: 'think', think: '' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      history,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
+
+    expect(messages[0]!.content).toEqual([
+      { type: 'thinking', thinking: '', signature: 'signed-thinking' },
+      { type: 'thinking', thinking: ' ' },
+    ]);
+  });
+
+  it('Anthropic-compatible providers do not replace empty unsigned thinking after non-empty signed thinking', async () => {
+    const history: Message[] = [
+      {
+        role: 'assistant',
+        content: [
+          { type: 'think', think: 'signed reasoning', encrypted: 'signed-thinking' },
+          { type: 'think', think: '' },
+        ],
+        toolCalls: [],
+      },
+    ];
+
+    const messages = await captureAnthropicMessages(
+      'compatible-preserved-thinking-model',
+      history,
+      (provider) => provider.withThinking('max').withThinkingKeep('all'),
+    );
+
+    expect(messages[0]!.content).toEqual([
+      {
+        type: 'thinking',
+        thinking: 'signed reasoning',
+        signature: 'signed-thinking',
+      },
+      { type: 'thinking', thinking: '' },
+    ]);
+  });
+
+  it('Anthropic normalizes a thinking delta with no thinking field to an empty ThinkPart', async () => {
+    const parts = await collectAnthropicStreamParts([
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta' },
+      },
+    ]);
+
+    expect(parts).toEqual([{ type: 'think', think: '' }]);
+  });
+
+  it('Anthropic normalizes a thinking block start with no thinking field to an empty ThinkPart', async () => {
+    const parts = await collectAnthropicStreamParts([
+      {
+        type: 'content_block_start',
+        index: 0,
+        content_block: { type: 'thinking' },
+      },
+    ]);
+
+    expect(parts).toEqual([{ type: 'think', think: '' }]);
+  });
+
+  it('Anthropic omits a missing thinking delta from the reduced assistant history', async () => {
+    const result = await generate(
+      createStreamingAnthropicProvider([
+        {
+          type: 'content_block_start',
+          index: 0,
+          content_block: { type: 'thinking', thinking: 'Simple request.' },
+        },
+        {
+          type: 'content_block_delta',
+          index: 0,
+          delta: { type: 'thinking_delta' },
+        },
+        {
+          type: 'content_block_start',
+          index: 1,
+          content_block: { type: 'text', text: 'Done' },
+        },
+      ]),
+      '',
+      [],
+      [],
+    );
+
+    expect(result.message.content).toEqual([
+      { type: 'think', think: 'Simple request.' },
+      { type: 'text', text: 'Done' },
+    ]);
+  });
+
+  it('Anthropic preserves a complete thinking delta', async () => {
+    const parts = await collectAnthropicStreamParts([
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'reasoning' },
+      },
+    ]);
+
+    expect(parts).toEqual([{ type: 'think', think: 'reasoning' }]);
+  });
+
+  it('Anthropic preserves the signature delta immediately following a thinking delta', async () => {
+    const parts = await collectAnthropicStreamParts([
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'thinking_delta', thinking: 'reasoning' },
+      },
+      {
+        type: 'content_block_delta',
+        index: 0,
+        delta: { type: 'signature_delta', signature: 'signature' },
+      },
+    ]);
+
+    expect(parts).toEqual([
+      { type: 'think', think: 'reasoning' },
+      { type: 'think', think: '', encrypted: 'signature' },
+    ]);
+  });
+
+  it.each(['claude-opus-4-9', 'opus-4-9', 'claude-mythos-preview'])(
+    'Claude model %s drops unsigned thinking blocks',
+    async (model) => {
+      const messages = await captureAnthropicMessages(model, EMPTY_THINKING_TOOL_HISTORY);
+      expect(messages[0]!.content).toEqual([
+        {
+          type: 'tool_use',
+          id: 'call_1',
+          name: 'lookup',
+          input: { q: 'test' },
+          cache_control: { type: 'ephemeral' },
+        },
+      ]);
+    },
+  );
+
+  it('Claude drops an unsigned-only assistant without leaving an empty wire message', async () => {
+    const messages = await captureAnthropicMessages(
+      'claude-opus-4-9',
+      UNSIGNED_THINKING_ONLY_HISTORY,
+    );
+
+    expect(messages).toEqual([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Start' },
+          { type: 'text', text: 'Continue', cache_control: { type: 'ephemeral' } },
+        ],
+      },
+    ]);
   });
 
   it('OpenAI Responses sends an explicitly empty ThinkPart as a reasoning item', async () => {

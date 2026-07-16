@@ -116,10 +116,9 @@ function isValidTimeoutValue(timeout: number, isBackground: boolean): boolean {
   return timeout <= timeoutCapS(isBackground);
 }
 
-function normalizeTimeoutMs(timeout: number | undefined, isBackground: boolean): number {
-  const defaultSeconds = isBackground ? DEFAULT_BACKGROUND_TIMEOUT_S : DEFAULT_TIMEOUT_S;
-  const value = timeout ?? defaultSeconds;
-  return Math.min(value, timeoutCapS(isBackground)) * MS_PER_SECOND;
+function normalizeForegroundTimeoutMs(timeout: number | undefined): number {
+  const value = timeout ?? DEFAULT_TIMEOUT_S;
+  return Math.min(value, MAX_TIMEOUT_S) * MS_PER_SECOND;
 }
 
 async function disposeProcess(proc: KaosProcess): Promise<void> {
@@ -162,16 +161,57 @@ function withoutAutoBackgroundOnTimeout(description: string): string {
   );
 }
 
+/**
+ * Rewrite the background-timeout sentence when the effective default is "no
+ * timeout" (`background.bash_task_timeout_s = 0`): the model must not be told
+ * tasks die at 600s, nor nudged into defensive `disable_timeout` /
+ * `timeout` arguments — an explicit `timeout` is honored and still capped.
+ */
+function withoutBackgroundDefaultTimeout(description: string): string {
+  return description.replace(
+    `Background commands default to a ${String(DEFAULT_BACKGROUND_TIMEOUT_S)}s timeout and \`timeout\` is capped at ${String(MAX_BACKGROUND_TIMEOUT_S)}s; set \`disable_timeout=true\` only when the task should run without a timeout.`,
+    `Background commands have no timeout by default; set \`timeout\` (max ${String(MAX_BACKGROUND_TIMEOUT_S)}s) only when the task should be bounded.`,
+  );
+}
+
+/**
+ * Keep the JSON-schema `timeout` parameter description in sync with an
+ * unbounded background default (`withoutBackgroundDefaultTimeout` covers the
+ * prose description; the model reads parameter descriptions too).
+ */
+function withoutBackgroundDefaultTimeoutInParameters(
+  parameters: Record<string, unknown>,
+): Record<string, unknown> {
+  const properties = parameters['properties'];
+  if (typeof properties !== 'object' || properties === null) return parameters;
+  const timeout = (properties as Record<string, unknown>)['timeout'];
+  if (typeof timeout !== 'object' || timeout === null) return parameters;
+  const current = (timeout as Record<string, unknown>)['description'];
+  if (typeof current !== 'string') return parameters;
+  (timeout as Record<string, unknown>)['description'] = current.replace(
+    `Background default ${String(DEFAULT_BACKGROUND_TIMEOUT_S)}s,`,
+    'Background default no timeout;',
+  );
+  return parameters;
+}
+
 export class BashTool implements BuiltinTool<BashInput> {
   readonly name = 'Bash' as const;
   readonly description: string;
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(BashInputSchema);
+  readonly parameters: Record<string, unknown>;
 
   private readonly isWindowsBash: boolean;
 
   private readonly allowBackground: boolean;
 
   private readonly autoBackgroundOnTimeout: boolean;
+
+  /**
+   * Default deadline for background tasks when the call omits `timeout`, and
+   * the re-armed deadline for foreground commands moved to the background.
+   * `undefined` arms no timer at all (`background.bash_task_timeout_s = 0`).
+   */
+  private readonly backgroundTimeoutMs: number | undefined;
 
   constructor(
     private readonly kaos: Kaos,
@@ -180,17 +220,34 @@ export class BashTool implements BuiltinTool<BashInput> {
     options?: {
       allowBackground?: boolean | undefined;
       autoBackgroundOnTimeout?: boolean;
+      /**
+       * Effective background default timeout in seconds
+       * (`background.bash_task_timeout_s`; `0` = no timeout). Defaults to
+       * {@link DEFAULT_BACKGROUND_TIMEOUT_S} when unset.
+       */
+      backgroundTimeoutS?: number;
     },
   ) {
     this.isWindowsBash = this.kaos.osEnv.osKind === 'Windows';
     this.allowBackground = options?.allowBackground ?? true;
     this.autoBackgroundOnTimeout = options?.autoBackgroundOnTimeout ?? true;
+    const backgroundTimeoutS = options?.backgroundTimeoutS ?? DEFAULT_BACKGROUND_TIMEOUT_S;
+    this.backgroundTimeoutMs =
+      backgroundTimeoutS === 0 ? undefined : backgroundTimeoutS * MS_PER_SECOND;
     const rendered = renderBashDescription(this.kaos.osEnv.shellName);
+    const withEffectiveDefault =
+      this.backgroundTimeoutMs === undefined
+        ? withoutBackgroundDefaultTimeout(rendered)
+        : rendered;
     this.description = !this.allowBackground
-      ? withoutBackgroundDescription(rendered)
+      ? withoutBackgroundDescription(withEffectiveDefault)
       : this.autoBackgroundOnTimeout
-        ? rendered
-        : withoutAutoBackgroundOnTimeout(rendered);
+        ? withEffectiveDefault
+        : withoutAutoBackgroundOnTimeout(withEffectiveDefault);
+    this.parameters =
+      this.backgroundTimeoutMs === undefined
+        ? withoutBackgroundDefaultTimeoutInParameters(toInputJsonSchema(BashInputSchema))
+        : toInputJsonSchema(BashInputSchema);
   }
 
   resolveExecution(args: BashInput): ToolExecution {
@@ -240,6 +297,16 @@ export class BashTool implements BuiltinTool<BashInput> {
     return this.kaos.execWithEnv(shellArgs, mergedEnv);
   }
 
+  /**
+   * Background deadline: an explicit `timeout` wins (the schema caps it at
+   * `MAX_BACKGROUND_TIMEOUT_S`); otherwise the configured default — which is
+   * `undefined` (no timer armed) when `background.bash_task_timeout_s = 0`.
+   */
+  private backgroundDefaultTimeoutMs(timeout: number | undefined): number | undefined {
+    if (timeout !== undefined) return Math.min(timeout, MAX_BACKGROUND_TIMEOUT_S) * MS_PER_SECOND;
+    return this.backgroundTimeoutMs;
+  }
+
   private async execution(
     args: BashInput,
     signal: AbortSignal,
@@ -250,14 +317,14 @@ export class BashTool implements BuiltinTool<BashInput> {
     if (validationError !== undefined) return validationError;
 
     const startsInBackground = args.run_in_background === true;
-    const foregroundTimeoutMs = normalizeTimeoutMs(args.timeout, false);
+    const foregroundTimeoutMs = normalizeForegroundTimeoutMs(args.timeout);
     const command = this.isWindowsBash ? rewriteWindowsNullRedirect(args.command) : args.command;
     const effectiveCwd = args.cwd ?? this.cwd;
     const description = startsInBackground ? args.description!.trim() : foregroundDescription(args);
     const timeoutMs = startsInBackground
       ? args.disable_timeout
         ? undefined
-        : normalizeTimeoutMs(args.timeout, true)
+        : this.backgroundDefaultTimeoutMs(args.timeout)
       : foregroundTimeoutMs;
 
     const builder = new ToolResultBuilder();
@@ -295,9 +362,13 @@ export class BashTool implements BuiltinTool<BashInput> {
           detached: startsInBackground,
           timeoutMs,
           // Detaching (ctrl+b) moves a foreground command to the background;
-          // give it the background timeout so it is not still bounded by the
-          // shorter foreground deadline.
-          detachTimeoutMs: DEFAULT_BACKGROUND_TIMEOUT_S * MS_PER_SECOND,
+          // give it the background default so it is not still bounded by the
+          // shorter foreground deadline. When the config disables the
+          // background timeout this must be `0`, not `undefined`: `detach()`
+          // only re-arms when the value is defined, so `undefined` would keep
+          // the already-armed foreground deadline and kill the task anyway
+          // (`reset(0)` clears the timer and arms nothing).
+          detachTimeoutMs: this.backgroundTimeoutMs ?? 0,
           // A foreground command that hits its timeout is moved to the
           // background (re-armed to detachTimeoutMs) instead of being killed —
           // unless disabled via config, or background tooling is unavailable

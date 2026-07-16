@@ -7,7 +7,7 @@ import { APIError as AnthropicAPIError } from '@anthropic-ai/sdk';
 import { APIError as OpenAIAPIError } from 'openai';
 import { describe, expect, it } from 'vitest';
 
-import { APIProviderRateLimitError } from '#/app/llmProtocol/errors';
+import { APIProviderRateLimitError, APIStatusError } from '#/app/llmProtocol/errors';
 import { convertAnthropicError } from '#/app/llmProtocol/providers/anthropic';
 import { convertOpenAIError } from '#/app/llmProtocol/providers/openai-common';
 import { OpenAIResponsesStreamedMessage } from '#/app/llmProtocol/providers/openai-responses';
@@ -35,6 +35,29 @@ describe('provider retry-after conversion', () => {
 
     expect(error).toBeInstanceOf(APIProviderRateLimitError);
     expect((error as APIProviderRateLimitError).retryAfterMs).toBe(12_000);
+  });
+
+  it('preserves the x-trace-id header on a status error', () => {
+    const source = new OpenAIAPIError(
+      500,
+      undefined,
+      'Internal server error',
+      new Headers({ 'x-trace-id': 'trace-err-1' }),
+    );
+
+    const error = convertOpenAIError(source);
+
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect((error as APIStatusError).traceId).toBe('trace-err-1');
+  });
+
+  it('leaves the trace id null when the error response has no x-trace-id header', () => {
+    const source = new OpenAIAPIError(500, undefined, 'Internal server error', new Headers());
+
+    const error = convertOpenAIError(source);
+
+    expect(error).toBeInstanceOf(APIStatusError);
+    expect((error as APIStatusError).traceId).toBeNull();
   });
 
   it('preserves Anthropic retry-after seconds on a rate-limit error', () => {

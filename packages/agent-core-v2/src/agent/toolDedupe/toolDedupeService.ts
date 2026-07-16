@@ -14,7 +14,9 @@ import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { canonicalTelemetryArgs } from '#/_base/utils/canonical-args';
+import type { ToolCallDedupDetectedEvent, ToolCallRepeatEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import type { LLMRequestTrace } from '#/app/llmProtocol/requestTrace';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IAgentToolExecutorService, type ToolCallDupType } from '#/agent/toolExecutor/toolExecutor';
 import type { ContentPart } from '#/app/llmProtocol/message';
@@ -130,7 +132,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
       await next();
     });
     toolExecutor.hooks.onBeforeExecuteTool.register('toolDedupe', async (ctx, next) => {
-      const checked = this.checkToolCall(ctx.toolCall.id, ctx.toolCall.name, ctx.args);
+      const checked = this.checkToolCall(ctx.toolCall.id, ctx.toolCall.name, ctx.args, ctx.trace);
       if (checked.syntheticResult !== null) {
         ctx.decision = { syntheticResult: checked.syntheticResult };
         return;
@@ -143,6 +145,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
         ctx.toolCall.name,
         ctx.args,
         ctx.result,
+        ctx.trace,
       );
       if (ctx.result.stopTurn === true) {
         ctx.stopTurn = true;
@@ -185,7 +188,12 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     }
   }
 
-  private checkToolCall(toolCallId: string, toolName: string, args: unknown): CheckedToolCall {
+  private checkToolCall(
+    toolCallId: string,
+    toolName: string,
+    args: unknown,
+    trace: LLMRequestTrace | undefined,
+  ): CheckedToolCall {
     const key = makeKey(toolName, args);
     const index = this.stepCalls.length;
     this.stepCalls.push(key);
@@ -194,13 +202,13 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     const existing = this.stepDeferreds.get(key);
     if (existing !== undefined) {
       this.syntheticCallIds.add(toolCallId);
-      this.recordDupType(toolCallId, toolName, args, 'same_step');
+      this.recordDupType(toolCallId, toolName, args, 'same_step', trace);
       return { syntheticResult: DEDUPE_PLACEHOLDER_RESULT };
     }
     this.stepDeferreds.set(key, makeDeferred<ToolDedupeResult>());
     this.originalCallIndex.set(toolCallId, index);
     if (this.consecutiveKey === key && this.consecutiveCount > 0) {
-      this.recordDupType(toolCallId, toolName, args, 'cross_step');
+      this.recordDupType(toolCallId, toolName, args, 'cross_step', trace);
       return { syntheticResult: null };
     }
     return { syntheticResult: null };
@@ -211,16 +219,19 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     toolName: string,
     args: unknown,
     dupType: ToolCallDupType,
+    trace: LLMRequestTrace | undefined,
   ): void {
     this.toolExecutor.recordDupType(toolCallId, dupType);
-    this.telemetry.track2('tool_call_dedup_detected', {
+    const properties: ToolCallDedupDetectedEvent = {
       turn_id: this.activeTurnId ?? 0,
       step_no: this.activeStep,
       tool_call_id: toolCallId,
       tool_name: toolName,
       dup_type: dupType,
       args_hash: argsHash(args),
-    });
+      trace_id: trace?.traceId,
+    };
+    this.telemetry.track2('tool_call_dedup_detected', properties);
   }
 
   private async finalizeResult(
@@ -228,6 +239,7 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     toolName: string,
     args: unknown,
     result: ToolDedupeResult,
+    trace: LLMRequestTrace | undefined,
   ): Promise<ToolDedupeResult> {
     const key = this.callKeyByCallId.get(toolCallId);
     if (key === undefined) return result;
@@ -271,11 +283,13 @@ export class AgentToolDedupeService extends Disposable implements IAgentToolDedu
     }
 
     if (streak >= 2) {
-      this.telemetry.track2('tool_call_repeat', {
+      const properties: ToolCallRepeatEvent = {
         tool_name: toolName,
         repeat_count: streak,
         action,
-      });
+        trace_id: trace?.traceId,
+      };
+      this.telemetry.track2('tool_call_repeat', properties);
     }
 
     this.stepDeferreds.get(key)?.resolve(finalResult);

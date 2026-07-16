@@ -14,14 +14,13 @@ import {
   IAgentLifecycleService,
   IAgentPromptService,
   ILogService,
-  ISessionActivity,
   ISessionInteractionService,
   ISessionContext,
   ISessionLifecycleService,
   ISessionMetadata,
   IWorkspaceRegistry,
 } from '@moonshot-ai/agent-core-v2';
-import { sessionSnapshotResponseSchema } from '@moonshot-ai/protocol';
+import { sessionSnapshotResponseSchema } from '../src/protocol/rest-snapshot';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { registerSnapshotRoutes } from '../src/routes/snapshot';
@@ -73,12 +72,14 @@ describe('server-v2 snapshot route enrichment', () => {
         ],
         [IAgentLifecycleService, { get: () => main }],
         [ISessionInteractionService, { listPending: () => [] }],
-        [ISessionActivity, { status: () => 'idle' }],
       ]),
     };
     const core = {
       accessor: fakeAccessor([
-        [ISessionLifecycleService, { resume: async () => session }],
+        [
+          ISessionLifecycleService,
+          { resume: async () => session, get: () => undefined },
+        ],
         [IWorkspaceRegistry, { get: async () => ({ root: '/workspace' }) }],
       ]),
     };

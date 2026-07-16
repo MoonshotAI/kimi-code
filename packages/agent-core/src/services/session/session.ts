@@ -21,7 +21,7 @@ import {
 } from '@moonshot-ai/protocol';
 
 export interface SessionListQuery extends CursorQuery {
-  status?: import('@moonshot-ai/protocol').SessionStatus;
+  busy?: boolean;
   workDir?: string;
   includeArchive?: boolean;
   /** When true, hide sessions the user has never interacted with (no prompt yet). */
@@ -120,7 +120,7 @@ export function toProtocolSession(
     title,
     created_at: new Date(summary.createdAt).toISOString(),
     updated_at: new Date(summary.updatedAt).toISOString(),
-    status: 'idle',
+    busy: false,
     archived: summary.archived === true,
     last_prompt: summary.lastPrompt,
     metadata: mergedMetadata,

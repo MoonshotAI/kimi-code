@@ -1,5 +1,5 @@
 import type { PrepareToolExecutionResult, ResolvedToolExecutionHookContext } from '#/agent/toolExecutor/toolHooks';
-import type { ToolInputDisplay } from '@moonshot-ai/protocol';
+import type { ToolInputDisplay } from '#/tool/toolInputDisplay';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 
 export type PermissionMode = 'manual' | 'yolo' | 'auto';

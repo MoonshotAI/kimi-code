@@ -51,7 +51,6 @@ import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
 
-import type { WarningEvent } from '@moonshot-ai/protocol';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import { IAgentTelemetryContextService } from '#/app/telemetry/agentTelemetryContext';
 import { IWireService } from '#/wire/wire';
@@ -82,6 +81,12 @@ import {
   type ProfileModelState,
 } from './profileOps';
 
+export interface WarningEvent {
+  readonly type: 'warning';
+  readonly message: string;
+  readonly code?: string;
+}
+
 declare module '#/app/event/eventBus' {
   interface DomainEventMap {
     warning: WarningEvent;
@@ -94,6 +99,7 @@ export class AgentProfileService implements IAgentProfileService {
   private optionsValue: ProfileServiceOptions = {};
   private activeToolNamesOverlay: readonly string[] | undefined;
   private agentsMdWarning: string | undefined;
+  private readonly emittedThinkingEffortWarnings = new Set<string>();
 
   private get activeToolNames(): ActiveToolsState {
     return (
@@ -471,9 +477,42 @@ export class AgentProfileService implements IAgentProfileService {
       const protocol = this.tryResolveRawModel()?.protocol;
       this.telemetryContext.set({ provider_type: protocol, protocol });
     }
+    if (changed.modelAlias !== undefined || changed.thinkingLevel !== undefined) {
+      this.warnAboutAnthropicThinkingEffort();
+    }
     this.emitStatusUpdated(
       changed.modelAlias !== undefined || changed.thinkingLevel !== undefined,
     );
+  }
+
+  private warnAboutAnthropicThinkingEffort(): void {
+    try {
+      const model = this.tryResolveRawModel();
+      if (model?.protocol !== 'anthropic') return;
+      const effort = this.getEffectiveThinkingLevel();
+      if (effort === 'on') return;
+
+      let code: string;
+      let message: string;
+      let knownEfforts = '';
+      if (effort === 'off') {
+        if (!model.alwaysThinking) return;
+        code = 'anthropic-thinking-cannot-disable';
+        message = `Model "${model.name}" declares always-on thinking. The configured effort "off" will be sent unchanged to the Anthropic-compatible backend.`;
+      } else {
+        const efforts = model.supportEfforts?.filter((value) => value.length > 0);
+        if (efforts === undefined || efforts.length === 0 || efforts.includes(effort)) return;
+        knownEfforts = efforts.join(',');
+        code = 'anthropic-thinking-effort-not-listed';
+        message = `Thinking effort "${effort}" is not listed for model "${model.name}" (known: ${efforts.join(', ')}). The configured value will be sent unchanged to the Anthropic-compatible backend.`;
+      }
+
+      const key = [code, model.id, model.name, effort, knownEfforts].join('\u0000');
+      if (this.emittedThinkingEffortWarnings.has(key)) return;
+      this.emittedThinkingEffortWarnings.add(key);
+      this.eventBus.publish({ type: 'warning', code, message });
+    } catch {
+    }
   }
 
   private setActiveTools(names: readonly string[] | undefined): void {

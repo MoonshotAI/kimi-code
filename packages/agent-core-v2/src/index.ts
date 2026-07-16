@@ -182,10 +182,8 @@ export * from '#/app/flag/flagService';
 import '#/app/multiServer/flag';
 export * from '#/app/multiServer/flag';
 
-export * from '#/activity/activity';
-export * from '#/activity/activityOps';
-import '#/activity/agentActivityService';
-import '#/activity/sessionActivityKernel';
+export * from '#/agent/activityView/activityView';
+import '#/agent/activityView/activityViewService';
 import '#/agent/plan/profile/plan';
 import '#/agent/plan/tools/enter-plan-mode';
 import '#/agent/plan/tools/exit-plan-mode';
@@ -271,8 +269,6 @@ export * from '#/app/sessionLegacy/sessionLegacyService';
 export * from '#/session/interaction/interaction';
 export * from '#/session/interaction/interactionService';
 export * from '#/session/sessionContext/sessionContext';
-export * from '#/session/sessionActivity/sessionActivity';
-export * from '#/session/sessionActivity/sessionActivityService';
 
 import '#/session/approval/approval';
 import '#/session/approval/approvalService';

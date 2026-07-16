@@ -116,7 +116,7 @@ describe('real password path (verifyPassword)', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('content-security-policy')).toBe(
-      "default-src 'self'; img-src 'self' data: blob:",
+      "default-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; form-action 'self'; base-uri 'none'; frame-ancestors 'self'",
     );
   });
 

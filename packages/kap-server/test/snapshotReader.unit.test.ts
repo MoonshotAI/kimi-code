@@ -161,7 +161,7 @@ describe('SnapshotReader.read', () => {
     await seedSession(f, 'sess_empty');
     const snap = await f.reader.read('sess_empty');
     expect(snap.session.id).toBe('sess_empty');
-    expect(snap.session.status).toBe('idle');
+    expect(snap.session.busy).toBe(false);
     expect(snap.messages.items).toEqual([]);
     expect(snap.messages.has_more).toBe(false);
     expect(snap.in_flight_turn).toBeNull();
