@@ -1,89 +1,112 @@
 # @moonshot-ai/klient
 
-Client SDK that reuses `agent-core-v2` service interfaces and fulfills them over
-the `/api/v2` HTTP channel. It follows the VS Code model: a channel is bound to
-**one Service** (the URL carries the scope + the Service's decorator id) and
-method calls are forwarded **verbatim** to the server's reflection dispatcher —
-no per-method allowlist, no `resource:action`, no renaming. The shared interface
-is the whole contract.
+Contract-driven client SDK for the agent-core-v2 engine. One facade, three
+transports — you pick the transport **once** at creation; everything after
+that is byte-identical:
 
 ```ts
-import { Klient, SessionIndexClient, HttpChannel } from '@moonshot-ai/klient';
-import { ISessionIndex } from '@moonshot-ai/agent-core-v2/app/sessionIndex/sessionIndex';
+import { createKlient } from '@moonshot-ai/klient/http';   // or '/ipc', '/memory'
 
-const client = new Klient({ url: 'http://127.0.0.1:58627' });
+const klient = createKlient({ url: 'http://127.0.0.1:58627', token });
 
-// Generic typed proxy: the v2 service token carries both the type and the
-// channel name (`String(ISessionIndex)` === 'sessionIndex').
-const sessions = await client.core(ISessionIndex).list({});
-const meta = await client.session('s1').service(ISessionMetadata).read();
+const env = await klient.global.env();
+const sessions = await klient.global.sessions.list({ limit: 20 });
 
-// Explicit, fully-typed implementation of a single interface. The channel is
-// bound to the Service's scope URL.
-const index: ISessionIndex = new SessionIndexClient(
-  new HttpChannel({ baseUrl: 'http://127.0.0.1:58627/api/v2/sessionIndex' }),
-);
-const page = await index.list({ workspaceId: 'w1' });
+const session = await klient.global.sessions.create({ workDir: process.cwd() });
+const agent = klient.session(session.id).agent('main');
+agent.events.on('assistant.delta', (e) => process.stdout.write(e.delta));
+agent.events.on('prompt.completed', () => console.log('\ndone'));
+await agent.prompt({ input: [{ type: 'text', text: 'Say OK.' }] });
+
+await klient.close();
 ```
 
-Service interfaces and tokens are imported directly from `agent-core-v2` leaf
-subpaths; the channel and proxy live in this package.
+## Architecture
 
-## WebSocket transport (calls + events)
-
-`Klient#ws()` returns a lazily-created `WsKlient` over the persistent
-`/api/v2/ws` socket: the same scope entries and typed proxies (one socket
-multiplexes every `call`), plus `listen(event, handler)` on each scope for the
-server's event streams — core `events`, session `interactions` /
-`interactions:resolved`, agent `events`:
-
-```ts
-const ws = client.ws();
-const sub = ws.session('s1').agent('main').listen('events', (event) => {
-  console.log('agent event', event);
-});
-const pending = await ws.session('s1').service(ISessionApprovalService).listPending();
-sub.dispose();
-ws.close();
+```
+facade (klient.global.*, klient.session(id).*, session.agent(id).*, *.events.*)
+   ↓ single-object params, zod-validated
+contract (procedure schemas, shared by all transports)
+   ↓
+KlientChannel { call, listen }   ← the only transport SPI
+   ↓
+http │ ipc │ memory
 ```
 
-The socket answers heartbeats, applies per-call timeouts, and reconnects
-automatically after an unexpected close (active `listen`s are re-subscribed;
-in-flight calls reject). The bearer token rides the
-`kimi-code.bearer.<token>` subprotocol, so the transport works unchanged in
-browsers.
+- **Facade** — aggregated methods, no engine service tokens, no
+  `onDid*`/`onWill*` event names. There is no escape hatch to raw services:
+  the facade is the public contract.
+  - `klient.global.*` — `sessions.*` (incl. `create`), `workspaces.*`,
+    `config.*`, `providers.*`, `models.*`, `catalog.*`, `auth.*`, `flags.*`,
+    `plugins.*`, `hostFs.*`, `env()`.
+  - `klient.session(id).*` — `get/setTitle/update/status/close/archive/
+    restore/fork/createChild`, `approvals.*`, `questions.*`,
+    `interactions.*`, `agents()`.
+  - `session.agent(id).*` — `prompt/steer/cancel/runShellCommand/
+    cancelShellCommand/getModel/setModel/setPermission/getUsage/getContext/
+    getPlan*/getTasks*/stopTask/getTaskOutput`.
+- **Contract** — every method has a zod input tuple + output schema, validated
+  on the client before send / after receive (default on; `validate: false` to
+  disable). Validation is sub-µs for typical payloads — cheaper than the JSON
+  serialization the wire already pays.
+- **Events** — `klient.events.on(...)` for the global bus
+  (`config.changed`, `models.changed`, `session.archived`, …),
+  `session(id).events.on('metadata.changed' | 'interactions.changed' |
+  'interactions.resolved')`, and `agent(id).events.on('turn.started' |
+  'assistant.delta' | 'tool.call.started' | 'prompt.completed' | …)`.
+  Underlying subscriptions are shared and ref-counted; payloads are
+  validated; bad payloads drop to `events.onError`.
 
-## Real-server smoke checks
+## Transports
 
-Run the transport smoke against a real server (the model phase is opt-in). It
-creates and archives a fixture session, and therefore touches the selected
-workspace's persisted metadata:
+| entry | options | events |
+|---|---|---|
+| `@moonshot-ai/klient/http` | `{ url, token?, fetch?, WebSocketImpl? }` | lazily opened WS, transparent |
+| `@moonshot-ai/klient/ipc` | `{ socketPath, token? }` | same socket |
+| `@moonshot-ai/klient/memory` | `{ scope }` (a bootstrapped engine app scope) | direct emitter/bus subscription |
+
+`ipc` and `memory` share one in-process dispatcher, so they behave identically
+by construction; `memory` additionally JSON round-trips every value so results
+match the networked transports byte-for-byte. The IPC host ships with the
+transport: `serveKlientIpc({ scope, socketPath })`.
+
+The same conformance suite runs against all three transports in this
+package's tests (`test/helpers/conformance.ts` — one test file per transport;
+the http leg boots an in-process kap-server).
+
+This package also hosts the e2e suites (the retired `server-e2e` package was
+folded in here):
+
+- `test/e2e/dual/` — session/agent suites that run the **exact same body**
+  against an in-memory engine and an in-process kap-server
+  (`test/helpers/dual.ts`). Model-requiring suites skip unless
+  `KIMI_E2E_MODEL` + `KIMI_E2E_API_KEY` (optional `KIMI_E2E_BASE_URL`,
+  `KIMI_E2E_PROTOCOL`) are set; the model is seeded into each backend's temp
+  home through the facade itself.
+- `test/e2e/v2/` — `/api/v2` wire tests booting kap-server in-process.
+- `test/e2e/legacy/` + `test/e2e/harness/` — the legacy `/api/v1` live suites
+  and their client harness (skip unless `KIMI_SERVER_URL` is set; the v1
+  surface has no in-memory equivalent, so these stay http-only).
+
+The docker e2e runner (`pnpm docker:e2e`) runs this whole vitest suite inside
+a container against a container-local server. See `AGENTS.md` for the testing
+rules.
+
+## Scope
+
+The facade covers the global (app), session, and agent surfaces shown above.
+What it deliberately leaves out (for now): onWill/hook-style interception
+(engine hooks are in-process `OrderedHookSlot`s and not wire-exposable), file
+upload (v1 multipart REST only), and the terminal surface (v1 REST + WS
+only).
+
+## Real-server smoke check
 
 ```sh
 KIMI_SERVER_URL=http://127.0.0.1:58627 \
 KIMI_SERVER_TOKEN=YOUR_SERVER_TOKEN \
-pnpm smoke
-
-KIMI_SMOKE_MODEL=YOUR_MODEL pnpm smoke
+pnpm -C packages/klient smoke
 ```
 
-The history smoke checks persisted sessions before warming one, including the
-cold-session regression where an indexed session is unavailable through the v2
-session scope. It sends no explicit mutation request. When `KIMI_SMOKE_MARKER`
-is set, the v1 message read resumes the session and may persist server-side
-legacy metadata migrations:
-
-```sh
-KIMI_SERVER_URL=http://127.0.0.1:58627 \
-KIMI_SERVER_TOKEN=YOUR_SERVER_TOKEN \
-KIMI_SMOKE_EXPECT_SESSION_ID=YOUR_SESSION_ID \
-KIMI_SMOKE_MARKER=YOUR_MARKER \
-KIMI_SMOKE_REQUIRE_HISTORY=1 \
-pnpm smoke:history
-```
-
-`KIMI_SMOKE_EXPECT_CWD` can select a session by working directory instead of
-`KIMI_SMOKE_EXPECT_SESSION_ID`. The transport smoke creates its fixture in the
-first registered workspace; set `KIMI_SMOKE_CWD` when a different server-local
-folder is required. Omit `KIMI_SERVER_TOKEN` only for a server started with
-authentication bypassed.
+Omit `KIMI_SERVER_TOKEN` only for a server started with authentication
+bypassed. `examples/basic.ts` is a shorter narrated tour.

@@ -66,7 +66,6 @@
         ./packages/agent-core
         ./packages/agent-core-v2
         ./packages/kap-server
-        ./packages/server-e2e
         ./packages/kaos
         ./packages/klient
         ./packages/kosong
@@ -91,7 +90,6 @@
         "@moonshot-ai/agent-core"
         "@moonshot-ai/agent-core-v2"
         "@moonshot-ai/kap-server"
-        "@moonshot-ai/server-e2e"
         "@moonshot-ai/kaos"
         "@moonshot-ai/kosong"
         "@moonshot-ai/migration-legacy"
