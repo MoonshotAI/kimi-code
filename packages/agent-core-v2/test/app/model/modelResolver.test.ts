@@ -669,6 +669,20 @@ describe('ModelResolverService', () => {
       expect(model.defaultEffort).toBeUndefined();
     });
 
+    it('infers latest Opus metadata for a flat providerless Anthropic model', () => {
+      models['m'] = {
+        model: 'compatible-model',
+        baseUrl: 'https://anthropic.example.test',
+        protocol: 'anthropic',
+        maxContextSize: 1000,
+      };
+
+      const model = ix.get(IModelResolver).resolve('m');
+
+      expect(model.supportEfforts).toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+      expect(model.defaultEffort).toBe('high');
+    });
+
     it('passes Vertex service-account options and derives location from the baseUrl', async () => {
       providers['p'] = {
         type: 'vertexai',
