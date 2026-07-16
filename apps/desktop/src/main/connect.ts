@@ -14,6 +14,15 @@ import { DESKTOP_PRODUCT_NAME } from '../shared/identity';
 
 let serverHandle: DesktopServerHandle | null = null;
 
+// connect() calls are serialized through this queue: window (re)creation
+// (`activate` → createWindow) and the menu's 重试连接 can fire back-to-back,
+// and two concurrent runs would both try to start the embedded server and
+// race for the same `server-desktop.lock` — whose live-pid check counts *our
+// own* process as a hard conflict (kap-server `ServerLockedError`, "server
+// already running"). Chaining guarantees only one start attempt exists at a
+// time; later runs see the handle the first one established.
+let connectQueue: Promise<void> = Promise.resolve();
+
 export function rendererDistRoot(): string {
   return app.isPackaged
     ? join(process.resourcesPath, 'desktop-dist')
@@ -42,10 +51,16 @@ export function closeServerHandle(): void {
 
 // --- connect flow -------------------------------------------------------------
 
-export async function connect(win: BrowserWindow): Promise<void> {
+export function connect(win: BrowserWindow): Promise<void> {
+  const run = connectQueue.then(() => connectOnce(win));
+  // A rejected run must not poison the queue: the menu's 重试连接 is exactly
+  // a later call, and it has to run even after a failed attempt.
+  connectQueue = run.catch(() => {});
+  return run;
+}
+
+async function connectOnce(win: BrowserWindow): Promise<void> {
   try {
-    serverHandle?.close().catch(() => {});
-    serverHandle = null;
     let origin: string;
     let token: string | undefined;
     // Renderer HMR (scripts/dev.mjs sets KIMI_RENDERER_DEV_URL): load the
@@ -58,26 +73,38 @@ export async function connect(win: BrowserWindow): Promise<void> {
       ({ origin, token } = target);
       process.stdout.write(`[kimi-desktop] connected to external server ${origin}\n`);
     } else {
-      serverHandle = await startDesktopServer({
-        // Unpackaged runs are local development: lock separately so they never
-        // fight a running packaged app over `server-desktop.lock`.
-        dev: !app.isPackaged,
-        // No static fallback in HMR dev: the renderer comes from the Vite dev
-        // server, and desktop-dist may not exist (kap-server would refuse to
-        // start without index.html in it).
-        webAssetsDir: devBase === undefined ? rendererDistRoot() : undefined,
-        identity: { userAgentProduct: DESKTOP_PRODUCT_NAME, version: app.getVersion() },
-        extraCorsOrigins: devBase === undefined ? [] : [new URL(devBase).origin],
-      });
+      // Reuse the live embedded server instead of restarting it. The server
+      // runs in this very process, so a held handle means it is healthy;
+      // closing it first would race the old close()'s lock release against
+      // the new acquire on the same `server-desktop.lock` (the lock counts
+      // this pid as a live conflict and fails with "server already running")
+      // and would tear down perfectly good sessions on every window
+      // (re)creation. A failed start leaves the handle null, so a later
+      // retry comes back through here and starts fresh.
+      if (serverHandle === null) {
+        serverHandle = await startDesktopServer({
+          // Unpackaged runs are local development: lock separately so they never
+          // fight a running packaged app over `server-desktop.lock`.
+          dev: !app.isPackaged,
+          // No static fallback in HMR dev: the renderer comes from the Vite dev
+          // server, and desktop-dist may not exist (kap-server would refuse to
+          // start without index.html in it).
+          webAssetsDir: devBase === undefined ? rendererDistRoot() : undefined,
+          identity: { userAgentProduct: DESKTOP_PRODUCT_NAME, version: app.getVersion() },
+          extraCorsOrigins: devBase === undefined ? [] : [new URL(devBase).origin],
+        });
+        process.stdout.write(`[kimi-desktop] connected to ${serverHandle.origin}\n`);
+      } else {
+        process.stdout.write(`[kimi-desktop] reusing embedded server ${serverHandle.origin}\n`);
+      }
       ({ origin, token } = serverHandle);
-      process.stdout.write(`[kimi-desktop] connected to ${origin}\n`);
     }
     if (!win.isDestroyed()) {
       await win.loadURL(rendererUrl(origin, token, devBase));
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`[kimi-desktop] startDesktopServer failed: ${message}\n`);
+    process.stderr.write(`[kimi-desktop] connect failed: ${message}\n`);
     if (!win.isDestroyed()) {
       await win.loadURL(dataUrl(errorHtml(message, serverLogPath())));
     }
