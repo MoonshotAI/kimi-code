@@ -24,10 +24,6 @@ export interface MergeWorkspacesInput {
   sessions: Pick<AppSession, 'id' | 'cwd' | 'workspaceId'>[];
   /** Root paths the user removed from the sidebar. */
   hiddenWorkspaceRoots: string[];
-  /** cwd of the active session, used to hint the branch on the active workspace. */
-  activeRoot: string | undefined;
-  /** Live git branch of the active session, or null when unknown. */
-  activeBranch: string | null;
   /** Per-workspace "server has more sessions" flag; false means the local
    *  session count is exact. */
   sessionsHasMoreByWorkspace: Record<string, boolean>;
@@ -43,8 +39,6 @@ export function mergeWorkspaces(input: MergeWorkspacesInput): AppWorkspace[] {
     workspaces,
     sessions,
     hiddenWorkspaceRoots,
-    activeRoot,
-    activeBranch,
     sessionsHasMoreByWorkspace,
   } = input;
 
@@ -73,7 +67,6 @@ export function mergeWorkspaces(input: MergeWorkspacesInput): AppWorkspace[] {
         id: s.workspaceId ?? root,
         root,
         name: basename(root),
-        isGitRepo: false,
         sessionCount: 0,
       });
     }
@@ -111,9 +104,7 @@ export function mergeWorkspaces(input: MergeWorkspacesInput): AppWorkspace[] {
       sessionsHasMoreByWorkspace[w.id] === false
         ? localCount
         : Math.max(w.sessionCount, localCount);
-    let branch = w.branch;
-    if (!branch && activeBranch && activeRoot === w.root) branch = activeBranch;
-    result.push({ ...w, sessionCount: count, branch });
+    result.push({ ...w, sessionCount: count });
   }
   return result;
 }

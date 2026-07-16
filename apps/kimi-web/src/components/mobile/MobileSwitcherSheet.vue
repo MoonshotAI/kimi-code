@@ -1,7 +1,7 @@
 <!-- apps/kimi-web/src/components/mobile/MobileSwitcherSheet.vue -->
 <!-- Mobile switcher bottom sheet, mirroring the desktop sidebar: a "+ New
      chat" row, then collapsible workspace groups (folder icon + name +
-     branch/path sub-line + per-group "+") with their session rows beneath.
+     path sub-line + per-group "+") with their session rows beneath.
      Tapping a session selects it AND closes the sheet; tapping a group header
      folds it, same as the desktop sidebar. -->
 <script setup lang="ts">
@@ -211,7 +211,7 @@ function onDeleteWorkspace(ws: WorkspaceView): void {
           <div class="mgh-main">
             <span class="mgh-name">{{ g.workspace.name }}</span>
             <Tooltip :text="g.workspace.root">
-              <span class="mgh-path">{{ g.workspace.branch || g.workspace.shortPath }}</span>
+              <span class="mgh-path">{{ g.workspace.shortPath }}</span>
             </Tooltip>
           </div>
 

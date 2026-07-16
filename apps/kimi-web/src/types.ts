@@ -60,8 +60,6 @@ export interface WorkspaceView {
   root: string;
   /** Home-shortened path for dim display, e.g. `~/code/kimi-code-web`. */
   shortPath: string;
-  /** Current branch, when known. */
-  branch?: string;
   /** Number of sessions in this workspace. */
   sessionCount: number;
 }

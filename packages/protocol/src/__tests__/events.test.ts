@@ -182,8 +182,6 @@ describe('events / display re-exports', () => {
       id: 'wd_project_123456abcdef',
       root: '/tmp/project',
       name: 'project',
-      is_git_repo: true,
-      branch: 'main',
       created_at: '2026-06-11T00:00:00.000Z',
       last_opened_at: '2026-06-11T00:00:00.000Z',
       session_count: 1,

@@ -158,8 +158,6 @@ export interface WireWorkspace {
   id: string;
   root: string;
   name: string;
-  is_git_repo: boolean;
-  branch: string | null;
   last_opened_at?: string;
   session_count: number;
 }
@@ -168,8 +166,6 @@ export interface WireFsBrowseEntry {
   name: string;
   path: string;
   is_dir: boolean;
-  is_git_repo: boolean;
-  branch?: string;
 }
 
 export interface WireFsBrowseResult {

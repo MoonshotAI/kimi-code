@@ -2282,8 +2282,6 @@ const mergedWorkspaces = computed<AppWorkspace[]>(() =>
     workspaces: rawState.workspaces,
     sessions: rawState.sessions,
     hiddenWorkspaceRoots: rawState.hiddenWorkspaceRoots,
-    activeRoot: rawState.sessions.find((s) => s.id === rawState.activeSessionId)?.cwd,
-    activeBranch: gitInfo.value?.branch ?? null,
     sessionsHasMoreByWorkspace: rawState.sessionsHasMoreByWorkspace,
   }),
 );
@@ -2342,7 +2340,6 @@ const workspacesView = computed<WorkspaceView[]>(() => {
     name: w.name,
     root: w.root,
     shortPath: shortenHome(w.root, rawState.fsHome),
-    branch: w.branch,
     sessionCount: w.sessionCount,
   }));
   if (workspaceSortMode.value === 'recent') {

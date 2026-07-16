@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -19,8 +19,6 @@ interface WorkspaceWire {
   id: string;
   root: string;
   name: string;
-  is_git_repo: boolean;
-  branch: string | null;
   created_at: string;
   last_opened_at: string;
   session_count: number;
@@ -100,12 +98,6 @@ describe('server-v2 /api/v1/workspaces', () => {
     return { status: res.status, body: (await res.json()) as Envelope<T> };
   }
 
-  /** Lay down a minimal git fixture: `.git/HEAD` referring to a branch. */
-  async function makeGitRepo(root: string, branch: string): Promise<void> {
-    await mkdir(join(root, '.git'), { recursive: true });
-    await writeFile(join(root, '.git', 'HEAD'), `ref: refs/heads/${branch}\n`, 'utf8');
-  }
-
   it('creates a workspace with the full wire shape', async () => {
     const root = home as string;
     const { status, body } = await postJson<WorkspaceWire>('/api/v1/workspaces', {
@@ -117,43 +109,9 @@ describe('server-v2 /api/v1/workspaces', () => {
     expect(body.data.root).toBe(root);
     expect(body.data.name).toBe('proj');
     expect(body.data.id).toMatch(/^wd_[a-z0-9._-]+_[0-9a-f]{12}$/);
-    expect(typeof body.data.is_git_repo).toBe('boolean');
-    expect(body.data.branch).toBeNull();
     expect(typeof body.data.session_count).toBe('number');
     expect(Number.isNaN(Date.parse(body.data.created_at))).toBe(false);
     expect(Number.isNaN(Date.parse(body.data.last_opened_at))).toBe(false);
-  });
-
-  it('resolves branch from .git/HEAD (and null when detached)', async () => {
-    const repo = join(home as string, 'repo');
-    await makeGitRepo(repo, 'feature/x');
-    const created = await postJson<WorkspaceWire>('/api/v1/workspaces', { root: repo });
-    expect(created.body.data.is_git_repo).toBe(true);
-    expect(created.body.data.branch).toBe('feature/x');
-
-    const detached = join(home as string, 'detached');
-    await mkdir(join(detached, '.git'), { recursive: true });
-    await writeFile(
-      join(detached, '.git', 'HEAD'),
-      '0123456789abcdef0123456789abcdef01234567\n',
-      'utf8',
-    );
-    const det = await postJson<WorkspaceWire>('/api/v1/workspaces', { root: detached });
-    expect(det.body.data.is_git_repo).toBe(true);
-    expect(det.body.data.branch).toBeNull();
-  });
-
-  it('resolves branch through a .git worktree file', async () => {
-    const root = join(home as string, 'worktree');
-    const realGitDir = join(home as string, 'real-git');
-    await mkdir(realGitDir, { recursive: true });
-    await writeFile(join(realGitDir, 'HEAD'), 'ref: refs/heads/wt-branch\n', 'utf8');
-    await mkdir(root, { recursive: true });
-    await writeFile(join(root, '.git'), `gitdir: ${realGitDir}\n`, 'utf8');
-
-    const { body } = await postJson<WorkspaceWire>('/api/v1/workspaces', { root });
-    expect(body.data.is_git_repo).toBe(true);
-    expect(body.data.branch).toBe('wt-branch');
   });
 
   it('derives the default name from the root when name is omitted', async () => {
