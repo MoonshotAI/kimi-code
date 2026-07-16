@@ -11,7 +11,7 @@ export function buildMcpRemoteHeaders(
     if (token === undefined || token.length === 0) {
       throw new KimiError(
         ErrorCodes.CONFIG_INVALID,
-        `MCP ${config.transport.toUpperCase()} bearer token env var "${config.bearerTokenEnvVar}" is not set or is empty`,
+        `MCP ${config.transport?.toUpperCase() ?? 'unknown'} bearer token env var "${config.bearerTokenEnvVar}" is not set or is empty`,
       );
     }
     // Strip any case-variant 'authorization' static header before injecting the

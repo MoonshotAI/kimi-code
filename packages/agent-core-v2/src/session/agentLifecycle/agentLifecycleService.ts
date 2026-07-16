@@ -261,31 +261,36 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
     }
     const child = await this.create({ agentId: opts?.agentId, forkedFrom: source.id });
 
-    const sourceData = source.accessor.get(IAgentProfileService).data();
-    const childProfile = child.accessor.get(IAgentProfileService);
-    const override = opts?.binding;
-    const model = override?.model ?? sourceData.modelAlias;
-    if (model !== undefined) {
-      await childProfile.bind({
-        profile: override?.profile ?? sourceData.profileName ?? 'agent',
-        model,
-        thinking: override?.thinking ?? sourceData.thinkingLevel,
-        cwd: override?.cwd ?? sourceData.cwd,
-      });
-    } else {
-      childProfile.update({
-        profileName: override?.profile ?? sourceData.profileName,
-        thinkingLevel: override?.thinking ?? sourceData.thinkingLevel,
-        systemPrompt: sourceData.systemPrompt,
-        activeToolNames: sourceData.activeToolNames,
-      });
-    }
+    try {
+      const sourceData = source.accessor.get(IAgentProfileService).data();
+      const childProfile = child.accessor.get(IAgentProfileService);
+      const override = opts?.binding;
+      const model = override?.model ?? sourceData.modelAlias;
+      if (model !== undefined) {
+        await childProfile.bind({
+          profile: override?.profile ?? sourceData.profileName ?? 'agent',
+          model,
+          thinking: override?.thinking ?? sourceData.thinkingLevel,
+          cwd: override?.cwd ?? sourceData.cwd,
+        });
+      } else {
+        childProfile.update({
+          profileName: override?.profile ?? sourceData.profileName,
+          thinkingLevel: override?.thinking ?? sourceData.thinkingLevel,
+          systemPrompt: sourceData.systemPrompt,
+          activeToolNames: sourceData.activeToolNames,
+        });
+      }
 
-    const sourceMessages = source.accessor.get(IAgentContextMemoryService)?.get();
-    if (sourceMessages !== undefined && sourceMessages.length > 0) {
-      child.accessor.get(IAgentContextMemoryService)?.append(...sourceMessages);
+      const sourceMessages = source.accessor.get(IAgentContextMemoryService)?.get();
+      if (sourceMessages !== undefined && sourceMessages.length > 0) {
+        child.accessor.get(IAgentContextMemoryService)?.append(...sourceMessages);
+      }
+      return child;
+    } catch (error) {
+      await this.remove(child.id);
+      throw error;
     }
-    return child;
   }
 
   get(agentId: string): IAgentScopeHandle | undefined {
@@ -302,22 +307,25 @@ export class AgentLifecycleService extends Disposable implements IAgentLifecycle
   async remove(agentId: string): Promise<void> {
     const handle = this.handles.get(agentId);
     if (handle === undefined) return;
-    this.handles.delete(agentId);
-    await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
-    const loop = handle.accessor.get(IAgentLoopService);
-    const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
-    const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
-    const reason = abortError('Agent removed');
-    for (const turnId of loop.status().pendingTurnIds) {
-      loop.cancel(turnId, reason);
+    try {
+      await handle.accessor.get(IAgentTaskService).stopAllOnExit('Session closed');
+      const loop = handle.accessor.get(IAgentLoopService);
+      const compaction = handle.accessor.get(IAgentFullCompactionService).compacting;
+      const compactionSettled = compaction?.promise.catch(() => undefined) ?? Promise.resolve();
+      const reason = abortError('Agent removed');
+      for (const turnId of loop.status().pendingTurnIds) {
+        loop.cancel(turnId, reason);
+      }
+      loop.cancel(undefined, reason);
+      if (compaction !== null && !compaction.abortController.signal.aborted) {
+        compaction.abortController.abort(reason);
+      }
+      await Promise.all([loop.settled(), compactionSettled]);
+    } finally {
+      this.handles.delete(agentId);
+      handle.dispose();
+      this.onDidDisposeEmitter.fire(agentId);
     }
-    loop.cancel(undefined, reason);
-    if (compaction !== null && !compaction.abortController.signal.aborted) {
-      compaction.abortController.abort(reason);
-    }
-    await Promise.all([loop.settled(), compactionSettled]);
-    handle.dispose();
-    this.onDidDisposeEmitter.fire(agentId);
   }
 }
 

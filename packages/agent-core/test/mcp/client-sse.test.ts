@@ -136,7 +136,7 @@ describe('SseMcpClient', () => {
           {} as ConstructorParameters<typeof SseError>[2],
         ),
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(isTerminalSseTransportError(new Error('fetch failed'))).toBe(false);
   });
 });

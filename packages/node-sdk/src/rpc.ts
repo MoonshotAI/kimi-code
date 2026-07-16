@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
   ErrorCodes,
+  KimiError,
   makeErrorPayload,
   type AgentContextData,
   type ApprovalRequest,
@@ -133,8 +134,14 @@ export abstract class SDKRpcClientBase {
   async createSession(input: CreateSessionOptions): Promise<SessionSummary> {
     const rpc = await this.getRpc();
     const { planMode, ...coreInput } = input;
-    void planMode;
-    return rpc.createSession(coreInput);
+    const summary = await rpc.createSession(coreInput);
+    if (planMode) {
+      await rpc.enterPlan({
+        sessionId: summary.id,
+        agentId: this.interactiveAgentId,
+      });
+    }
+    return summary;
   }
 
   async createSessionWithKaos(
@@ -142,9 +149,7 @@ export abstract class SDKRpcClientBase {
     kaos: Kaos,
     persistenceKaos?: Kaos,
   ): Promise<SessionSummary> {
-    void kaos;
-    void persistenceKaos;
-    return this.createSession(input);
+    throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Kaos overrides not supported');
   }
 
   async resumeSession(input: ResumeSessionInput): Promise<ResumedSessionSummary> {
@@ -157,9 +162,7 @@ export abstract class SDKRpcClientBase {
     kaos: Kaos,
     persistenceKaos?: Kaos,
   ): Promise<ResumedSessionSummary> {
-    void kaos;
-    void persistenceKaos;
-    return this.resumeSession(input);
+    throw new KimiError(ErrorCodes.REQUEST_INVALID, 'Kaos overrides not supported');
   }
 
   async reloadSession(input: ReloadSessionRpcInput): Promise<ResumedSessionSummary> {

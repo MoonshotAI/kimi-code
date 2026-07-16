@@ -34,7 +34,7 @@ export interface ErrorEvent extends KimiErrorPayload {
 export interface McpServerStatusPayload {
   readonly name: string;
   readonly transport: 'stdio' | 'http' | 'sse';
-  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth';
+  readonly status: 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'pending-approval';
   readonly toolCount: number;
   readonly error?: string;
 }
@@ -130,6 +130,10 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     signal?.throwIfAborted();
   }
 
+  approveServer(name: string): Promise<void> {
+    return this.sessionMcp.approveServer(name);
+  }
+
   onStatusChange(listener: Parameters<IAgentMcpService['onStatusChange']>[0]) {
     const unsubscribe = this.sessionMcp.connectionManager().onStatusChange(listener);
     return {
@@ -176,7 +180,7 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
       });
       return;
     }
-    if (entry.status === 'disabled' || entry.status === 'pending') {
+    if (entry.status === 'disabled' || entry.status === 'pending' || entry.status === 'pending-approval') {
       const removed = this.unregisterMcpServer(entry.name);
       if (removed) {
         this.eventBus.publish({
@@ -298,8 +302,12 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
   ): void {
     const enabledNamesSnapshot = [...enabledNames].toSorted((a, b) => a.localeCompare(b));
     const work = (): void => {
+      // Sort rawTools by name before hashing so a server that returns the
+      // same tool set in a different order does not trigger a redundant
+      // mcpToolsDiscovered wire op dispatch.
+      const sortedTools = [...rawTools].sort((a, b) => a.name.localeCompare(b.name));
       const hash = createHash('sha256')
-        .update(JSON.stringify({ tools: rawTools, enabledNames: enabledNamesSnapshot, collisions }))
+        .update(JSON.stringify({ tools: sortedTools, enabledNames: enabledNamesSnapshot, collisions }))
         .digest('hex');
       const key = `${serverName}\n${hash}`;
       if (this.wire.getModel(McpDiscoveryModel).seen.includes(key)) return;

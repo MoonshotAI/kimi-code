@@ -336,17 +336,6 @@ export {
   unsupportedImageMimeFromUrl,
 } from '#/agent/media/image-format-policy';
 export {
-  MODEL_ACCEPTED_IMAGE_MIMES,
-  buildImageConversionGuidance,
-  buildUnsupportedImageNotice,
-  decodeBase64Prefix,
-  isModelAcceptedImageMime,
-  normalizeImageMime,
-  parseImageDataUrl,
-  resolveEffectiveImageMime,
-  unsupportedImageMimeFromUrl,
-} from '#/agent/media/image-format-policy';
-export {
   persistOriginalImage,
   sessionMediaOriginalsDir,
 } from '#/agent/media/image-originals';

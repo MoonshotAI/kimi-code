@@ -64,7 +64,11 @@ export class HttpMcpClient implements MCPClient {
   private unexpectedCloseFired = false;
 
   constructor(config: McpServerHttpConfig, options: HttpMcpClientOptions = {}) {
-    const envLookup = options.envLookup ?? ((name) => process.env[name]);
+    const envLookup = options.envLookup ?? ((name) => {
+      const configValue = config.env?.[name];
+      if (configValue !== undefined) return configValue;
+      return process.env[name];
+    });
     const headers = buildMcpHttpHeaders(config, envLookup);
 
     this.transport = new StreamableHTTPClientTransport(new URL(config.url), {
@@ -139,6 +143,8 @@ export class HttpMcpClient implements MCPClient {
   private async closeStartedClient(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+    this.client.onclose = undefined;
+    this.client.onerror = undefined;
     await this.client.close();
   }
 
@@ -203,7 +209,7 @@ export class HttpMcpClient implements MCPClient {
  */
 export function isTerminalTransportError(error: Error): boolean {
   if (error.name === 'UnauthorizedError') return true;
-  if (/Maximum reconnection attempts/i.test(error.message)) return true;
+  if (/(?:Maximum|Max) reconnection attempts|reconnection attempts exceeded/i.test(error.message)) return true;
   return false;
 }
 

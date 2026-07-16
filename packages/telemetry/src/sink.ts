@@ -7,6 +7,7 @@ import type {
   TelemetryPrimitive,
   TelemetryTransport,
 } from './types';
+import { cleanTelemetryProperties } from './privacy';
 
 export interface EventSinkContextOptions {
   readonly appName: string;
@@ -45,8 +46,10 @@ export class EventSink {
   }
 
   accept(event: TelemetryEvent): void {
+    const cleaned = cleanTelemetryProperties(event.properties);
     const enriched: EnrichedTelemetryEvent = {
       ...event,
+      properties: cleaned,
       context: { ...this.context },
     };
     this.buffer.push(enriched);

@@ -57,7 +57,11 @@ export class SseMcpClient implements MCPClient {
   private unexpectedCloseFired = false;
 
   constructor(config: McpServerSseConfig, options: SseMcpClientOptions = {}) {
-    const envLookup = options.envLookup ?? ((name) => process.env[name]);
+    const envLookup = options.envLookup ?? ((name) => {
+      const configValue = config.env?.[name];
+      if (configValue !== undefined) return configValue;
+      return process.env[name];
+    });
     const headers = buildMcpRemoteHeaders(config, envLookup);
 
     this.transport = new SSEClientTransport(new URL(config.url), {
@@ -130,6 +134,8 @@ export class SseMcpClient implements MCPClient {
   private async closeStartedClient(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+    this.client.onclose = undefined;
+    this.client.onerror = undefined;
     await this.client.close();
   }
 
@@ -165,5 +171,5 @@ export class SseMcpClient implements MCPClient {
 
 export function isTerminalSseTransportError(error: Error): boolean {
   if (error.name === 'UnauthorizedError') return true;
-  return error instanceof SseError && error.code !== undefined;
+  return error instanceof SseError && error.code !== undefined && error.code >= 400;
 }

@@ -573,7 +573,7 @@ describe('AgentLifecycleService', () => {
     expect(connectAll).toHaveBeenCalledWith({
       shared: { transport: 'stdio', command: 'plugin-version' },
       callerOnly: { transport: 'http', url: 'https://caller.example.com' },
-    });
+    }, undefined);
 
     await sessionMcp.ensureMcpReady({ ignored: { transport: 'stdio', command: 'ignored' } });
     expect(connectAll).toHaveBeenCalledTimes(1);

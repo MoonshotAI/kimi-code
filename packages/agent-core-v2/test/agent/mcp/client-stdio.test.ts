@@ -161,25 +161,29 @@ describe('StdioMcpClient', () => {
   }, 15000);
 
   it('inherits parent process env so PATH/HOME survive; config.env overrides on conflict', async () => {
-    const parentOnly = `KIMI_TEST_PARENT_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    const shared = `KIMI_TEST_SHARED_${Date.now()}_${Math.random().toString(36).slice(2)}`;
-    process.env[parentOnly] = 'from-parent';
-    process.env[shared] = 'from-parent';
+    const parentKey = 'LC_ALL';
+    const sharedKey = 'LC_CTYPE';
+    const savedParent = process.env[parentKey];
+    const savedShared = process.env[sharedKey];
+    process.env[parentKey] = 'from-parent';
+    process.env[sharedKey] = 'from-parent';
     const client = new StdioMcpClient({
       transport: 'stdio',
       command: process.execPath,
       args: [stdioFixture],
-      env: { [shared]: 'from-config' },
+      env: { [sharedKey]: 'from-config' },
     });
     try {
       await client.connect();
-      const inherited = await client.callTool('read_env', { name: parentOnly });
+      const inherited = await client.callTool('read_env', { name: parentKey });
       expect(inherited.content).toEqual([{ type: 'text', text: 'from-parent' }]);
-      const overridden = await client.callTool('read_env', { name: shared });
+      const overridden = await client.callTool('read_env', { name: sharedKey });
       expect(overridden.content).toEqual([{ type: 'text', text: 'from-config' }]);
     } finally {
-      delete process.env[parentOnly];
-      delete process.env[shared];
+      if (savedParent === undefined) delete process.env[parentKey];
+      else process.env[parentKey] = savedParent;
+      if (savedShared === undefined) delete process.env[sharedKey];
+      else process.env[sharedKey] = savedShared;
       await client.close();
     }
   }, 15000);
@@ -317,6 +321,29 @@ describe('mergeStdioEnv', () => {
   it('lets config.env override the parent env', () => {
     const merged = mergeStdioEnv({ FOO: 'override' }, { FOO: 'parent', PATH: '/x' });
     expect(merged['FOO']).toBe('override');
+  });
+
+  it('only allows approved env keys from parent environment', () => {
+    const merged = mergeStdioEnv(undefined, {
+      PATH: '/usr/bin',
+      HOME: '/home/user',
+      GITHUB_TOKEN: 'secret-token',
+      AWS_SECRET_ACCESS_KEY: 'secret-key',
+      DB_PASSWORD: 's3cret',
+      NPM_CREDENTIALS: 'creds',
+      OPENAI_API_KEY: 'sk-abc',
+      CUSTOM_DEBUG_VAR: 'debug',
+      INTERNAL_BUILD_ID: '12345',
+    });
+    expect(merged['PATH']).toBe('/usr/bin');
+    expect(merged['HOME']).toBe('/home/user');
+    expect(merged['GITHUB_TOKEN']).toBeUndefined();
+    expect(merged['AWS_SECRET_ACCESS_KEY']).toBeUndefined();
+    expect(merged['DB_PASSWORD']).toBeUndefined();
+    expect(merged['NPM_CREDENTIALS']).toBeUndefined();
+    expect(merged['OPENAI_API_KEY']).toBeUndefined();
+    expect(merged['CUSTOM_DEBUG_VAR']).toBeUndefined();
+    expect(merged['INTERNAL_BUILD_ID']).toBeUndefined();
   });
 
   it('does not depend on a filesystem cwd fixture for env merging', async () => {

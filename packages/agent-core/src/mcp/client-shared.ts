@@ -27,6 +27,7 @@ export interface UnexpectedCloseReason {
 export type UnexpectedCloseListener = (reason: UnexpectedCloseReason) => void;
 
 export interface McpRequestOptions {
+  /** Timeout in milliseconds. */
   readonly timeout?: number;
   readonly signal?: AbortSignal;
 }
@@ -41,6 +42,7 @@ export function buildRequestOptions(
   toolCallTimeoutMs: number | undefined,
   signal: AbortSignal | undefined,
 ): McpRequestOptions | undefined {
+  if (signal?.aborted) { throw signal.reason ?? new Error('Tool call aborted'); }
   if (toolCallTimeoutMs === undefined && signal === undefined) return undefined;
   return { timeout: toolCallTimeoutMs, signal };
 }
@@ -87,5 +89,7 @@ export function toMcpToolResult(result: unknown): MCPToolResult {
       isError: false,
     };
   }
+  // Intentionally returns empty content for unrecognized result shapes —
+  // the caller is expected to log the raw shape before this codepath.
   return { content: [], isError: false };
 }

@@ -79,8 +79,12 @@ export class SessionMcpService extends Disposable implements ISessionMcpService 
     const withCaller = mergeCallerMcpServers(base, callerServers);
     const servers = { ...withCaller?.servers, ...pluginServers };
     if (Object.keys(servers).length === 0) return;
-    await manager.connectAll(servers);
+    await manager.connectAll(servers, withCaller?.sources);
     this.trackMcpInitialLoad(manager);
+  }
+
+  approveServer(name: string): Promise<void> {
+    return this.connectionManager().approveServer(name);
   }
 
   private trackMcpInitialLoad(manager: McpConnectionManager): void {

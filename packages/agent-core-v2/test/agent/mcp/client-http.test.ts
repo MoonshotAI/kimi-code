@@ -98,6 +98,40 @@ describe('buildMcpHttpHeaders', () => {
     ).toEqual({ Authorization: 'Bearer fresh', 'X-Trace': '1' });
   });
 
+  it('refuses bearer token for loopback / private / metadata URLs (SSRF guard)', () => {
+    for (const url of [
+      'http://127.0.0.1:8080/mcp',
+      'http://127.1.2.3/mcp',
+      'http://169.254.169.254/latest/meta-data',
+      'http://10.0.0.1/mcp',
+      'http://192.168.1.1/mcp',
+      'http://[::1]/mcp',
+      'http://0.0.0.0/mcp',
+    ]) {
+      expectConfigInvalid(() =>
+        buildMcpHttpHeaders(
+          { transport: 'http', url, bearerTokenEnvVar: 'TOK' },
+          () => 'secret',
+        ),
+      );
+    }
+  });
+
+  it('allows bearer token for localhost and public URLs', () => {
+    expect(
+      buildMcpHttpHeaders(
+        { transport: 'http', url: 'http://localhost:8080/mcp', bearerTokenEnvVar: 'TOK' },
+        () => 'secret',
+      ),
+    ).toEqual({ Authorization: 'Bearer secret' });
+    expect(
+      buildMcpHttpHeaders(
+        { transport: 'http', url: 'https://example.com/mcp', bearerTokenEnvVar: 'TOK' },
+        () => 'secret',
+      ),
+    ).toEqual({ Authorization: 'Bearer secret' });
+  });
+
   it('flags errors the SDK uses to signal a dead HTTP transport as terminal', () => {
     const unauthorized = new Error('Unauthorized');
     unauthorized.name = 'UnauthorizedError';

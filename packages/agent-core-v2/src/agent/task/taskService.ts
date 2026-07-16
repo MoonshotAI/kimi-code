@@ -739,7 +739,10 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
       (entry.task === undefined ? undefined : entry.task.forceStop?.bind(entry.task));
     if (forceStop === undefined) return;
     try {
-      void forceStop().catch(() => {});
+      const result = forceStop();
+      if (result instanceof Promise) {
+        void result.catch(() => {});
+      }
     } catch {}
   }
 

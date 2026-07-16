@@ -23,6 +23,11 @@ export interface IAgentMcpService {
   resolved(name: string): McpResolvedServer | undefined;
   getRemoteServerUrl(name: string): string | undefined;
   reconnect(name: string, signal?: AbortSignal): Promise<void>;
+  /**
+   * Mark a server in ``pending-approval`` state (stdio server sourced
+   * from ``<repoRoot>/.mcp.json``) as trusted and start connecting it.
+   */
+  approveServer(name: string): Promise<void>;
   onStatusChange(listener: (entry: McpServerEntry) => void): IDisposable;
 }
 

@@ -505,7 +505,7 @@ describe('kimi provider list', () => {
     await tryRun(() => handleProviderList(deps, { json: true }));
 
     const parsed = JSON.parse(stdout.join('')) as {
-      providers: Record<string, unknown>;
+      providers: Record<string, Record<string, unknown>>;
       models: Record<string, unknown>;
     };
     expect(Object.keys(parsed.providers).toSorted()).toEqual([
@@ -514,6 +514,10 @@ describe('kimi provider list', () => {
       'manual',
     ]);
     expect(Object.keys(parsed.models)).toContain('kohub/a');
+    // apiKey must never leak to stdout
+    for (const p of Object.values(parsed.providers)) {
+      expect(p['apiKey']).toBeUndefined();
+    }
   });
 });
 

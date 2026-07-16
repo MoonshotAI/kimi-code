@@ -68,6 +68,18 @@ export async function startCallbackServer(): Promise<CallbackServer> {
       res.writeHead(404).end();
       return;
     }
+    // Reject cross-site requests: a browser-initiated OAuth redirect never
+    // carries an Origin header (it is a top-level navigation), while a
+    // cross-site fetch from a malicious page does. localhost / 127.0.0.1
+    // origins are allowed for same-machine tooling.
+    const origin = req.headers.origin;
+    if (origin !== undefined && !isLocalhostOrigin(origin)) {
+      res.writeHead(403, { 'content-type': 'text/plain; charset=utf-8' }).end('Forbidden');
+      settle(() => {
+        rejectCode?.(new Error(`OAuth callback rejected cross-site origin: ${origin}`));
+      });
+      return;
+    }
     const errorParam = url.searchParams.get('error');
     if (errorParam !== null) {
       const description = url.searchParams.get('error_description') ?? '';
@@ -155,4 +167,15 @@ export async function startCallbackServer(): Promise<CallbackServer> {
   };
 
   return { redirectUri, waitForCode, close };
+}
+
+function isLocalhostOrigin(origin: string): boolean {
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+  return parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1' || parsed.hostname === '::1';
 }

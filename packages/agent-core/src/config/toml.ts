@@ -15,6 +15,7 @@ import {
   type KimiConfig,
   type LoopControl,
   type ModelAlias,
+  type ModelCatalogConfig,
   type MoonshotServiceConfig,
   type OAuthRef,
   type PermissionConfig,
@@ -320,6 +321,8 @@ export function transformTomlData(data: Record<string, unknown>): Record<string,
       result[targetKey] = cloneRecord(value);
     } else if (targetKey === 'subagent' && isPlainObject(value)) {
       result[targetKey] = transformPlainObject(value);
+    } else if (targetKey === 'modelCatalog' && isPlainObject(value)) {
+      result[targetKey] = transformPlainObject(value);
     } else if (!isPlainObject(value)) {
       result[targetKey] = value;
     }
@@ -497,6 +500,7 @@ export function configToTomlData(config: KimiConfig): Record<string, unknown> {
   setSection(out, 'background', config.background, backgroundToToml);
   setSection(out, 'subagent', config.subagent, subagentToToml);
   setSection(out, 'image', config.image, imageToToml);
+  setSection(out, 'model_catalog', config.modelCatalog, modelCatalogToToml);
   setSection(out, 'experimental', config.experimental, experimentalToToml);
   setSection(out, 'permission', config.permission, permissionToToml);
   setHooks(out, config.hooks);
@@ -550,6 +554,7 @@ function setSection<T>(
 function providerToToml(provider: ProviderConfig, rawProvider: unknown): Record<string, unknown> {
   const out = cloneRecord(rawProvider);
   for (const [key, value] of Object.entries(provider)) {
+    if (key === 'apiKey') continue;
     if (key === 'oauth' && value !== undefined) {
       out[camelToSnake(key)] = oauthToToml(value as OAuthRef);
     } else if ((key === 'env' || key === 'customHeaders') && value !== undefined) {
@@ -689,6 +694,17 @@ function subagentToToml(subagent: SubagentConfig, rawSubagent: unknown): Record<
 function imageToToml(image: ImageConfig, rawImage: unknown): Record<string, unknown> {
   const out = cloneRecord(rawImage);
   for (const [key, value] of Object.entries(image)) {
+    setDefined(out, camelToSnake(key), value);
+  }
+  return out;
+}
+
+function modelCatalogToToml(
+  modelCatalog: ModelCatalogConfig,
+  rawModelCatalog: unknown,
+): Record<string, unknown> {
+  const out = cloneRecord(rawModelCatalog);
+  for (const [key, value] of Object.entries(modelCatalog)) {
     setDefined(out, camelToSnake(key), value);
   }
   return out;

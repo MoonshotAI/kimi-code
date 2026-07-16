@@ -591,6 +591,7 @@ export function mcpServices(options: {
     _serviceBrand: undefined,
     ensureMcpReady: () => Promise.resolve(),
     connectionManager: () => options.manager!,
+    approveServer: () => Promise.reject(new Error('not implemented')),
   } satisfies ISessionMcpService);
 }
 

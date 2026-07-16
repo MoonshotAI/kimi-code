@@ -128,7 +128,7 @@ function sanitizeAndTruncatePromptText(text: string, maxLength: number): string 
       '$1=[redacted]',
     )
     .replaceAll(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[redacted]')
-    .replaceAll(/\b[A-Za-z0-9][A-Za-z0-9+/=_-]{39,}\b/g, '[redacted]')
+    .replaceAll(/\b(gh[opu]_|github_pat_)[A-Za-z0-9_]{20,}\b/g, '[redacted]')
     .replaceAll(/\p{Cc}+/gu, ' ')
     .replaceAll(/\s+/g, ' ')
     .trim();

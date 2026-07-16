@@ -60,11 +60,15 @@ export async function loadMcpServers(
   return { ...user, ...projectRoot, ...project };
 }
 
+const MAX_PROJECT_ROOT_DEPTH = 64;
+
 async function findProjectRoot(cwd: string): Promise<string> {
   const start = normalize(cwd);
   let current = start;
+  let depth = 0;
 
   while (true) {
+    if (depth++ >= MAX_PROJECT_ROOT_DEPTH) return start;
     if (await pathExists(join(current, '.git'))) return current;
     const parent = dirname(current);
     if (parent === current) return start;

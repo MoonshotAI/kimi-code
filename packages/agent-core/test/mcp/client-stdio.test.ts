@@ -315,4 +315,21 @@ describe('mergeStdioEnv', () => {
     const merged = mergeStdioEnv({ FOO: 'override' }, { FOO: 'parent', PATH: '/x' });
     expect(merged['FOO']).toBe('override');
   });
+
+  it('filters sensitive env keys from parent environment', () => {
+    const merged = mergeStdioEnv(undefined, {
+      PATH: '/usr/bin',
+      GITHUB_TOKEN: 'secret-token',
+      AWS_SECRET_ACCESS_KEY: 'secret-key',
+      DB_PASSWORD: 's3cret',
+      NPM_CREDENTIALS: 'creds',
+      OPENAI_API_KEY: 'sk-abc',
+    });
+    expect(merged['PATH']).toBe('/usr/bin');
+    expect(merged['GITHUB_TOKEN']).toBeUndefined();
+    expect(merged['AWS_SECRET_ACCESS_KEY']).toBeUndefined();
+    expect(merged['DB_PASSWORD']).toBeUndefined();
+    expect(merged['NPM_CREDENTIALS']).toBeUndefined();
+    expect(merged['OPENAI_API_KEY']).toBeUndefined();
+  });
 });

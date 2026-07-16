@@ -530,6 +530,7 @@ describe('mcpResultToExecutableOutput', () => {
 describe('createMcpTool', () => {
   test('omits truncated when the MCP output was not truncated', async () => {
     const client = {
+      async connect() {},
       async listTools() {
         return [];
       },

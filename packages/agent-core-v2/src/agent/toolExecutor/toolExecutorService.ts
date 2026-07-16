@@ -848,21 +848,21 @@ function abortedToolOutput(toolName: string, signal: AbortSignal): string {
   return `Tool "${toolName}" was aborted`;
 }
 
-async function raceWithAbortGrace<Result>(
-  executePromise: Promise<Result>,
+async function raceWithAbortGrace(
+  executePromise: Promise<ExecutableToolResult>,
   signal: AbortSignal,
   toolName: string,
-): Promise<Result> {
+): Promise<ExecutableToolResult> {
   let graceTimer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
 
-  const graceSentinel: Promise<Result> = new Promise((resolve) => {
+  const graceSentinel = new Promise<ExecutableToolResult>((resolve) => {
     const armTimer = (): void => {
       graceTimer = setTimeout(() => {
         resolve({
           output: abortedToolOutput(toolName, signal),
           isError: true,
-        } as unknown as Result);
+        });
       }, ABORT_GRACE_MS);
     };
     if (signal.aborted) {

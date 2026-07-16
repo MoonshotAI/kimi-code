@@ -52,7 +52,8 @@ function tieredBackoffDelay(
   max: number,
   factor: number,
 ): number {
-  return Math.min(base * Math.pow(factor, attempt - 1), max);
+  const raw = Math.min(base * Math.pow(factor, attempt - 1), max);
+  return raw + Math.random() * JITTER_FACTOR * raw;
 }
 
 export function overloadBackoffDelay(attempt: number): number {
@@ -65,12 +66,14 @@ export function rateLimitBackoffDelay(attempt: number): number {
 
 export function isOverloadError(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
-  const statusCode = (error as { statusCode?: unknown }).statusCode;
-  if (typeof statusCode === 'number' && statusCode === 503) return true;
-  const details = (error as { details?: unknown }).details;
-  if (details !== null && typeof details === 'object') {
-    const detailsStatus = (details as { statusCode?: unknown }).statusCode;
-    if (typeof detailsStatus === 'number' && detailsStatus === 503) return true;
+  const statusCode = maybeStatusCode(error);
+  if (typeof statusCode === 'number') {
+    if (statusCode === 503) return true;
+    if (statusCode === 529) return true;
+    if (statusCode === 500) {
+      const message = error instanceof Error ? error.message : String(error);
+      return /overload/i.test(message);
+    }
   }
   return false;
 }

@@ -440,6 +440,13 @@ export class SSHKaos implements Kaos {
   private _home: string;
   private _cwd: string;
   private readonly _envLayers: readonly Record<string, string>[];
+  private _closed: boolean = false;
+
+  private _assertNotClosed(): void {
+    if (this._closed) {
+      throw new KaosError('SSHKaos instance has been closed and is no longer usable.');
+    }
+  }
 
   // Stub: real wiring (probing the remote host via `uname` / `$SHELL` over the
   // SSH transport) is deferred.
@@ -464,10 +471,12 @@ export class SSHKaos implements Kaos {
   }
 
   withCwd(cwd: string): SSHKaos {
+    this._assertNotClosed();
     return new SSHKaos(this._client, this._sftp, this._home, cwd, this._envLayers);
   }
 
   withEnv(env: Record<string, string>): SSHKaos {
+    this._assertNotClosed();
     return new SSHKaos(this._client, this._sftp, this._home, this._cwd, [...this._envLayers, env]);
   }
 
@@ -545,24 +554,29 @@ export class SSHKaos implements Kaos {
   // ── Path operations (sync) ─────────────────────────────────────────
 
   pathClass(): 'posix' | 'win32' {
+    this._assertNotClosed();
     return 'posix';
   }
 
   normpath(path: string): string {
+    this._assertNotClosed();
     return normalize(path);
   }
 
   gethome(): string {
+    this._assertNotClosed();
     return this._home;
   }
 
   getcwd(): string {
+    this._assertNotClosed();
     return this._cwd;
   }
 
   // ── Directory operations (async) ───────────────────────────────────
 
   async chdir(path: string): Promise<void> {
+    this._assertNotClosed();
     let target: string;
     if (isAbsolute(path)) {
       target = path;
@@ -582,6 +596,7 @@ export class SSHKaos implements Kaos {
   }
 
   async stat(path: string, options?: { followSymlinks?: boolean }): Promise<StatResult> {
+    this._assertNotClosed();
     const resolved = this._resolvePath(path);
     const followSymlinks = options?.followSymlinks ?? true;
     // sftpStat / sftpLstat already wrap errors via mapSftpError.
@@ -608,6 +623,7 @@ export class SSHKaos implements Kaos {
   }
 
   async *iterdir(path: string): AsyncGenerator<string> {
+    this._assertNotClosed();
     const resolved = this._resolvePath(path);
     const entries = await sftpReaddir(this._sftp, resolved);
     for (const entry of entries) {
@@ -621,6 +637,7 @@ export class SSHKaos implements Kaos {
     pattern: string,
     options?: { caseSensitive?: boolean },
   ): AsyncGenerator<string> {
+    this._assertNotClosed();
     const resolved = this._resolvePath(path);
     const caseSensitive = options?.caseSensitive ?? true;
     if (!caseSensitive) {
@@ -712,6 +729,7 @@ export class SSHKaos implements Kaos {
   // ── File operations (async) ────────────────────────────────────────
 
   async readBytes(path: string, n?: number): Promise<Buffer> {
+    this._assertNotClosed();
     const resolved = this._resolvePath(path);
     if (n !== undefined) {
       return new Promise<Buffer>((resolve, reject) => {
@@ -735,6 +753,7 @@ export class SSHKaos implements Kaos {
     path: string,
     options?: { encoding?: BufferEncoding; errors?: 'strict' | 'replace' | 'ignore' },
   ): Promise<string> {
+    this._assertNotClosed();
     const encoding = options?.encoding ?? 'utf-8';
     const errors = options?.errors ?? 'strict';
     const data = await sftpReadFile(this._sftp, this._resolvePath(path));
@@ -745,6 +764,7 @@ export class SSHKaos implements Kaos {
     path: string,
     options?: { encoding?: BufferEncoding; errors?: 'strict' | 'replace' | 'ignore' },
   ): AsyncGenerator<string> {
+    this._assertNotClosed();
     // SFTP does not support streaming line reads; read all then split.
     // Match Python's splitlines() semantics: returned lines do NOT include
     // the line terminator, and a trailing newline does not create an extra
@@ -764,6 +784,7 @@ export class SSHKaos implements Kaos {
   }
 
   async writeBytes(path: string, data: Buffer): Promise<number> {
+    this._assertNotClosed();
     await sftpWriteFile(this._sftp, this._resolvePath(path), data);
     return data.length;
   }
@@ -773,6 +794,7 @@ export class SSHKaos implements Kaos {
     data: string,
     options?: { mode?: 'w' | 'a'; encoding?: BufferEncoding },
   ): Promise<number> {
+    this._assertNotClosed();
     const resolved = this._resolvePath(path);
     const mode = options?.mode ?? 'w';
     const encoding = options?.encoding ?? 'utf-8';
@@ -786,6 +808,7 @@ export class SSHKaos implements Kaos {
   }
 
   async mkdir(path: string, options?: { parents?: boolean; existOk?: boolean }): Promise<void> {
+    this._assertNotClosed();
     const resolved = this._resolvePath(path);
     const parents = options?.parents ?? false;
     const existOk = options?.existOk ?? false;
@@ -874,6 +897,7 @@ export class SSHKaos implements Kaos {
         'SSHKaos.exec(): at least one argument (the command to run) is required.',
       );
     }
+    this._assertNotClosed();
     return this._execInternal(args, this._buildExecEnv());
   }
 
@@ -883,6 +907,7 @@ export class SSHKaos implements Kaos {
         'SSHKaos.execWithEnv(): at least one argument (the command to run) is required.',
       );
     }
+    this._assertNotClosed();
     return this._execInternal(args, this._buildExecEnv(env));
   }
 
@@ -953,6 +978,7 @@ export class SSHKaos implements Kaos {
    * Close the SSH connection. After this, the SSHKaos instance is unusable.
    */
   close(): Promise<void> {
+    this._closed = true;
     this._sftp.end();
     const closed = new Promise<void>((resolve) => {
       this._client.once('close', () => resolve());

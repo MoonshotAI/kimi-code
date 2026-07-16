@@ -118,7 +118,7 @@ export type PermissionConfig = z.infer<typeof PermissionConfigSchema>;
 export const LoopControlSchema = z.object({
   maxStepsPerTurn: z.number().int().min(0).optional(),
   maxRetriesPerStep: z.number().int().min(0).optional(),
-  maxRalphIterations: z.number().int().min(-1).optional(),
+  maxRalphIterations: z.number().int().min(-1).optional(), // -1 means unlimited
   reservedContextSize: z.number().int().min(0).optional(),
   compactionTriggerRatio: z.number().min(0.5).max(0.99).optional(),
 });
@@ -219,8 +219,8 @@ export type ServicesConfig = z.infer<typeof ServicesConfigSchema>;
 
 const McpServerCommonFields = {
   enabled: z.boolean().optional(),
-  startupTimeoutMs: z.number().int().min(1).optional(),
-  toolTimeoutMs: z.number().int().min(1).optional(),
+  startupTimeoutMs: z.number().int().min(1).max(300_000).optional(),
+  toolTimeoutMs: z.number().int().min(1).max(300_000).optional(),
   enabledTools: z.array(z.string()).optional(),
   disabledTools: z.array(z.string()).optional(),
 } as const;
@@ -243,9 +243,8 @@ export const McpServerHttpConfigSchema = z.object({
   transport: z.literal('http'),
   url: z.string().url(),
   headers: StringRecordSchema.optional(),
-  // Indirect secret reference: the bearer token is looked up from
-  // `process.env[bearerTokenEnvVar]` at connection time, never committed.
   bearerTokenEnvVar: z.string().min(1).optional(),
+  env: StringRecordSchema.optional(),
   ...McpServerCommonFields,
 });
 
@@ -255,9 +254,8 @@ export const McpServerSseConfigSchema = z.object({
   transport: z.literal('sse'),
   url: z.string().url(),
   headers: StringRecordSchema.optional(),
-  // Indirect secret reference: the bearer token is looked up from
-  // `process.env[bearerTokenEnvVar]` at connection time, never committed.
   bearerTokenEnvVar: z.string().min(1).optional(),
+  env: StringRecordSchema.optional(),
   ...McpServerCommonFields,
 });
 
@@ -275,6 +273,7 @@ export const McpServerConfigSchema = z.preprocess((raw) => {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw;
   const obj = raw as Record<string, unknown>;
   if ('transport' in obj) return obj;
+  if (typeof obj['command'] === 'string' && typeof obj['url'] === 'string') return obj;
   if (typeof obj['command'] === 'string') return { ...obj, transport: 'stdio' };
   if (typeof obj['url'] === 'string') return { ...obj, transport: 'http' };
   return obj;

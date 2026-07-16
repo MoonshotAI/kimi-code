@@ -50,6 +50,7 @@ export class LockFile {
     try {
       const fh = await fs.open(this.path, 'wx'); // O_CREAT | O_EXCL | O_WRONLY
       await fh.writeFile(JSON.stringify({ pid: process.pid, ts: Date.now() }));
+      await fh.sync();
       await fh.close();
       this.markHeld();
       return true;

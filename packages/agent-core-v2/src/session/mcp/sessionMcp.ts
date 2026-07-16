@@ -29,6 +29,12 @@ export interface ISessionMcpService {
 
   /** The session's shared connection manager (built lazily, cached). */
   connectionManager(): McpConnectionManager;
+
+  /**
+   * Approve a ``pending-approval`` MCP server (stdio server sourced
+   * from ``<repoRoot>/.mcp.json``) and start connecting it.
+   */
+  approveServer(name: string): Promise<void>;
 }
 
 export const ISessionMcpService: ServiceIdentifier<ISessionMcpService> =

@@ -81,13 +81,21 @@ export class AuthClientLRU<TClient> {
 
   private digest(auth: ProviderRequestAuth): string {
     const parts: string[] = [];
-    if (auth.apiKey !== undefined) parts.push(`k:${auth.apiKey}`);
-    if (auth.bearerToken !== undefined) parts.push(`b:${auth.bearerToken}`);
+    if (auth.apiKey !== undefined) parts.push(`k:${this.fingerprint(auth.apiKey)}`);
+    if (auth.bearerToken !== undefined) parts.push(`b:${this.fingerprint(auth.bearerToken)}`);
     if (auth.headers !== undefined) {
       const entries = Object.entries(auth.headers).sort(([a], [b]) => a.localeCompare(b));
-      for (const [k, v] of entries) parts.push(`h:${k}=${v}`);
+      for (const [k, v] of entries) parts.push(`h:${k}=${this.fingerprint(v)}`);
     }
     return parts.join('|');
+  }
+
+  private fingerprint(value: string): string {
+    const len = value.length;
+    if (len === 0) return '0::';
+    const first = value.charAt(0);
+    const last = value.charAt(len - 1);
+    return `${len}:${first}...${last}`;
   }
 }
 

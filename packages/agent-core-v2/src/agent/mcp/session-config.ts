@@ -1,9 +1,11 @@
 import type { McpServerConfig } from './config-schema';
 
-import { loadMcpServers } from './config-loader';
+import { loadMcpServersWithSources, type McpConfigSource, type SourcedMcpServerConfig } from './config-loader';
 
 export interface SessionMcpConfig {
   readonly servers: Record<string, McpServerConfig>;
+  /** Per-server origin; ``undefined`` for caller-supplied / plugin servers. */
+  readonly sources?: Record<string, McpConfigSource>;
 }
 
 export interface ResolveSessionMcpConfigInput {
@@ -14,12 +16,18 @@ export interface ResolveSessionMcpConfigInput {
 export async function resolveSessionMcpConfig(
   input: ResolveSessionMcpConfigInput,
 ): Promise<SessionMcpConfig | undefined> {
-  const servers = await loadMcpServers({
+  const sourced = await loadMcpServersWithSources({
     cwd: input.cwd,
     homeDir: input.homeDir,
   });
-  if (Object.keys(servers).length === 0) return undefined;
-  return { servers };
+  if (Object.keys(sourced).length === 0) return undefined;
+  const servers: Record<string, McpServerConfig> = {};
+  const sources: Record<string, McpConfigSource> = {};
+  for (const [name, entry] of Object.entries(sourced)) {
+    servers[name] = entry.config;
+    sources[name] = entry.source;
+  }
+  return { servers, sources };
 }
 
 export function mergeCallerMcpServers(
@@ -34,5 +42,8 @@ export function mergeCallerMcpServers(
       ...base?.servers,
       ...callerServers,
     },
+    sources: base?.sources,
   };
 }
+
+export type { McpConfigSource, SourcedMcpServerConfig };

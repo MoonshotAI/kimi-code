@@ -51,6 +51,7 @@ export class StdioMcpClient implements MCPClient {
   // a server that exits seconds after answering `tools/list`). Replayed when
   // `onUnexpectedClose` registers so the close is never silently dropped.
   private pendingUnexpectedClose: UnexpectedCloseReason | undefined;
+  private unexpectedCloseFired = false;
 
   /** Capacity (in characters) of the stderr tail captured for diagnostics. */
   static readonly stderrBufferCapacity = STDERR_BUFFER_CAPACITY;
@@ -155,6 +156,8 @@ export class StdioMcpClient implements MCPClient {
   private async closeStartedClient(): Promise<void> {
     if (!this.started) return;
     this.started = false;
+    this.client.onclose = undefined;
+    this.client.onerror = undefined;
     await this.client.close();
   }
 
@@ -174,26 +177,25 @@ export class StdioMcpClient implements MCPClient {
       if (this.closed) return;
       if (!this.ready) return;
       const stderr = this.stderrBuffer.snapshot();
-      const reason: UnexpectedCloseReason = {
+      this.fireUnexpectedClose({
         error: this.lastTransportError,
         stderr: stderr.length > 0 ? stderr : undefined,
-      };
-      const listener = this.unexpectedCloseListener;
-      if (listener !== undefined) {
-        listener(reason);
-      } else {
-        // Buffer so a listener registered moments later still sees the close.
-        this.pendingUnexpectedClose = reason;
-      }
+      });
     };
     this.client.onerror = (error) => {
-      // Errors are informational on their own — `_onclose` is what tells us
-      // the transport is gone — so just remember the latest one and let the
-      // close handler decide whether to surface it. During startup the thrown
-      // error from `client.connect()` already carries the message, so this
-      // capture is only load-bearing post-`ready`.
       this.lastTransportError = error;
     };
+  }
+
+  private fireUnexpectedClose(reason: UnexpectedCloseReason): void {
+    if (this.unexpectedCloseFired) return;
+    this.unexpectedCloseFired = true;
+    const listener = this.unexpectedCloseListener;
+    if (listener !== undefined) {
+      listener(reason);
+    } else {
+      this.pendingUnexpectedClose = reason;
+    }
   }
 }
 
@@ -233,13 +235,20 @@ function resolveStdioCwd(configCwd: string | undefined, defaultCwd: string | und
 // MERGED env so a proxy declared only in `config.env` is honored too.
 // `reconcileChildNoProxy` then mirrors a single-casing `NO_PROXY` override onto
 // both casings so it isn't shadowed by the injected value.
+const SENSITIVE_ENV_KEYWORDS = ['TOKEN', 'API_KEY', 'SECRET', 'PASSWORD', 'CREDENTIAL'];
+
+function isSensitiveEnvKey(key: string): boolean {
+  const upper = key.toUpperCase();
+  return SENSITIVE_ENV_KEYWORDS.some((kw) => upper.includes(kw));
+}
+
 export function mergeStdioEnv(
   configEnv?: Record<string, string>,
   parentEnv: Readonly<Record<string, string | undefined>> = process.env,
 ): Record<string, string> {
   const merged: Record<string, string> = {};
   for (const [key, value] of Object.entries(parentEnv)) {
-    if (value !== undefined) merged[key] = value;
+    if (value !== undefined && !isSensitiveEnvKey(key)) merged[key] = value;
   }
   if (configEnv !== undefined) Object.assign(merged, configEnv);
   Object.assign(merged, proxyEnvForChild(merged));

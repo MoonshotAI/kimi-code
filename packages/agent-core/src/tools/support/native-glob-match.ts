@@ -33,9 +33,9 @@ export function tryNativeGlobMatch(
   _options?: { nocase?: boolean },
 ): boolean {
   const m = getNative();
-  if (m?.nativeGlobMatchesAny != null) {
+  if (m?.['nativeGlobMatchesAny'] != null) {
     try {
-      return (m.nativeGlobMatchesAny as (globs: string[], path: string) => boolean)([pattern], value);
+      return (m['nativeGlobMatchesAny'] as (globs: string[], path: string) => boolean)([pattern], value);
     } catch {
       // fall through
     }

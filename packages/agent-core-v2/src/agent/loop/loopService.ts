@@ -336,6 +336,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     request.abort();
     step.controller?.abort(cancellation);
     step.resultControl?.resolve({ type: 'cancelled', reason: cancellation });
+    this.rejectAssignment(request, cancellation);
     return true;
   }
 
@@ -430,7 +431,11 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     result: TurnResult | undefined,
   ): void {
     if (result?.type === 'failed') {
-      ready.reject(result.error);
+      ready.reject(
+        result.error instanceof Error
+          ? result.error
+          : new Error2(ErrorCodes.INTERNAL, String(result.error)),
+      );
     } else if (result?.type === 'cancelled') {
       ready.reject(result.reason instanceof Error ? result.reason : abortError('Turn cancelled'));
     } else {
@@ -536,7 +541,16 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     if (maxSteps !== undefined && maxSteps > 0 && runtime.steps >= maxSteps) {
       throw createMaxStepsExceededError(maxSteps);
     }
-    const batch = runtime.queue.takeNextBatch()!;
+    const batch = runtime.queue.takeNextBatch();
+    if (batch === undefined) {
+      return {
+        result: {
+          type: 'completed',
+          steps: runtime.steps,
+          truncated: runtime.lastStopReason === 'truncated',
+        },
+      };
+    }
     const mutableStep = runtime.job?.steps.get(batch.driver.id);
     if (mutableStep !== undefined) {
       mutableStep.state = 'running';
@@ -848,6 +862,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       await this.hooks.onDidFinishStep.run(context);
     } catch (error) {
       if (isAbortError(error) || signal.aborted) throw error;
+      console.error(error);
     }
     return context.stopTurn;
   }

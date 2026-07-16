@@ -18,7 +18,7 @@ export const LOOP_CONTROL_SECTION = 'loopControl';
 export const LoopControlSchema = z.object({
   maxStepsPerTurn: z.number().int().min(0).optional(),
   maxRetriesPerStep: z.number().int().min(0).optional(),
-  maxRalphIterations: z.number().int().min(-1).optional(),
+  maxRalphIterations: z.number().int().min(-1).optional(), // -1 means unlimited
   reservedContextSize: z.number().int().min(0).optional(),
   compactionTriggerRatio: z.number().min(0.5).max(0.99).optional(),
 });

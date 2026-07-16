@@ -48,6 +48,13 @@ export class McpOAuthService {
   private readonly store: McpOAuthStore;
   private readonly clientLabel: string | undefined;
   private readonly providers = new Map<string, McpOAuthClientProvider>();
+  /**
+   * In-flight OAuth flows keyed by server name. A second `beginAuthorization`
+   * for the same server cancels the previous flow and supersedes its
+   * callback server, so the old listener port is released before the new
+   * one is bound.
+   */
+  private readonly inFlight = new Map<string, BeginAuthorizationResult>();
 
   constructor(options: McpOAuthServiceOptions) {
     this.store = options.store;
@@ -91,6 +98,9 @@ export class McpOAuthService {
     }
 
     provider.resetFlow();
+    // Force PKCE state to be generated up front so the CSRF check in complete()
+    // cannot be bypassed by a flow path that never invokes provider.state().
+    provider.state();
 
     let callbackServer: CallbackServer;
     try {
@@ -138,7 +148,10 @@ export class McpOAuthService {
           timeoutMs: opts.timeoutMs,
         });
         const expectedState = provider.expectedState();
-        if (expectedState !== undefined && state !== expectedState) {
+        if (expectedState === undefined) {
+          throw new Error('OAuth state missing — possible CSRF; refusing token exchange');
+        }
+        if (state !== expectedState) {
           throw new Error('OAuth state mismatch — possible CSRF; refusing token exchange');
         }
         const finalResult = await auth(provider as OAuthClientProvider, {
@@ -157,7 +170,29 @@ export class McpOAuthService {
       provider.resetFlow();
     };
 
-    return { authorizationUrl, complete, cancel };
+    const result: BeginAuthorizationResult = { authorizationUrl, complete, cancel };
+    this.inFlight.set(serverName, result);
+    const clearInFlight = (): void => {
+      const current = this.inFlight.get(serverName);
+      if (current === result) this.inFlight.delete(serverName);
+    };
+    const originalComplete = complete;
+    const originalCancel = cancel;
+    (result as { complete: typeof complete }).complete = async (opts = {}) => {
+      try {
+        return await originalComplete(opts);
+      } finally {
+        clearInFlight();
+      }
+    };
+    (result as { cancel: typeof cancel }).cancel = async () => {
+      try {
+        return await originalCancel();
+      } finally {
+        clearInFlight();
+      }
+    };
+    return result;
   }
 
   invalidate(

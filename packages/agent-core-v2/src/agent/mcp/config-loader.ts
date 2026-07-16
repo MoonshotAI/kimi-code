@@ -16,6 +16,19 @@ export interface McpJsonPaths {
   readonly project: string;
 }
 
+/**
+ * Origin of an MCP server configuration. ``project-root`` configs come
+ * from ``<repoRoot>/.mcp.json`` (typically checked into git) and are
+ * treated as untrusted: their stdio servers require explicit user
+ * approval before kimi-code will spawn them.
+ */
+export type McpConfigSource = 'user' | 'project-root' | 'project';
+
+export interface SourcedMcpServerConfig {
+  readonly config: McpServerConfig;
+  readonly source: McpConfigSource;
+}
+
 export interface ResolveMcpJsonPathsInput {
   readonly cwd: string;
   readonly homeDir?: string;
@@ -28,7 +41,7 @@ export async function resolveMcpJsonPaths(input: ResolveMcpJsonPathsInput): Prom
   return {
     user: join(kimiHome, 'mcp.json'),
     projectRoot: join(projectRoot, '.mcp.json'),
-    project: join(kimiHome, 'mcp-project.json'),
+    project: join(input.cwd, '.kimi-code', 'mcp.json'),
   };
 }
 
@@ -40,20 +53,40 @@ export interface LoadMcpServersInput {
 export async function loadMcpServers(
   input: LoadMcpServersInput,
 ): Promise<Record<string, McpServerConfig>> {
+  const sourced = await loadMcpServersWithSources(input);
+  return Object.fromEntries(Object.entries(sourced).map(([k, v]) => [k, v.config]));
+}
+
+/**
+ * Like {@link loadMcpServers} but tags each entry with its origin so the
+ * connection manager can apply trust policies (e.g. requiring approval
+ * for stdio servers sourced from ``<repoRoot>/.mcp.json``).
+ */
+export async function loadMcpServersWithSources(
+  input: LoadMcpServersInput,
+): Promise<Record<string, SourcedMcpServerConfig>> {
   const paths = await resolveMcpJsonPaths({ cwd: input.cwd, homeDir: input.homeDir });
   const [user, projectRoot, project] = await Promise.all([
     readMcpJson(paths.user),
     readMcpJson(paths.projectRoot, { stdioCwdBase: dirname(paths.projectRoot) }),
     readMcpJson(paths.project),
   ]);
-  return { ...user, ...projectRoot, ...project };
+  const merged: Record<string, SourcedMcpServerConfig> = {};
+  for (const [name, config] of Object.entries(user)) merged[name] = { config, source: 'user' };
+  for (const [name, config] of Object.entries(projectRoot)) merged[name] = { config, source: 'project-root' };
+  for (const [name, config] of Object.entries(project)) merged[name] = { config, source: 'project' };
+  return merged;
 }
+
+const MAX_PROJECT_ROOT_DEPTH = 64;
 
 async function findProjectRoot(cwd: string): Promise<string> {
   const start = normalize(cwd);
   let current = start;
+  let depth = 0;
 
   while (true) {
+    if (depth++ >= MAX_PROJECT_ROOT_DEPTH) return start;
     if (await pathExists(join(current, '.git'))) return current;
     const parent = dirname(current);
     if (parent === current) return start;

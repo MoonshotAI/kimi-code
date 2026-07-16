@@ -139,7 +139,11 @@ export class CloudAppender implements ITelemetryAppender {
     if (this.buffer.length === 0) return;
     const events = this.buffer;
     this.buffer = [];
-    await this.transport.send(events);
+    try {
+      await this.transport.send(events);
+    } catch {
+      this.buffer = [...events, ...this.buffer];
+    }
   }
 
   async shutdown(): Promise<void> {

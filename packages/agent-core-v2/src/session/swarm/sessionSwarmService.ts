@@ -17,6 +17,7 @@ import type { TokenUsage } from '#/app/llmProtocol/usage';
 
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
+import { Disposable } from '#/_base/di/lifecycle';
 import { linkAbortSignal } from '#/_base/utils/abort';
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import { IAgentProfileService } from '#/agent/profile/profile';
@@ -69,7 +70,7 @@ declare module '#/app/event/eventBus' {
 
 const RESUMED_PROFILE_FALLBACK = 'subagent';
 
-export class SessionSwarmService implements ISessionSwarmService {
+export class SessionSwarmService extends Disposable implements ISessionSwarmService {
   declare readonly _serviceBrand: undefined;
 
   private readonly inFlight = new Map<string, AbortController>();
@@ -82,7 +83,9 @@ export class SessionSwarmService implements ISessionSwarmService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ILogService private readonly log: ILogService,
-  ) {}
+  ) {
+    super();
+  }
 
   async getSwarmItem(args: {
     readonly callerAgentId: string;
@@ -127,6 +130,11 @@ export class SessionSwarmService implements ISessionSwarmService {
 
   cancel({ callerAgentId }: { readonly callerAgentId: string }): void {
     this.inFlight.get(callerAgentId)?.abort();
+  }
+
+  override dispose(): void {
+    for (const [, ctrl] of this.inFlight) ctrl.abort();
+    super.dispose();
   }
 
   private async spawnAttempt(

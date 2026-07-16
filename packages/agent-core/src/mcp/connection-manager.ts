@@ -323,7 +323,11 @@ export class McpConnectionManager {
   ): Promise<unknown | undefined> {
     let client: RuntimeMcpClient | undefined;
     try {
-      const startupClient = this.createClient(entry.config, entry.name);
+      const startupClient = await this.createClient(entry.config, entry.name);
+      if (!this.isCurrent(entry, attemptId)) {
+        await this.closeRuntimeClient(startupClient);
+        return undefined;
+      }
       client = startupClient;
       entry.client = startupClient;
       const discovered = await withTimeout(
@@ -413,7 +417,7 @@ export class McpConnectionManager {
     return entry.attemptId;
   }
 
-  private createClient(config: McpServerConfig, name: string): RuntimeMcpClient {
+  private async createClient(config: McpServerConfig, name: string): Promise<RuntimeMcpClient> {
     const toolCallTimeoutMs = config.toolTimeoutMs;
     if (config.transport === 'stdio') {
       return new StdioMcpClient(config, { toolCallTimeoutMs, defaultCwd: this.options.stdioCwd });
@@ -422,29 +426,25 @@ export class McpConnectionManager {
       return new SseMcpClient(config, {
         toolCallTimeoutMs,
         envLookup: this.options.envLookup,
-        oauthProvider: this.resolveOAuthProvider(config, name),
+        oauthProvider: await this.resolveOAuthProvider(config, name),
       });
     }
     return new HttpMcpClient(config, {
       toolCallTimeoutMs,
       envLookup: this.options.envLookup,
-      oauthProvider: this.resolveOAuthProvider(config, name),
+      oauthProvider: await this.resolveOAuthProvider(config, name),
     });
   }
 
-  private resolveOAuthProvider(
+  private async resolveOAuthProvider(
     config: McpServerConfig,
     name: string,
-  ): ReturnType<McpOAuthService['getProvider']> | undefined {
+  ): Promise<ReturnType<McpOAuthService['getProvider']> | undefined> {
     const oauthService = this.oauthService;
     if (oauthService === undefined) return undefined;
     if (!isRemoteMcpConfig(config)) return undefined;
     if (config.bearerTokenEnvVar !== undefined) return undefined;
-    // Only attach the provider once tokens have been minted; before that,
-    // the transport should propagate a clean 401 so we can flip the entry
-    // into `needs-auth` rather than getting tangled in the SDK's auth()
-    // flow (which would try DCR before we have an active redirect URL).
-    if (!oauthService.hasTokens(name, config.url)) return undefined;
+    if (!(await oauthService.hasTokens(name, config.url))) return undefined;
     return oauthService.getProvider(name, config.url);
   }
 
@@ -587,13 +587,22 @@ async function withTimeout<T>(
   onTimeout?: () => void,
 ): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
+  let originalError: unknown;
   try {
     return await new Promise<T>((resolve, reject) => {
       timer = setTimeout(() => {
-        onTimeout?.();
-        reject(new Error(`Timed out after ${timeoutMs}ms`));
+        try {
+          onTimeout?.();
+        } catch {
+          // Suppress — timeout cleanup must not prevent the rejection
+          // from settling the outer promise.
+        }
+        reject(new Error(`Timed out after ${timeoutMs}ms`, { cause: originalError }));
       }, timeoutMs);
-      promise.then(resolve, reject);
+      promise.then(resolve, (err) => {
+        originalError = err;
+        reject(err);
+      });
     });
   } finally {
     if (timer !== undefined) clearTimeout(timer);

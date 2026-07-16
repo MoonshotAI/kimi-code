@@ -142,9 +142,6 @@ export function isRetryableGenerateError(error: unknown): boolean {
   if (error instanceof APIEmptyResponseError) {
     return true;
   }
-  if (error instanceof APIProviderOverloadedError) {
-    return true;
-  }
   if (error instanceof APIStatusError) {
     return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
   }

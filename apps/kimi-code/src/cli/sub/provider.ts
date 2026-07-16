@@ -172,8 +172,12 @@ export async function handleProviderList(
   const config = await harness.getConfig();
 
   if (opts.json) {
+    const cleaned = structuredClone(config.providers);
+    for (const p of Object.values(cleaned)) {
+      delete (p as Record<string, unknown>)['apiKey'];
+    }
     deps.stdout.write(
-      `${JSON.stringify({ providers: config.providers, models: config.models ?? {} }, null, 2)}\n`,
+      `${JSON.stringify({ providers: cleaned, models: config.models ?? {} }, null, 2)}\n`,
     );
     return;
   }

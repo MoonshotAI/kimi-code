@@ -179,11 +179,21 @@ export async function mcpResultToExecutableOutput(
   truncated?: true;
 }> {
   const converted: ContentPart[] = [];
+  let dropped = 0;
+  const droppedTypes: string[] = [];
   for (const block of result.content) {
     const part = convertMCPContentBlock(block);
     if (part !== null) {
       converted.push(part);
+    } else {
+      dropped++;
+      droppedTypes.push(block.type);
     }
+  }
+  if (dropped > 0) {
+    console.debug(
+      `mcpResultToExecutableOutput: dropped ${dropped} unsupported content block(s), types: ${droppedTypes.join(', ')}`,
+    );
   }
 
   const wrapped = wrapMediaOnly(converted, qualifiedToolName);

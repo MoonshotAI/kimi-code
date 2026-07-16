@@ -216,10 +216,11 @@ export class PluginManager {
 
   async remove(id: string): Promise<void> {
     const key = normalizePluginId(id);
+    const record = this.records.get(key);
+    if (record === undefined) throw pluginNotFound(id);
     const next = new Map(this.records);
-    if (!next.delete(key)) {
-      throw pluginNotFound(id);
-    }
+    next.delete(key);
+    await rm(record.root, { recursive: true, force: true }).catch(() => {});
     await this.persist(next);
     this.records = next;
   }

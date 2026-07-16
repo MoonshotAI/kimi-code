@@ -289,6 +289,9 @@ function sessionMcpServiceStub(
     connectionManager: () => {
       throw new Error('not implemented');
     },
+    approveServer: () => {
+      throw new Error('not implemented');
+    },
   };
 }
 

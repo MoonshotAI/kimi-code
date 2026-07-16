@@ -363,6 +363,7 @@ describe('AgentMcpService', () => {
   it('truncates oversized MCP text output through the wrapped tool path', async () => {
     const manager = new FakeMcpManager();
     const client: MCPClient = {
+      async connect() {},
       async listTools() {
         return [
           {
@@ -398,6 +399,7 @@ describe('AgentMcpService', () => {
   it('wraps MCP image output in mcp_tool_result companions through the wrapped tool path', async () => {
     const manager = new FakeMcpManager();
     const client: MCPClient = {
+      async connect() {},
       async listTools() {
         return [
           {
@@ -444,6 +446,7 @@ describe('AgentMcpService', () => {
       await new Jimp({ width: 3600, height: 1800, color: 0x3366ccff }).getBuffer('image/png'),
     ).toString('base64');
     const client: MCPClient = {
+      async connect() {},
       async listTools() {
         return [
           {
@@ -493,6 +496,7 @@ describe('AgentMcpService', () => {
     const manager = new FakeMcpManager();
     let receivedSignal: AbortSignal | undefined;
     const client: MCPClient = {
+      async connect() {},
       async listTools() {
         return [
           {
