@@ -37,15 +37,22 @@ export interface TrayActions {
   quit(): void;
 }
 
-export function createTray(actions: TrayActions): Tray {
-  const image = nativeImage.createFromPath(
-    trayIconPath({
-      platform: process.platform,
-      isPackaged: app.isPackaged,
-      resourcesPath: process.resourcesPath,
-      appPath: app.getAppPath(),
-    }),
-  );
+export function createTray(actions: TrayActions): Tray | null {
+  const iconPath = trayIconPath({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    resourcesPath: process.resourcesPath,
+    appPath: app.getAppPath(),
+  });
+  const image = nativeImage.createFromPath(iconPath);
+  // A missing asset yields an empty image, and `new Tray()` on it would throw
+  // inside the whenReady chain — silently killing the tray AND every
+  // statement after it. Degrade loudly instead. (2026-07: a broken
+  // extraResources glob did exactly this — assets never shipped, no tray.)
+  if (image.isEmpty()) {
+    console.warn('[tray] icon not found, tray disabled:', iconPath);
+    return null;
+  }
   // The macOS asset is an all-white silhouette: hand it to the system as a
   // template image so the menu bar recolors it (black on light themes, white
   // on dark). Windows/Linux keep their colored icon as-is.
