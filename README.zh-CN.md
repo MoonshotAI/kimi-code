@@ -126,6 +126,7 @@ pnpm build      # 构建所有包
 
 - [Issues](https://github.com/MoonshotAI/kimi-code/issues)
 - 安全漏洞反馈，请见 [SECURITY.md](SECURITY.md)。
+- 社区项目：[kimi-skill](https://github.com/ghyghoo8/kimi-skill) —— 把 Kimi Code CLI 当作 headless 子 agent 使用的 Agent Skills。
 
 ## 致谢
 
