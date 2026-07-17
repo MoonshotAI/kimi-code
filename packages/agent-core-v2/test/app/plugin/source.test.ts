@@ -59,6 +59,42 @@ describe('resolveInstallSource', () => {
     });
   });
 
+  it('recognizes a GitLab release URL as a tag ref', () => {
+    expect(
+      resolveInstallSource('https://gitlab.example.com/team/sample/-/releases/v1.2.3'),
+    ).toEqual({
+      kind: 'gitlab',
+      baseUrl: 'https://gitlab.example.com',
+      projectPath: 'team/sample',
+      ref: { kind: 'tag', value: 'v1.2.3' },
+    });
+  });
+
+  it('treats the latest-release permalink as a bare repository URL', () => {
+    expect(
+      resolveInstallSource(
+        'https://gitlab.example.com/team/sample/-/releases/permalink/latest',
+      ),
+    ).toEqual({
+      kind: 'gitlab',
+      baseUrl: 'https://gitlab.example.com',
+      projectPath: 'team/sample',
+    });
+  });
+
+  it.each([
+    [
+      'versioned release asset',
+      'https://gitlab.example.com/team/sample/-/releases/v1/downloads/plugin.zip',
+    ],
+    [
+      'latest release asset',
+      'https://gitlab.example.com/team/sample/-/releases/permalink/latest/downloads/plugin.zip',
+    ],
+  ])('leaves a %s URL as a zip source', (_description, url) => {
+    expect(resolveInstallSource(url)).toEqual({ kind: 'zip-url', path: url });
+  });
+
   it('uses a .git suffix to recognize an arbitrary self-managed hostname', () => {
     expect(resolveInstallSource('https://code.example.com/team/sample.git')).toEqual({
       kind: 'gitlab',

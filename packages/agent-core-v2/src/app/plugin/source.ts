@@ -71,12 +71,17 @@ function parseGitlabUrl(raw: string): ResolvedSource | undefined {
     return { ...base, ref: { kind, value } };
   }
 
-  if (head === 'releases' && rest.length >= 2) {
-    if (rest[1] === 'permalink' && rest[2] === 'latest') return base;
-    return {
-      ...base,
-      ref: { kind: 'tag', value: decodeRefSegments(rest.slice(1)) },
-    };
+  if (head === 'releases') {
+    if (rest.length === 3 && rest[1] === 'permalink' && rest[2] === 'latest') {
+      return base;
+    }
+    if (rest.length === 2) {
+      return {
+        ...base,
+        ref: { kind: 'tag', value: decodeRefSegments(rest.slice(1)) },
+      };
+    }
+    return undefined;
   }
 
   if (head === 'commit' && rest.length >= 2) {

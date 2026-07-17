@@ -301,6 +301,19 @@ describe('resolveInstallSource', () => {
       });
     });
 
+    it.each([
+      [
+        'versioned release asset',
+        'https://gitlab.example.com/team/sample/-/releases/v1/downloads/plugin.zip',
+      ],
+      [
+        'latest release asset',
+        'https://gitlab.example.com/team/sample/-/releases/permalink/latest/downloads/plugin.zip',
+      ],
+    ])('leaves a %s URL as a zip source', (_description, url) => {
+      expect(resolveInstallSource(url)).toEqual({ kind: 'zip-url', path: url });
+    });
+
     it('leaves existing GitLab archive URLs as zip URLs', () => {
       const url =
         'https://gitlab.example.com/team/sample/-/archive/main/sample-main.zip';
