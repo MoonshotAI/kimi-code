@@ -29,8 +29,9 @@ import type {
 import {
   loadWorkspaceNameOverrides,
   safeGetJson,
+  safeGetString,
   safeRemove,
-  safeSetJson,
+  safeSetString,
   saveWorkspaceNameOverrides,
   STORAGE_KEYS,
 } from '../../lib/storage';
@@ -128,10 +129,109 @@ let nextLocalTurnToken = 0;
  * cannot block every later prompt behind it. Module-level singleton — the
  * queue itself is per-session on rawState, so a page reload resets both.
  */
-const queueFlushFailures = new Map<string, number>();
+/**
+ * Consecutive flushQueueHead failures per queue ENTRY (not per session) —
+ * keyed by entry id, falling back to its text for entries without one.
+ * Keying by entry keeps a removed or reordered head from handing its
+ * failure budget down to the next entry.
+ */
+const queueFlushFailures = new Map<string, { key: string; count: number }>();
 const MAX_QUEUE_FLUSH_FAILURES = 3;
 
-type QueuedPromptEntry = { text: string; attachments?: PromptAttachment[] };
+/**
+ * Entries this tab popped and is submitting right now: already out of the
+ * local queue but not yet acknowledged. Cross-tab merges treat these as
+ * removed so an adopt can't bring a submitting entry back early — a failed
+ * submit re-queues it under the SAME id and the merge dedupes.
+ */
+const queueInFlightSubmits = new Map<string, Set<string>>();
+
+/** How long a removal stays remembered in the shared snapshot (per id). */
+const QUEUE_GONE_TTL_MS = 30 * 60 * 1000;
+
+type QueuedPromptEntry = {
+  text: string;
+  attachments?: PromptAttachment[];
+  id?: string;
+  enqueuedAt?: number;
+};
+
+/**
+ * Shared (localStorage) per-session queue snapshot. `gone` is the removal
+ * set — ids this or another tab finished/discarded, with timestamps — and is
+ * what stops a union merge from RESURRECTING an entry a concurrent tab
+ * already flushed or discarded (without it, the tab still holding the entry
+ * would merge it back in and eventually flush it twice).
+ */
+interface SessionQueueSnapshot {
+  entries: QueuedPromptEntry[];
+  gone?: Record<string, number>;
+}
+
+let queueEntryCounter = 0;
+function nextQueueEntryId(): string {
+  queueEntryCounter += 1;
+  return `${Date.now().toString(36)}-${queueEntryCounter}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function pruneGoneMap(gone: Record<string, number> | undefined): Record<string, number> {
+  if (gone === undefined) return {};
+  const cutoff = Date.now() - QUEUE_GONE_TTL_MS;
+  const out: Record<string, number> = {};
+  for (const [id, at] of Object.entries(gone)) {
+    if (at >= cutoff) out[id] = at;
+  }
+  return out;
+}
+
+/** Stable, deterministic order for a session's queue. Manual reorder
+ *  re-stamps enqueuedAt, so a user's drag order survives sorting. */
+function sortQueuedEntries(entries: QueuedPromptEntry[]): QueuedPromptEntry[] {
+  return entries.toSorted(
+    (a, b) => (a.enqueuedAt ?? Number.POSITIVE_INFINITY) - (b.enqueuedAt ?? Number.POSITIVE_INFINITY),
+  );
+}
+
+/**
+ * Union-merge two per-session entry maps by entry id. Merging instead of
+ * last-writer-wins replacement is what keeps two tabs enqueueing different
+ * prompts close together from silently discarding each other's entry: the
+ * tab that lost the storage write still holds its entry in memory, the
+ * adopt merges it back, and the resulting watch write converges both tabs.
+ * Entries without an id (legacy persisted data) dedupe by content. Ids in
+ * `goneBySid` or submitting in this tab are filtered out.
+ */
+function mergeQueuedSnapshots(
+  a: Record<string, QueuedPromptEntry[]>,
+  b: Record<string, QueuedPromptEntry[]>,
+  goneBySid: Record<string, Record<string, number>>,
+): Record<string, QueuedPromptEntry[]> {
+  const out: Record<string, QueuedPromptEntry[]> = {};
+  const sids = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const sid of sids) {
+    const gone = goneBySid[sid] ?? {};
+    const submitting = queueInFlightSubmits.get(sid);
+    const seenIds = new Set<string>();
+    const seenContent = new Set<string>();
+    const merged: QueuedPromptEntry[] = [];
+    for (const entry of [...(a[sid] ?? []), ...(b[sid] ?? [])]) {
+      if (entry.id !== undefined) {
+        if (seenIds.has(entry.id) || gone[entry.id] !== undefined || submitting?.has(entry.id)) {
+          continue;
+        }
+        seenIds.add(entry.id);
+      } else {
+        const contentKey = `${entry.text}\n${JSON.stringify(entry.attachments ?? null)}`;
+        if (seenContent.has(contentKey)) continue;
+        seenContent.add(contentKey);
+      }
+      merged.push(entry);
+    }
+    const sorted = sortQueuedEntries(merged);
+    if (sorted.length > 0) out[sid] = sorted;
+  }
+  return out;
+}
 
 /**
  * The local prompt queue is persisted per session (STORAGE_KEYS.promptQueue)
@@ -142,25 +242,55 @@ type QueuedPromptEntry = { text: string; attachments?: PromptAttachment[] };
  * witnessed turn, and sendPrompt flushes FIFO), so it can never ghost-send
  * just because a session was re-opened.
  */
-function loadQueuedPrompts(): Record<string, QueuedPromptEntry[]> {
+function loadQueueSnapshots(): Record<string, SessionQueueSnapshot> {
   const parsed = safeGetJson<unknown>(STORAGE_KEYS.promptQueue);
   if (!parsed || typeof parsed !== 'object') return {};
-  const out: Record<string, QueuedPromptEntry[]> = {};
-  for (const [sid, entries] of Object.entries(parsed as Record<string, unknown>)) {
-    if (!Array.isArray(entries)) continue;
-    const valid = entries.filter(isQueuedPromptLike);
-    if (valid.length > 0) out[sid] = valid;
+  const out: Record<string, SessionQueueSnapshot> = {};
+  for (const [sid, value] of Object.entries(parsed as Record<string, unknown>)) {
+    // Legacy shape: a bare entry array with no removal set.
+    const raw = Array.isArray(value)
+      ? { entries: value as unknown[] }
+      : (value as { entries?: unknown; gone?: unknown } | null);
+    if (!raw || !Array.isArray(raw.entries)) continue;
+    const entries = raw.entries.filter(isQueuedPromptLike);
+    const gone: Record<string, number> = {};
+    if (raw.gone && typeof raw.gone === 'object') {
+      for (const [id, at] of Object.entries(raw.gone as Record<string, unknown>)) {
+        if (typeof at === 'number') gone[id] = at;
+      }
+    }
+    const pruned = pruneGoneMap(gone);
+    if (entries.length > 0 || Object.keys(pruned).length > 0) {
+      out[sid] = { entries, gone: pruned };
+    }
   }
   return out;
 }
 
 function isQueuedPromptLike(value: unknown): value is QueuedPromptEntry {
   if (!value || typeof value !== 'object') return false;
-  const entry = value as { text?: unknown; attachments?: unknown };
+  const entry = value as { text?: unknown; attachments?: unknown; id?: unknown; enqueuedAt?: unknown };
   if (typeof entry.text !== 'string') return false;
+  if (entry.id !== undefined && typeof entry.id !== 'string') return false;
+  if (entry.enqueuedAt !== undefined && typeof entry.enqueuedAt !== 'number') return false;
   if (entry.attachments === undefined) return true;
   if (!Array.isArray(entry.attachments)) return false;
   return entry.attachments.every(isPromptAttachmentLike);
+}
+
+/** Entries view of the shared snapshots (removal-set ids filtered out). */
+function queuedEntriesFromSnapshots(
+  snapshots: Record<string, SessionQueueSnapshot>,
+): Record<string, QueuedPromptEntry[]> {
+  const out: Record<string, QueuedPromptEntry[]> = {};
+  for (const [sid, snap] of Object.entries(snapshots)) {
+    const gone = snap.gone ?? {};
+    const entries = sortQueuedEntries(
+      snap.entries.filter((entry) => entry.id === undefined || gone[entry.id] === undefined),
+    );
+    if (entries.length > 0) out[sid] = entries;
+  }
+  return out;
 }
 
 function isPromptAttachmentLike(value: unknown): value is PromptAttachment {
@@ -172,13 +302,44 @@ function isPromptAttachmentLike(value: unknown): value is PromptAttachment {
   );
 }
 
-function saveQueuedPrompts(queue: Record<string, QueuedPromptEntry[]>): void {
-  // Drop empty arrays so a fully drained session leaves no key behind.
-  const compact: Record<string, QueuedPromptEntry[]> = {};
-  for (const [sid, entries] of Object.entries(queue)) {
-    if (entries.length > 0) compact[sid] = entries;
+function writeQueueSnapshots(snapshots: Record<string, SessionQueueSnapshot>): void {
+  const out: Record<string, SessionQueueSnapshot> = {};
+  for (const [sid, snap] of Object.entries(snapshots)) {
+    const entries = sortQueuedEntries(snap.entries);
+    const gone = pruneGoneMap(snap.gone);
+    if (entries.length === 0 && Object.keys(gone).length === 0) continue;
+    out[sid] = { entries, ...(Object.keys(gone).length > 0 ? { gone } : {}) };
   }
-  safeSetJson(STORAGE_KEYS.promptQueue, compact);
+  const serialized = JSON.stringify(out);
+  // Skip the write when nothing changed — otherwise two tabs' writes would
+  // ping-pong storage events forever.
+  if (safeGetString(STORAGE_KEYS.promptQueue) === serialized) return;
+  safeSetString(STORAGE_KEYS.promptQueue, serialized);
+}
+
+/** Persist the current in-memory queue, preserving stored removal sets. */
+function saveQueuedPrompts(queue: Record<string, QueuedPromptEntry[]>): void {
+  const stored = loadQueueSnapshots();
+  for (const [sid, snap] of Object.entries(stored)) {
+    snap.entries = queue[sid] ?? [];
+  }
+  for (const [sid, entries] of Object.entries(queue)) {
+    stored[sid] ??= { entries };
+  }
+  writeQueueSnapshots(stored);
+}
+
+/** Read-modify-write the shared removal set for `sid`. */
+function tombstoneQueuedIds(sid: string, ids: Array<string | undefined>): void {
+  const realIds = ids.filter((id): id is string => id !== undefined);
+  if (realIds.length === 0) return;
+  const stored = loadQueueSnapshots();
+  const snap = stored[sid] ?? { entries: [] };
+  const gone = { ...snap.gone };
+  const now = Date.now();
+  for (const id of realIds) gone[id] = now;
+  stored[sid] = { ...snap, gone };
+  writeQueueSnapshots(stored);
 }
 
 export interface LocalTurnStartState {
@@ -359,10 +520,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   } = deps;
   let exportInFlight = false;
 
-  // Hydrate the local prompt queue from storage (see loadQueuedPrompts) so
-  // queued prompts survive a page refresh. Only fills an empty in-memory
-  // queue — a live one is never clobbered.
-  const storedQueue = loadQueuedPrompts();
+  // Hydrate the local prompt queue from storage so queued prompts survive a
+  // page refresh. Only fills an empty in-memory queue — a live one is never
+  // clobbered. Entries already removed elsewhere (in the shared `gone` set)
+  // are filtered out.
+  const storedSnapshots = loadQueueSnapshots();
+  const storedQueue = queuedEntriesFromSnapshots(storedSnapshots);
   if (Object.keys(rawState.queuedBySession).length === 0 && Object.keys(storedQueue).length > 0) {
     rawState.queuedBySession = storedQueue;
   }
@@ -378,15 +541,40 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   );
 
   /**
-   * Multi-tab convergence: adopt the queue another tab just persisted. Unlike
-   * startup hydration this ALWAYS replaces the in-memory queue — the other
-   * tab's write is the newer truth, and adopting it is what stops two tabs
-   * from flushing the same queued prompts twice. (Our own not-yet-persisted
-   * mutation is at most a microtask old and is re-written by the watch right
-   * after, becoming the next newer truth.)
+   * Multi-tab convergence: UNION-merge the queue another tab just persisted
+   * with our own by entry id (never last-writer-wins replacement — that
+   * would silently discard whichever tab lost a concurrent write). Entries
+   * in the shared `gone` set or currently submitting here are left out, so a
+   * flushed/discarded entry can't resurrect and be flushed twice. The watch
+   * above then persists the merged result, converging both tabs.
    */
   function syncQueuedPromptsFromStorage(): void {
-    rawState.queuedBySession = loadQueuedPrompts();
+    const snapshots = loadQueueSnapshots();
+    const goneBySid: Record<string, Record<string, number>> = {};
+    for (const [sid, snap] of Object.entries(snapshots)) {
+      goneBySid[sid] = snap.gone ?? {};
+    }
+    rawState.queuedBySession = mergeQueuedSnapshots(
+      rawState.queuedBySession,
+      queuedEntriesFromSnapshots(snapshots),
+      goneBySid,
+    );
+  }
+
+  /**
+   * Drop a session's queue for good (the facade's session-forget path, e.g.
+   * after archive): every current entry lands in the shared removal set so
+   * another tab's merge can't resurrect it into a session that no longer
+   * exists.
+   */
+  function discardQueuedPrompts(sid: string): void {
+    const current = rawState.queuedBySession[sid] ?? [];
+    tombstoneQueuedIds(sid, current.map((entry) => entry.id));
+    if (rawState.queuedBySession[sid] !== undefined) {
+      const next = { ...rawState.queuedBySession };
+      delete next[sid];
+      rawState.queuedBySession = next;
+    }
   }
 
   async function loadOlderMessages(sessionId: string): Promise<void> {
@@ -1714,6 +1902,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (activity.value === 'idle' && !rawState.inFlightBySession[sid]) {
       const ok = await submitPromptInternal(sid, merged, mergedAttachments);
       if (!ok) restoreQueue();
+      else tombstoneQueuedIds(sid, queue.map((q) => q.id));
       return;
     }
 
@@ -1760,6 +1949,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,
       });
+
+      // The merged queue entries are consumed by this prompt no matter how
+      // the steer below turns out — tombstone them so no other tab
+      // re-flushes them.
+      tombstoneQueuedIds(sid, queue.map((q) => q.id));
 
       // Stamp the real prompt_id onto the optimistic echo. Unlike a normal send,
       // a steered prompt IS echoed back by the daemon as a messageCreated user
@@ -1819,9 +2013,17 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const sid = rawState.activeSessionId;
     if (!sid) return;
     const current = rawState.queuedBySession[sid] ?? [];
+    // The id is the entry's stable identity for cross-tab merge/dedupe; the
+    // timestamp orders merged snapshots (and can be re-stamped by reorder).
+    const entry: QueuedPromptEntry = {
+      text,
+      attachments,
+      id: nextQueueEntryId(),
+      enqueuedAt: Date.now(),
+    };
     rawState.queuedBySession = {
       ...rawState.queuedBySession,
-      [sid]: [...current, { text, attachments }],
+      [sid]: [...current, entry],
     };
   }
 
@@ -1832,23 +2034,46 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * abort); the next turn end or the next idle sendPrompt drives the next
    * attempt. After MAX_QUEUE_FLUSH_FAILURES consecutive failures the entry
    * is dropped instead, so one permanently rejected prompt cannot wedge the
-   * queue. Every failure is already surfaced via pushOperationFailure.
+   * queue. The budget is tracked PER ENTRY (by id), so removing or
+   * reordering the head resets it for the next entry. Every failure is
+   * already surfaced via pushOperationFailure.
+   *
+   * Cross-tab bookkeeping: the popped id is marked in-flight for the whole
+   * submit window so a concurrent adopt can't resurrect it early; success
+   * (or a final drop) moves it into the shared removal set, and a failed
+   * submit re-queues it under the SAME id, which the merge dedupes.
    */
   function flushQueueHead(sid: string): void {
     const [next, ...rest] = rawState.queuedBySession[sid] ?? [];
     if (next === undefined) return;
     rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: rest };
+    if (next.id !== undefined) {
+      const submitting = queueInFlightSubmits.get(sid) ?? new Set<string>();
+      submitting.add(next.id);
+      queueInFlightSubmits.set(sid, submitting);
+    }
     void submitPromptInternal(sid, next.text, next.attachments).then((ok) => {
+      if (next.id !== undefined) {
+        const submitting = queueInFlightSubmits.get(sid);
+        submitting?.delete(next.id);
+        if (submitting?.size === 0) queueInFlightSubmits.delete(sid);
+      }
       if (ok) {
         queueFlushFailures.delete(sid);
+        tombstoneQueuedIds(sid, [next.id]);
         return;
       }
-      const failures = (queueFlushFailures.get(sid) ?? 0) + 1;
-      if (failures >= MAX_QUEUE_FLUSH_FAILURES) {
+      // Per-entry budget: a different head (removed/reordered since) starts
+      // fresh instead of inheriting the previous entry's failures.
+      const key = next.id ?? next.text;
+      const previous = queueFlushFailures.get(sid);
+      const count = previous !== undefined && previous.key === key ? previous.count + 1 : 1;
+      if (count >= MAX_QUEUE_FLUSH_FAILURES) {
         queueFlushFailures.delete(sid);
+        tombstoneQueuedIds(sid, [next.id]);
         return;
       }
-      queueFlushFailures.set(sid, failures);
+      queueFlushFailures.set(sid, { key, count });
       const current = rawState.queuedBySession[sid] ?? [];
       rawState.queuedBySession = {
         ...rawState.queuedBySession,
@@ -2581,6 +2806,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (!sid) return;
     const current = rawState.queuedBySession[sid] ?? [];
     if (index < 0 || index >= current.length) return;
+    // Tombstone first so a concurrent cross-tab merge can't resurrect it.
+    tombstoneQueuedIds(sid, [current[index]?.id]);
     const next = [...current];
     next.splice(index, 1);
     rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: next };
@@ -2589,6 +2816,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   /**
    * Move a queued message within the active session's queue (drag-to-reorder).
    * Defensive: no-op if indices are equal, out of range, or no active session.
+   * Re-stamps enqueuedAt in display order — the merge sorts by it, so the
+   * user's order survives cross-tab adoption.
    */
   function reorderQueue(from: number, to: number): void {
     const sid = rawState.activeSessionId;
@@ -2600,7 +2829,11 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const [moved] = next.splice(from, 1);
     if (moved === undefined) return;
     next.splice(to, 0, moved);
-    rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: next };
+    const base = Date.now();
+    rawState.queuedBySession = {
+      ...rawState.queuedBySession,
+      [sid]: next.map((entry, index) => ({ ...entry, enqueuedAt: base + index })),
+    };
   }
 
   /**
@@ -2797,6 +3030,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     unqueue,
     reorderQueue,
     syncQueuedPromptsFromStorage,
+    discardQueuedPrompts,
     abortCurrentPrompt,
     respondApproval,
     respondQuestion,

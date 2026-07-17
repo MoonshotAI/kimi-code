@@ -296,10 +296,15 @@ export type PromptAttachment = {
 };
 
 /** A prompt waiting for the session to go idle. Keeps the uploaded
-    fileIds so attachments survive queueing (not just the text). */
+    fileIds so attachments survive queueing (not just the text). The id is
+    the entry's stable identity for cross-tab merge/dedupe; enqueuedAt orders
+    merged snapshots and is re-stamped on manual reorder. Both are assigned
+    at enqueue time and persisted. */
 interface QueuedPrompt {
   text: string;
   attachments?: PromptAttachment[];
+  id?: string;
+  enqueuedAt?: number;
 }
 
 export interface ExtendedState extends KimiClientState {
@@ -625,9 +630,10 @@ function forgetSession(sessionId: string): void {
   // In-flight / queued prompt state: drop these too so a queued follow-up
   // can't be submitted to a session that was just archived when its turn later
   // ends (onMainTurnEnd drains queuedBySession[sid] without re-checking
-  // that the session still exists).
+  // that the session still exists). discardQueuedPrompts also tombstones the
+  // entries in the shared snapshot so another tab can't merge them back.
   forgetLocalTurnState(sessionId);
-  delete rawState.queuedBySession[sessionId];
+  workspaceState.discardQueuedPrompts(sessionId);
   delete rawState.promptIdBySession[sessionId];
   delete rawState.inFlightBySession[sessionId];
   delete rawState.turnActiveBySession[sessionId];

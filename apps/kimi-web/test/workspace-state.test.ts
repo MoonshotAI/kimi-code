@@ -959,7 +959,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
     // 'running'), sendPrompt queues rather than posting immediately.
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
     expect(state.queuedBySession['sess_1']).toEqual([
-      { text: 'improve test coverage', attachments: undefined },
+      expect.objectContaining({ text: 'improve test coverage', attachments: undefined }),
     ]);
   });
 
@@ -1574,7 +1574,9 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
 
     expect(state.inFlightBySession.sess_1).toBe(true);
     expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(state.queuedBySession.sess_1).toEqual([{ text: 'next', attachments: undefined }]);
+    expect(state.queuedBySession.sess_1).toEqual([
+      expect.objectContaining({ text: 'next', attachments: undefined }),
+    ]);
   });
 
   it('drains one queued prompt when only background work remains', async () => {
@@ -1644,7 +1646,9 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       'sess_1',
       expect.objectContaining({ content: [{ type: 'text', text: 'stuck queued' }] }),
     );
-    expect(state.queuedBySession.sess_1).toEqual([{ text: 'next', attachments: undefined }]);
+    expect(state.queuedBySession.sess_1).toEqual([
+      expect.objectContaining({ text: 'next', attachments: undefined }),
+    ]);
   });
 
   it('re-queues a failed flush at the head and drops it after repeated failures', async () => {
@@ -1853,57 +1857,237 @@ describe('useWorkspaceState — prompt queue persistence', () => {
     // way the facade wraps rawState in production.
     const state = reactive(createState());
     const ws = useWorkspaceState(state, deps());
+    const readStored = () =>
+      JSON.parse(localStorage.getItem(STORAGE_KEYS.promptQueue) ?? '{}') as Record<
+        string,
+        { entries: Array<Record<string, unknown>>; gone?: Record<string, number> }
+      >;
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-    // A send while the session is running lands in the queue AND in storage.
+    // A send while the session is running lands in the queue AND in storage,
+    // stamped with a stable id for cross-tab merge/dedupe.
     await ws.sendPrompt('queued while running', [{ fileId: 'f_q', kind: 'image' }]);
     await nextTick();
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.promptQueue)!)).toEqual({
-      sess_1: [{ text: 'queued while running', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
-    });
+    let stored = readStored();
+    expect(
+      stored.sess_1?.entries.map((e) => ({ text: e.text, attachments: e.attachments })),
+    ).toEqual([{ text: 'queued while running', attachments: [{ fileId: 'f_q', kind: 'image' }] }]);
+    const firstId = stored.sess_1?.entries[0]?.id as string;
+    expect(firstId).toBeTruthy();
 
-    // A witnessed turn end flushes the head — the persisted queue drains too.
+    // A witnessed turn end flushes the head — the entry leaves the stored
+    // queue and its id lands in the shared removal set.
     ws.finishPromptLocal('sess_1', { turnWasActive: true });
     await nextTick();
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.promptQueue)!)).toEqual({});
+    await settle();
+    stored = readStored();
+    expect(stored.sess_1?.entries ?? []).toEqual([]);
+    expect(Object.keys(stored.sess_1?.gone ?? {})).toEqual([firstId]);
 
-    // Deleting a session key (the facade's session-forget path) syncs via the
-    // same deep watch.
+    // The facade's session-forget path discards the queue too.
     state.queuedBySession = {
       sess_1: [{ text: 'a', attachments: undefined }],
       sess_2: [{ text: 'b', attachments: undefined }],
     };
     await nextTick();
-    delete state.queuedBySession.sess_1;
+    ws.discardQueuedPrompts('sess_1');
     await nextTick();
-    expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.promptQueue)!)).toEqual({
-      sess_2: [{ text: 'b' }],
-    });
+    stored = readStored();
+    expect(stored.sess_2?.entries.map((e) => e.text)).toEqual(['b']);
+    expect(stored.sess_1?.entries ?? []).toEqual([]);
   });
 
-  it('adopts the queue another tab persisted, so two tabs never flush the same entries twice', () => {
-    const state = createState();
-    state.queuedBySession = { sess_1: [{ text: 'stale local', attachments: undefined }] };
+  it('union-merges a queue another tab persisted instead of discarding concurrent entries', async () => {
+    const state = reactive(createState());
+    state.queuedBySession = {
+      sess_1: [{ text: 'from tab A', attachments: undefined, id: 'id-a', enqueuedAt: 1000 }],
+    };
     const ws = useWorkspaceState(state, deps());
 
-    // Simulate another tab flushing part of the queue and persisting the rest.
+    // Tab B persisted its own entry close in time — tab A's write lost the
+    // race in storage, but A's entry must not be silently discarded.
     localStorage.setItem(
       STORAGE_KEYS.promptQueue,
-      JSON.stringify({ sess_1: [{ text: 'newer from tab B' }] }),
+      JSON.stringify({
+        sess_1: {
+          entries: [{ text: 'from tab B', attachments: undefined, id: 'id-b', enqueuedAt: 2000 }],
+        },
+      }),
     );
     ws.syncQueuedPromptsFromStorage();
 
-    expect(state.queuedBySession).toEqual({ sess_1: [{ text: 'newer from tab B' }] });
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['from tab A', 'from tab B']);
+    await nextTick();
+    // The merged queue converges back into storage for tab B to adopt.
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEYS.promptQueue)!) as Record<
+      string,
+      { entries: Array<{ text: string }> }
+    >;
+    expect(stored.sess_1?.entries.map((e) => e.text)).toEqual(['from tab A', 'from tab B']);
   });
 
-  it('clears the in-memory queue when another tab drained it', () => {
+  it('drops entries the shared removal set says another tab already flushed', () => {
     const state = createState();
-    state.queuedBySession = { sess_1: [{ text: 'stale local', attachments: undefined }] };
+    state.queuedBySession = {
+      sess_1: [{ text: 'stale local', attachments: undefined, id: 'id-x', enqueuedAt: 1000 }],
+    };
     const ws = useWorkspaceState(state, deps());
 
-    localStorage.setItem(STORAGE_KEYS.promptQueue, JSON.stringify({}));
+    localStorage.setItem(
+      STORAGE_KEYS.promptQueue,
+      JSON.stringify({ sess_1: { entries: [], gone: { 'id-x': Date.now() } } }),
+    );
     ws.syncQueuedPromptsFromStorage();
 
-    expect(state.queuedBySession).toEqual({});
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
+  it('hydrates the v2 snapshot shape and filters entries already removed elsewhere', () => {
+    localStorage.setItem(
+      STORAGE_KEYS.promptQueue,
+      JSON.stringify({
+        sess_1: {
+          entries: [
+            { text: 'kept', id: 'id-keep', enqueuedAt: 1 },
+            { text: 'gone', id: 'id-gone', enqueuedAt: 2 },
+          ],
+          gone: { 'id-gone': Date.now() },
+        },
+      }),
+    );
+    const state = createState();
+    useWorkspaceState(state, deps());
+
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['kept']);
+  });
+
+  it('does not resurrect an entry this tab already flushed when adopting a stale snapshot', async () => {
+    const state = reactive(createState());
+    state.queuedBySession = {
+      sess_1: [{ text: 'mine', attachments: undefined, id: 'id-mine', enqueuedAt: 1000 }],
+    };
+    const ws = useWorkspaceState(state, deps());
+
+    // This tab flushes its entry successfully...
+    ws.finishPromptLocal('sess_1', { turnWasActive: true });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+
+    // ...but a snapshot from another tab (written with the removal set
+    // preserved) still holds the entry. It must not resurrect and flush twice.
+    localStorage.setItem(
+      STORAGE_KEYS.promptQueue,
+      JSON.stringify({
+        sess_1: {
+          entries: [{ text: 'mine', attachments: undefined, id: 'id-mine', enqueuedAt: 1000 }],
+          gone: { 'id-mine': Date.now() },
+        },
+      }),
+    );
+    ws.syncQueuedPromptsFromStorage();
+
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
+  it('keeps a submitting entry out of adopted snapshots until its submit resolves', async () => {
+    let rejectSubmit!: (err: Error) => void;
+    apiMock.submitPrompt.mockImplementation(
+      () =>
+        new Promise<{ promptId: string }>((_resolve, reject) => {
+          rejectSubmit = reject;
+        }),
+    );
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [{ text: 'submitting', attachments: undefined, id: 'id-busy', enqueuedAt: 1000 }],
+    };
+    const ws = useWorkspaceState(state, deps());
+
+    ws.finishPromptLocal('sess_1', { turnWasActive: true });
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+
+    // A stale snapshot still containing the entry must not bring it back
+    // while its submit is in flight.
+    localStorage.setItem(
+      STORAGE_KEYS.promptQueue,
+      JSON.stringify({
+        sess_1: {
+          entries: [{ text: 'submitting', attachments: undefined, id: 'id-busy', enqueuedAt: 1000 }],
+        },
+      }),
+    );
+    ws.syncQueuedPromptsFromStorage();
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+
+    // The submit fails: the entry is re-queued ONCE under the same id, and a
+    // follow-up adopt still holds exactly one copy (dedupe by id).
+    rejectSubmit(new Error('turn.agent_busy'));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['submitting']);
+    ws.syncQueuedPromptsFromStorage();
+    expect(state.queuedBySession.sess_1?.length).toBe(1);
+  });
+
+  it('resets the flush failure budget when the queue head changes', async () => {
+    apiMock.submitPrompt.mockRejectedValue(new Error('turn.agent_busy'));
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first', attachments: undefined, id: 'id-first', enqueuedAt: 1 },
+        { text: 'second', attachments: undefined, id: 'id-second', enqueuedAt: 2 },
+      ],
+    };
+    const ws = useWorkspaceState(state, deps());
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const flushOnce = async () => {
+      state.inFlightBySession = { sess_1: true };
+      ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+      await settle();
+    };
+
+    // 'first' fails once, then the user discards it.
+    await flushOnce();
+    ws.unqueue(0);
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['second']);
+
+    // 'second' gets its OWN budget: two failures leave it queued...
+    await flushOnce();
+    await flushOnce();
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['second']);
+    // ...and only the third consecutive failure drops it.
+    await flushOnce();
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
+  it('keeps a manual reorder stable across cross-tab adoption', () => {
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'a', attachments: undefined, id: 'id-a', enqueuedAt: 1 },
+        { text: 'b', attachments: undefined, id: 'id-b', enqueuedAt: 2 },
+      ],
+    };
+    const ws = useWorkspaceState(state, deps());
+
+    ws.reorderQueue(1, 0);
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['b', 'a']);
+
+    // Adopting an older snapshot must not un-reorder: reorder re-stamps
+    // enqueuedAt, and the merge sorts by it (dedupe by id).
+    localStorage.setItem(
+      STORAGE_KEYS.promptQueue,
+      JSON.stringify({
+        sess_1: {
+          entries: [
+            { text: 'a', attachments: undefined, id: 'id-a', enqueuedAt: 1 },
+            { text: 'b', attachments: undefined, id: 'id-b', enqueuedAt: 2 },
+          ],
+        },
+      }),
+    );
+    ws.syncQueuedPromptsFromStorage();
+
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['b', 'a']);
   });
 });
 
