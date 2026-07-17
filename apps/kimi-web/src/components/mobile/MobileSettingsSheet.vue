@@ -22,9 +22,11 @@ import {
 import BottomSheet from '../dialogs/BottomSheet.vue';
 import LanguageSwitcher from '../settings/LanguageSwitcher.vue';
 import { formatTokens } from '../../lib/formatTokens';
+import { CODE_FONT_CANDIDATES, UI_FONT_CANDIDATES, installedCandidates } from '../../lib/fontCandidates';
 import Button from '../ui/Button.vue';
 import Input from '../ui/Input.vue';
 import SegmentedControl from '../ui/SegmentedControl.vue';
+import Select from '../ui/Select.vue';
 
 const { t } = useI18n();
 
@@ -89,6 +91,49 @@ function onUiFontFamily(v: string): void {
 
 function onCodeFontFamily(v: string): void {
   emit('setCodeFontFamily', v as CodeFontFamily);
+}
+
+// Custom font dropdowns: the browser cannot enumerate installed fonts, so the
+// select probes a curated candidate list (lib/fontCandidates) and offers the
+// installed ones; the last option reveals a free-text input for unlisted
+// faces. A stored name that is not detected is kept as a select option so the
+// current value always renders.
+const MANUAL_FONT_VALUE = '__manual__';
+
+const uiFontManual = ref(false);
+const codeFontManual = ref(false);
+
+const uiFontOptions = computed<string[]>(() => {
+  const installed = installedCandidates(UI_FONT_CANDIDATES);
+  const current = props.uiCustomFont.trim();
+  return current !== '' && !installed.includes(current) ? [current, ...installed] : installed;
+});
+
+const codeFontOptions = computed<string[]>(() => {
+  const installed = installedCandidates(CODE_FONT_CANDIDATES);
+  const current = props.codeCustomFont.trim();
+  return current !== '' && !installed.includes(current) ? [current, ...installed] : installed;
+});
+
+const uiFontSelectValue = computed(() => (uiFontManual.value ? MANUAL_FONT_VALUE : props.uiCustomFont));
+const codeFontSelectValue = computed(() => (codeFontManual.value ? MANUAL_FONT_VALUE : props.codeCustomFont));
+
+function onUiFontSelect(value: string): void {
+  if (value === MANUAL_FONT_VALUE) {
+    uiFontManual.value = true;
+    return;
+  }
+  uiFontManual.value = false;
+  emit('setUiCustomFont', value);
+}
+
+function onCodeFontSelect(value: string): void {
+  if (value === MANUAL_FONT_VALUE) {
+    codeFontManual.value = true;
+    return;
+  }
+  codeFontManual.value = false;
+  emit('setCodeCustomFont', value);
 }
 
 const PERM_MODES: PermissionMode[] = ['manual', 'auto', 'yolo'];
@@ -405,11 +450,29 @@ watch(
         <span class="srow-label">{{ t('theme.fontCustomLabel') }}</span>
       </span>
       <span class="font-input">
+        <Select
+          size="sm"
+          :model-value="uiFontSelectValue"
+          :aria-label="t('theme.fontCustomLabel')"
+          @update:model-value="onUiFontSelect"
+        >
+          <option value="" disabled>{{ t('theme.fontCustomSelect') }}</option>
+          <option v-for="name in uiFontOptions" :key="name" :value="name">{{ name }}</option>
+          <option :value="MANUAL_FONT_VALUE">{{ t('theme.fontCustomManual') }}</option>
+        </Select>
+      </span>
+    </div>
+
+    <div v-if="uiFontFamily === 'custom' && uiFontManual" class="srow read-only pref">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('theme.fontCustomManualLabel') }}</span>
+      </span>
+      <span class="font-input">
         <Input
           size="sm"
           :model-value="uiCustomFont"
           :placeholder="t('theme.fontCustomPlaceholder')"
-          :aria-label="t('theme.fontCustomLabel')"
+          :aria-label="t('theme.fontCustomManualLabel')"
           @update:model-value="emit('setUiCustomFont', $event)"
         />
       </span>
@@ -435,11 +498,29 @@ watch(
         <span class="srow-label">{{ t('theme.codeFontCustomLabel') }}</span>
       </span>
       <span class="font-input">
+        <Select
+          size="sm"
+          :model-value="codeFontSelectValue"
+          :aria-label="t('theme.codeFontCustomLabel')"
+          @update:model-value="onCodeFontSelect"
+        >
+          <option value="" disabled>{{ t('theme.fontCustomSelect') }}</option>
+          <option v-for="name in codeFontOptions" :key="name" :value="name">{{ name }}</option>
+          <option :value="MANUAL_FONT_VALUE">{{ t('theme.fontCustomManual') }}</option>
+        </Select>
+      </span>
+    </div>
+
+    <div v-if="codeFontFamily === 'custom' && codeFontManual" class="srow read-only pref">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('theme.fontCustomManualLabel') }}</span>
+      </span>
+      <span class="font-input">
         <Input
           size="sm"
           :model-value="codeCustomFont"
           :placeholder="t('theme.fontCustomPlaceholder')"
-          :aria-label="t('theme.codeFontCustomLabel')"
+          :aria-label="t('theme.fontCustomManualLabel')"
           @update:model-value="emit('setCodeCustomFont', $event)"
         />
       </span>

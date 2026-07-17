@@ -14,6 +14,10 @@ export default {
   fontCustomLabel: 'Custom UI font',
   fontCustomHint: 'Locally installed font name(s)',
   fontCustomPlaceholder: 'e.g. Maple Mono NF CN',
+  fontCustomSelect: 'Choose installed font',
+  fontCustomManual: 'Enter manually…',
+  fontCustomManualLabel: 'Custom font name',
+  fontCustomManualHint: 'Comma-separated names OK',
   codeFontLabel: 'Code font',
   codeFontCustomLabel: 'Custom code font',
 } as const;

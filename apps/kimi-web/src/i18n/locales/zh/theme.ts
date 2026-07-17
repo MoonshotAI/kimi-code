@@ -14,6 +14,10 @@ export default {
   fontCustomLabel: '自定义界面字体',
   fontCustomHint: '本机已安装的字体名称',
   fontCustomPlaceholder: '例如 Maple Mono NF CN',
+  fontCustomSelect: '选择已装字体',
+  fontCustomManual: '手动输入…',
+  fontCustomManualLabel: '自定义字体名称',
+  fontCustomManualHint: '可用逗号分隔多个字体',
   codeFontLabel: '代码字体',
   codeFontCustomLabel: '自定义代码字体',
 } as const;
