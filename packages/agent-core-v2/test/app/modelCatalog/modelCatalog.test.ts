@@ -467,6 +467,7 @@ describe('ModelCatalogService', () => {
         displayName: 'Old K2',
       },
     };
+    backing.defaultModel = 'my-kimi/kimi-k2';
     const fetchMock = vi.fn(
       async () =>
         new Response(
@@ -509,5 +510,49 @@ describe('ModelCatalogService', () => {
     });
     expect(backing.models['my-kimi/kimi-k2']?.displayName).toBe('Fresh K2');
     expect(backing.models['my-kimi/kimi-k2.5']).toBeDefined();
+    // The surviving default selection is written back, not cleared.
+    expect(backing.defaultModel).toBe('my-kimi/kimi-k2');
+  });
+
+  it('refreshProviderModels clears a stale defaultModel whose alias upstream dropped', async () => {
+    const baseUrl = 'https://api.managed.example.test/coding/v1';
+    vi.stubEnv('KIMI_CODE_BASE_URL', baseUrl);
+    backing.providers = {
+      'my-kimi': { type: 'kimi', baseUrl, apiKey: 'sk-distributed-key' },
+    };
+    backing.models = {
+      'my-kimi/kimi-k2': {
+        provider: 'my-kimi',
+        model: 'kimi-k2',
+        maxContextSize: 262144,
+        displayName: 'Old K2',
+      },
+    };
+    backing.defaultModel = 'my-kimi/kimi-k2';
+    backing.thinking = { enabled: true };
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            data: [{ id: 'kimi-k3', context_length: 1048576, supports_reasoning: true }],
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await catalog().refreshProviderModels({ scope: 'all' });
+
+    expect(result.failed).toEqual([]);
+    expect(result.changed).toEqual([
+      { provider_id: 'my-kimi', provider_name: 'my-kimi', added: 1, removed: 1 },
+    ]);
+    // The dropped alias was the default: an explicit undefined in the patch
+    // must clear the section instead of leaving the default dangling.
+    expect(configSet).toHaveBeenCalledWith('defaultModel', undefined);
+    expect(backing.defaultModel).toBeUndefined();
+    expect(backing.thinking).toBeUndefined();
+    expect(backing.models['my-kimi/kimi-k3']).toBeDefined();
+    expect(backing.models['my-kimi/kimi-k2']).toBeUndefined();
   });
 });

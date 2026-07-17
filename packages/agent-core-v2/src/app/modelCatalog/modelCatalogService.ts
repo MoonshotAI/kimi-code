@@ -201,10 +201,15 @@ export class ModelCatalogService implements IModelCatalogService {
     if (patch.models !== undefined) {
       await this.config.replace(MODELS_SECTION, patch.models);
     }
-    if (patch.defaultModel !== undefined) {
+    // The refresh orchestrator always sends all four keys, so key presence is
+    // the write intent and an explicit `undefined` means CLEAR, not "leave
+    // alone" — otherwise a default model (and its thinking setting) whose
+    // alias the upstream dropped would dangle in the user config forever,
+    // since `removeProviderForRefresh` only replaces providers/models.
+    if ('defaultModel' in patch) {
       await this.config.set(DEFAULT_MODEL_SECTION, patch.defaultModel);
     }
-    if (patch.thinking !== undefined) {
+    if ('thinking' in patch) {
       await this.config.set(THINKING_SECTION, patch.thinking);
     }
     return this.readUserConfigShape();
