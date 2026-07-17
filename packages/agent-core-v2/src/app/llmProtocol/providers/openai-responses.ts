@@ -1,8 +1,10 @@
 import {
   APIContextOverflowError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   ChatProviderError,
   isContextOverflowErrorCode,
+  isQuotaExhaustedStatusError,
 } from '../errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '../message';
 import { extractText, isToolDeclarationOnlyMessage } from '../message';
@@ -241,6 +243,9 @@ function errorFromOpenAIResponsesEvent(
   const fullMessage = `${prefix}: ${formatted}`;
   if (isContextOverflowErrorCode(code)) {
     return new APIContextOverflowError(400, fullMessage);
+  }
+  if (isQuotaExhaustedStatusError(429, fullMessage, { errorCode: code })) {
+    return new APIProviderQuotaExhaustedError(fullMessage);
   }
   if (code === 'rate_limit_exceeded' || readEmbeddedStatusCode(message) === 429) {
     return new APIProviderRateLimitError(fullMessage);

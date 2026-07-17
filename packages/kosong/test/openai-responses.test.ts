@@ -1,8 +1,10 @@
 import {
   APIContextOverflowError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   APIStatusError,
   ChatProviderError,
+  isRetryableGenerateError,
 } from '#/errors';
 import { generate } from '#/generate';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
@@ -2006,6 +2008,62 @@ describe('OpenAIResponsesChatProvider', () => {
       expect(caughtError).toBeInstanceOf(APIProviderRateLimitError);
       expect((caughtError as APIProviderRateLimitError).statusCode).toBe(429);
       expect((caughtError as Error).message).toContain('status_code=429');
+    });
+
+    it('fails fast on response.failed with an insufficient_quota code', async () => {
+      // Quota exhaustion arriving as a Responses stream event carries no HTTP
+      // status; without the structured-code check it would fall through to the
+      // base ChatProviderError, whose unclassified fallback is retryable — and
+      // burn the whole retry budget on an error that cannot succeed.
+      const events = [
+        {
+          type: 'response.failed',
+          response: {
+            id: 'resp_quota',
+            status: 'failed',
+            error: {
+              code: 'insufficient_quota',
+              message: 'You exceeded your current quota, please check your plan and billing details.',
+            },
+          },
+        },
+      ];
+      const stream = new OpenAIResponsesStreamedMessage(makeAsyncIterable(events), true);
+
+      let caughtError: unknown;
+      try {
+        await collectStreamParts(stream);
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(APIProviderQuotaExhaustedError);
+      expect((caughtError as APIProviderQuotaExhaustedError).statusCode).toBe(429);
+      expect(isRetryableGenerateError(caughtError)).toBe(false);
+    });
+
+    it('classifies an embedded status_code=429 with billing wording as quota exhausted', async () => {
+      const events = [
+        {
+          type: 'error',
+          code: 'upstream_error',
+          message:
+            'llmproxy/openai/responses/resp_q.json status_code=429 Your account is suspended due to insufficient balance, please recharge your account',
+          param: null,
+        },
+      ];
+      const stream = new OpenAIResponsesStreamedMessage(makeAsyncIterable(events), true);
+
+      let caughtError: unknown;
+      try {
+        await collectStreamParts(stream);
+      } catch (error) {
+        caughtError = error;
+      }
+
+      expect(caughtError).toBeInstanceOf(APIProviderQuotaExhaustedError);
+      expect(caughtError).not.toBeInstanceOf(APIProviderRateLimitError);
+      expect(isRetryableGenerateError(caughtError)).toBe(false);
     });
 
     it('rejects malformed stream events with a non-string type even when message is present', async () => {

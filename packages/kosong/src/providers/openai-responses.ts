@@ -1,8 +1,10 @@
 import {
   APIContextOverflowError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   ChatProviderError,
   isContextOverflowErrorCode,
+  isQuotaExhaustedStatusError,
 } from '#/errors';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { extractText, isToolDeclarationOnlyMessage } from '#/message';
@@ -250,6 +252,15 @@ function errorFromOpenAIResponsesEvent(
   const fullMessage = `${prefix}: ${formatted}`;
   if (isContextOverflowErrorCode(code)) {
     return new APIContextOverflowError(400, fullMessage);
+  }
+  // Quota/balance exhaustion first — otherwise an `insufficient_quota` event
+  // falls through to the base ChatProviderError (whose unclassified fallback
+  // is retryable), and a quota message with an embedded status_code=429 would
+  // classify as a retryable rate limit. Responses stream events carry no HTTP
+  // status, so the 429 passed here only satisfies the predicate's status gate
+  // while the event code / billing wording carries the actual evidence.
+  if (isQuotaExhaustedStatusError(429, fullMessage, { errorCode: code })) {
+    return new APIProviderQuotaExhaustedError(fullMessage);
   }
   if (code === 'rate_limit_exceeded' || readEmbeddedStatusCode(message) === 429) {
     return new APIProviderRateLimitError(fullMessage);

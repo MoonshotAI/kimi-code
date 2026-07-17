@@ -96,6 +96,27 @@ describe('OpenAI Responses rate-limit conversion', () => {
 
     await expect(consume(stream)).rejects.toBeInstanceOf(APIProviderRateLimitError);
   });
+
+  it('fails fast on a streamed insufficient_quota error event', async () => {
+    const stream = new OpenAIResponsesStreamedMessage(
+      streamEvents([
+        {
+          type: 'error',
+          code: 'insufficient_quota',
+          message: 'You exceeded your current quota, please check your plan and billing details.',
+          param: null,
+        },
+      ]),
+      true,
+    );
+
+    const caught = await consume(stream).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(caught).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(caught)).toBe(false);
+  });
 });
 
 describe('OpenAI quota-exhausted 429 conversion', () => {
