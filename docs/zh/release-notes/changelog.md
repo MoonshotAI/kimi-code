@@ -506,14 +506,14 @@ outline: 2
 
 ### 新功能
 
-- TUI 新增 shell 模式。在输入框中键入 `!` 即可启用。对于长时间运行的命令，按 `Ctrl+B` 可将其移至后台。例如，你可以运行 `!gh auth login` 登录 GitHub CLI，无需打开新的终端。
+- TUI 新增 shell 模式。在输入框中键入 `!` 即可启用。对于长时间运行的命令，按 `Ctrl+B` 可将其移至后台。
 - CLI 新增 `--host` 选项，可通过 `kimi web --host` 将服务器暴露到互联网，并加固 token 鉴权、限流等安全措施。
 - Web UI 支持渲染 LaTeX 行间公式（`$$…$$`）。
 
 ### 修复
 
 - 修复 Linux 上由未处理的原生剪贴板错误导致的启动崩溃。
-- 修复当 CLI 通过 npm/pnpm 安装或从源码运行时，`kimi web` 和 `/web` 在 Windows 上因 `spawn EFTYPE` 无法启动后台服务器守护进程的问题。官方单二进制安装脚本不受影响。
+- 修复当 CLI 通过 npm/pnpm 安装或从源码运行时，`kimi web` 和 `/web` 在 Windows 上因 `spawn EFTYPE` 无法启动后台服务器守护进程的问题。
 - 修复终端窗口在 Linux Wayland 上反复失去焦点、导致输入法（IME）输入失效的问题。
 - 不再在 60 秒后自动关闭 web UI 中的问题，使其等待用户的回答。
 - 修复 explore 子 Agent 在 git 命令超时或目录不是仓库时静默丢失 git 上下文的问题。
@@ -524,7 +524,7 @@ outline: 2
 
 ### 优化
 
-- 将 `/plugins` 重新设计为单个标签页面板：**Installed**（管理已安装插件——切换、移除、MCP、详情、重新加载）、**Official**（Kimi 维护的 marketplace 插件）、**Third-party**（来自其他发布者的 marketplace 插件）以及 **Custom**（直接从 GitHub URL、zip URL 或本地路径安装）。使用 `Tab` / `Shift-Tab` 切换标签页。
+- 将 `/plugins` 重新设计为单个标签页面板：**Installed**（管理已安装插件）、**Official**（Kimi 维护的 marketplace 插件）、**Third-party**（来自其他发布者的 marketplace 插件）以及 **Custom**（直接从 GitHub URL、zip URL 或本地路径安装）。
 - 当 Agent 在 web 聊天中编辑或写入文件时，显示逐行 diff。
 - 在 web UI 中退出 Plan 模式时，在计划审查卡片中显示计划正文和方案选项。
 - 在子 Agent 的详情面板中显示其完整的累积进度，并以简洁的工具调用摘要替代原始 JSON。
@@ -876,7 +876,7 @@ outline: 2
 - 修复编辑或粘贴已排队目标时的待处理目标队列处理。
 - 在 YOLO 模式下启动目标前进行询问，方便用户切换到 Auto 来处理无人值守工作。
 - 当响应在产生可见输出前被拦截时，显示简洁的供应商过滤错误。
-- 输入无效子命令时显示 “unknown command” 而不是 “too many arguments”。
+- 输入无效子命令时显示 "unknown command" 而不是 "too many arguments"。
 - 将 OpenAI Chat Completions 的 `xhigh` 和 `max` thinking effort 限制为 `high`，除非模型在 `v1/chat/completions` 上支持 `xhigh`。
 - 在压缩长对话时保留 thinking effort。
 - 当能力变化而模型 ID 未变化时刷新供应商模型元数据。
@@ -885,7 +885,6 @@ outline: 2
 
 - 让待处理目标的确认样式与目标生命周期消息使用相同的强调处理。
 - 当没有活跃目标需要等待时立即启动待处理目标。
-  支持在管理待处理目标时进行多行编辑。
 - 为子 Agent 使用固定的 30 分钟超时，并在超时后显示简洁的恢复说明。
 - 输入斜杠命令时高亮目标队列子命令。
 
@@ -933,7 +932,7 @@ outline: 2
 
 ### 新功能
 
-- 支持 `kimi acp` 子命令：kimi-code 现在可通过 stdio 使用 [Agent Client Protocol 0.23](https://agentclientprotocol.com/)，因此 IDE（Zed、JetBrains AI Chat、自定义客户端）可以直接驱动会话；覆盖矩阵、Zed 配置和破坏性预发布说明见 [kimi acp 子命令页面](https://moonshotai.github.io/kimi-code/zh/reference/kimi-acp.html)。
+- 支持 `kimi acp` 子命令：kimi-code 现在可通过 stdio 使用 [Agent Client Protocol 0.23](https://agentclientprotocol.com/)，因此 IDE（Zed、JetBrains AI Chat、自定义客户端）可以直接驱动会话。
 - 新增 `/btw`，用于进行不会引导当前主轮次的侧通道对话，并允许 `/btw` 在输入问题前打开侧通道面板。
 
 ### 修复
@@ -958,15 +957,11 @@ outline: 2
 ### 新功能
 
 - 新增实验性 goal 模式，用于需要多轮处理的较长任务。在启动 Kimi 前设置 `KIMI_CODE_EXPERIMENTAL_GOAL_COMMAND=1` 即可开启。
-  在终端界面中使用 `/goal <objective>` 让 Kimi 跨轮次持续专注于同一任务。例如：
-  ```text
-  /goal Fix the failing checkout test
-  ```
-  Kimi 会在终端界面中显示目标，并在工作过程中保持进度可见。使用 `/goal status`、`/goal pause`、`/goal resume`、`/goal cancel` 和 `/goal replace <objective>` 来管理该目标。该功能仍处于实验阶段，欢迎试用并反馈改进建议。
-- 新增 `kimi provider` CLI 子命令，支持 `add`、`remove`、`list` 以及 `catalog list` / `catalog add` 操作，可在不启动终端界面的情况下导入和管理来自自定义 registry（api.json）或公开 models.dev 目录的供应商。
+  使用 `/goal <objective>` 让 Kimi 跨轮次持续专注于同一任务。
+- 新增 `kimi provider` CLI 子命令，支持 `add`、`remove`、`list` 以及 `catalog list` / `catalog add` 操作。
 - 新增后台结构化提问，让 Agent 在等待用户回答时也能继续工作。
 - 新增后台自动更新，可在 tui.toml 中关闭。
-- 新增 `/undo` 斜杠命令，用于从对话历史中撤回上一条提示词，并在撤回时保持回放记录同步。
+- 新增 `/undo` 斜杠命令，用于从对话历史中撤回上一条提示词。
 - 新增 `kimi upgrade` 命令，用于手动检查并升级 Kimi Code CLI。
 - 新增审批生命周期 hook 事件，用于观察待处理和已完成的权限提示。
 - 允许子 Agent 使用在其父 Agent 上注册的自定义工具。
@@ -978,10 +973,10 @@ outline: 2
 - 修复自定义 registry 供应商在重新导入时的处理问题，防止多供应商条目丢失，并移除过时的供应商及其模型别名和默认模型引用。
 - 修复工具输出预览的渲染效果：去除尾部空行、为多行 Bash 命令标题附加省略号，并按视觉换行而非原始换行数裁切过长的单行输出。
 - 修复斜杠激活的 skill 因缺少系统提示词包装器而未被模型识别的问题。
-- 修复在过窄终端上 `/sessions` 选择器崩溃的问题，通过将每行渲染宽度限制在终端宽度内。
+- 修复在过窄终端上 `/sessions` 选择器崩溃的问题。
 - 在括号展开前规范化 glob 模式，防止不正确的路径匹配。
 - 防止退出 CLI 后仍出现修改过的键盘释放序列。
-- 修复 Windows 上的 Git Bash 路径检测，额外搜索 `usr\bin\bash.exe` 路径，这是许多 Git for Windows 安装中 bash 所在的位置（这些安装中 `bin\bash.exe` 不存在）。
+- 修复 Windows 上的 Git Bash 路径检测，额外搜索 `usr\bin\bash.exe` 路径。
 
 ### 优化
 
@@ -1000,9 +995,9 @@ outline: 2
 
 ### 新功能
 
-- 新增用于管理 AI 供应商的 `/provider` 命令，支持自定义 registry 导入，并引入标签页式模型选择器。该命令替代了已废弃的 `/connect`，请改用 `/provider`。
-- 在终端界面中以独立样式渲染定时提醒，向 SDK 客户端暴露 cron 触发事件，并在报告 cron 触发时间时附带本地时区偏移。
-- 新增 `KIMI_MODEL_ADAPTIVE_THINKING`（以及对应的 `adaptive_thinking` 模型别名字段），用于强制开启或关闭自适应 thinking（`thinking: { type: 'adaptive' }`），覆盖基于 Anthropic 模型名的版本推断。这样一来，背后由支持自适应能力的模型驱动、且使用自定义名称的兼容端点，即使模型名没有编码出可解析的 Claude 版本，也能选择启用该能力。
+- 新增用于管理 AI 供应商的 `/provider` 命令，支持自定义 registry 导入，并引入标签页式模型选择器。该命令替代了已废弃的 `/connect`。
+- 在终端界面中以独立样式渲染定时提醒，向 SDK 客户端暴露 cron 触发事件。
+- 新增 `KIMI_MODEL_ADAPTIVE_THINKING`（以及对应的 `adaptive_thinking` 模型别名字段），用于强制开启或关闭自适应 thinking。
 
 ### 修复
 
@@ -1018,14 +1013,14 @@ outline: 2
 
 ### 新功能
 
-- 新增 `KIMI_MODEL_*` 环境变量通道，让你无需编辑 `config.toml` 即可让 Kimi Code 使用指定模型（供应商类型、base URL、API 密钥、上下文大小、能力以及 thinking 设置）。
-- 支持直接从 GitHub 仓库 URL 安装 plugin，并在 plugin 管理器中展示每次安装的来源和信任级别（kimi-official、curated、third-party）。
+- 新增 `KIMI_MODEL_*` 环境变量通道，让你无需编辑 `config.toml` 即可让 Kimi Code 使用指定模型。
+- 支持直接从 GitHub 仓库 URL 安装 plugin，并在 plugin 管理器中展示每次安装的来源和信任级别。
 
 ### 修复
 
-- 在对话记录中显示后台 Agent 真实的最终状态，使丢失、失败和被终止的 Agent 不再显示为已完成；并在失败通知中包含用于恢复的 agent id 和恢复说明，让模型能够可靠地恢复。
+- 在对话记录中显示后台 Agent 真实的最终状态，使丢失、失败和被终止的 Agent 不再显示为已完成。
 - 在长对话中从供应商模型的 token 限制错误中恢复。
-- 当模型响应流在传输中途被中断（`terminated` 错误）时自动重试，而不是让该轮次失败。
+- 当模型响应流在传输中途被中断（`terminated` 错误）时自动重试。
 - 在各供应商的响应中一致地处理上下文溢出错误。
 - 将失败的压缩重试按模型上下文窗口的固定一段进行退避。
 - 修复原生自更新程序在安装命令实际失败时仍报告更新成功的问题。
@@ -1037,8 +1032,8 @@ outline: 2
 ### 优化
 
 - 移除每轮 1000 步的默认上限。用户仍可在配置中设置 `max_steps_per_turn` 来强制使用自定义上限。
-- 支持在 listSessions 中通过 sessionId 或 workDir 查询会话，并在从其他工作目录恢复会话时显示一条便捷的 cd 命令。
-- 扩充页脚轮换提示，展示更多命令和快捷键，并更突出地呈现较新和重要的内容。
+- 支持在 listSessions 中通过 sessionId 或 workDir 查询会话。
+- 扩充页脚轮换提示，展示更多命令和快捷键。
 - 改进终端界面中的用量信息展示。
 - 将 plugin 信任徽章限制为仅匹配 Kimi 托管的 plugin CDN URL 模式。
 - 明确子 Agent 和后台任务的停止消息为用户主动发起。
@@ -1055,9 +1050,7 @@ outline: 2
 
 ### 新功能
 
-- 新增定时任务：
-  你现在可以让 Agent 在指定时间提醒你、按重复的 cron 计划运行任务（例如每 5 分钟检查一次部署，或每个工作日上午 9 点生成一份日报），也可以让它在几分钟后自动回来继续之前的工作。
-  定时任务使用标准的 5 字段 cron 语法。
+- 新增定时任务：你可以让 Agent 在指定时间提醒你、按重复的 cron 计划运行任务，也可以让它在几分钟后自动回来继续之前的工作。定时任务使用标准的 5 字段 cron 语法。
 - 新增 `/auto` 斜杠命令和 `--auto` CLI 参数，用于启用 auto 权限模式。
 - 在 `Write` 和 `Edit` 的审批提示中显示文件内容与 diff，并通过 `Ctrl-E` 在专用的全屏查看器中打开。
 
@@ -1070,13 +1063,13 @@ outline: 2
 ### 优化
 
 - 在更新提示中新增可点击的变更记录链接。
-- 用 `Ctrl-O` 展开 Bash 工具卡片时显示完整的 Bash 命令。卡片标题仍会将过长命令截断至 60 个字符，但展开后的视图现在会在输出上方显示完整的多行命令。
-- 将写入终端窗口/标签页的会话标题从 80 个字符缩短到 32 个字符，避免较长的首条消息或粘贴内容把标签栏拉伸到难以阅读的宽度。
-- 将嵌入式待办面板上限设为 5 行，并显示 `+N more` 指示器，避免较长的任务列表填满整个屏幕。
+- 用 `Ctrl-O` 展开 Bash 工具卡片时显示完整的 Bash 命令。
+- 将写入终端窗口/标签页的会话标题从 80 个字符缩短到 32 个字符。
+- 将嵌入式待办面板上限设为 5 行，并显示 `+N more` 指示器。
 - 明确 plugin 管理器的键盘快捷键，并在原地显示 plugin 状态变化。
 - 在 plugin 管理器的摘要中报告检测到的 plugin Skill。
-- 将 `wire.jsonl` 中的大型 base64 媒体内容卸载到外部 blob 文件，减小 wire 体积，降低会话回放时的内存压力。同时为 `BlobStore` 增加内存级直读缓存，避免重复重建时产生多余的磁盘读取。
-- 在 `AskUserQuestion` 对话框中对过长的问题、正文和选项文本进行换行显示，而不是用省略号截断。问题提示、正文描述、选项标签、选项描述以及提交标签页的复核条目现在会以悬挂缩进的方式分多行显示。
+- 将 `wire.jsonl` 中的大型 base64 媒体内容卸载到外部 blob 文件。
+- 在 `AskUserQuestion` 对话框中对过长的问题、正文和选项文本进行换行显示。
 
 ### 重构
 
@@ -1098,7 +1091,7 @@ outline: 2
 - 修复在空 Thinking 增量产生孤立 Thinking 组件时，Thinking 旋转图标残留到轮次结束之后的问题。
 - 派生会话后显示原始的会话恢复命令。
 - 限制 plugin zip 安装：仅接受 manifest 位于归档根目录或单层包装目录的情况。
-- 将带会话标签的日志条目独占地路由到会话 sink，不再同时写入全局 sink；并对所有携带 `agentId=main` 的会话日志行，统一省略主 Agent 中稳定不变的上下文键。
+- 将带会话标签的日志条目独占地路由到会话 sink，不再同时写入全局 sink。
 
 ### 重构
 
@@ -1113,8 +1106,8 @@ outline: 2
 
 ### 新功能
 
-- `/logout` 现在会打开一个选择器，让你选择要登出的供应商，而不再总是登出当前模型所对应的供应商。当前供应商默认高亮，因此按 Enter 即可保持与此前一致的行为。该命令同时以 `/disconnect` 别名提供。
-- `openai` 供应商现在开箱即用地支持 OpenAI 兼容的 reasoner 模型：自动识别响应中的 Thinking 字段（`reasoning_content` / `reasoning_details` / `reasoning`），并在历史包含 Thinking 时自动注入 `reasoning_effort`。DeepSeek、Qwen、One API 等网关服务无需再手工设置 `reasoning_key`，该字段仍可作为非标准网关的显式覆盖项。
+- `/logout` 现在会打开一个选择器，让你选择要登出的供应商，而不再总是登出当前模型所对应的供应商。该命令同时以 `/disconnect` 别名提供。
+- `openai` 供应商现在开箱即用地支持 OpenAI 兼容的 reasoner 模型：自动识别响应中的 Thinking 字段（`reasoning_content` / `reasoning_details` / `reasoning`），并在历史包含 Thinking 时自动注入 `reasoning_effort`。
 
 ### 修复
 
@@ -1124,9 +1117,9 @@ outline: 2
 - 修复 `~/.agents/` 下的用户 Skill 未被加载的问题。
 - 恢复终端界面中运行中的子 Agent 的实时 token 显示。
 - 在会话恢复时，若所有待办均已完成则隐藏待办面板。
-- 在工具返回结果格式错误或缺失时，始终发出配对的工具结果，避免下一次请求因缺少 `tool_call_id` 而失败。
-- 修复 Plan 模式下的会话重置：新会话在 Plan 评审被拒后不再失败，并能在初始化错误后继续接收事件。
-- 在控制终端消失时及时退出。终端界面现在会处理 `SIGHUP` / `SIGTERM` 信号以及 stdout/stderr 的 `EIO` / `EPIPE` / `ENOTCONN` 错误，避免父 shell 或终端复用器异常退出后残留占用 CPU 核心的 `kimi` 进程。
+- 在工具返回结果格式错误或缺失时，始终发出配对的工具结果。
+- 修复 Plan 模式下的会话重置：新会话在 Plan 评审被拒后不再失败。
+- 在控制终端消失时及时退出。终端界面现在会处理 `SIGHUP` / `SIGTERM` 信号。
 - 避免本地补全上限过小，导致摘要生成前推理被截断。
 
 ### 重构
@@ -1142,10 +1135,10 @@ outline: 2
 ### 新功能
 
 - 新增 `/connect` 命令，可从模型目录中配置供应商和模型。
-- `/connect` 的供应商和模型选择器现支持键入即搜索过滤，长列表会自动分页；配置了较多模型时，`/model` 选择器同样支持分页。
+- `/connect` 的供应商和模型选择器现支持键入即搜索过滤，长列表会自动分页。
 - 在终端界面输入框中新增 `Ctrl-J` 作为插入换行的额外快捷键。
 - 在会话回放过程中新增 wire 记录迁移处理。
-- 在首次启动迁移期间，将用户 Skill 从 `~/.kimi/skills/` 迁移到 `~/.kimi-code/skills/`；已存在的目标 Skill 会被保留。
+- 在首次启动迁移期间，将用户 Skill 从 `~/.kimi/skills/` 迁移到 `~/.kimi-code/skills/`。
 - 在 stream-json 输出格式中以结构化 meta 消息形式发出会话恢复提示。
 
 ### 修复
@@ -1154,14 +1147,14 @@ outline: 2
 - 将 `X-Msh-Platform` 请求头的取值修正为 `kimi_code_cli`。
 - 在未配置模型时，澄清提示词模式下的错误提示，引导用户走登录流程。
 - 在会话选择器中隐藏空的当前会话，同时保留其他空会话可见。
-- 不再在迁移界面中提及 OAuth 凭据 —— 它们从不会被迁移，此前的 "needs /login" 提示会被误读为失败。仅使用 OAuth 的安装不再触发迁移界面。
+- 不再在迁移界面中提及 OAuth 凭据。
 - 在反馈、用量、登录和模型设置失败时，展示 API 返回的错误信息。
-- 将终端界面中的模型选择持久化到默认配置，并在新会话中遵循已配置的默认 Thinking 状态。
+- 将终端界面中的模型选择持久化到默认配置。
 - 在更新对话历史之前，对不包含摘要的压缩响应进行重试。
 - 避免大体量流式工具参数导致的 CPU 峰值，并合并高频的流式 UI 更新。
-- 在 wire 协议版本较新时改为继续恢复会话而不是失败。终端界面会显示一条警告，并在不进行迁移的情况下回放记录。
+- 在 wire 协议版本较新时改为继续恢复会话而不是失败。
 - 当 tmux 的扩展按键设置可能导致带修饰键的 Enter 快捷键无法工作时，向 tmux 用户发出提示。
-- 默认让 Kimi 请求使用剩余的上下文窗口作为补全 token 的额度，同时将显式设置的环境变量上限作为硬上限保留。
+- 默认让 Kimi 请求使用剩余的上下文窗口作为补全 token 的额度。
 
 ### 重构
 

@@ -1386,10 +1386,12 @@ async function createRuntimeConfig(input: {
   // (~300KB) that's only needed when fetching URLs. Loading them lazily keeps
   // the startup bundle small.
   const { LocalFetchURLProvider } = await import('#/tools/providers/local-fetch-url');
+  const { LocalWebSearchProvider } = await import('#/tools/providers/local-web-search');
   const { MoonshotFetchURLProvider } = await import('#/tools/providers/moonshot-fetch-url');
   const { MoonshotWebSearchProvider } = await import('#/tools/providers/moonshot-web-search');
 
   const localFetcher = new LocalFetchURLProvider();
+  const localSearcher = new LocalWebSearchProvider();
   const searchService = input.config.services?.moonshotSearch;
   const fetchService = input.config.services?.moonshotFetch;
 
@@ -1405,7 +1407,7 @@ async function createRuntimeConfig(input: {
           }),
     webSearcher:
       searchService?.baseUrl === undefined
-        ? undefined
+        ? localSearcher
         : new MoonshotWebSearchProvider({
             baseUrl: searchService.baseUrl,
             defaultHeaders: input.kimiRequestHeaders,

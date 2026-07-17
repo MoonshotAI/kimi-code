@@ -17,15 +17,14 @@ export async function handleWorkflowCommand(host: SlashCommandHost, args: string
     host.showError(getNoActiveSessionMessage());
     return;
   }
-
-  const trimmed = args.trim();
+const trimmed = args.trim();
 
   // No args → show usage.
   if (trimmed.length === 0) {
     const wf = t('tui.slashCommands.workflowHelp') as Record<string, string>;
     host.showNotice(
       t('tui.slashCommands.workflow'),
-      [
+[
         wf.usage,
         wf.list,
         wf.run,

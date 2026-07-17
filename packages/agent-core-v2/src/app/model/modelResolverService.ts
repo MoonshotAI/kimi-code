@@ -364,6 +364,7 @@ function buildProtocolProviderOptions(
     }
     case 'google-genai':
     case 'openai_responses':
+    case 'mimo-free':
       break;
     default: {
       const exhaustive: never = protocol;
@@ -393,6 +394,8 @@ function providerBaseUrlEnvFallback(
       return envValue(env, 'GOOGLE_GEMINI_BASE_URL');
     case 'vertexai':
       return envValue(env, 'GOOGLE_VERTEX_BASE_URL');
+    case 'mimo-free':
+      return undefined; // free model — uses its own bootstrap URL
     default: {
       const exhaustive: never = protocol;
       return exhaustive;
