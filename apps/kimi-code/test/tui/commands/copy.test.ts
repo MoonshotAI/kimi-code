@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { ContextMessage } from '@moonshot-ai/kimi-code-sdk';
-
 import { findLastAssistantText, handleCopyCommand } from '#/tui/commands/copy';
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
 import { findBuiltInSlashCommand, resolveSlashCommandAvailability } from '#/tui/commands/index';
+import type { TranscriptEntry } from '#/tui/types';
 
 const mocks = vi.hoisted(() => ({
   copyTextToClipboard: vi.fn(),
@@ -14,25 +13,24 @@ vi.mock('#/utils/clipboard/clipboard-text', () => ({
   copyTextToClipboard: mocks.copyTextToClipboard,
 }));
 
-function assistantText(text: string, extra: Partial<ContextMessage> = {}): ContextMessage {
+let nextEntryId = 0;
+
+function entry(kind: TranscriptEntry['kind'], content: string): TranscriptEntry {
   return {
-    role: 'assistant',
-    content: [{ type: 'text', text }],
-    toolCalls: [],
-    ...extra,
+    id: `entry-${String(nextEntryId++)}`,
+    kind,
+    renderMode: 'markdown',
+    content,
   };
 }
 
-function userText(text: string): ContextMessage {
-  return { role: 'user', content: [{ type: 'text', text }], toolCalls: [] };
+function assistantEntry(content: string): TranscriptEntry {
+  return entry('assistant', content);
 }
 
-function makeHost(history: ContextMessage[]) {
+function makeHost(entries: TranscriptEntry[]) {
   const host = {
-    session: {
-      id: 'ses-1',
-      getContext: vi.fn(async () => ({ history, tokenCount: 0 })),
-    },
+    state: { transcriptEntries: entries },
     showStatus: vi.fn(),
     showError: vi.fn(),
   } as unknown as SlashCommandHost & {
@@ -51,52 +49,36 @@ describe('copy slash command', () => {
 });
 
 describe('findLastAssistantText', () => {
-  it('returns an empty string for empty history', () => {
+  it('returns an empty string for an empty transcript', () => {
     expect(findLastAssistantText([])).toBe('');
   });
 
-  it('returns the newest assistant text across later user/tool noise', () => {
-    const history = [
-      assistantText('first answer'),
-      userText('follow-up question'),
-      assistantText('second answer'),
-      userText('typing…'),
+  it('returns the newest assistant entry across later non-assistant entries', () => {
+    const entries = [
+      assistantEntry('first answer'),
+      entry('user', 'follow-up question'),
+      assistantEntry('second answer'),
+      entry('user', 'typing…'),
+      entry('status', 'Working…'),
     ];
 
-    expect(findLastAssistantText(history)).toBe('second answer');
+    expect(findLastAssistantText(entries)).toBe('second answer');
   });
 
-  it('joins multiple text parts with a blank line', () => {
-    const history: ContextMessage[] = [
-      {
-        role: 'assistant',
-        content: [
-          { type: 'text', text: 'part one' },
-          { type: 'think', think: 'hidden reasoning' },
-          { type: 'text', text: 'part two' },
-        ],
-        toolCalls: [],
-      },
-    ];
+  it('skips assistant entries with empty or whitespace-only content', () => {
+    const entries = [assistantEntry('real answer'), assistantEntry('   \n  ')];
 
-    expect(findLastAssistantText(history)).toBe('part one\n\npart two');
+    expect(findLastAssistantText(entries)).toBe('real answer');
   });
 
-  it('skips error, internal, and text-less assistant messages', () => {
-    const history = [
-      assistantText('real answer'),
-      assistantText('api failure', { isError: true }),
-      assistantText('hook noise', { origin: { kind: 'hook_result', event: 'Stop' } }),
-      {
-        role: 'assistant',
-        content: [],
-        toolCalls: [
-          { type: 'function', id: 'call-1', name: 'Bash', arguments: '{"command":"ls"}' },
-        ],
-      } as ContextMessage,
+  it('ignores thinking and other non-visible-reply kinds', () => {
+    const entries = [
+      assistantEntry('visible reply'),
+      entry('thinking', 'hidden reasoning'),
+      entry('tool_call', 'Bash ls'),
     ];
 
-    expect(findLastAssistantText(history)).toBe('real answer');
+    expect(findLastAssistantText(entries)).toBe('visible reply');
   });
 });
 
@@ -106,8 +88,8 @@ describe('handleCopyCommand', () => {
     mocks.copyTextToClipboard.mockResolvedValue('native');
   });
 
-  it('copies the last assistant text and reports the character count', async () => {
-    const host = makeHost([userText('hi'), assistantText('final summary')]);
+  it('copies the last visible assistant text and reports the character count', async () => {
+    const host = makeHost([entry('user', 'hi'), assistantEntry('final summary')]);
 
     await handleCopyCommand(host);
 
@@ -120,7 +102,7 @@ describe('handleCopyCommand', () => {
 
   it('marks the copy as unverified when only the terminal escape delivered it', async () => {
     mocks.copyTextToClipboard.mockResolvedValue('osc52');
-    const host = makeHost([userText('hi'), assistantText('final summary')]);
+    const host = makeHost([entry('user', 'hi'), assistantEntry('final summary')]);
 
     await handleCopyCommand(host);
 
@@ -131,7 +113,7 @@ describe('handleCopyCommand', () => {
   });
 
   it('warns when there is no assistant message to copy', async () => {
-    const host = makeHost([userText('hi')]);
+    const host = makeHost([entry('user', 'hi')]);
 
     await handleCopyCommand(host);
 
@@ -139,19 +121,9 @@ describe('handleCopyCommand', () => {
     expect(host.showStatus).toHaveBeenCalledWith('No assistant message to copy.', 'warning');
   });
 
-  it('shows an error when there is no active session', async () => {
-    const host = makeHost([]);
-    (host as { session?: unknown }).session = undefined;
-
-    await handleCopyCommand(host);
-
-    expect(host.showError).toHaveBeenCalledOnce();
-    expect(mocks.copyTextToClipboard).not.toHaveBeenCalled();
-  });
-
   it('shows an error when the clipboard write fails', async () => {
     mocks.copyTextToClipboard.mockRejectedValue(new Error('pbcopy exited'));
-    const host = makeHost([assistantText('final summary')]);
+    const host = makeHost([assistantEntry('final summary')]);
 
     await handleCopyCommand(host);
 
