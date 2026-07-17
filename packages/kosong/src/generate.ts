@@ -117,7 +117,19 @@ export async function generate(
     : tools;
 
   options?.onRequestStart?.();
-  const stream = await provider.generate(systemPrompt, wireTools, history, options);
+  // Provider streams expose no cancellation handle of their own, so the idle
+  // watchdog must tear down a stalled transport through the request's
+  // AbortSignal: merge the caller's signal with a watchdog-owned controller
+  // and hand the merged signal to the provider.
+  const watchdog = new AbortController();
+  const providerOptions: GenerateOptions = {
+    ...options,
+    signal:
+      options?.signal === undefined
+        ? watchdog.signal
+        : AbortSignal.any([options.signal, watchdog.signal]),
+  };
+  const stream = await provider.generate(systemPrompt, wireTools, history, providerOptions);
   // Early capture: the trace id arrives with the response headers, before the
   // stream body — and before any mid-stream abort — so hosts can attribute
   // even a cancelled stream to its server-side request.
@@ -142,7 +154,7 @@ export async function generate(
   let firstPartAt: number | undefined;
   let lastResumeAt = 0;
 
-  for await (const part of withStreamIdleTimeout(stream, provider)) {
+  for await (const part of withStreamIdleTimeout(stream, provider, watchdog)) {
     const arrivedAt = Date.now();
     if (firstPartAt === undefined) {
       firstPartAt = arrivedAt;
@@ -322,41 +334,53 @@ export class StreamIdleTimeoutError extends APITimeoutError {
 async function* withStreamIdleTimeout(
   stream: StreamedMessage,
   provider: ChatProvider,
+  watchdog: AbortController,
 ): AsyncGenerator<StreamedMessagePart> {
   const iterator = stream[Symbol.asyncIterator]();
   const startedAt = Date.now();
-  while (true) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(
-          new StreamIdleTimeoutError(
-            provider.name,
-            provider.modelName,
-            STREAM_IDLE_TIMEOUT_MS,
-            Date.now() - startedAt,
-            stream.traceId ?? null,
-          ),
-        );
-      }, STREAM_IDLE_TIMEOUT_MS);
-    });
-    const next = iterator.next();
-    let result: IteratorResult<StreamedMessagePart>;
-    try {
-      result = await Promise.race([next, timeout]);
-    } catch (error) {
-      if (error instanceof StreamIdleTimeoutError) {
-        // The dangling next() will reject once the stream is cancelled below;
-        // swallow it so it never surfaces as an unhandled rejection.
-        next.catch(() => {});
-        await cancelStream(stream);
+  try {
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new StreamIdleTimeoutError(
+              provider.name,
+              provider.modelName,
+              STREAM_IDLE_TIMEOUT_MS,
+              Date.now() - startedAt,
+              stream.traceId ?? null,
+            ),
+          );
+        }, STREAM_IDLE_TIMEOUT_MS);
+      });
+      const next = iterator.next();
+      let result: IteratorResult<StreamedMessagePart>;
+      try {
+        result = await Promise.race([next, timeout]);
+      } catch (error) {
+        if (error instanceof StreamIdleTimeoutError) {
+          // The dangling next() will reject once the transport is aborted
+          // below; swallow it so it never surfaces as an unhandled rejection.
+          next.catch(() => {});
+          // Abort the underlying request so the stalled connection is truly
+          // closed instead of leaking until the server gives up on it.
+          watchdog.abort(error);
+          await cancelStream(stream);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timer);
       }
-      throw error;
-    } finally {
-      clearTimeout(timer);
+      if (result.done === true) return;
+      yield result.value;
     }
-    if (result.done === true) return;
-    yield result.value;
+  } finally {
+    // Close the provider iterator on every exit path (timeout, consumer
+    // throw, early break) so generator cleanup runs. Never await it: on a
+    // stalled stream `return()` stays pending until the transport abort
+    // settles the dangling read, and awaiting would re-introduce the hang.
+    void Promise.resolve(iterator.return?.()).catch(() => {});
   }
 }
 

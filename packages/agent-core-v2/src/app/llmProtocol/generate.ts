@@ -1,3 +1,16 @@
+/**
+ * Streams one assistant message from a chat provider and assembles the parts
+ * into a complete `GenerateResult`, merging interleaved content and routing
+ * parallel tool-call argument deltas to the correct call.
+ *
+ * Also owns the stream idle watchdog: the underlying HTTP client's request
+ * timeout is cleared once response headers arrive, so a stream that goes
+ * silent mid-flight would otherwise block `for await` forever. When no chunk
+ * arrives within `KIMI_STREAM_IDLE_TIMEOUT_MS` (default 180s) the watchdog
+ * aborts the provider request through the merged AbortSignal — actually
+ * closing the stalled connection — and throws `StreamIdleTimeoutError`, an
+ * `APITimeoutError` subclass the loop's retry plugin classifies as retryable.
+ */
 import { APIEmptyResponseError, APITimeoutError } from './errors';
 import {
   isContentPart,
@@ -50,7 +63,15 @@ export async function generate(
     : tools;
 
   options?.onRequestStart?.();
-  const stream = await provider.generate(systemPrompt, wireTools, history, options);
+  const watchdog = new AbortController();
+  const providerOptions: GenerateOptions = {
+    ...options,
+    signal:
+      options?.signal === undefined
+        ? watchdog.signal
+        : AbortSignal.any([options.signal, watchdog.signal]),
+  };
+  const stream = await provider.generate(systemPrompt, wireTools, history, providerOptions);
   if (stream.traceId !== undefined) {
     options?.onTraceId?.(stream.traceId);
   }
@@ -62,7 +83,7 @@ export async function generate(
   let firstPartAt: number | undefined;
   let lastResumeAt = 0;
 
-  for await (const part of withStreamIdleTimeout(stream, provider)) {
+  for await (const part of withStreamIdleTimeout(stream, provider, watchdog)) {
     const arrivedAt = Date.now();
     if (firstPartAt === undefined) {
       firstPartAt = arrivedAt;
@@ -175,20 +196,6 @@ type CancelableStream = StreamedMessage & {
   return?: () => unknown;
 };
 
-/**
- * Guard the gap between streamed chunks with an inactivity deadline.
- *
- * The provider SSE stream has no read timeout of its own — the HTTP client's
- * request timeout is cleared as soon as response headers arrive (see
- * `openai/src/client.ts` `fetchWithTimeout`, which wraps the fetch call in
- * `try { … } finally { clearTimeout(timeout) }` and resolves once headers
- * are received) — so a connection that goes silent mid-stream would
- * otherwise block `for await` forever and leave the whole turn hanging.
- * If no chunk arrives within the deadline the stream is cancelled and a
- * descriptive `APITimeoutError` subclass is thrown so the step fails loudly
- * and the loop's retry plugin can re-drive it (see
- * `isRetryableGenerateError`).
- */
 const STREAM_IDLE_TIMEOUT_MS = (() => {
   const raw = Number(process.env['KIMI_STREAM_IDLE_TIMEOUT_MS']);
   return Number.isFinite(raw) && raw > 0 ? raw : 180_000;
@@ -223,41 +230,45 @@ export class StreamIdleTimeoutError extends APITimeoutError {
 async function* withStreamIdleTimeout(
   stream: StreamedMessage,
   provider: ChatProvider,
+  watchdog: AbortController,
 ): AsyncGenerator<StreamedMessagePart> {
   const iterator = stream[Symbol.asyncIterator]();
   const startedAt = Date.now();
-  while (true) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        reject(
-          new StreamIdleTimeoutError(
-            provider.name,
-            provider.modelName,
-            STREAM_IDLE_TIMEOUT_MS,
-            Date.now() - startedAt,
-            stream.traceId ?? null,
-          ),
-        );
-      }, STREAM_IDLE_TIMEOUT_MS);
-    });
-    const next = iterator.next();
-    let result: IteratorResult<StreamedMessagePart>;
-    try {
-      result = await Promise.race([next, timeout]);
-    } catch (error) {
-      if (error instanceof StreamIdleTimeoutError) {
-        // The dangling next() will reject once the stream is cancelled below;
-        // swallow it so it never surfaces as an unhandled rejection.
-        next.catch(() => {});
-        await cancelStream(stream);
+  try {
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(
+            new StreamIdleTimeoutError(
+              provider.name,
+              provider.modelName,
+              STREAM_IDLE_TIMEOUT_MS,
+              Date.now() - startedAt,
+              stream.traceId ?? null,
+            ),
+          );
+        }, STREAM_IDLE_TIMEOUT_MS);
+      });
+      const next = iterator.next();
+      let result: IteratorResult<StreamedMessagePart>;
+      try {
+        result = await Promise.race([next, timeout]);
+      } catch (error) {
+        if (error instanceof StreamIdleTimeoutError) {
+          next.catch(() => {});
+          watchdog.abort(error);
+          await cancelStream(stream);
+        }
+        throw error;
+      } finally {
+        clearTimeout(timer);
       }
-      throw error;
-    } finally {
-      clearTimeout(timer);
+      if (result.done === true) return;
+      yield result.value;
     }
-    if (result.done === true) return;
-    yield result.value;
+  } finally {
+    void Promise.resolve(iterator.return?.()).catch(() => {});
   }
 }
 

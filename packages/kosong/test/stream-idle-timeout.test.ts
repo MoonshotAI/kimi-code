@@ -11,13 +11,20 @@
  * kap-server path — the same failure signature must fail loudly on both.
  */
 import { APITimeoutError, isRetryableGenerateError } from '#/errors';
-import type { StreamedMessagePart } from '#/message';
-import type { ChatProvider, StreamedMessage, ThinkingEffort } from '#/provider';
+import type { Message, StreamedMessagePart } from '#/message';
+import type {
+  ChatProvider,
+  GenerateOptions,
+  StreamedMessage,
+  ThinkingEffort,
+} from '#/provider';
 import type { Tool } from '#/tool';
-import type { Message } from '#/message';
 import { describe, expect, it } from 'vitest';
 
-function makeProvider(stream: StreamedMessage): ChatProvider {
+function makeProvider(
+  stream: StreamedMessage,
+  onGenerate?: (options?: GenerateOptions) => void,
+): ChatProvider {
   return {
     name: 'fake',
     modelName: 'fake-model',
@@ -26,7 +33,11 @@ function makeProvider(stream: StreamedMessage): ChatProvider {
       _systemPrompt: string,
       _tools: Tool[],
       _history: Message[],
-    ): Promise<StreamedMessage> => stream,
+      options?: GenerateOptions,
+    ): Promise<StreamedMessage> => {
+      onGenerate?.(options);
+      return stream;
+    },
     withThinking(_effort: ThinkingEffort): ChatProvider {
       return this;
     },
@@ -37,6 +48,7 @@ function stalledStream(
   parts: StreamedMessagePart[],
   onCancel?: () => void,
   traceId: string | null = null,
+  onIteratorReturn?: () => void,
 ): StreamedMessage {
   let i = 0;
   return {
@@ -53,6 +65,10 @@ function stalledStream(
             return Promise.resolve({ done: false, value: parts[i++]! });
           }
           return new Promise<never>(() => {}); // silent forever
+        },
+        return(): Promise<IteratorResult<StreamedMessagePart>> {
+          onIteratorReturn?.();
+          return Promise.resolve({ done: true, value: undefined });
         },
       };
     },
@@ -140,5 +156,52 @@ describe('kosong.generate() stream idle watchdog', () => {
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
     ]);
     expect(result.message.content.some((p) => p.type === 'text')).toBe(true);
+  });
+
+  it('aborts the provider request and closes the iterator when the watchdog fires', async () => {
+    const { generate, StreamIdleTimeoutError } = await importGenerateWithTimeout(200);
+    let providerSignal: AbortSignal | undefined;
+    let iteratorReturned = false;
+    const stream = stalledStream(
+      [{ type: 'think', think: 'partial thinking' }],
+      undefined,
+      null,
+      () => {
+        iteratorReturned = true;
+      },
+    );
+    const provider = makeProvider(stream, (options) => {
+      providerSignal = options?.signal;
+    });
+    await expect(
+      generate(provider, 'system', [], [
+        { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      ]),
+    ).rejects.toBeInstanceOf(StreamIdleTimeoutError);
+    expect(providerSignal?.aborted).toBe(true);
+    expect(providerSignal?.reason).toBeInstanceOf(StreamIdleTimeoutError);
+    expect(iteratorReturned).toBe(true);
+  });
+
+  it('still delivers caller aborts to the provider through the merged signal', async () => {
+    const { generate } = await importGenerateWithTimeout(200);
+    let providerSignal: AbortSignal | undefined;
+    const stream = healthyStream([{ type: 'text', text: 'hello' }]);
+    const provider = makeProvider(stream, (options) => {
+      providerSignal = options?.signal;
+    });
+    const caller = new AbortController();
+    await generate(
+      provider,
+      'system',
+      [],
+      [{ role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] }],
+      undefined,
+      { signal: caller.signal },
+    );
+    expect(providerSignal).toBeDefined();
+    expect(providerSignal?.aborted).toBe(false);
+    caller.abort();
+    expect(providerSignal?.aborted).toBe(true);
   });
 });
