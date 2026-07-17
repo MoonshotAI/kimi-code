@@ -84,7 +84,7 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
   const subcmd = args.trim().toLowerCase();
   if (subcmd === 'clear') {
     await session.clearPlan();
-    host.showNotice(t('tui.commands.planCleared'));
+    host.showNotice(t('tui.statusMessages.planCleared'));
     return;
   }
 
@@ -93,7 +93,7 @@ export async function handlePlanCommand(host: SlashCommandHost, args: string): P
   else if (subcmd === 'on') enabled = true;
   else if (subcmd === 'off') enabled = false;
   else {
-    host.showError(t('tui.commands.unknownPlanSubcommand', { subcmd }));
+    host.showError(t('tui.statusMessages.unknownPlanSubcommand', { subcmd }));
     return;
   }
 
@@ -107,15 +107,15 @@ async function applyPlanMode(host: SlashCommandHost, session: Session, enabled: 
     if (enabled) {
       const plan = await session.getPlan().catch(() => null);
       host.showNotice(
-        t('tui.commands.planModeOn'),
-        plan?.path !== undefined ? t('tui.commands.planWillBeCreatedHere', { path: plan.path }) : undefined,
+        t('tui.statusMessages.planModeOn'),
+        plan?.path !== undefined ? t('tui.statusMessages.planWillBeCreatedHere', { path: plan.path }) : undefined,
       );
       return;
     }
-    host.showNotice(t('tui.commands.planModeOff'));
+    host.showNotice(t('tui.statusMessages.planModeOff'));
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(t('tui.commands.failedToSetPlanMode', { msg }));
+    host.showError(t('tui.statusMessages.failedToSetPlanMode', { msg }));
   }
 }
 
@@ -131,23 +131,23 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
 
   if (subcmd === 'on') {
     if (currentMode === 'yolo') {
-      host.showNotice(t('tui.commands.yoloModeAlreadyOn'));
+      host.showNotice(t('tui.statusMessages.yoloModeAlreadyOn'));
       return;
     }
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice(t('tui.commands.yoloModeOn'), t('tui.commands.yoloModeOnSub'));
+    host.showNotice(t('tui.statusMessages.yoloModeOn'), t('tui.statusMessages.yoloModeOnSub'));
     return;
   }
 
   if (subcmd === 'off') {
     if (currentMode !== 'yolo') {
-      host.showNotice(t('tui.commands.yoloModeAlreadyOff'));
+      host.showNotice(t('tui.statusMessages.yoloModeAlreadyOff'));
       return;
     }
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice(t('tui.commands.yoloModeOff'));
+    host.showNotice(t('tui.statusMessages.yoloModeOff'));
     return;
   }
 
@@ -155,11 +155,11 @@ export async function handleYoloCommand(host: SlashCommandHost, args: string): P
   if (currentMode === 'yolo') {
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice(t('tui.commands.yoloModeOff'));
+    host.showNotice(t('tui.statusMessages.yoloModeOff'));
   } else {
     await session.setPermission('yolo');
     host.setAppState({ permissionMode: 'yolo' });
-    host.showNotice(t('tui.commands.yoloModeOn'), t('tui.commands.yoloModeOnSub'));
+    host.showNotice(t('tui.statusMessages.yoloModeOn'), t('tui.statusMessages.yoloModeOnSub'));
   }
 }
 
@@ -175,23 +175,23 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
 
   if (subcmd === 'on') {
     if (currentMode === 'auto') {
-      host.showNotice(t('tui.commands.autoModeAlreadyOn'));
+      host.showNotice(t('tui.statusMessages.autoModeAlreadyOn'));
       return;
     }
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice(t('tui.commands.autoModeOn'), t('tui.commands.autoModeOnSub'));
+    host.showNotice(t('tui.statusMessages.autoModeOn'), t('tui.statusMessages.autoModeOnSub'));
     return;
   }
 
   if (subcmd === 'off') {
     if (currentMode !== 'auto') {
-      host.showNotice(t('tui.commands.autoModeAlreadyOff'));
+      host.showNotice(t('tui.statusMessages.autoModeAlreadyOff'));
       return;
     }
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice(t('tui.commands.autoModeOff'));
+    host.showNotice(t('tui.statusMessages.autoModeOff'));
     return;
   }
 
@@ -199,11 +199,11 @@ export async function handleAutoCommand(host: SlashCommandHost, args: string): P
   if (currentMode === 'auto') {
     await session.setPermission('manual');
     host.setAppState({ permissionMode: 'manual' });
-    host.showNotice(t('tui.commands.autoModeOff'));
+    host.showNotice(t('tui.statusMessages.autoModeOff'));
   } else {
     await session.setPermission('auto');
     host.setAppState({ permissionMode: 'auto' });
-    host.showNotice(t('tui.commands.autoModeOn'), t('tui.commands.autoModeOnSub'));
+    host.showNotice(t('tui.statusMessages.autoModeOn'), t('tui.statusMessages.autoModeOnSub'));
   }
 }
 
@@ -235,7 +235,7 @@ export async function handleThemeCommand(host: SlashCommandHost, args: string): 
   if (!isBuiltInTheme(theme)) {
     const custom = await loadCustomThemeMerged(theme);
     if (custom === null) {
-      host.showError(t('tui.commands.unknownTheme', { theme }));
+      host.showError(t('tui.statusMessages.unknownTheme', { theme }));
       return;
     }
   }
@@ -250,7 +250,7 @@ export async function handleModelCommand(host: SlashCommandHost, args: string): 
     return;
   }
   if (host.state.appState.availableModels[alias] === undefined) {
-    host.showError(t('tui.commands.unknownModelAlias', { alias }));
+    host.showError(t('tui.statusMessages.unknownModelAlias', { alias }));
     return;
   }
   showModelPicker(host, alias);
@@ -260,7 +260,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
   const alias = host.state.appState.model;
   const model = host.state.appState.availableModels[alias];
   if (model === undefined) {
-    host.showError(t('tui.commands.noModelSelected'));
+    host.showError(t('tui.statusMessages.noModelSelected'));
     return;
   }
   const effective = effectiveModelForHost(host, model);
@@ -275,7 +275,7 @@ export async function handleEffortCommand(host: SlashCommandHost, args: string):
     const protocol = effective.protocol ?? providerType;
     if (protocol !== 'anthropic') {
       host.showError(
-        t('tui.commands.unsupportedEffort', { arg, alias, segments: segments.join(', ') }),
+        t('tui.statusMessages.unsupportedEffort', { arg, alias, segments: segments.join(', ') }),
       );
       return;
     }
@@ -408,8 +408,8 @@ export function showModelPicker(host: SlashCommandHost, selectedValue: string = 
   const entries = Object.entries(models);
   if (entries.length === 0) {
     host.showNotice(
-      t('tui.commands.noModelsConfigured'),
-      t('tui.commands.noModelsConfiguredSub'),
+      t('tui.statusMessages.noModelsConfigured'),
+      t('tui.statusMessages.noModelsConfiguredSub'),
     );
     return;
   }
@@ -442,7 +442,7 @@ async function performModelSwitch(
   persist: boolean,
 ): Promise<void> {
   if (host.state.appState.streamingPhase !== 'idle') {
-    host.showError(t('tui.commands.cannotSwitchModelsWhileStreaming'));
+    host.showError(t('tui.statusMessages.cannotSwitchModelsWhileStreaming'));
     return;
   }
 
@@ -471,7 +471,7 @@ async function performModelSwitch(
     }
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(t('tui.commands.switchModelFailed', { msg }));
+    host.showError(t('tui.statusMessages.switchModelFailed', { msg }));
     return;
   }
 
@@ -505,7 +505,7 @@ async function performModelSwitch(
       persisted = await persistModelSelection(host, effectiveAlias, effectiveEffort);
     } catch (error) {
       const msg = formatErrorMessage(error);
-      host.showError(t('tui.commands.switchSavedButDefaultFailed', { name: displayName, msg }));
+      host.showError(t('tui.statusMessages.switchSavedButDefaultFailed', { name: displayName, msg }));
       return;
     }
   }
@@ -661,7 +661,7 @@ export async function showExperimentsPanel(host: SlashCommandHost): Promise<void
   try {
     features = await host.harness.getExperimentalFeatures();
   } catch (error) {
-    host.showError(t('tui.commands.loadExperimentsFailed', { error: formatErrorMessage(error) }));
+    host.showError(t('tui.statusMessages.loadExperimentsFailed', { error: formatErrorMessage(error) }));
     return;
   }
   mountExperimentsPanel(host, features);
@@ -694,14 +694,14 @@ export async function applyExperimentalFeatureChanges(
       await host.session.reloadSession();
       await host.reloadCurrentSessionView(
         host.session,
-        t('tui.commands.experimentalUpdatedSessionReloaded'),
+        t('tui.statusMessages.experimentalUpdatedSessionReloaded'),
       );
     } else {
-      host.showStatus(t('tui.commands.experimentalUpdated'), 'success');
+      host.showStatus(t('tui.statusMessages.experimentalUpdated'), 'success');
     }
     host.track('experimental_features_apply', { changed: changes.length });
   } catch (error) {
-    host.showError(t('tui.commands.updateExperimentsFailed', { error: formatErrorMessage(error) }));
+    host.showError(t('tui.statusMessages.updateExperimentsFailed', { error: formatErrorMessage(error) }));
   }
 }
 
@@ -774,12 +774,12 @@ async function applyPermissionChoice(host: SlashCommandHost, mode: PermissionMod
     await host.requireSession().setPermission(mode);
   } catch (error) {
     const msg = formatErrorMessage(error);
-    host.showError(t('tui.commands.failedToSetPermission', { error: msg }));
+    host.showError(t('tui.statusMessages.failedToSetPermission', { error: msg }));
     return;
   }
 
   host.setAppState({ permissionMode: mode });
-  host.showNotice(t('tui.commands.configPermissionMode', { mode }));
+  host.showNotice(t('tui.messages.configPermissionMode', { mode }));
 }
 
 export function showSettingsSelector(host: SlashCommandHost): void {
