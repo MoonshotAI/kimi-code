@@ -914,6 +914,8 @@ function selectModel(modelId: string): void {
             class="ph"
             :placeholder="placeholder"
             :disabled="starting"
+            autocomplete="off"
+            spellcheck="false"
             rows="1"
             @keydown="handleKeydown"
             @compositionstart="handleCompositionStart"
