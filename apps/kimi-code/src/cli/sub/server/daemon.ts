@@ -1,16 +1,17 @@
 /**
  * `kimi web` daemon orchestration — parent (spawner) side.
  *
- * Ensures a single background server daemon exists for this device, then
- * returns its origin so the caller can open the web UI. The flow:
+ * Ensures a background server daemon exists for this device, then returns its
+ * origin so the caller can open the web UI. The flow:
  *
- *   1. Read `~/.kimi-code/server/lock`. If it names a *live* daemon, reuse it
- *      (wait for it to be healthy) — never spawn a second one.
+ *   1. Read the instance registry (`~/.kimi-code/server/instances/`). If it
+ *      names a *live* daemon, reuse it (wait for it to be healthy) — never
+ *      spawn a second one.
  *   2. Otherwise pick a free port (preferred port when available, else an
  *      OS-assigned one) and spawn `kimi server run --daemon` as a detached
  *      child whose stdio is redirected to the server log.
- *   3. Poll the lock until *some* live daemon (ours, or a concurrent racer's
- *      that won the lock) is healthy, then return its origin.
+ *   3. Poll the registry until *some* live daemon (ours, or a concurrent
+ *      racer's that registered first) is healthy, then return its origin.
  *
  * The child side (`startServerDaemon`) lives in `./run.ts` next to the
  * foreground runner so it can share the same bootstrap helpers.
@@ -22,7 +23,11 @@ import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 
-import { DEFAULT_LOCK_DIR, getLiveLock, type LockContents } from '@moonshot-ai/kap-server';
+import {
+  DEFAULT_SERVER_DIR,
+  getLiveServerInstance,
+  type ServerInstanceInfo,
+} from '@moonshot-ai/kap-server';
 
 import {
   DEFAULT_SERVER_HOST,
@@ -39,7 +44,7 @@ const SERVER_LOG_FILENAME = 'server.log';
 const REUSE_HEALTH_TIMEOUT_MS = 15_000;
 /** How long to wait for a freshly-spawned daemon to come up. */
 const SPAWN_TIMEOUT_MS = 20_000;
-/** Poll cadence while waiting for the daemon to appear in the lock + healthz. */
+/** Poll cadence while waiting for the daemon to register + answer healthz. */
 const POLL_INTERVAL_MS = 200;
 /** Default log level for a daemon spawned without an explicit `--log-level`. */
 const DEFAULT_DAEMON_LOG_LEVEL = 'info';
@@ -73,26 +78,25 @@ export interface EnsureDaemonResult {
   readonly origin: string;
   /** True when an already-running daemon was reused (no new server started). */
   readonly reused: boolean;
-  /** Bind host the running daemon is actually listening on (from the lock). */
+  /** Bind host the running daemon is actually listening on (from the registry). */
   readonly host: string;
-  /** Port the running daemon is actually listening on (from the lock). */
+  /** Port the running daemon is actually listening on (from the registry). */
   readonly port: number;
   /**
-   * CLI version that started the reused server, recorded in its lock. Absent
-   * for freshly-spawned servers (same version as this CLI) and for locks
-   * written by older builds.
+   * CLI version that started the reused server, recorded in the registry.
+   * Absent for freshly-spawned servers (same version as this CLI) and for
+   * instances registered by older builds.
    */
   readonly hostVersion?: string;
 }
 
 /** Path of the daemon log file (shared with the OS-service log location). */
 export function daemonLogPath(): string {
-  return join(DEFAULT_LOCK_DIR, SERVER_LOG_FILENAME);
+  return join(DEFAULT_SERVER_DIR, SERVER_LOG_FILENAME);
 }
 
-export function lockConnectHost(lock: LockContents): string {
-  const host = lock.host ?? LOCAL_SERVER_HOST;
-  return host === '0.0.0.0' ? LOCAL_SERVER_HOST : host;
+export function instanceConnectHost(instance: ServerInstanceInfo): string {
+  return instance.host === '0.0.0.0' ? LOCAL_SERVER_HOST : instance.host;
 }
 
 /** True when `host:port` is currently free to bind (nothing listening). */
@@ -303,21 +307,21 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Return an already-live, healthy daemon's connection info, or `undefined`
- * when no reusable server holds the lock. Used by `ensureDaemon` (step 1) and
+ * when no reusable server is registered. Used by `ensureDaemon` (step 1) and
  * by foreground-mode `kimi web`, which opens the running server instead of
  * failing to bind its port.
  */
 export async function findReusableDaemon(): Promise<EnsureDaemonResult | undefined> {
-  const existing = getLiveLock();
+  const existing = await getLiveServerInstance();
   if (!existing) return undefined;
-  const origin = serverOrigin(lockConnectHost(existing), existing.port);
+  const origin = serverOrigin(instanceConnectHost(existing), existing.port);
   if (!(await waitForServerHealthy(origin, REUSE_HEALTH_TIMEOUT_MS))) return undefined;
   return {
     origin,
     reused: true,
-    host: existing.host ?? DEFAULT_SERVER_HOST,
+    host: existing.host,
     port: existing.port,
-    hostVersion: existing.host_version,
+    hostVersion: existing.hostVersion,
   };
 }
 
@@ -331,12 +335,13 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
   const preferred = options.port ?? DEFAULT_SERVER_PORT;
   const logLevel = options.logLevel ?? DEFAULT_DAEMON_LOG_LEVEL;
 
-  // 1. Reuse an already-live daemon if one holds the lock.
+  // 1. Reuse an already-live daemon if one is registered.
   const reusable = await findReusableDaemon();
   if (reusable) return reusable;
-  // A live lock pid that is not responding (wedged or mid-boot failure) falls
-  // through to spawn: if it is truly wedged our child loses the lock race and
-  // we reconnect below; if it died, stale takeover lets our child claim it.
+  // A live registered pid that is not responding (wedged or mid-boot failure)
+  // falls through to spawn: our child registers itself alongside it (walking
+  // to the next free port), and the poll below reconnects once either is
+  // healthy.
 
   // 2. No reusable daemon — pick a free port and spawn one detached.
   const port = await resolveDaemonPort(host, preferred);
@@ -354,11 +359,11 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
     idleGraceMs: options.idleGraceMs,
   });
 
-  // Watch for an early exit so a boot failure (e.g. the non-loopback TLS gate,
-  // a config error, or a lost lock race with no other daemon to fall back to)
-  // surfaces the real error immediately instead of waiting out the full spawn
-  // timeout. The exit code/signal plus a tail of the daemon log is what tells
-  // the operator *why* it failed.
+  // Watch for an early exit so a boot failure (e.g. the non-loopback TLS gate
+  // or a config error, with no other daemon to fall back to) surfaces the real
+  // error immediately instead of waiting out the full spawn timeout. The exit
+  // code/signal plus a tail of the daemon log is what tells the operator *why*
+  // it failed.
   let childExit: { code: number | null; signal: NodeJS.Signals | null } | undefined;
   child.once('exit', (code, signal) => {
     childExit = { code, signal };
@@ -369,23 +374,23 @@ export async function ensureDaemon(options: EnsureDaemonOptions = {}): Promise<E
     childExit = { code: -1, signal: null };
   });
 
-  // 3. Wait until some live daemon (ours, or a racer that won the lock) is up.
+  // 3. Wait until some live daemon (ours, or a racer that registered first) is up.
   const deadline = Date.now() + SPAWN_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const live = getLiveLock();
+    const live = await getLiveServerInstance();
     if (live) {
-      const origin = serverOrigin(lockConnectHost(live), live.port);
+      const origin = serverOrigin(instanceConnectHost(live), live.port);
       if (await isServerHealthy(origin, 500)) {
         return {
           origin,
           reused: false,
-          host: live.host ?? DEFAULT_SERVER_HOST,
+          host: live.host,
           port: live.port,
         };
       }
     }
     if (childExit !== undefined && !live) {
-      // Our child exited and no other live daemon holds the lock to fall back
+      // Our child exited and no other live daemon is registered to fall back
       // to — this is a real boot failure, not a lost race.
       throw new Error(formatDaemonBootFailure(childExit, daemonLogPath()));
     }

@@ -2,18 +2,18 @@
  * `kimi server ps` — list clients currently connected to the running server.
  *
  * Talks to the running server over HTTP (`GET /api/v1/connections`) using the
- * single-instance lock (`~/.kimi-code/server/lock`) to discover its origin —
+ * instance registry (`~/.kimi-code/server/instances/`) to discover its origin —
  * the same way `kimi web` locates the daemon.
  */
 
 import chalk from 'chalk';
 import type { Command } from 'commander';
 
-import { getLiveLock } from '@moonshot-ai/kap-server';
+import { getLiveServerInstance } from '@moonshot-ai/kap-server';
 
 import { getDataDir } from '#/utils/paths';
 
-import { lockConnectHost } from './daemon';
+import { instanceConnectHost } from './daemon';
 import { authHeaders, isServerHealthy, resolveServerToken, serverOrigin } from './shared';
 
 /** Wire shape of a single connection returned by `GET /api/v1/connections`. */
@@ -52,14 +52,14 @@ export function registerPsCommand(server: Command): void {
 }
 
 async function handlePsCommand(opts: { json?: boolean }): Promise<void> {
-  const lock = getLiveLock();
-  if (!lock) {
+  const instance = await getLiveServerInstance();
+  if (!instance) {
     throw new Error(
       'No running Kimi server. Start one with `kimi server run` or `kimi web`.',
     );
   }
 
-  const origin = serverOrigin(lockConnectHost(lock), lock.port);
+  const origin = serverOrigin(instanceConnectHost(instance), instance.port);
   if (!(await isServerHealthy(origin, HEALTH_TIMEOUT_MS))) {
     throw new Error(`Kimi server at ${origin} is not responding.`);
   }

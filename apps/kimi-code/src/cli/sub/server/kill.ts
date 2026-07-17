@@ -6,21 +6,23 @@
  *
  *   1. API path  — `POST /api/v1/shutdown` for a graceful, in-process shutdown
  *                  (best-effort; older builds or a wedged server may not answer).
- *   2. PID path  — signal the pid recorded in the lock (SIGTERM → wait →
- *                  SIGKILL). SIGKILL / TerminateProcess is the hard guarantee:
- *                  it cannot be caught or ignored.
+ *   2. PID path  — signal the pid recorded in the instance registry (SIGTERM →
+ *                  wait → SIGKILL). SIGKILL / TerminateProcess is the hard
+ *                  guarantee: it cannot be caught or ignored.
  *
- * The only honest failure mode is insufficient permissions (a process owned by
- * another user), which surfaces as an error rather than a silent miss.
+ * With multiple servers sharing the home directory, the longest-running live
+ * instance is the target. The only honest failure mode is insufficient
+ * permissions (a process owned by another user), which surfaces as an error
+ * rather than a silent miss.
  */
 
 import type { Command } from 'commander';
 
-import { getLiveLock, type LockContents } from '@moonshot-ai/kap-server';
+import { getLiveServerInstance, type ServerInstanceInfo } from '@moonshot-ai/kap-server';
 
 import { getDataDir } from '#/utils/paths';
 
-import { lockConnectHost } from './daemon';
+import { instanceConnectHost } from './daemon';
 import { authHeaders, serverOrigin, tryResolveServerToken } from './shared';
 
 /** How long to wait for the graceful API shutdown request. */
@@ -33,7 +35,7 @@ const KILL_GRACE_MS = 2000;
 const POLL_INTERVAL_MS = 100;
 
 export interface KillCommandDeps {
-  getLiveLock(): LockContents | undefined;
+  getLiveInstance(): Promise<ServerInstanceInfo | undefined>;
   requestShutdown(origin: string, token: string | undefined): Promise<void>;
   /** Best-effort read of the persistent bearer token; undefined on miss. */
   resolveToken(): string | undefined;
@@ -59,14 +61,14 @@ export function registerKillCommand(server: Command): void {
 }
 
 export async function handleKillCommand(deps: KillCommandDeps): Promise<void> {
-  const lock = deps.getLiveLock();
-  if (!lock) {
+  const instance = await deps.getLiveInstance();
+  if (!instance) {
     deps.stdout.write('No running Kimi server.\n');
     return;
   }
 
-  const { pid } = lock;
-  const origin = serverOrigin(lockConnectHost(lock), lock.port);
+  const { pid } = instance;
+  const origin = serverOrigin(instanceConnectHost(instance), instance.port);
 
   // 1. API path — best-effort graceful shutdown. Ignore every outcome: the
   //    server may be an older build without the route, already wedged, or may
@@ -153,7 +155,7 @@ export async function requestShutdownViaApi(
 }
 
 const DEFAULT_KILL_DEPS: KillCommandDeps = {
-  getLiveLock,
+  getLiveInstance: getLiveServerInstance,
   requestShutdown: requestShutdownViaApi,
   resolveToken: () => tryResolveServerToken(getDataDir()),
   signalPid,

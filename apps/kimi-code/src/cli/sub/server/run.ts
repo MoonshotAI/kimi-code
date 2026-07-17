@@ -88,9 +88,9 @@ export interface RunCommandDeps {
     origin: string;
     /** True when an already-running daemon was reused (no new server started). */
     reused?: boolean;
-    /** Bind host the running daemon is actually listening on (from the lock). */
+    /** Bind host the running daemon is actually listening on (from the registry). */
     host?: string;
-    /** Port the running daemon is actually listening on (from the lock). */
+    /** Port the running daemon is actually listening on (from the registry). */
     port?: number;
     /** CLI version that started the reused server (from its lock), if recorded. */
     hostVersion?: string;

@@ -1029,31 +1029,30 @@ describe('--keep-alive (no 60s idle-kill)', () => {
   });
 });
 
-describe('lockConnectHost (M6.2 connect side)', () => {
+describe('instanceConnectHost (M6.2 connect side)', () => {
   it('maps a 0.0.0.0 bind to 127.0.0.1 so the CLI connects over loopback', async () => {
-    const { lockConnectHost } = await import('#/cli/sub/server/daemon');
+    const { instanceConnectHost } = await import('#/cli/sub/server/daemon');
     // The daemon binds 0.0.0.0 (all interfaces), but the local CLI must
     // connect over loopback — 0.0.0.0 is not a connectable address. The token
     // then rides on that loopback connection (covered by the M5.4 kill/ps
     // Authorization tests).
-    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627, host: '0.0.0.0' })).toBe(
-      '127.0.0.1',
-    );
+    expect(
+      instanceConnectHost({
+        serverId: 'srv',
+        pid: 1,
+        startedAt: 0,
+        heartbeatAt: 0,
+        port: 58627,
+        host: '0.0.0.0',
+      }),
+    ).toBe('127.0.0.1');
   });
 
   it('preserves a loopback / concrete bind host', async () => {
-    const { lockConnectHost } = await import('#/cli/sub/server/daemon');
-    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627, host: '127.0.0.1' })).toBe(
-      '127.0.0.1',
-    );
-    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627, host: '192.168.1.5' })).toBe(
-      '192.168.1.5',
-    );
-  });
-
-  it('falls back to 127.0.0.1 when the lock has no host', async () => {
-    const { lockConnectHost } = await import('#/cli/sub/server/daemon');
-    expect(lockConnectHost({ pid: 1, started_at: '', port: 58627 })).toBe('127.0.0.1');
+    const { instanceConnectHost } = await import('#/cli/sub/server/daemon');
+    const base = { serverId: 'srv', pid: 1, startedAt: 0, heartbeatAt: 0, port: 58627 };
+    expect(instanceConnectHost({ ...base, host: '127.0.0.1' })).toBe('127.0.0.1');
+    expect(instanceConnectHost({ ...base, host: '192.168.1.5' })).toBe('192.168.1.5');
   });
 });
 
@@ -1697,7 +1696,7 @@ function makeKillDeps(overrides: Partial<KillCommandDeps> = {}): {
   const state = { shutdownCalls: 0 };
   const clock = { t: 0 };
   const deps: KillCommandDeps = {
-    getLiveLock: () => undefined,
+    getLiveInstance: async () => undefined,
     requestShutdown: async () => {
       state.shutdownCalls += 1;
     },
@@ -1723,11 +1722,18 @@ function makeKillDeps(overrides: Partial<KillCommandDeps> = {}): {
 }
 
 describe('`kimi server kill`', () => {
-  const liveLock = { pid: 1234, started_at: '2026-06-17T00:00:00.000Z', port: 58627 };
+  const liveInstance = {
+    serverId: 'srv-1',
+    pid: 1234,
+    host: '127.0.0.1',
+    port: 58627,
+    startedAt: 1000,
+    heartbeatAt: 1000,
+  };
 
-  it('prints "No running Kimi server." and sends no signal when no live lock exists', async () => {
+  it('prints "No running Kimi server." and sends no signal when no live instance exists', async () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
-    const { deps, writes, signals } = makeKillDeps({ getLiveLock: () => undefined });
+    const { deps, writes, signals } = makeKillDeps({ getLiveInstance: async () => undefined });
 
     await handleKillCommand(deps);
 
@@ -1738,7 +1744,7 @@ describe('`kimi server kill`', () => {
   it('attempts the API shutdown, then stops after SIGTERM when the pid exits promptly', async () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
     const { deps, writes, signals, state, clock } = makeKillDeps({
-      getLiveLock: () => liveLock,
+      getLiveInstance: async () => liveInstance,
       pidAlive: () => clock.t < 50,
     });
 
@@ -1753,7 +1759,7 @@ describe('`kimi server kill`', () => {
   it('escalates to SIGKILL when the pid survives SIGTERM', async () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
     const { deps, writes, signals, clock } = makeKillDeps({
-      getLiveLock: () => ({ ...liveLock, pid: 5678 }),
+      getLiveInstance: async () => ({ ...liveInstance, pid: 5678 }),
       // Survives the 3s SIGTERM grace, dies during the 2s SIGKILL grace.
       pidAlive: () => clock.t < 3100,
     });
@@ -1768,7 +1774,7 @@ describe('`kimi server kill`', () => {
   it('throws a permissions error when the pid survives SIGKILL', async () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
     const { deps } = makeKillDeps({
-      getLiveLock: () => ({ ...liveLock, pid: 9999 }),
+      getLiveInstance: async () => ({ ...liveInstance, pid: 9999 }),
       pidAlive: () => true,
     });
 
@@ -1811,13 +1817,20 @@ describe('authHeaders', () => {
 });
 
 describe('`kimi server kill` carries the bearer token', () => {
-  const liveLock = { pid: 1234, started_at: '2026-06-17T00:00:00.000Z', port: 58627 };
+  const liveInstance = {
+    serverId: 'srv-1',
+    pid: 1234,
+    host: '127.0.0.1',
+    port: 58627,
+    startedAt: 1000,
+    heartbeatAt: 1000,
+  };
 
   it('passes the resolved token to requestShutdown', async () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
     let seenToken: string | undefined = 'unset';
     const { deps } = makeKillDeps({
-      getLiveLock: () => liveLock,
+      getLiveInstance: async () => liveInstance,
       resolveToken: () => 'tok-123',
       requestShutdown: async (_origin, token) => {
         seenToken = token;
@@ -1834,7 +1847,7 @@ describe('`kimi server kill` carries the bearer token', () => {
     const { handleKillCommand } = await import('#/cli/sub/server/kill');
     let seenToken: string | undefined = 'unset';
     const { deps } = makeKillDeps({
-      getLiveLock: () => liveLock,
+      getLiveInstance: async () => liveInstance,
       resolveToken: () => undefined,
       requestShutdown: async (_origin, token) => {
         seenToken = token;
@@ -1978,16 +1991,19 @@ describe('`kimi server rotate-token`', () => {
   it('re-prints the access links with the new token when a server is running', async () => {
     const { registerServerCommand } = await import('#/cli/sub/server');
     const { mkdirSync, writeFileSync: writeSync } = await import('node:fs');
-    // Fake a live lock pointing at this (alive) process so getLiveLock() finds
-    // the running server and the command can re-print its links.
-    mkdirSync(join(dir, 'server'), { recursive: true });
+    // Fake a live instance-registry entry pointing at this (alive) process so
+    // getLiveServerInstance() finds the running server and the command can
+    // re-print its links.
+    mkdirSync(join(dir, 'server', 'instances'), { recursive: true });
     writeSync(
-      join(dir, 'server', 'lock'),
+      join(dir, 'server', 'instances', '01JTEST0000000000000000000.json'),
       JSON.stringify({
+        server_id: '01JTEST0000000000000000000',
         pid: process.pid,
-        started_at: new Date().toISOString(),
-        port: 58627,
         host: '127.0.0.1',
+        port: 58627,
+        started_at: Date.now(),
+        heartbeat_at: Date.now(),
       }),
     );
 
