@@ -125,6 +125,34 @@ The bound agent is the session's identity: it is fixed at the session's first bi
 
 For main-agent customization, prefer `mode: append` so the environment, workspace-instruction, and Skill injections stay in effect; `mode: replace` fits self-contained sub-agents that own their entire prompt.
 
+### Overriding the main agent's system prompt with SYSTEM.md
+
+To override the main agent's system prompt permanently — without passing `--agent` or `--agent-file` on every launch — write a `$KIMI_CODE_HOME/SYSTEM.md` file (default: `~/.kimi-code/SYSTEM.md`; it moves with `KIMI_CODE_HOME`). While the file exists and is non-empty, it replaces the built-in default main agent's system prompt in full — and only the prompt: the description and tool set are inherited from the built-in defaults. Like `--agent` / `--agent-file`, SYSTEM.md currently takes effect only under the v2 engine (`KIMI_CODE_EXPERIMENTAL_FLAG=1`); the v1 engine ignores the file.
+
+SYSTEM.md is a plain Markdown body — no frontmatter is required or read. A missing or empty file has no effect, and a read failure falls back to the built-in prompt with a warning. Explicit intent still outranks it: a project-scoped same-name agent file declaring `override: true` and any file passed via `--agent-file` take precedence, and selecting another agent with `--agent` bypasses it entirely. Within the user scope itself, SYSTEM.md wins over a same-name file discovered in the `agents/` directories.
+
+Unlike a regular agent file whose body is used as-is, SYSTEM.md is rendered as a template each time the prompt is built — `${var}` placeholders in the body are substituted:
+
+| Variable | Content |
+| --- | --- |
+| `${skills}` | The merged Agent Skills injection; empty when the `Skill` tool is unavailable |
+| `${agents_md}` | Content of the workspace instruction files (such as `AGENTS.md`) |
+| `${cwd}` | Current working directory |
+| `${cwd_listing}` | Listing of the working directory |
+| `${os}` | Operating system kind |
+| `${shell}` | Shell name and path, for example `bash (\`/bin/bash\`)` |
+| `${now}` | Current time in ISO format |
+
+Unknown variables stay verbatim, a bare `$` is never special, and a variable with no context value renders as an empty string. The variables are enough to rebuild the skeleton of the built-in prompt, for example:
+
+```markdown
+You are Kimi, running at ${cwd} on ${os}.
+
+${agents_md}
+
+${skills}
+```
+
 ## Instruction Files
 
 Global Kimi-specific instructions can live at `$KIMI_CODE_HOME/AGENTS.md` (default: `~/.kimi-code/AGENTS.md`). When you relocate the data root with `KIMI_CODE_HOME`, this global instruction file moves with it. Generic cross-tool instructions can still live under `~/.agents/AGENTS.md` in the real OS home, and project-level instructions remain under the project tree, for example `.kimi-code/AGENTS.md` or `AGENTS.md`.

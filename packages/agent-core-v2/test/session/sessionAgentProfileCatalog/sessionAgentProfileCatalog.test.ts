@@ -490,4 +490,75 @@ describe('SessionAgentProfileCatalogService', () => {
       host.dispose();
     });
   });
+
+  it('replaces the builtin default system prompt with user-level SYSTEM.md', async () => {
+    await withFixture(async (fixture) => {
+      await writeFile(
+        join(fixture.homeDir, 'SYSTEM.md'),
+        'You are a custom main agent. cwd=${cwd} unknown=${nope}',
+      );
+      const { host, session } = makeSession(fixture);
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+
+      const prompt = catalog.getDefault().systemPrompt({ cwd: '/work/dir' });
+      expect(prompt).toContain('You are a custom main agent.');
+      expect(prompt).toContain('cwd=/work/dir');
+      expect(prompt).toContain('unknown=${nope}');
+      host.dispose();
+    });
+  });
+
+  it('lets SYSTEM.md win over a same-name scanned user agent file', async () => {
+    await withFixture(async (fixture) => {
+      await writeAgent(
+        join(fixture.homeDir, 'agents'),
+        'agent.md',
+        agentMd('agent', 'user agents dir default', true),
+      );
+      await writeFile(join(fixture.homeDir, 'SYSTEM.md'), 'system md prompt');
+      const { host, session } = makeSession(fixture);
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+
+      expect(catalog.getDefault().systemPrompt({})).toContain('system md prompt');
+      host.dispose();
+    });
+  });
+
+  it('lets a same-name project agent file win over user-level SYSTEM.md', async () => {
+    await withFixture(async (fixture) => {
+      await writeFile(join(fixture.homeDir, 'SYSTEM.md'), 'system md prompt');
+      await writeAgent(
+        join(fixture.workDir, '.kimi-code', 'agents'),
+        'agent.md',
+        agentMd('agent', 'project default override', true),
+      );
+      const { host, session } = makeSession(fixture);
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+
+      expect(catalog.getDefault().description).toBe('project default override');
+      expect(catalog.getDefault().systemPrompt({})).not.toContain('system md prompt');
+      host.dispose();
+    });
+  });
+
+  it('lets an explicit agent file win over user-level SYSTEM.md', async () => {
+    await withFixture(async (fixture) => {
+      await writeFile(join(fixture.homeDir, 'SYSTEM.md'), 'system md prompt');
+      const explicitFile = await writeAgent(
+        fixture.workDir,
+        'explicit.md',
+        agentMd('agent', 'explicit default override', true),
+      );
+      const { host, session } = makeSession(fixture, { explicitFiles: [explicitFile] });
+      const catalog = session.accessor.get(ISessionAgentProfileCatalog);
+      await catalog.load();
+
+      expect(catalog.getDefault().description).toBe('explicit default override');
+      expect(catalog.getDefault().systemPrompt({})).not.toContain('system md prompt');
+      host.dispose();
+    });
+  });
 });

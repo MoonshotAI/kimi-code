@@ -125,6 +125,34 @@ KIMI_CODE_EXPERIMENTAL_FLAG=1 kimi -p --agent reviewer "审查这个分支上的
 
 定制主 Agent 时推荐使用 `mode: append`，以保持环境、工作区指令和 Skill 注入生效；`mode: replace` 适合自包含、完全拥有自己提示词的子 Agent。
 
+### 用 SYSTEM.md 覆盖主 Agent 的系统提示词
+
+希望永久覆盖主 Agent 的系统提示词、而不必每次启动都传入 `--agent` 或 `--agent-file` 时，可以写一份 `$KIMI_CODE_HOME/SYSTEM.md`（默认：`~/.kimi-code/SYSTEM.md`，随 `KIMI_CODE_HOME` 移动）。文件存在且非空期间，它整体替换内置默认主 Agent 的系统提示词——但只替换提示词，描述与工具集仍沿用内置默认值。与 `--agent` / `--agent-file` 一样，SYSTEM.md 目前仅在 v2 引擎下生效（`KIMI_CODE_EXPERIMENTAL_FLAG=1`）；v1 引擎会忽略该文件。
+
+SYSTEM.md 是纯 Markdown 正文，不需要也不读取 Frontmatter。文件缺失或为空时不生效；读取失败时会告警并回退到内置提示词。优先级上，显式意图仍然胜出：项目作用域中声明了 `override: true` 的同名 Agent 文件、通过 `--agent-file` 传入的文件都排在 SYSTEM.md 之前，用 `--agent` 选择其他 Agent 时 SYSTEM.md 也不会生效；而在用户作用域内部，SYSTEM.md 优先于 `agents/` 目录中扫描到的同名文件。
+
+与按原样使用的普通 Agent 文件正文不同，SYSTEM.md 在每次构建提示词时作为模板渲染——正文中的 `${var}` 占位符会被替换：
+
+| 变量 | 内容 |
+| --- | --- |
+| `${skills}` | 合并后的 Agent Skills 注入内容；`Skill` 工具不可用时为空 |
+| `${agents_md}` | 工作区指令文件（如 `AGENTS.md`）的内容 |
+| `${cwd}` | 当前工作目录 |
+| `${cwd_listing}` | 工作目录的文件列表 |
+| `${os}` | 操作系统类型 |
+| `${shell}` | Shell 名称与路径，例如 `bash (\`/bin/bash\`)` |
+| `${now}` | 当前时间（ISO 格式） |
+
+未知变量原样保留，单独的 `$` 没有特殊含义；上下文中缺失的变量渲染为空字符串。利用这些变量可以重建内置提示词的骨架，例如：
+
+```markdown
+You are Kimi, running at ${cwd} on ${os}.
+
+${agents_md}
+
+${skills}
+```
+
 ## 指令文件
 
 全局 Kimi 专属指令可放在 `$KIMI_CODE_HOME/AGENTS.md`（默认：`~/.kimi-code/AGENTS.md`）。当你用 `KIMI_CODE_HOME` 移动数据根时，这份全局指令文件也会一起移动。跨工具通用指令仍可放在真实 OS home 下的 `~/.agents/AGENTS.md`，项目级指令仍放在项目目录中，例如 `.kimi-code/AGENTS.md` 或 `AGENTS.md`。
