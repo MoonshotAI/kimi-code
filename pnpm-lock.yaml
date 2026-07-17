@@ -178,35 +178,35 @@ importers:
         specifier: workspace:^
         version: link:../../packages/klient
       '@tanstack/react-query':
-        specifier: ^5.99.2
+        specifier: ^5.74.4
         version: 5.99.2(react@19.2.5)
       react:
-        specifier: ^19.2.5
+        specifier: ^19.1.0
         version: 19.2.5
       react-dom:
-        specifier: ^19.2.5
+        specifier: ^19.1.0
         version: 19.2.5(react@19.2.5)
     devDependencies:
       '@tailwindcss/vite':
-        specifier: ^4.2.2
-        version: 4.2.2(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+        specifier: ^4.1.4
+        version: 4.1.18(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
       '@types/react':
-        specifier: ^19.2.14
+        specifier: ^19.1.2
         version: 19.2.14
       '@types/react-dom':
-        specifier: ^19.2.3
+        specifier: ^19.1.2
         version: 19.2.3(@types/react@19.2.14)
       '@vitejs/plugin-react':
-        specifier: ^4.7.0
+        specifier: ^4.4.1
         version: 4.7.0(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
       tailwindcss:
-        specifier: ^4.2.2
-        version: 4.2.2
+        specifier: ^4.1.4
+        version: 4.1.18
       typescript:
         specifier: 6.0.2
         version: 6.0.2
       vite:
-        specifier: ^6.4.2
+        specifier: ^6.3.3
         version: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
       vitest:
         specifier: 4.1.4
