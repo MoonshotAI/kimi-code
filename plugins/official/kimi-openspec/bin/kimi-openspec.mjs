@@ -8,7 +8,7 @@
 // Business logic is kept self-contained so the plugin can run from a zipped
 // marketplace install without workspace package dependencies.
 
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile, readdir } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -19,7 +19,7 @@ const VERSION = '1.0.0';
 const PROTOCOL_VERSION = '2025-06-18';
 const OPENSPEC_CMD = 'npx --yes @fission-ai/openspec';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // ─── Cache ───────────────────────────────────────────────────────────
 
@@ -362,11 +362,11 @@ async function runTool(params, cache) {
   const name = params?.name;
   const args = params?.arguments ?? {};
 
-  const runOpenSpec = async (callArgs) => {
-    const cmd = `${OPENSPEC_CMD} ${callArgs.join(' ')}`;
+  const runOpenSpec = async (subCommand, extraArgs = []) => {
+    const cmd = [...OPENSPEC_CMD, subCommand, ...extraArgs];
     try {
-      const { stdout, stderr } = await execAsync(cmd, { cwd: cache.projectPath });
-      return { success: true, stdout, stderr, message: `Ran: ${cmd}` };
+      const { stdout, stderr } = await execFileAsync(OPENSPEC_CMD[0], [...OPENSPEC_CMD.slice(1), subCommand, ...extraArgs], { cwd: cache.projectPath });
+      return { success: true, stdout, stderr, message: `Ran: ${cmd.join(' ')}` };
     } catch (error) {
       return {
         success: false,
@@ -380,17 +380,17 @@ async function runTool(params, cache) {
   switch (name) {
     case 'openspec_init': {
       const tools = typeof args.tools === 'string' && args.tools.length > 0 ? args.tools : 'claude';
-      const cmdArgs = ['init', '--tools', `"${tools}"`];
-      if (args.force) cmdArgs.push('--force');
-      const res = await runOpenSpec(cmdArgs);
+      const extraArgs = ['--tools', tools];
+      if (args.force) extraArgs.push('--force');
+      const res = await runOpenSpec('init', extraArgs);
       await refreshCache(cache);
       return formatResult(res);
     }
 
     case 'openspec_new_change': {
-      const cmdArgs = ['new', 'change', `"${args.name}"`];
-      if (args.description) cmdArgs.push('--description', `"${args.description}"`);
-      const res = await runOpenSpec(cmdArgs);
+      const extraArgs = ['change', args.name];
+      if (args.description) extraArgs.push('--description', args.description);
+      const res = await runOpenSpec('new', extraArgs);
       await refreshCache(cache);
       return formatResult(res);
     }
@@ -430,10 +430,9 @@ async function runTool(params, cache) {
           isError: true,
         };
       }
-      const cmdArgs = ['show', `"${args.itemName}"`];
-      if (args.type) cmdArgs.push('--type', args.type);
-      cmdArgs.push('--json');
-      const res = await runOpenSpec(cmdArgs);
+      const extraArgs = [args.itemName, '--json'];
+      if (args.type) extraArgs.push('--type', args.type);
+      const res = await runOpenSpec('show', extraArgs);
       return formatResult(res);
     }
 
@@ -452,40 +451,39 @@ async function runTool(params, cache) {
           isError: true,
         };
       }
-      const cmdArgs = ['status', '--change', `"${args.changeName}"`, '--json'];
-      const res = await runOpenSpec(cmdArgs);
+      const res = await runOpenSpec('status', ['--change', args.changeName, '--json']);
       return formatResult(res);
     }
 
     case 'openspec_validate': {
-      const cmdArgs = ['validate'];
-      if (args.itemName) cmdArgs.push(`"${args.itemName}"`);
-      if (args.all) cmdArgs.push('--all');
-      if (args.strict) cmdArgs.push('--strict');
-      cmdArgs.push('--json');
-      const res = await runOpenSpec(cmdArgs);
+      const extraArgs = [];
+      if (args.itemName) extraArgs.push(args.itemName);
+      if (args.all) extraArgs.push('--all');
+      if (args.strict) extraArgs.push('--strict');
+      extraArgs.push('--json');
+      const res = await runOpenSpec('validate', extraArgs);
       return formatResult(res);
     }
 
     case 'openspec_archive': {
-      const cmdArgs = ['archive', `"${args.changeName}"`, '--yes'];
-      if (args.skipSpecs) cmdArgs.push('--skip-specs');
-      const res = await runOpenSpec(cmdArgs);
+      const extraArgs = [args.changeName, '--yes'];
+      if (args.skipSpecs) extraArgs.push('--skip-specs');
+      const res = await runOpenSpec('archive', extraArgs);
       await refreshCache(cache);
       return formatResult(res);
     }
 
     case 'openspec_update': {
-      const res = await runOpenSpec(['update']);
+      const res = await runOpenSpec('update', []);
       await refreshCache(cache);
       return formatResult(res);
     }
 
     case 'openspec_instructions': {
-      const cmdArgs = ['instructions', `"${args.artifact}"`];
-      if (args.changeName) cmdArgs.push('--change', `"${args.changeName}"`);
-      cmdArgs.push('--json');
-      const res = await runOpenSpec(cmdArgs);
+      const extraArgs = [args.artifact];
+      if (args.changeName) extraArgs.push('--change', args.changeName);
+      extraArgs.push('--json');
+      const res = await runOpenSpec('instructions', extraArgs);
       return formatResult(res);
     }
 
