@@ -882,6 +882,7 @@ function registerSessionExportServices(
       createdAt: 1,
       lastOpenedAt: 2,
     }),
+    resolveAliasIds: async (id) => [id],
     createOrTouch: async (root) => ({
       id: 'ws_created',
       root,

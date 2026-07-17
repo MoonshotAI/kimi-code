@@ -252,7 +252,7 @@ describe('server-v2 /api/v2 RPC', () => {
     const { body } = await call<number>(
       'POST',
       rpc('core', ISessionIndex, 'countActive'),
-      created.body.data.id,
+      [[created.body.data.id]],
     );
     expect(body.code).toBe(0);
     expect(body.data).toBeGreaterThanOrEqual(1);

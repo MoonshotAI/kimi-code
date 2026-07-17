@@ -16,7 +16,9 @@
  * projects the v2 record onto the v1 shape, deriving the extra fields:
  *   - `created_at` / `last_opened_at` — from the registry's in-memory
  *     timestamps (reset on restart; the registry is still a skeleton).
- *   - `session_count` — count of persisted sessions for the workspace.
+ *   - `session_count` — count of persisted sessions for the workspace, summed
+ *     across every id spelling of the same root (`resolveAliasIds`) so legacy
+ *     split buckets count once for the workspace, not per bucket.
  */
 
 import {
@@ -232,9 +234,12 @@ async function toWireWorkspace(core: Scope, ws: Workspace): Promise<WorkspaceWir
 }
 
 async function countSessions(core: Scope, workspaceId: string): Promise<number> {
+  // One set-query over the alias set (legacy split buckets): a single merged
+  // listing cannot double-count, and a singleton set behaves exactly as before.
+  const workspaceIds = await core.accessor.get(IWorkspaceRegistry).resolveAliasIds(workspaceId);
   const page = await core.accessor
     .get(ISessionIndex)
-    .list({ workspaceId, includeArchived: true });
+    .list({ workspaceIds, includeArchived: true });
   return page.items.length;
 }
 

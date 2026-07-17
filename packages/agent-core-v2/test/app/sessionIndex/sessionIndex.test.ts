@@ -96,7 +96,7 @@ describe('FileSessionIndex (legacy)', () => {
     await seedEmpty('no-state');
 
     const store = build();
-    const page = await store.list({ workspaceId });
+    const page = await store.list({ workspaceIds: [workspaceId] });
     expect(page.items.map((s) => s.id).toSorted()).toEqual(['active']);
     expect(page.items[0]?.workspaceId).toBe(workspaceId);
     expect(page.items[0]?.archived).toBe(false);
@@ -107,7 +107,7 @@ describe('FileSessionIndex (legacy)', () => {
     await seedSession('archived', { archived: true });
 
     const store = build();
-    const page = await store.list({ workspaceId, includeArchived: true });
+    const page = await store.list({ workspaceIds: [workspaceId], includeArchived: true });
     expect(page.items.map((s) => s.id).toSorted()).toEqual(['active', 'archived']);
   });
 
@@ -184,8 +184,56 @@ describe('FileSessionIndex (legacy)', () => {
     await seedEmpty('no-state');
 
     const store = build();
-    expect(await store.countActive(workspaceId)).toBe(2);
-    expect(await store.countActive('wd_unknown')).toBe(0);
+    expect(await store.countActive([workspaceId])).toBe(2);
+    expect(await store.countActive(['wd_unknown'])).toBe(0);
+  });
+
+  it('list merges a workspace-id set into one recency-ordered page', async () => {
+    const otherId = encodeWorkDirKey('/home/user/other');
+    await seedSession('a1', { createdAt: 1, updatedAt: 1 });
+    await seedSession('a3', { createdAt: 3, updatedAt: 3 });
+    await seedSession('b2', { createdAt: 2, updatedAt: 2 }, otherId);
+    await seedSession('b4', { createdAt: 4, updatedAt: 4 }, otherId);
+
+    const store = build();
+    const page = await store.list({ workspaceIds: [workspaceId, otherId] });
+    expect(page.items.map((s) => s.id)).toEqual(['b4', 'a3', 'b2', 'a1']);
+    expect(page.items[0]?.workspaceId).toBe(otherId);
+  });
+
+  it('list applies limit after the cross-bucket merge', async () => {
+    const otherId = encodeWorkDirKey('/home/user/other');
+    await seedSession('a1', { createdAt: 1, updatedAt: 1 });
+    await seedSession('a3', { createdAt: 3, updatedAt: 3 });
+    await seedSession('b2', { createdAt: 2, updatedAt: 2 }, otherId);
+
+    const store = build();
+    const page = await store.list({ workspaceIds: [workspaceId, otherId], limit: 2 });
+    expect(page.items.map((s) => s.id)).toEqual(['a3', 'b2']);
+  });
+
+  it('list filters archived across every bucket of the id set', async () => {
+    const otherId = encodeWorkDirKey('/home/user/other');
+    await seedSession('active', {});
+    await seedSession('archived', { archived: true }, otherId);
+
+    const store = build();
+    const visible = await store.list({ workspaceIds: [workspaceId, otherId] });
+    expect(visible.items.map((s) => s.id)).toEqual(['active']);
+
+    const all = await store.list({ workspaceIds: [workspaceId, otherId], includeArchived: true });
+    expect(all.items.map((s) => s.id).toSorted()).toEqual(['active', 'archived']);
+  });
+
+  it('countActive sums over the workspace-id set', async () => {
+    const otherId = encodeWorkDirKey('/home/user/other');
+    await seedSession('a', {});
+    await seedSession('b', {}, otherId);
+    await seedSession('archived', { archived: true }, otherId);
+
+    const store = build();
+    expect(await store.countActive([workspaceId, otherId])).toBe(2);
+    expect(await store.countActive([otherId])).toBe(1);
   });
 });
 
@@ -265,7 +313,7 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('archived', { archived: true });
 
     const store = build();
-    const first = await store.list({ workspaceId });
+    const first = await store.list({ workspaceIds: [workspaceId] });
     expect(first.items.map((s) => s.id)).toEqual(['active']);
     expect(first.items[0]?.title).toBe('hello');
 
@@ -274,7 +322,7 @@ describe('FileSessionIndex (read model)', () => {
       'active',
       summary('active', { title: 'renamed', updatedAt: 3 }),
     );
-    const second = await store.list({ workspaceId });
+    const second = await store.list({ workspaceIds: [workspaceId] });
     expect(second.items[0]?.title).toBe('renamed');
   });
 
@@ -317,10 +365,34 @@ describe('FileSessionIndex (read model)', () => {
     await seedSession('b', { archived: true });
 
     const store = build();
-    expect(await store.countActive(workspaceId)).toBe(1);
+    expect(await store.countActive([workspaceId])).toBe(1);
 
     await queryStore.put(SESSION_COLLECTION, 'a', summary('a', { archived: true }));
-    expect(await store.countActive(workspaceId)).toBe(0);
+    expect(await store.countActive([workspaceId])).toBe(0);
+  });
+
+  it('list merges a workspace-id set into one recency-ordered page', async () => {
+    const otherId = encodeWorkDirKey('/home/user/other');
+    await seedSession('a1', { createdAt: 1, updatedAt: 1 });
+    await seedSession('a3', { createdAt: 3, updatedAt: 3 });
+    await seedSession('b2', { createdAt: 2, updatedAt: 2 }, otherId);
+    await seedSession('b4', { createdAt: 4, updatedAt: 4 }, otherId);
+
+    const store = build();
+    const page = await store.list({ workspaceIds: [workspaceId, otherId] });
+    expect(page.items.map((s) => s.id)).toEqual(['b4', 'a3', 'b2', 'a1']);
+    expect(page.items[0]?.workspaceId).toBe(otherId);
+  });
+
+  it('countActive sums over the workspace-id set', async () => {
+    const otherId = encodeWorkDirKey('/home/user/other');
+    await seedSession('a', {});
+    await seedSession('b', {}, otherId);
+    await seedSession('archived', { archived: true }, otherId);
+
+    const store = build();
+    expect(await store.countActive([workspaceId, otherId])).toBe(2);
+    expect(await store.countActive([otherId])).toBe(1);
   });
 
   it('falls back to the legacy disk path when the query store is locked', async () => {
@@ -343,11 +415,13 @@ describe('FileSessionIndex (read model)', () => {
       ]);
       disposeHost = () => { host.dispose(); };
       const store = host.app.accessor.get(ISessionIndex);
-      const page = await store.list({ workspaceId });
+      // The read model throws storage.locked; the index serves from disk.
+      const page = await store.list({ workspaceIds: [workspaceId] });
       expect(page.items.map((s) => s.id)).toEqual(['active']);
       expect(page.items[0]?.title).toBe('from disk');
       expect(await store.get('active')).toMatchObject({ id: 'active', title: 'from disk' });
-      expect(await store.countActive(workspaceId)).toBe(1);
+      expect(await store.countActive([workspaceId])).toBe(1);
+      // The lock is warned about once, then the read model stays disabled.
       expect(warnings).toEqual(['query-store locked by another process; disabling read model']);
     } finally {
       await lockHolder.close();

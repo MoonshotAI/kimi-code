@@ -1,8 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { encodeWorkDirKey } from '@moonshot-ai/agent-core-v2/_base/utils/workdir-slug';
 
 import { type RunningServer, startServer } from '../src/start';
 import { authHeaders } from './helpers/auth';
@@ -191,5 +193,58 @@ describe('server-v2 /api/v1/workspaces', () => {
     const { body } = await getJson<ListWire>('/api/v1/workspaces');
     const ws = body.data.items.find((w) => w.id === created.body.data.id);
     expect(ws?.session_count).toBe(1);
+  });
+
+  it('sums session_count across legacy split buckets of one root', async () => {
+    // Legacy pre-fold data: one physical directory registered under two
+    // spelling variants, with sessions bucketed per minted id.
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const lowerRoot = 'c:\\users\\foo\\proj';
+    const typedId = encodeWorkDirKey(typedRoot);
+    const lowerId = encodeWorkDirKey(lowerRoot);
+    await writeFile(
+      join(home as string, 'workspaces.json'),
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          [typedId]: {
+            root: typedRoot,
+            name: 'proj',
+            created_at: '2024-01-01T00:00:00.000Z',
+            last_opened_at: '2024-01-01T00:00:00.000Z',
+          },
+          [lowerId]: {
+            root: lowerRoot,
+            name: 'proj',
+            created_at: '2024-01-01T00:00:00.000Z',
+            last_opened_at: '2024-01-01T00:00:00.000Z',
+          },
+        },
+      }),
+      'utf8',
+    );
+    const seedBucket = async (
+      wsId: string,
+      sid: string,
+      meta: Record<string, unknown>,
+    ): Promise<void> => {
+      const dir = join(home as string, 'sessions', wsId, sid);
+      await mkdir(dir, { recursive: true });
+      await writeFile(
+        join(dir, 'state.json'),
+        JSON.stringify({ version: 2, cwd: typedRoot, createdAt: 1, updatedAt: 1, ...meta }),
+        'utf8',
+      );
+    };
+    await seedBucket(typedId, 's-typed', {});
+    // Archived sessions count too (the wire counts every persisted session).
+    await seedBucket(lowerId, 's-lower', { archived: true, updatedAt: 2 });
+
+    // The catalog dedupes to one workspace whose count covers both buckets.
+    const { body } = await getJson<ListWire>('/api/v1/workspaces');
+    expect(body.code).toBe(0);
+    expect(body.data.items).toHaveLength(1);
+    expect([typedId, lowerId]).toContain(body.data.items[0]?.id);
+    expect(body.data.items[0]?.session_count).toBe(2);
   });
 });
