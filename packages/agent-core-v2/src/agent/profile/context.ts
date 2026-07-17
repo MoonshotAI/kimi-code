@@ -197,7 +197,7 @@ async function pathExists(deps: ProfileContextDeps, path: string): Promise<boole
 
 async function isFile(deps: ProfileContextDeps, path: string): Promise<boolean> {
   try {
-    const stat = await deps.fs.stat(path);
+    const stat = await deps.fs.stat(path, { followSymlinks: true });
     return stat.isFile;
   } catch {
     return false;
