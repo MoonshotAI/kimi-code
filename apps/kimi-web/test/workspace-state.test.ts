@@ -775,9 +775,9 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
 
   it('awaits the profile POST before activating, so draft controls apply first', async () => {
     // Skill activation only carries `args`, so the daemon never sees the per-
-    // prompt controls (plan/swarm plus permission and thinking) the user set on
-    // the draft. We persist them to the new session's profile and must WAIT for
-    // it; otherwise :activate can race ahead of applyAgentState and the first
+    // prompt controls (plan/swarm plus permission) the user set on the draft.
+    // We persist them to the new session's profile and must WAIT for it;
+    // otherwise :activate can race ahead of applyAgentState and the first
     // skill turn runs at daemon defaults while the UI shows otherwise.
     let resolveProfile!: (persisted: boolean) => void;
     const profileGate = new Promise<boolean>((r) => {
@@ -801,7 +801,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     // Activation must NOT have started while /profile is still pending.
     await new Promise((r) => setTimeout(r, 0));
     expect(persistSessionProfile).toHaveBeenCalledWith(
-      { model: undefined, planMode: true, swarmMode: true, permissionMode: 'auto', thinking: 'high' },
+      { model: undefined, planMode: true, swarmMode: true, permissionMode: 'auto' },
       'sess_new',
     );
     expect(activateSkill).not.toHaveBeenCalled();
@@ -812,10 +812,11 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
   });
 
-  it('falls back to persisting the active level when the new session model cannot be resolved', async () => {
-    // thinkingLevelForModelId returns undefined (model not resolvable here) —
-    // the persist then keeps the active-session level verbatim, same as the
-    // fallback on the normal prompt paths.
+  it('does not write thinking in the draft profile patch — activateSkill persists it once', async () => {
+    // activateSkill resolves and persists the level itself (gated) right
+    // before activating. Duplicating the write in THIS patch would be a
+    // redundant profile update whose transient failure could veto an
+    // otherwise-ready activation, so the draft patch must not carry it.
     const activateSkill2 = vi.fn().mockResolvedValue(undefined);
     const persistSessionProfile2 = vi.fn().mockResolvedValue(true);
     const state2 = createState();
@@ -830,27 +831,14 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
       }),
       draftModes: { planMode: true, swarmMode: false, goalMode: false },
     };
-    // 'kimi-code' declares efforts ['low','medium','high']. The resolver mock
-    // still returns undefined below, so the persisted level stays the active
-    // one ('max') via the catalog-miss fallback.
-    (deps2.modelProvider as unknown as { models: unknown }).models = ref([
-      {
-        id: 'kimi-code',
-        model: 'kimi-code',
-        provider: 'kimi',
-        displayName: 'kimi-code',
-        capabilities: ['thinking'],
-        supportEfforts: ['low', 'medium', 'high'],
-      },
-    ]);
     const ws2 = useWorkspaceState(state2, deps2);
 
     await ws2.startSessionAndActivateSkill('wd_1', 'pre-changelog');
 
-    expect(persistSessionProfile2).toHaveBeenCalledWith(
-      expect.objectContaining({ thinking: 'max' }),
-      'sess_new',
-    );
+    expect(persistSessionProfile2).toHaveBeenCalledOnce();
+    const patch = persistSessionProfile2.mock.calls[0]![0] as Record<string, unknown>;
+    expect(patch).toMatchObject({ model: 'kimi-code', planMode: true, swarmMode: false });
+    expect('thinking' in patch).toBe(false);
     expect(activateSkill2).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
   });
 

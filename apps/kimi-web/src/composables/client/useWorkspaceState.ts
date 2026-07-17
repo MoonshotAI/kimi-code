@@ -1188,12 +1188,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (!sid) return;
       // Unlike a plain prompt, skill activation only carries `args`, so the
       // daemon never sees the prompt-time controls the user may have changed on
-      // the draft (plan/swarm, plus permission via /auto|/yolo and thinking via
-      // /thinking). Persist them onto this new session's profile and await it
-      // before activating, otherwise the first skill turn can start before
-      // applyAgentState and run at daemon defaults while the UI shows otherwise.
-      // Goal mode is a one-shot flag consumed per send, not a profile field, so
-      // there is nothing to persist for it.
+      // the draft (plan/swarm, plus permission via /auto|/yolo). Persist them
+      // onto this new session's profile and await it before activating,
+      // otherwise the first skill turn can start before applyAgentState and
+      // run at daemon defaults while the UI shows otherwise. Thinking is NOT
+      // persisted here — activateSkill resolves and persists it for this
+      // session's model (gated) immediately before activating. Goal mode is a
+      // one-shot flag consumed per send, not a profile field, so there is
+      // nothing to persist for it.
       const planMode = rawState.planModeBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
       const promptSession = rawState.sessions.find((s) => s.id === sid);
@@ -1201,16 +1203,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         (promptSession?.model && promptSession.model.length > 0
           ? promptSession.model
           : rawState.defaultModel) ?? undefined;
-      // Thinking is resolved for the new session's own model (its stored pick
-      // when declared, else the catalog default) — never the raw active value,
-      // which can drift while createDraftSession awaits (see submitPromptInternal).
+      // No thinking in this patch: activateSkill itself resolves and persists
+      // the level for this session's model (single writer, gated) right before
+      // activating — a second write here would be a redundant profile update
+      // whose transient failure could false-veto a ready activation.
       const persisted = await persistSessionProfile(
         {
           model,
           planMode,
           swarmMode,
           permissionMode: rawState.permission,
-          thinking: modelProvider.thinkingLevelForModelId(model) ?? rawState.thinking,
         },
         sid,
       );
