@@ -37,7 +37,11 @@ export async function startVisServer(
         port: info.port,
         host,
         url: `http://${hostForUrl(host)}:${info.port}/`,
-        lanUrls: isAllInterfaces(host) ? getLocalNetworkAddresses(info.port) : undefined,
+        lanUrls: isAllInterfaces(host)
+          ? getLocalNetworkAddresses(info.port).map((url) =>
+              authToken ? `${url}?token=${authToken}` : url,
+            )
+          : undefined,
         close: () =>
           new Promise<void>((done, fail) => {
             server.close((err?: Error) => (err ? fail(err) : done()));
