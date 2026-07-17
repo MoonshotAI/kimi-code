@@ -369,7 +369,7 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       "compact",
       "clear",
       "yolo",
-      "afk",
+      "auto",
       "plan",
       "add-dir",
       "export",

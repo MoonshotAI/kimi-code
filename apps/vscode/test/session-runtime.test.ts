@@ -570,18 +570,24 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     await expect(pending).resolves.toEqual(expected);
   });
 
-  it("auto-approves SDK approval requests in legacy yolo mode", async () => {
-    const { sdk, broadcasts } = createRuntime({ yolo: true, afk: false });
-
-    await expect(sdk.requestApproval({
+  it("forwards SDK approval requests to the Webview in legacy yolo mode", async () => {
+    const { runtime, sdk, broadcasts } = createRuntime({ yolo: true, afk: false });
+    const pending = sdk.requestApproval({
       toolCallId: "tool-yolo",
       toolName: "Bash",
       action: "Run command",
       display: { kind: "command", command: "pnpm test" },
-    })).resolves.toEqual({ decision: "approved" });
-    expect(streamData(broadcasts)).not.toContainEqual(
-      expect.objectContaining({ type: "ApprovalRequest" }),
-    );
+    });
+    const request = streamData(broadcasts).find(
+      (event) =>
+        typeof event === "object" &&
+        event !== null &&
+        "type" in event &&
+        event.type === "ApprovalRequest",
+    ) as { payload: { id: string } };
+
+    expect(runtime.respondApproval(request.payload.id, "approve")).toBe(true);
+    await expect(pending).resolves.toEqual({ decision: "approved" });
   });
 
   it("restores core permission when a legacy flag cannot be persisted", async () => {

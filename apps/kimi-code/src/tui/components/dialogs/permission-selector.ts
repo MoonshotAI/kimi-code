@@ -1,27 +1,24 @@
 import type { PermissionMode } from '@moonshot-ai/kimi-code-sdk';
 
-import { t } from '#/i18n';
 import { ChoicePickerComponent, type ChoiceOption } from './choice-picker';
 
-function getPermissionOptions(): readonly ChoiceOption[] {
-  return [
-    {
-      value: 'manual',
-      label: t('tui.dialogs.permissionSelector.manual'),
-      description: t('tui.dialogs.permissionSelector.manualDesc'),
-    },
-    {
-      value: 'auto',
-      label: t('tui.dialogs.permissionSelector.auto'),
-      description: t('tui.dialogs.permissionSelector.autoDesc'),
-    },
-    {
-      value: 'yolo',
-      label: t('tui.dialogs.permissionSelector.yolo'),
-      description: t('tui.dialogs.permissionSelector.yoloDesc'),
-    },
-  ];
-}
+const PERMISSION_OPTIONS: readonly ChoiceOption[] = [
+  {
+    value: 'manual',
+    label: 'Manual',
+    description: 'Approve every action yourself.',
+  },
+  {
+    value: 'yolo',
+    label: 'YOLO',
+    description: 'Auto-approve tool actions, but the agent may still ask questions.',
+  },
+  {
+    value: 'auto',
+    label: 'Auto',
+    description: 'Fully autonomous — agent decides everything without asking.',
+  },
+];
 
 function isPermissionModeChoice(value: string): value is PermissionMode {
   return value === 'manual' || value === 'auto' || value === 'yolo';
@@ -36,8 +33,8 @@ export interface PermissionSelectorOptions {
 export class PermissionSelectorComponent extends ChoicePickerComponent {
   constructor(opts: PermissionSelectorOptions) {
     super({
-      title: t('tui.dialogs.permissionSelector.title'),
-      options: [...getPermissionOptions()],
+      title: 'Select permission mode',
+      options: [...PERMISSION_OPTIONS],
       currentValue: opts.currentValue,
       onSelect: (value) => {
         if (isPermissionModeChoice(value)) opts.onSelect(value);

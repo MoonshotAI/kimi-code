@@ -1,5 +1,4 @@
 import { CLI_COMMAND_NAME } from '#/constant/app';
-import { t } from '#/i18n';
 import { registerMigrateCommand } from '#/migration/index';
 import { Command, Option } from 'commander';
 
@@ -25,53 +24,67 @@ export function createProgram(
   onUpgrade: UpgradeCommandHandler = () => {},
 ): Command {
   const program = new Command(CLI_COMMAND_NAME)
-    .description(t('cli.program.description'))
+    .description('The Starting Point for Next-Gen Agents')
     .version(version, '-V, --version')
     .allowUnknownOption(false)
     .configureHelp({ helpWidth: 100 })
-    .helpOption('-h, --help', t('cli.program.helpOption'))
-    .usage(t('cli.program.usage'))
-    .addHelpText(
-      'after',
-      `\n${t('cli.program.documentation')}        https://moonshotai.github.io/kimi-code/\n`,
-    );
+    .helpOption('-h, --help', 'Show help.')
+    .usage('[options] [command]')
+    .addHelpText('after', '\nDocumentation:        https://moonshotai.github.io/kimi-code/\n');
 
   program
     .addOption(
-      new Option('-S, --session [id]', t('cli.optionDescriptions.session')).argParser(
-        (val: string | boolean) => (val === true ? '' : (val as string)),
-      ),
+      new Option(
+        '-S, --session [id]',
+        'Resume a session. With ID: resume that session. Without ID: interactively pick.',
+      ).argParser((val: string | boolean) => (val === true ? '' : (val as string))),
     )
     .addOption(
       new Option('-r, --resume [id]')
         .hideHelp()
         .argParser((val: string | boolean) => (val === true ? '' : (val as string))),
     )
-    .option('-c, --continue', t('cli.optionDescriptions.continue'), false)
+    .option('-c, --continue', 'Continue the previous session for the working directory.', false)
     .addOption(new Option('-C').hideHelp().default(false))
-    .option('-y, --yolo', t('cli.optionDescriptions.yolo'), false)
-    .option('--auto', t('cli.optionDescriptions.auto'), false)
-    .addOption(new Option('-m, --model <model>', t('cli.optionDescriptions.model')))
-    .addOption(new Option('-p, --prompt <prompt>', t('cli.optionDescriptions.prompt')))
+    .option('-y, --yolo', 'Auto-approve regular tool calls; the agent may still ask questions.', false)
+    .option('--auto', 'Start in auto permission mode: fully autonomous, the agent will not ask questions.', false)
     .addOption(
-      new Option('--output-format <format>', t('cli.optionDescriptions.outputFormat')).choices([
-        'text',
-        'stream-json',
-      ]),
+      new Option(
+        '-m, --model <model>',
+        'LLM model alias to use for this invocation. Defaults to default_model in config.toml.',
+      ),
     )
     .addOption(
-      new Option('--skills-dir <dir>', t('cli.optionDescriptions.skillsDir'))
+      new Option(
+        '-p, --prompt <prompt>',
+        'Run one prompt non-interactively and print the response.',
+      ),
+    )
+    .addOption(
+      new Option(
+        '--output-format <format>',
+        'Output format for prompt mode. Defaults to text.',
+      ).choices(['text', 'stream-json']),
+    )
+    .addOption(
+      new Option(
+        '--skills-dir <dir>',
+        'Load skills from this directory instead of auto-discovered user and project directories. Can be repeated.',
+      )
         .argParser((value: string, previous: string[] | undefined) => [...(previous ?? []), value])
         .default([]),
     )
     .addOption(
-      new Option('--add-dir <dir>', t('cli.optionDescriptions.addDir'))
+      new Option(
+        '--add-dir <dir>',
+        'Add an additional workspace directory for this session. Can be repeated.',
+      )
         .argParser((value: string, previous: string[] | undefined) => [...(previous ?? []), value])
         .default([]),
     )
     .addOption(new Option('--yes').hideHelp().default(false))
     .addOption(new Option('--auto-approve').hideHelp().default(false))
-    .option('--plan', t('cli.optionDescriptions.plan'), false);
+    .option('--plan', 'Start in plan mode.', false);
 
   registerExportCommand(program);
   registerProviderCommand(program);
@@ -84,7 +97,7 @@ export function createProgram(
   program
     .command('upgrade')
     .alias('update')
-    .description(t('cli.commandDescriptions.upgrade'))
+    .description('Upgrade Kimi Code to the latest version.')
     .action(async () => {
       await onUpgrade();
     });
@@ -100,9 +113,7 @@ export function createProgram(
 
   program.argument('[args...]').action((args: string[]) => {
     if (args.length > 0) {
-      program.error(
-        t('cli.errors.unknownCommand', { command: args[0] ?? '', cliName: CLI_COMMAND_NAME }),
-      );
+      program.error(`unknown command '${args[0]}'. See '${CLI_COMMAND_NAME} --help'.`);
     }
 
     const raw = program.opts<Record<string, unknown>>();
