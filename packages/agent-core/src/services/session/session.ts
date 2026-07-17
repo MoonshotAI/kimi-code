@@ -23,6 +23,12 @@ import {
 export interface SessionListQuery extends CursorQuery {
   busy?: boolean;
   workDir?: string;
+  /**
+   * Filter by workspace id: widens to every alias spelling of the same
+   * physical root (Windows case/slash splits) and returns the union of all
+   * alias buckets. Takes precedence over `workDir` when both are set.
+   */
+  workspaceId?: string;
   includeArchive?: boolean;
   /** When true, hide sessions the user has never interacted with (no prompt yet). */
   excludeEmpty?: boolean;
@@ -94,6 +100,7 @@ export class SessionNotFoundError extends Error {
 export function toProtocolSession(
   summary: SessionSummary,
   meta?: SessionMeta | undefined,
+  workspaceIdOverride?: string,
 ): Session {
   const summaryMetadata = (summary.metadata ?? {}) as Record<string, unknown>;
   const customMetadata = (meta?.custom ?? {}) as Record<string, unknown>;
@@ -112,7 +119,12 @@ export function toProtocolSession(
   };
 
   const title = meta?.title ?? summary.title ?? '';
-  const workspaceId = encodeWorkDirKey(summary.workDir);
+  // Prefer the registered workspace id (resolved by the caller from the
+  // workspace registry via identity-key match) so the sidebar groups sessions
+  // under the registered workspace even when the session's workDir string
+  // differs from the registered root in case/slashes (Windows). Fallback is
+  // the minted key — the pre-resolver behavior.
+  const workspaceId = workspaceIdOverride ?? encodeWorkDirKey(summary.workDir);
 
   return {
     id: summary.id,

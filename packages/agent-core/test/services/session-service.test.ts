@@ -25,6 +25,7 @@ import {
   IPromptService,
   IQuestionService,
   type ISessionService,
+  IWorkspaceRegistry,
   PromptService,
   SessionNotFoundError,
   SessionUndoUnavailableError,
@@ -243,7 +244,29 @@ let promptStub: ReturnType<typeof makePromptServiceStub>;
 let approvalStub: ReturnType<typeof makeApprovalServiceStub>;
 let questionStub: ReturnType<typeof makeQuestionServiceStub>;
 let eventBus: ReturnType<typeof makeEventServiceStub>;
+let workspaceRegistryStub: ReturnType<typeof makeWorkspaceRegistryStub>;
 let instantiation: TestInstantiationService;
+
+function makeWorkspaceRegistryStub(): {
+  workspaceRegistry: IWorkspaceRegistry;
+  findWorkspaceIdByRoot: ReturnType<typeof vi.fn>;
+  resolveAliasWorkDirs: ReturnType<typeof vi.fn>;
+} {
+  const findWorkspaceIdByRoot = vi.fn(async (): Promise<string | undefined> => undefined);
+  const resolveAliasWorkDirs = vi.fn(async (): Promise<readonly string[]> => []);
+  const workspaceRegistry: IWorkspaceRegistry = {
+    _serviceBrand: undefined,
+    list: vi.fn() as unknown as IWorkspaceRegistry['list'],
+    get: vi.fn() as unknown as IWorkspaceRegistry['get'],
+    createOrTouch: vi.fn() as unknown as IWorkspaceRegistry['createOrTouch'],
+    update: vi.fn() as unknown as IWorkspaceRegistry['update'],
+    delete: vi.fn() as unknown as IWorkspaceRegistry['delete'],
+    resolveRoot: vi.fn() as unknown as IWorkspaceRegistry['resolveRoot'],
+    findWorkspaceIdByRoot,
+    resolveAliasWorkDirs,
+  };
+  return { workspaceRegistry, findWorkspaceIdByRoot, resolveAliasWorkDirs };
+}
 
 function makeEventServiceStub(): {
   eventService: IEventService;
@@ -346,6 +369,7 @@ beforeEach(() => {
   approvalStub = makeApprovalServiceStub();
   questionStub = makeQuestionServiceStub();
   eventBus = makeEventServiceStub();
+  workspaceRegistryStub = makeWorkspaceRegistryStub();
   instantiation = makeTestInstantiation({
     promptService: promptStub.promptService,
     approvalService: approvalStub.approvalService,
@@ -357,6 +381,7 @@ beforeEach(() => {
     instantiation,
     approvalStub.approvalService,
     questionStub.questionService,
+    workspaceRegistryStub.workspaceRegistry,
   );
 });
 
@@ -502,6 +527,20 @@ describe('toProtocolSession adapter', () => {
     expect(proto.workspace_id).toBe(encodeWorkDirKey('/tmp/wd-ws'));
     expect(proto.workspace_id).toMatch(/^wd_[A-Za-z0-9._-]+_[0-9a-f]{12}$/);
   });
+
+  it('prefers the registry-resolved workspace id over the minted key', async () => {
+    const { encodeWorkDirKey } = await import('../../src/session/store');
+    const summary: SessionSummary = {
+      id: 'sess_ws_alias',
+      workDir: '/tmp/wd-ws',
+      sessionDir: '/tmp/sd-ws',
+      createdAt: 0,
+      updatedAt: 0,
+    };
+    const proto = toProtocolSession(summary, undefined, 'wd_registered_0123456789ab');
+    expect(proto.workspace_id).toBe('wd_registered_0123456789ab');
+    expect(proto.workspace_id).not.toBe(encodeWorkDirKey('/tmp/wd-ws'));
+  });
 });
 
 describe('SessionService.create', () => {
@@ -515,6 +554,19 @@ describe('SessionService.create', () => {
     expect(session.metadata.cwd).toBe('/tmp/foo');
     expect(session.title).toBe('My session');
     expect(session.created_at.endsWith('Z')).toBe(true);
+  });
+
+  it('projects the registered workspace id when one identity-matches the cwd', async () => {
+    workspaceRegistryStub.findWorkspaceIdByRoot.mockResolvedValue('wd_registered_0123456789ab');
+    const session = await svc.create({ metadata: { cwd: '/tmp/foo' } });
+    expect(workspaceRegistryStub.findWorkspaceIdByRoot).toHaveBeenCalledWith('/tmp/foo');
+    expect(session.workspace_id).toBe('wd_registered_0123456789ab');
+  });
+
+  it('falls back to the minted workspace id when the registry has no match', async () => {
+    const { encodeWorkDirKey } = await import('../../src/session/store');
+    const session = await svc.create({ metadata: { cwd: '/tmp/foo' } });
+    expect(session.workspace_id).toBe(encodeWorkDirKey('/tmp/foo'));
   });
 
   it('passes model through to the agent_config when supplied', async () => {
@@ -647,6 +699,54 @@ describe('SessionService.list', () => {
     const next = await svc.list({ excludeEmpty: true, page_size: 1, before_id: 'u1' });
     expect(next.items.map((s) => s.id)).toEqual(['u2']);
     expect(next.has_more).toBe(false);
+  });
+
+  it('workspaceId returns the union across alias workDirs, sorted by recency', async () => {
+    const ts = (n: number) => 1_000_000 + n * 1_000;
+    const summary = (id: string, workDir: string, updatedAt: number): SessionSummary => ({
+      id,
+      workDir,
+      sessionDir: `/tmp/sessions/${id}`,
+      createdAt: updatedAt,
+      updatedAt,
+      metadata: { cwd: workDir },
+      title: undefined,
+    });
+    // Three spellings of one Windows root (the legacy-split setup) — the union
+    // — plus an unrelated session that must stay out of the page. A single
+    // workDir query could never see all three: variants of a registered root
+    // resolve back onto the registered bucket.
+    state.sessions = [
+      summary('s1', 'C:\\Dev\\Project', ts(1)),
+      summary('s2', 'c:\\dev\\project', ts(3)),
+      summary('s3', 'C:/dev/project', ts(2)),
+      summary('s4', '/tmp/other', ts(4)),
+    ];
+    workspaceRegistryStub.resolveAliasWorkDirs.mockResolvedValue([
+      'C:\\Dev\\Project',
+      'C:/dev/project',
+      'c:\\dev\\project',
+    ]);
+
+    const page = await svc.list({ workspaceId: 'wd_alias_deadbeef0000' });
+
+    expect(workspaceRegistryStub.resolveAliasWorkDirs).toHaveBeenCalledWith(
+      'wd_alias_deadbeef0000',
+    );
+    expect(page.items.map((s) => s.id)).toEqual(['s2', 's3', 's1']);
+    expect(page.has_more).toBe(false);
+  });
+
+  it('workspaceId for an unknown workspace returns an empty page', async () => {
+    const page = await svc.list({ workspaceId: 'wd_unknown_deadbeef0000' });
+    expect(page.items).toEqual([]);
+    expect(page.has_more).toBe(false);
+  });
+
+  it('does not consult workspace aliases when no workspaceId is given', async () => {
+    await svc.list({});
+    await svc.list({ workDir: '/tmp/b' });
+    expect(workspaceRegistryStub.resolveAliasWorkDirs).not.toHaveBeenCalled();
   });
 });
 

@@ -14,6 +14,7 @@ import {
   type WorkspaceSortMode,
 } from '../lib/workspaceOrder';
 import { mergeWorkspaces } from '../lib/mergeWorkspaces';
+import { workspaceRootKey } from '../lib/rootKey';
 import { mergeSnapshotMessages } from '../lib/snapshotMessages';
 import { mergeSnapshotSubagents } from '../lib/taskMerge';
 import { createCoalescedAsyncRunner } from '../lib/snapshotSync';
@@ -2334,12 +2335,19 @@ const changesByPath = computed<Record<string, string>>(() => {
 // ---------------------------------------------------------------------------
 
 /**
- * The workspace id a session belongs to: prefer the daemon-provided
- * session.workspaceId; otherwise map by cwd (in derived/fallback mode the
- * workspace id IS the cwd).
+ * The workspace id a session belongs to: the first registered workspace whose
+ * root identity-matches the session cwd (folds Windows case/slash variants —
+ * keeps grouping consistent with `mergeWorkspaces` so a session never falls
+ * out of the group the merge rendered); otherwise the daemon-provided
+ * session.workspaceId; otherwise the cwd itself (derived/fallback mode).
  */
 function workspaceIdForSession(s: { workspaceId?: string; cwd: string }): string {
-  return rawState.workspaces.find((w) => w.root === s.cwd)?.id ?? s.workspaceId ?? s.cwd;
+  const cwdKey = workspaceRootKey(s.cwd);
+  return (
+    rawState.workspaces.find((w) => workspaceRootKey(w.root) === cwdKey)?.id ??
+    s.workspaceId ??
+    s.cwd
+  );
 }
 
 /**

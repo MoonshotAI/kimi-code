@@ -2025,3 +2025,37 @@ describe('useWorkspaceState — loadAllSessions usage preservation', () => {
     expect(next[0].usage.contextTokens).toBe(0);
   });
 });
+
+describe('useWorkspaceState — upsertWorkspacePreserveOrder hidden roots', () => {
+  beforeEach(() => {
+    installStorage(createMemoryStorage());
+  });
+
+  afterEach(() => {
+    installStorage(createMemoryStorage());
+  });
+
+  it('clears a folded hidden entry when the same directory is re-added with a different spelling', () => {
+    // mergeWorkspaces hides by folded key, so hiding `C:\Foo` then re-adding
+    // `c:\foo` must un-hide too — otherwise the add succeeds but the group
+    // never reappears.
+    const state = createState();
+    state.hiddenWorkspaceRoots = ['C:\\Users\\Foo\\Proj'];
+    const ws = useWorkspaceState(state, createDeps());
+
+    ws.upsertWorkspacePreserveOrder(workspace('wd_x', 'c:\\users\\foo\\proj', 'proj'));
+
+    expect(state.hiddenWorkspaceRoots).toEqual([]);
+    expect(state.workspaces[0]?.root).toBe('c:\\users\\foo\\proj');
+  });
+
+  it('keeps hidden entries for case-distinct POSIX roots', () => {
+    const state = createState();
+    state.hiddenWorkspaceRoots = ['/home/Foo'];
+    const ws = useWorkspaceState(state, createDeps());
+
+    ws.upsertWorkspacePreserveOrder(workspace('wd_y', '/home/foo', 'foo'));
+
+    expect(state.hiddenWorkspaceRoots).toEqual(['/home/Foo']);
+  });
+});

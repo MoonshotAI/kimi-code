@@ -26,6 +26,20 @@ export interface IWorkspaceRegistry {
 
   list(): Promise<readonly Workspace[]>;
   get(id: string): Promise<Workspace | undefined>;
+  /**
+   * Every persisted id that addresses the same physical directory as `id`:
+   * registered entries whose `workspaceRootKey` identity matches, plus
+   * session-index-only spellings (`session_index.jsonl` workDirs never seen by
+   * the registry, i.e. legacy split buckets). Read-only — ids/buckets are never
+   * rewritten. An unknown `id` resolves to `[id]` so callers keep their
+   * existing not-found semantics.
+   */
+  resolveAliasIds(id: string): Promise<readonly string[]>;
+  /**
+   * Register (or refresh `lastOpenedAt` for) a workspace rooted at `root`.
+   * Throws `fs.path_not_found` when `root` is missing or not a directory —
+   * callers opening a session must ensure the directory exists first.
+   */
   createOrTouch(root: string, name?: string): Promise<Workspace>;
   update(id: string, patch: WorkspaceUpdate): Promise<Workspace | undefined>;
   delete(id: string): Promise<void>;
