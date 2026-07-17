@@ -337,8 +337,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { sessionId, isStreaming } = get();
     if (sessionId === null || isStreaming) return;
     try {
-      const { events } = await bridge.undoChat(1);
-      await get().loadSession(sessionId, events);
+      await bridge.undoChat(1);
+      // All views (this one included) reload through the
+      // ConversationHistoryChanged broadcast from the runtime.
       toast.success("Undid the last turn.");
     } catch (error) {
       toast.error(`Failed to undo: ${error instanceof Error ? error.message : String(error)}`);

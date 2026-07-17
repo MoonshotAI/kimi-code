@@ -1101,7 +1101,12 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       { getSession: () => runtime, logError: () => undefined } as unknown as HandlerContext,
     );
 
-    expect(Array.isArray((result as { events: unknown[] }).events)).toBe(true);
+    expect(result).toEqual({ ok: true });
+    expect(rig.broadcasts).toContainEqual({
+      event: Events.ConversationHistoryChanged,
+      data: { sessionId: runtime.id },
+      webviewId: "view-1",
+    });
     await expect(runtime.session.getContext()).resolves.toMatchObject({ history: [] });
   });
 
@@ -1118,8 +1123,13 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
       { getSession: () => runtime, logError: () => undefined } as unknown as HandlerContext,
     );
 
-    const events = (result as { events: Array<{ type: string }> }).events;
-    expect(events.some((event) => event.type === "TurnBegin")).toBe(false);
+    expect(result).toEqual({ ok: true });
+    expect(rig.broadcasts).toContainEqual({
+      event: Events.ConversationHistoryChanged,
+      data: { sessionId: created.id },
+      webviewId: "view-1",
+    });
+    await expect(runtime.session.getContext()).resolves.toMatchObject({ history: [] });
   });
 
   it("toggles plan mode through the public session without calling the model", async () => {

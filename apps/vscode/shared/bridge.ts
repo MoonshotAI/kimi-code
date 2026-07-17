@@ -97,6 +97,7 @@ export const Events = {
   FileChangesUpdated: "fileChangesUpdated",
   RollbackInput: "rollbackInput",
   LoginUrl: "loginUrl",
+  ConversationHistoryChanged: "conversationHistoryChanged",
 } as const;
 
 const rpcMethods = new Set<string>(Object.values(Methods));

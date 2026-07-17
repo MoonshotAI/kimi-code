@@ -46,6 +46,7 @@ interface FakeSessionBoundary {
   readonly cancelCount: () => number;
   readonly cancelCompactionCount: () => number;
   readonly undoCounts: readonly number[];
+  readonly reloadCount: () => number;
   readonly closeCount: () => number;
   emit(event: Event): void;
   rejectNextPrompt(error: Error): void;
@@ -71,6 +72,7 @@ function createFakeSession(): FakeSessionBoundary {
   let cancellations = 0;
   let compactionCancellations = 0;
   const undoCounts: number[] = [];
+  let reloads = 0;
   let closes = 0;
   let permission: PermissionMode = "manual";
 
@@ -120,6 +122,10 @@ function createFakeSession(): FakeSessionBoundary {
     async undoHistory(count: number) {
       undoCounts.push(count);
     },
+    async reloadSession() {
+      reloads += 1;
+      return summary;
+    },
     async getStatus() {
       return {
         thinkingEffort: "off",
@@ -158,6 +164,7 @@ function createFakeSession(): FakeSessionBoundary {
     cancelCount: () => cancellations,
     cancelCompactionCount: () => compactionCancellations,
     undoCounts,
+    reloadCount: () => reloads,
     closeCount: () => closes,
     emit(event) {
       for (const listener of listeners) listener(event);
@@ -522,12 +529,18 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     expect(sdk.cancelCount()).toBe(1);
   });
 
-  it("forwards undoHistory to the SDK while the session is idle", async () => {
-    const { runtime, sdk } = createRuntime();
+  it("forwards undoHistory to the SDK while the session is idle and notifies views", async () => {
+    const { runtime, sdk, broadcasts } = createRuntime();
 
     await runtime.undoHistory(2);
 
     expect([...sdk.undoCounts]).toEqual([2]);
+    expect(sdk.reloadCount()).toBe(1);
+    expect(broadcasts).toContainEqual({
+      event: Events.ConversationHistoryChanged,
+      data: { sessionId: "session-1" },
+      webviewId: "view-1",
+    });
   });
 
   it("rejects undoHistory while a response is still generating", async () => {
@@ -538,6 +551,44 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
       "Wait for the current response to finish before undoing.",
     );
     expect(sdk.undoCounts).toEqual([]);
+  });
+
+  it("rejects a second undo while the first one is still running", async () => {
+    const { runtime, sdk } = createRuntime();
+    let releaseUndo!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseUndo = resolve;
+    });
+    const fakeSession = sdk.session as unknown as { undoHistory: (count: number) => Promise<void> };
+    const original = fakeSession.undoHistory.bind(fakeSession);
+    let calls = 0;
+    fakeSession.undoHistory = (count: number) => {
+      calls += 1;
+      return calls === 1 ? gate.then(() => original(count)) : original(count);
+    };
+
+    const first = runtime.undoHistory(1);
+    await expect(runtime.undoHistory(1)).rejects.toThrow(
+      "Wait for the current response to finish before undoing.",
+    );
+
+    releaseUndo();
+    await first;
+    expect(calls).toBe(1);
+  });
+
+  it("still notifies views when the post-undo reload fails", async () => {
+    const { runtime, sdk, broadcasts } = createRuntime();
+    const fakeSession = sdk.session as unknown as { reloadSession: () => Promise<unknown> };
+    fakeSession.reloadSession = () => Promise.reject(new Error("provider broke"));
+
+    await runtime.undoHistory(1);
+
+    expect(broadcasts).toContainEqual({
+      event: Events.ConversationHistoryChanged,
+      data: { sessionId: "session-1" },
+      webviewId: "view-1",
+    });
   });
 
   it("converts legacy media keys when steering an active response", async () => {

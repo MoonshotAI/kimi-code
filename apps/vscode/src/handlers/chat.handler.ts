@@ -4,10 +4,9 @@ import { isKimiError } from "@moonshot-ai/kimi-code-sdk";
 import { Events, Methods } from "../../shared/bridge";
 import type { ApprovalResponse, ContentPart } from "../../shared/legacy-sdk";
 import { getUserMessage } from "../../shared/errors";
-import type { ErrorPhase, UIStreamEvent } from "../../shared/types";
+import type { ErrorPhase } from "../../shared/types";
 import { VSCodeSettings } from "../config/vscode-settings";
 import { normalizeEffort } from "../runtime/kimi-runtime";
-import { replaySessionToWebviewEvents } from "../runtime/replay-adapter";
 import type { SessionRuntime } from "../runtime/session-runtime";
 import { isWorkspacePathContained, relativeWorkspacePath } from "../utils/workspace-path";
 import { parseHostSlashCommand, runHostSlashCommand } from "./slash-command";
@@ -177,23 +176,15 @@ const steerChat: Handler<{ content: string | ContentPart[] }, { ok: boolean }> =
   return { ok: true };
 };
 
-const undoChat: Handler<{ count?: number }, { events: UIStreamEvent[] }> = async (params, ctx) => {
+const undoChat: Handler<{ count?: number }, { ok: boolean }> = async (params, ctx) => {
   const runtime = ctx.getSession();
   if (runtime === undefined) throw new Error("There is no conversation to undo.");
   const requested = Number(params?.count);
   const count = Number.isFinite(requested) && requested >= 1 ? Math.floor(requested) : 1;
+  // The runtime broadcasts ConversationHistoryChanged to every subscribed
+  // view on success; each view rehydrates via LoadKimiSessionHistory.
   await runtime.undoHistory(count);
-
-  // Refresh the SDK's cached resume state before replaying: undoHistory
-  // mutates the engine but does not update the cache, which would otherwise
-  // replay the pre-undo conversation (resumed sessions) or be absent
-  // entirely (sessions created in this process).
-  await runtime.session.reloadSession();
-  const resumeState = runtime.session.getResumeState();
-  if (resumeState?.agents["main"] === undefined) {
-    throw new Error("Session history is unavailable.");
-  }
-  return { events: replaySessionToWebviewEvents(resumeState, runtime.id) };
+  return { ok: true };
 };
 
 const resetSession: Handler<void, { ok: boolean }> = async (_, ctx) => {

@@ -192,7 +192,7 @@ class Bridge {
   }
 
   undoChat(count = 1) {
-    return this.call<{ events: import("shared/types").UIStreamEvent[] }>(Methods.UndoChat, { count });
+    return this.call<{ ok: boolean }>(Methods.UndoChat, { count });
   }
 
   resetSession() {

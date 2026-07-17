@@ -46,6 +46,21 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
           toast.error(error instanceof Error ? error.message : String(error));
         });
       }),
+      // The runtime broadcasts this after a conversation-level mutation
+      // (e.g. undo); every subscribed view rehydrates so no webview keeps
+      // showing a transcript the engine already truncated.
+      bridge.on(Events.ConversationHistoryChanged, ({ sessionId: changedSessionId }: { sessionId: string }) => {
+        const store = useChatStore.getState();
+        if (store.sessionId !== changedSessionId) return;
+        void (async () => {
+          try {
+            const events = await bridge.loadSessionHistory(changedSessionId);
+            await store.loadSession(changedSessionId, events);
+          } catch (error) {
+            toast.error(`Failed to reload the conversation: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        })();
+      }),
     ];
     return () => unsubs.forEach((u) => u());
   }, [setMCPServers, setExtensionConfig, startNewConversation]);

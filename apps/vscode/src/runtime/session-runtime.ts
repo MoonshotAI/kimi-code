@@ -353,15 +353,31 @@ export class SessionRuntime {
 
   /**
    * Drop the last `count` user turns from the conversation, matching the
-   * CLI's /undo. Only meaningful while idle; the engine itself reports when
-   * there is nothing (or a compaction boundary) left to undo.
+   * CLI's /undo. Runs as one exclusive operation: undo + reload are seized so
+   * a double-click or an incoming prompt cannot race the truncation. Every
+   * subscribed view is notified to re-hydrate its transcript afterwards;
+   * a reload failure only downgrades that refresh to a best-effort one —
+   * the undo itself has already landed in the engine.
    */
   async undoHistory(count: number): Promise<void> {
     this.ensureOpen();
     if (this.isBusy) {
       throw new Error("Wait for the current response to finish before undoing.");
     }
-    await this.session.undoHistory(count);
+    this.exclusiveActionActive = true;
+    try {
+      await this.session.undoHistory(count);
+      try {
+        await this.session.reloadSession();
+      } catch (error) {
+        this.log("Failed to reload the session after undo; views rehydrate from persisted records", error);
+      }
+      for (const webviewId of this.webviewIds) {
+        this.broadcast(Events.ConversationHistoryChanged, { sessionId: this.id }, webviewId);
+      }
+    } finally {
+      this.exclusiveActionActive = false;
+    }
   }
 
   /**
