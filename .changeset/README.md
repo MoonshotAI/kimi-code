@@ -6,9 +6,9 @@
 
 ## 参与发版的包
 
-只有 `kimi-code-app`（`apps/desktop`）。其余 workspace 包（web 共享包、kimi-code submodule 包）全部在 `.changeset/config.json` 的 `ignore` 里——写 changeset 时只会看到 kimi-desktop。
+只有 `kimi-code-app`（`apps/desktop`）。本仓其余 workspace 包（`kimi-code-web`、web 共享包）在 `.changeset/config.json` 的 `ignore` 里；kimi-code submodule 的包无法进 ignore（release CI 不 checkout submodule，而 ignore 要求包真实存在于 workspace），跑 `pnpm changeset` 时会在列表里看到它们——严禁选择，changeset 只允许写 `kimi-code-app`。
 
-注意：desktop 的运行时代码包含 workspace 源码（`@moonshot-ai/web-*`、kimi-code 的 `kap-server` / `agent-core-v2` 等）。这些包的用户可见变化都要手动归因到 kimi-desktop 的 changeset 上，不要依赖依赖链自动 bump。
+注意：desktop 的运行时代码包含 workspace 源码（`@moonshot-ai/web-*`、kimi-code 的 `kap-server` / `agent-core-v2` 等）。这些包的用户可见变化都要手动归因到 `kimi-code-app` 的 changeset 上，不要依赖依赖链自动 bump。
 
 ## 发版流程
 

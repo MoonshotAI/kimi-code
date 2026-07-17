@@ -7,7 +7,7 @@ description: 在 code-app 仓库写 changeset（发版说明）时使用：判�
 
 code-app 用 changesets 管理桌面端（`kimi-code-app`）的版本与发版。功能 PR 里只要有用户能感知的变化，就附一个 `.changeset/*.md` 文件一起提交；合入 main 后 CI 会自动汇总出版本 PR。
 
-只有 `kimi-code-app` 参与发版，其余包都在 `.changeset/config.json` 的 `ignore` 里。注意 desktop 运行时打包了 `packages/web-*` 和 kimi-code submodule 的源码（`kap-server`、`agent-core-v2` 等），这些改动只要用户能感知，也算 `kimi-code-app` 的变化，同样要写。
+只有 `kimi-code-app` 参与发版，changeset 的 frontmatter 只允许出现 `kimi-code-app`。本仓其余包（`kimi-code-web`、`@moonshot-ai/web-*` 等）在 `.changeset/config.json` 的 `ignore` 里；kimi-code submodule 的包**不在** ignore 里（release CI 不 checkout submodule，而 ignore 要求包真实存在于 workspace），跑 `pnpm changeset` 时列表里会看到它们——**严禁选择**，选了 CI 的 `changeset version` 会直接失败。注意 desktop 运行时打包了 `packages/web-*` 和 kimi-code submodule 的源码（`kap-server`、`agent-core-v2` 等），这些改动只要用户能感知，也算 `kimi-code-app` 的变化，同样要写。
 
 ## 什么时候要写
 
@@ -58,4 +58,4 @@ code-app 用 changesets 管理桌面端（`kimi-code-app`）的版本与发版�
 - 描述不是中文，或超过两句话。
 - 描述里出现文件名、内部包名、PR 号等技术细节。
 - 给纯测试 / 文档 / 重构改动写了 changeset。
-- frontmatter 里出现 `kimi-code-app` 以外的包。
+- frontmatter 里出现 `kimi-code-app` 以外的包（`pnpm changeset` 列表里能看到 kimi-code submodule 的包，一个都不能选）。
