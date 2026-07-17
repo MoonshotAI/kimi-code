@@ -25,7 +25,7 @@ import { Readability } from '@mozilla/readability';
 import { parseHTML as rawParseHTML } from 'linkedom';
 import { Agent, type Dispatcher } from 'undici';
 
-import { isProxyConfigured } from '../../utils/proxy';
+import { isProxyConfigured, makeNoProxyMatcher, resolveNoProxy } from '../../utils/proxy';
 import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../builtin';
 
 // Readability's .d.ts references the global `Document` type, but this
@@ -103,6 +103,8 @@ function isBlockedAddress(address: string): boolean {
 interface SafeFetchTarget {
   /** Lowercased hostname with any IPv6 brackets stripped. */
   host: string;
+  /** Effective origin port — explicit, or the scheme default. */
+  port: string;
   /** Validated DNS answers to pin the connection to — absent when no lookup was needed. */
   addresses?: LookupAddress[];
 }
@@ -130,13 +132,14 @@ async function resolveSafeFetchTarget(url: string, allowPrivate: boolean): Promi
   // Node versions (and not others). Strip them for uniform comparison.
   const hostRaw = parsed.hostname.toLowerCase();
   const host = hostRaw.startsWith('[') && hostRaw.endsWith(']') ? hostRaw.slice(1, -1) : hostRaw;
-  if (allowPrivate) return { host };
+  const port = parsed.port !== '' ? parsed.port : parsed.protocol === 'https:' ? '443' : '80';
+  if (allowPrivate) return { host, port };
   // IP literals are checked directly and never resolved.
   if (isIP(host) !== 0) {
     if (isBlockedAddress(host)) {
       throw new Error(`Refusing to fetch private address: "${host}"`);
     }
-    return { host };
+    return { host, port };
   }
   // Literal "localhost" / loopback aliases.
   if (host === 'localhost' || host.endsWith('.localhost')) {
@@ -159,7 +162,7 @@ async function resolveSafeFetchTarget(url: string, allowPrivate: boolean): Promi
       throw new Error(`Refusing to fetch host "${host}": resolves to private address "${address}".`);
     }
   }
-  return { host, addresses };
+  return { host, port, addresses };
 }
 
 /**
@@ -239,6 +242,11 @@ export class LocalFetchURLProvider implements UrlFetcher {
     if (contentLengthRaw !== null) {
       const cl = Number(contentLengthRaw);
       if (Number.isFinite(cl) && cl > this.maxBytes) {
+        // Drain before throwing: the caller closes per-hop Agents in a
+        // finally, and an active oversized stream could stall that close.
+        await response.body?.cancel().catch(() => {
+          /* already closed */
+        });
         throw new Error(
           `Response body too large: ${String(cl)} bytes exceeds maxBytes (${String(this.maxBytes)}).`,
         );
@@ -317,10 +325,16 @@ export class LocalFetchURLProvider implements UrlFetcher {
     // IP literals (and allowPrivate mode) need no pin — there is no second
     // resolution to race.
     if (target.addresses === undefined) return undefined;
-    // With an HTTP/SOCKS proxy configured, origin resolution happens on the
-    // proxy side; a direct-connect pinned Agent would bypass the proxy
-    // entirely, so pinning only applies to direct connections.
-    if (isProxyConfigured(process.env)) return undefined;
+    // Pin only when this request will actually connect directly. When a
+    // proxy applies, origin DNS happens on the proxy side (nothing local
+    // to pin) and a direct-connect pinned Agent would bypass the proxy
+    // entirely. A NO_PROXY bypass still connects directly — keep pinning.
+    if (
+      isProxyConfigured(process.env) &&
+      !makeNoProxyMatcher(resolveNoProxy(process.env))(target.host, target.port)
+    ) {
+      return undefined;
+    }
     const dispatcher = new Agent({
       connect: { lookup: pinnedLookup(target.host, target.addresses) },
     });

@@ -350,4 +350,46 @@ describe('LocalFetchURLProvider connection pinning', () => {
 
     expect((fetchImpl.mock.calls[0]![1] as RequestInit).dispatcher).toBeUndefined();
   });
+
+  it('still pins when the request bypasses the proxy via NO_PROXY wildcard', async () => {
+    vi.stubEnv('http_proxy', 'http://proxy.example:8080');
+    vi.stubEnv('no_proxy', '*');
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(htmlResponse('ok', 'text/plain'));
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    await provider.fetch('https://example.com/');
+
+    expect((fetchImpl.mock.calls[0]![1] as RequestInit).dispatcher).toBeInstanceOf(Agent);
+  });
+
+  it('still pins when NO_PROXY exempts the target host specifically', async () => {
+    vi.stubEnv('http_proxy', 'http://proxy.example:8080');
+    vi.stubEnv('no_proxy', 'example.com');
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(htmlResponse('ok', 'text/plain'));
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    await provider.fetch('https://example.com/');
+
+    expect((fetchImpl.mock.calls[0]![1] as RequestInit).dispatcher).toBeInstanceOf(Agent);
+  });
+
+  it('rejects oversized responses by content-length and still closes the pinned Agent', async () => {
+    const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response('short', {
+        status: 200,
+        headers: {
+          'content-type': 'text/plain',
+          'content-length': String(11 * 1024 * 1024),
+        },
+      }),
+    );
+    const provider = new LocalFetchURLProvider({ fetchImpl });
+
+    await expect(provider.fetch('https://example.com/big')).rejects.toThrow(
+      'Response body too large',
+    );
+
+    const dispatcher = (fetchImpl.mock.calls[0]![1] as RequestInit).dispatcher;
+    expect(asUndiciAgent(dispatcher).closed).toBe(true);
+  });
 });

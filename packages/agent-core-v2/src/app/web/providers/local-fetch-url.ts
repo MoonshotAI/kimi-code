@@ -1,3 +1,17 @@
+/**
+ * `web` domain (L4) — local `UrlFetcher` used when no managed fetch service
+ * is configured. GETs URLs with a Chrome-like UA and SSRF hardening: http(s)
+ * schemes only; unless `allowPrivateAddresses` is set, IP literals and
+ * DNS-resolved addresses in loopback / RFC1918 / link-local / CGNAT / ULA
+ * ranges are refused, including IPv4-mapped IPv6 forms; redirects are
+ * followed manually with the same validation re-run on every hop; and each
+ * request's connection is pinned to the DNS answers validation approved, so
+ * a connect-time re-resolution cannot be rebound elsewhere (pinning is
+ * skipped for IP literals and for requests a proxy will carry — NO_PROXY
+ * bypasses still pin). Oversized bodies are refused; plain texts pass
+ * through verbatim and HTML is reduced to its main text.
+ */
+
 import { lookup as callbackLookup, type LookupAddress, type LookupOptions } from 'node:dns';
 import { lookup } from 'node:dns/promises';
 import { BlockList, isIP, type LookupFunction } from 'node:net';
@@ -6,7 +20,7 @@ import { Readability } from '@mozilla/readability';
 import { parseHTML as rawParseHTML } from 'linkedom';
 import { Agent, type Dispatcher } from 'undici';
 
-import { isProxyConfigured } from '#/_base/utils/proxy';
+import { isProxyConfigured, makeNoProxyMatcher, resolveNoProxy } from '#/_base/utils/proxy';
 
 import { HttpFetchError, type UrlFetcher, type UrlFetchResult } from '../tools/fetch-url-types';
 
@@ -55,8 +69,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
     url: string,
     options?: { toolCallId?: string; signal?: AbortSignal },
   ): Promise<UrlFetchResult> {
-    // Pinned Agents are created per redirect hop and closed once the final
-    // body is consumed, so keep-alive sockets never linger.
     const dispatchers: Dispatcher[] = [];
     try {
       const response = await this.requestWithValidatedRedirects(
@@ -89,6 +101,8 @@ export class LocalFetchURLProvider implements UrlFetcher {
     if (contentLengthRaw !== null) {
       const cl = Number(contentLengthRaw);
       if (Number.isFinite(cl) && cl > this.maxBytes) {
+        await response.body?.cancel().catch(() => {
+        });
         throw new Error(
           `Response body too large: ${String(cl)} bytes exceeds maxBytes (${String(this.maxBytes)}).`,
         );
@@ -112,12 +126,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
     return { content: this.extractMainContent(body), kind: 'extracted' };
   }
 
-  /**
-   * GET `url`, following redirects manually. Every hop re-runs the full
-   * SSRF check (IP-literal + DNS) before the request goes out — a public
-   * URL must not be able to bounce the fetcher at an internal address.
-   * Redirects without a `Location` header are treated as final responses.
-   */
   private async requestWithValidatedRedirects(
     url: string,
     signal: AbortSignal | undefined,
@@ -132,9 +140,6 @@ export class LocalFetchURLProvider implements UrlFetcher {
         headers: { 'User-Agent': this.userAgent },
         signal,
         redirect: 'manual',
-        // `dispatcher` is honored by undici at runtime but absent from
-        // DOM's RequestInit type (DOM-lib consumers typecheck this source)
-        // — hide it behind `unknown` to stay lib-agnostic.
         dispatcher: this.pinnedDispatcherFor(target, dispatchers) as unknown,
       } as RequestInit);
       if (!REDIRECT_STATUSES.has(response.status)) return response;
@@ -152,23 +157,17 @@ export class LocalFetchURLProvider implements UrlFetcher {
     }
   }
 
-  /**
-   * Pin the connection to the addresses the safety check just validated.
-   * undici resolves the origin again when it connects, so without pinning
-   * an attacker-controlled DNS could answer the check with a public IP and
-   * the connect with an internal one (TOCTOU / DNS rebinding).
-   */
   private pinnedDispatcherFor(
     target: SafeFetchTarget,
     dispatchers: Dispatcher[],
   ): Dispatcher | undefined {
-    // IP literals (and allowPrivate mode) need no pin — there is no second
-    // resolution to race.
     if (target.addresses === undefined) return undefined;
-    // With an HTTP/SOCKS proxy configured, origin resolution happens on the
-    // proxy side; a direct-connect pinned Agent would bypass the proxy
-    // entirely, so pinning only applies to direct connections.
-    if (isProxyConfigured(process.env)) return undefined;
+    if (
+      isProxyConfigured(process.env) &&
+      !makeNoProxyMatcher(resolveNoProxy(process.env))(target.host, target.port)
+    ) {
+      return undefined;
+    }
     const dispatcher = new Agent({
       connect: { lookup: pinnedLookup(target.host, target.addresses) },
     });
@@ -211,38 +210,31 @@ export class LocalFetchURLProvider implements UrlFetcher {
   }
 }
 
-// SSRF blocklist: loopback / RFC 1918 / link-local / CGNAT / ULA and "this
-// network", for both address families. BlockList.check() maps IPv4-mapped
-// IPv6 addresses (e.g. ::ffff:127.0.0.1) onto the IPv4 subnets, so mapped
-// literals cannot slip past the v4 rules.
 const PRIVATE_ADDRESS_BLOCKLIST = (() => {
   const list = new BlockList();
-  list.addSubnet('0.0.0.0', 8, 'ipv4'); // "this network"
+  list.addSubnet('0.0.0.0', 8, 'ipv4');
   list.addSubnet('10.0.0.0', 8, 'ipv4');
-  list.addSubnet('100.64.0.0', 10, 'ipv4'); // CGNAT
-  list.addSubnet('127.0.0.0', 8, 'ipv4'); // loopback
-  list.addSubnet('169.254.0.0', 16, 'ipv4'); // link-local / cloud metadata
+  list.addSubnet('100.64.0.0', 10, 'ipv4');
+  list.addSubnet('127.0.0.0', 8, 'ipv4');
+  list.addSubnet('169.254.0.0', 16, 'ipv4');
   list.addSubnet('172.16.0.0', 12, 'ipv4');
   list.addSubnet('192.168.0.0', 16, 'ipv4');
-  list.addSubnet('::', 128, 'ipv6'); // unspecified
-  list.addSubnet('::1', 128, 'ipv6'); // loopback
-  list.addSubnet('fc00::', 7, 'ipv6'); // ULA
-  list.addSubnet('fe80::', 10, 'ipv6'); // link-local
+  list.addSubnet('::', 128, 'ipv6');
+  list.addSubnet('::1', 128, 'ipv6');
+  list.addSubnet('fc00::', 7, 'ipv6');
+  list.addSubnet('fe80::', 10, 'ipv6');
   return list;
 })();
 
 function isBlockedAddress(address: string): boolean {
-  // Link-local addresses may carry a zone id ("fe80::1%en0") — strip it
-  // before matching.
   const normalized = address.split('%', 1)[0] ?? address;
   if (isIP(normalized) === 4) return PRIVATE_ADDRESS_BLOCKLIST.check(normalized, 'ipv4');
   return isIP(normalized) === 6 && PRIVATE_ADDRESS_BLOCKLIST.check(normalized, 'ipv6');
 }
 
 interface SafeFetchTarget {
-  /** Lowercased hostname with any IPv6 brackets stripped. */
   host: string;
-  /** Validated DNS answers to pin the connection to — absent when no lookup was needed. */
+  port: string;
   addresses?: LookupAddress[];
 }
 
@@ -256,26 +248,19 @@ async function resolveSafeFetchTarget(url: string, allowPrivate: boolean): Promi
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new Error(`Unsupported URL scheme "${parsed.protocol}" — only http(s) allowed.`);
   }
-  // URL hostname preserves surrounding `[ ]` for IPv6 literals on some
-  // Node versions (and not others). Strip them for uniform comparison.
   const hostRaw = parsed.hostname.toLowerCase();
   const host = hostRaw.startsWith('[') && hostRaw.endsWith(']') ? hostRaw.slice(1, -1) : hostRaw;
-  if (allowPrivate) return { host };
-  // IP literals are checked directly and never resolved.
+  const port = parsed.port !== '' ? parsed.port : parsed.protocol === 'https:' ? '443' : '80';
+  if (allowPrivate) return { host, port };
   if (isIP(host) !== 0) {
     if (isBlockedAddress(host)) {
       throw new Error(`Refusing to fetch private address: "${host}"`);
     }
-    return { host };
+    return { host, port };
   }
-  // Literal "localhost" / loopback aliases.
   if (host === 'localhost' || host.endsWith('.localhost')) {
     throw new Error(`Refusing to fetch private host: "${host}"`);
   }
-  // Hostnames must be resolved and every resulting address checked — a
-  // public-looking domain can point at loopback (e.g. localtest.me) or any
-  // internal address. The validated answers are returned so the caller can
-  // pin the connection to them (TOCTOU / DNS-rebinding protection).
   let addresses: LookupAddress[];
   try {
     addresses = await lookup(host, { all: true });
@@ -290,16 +275,9 @@ async function resolveSafeFetchTarget(url: string, allowPrivate: boolean): Promi
       throw new Error(`Refusing to fetch host "${host}": resolves to private address "${address}".`);
     }
   }
-  return { host, addresses };
+  return { host, port, addresses };
 }
 
-/**
- * Build a `net`/`tls` lookup hook that answers `host` from the validated
- * address set, so the connect-time resolution cannot drift from what the
- * safety check approved. Anything else is delegated to the real resolver
- * (a per-hop Agent only ever connects to its own origin, but stay
- * functional if reused elsewhere).
- */
 function pinnedLookup(host: string, addresses: LookupAddress[]): LookupFunction {
   return (hostname: string, options: LookupOptions | undefined, callback: PinnedLookupCallback) => {
     if (hostname !== host) {
