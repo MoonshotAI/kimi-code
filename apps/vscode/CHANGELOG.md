@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.3
+
+### Fixed
+
+- Editor mentions now work for files outside the working directory, and paths
+  containing spaces are quoted correctly.
+- Cancelling a running turn now reliably reaches the engine, and the UI no
+  longer reports a task as stopped when there is nothing to cancel.
+- Attaching to or resuming an existing session no longer overwrites its model
+  and thinking effort with the configured defaults; model or effort changes
+  picked in the composer are applied when the prompt is sent.
+
 ## 0.6.2
 
 ### Fixed
