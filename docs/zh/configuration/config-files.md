@@ -23,7 +23,7 @@ TOML 字段名一律用下划线（snake_case），如 `default_model`、`max_co
 以下示例覆盖最常用的配置项，可直接复制后按需修改：
 
 ```toml
-default_model = "kimi-code/kimi-for-coding"
+default_model = "kimi-code/k3"
 default_permission_mode = "manual"
 default_plan_mode = false
 merge_all_available_skills = true
@@ -33,6 +33,15 @@ telemetry = true
 type = "kimi"
 base_url = "https://api.kimi.com/coding/v1"
 api_key = ""
+
+[models."kimi-code/k3"]
+provider = "managed:kimi-code"
+model = "k3"
+max_context_size = 1048576
+capabilities = [ "thinking", "always_thinking", "image_in", "video_in", "tool_use" ]
+display_name = "K3"
+support_efforts = [ "max" ]
+default_effort = "max"
 
 [models."kimi-code/kimi-for-coding"]
 provider = "managed:kimi-code"
