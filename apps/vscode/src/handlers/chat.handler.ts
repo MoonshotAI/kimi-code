@@ -6,6 +6,7 @@ import type { ApprovalResponse, ContentPart } from "../../shared/legacy-sdk";
 import { getUserMessage } from "../../shared/errors";
 import type { ErrorPhase, UIStreamEvent } from "../../shared/types";
 import { VSCodeSettings } from "../config/vscode-settings";
+import { normalizeEffort } from "../runtime/kimi-runtime";
 import { replaySessionToWebviewEvents } from "../runtime/replay-adapter";
 import type { SessionRuntime } from "../runtime/session-runtime";
 import { isWorkspacePathContained, relativeWorkspacePath } from "../utils/workspace-path";
@@ -102,11 +103,23 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
   }
 
   try {
+    // Attach no longer overwrites session modes with the configured defaults
+    // (resumed sessions keep their own), so apply the model/effort that the
+    // composer submitted with this prompt before the turn starts.
     const status = await runtime.session.getStatus();
+    let model = status.model;
+    if (params.model && model !== params.model) {
+      await runtime.session.setModel(params.model);
+      model = params.model;
+    }
+    const effort = normalizeEffort(params.effort ?? (params.thinking === true ? "on" : "off"));
+    if (status.thinkingEffort !== effort) {
+      await runtime.session.setThinking(effort);
+    }
     if (params.planMode !== undefined && status.planMode !== params.planMode) {
       await runtime.session.setPlanMode(params.planMode);
     }
-    runtime.announceSessionStart(status.model);
+    runtime.announceSessionStart(model);
   } catch (error) {
     emitCaughtError(ctx, error, "preflight", runtime.id);
     return { done: false };
@@ -171,8 +184,11 @@ const undoChat: Handler<{ count?: number }, { events: UIStreamEvent[] }> = async
   const count = Number.isFinite(requested) && requested >= 1 ? Math.floor(requested) : 1;
   await runtime.undoHistory(count);
 
-  // Return a fresh replay so the webview can re-render the truncated
-  // conversation, mirroring how LoadKimiSessionHistory re-hydrates views.
+  // Refresh the SDK's cached resume state before replaying: undoHistory
+  // mutates the engine but does not update the cache, which would otherwise
+  // replay the pre-undo conversation (resumed sessions) or be absent
+  // entirely (sessions created in this process).
+  await runtime.session.reloadSession();
   const resumeState = runtime.session.getResumeState();
   if (resumeState?.agents["main"] === undefined) {
     throw new Error("Session history is unavailable.");

@@ -267,7 +267,7 @@ async function applySessionSettings(
   }
 }
 
-function normalizeEffort(effort: string): ThinkingEffort {
+export function normalizeEffort(effort: string): ThinkingEffort {
   return (effort.trim() || "off") as ThinkingEffort;
 }
 
