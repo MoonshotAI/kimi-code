@@ -25,7 +25,7 @@ function entry(kind: TranscriptEntry['kind'], content: string): TranscriptEntry 
 }
 
 function assistantEntry(content: string): TranscriptEntry {
-  return entry('assistant', content);
+  return { ...entry('assistant', content), modelText: true };
 }
 
 function makeHost(entries: TranscriptEntry[]) {
@@ -79,6 +79,16 @@ describe('findLastAssistantText', () => {
     ];
 
     expect(findLastAssistantText(entries)).toBe('visible reply');
+  });
+
+  it('skips synthetic assistant cards like hook results and goal completions', () => {
+    const entries = [
+      assistantEntry('real reply'),
+      entry('assistant', '*PostToolUse hook* ran something'),
+      entry('assistant', 'Goal completed: shipped the feature'),
+    ];
+
+    expect(findLastAssistantText(entries)).toBe('real reply');
   });
 });
 
