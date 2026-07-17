@@ -30,6 +30,11 @@ function pidAlive(pid: unknown): boolean {
 
 // Track held locks so we can release them on process exit as a safety net.
 const HELD = new Set<LockFile>();
+// Distinct sidecar names per acquire attempt: two lock users in the same
+// process (e.g. independent shard pools) must never share a tmp/bid/watch
+// path, or one user's cleanup would delete the other's in-flight file.
+let sidecarSeq = 0;
+const nextSidecarSeq = (): number => ++sidecarSeq;
 let exitHooked = false;
 // Co-bidders all replace the stale corpse within the same wave (they woke on
 // the same event); the settle pause before the winner claims the lock must
@@ -75,7 +80,7 @@ export class LockFile {
     // descheduled before its bid write on a shard-parallel CI runner — see the
     // takeover loop below; a stalled contender is only in the way, not
     // invisible.)
-    const watch = `${this.path}.watch-${process.pid}`;
+    const watch = `${this.path}.watch-${process.pid}-${nextSidecarSeq()}`;
     await fs.writeFile(watch, JSON.stringify({ pid: process.pid, ts: Date.now() }));
     try {
       await this.reapDeadWatches();
@@ -100,7 +105,7 @@ export class LockFile {
       // the corpse first: a blind retry loop could land our bid seconds late,
       // OVERWRITING an already-verified winner's lock line and double-holding
       // (exactly the failure this loop is careful not to reintroduce).
-      const bid = `${this.path}.bid-${process.pid}`;
+      const bid = `${this.path}.bid-${process.pid}-${nextSidecarSeq()}`;
       const attemptStart = Date.now();
       try {
         await fs.writeFile(bid, JSON.stringify({ pid: process.pid, ts: Date.now() }));
@@ -167,7 +172,7 @@ export class LockFile {
     const prefix = `${path.basename(this.path)}.watch-`;
     for (const f of await fs.readdir(dir).catch(() => [] as string[])) {
       if (!f.startsWith(prefix)) continue;
-      const pid = Number(f.slice(prefix.length));
+      const pid = Number(f.slice(prefix.length).split('-')[0]);
       if (Number.isInteger(pid) && pid !== process.pid && !pidAlive(pid)) {
         await fs.unlink(path.join(dir, f)).catch(() => {});
       }
@@ -180,7 +185,7 @@ export class LockFile {
     const prefix = `${path.basename(this.path)}.watch-`;
     for (const f of await fs.readdir(dir).catch(() => [] as string[])) {
       if (!f.startsWith(prefix)) continue;
-      const pid = Number(f.slice(prefix.length));
+      const pid = Number(f.slice(prefix.length).split('-')[0]);
       if (!Number.isInteger(pid) || pid === process.pid) continue;
       if (pidAlive(pid)) return true;
       await fs.unlink(path.join(dir, f)).catch(() => {});
@@ -190,7 +195,7 @@ export class LockFile {
 
   /** Atomic create-if-absent publish: tmp write + hard link (EEXIST-safe). */
   private async tryCreate(): Promise<boolean> {
-    const tmp = `${this.path}.tmp-${process.pid}`;
+    const tmp = `${this.path}.tmp-${process.pid}-${nextSidecarSeq()}`;
     try {
       await fs.writeFile(tmp, JSON.stringify({ pid: process.pid, ts: Date.now() }));
       await fs.link(tmp, this.path);
@@ -248,7 +253,7 @@ export class LockFile {
    *  behind for a lock that is actually still owned. */
   async renew(): Promise<void> {
     if (!this.held) return;
-    const tmp = `${this.path}.tmp-${process.pid}`;
+    const tmp = `${this.path}.tmp-${process.pid}-${nextSidecarSeq()}`;
     await fs.writeFile(tmp, JSON.stringify({ pid: process.pid, ts: Date.now() }));
     // Windows: replacing our own lock can still clash with a co-process's
     // readFile/stat of it (EPERM) — the helper rides out such transients.

@@ -38,7 +38,7 @@ import type {
   CompactResult,
   ScanOptions,
 } from './types.js';
-import { CLUSTER_INDEX_FILE } from './utils.js';
+import { CLUSTER_INDEX_FILE, sleep } from './utils.js';
 
 export type {
   ClusterIndexRegistry,
@@ -273,6 +273,65 @@ export class ClusterDb<V = unknown> {
     await fs.rename(tmp, file);
   }
 
+  /** Compare two index definitions by their effective values (defaults
+   *  applied), so a raced create of the same definition is a no-op while a
+   *  genuinely different one keeps the "already exists" error. */
+  private static sameIndexDef(a: IndexDef, b: IndexDef): boolean {
+    return (
+      a.field === b.field &&
+      (a.type ?? 'equality') === (b.type ?? 'equality') &&
+      !!a.unique === !!b.unique &&
+      (a.sparse ?? true) === (b.sparse ?? true)
+    );
+  }
+
+  /** Per-process serialization of registry read-modify-publish cycles, keyed
+   *  by registry file. Cross-process safety comes from the CAS loop in
+   *  mutateRegistry; this only keeps ClusterDb instances in THIS process from
+   *  interleaving their load/save/verify steps. */
+  private static readonly registryLocks = new Map<string, Promise<void>>();
+
+  private static async withRegistryLock<T>(file: string, fn: () => Promise<T>): Promise<T> {
+    const prev = ClusterDb.registryLocks.get(file) ?? Promise.resolve();
+    let release!: () => void;
+    const current = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tail = prev.then(() => current);
+    ClusterDb.registryLocks.set(file, tail);
+    await prev;
+    try {
+      return await fn();
+    } finally {
+      release();
+      if (ClusterDb.registryLocks.get(file) === tail) ClusterDb.registryLocks.delete(file);
+    }
+  }
+
+  /** Publish one registry mutation as a compare-and-swap loop: every attempt
+   *  re-loads the registry, re-applies the mutation idempotently
+   *  (append-if-absent for creates, remove-if-present for drops; mutate
+   *  returns false when the effect is already there, ending the loop),
+   *  writes via tmp+rename, and accepts the write only when a post-save
+   *  re-read still equals what was published. A concurrent rename from
+   *  another process fails that check, so the attempt is retried with
+   *  jittered backoff. */
+  private async mutateRegistry(mutate: (reg: ClusterIndexRegistry) => boolean): Promise<void> {
+    for (let attempt = 0; ; attempt++) {
+      const done = await ClusterDb.withRegistryLock(this.indexPath, async () => {
+        const reg = await ClusterDb.loadRegistry(this.indexPath);
+        if (!mutate(reg)) return true; // The effect is already published.
+        const published = JSON.stringify(reg);
+        await ClusterDb.saveRegistry(this.indexPath, reg);
+        const reread = await ClusterDb.loadRegistry(this.indexPath);
+        return JSON.stringify(reread) === published;
+      });
+      if (done) return;
+      if (attempt >= 19) throw new Error('cluster index registry update keeps losing write races; retry the operation');
+      await sleep(10 + Math.floor(Math.random() * 41));
+    }
+  }
+
   private requireJsonCodec(what: string): void {
     if (this.topology.meta.valueCodec !== 'json') {
       throw new Error(`${what} require valueCodec: "json"`);
@@ -283,9 +342,22 @@ export class ClusterDb<V = unknown> {
    *  management needs this so definitions stay consistent cluster-wide; it
    *  waits (up to lockAcquireTimeoutMs per shard) for shards held by other
    *  processes and throws LockError when they cannot be acquired in time. */
-  private async forEachShardWriter(fn: (db: MiniDb<V>) => void | Promise<void>): Promise<void> {
+  private async forEachShardWriter(fn: (db: MiniDb<V>, shardId: number) => void | Promise<void>): Promise<void> {
     for (const id of this.router.shardIds()) {
-      await this.writer(id, fn);
+      await this.writer(id, (db) => fn(db, id));
+    }
+  }
+
+  /** Best-effort cleanup after a failed index fan-out: run fn on the shards
+   *  the fan-out had completed on, swallowing errors (a shard that cannot be
+   *  re-acquired is left as-is). */
+  private async rollbackShards(shardIds: number[], fn: (db: MiniDb<V>) => void | Promise<void>): Promise<void> {
+    for (const id of shardIds) {
+      try {
+        await this.writer(id, fn);
+      } catch {
+        // Best effort only; the original fan-out error is what propagates.
+      }
     }
   }
 
@@ -297,11 +369,33 @@ export class ClusterDb<V = unknown> {
     this.requireJsonCodec('secondary indexes');
     const reg = await ClusterDb.loadRegistry(this.indexPath);
     if (reg.indexes.some((i) => i.name === name)) throw new Error(`index "${name}" already exists`);
-    await this.forEachShardWriter(async (db) => {
-      if (!db.listIndexes().some((i) => i.name === name)) await db.createIndex(name, def);
+    const createdOn: number[] = [];
+    try {
+      await this.forEachShardWriter(async (db, shardId) => {
+        if (!db.listIndexes().some((i) => i.name === name)) {
+          await db.createIndex(name, def);
+          createdOn.push(shardId);
+        }
+      });
+    } catch (e) {
+      // Roll back the partial fan-out: drop the index from exactly the shards
+      // this call created it on, so no shard keeps enforcing an index the
+      // registry never recorded.
+      await this.rollbackShards(createdOn, async (db) => {
+        await db.dropIndex(name);
+      });
+      throw e;
+    }
+    await this.mutateRegistry((current) => {
+      const existing = current.indexes.find((i) => i.name === name);
+      if (existing) {
+        // A raced create of the same definition already published.
+        if (ClusterDb.sameIndexDef(existing.def, def)) return false;
+        throw new Error(`index "${name}" already exists`);
+      }
+      current.indexes.push({ name, def });
+      return true;
     });
-    reg.indexes.push({ name, def });
-    await ClusterDb.saveRegistry(this.indexPath, reg);
   }
 
   async dropIndex(name: string): Promise<boolean> {
@@ -311,8 +405,13 @@ export class ClusterDb<V = unknown> {
     await this.forEachShardWriter(async (db) => {
       if (db.listIndexes().some((i) => i.name === name)) await db.dropIndex(name);
     });
-    if (existed) await ClusterDb.saveRegistry(this.indexPath, { ...reg, indexes: reg.indexes.filter((i) => i.name !== name) });
-    return existed;
+    if (!existed) return false;
+    await this.mutateRegistry((current) => {
+      if (!current.indexes.some((i) => i.name === name)) return false;
+      current.indexes = current.indexes.filter((i) => i.name !== name);
+      return true;
+    });
+    return true;
   }
 
   /** Cluster-wide index definitions from the registry (source of truth). */
@@ -348,15 +447,21 @@ export class ClusterDb<V = unknown> {
   ): Promise<{ key: string; value: V | undefined; field: number }[]> {
     this.ensureOpen();
     await this.requireIndex(name);
+    // Only the numeric bounds go to the shards; offset/count/reverse must
+    // apply to the globally merged result, not per shard.
+    const bounds = { min: opts?.min, max: opts?.max, minExclusive: opts?.minExclusive, maxExclusive: opts?.maxExclusive };
     const out: { key: string; value: V | undefined; field: number }[] = [];
     for (const id of this.router.shardIds()) {
       const rows = await this.reader(id, (db) =>
-        db.listIndexes().some((i) => i.name === name) ? db.findRange(name, opts) : [],
+        db.listIndexes().some((i) => i.name === name) ? db.findRange(name, bounds) : [],
       );
       out.push(...rows);
     }
     out.sort((a, b) => a.field - b.field || compareEntries({ key: a.key, value: a.value }, { key: b.key, value: b.value }));
-    return out;
+    if (opts?.reverse) out.reverse();
+    const offset = opts?.offset ?? 0;
+    const sliced = offset > 0 ? out.slice(offset) : out;
+    return opts?.count === undefined ? sliced : sliced.slice(0, opts.count);
   }
 
   private async requireIndex(name: string): Promise<void> {
@@ -371,15 +476,30 @@ export class ClusterDb<V = unknown> {
     this.requireJsonCodec('text indexes');
     const reg = await ClusterDb.loadRegistry(this.indexPath);
     if (reg.textIndexes.some((t) => t.name === name)) throw new Error(`text index "${name}" already exists`);
-    await this.forEachShardWriter(async (db) => {
-      try {
-        await db.createTextIndex(name, opts);
-      } catch (e) {
-        if (!(e instanceof Error) || !e.message.includes('already exists')) throw e;
-      }
+    const createdOn: number[] = [];
+    try {
+      await this.forEachShardWriter(async (db, shardId) => {
+        try {
+          await db.createTextIndex(name, opts);
+          createdOn.push(shardId);
+        } catch (e) {
+          if (!(e instanceof Error) || !e.message.includes('already exists')) throw e;
+        }
+      });
+    } catch (e) {
+      // Roll back the partial fan-out: drop the text index only from the
+      // shards this call created it on (see createIndex).
+      await this.rollbackShards(createdOn, async (db) => {
+        await db.dropTextIndex(name);
+      });
+      throw e;
+    }
+    const fields = opts.fields ?? null;
+    await this.mutateRegistry((current) => {
+      if (current.textIndexes.some((t) => t.name === name)) return false; // A raced create already published.
+      current.textIndexes.push({ name, fields });
+      return true;
     });
-    reg.textIndexes.push({ name, fields: opts.fields ?? null });
-    await ClusterDb.saveRegistry(this.indexPath, reg);
   }
 
   async dropTextIndex(name: string): Promise<boolean> {
@@ -393,9 +513,12 @@ export class ClusterDb<V = unknown> {
         if (!(e instanceof Error) || !e.message.includes('no such text index')) throw e;
       }
     });
-    if (existed) {
-      await ClusterDb.saveRegistry(this.indexPath, { ...reg, textIndexes: reg.textIndexes.filter((t) => t.name !== name) });
-    }
+    if (!existed) return false;
+    await this.mutateRegistry((current) => {
+      if (!current.textIndexes.some((t) => t.name === name)) return false;
+      current.textIndexes = current.textIndexes.filter((t) => t.name !== name);
+      return true;
+    });
     return existed;
   }
 

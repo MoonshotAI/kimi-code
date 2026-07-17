@@ -5,7 +5,9 @@
 
 import { test } from 'vitest';
 import assert from 'node:assert/strict';
-import { ClusterDb } from '../../src/cluster/index.js';
+import path from 'node:path';
+import { MiniDb } from '../../src/index.js';
+import { ClusterDb, shardDirName } from '../../src/cluster/index.js';
 import { tmpDir, rmrf } from '../e2e/helpers/tmp.js';
 import { keyOnShard, keysByShard } from './helpers.js';
 
@@ -156,6 +158,111 @@ test('compact rewrites every shard and preserves data', async () => {
     await db.set('cmp:after', 99);
     assert.equal(await db.get('cmp:after'), 99);
     await db.close();
+  } finally {
+    await rmrf(dir);
+  }
+});
+
+test('findRange applies offset/count/reverse to the globally merged result', async () => {
+  const dir = await tmpDir('minidb-cluster-');
+  try {
+    interface D { n: number }
+    const db = await ClusterDb.open<D>({ dir, shardCount: 4, valueCodec: 'json' });
+    const byShard = keysByShard('fr', 60, 4);
+    assert.ok(byShard.size >= 3);
+    const entries: [string, D][] = [];
+    let i = 0;
+    for (const shardKeys of byShard.values()) {
+      for (const k of shardKeys) {
+        entries.push([k, { n: i % 25 }]); // Values repeat across shards.
+        i++;
+      }
+    }
+    await db.mset(entries);
+    await db.createIndex('by-n', { field: 'n', type: 'range' });
+
+    // Reference order (field asc, key asc) computed locally from the data.
+    const cmpKey = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+    const rows = entries.map(([key, d]) => ({ key, n: d.n })).sort((a, b) => a.n - b.n || cmpKey(a.key, b.key));
+    const keys = (rs: { key: string }[]) => rs.map((r) => r.key);
+    const query = async (opts: Parameters<ClusterDb<D>['findRange']>[1]) => keys(await db.findRange('by-n', opts));
+
+    assert.deepEqual(await query({}), keys(rows));
+    // Count/offset are global totals, not per shard (4 shards here).
+    assert.deepEqual(await query({ count: 6 }), keys(rows.slice(0, 6)));
+    assert.deepEqual(await query({ offset: 55 }), keys(rows.slice(55)));
+    assert.deepEqual(await query({ offset: 12, count: 8 }), keys(rows.slice(12, 20)));
+    // Reverse flips the merged order, including the key tie-break.
+    assert.deepEqual(await query({ reverse: true }), keys([...rows].reverse()));
+    assert.deepEqual(await query({ reverse: true, count: 7 }), keys([...rows].reverse().slice(0, 7)));
+    // Bounds still apply globally on top of offset/count.
+    const inBounds = rows.filter((r) => r.n >= 3 && r.n < 20);
+    assert.deepEqual(await query({ min: 3, max: 20, maxExclusive: true, count: 5 }), keys(inBounds.slice(0, 5)));
+    assert.deepEqual(await query({ min: 3, max: 20, maxExclusive: true, offset: 2, count: 5 }), keys(inBounds.slice(2, 7)));
+    await db.close();
+  } finally {
+    await rmrf(dir);
+  }
+});
+
+test('concurrent createIndex from two instances keeps both registry entries', async () => {
+  const dir = await tmpDir('minidb-cluster-');
+  try {
+    interface D { a: number; b: number }
+    const shardCount = 4;
+    const dbA = await ClusterDb.open<D>({ dir, shardCount, valueCodec: 'json' });
+    const dbB = await ClusterDb.open<D>({ dir, shardCount, valueCodec: 'json' });
+    // Two different indexes created concurrently: neither registry write may
+    // clobber the other.
+    await Promise.all([dbA.createIndex('ia', { field: 'a' }), dbB.createIndex('ib', { field: 'b' })]);
+    await dbA.close();
+    await dbB.close();
+
+    // Re-verify through a fresh instance: the registry lists both, and both
+    // sidecars answer on every shard.
+    const fresh = await ClusterDb.open<D>({ dir, shardCount, valueCodec: 'json' });
+    assert.deepEqual(
+      (await fresh.listIndexes()).map((d) => d.name).sort(),
+      ['ia', 'ib'],
+    );
+    for (let id = 0; id < shardCount; id++) {
+      const k = keyOnShard('cas', id, shardCount);
+      await fresh.set(k, { a: id, b: id + 100 });
+      assert.deepEqual((await fresh.findEq('ia', id)).map((r) => r.key), [k]);
+      assert.deepEqual((await fresh.findEq('ib', id + 100)).map((r) => r.key), [k]);
+    }
+    await fresh.close();
+  } finally {
+    await rmrf(dir);
+  }
+});
+
+test('a failed unique createIndex rolls back the shards it already created on', async () => {
+  const dir = await tmpDir('minidb-cluster-');
+  try {
+    interface D { u: number }
+    const shardCount = 4;
+    const db = await ClusterDb.open<D>({ dir, shardCount, valueCodec: 'json' });
+    // One u=9 doc per shard plus a second u=9 doc on the LAST shard: the
+    // fan-out fails there after the earlier shards already persisted the index.
+    for (let id = 0; id < shardCount; id++) await db.set(keyOnShard('rb', id, shardCount), { u: 9 });
+    await db.set(keyOnShard('rb-dup', shardCount - 1, shardCount), { u: 9 });
+    await assert.rejects(() => db.createIndex('u-idx', { field: 'u', unique: true }), /unique index "u-idx" violation/);
+    await db.close();
+
+    // Every shard sidecar must be clean (not just the registry).
+    for (let id = 0; id < shardCount; id++) {
+      const shard = await MiniDb.open<D>({ dir: path.join(dir, shardDirName(id, shardCount)), valueCodec: 'json', readOnly: true });
+      assert.deepEqual(shard.listIndexes(), []);
+      await shard.close();
+    }
+    const fresh = await ClusterDb.open<D>({ dir, shardCount, valueCodec: 'json' });
+    assert.deepEqual(await fresh.listIndexes(), []);
+    // Writes that the phantom unique index would have rejected now succeed.
+    const after = Array.from({ length: shardCount }, (_, id) => keyOnShard('rb-after', id, shardCount));
+    for (const k of after) await fresh.set(k, { u: 9 });
+    assert.deepEqual((await fresh.mget(after)).map((d) => d?.u), after.map(() => 9));
+    await fresh.close();
   } finally {
     await rmrf(dir);
   }
