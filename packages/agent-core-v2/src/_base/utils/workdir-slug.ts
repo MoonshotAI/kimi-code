@@ -54,6 +54,11 @@ const WIN_SHAPED = /^(?:[A-Za-z]:[\\/]|\\\\|\/\/)/;
  * translations are a documented non-goal.
  */
 export function workspaceRootKey(root: string): string {
-  const normalized = root.replaceAll('\\', '/').replace(/\/+$/, '');
-  return WIN_SHAPED.test(normalized) ? normalized.toLowerCase() : normalized;
+  const slashed = root.replaceAll('\\', '/');
+  // Test the shape BEFORE stripping trailing separators: a drive root
+  // (`C:\`) loses its only separator to the strip (`C:`) and would no
+  // longer read as Windows-shaped, escaping the case-fold.
+  const shaped = WIN_SHAPED.test(slashed);
+  const normalized = slashed.replace(/\/+$/, '');
+  return shaped ? normalized.toLowerCase() : normalized;
 }

@@ -632,4 +632,48 @@ describe('touchWorkspaceRegistry', () => {
     const file = await readRegistryFile();
     expect(file.workspaces[result.workspaceId]?.root).toBe(root);
   });
+
+  it('folds a Windows case-variant spelling onto the existing entry instead of minting a duplicate', async () => {
+    // The runtime touch path must mirror the service's identity folding:
+    // minting the alias id here would make it the preferred id on the next
+    // `resolveWorkspaceId` call and split sessions into the duplicate bucket.
+    const diskSpelling = 'C:\\Users\\Foo\\Proj';
+    const diskId = encodeWorkDirKey(normalizeWorkDir(diskSpelling));
+    await writeFile(
+      join(homeDir, 'workspaces.json'),
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          [diskId]: {
+            root: diskSpelling,
+            name: 'Proj',
+            created_at: '2026-01-01T00:00:00.000Z',
+            last_opened_at: '2026-01-01T00:00:00.000Z',
+          },
+        },
+        deleted_workspace_ids: [],
+      }),
+      'utf-8',
+    );
+
+    const result = await touchWorkspaceRegistry(homeDir, 'c:\\users\\foo\\proj');
+
+    expect(result.created).toBe(false);
+    expect(result.workspaceId).toBe(diskId);
+    const file = await readRegistryFile();
+    expect(Object.keys(file.workspaces)).toEqual([diskId]);
+    expect(file.workspaces[diskId]?.root).toBe(diskSpelling);
+    expect(file.workspaces[diskId]?.name).toBe('Proj');
+    expect(Date.parse(file.workspaces[diskId]?.last_opened_at ?? '')).toBeGreaterThan(
+      Date.parse('2026-01-01T00:00:00.000Z'),
+    );
+  });
+
+  it('keeps case-distinct POSIX roots as separate entries', async () => {
+    const first = await touchWorkspaceRegistry(homeDir, '/tmp/AliasCheckFoo');
+    const second = await touchWorkspaceRegistry(homeDir, '/tmp/aliascheckfoo');
+
+    expect(second.created).toBe(true);
+    expect(second.workspaceId).not.toBe(first.workspaceId);
+  });
 });

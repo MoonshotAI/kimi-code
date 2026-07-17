@@ -139,6 +139,13 @@ describe('workspaceRootKey', () => {
     expect(workspaceRootKey('C:\\Users\\Foo')).toBe('c:/users/foo');
   });
 
+  it('folds drive roots before separator stripping can mask the shape', () => {
+    // `C:\` would strip to `C:` and stop reading as Windows-shaped.
+    expect(workspaceRootKey('C:\\')).toBe('c:');
+    expect(workspaceRootKey('C:\\')).toBe(workspaceRootKey('c:\\'));
+    expect(workspaceRootKey('C:\\')).toBe(workspaceRootKey('c:/'));
+  });
+
   it('folds UNC paths', () => {
     expect(workspaceRootKey('\\\\HOST\\Share\\Dir')).toBe('//host/share/dir');
     expect(workspaceRootKey('\\\\HOST\\Share\\Dir')).toBe(workspaceRootKey('//host/share/dir'));

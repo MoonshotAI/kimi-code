@@ -282,6 +282,13 @@ describe('workspaceRootKey', () => {
     expect(workspaceRootKey('c:/Users/DEV/Project')).toBe('c:/users/dev/project');
   });
 
+  it('folds drive roots before separator stripping can mask the shape', () => {
+    // `C:\` would strip to `C:` and stop reading as Windows-shaped.
+    expect(workspaceRootKey('C:\\')).toBe('c:');
+    expect(workspaceRootKey('C:\\')).toBe(workspaceRootKey('c:\\'));
+    expect(workspaceRootKey('C:\\')).toBe(workspaceRootKey('c:/'));
+  });
+
   it('unifies slashes and strips trailing separators', () => {
     expect(workspaceRootKey('C:\\Users\\Dev\\Project\\')).toBe('c:/users/dev/project');
     expect(workspaceRootKey('C:/Users/Dev/Project/')).toBe('c:/users/dev/project');
