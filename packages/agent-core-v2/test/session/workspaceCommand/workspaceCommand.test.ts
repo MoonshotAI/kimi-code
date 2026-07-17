@@ -121,6 +121,10 @@ class MemoryHostFs implements IHostFileSystem {
     throw enoent(path);
   }
 
+  async lstat(path: string): Promise<HostFileStat> {
+    return this.stat(path);
+  }
+
   async readdir(): Promise<readonly HostDirEntry[]> {
     throw new Error('not implemented');
   }
