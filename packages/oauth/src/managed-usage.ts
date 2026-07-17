@@ -47,6 +47,12 @@ export interface UsageRow {
   readonly used: number;
   readonly limit: number;
   readonly resetHint?: string | undefined;
+  /** Raw reset timestamp from the payload (ISO), when present — lets clients
+   *  localize / re-relativize the reset hint instead of parsing `resetHint`. */
+  readonly resetAt?: string;
+  /** Rolling window length in seconds, when the payload declares one — lets
+   *  clients localize the row label (e.g. "5h limit" / "5 小时限额"). */
+  readonly windowSeconds?: number;
 }
 
 export interface BoosterWalletInfo {
@@ -136,7 +142,10 @@ export function parseManagedUsagePayload(payload: unknown): ParsedManagedUsage {
       const window = isRecord(windowRaw) ? windowRaw : {};
       const label = limitLabel(item, detail, window, idx);
       const row = toUsageRow(detail, label);
-      if (row !== null) limits.push(row);
+      if (row !== null) {
+        const windowSeconds = windowSecondsFrom(window, item, detail);
+        limits.push(windowSeconds === null ? row : { ...row, windowSeconds });
+      }
     }
   }
   const extraUsage = parseBoosterWallet(rec['boosterWallet']);
@@ -166,7 +175,49 @@ function toUsageRow(raw: unknown, defaultLabel: string): UsageRow | null {
     used: used ?? 0,
     limit: limit ?? 0,
     resetHint,
+    resetAt: rawResetAt(raw),
   };
+}
+
+function rawResetAt(raw: Record<string, unknown>): string | undefined {
+  for (const key of ['reset_at', 'resetAt', 'reset_time', 'resetTime']) {
+    const v = raw[key];
+    if (typeof v === 'string' && v.length > 0) return v;
+  }
+  return undefined;
+}
+
+function windowSecondsFrom(
+  window: Record<string, unknown>,
+  item: Record<string, unknown>,
+  detail: Record<string, unknown>,
+): number | null {
+  const duration = toInt(window['duration'] ?? item['duration'] ?? detail['duration']);
+  if (duration === null || duration <= 0) return null;
+  const rawUnit = window['timeUnit'] ?? item['timeUnit'] ?? detail['timeUnit'];
+  switch (parseTimeUnit(rawUnit)) {
+    case 'MINUTE':
+      return duration * 60;
+    case 'HOUR':
+      return duration * 3600;
+    case 'DAY':
+      return duration * 86400;
+    case 'SECOND':
+      return duration;
+    case null:
+      return null;
+  }
+}
+
+function parseTimeUnit(raw: unknown): 'SECOND' | 'MINUTE' | 'HOUR' | 'DAY' | null {
+  if (typeof raw !== 'string') return null;
+  const parts = raw.trim().toUpperCase().split(/[^A-Z]+/).filter(Boolean);
+  const last = parts.at(-1);
+  if (last === 'SECOND' || last === 'SECONDS') return 'SECOND';
+  if (last === 'MINUTE' || last === 'MINUTES') return 'MINUTE';
+  if (last === 'HOUR' || last === 'HOURS') return 'HOUR';
+  if (last === 'DAY' || last === 'DAYS') return 'DAY';
+  return null;
 }
 
 function limitLabel(
@@ -181,15 +232,20 @@ function limitLabel(
   }
   const duration = toInt(window['duration'] ?? item['duration'] ?? detail['duration']);
   const rawUnit = window['timeUnit'] ?? item['timeUnit'] ?? detail['timeUnit'];
-  const timeUnit = typeof rawUnit === 'string' ? rawUnit : '';
   if (duration !== null) {
-    if (timeUnit.includes('MINUTE')) {
-      if (duration >= 60 && duration % 60 === 0) return `${String(duration / 60)}h limit`;
-      return `${String(duration)}m limit`;
+    switch (parseTimeUnit(rawUnit)) {
+      case 'MINUTE':
+        if (duration >= 60 && duration % 60 === 0) return `${String(duration / 60)}h limit`;
+        return `${String(duration)}m limit`;
+      case 'HOUR':
+        return `${String(duration)}h limit`;
+      case 'DAY':
+        return `${String(duration)}d limit`;
+      case 'SECOND':
+        return `${String(duration)}s limit`;
+      case null:
+        break;
     }
-    if (timeUnit.includes('HOUR')) return `${String(duration)}h limit`;
-    if (timeUnit.includes('DAY')) return `${String(duration)}d limit`;
-    return `${String(duration)}s limit`;
   }
   return `Limit #${String(idx + 1)}`;
 }

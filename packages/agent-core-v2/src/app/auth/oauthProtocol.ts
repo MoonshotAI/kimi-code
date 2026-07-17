@@ -2,8 +2,9 @@
  * `auth` domain — the v1 OAuth wire DTO schemas.
  *
  * Request/response shapes of the v1 `/oauth/*` endpoints plus the managed
- * OAuth provider model-refresh response, defined as zod schemas so the
- * transports validate against the same contract the `IOAuthService` returns.
+ * OAuth provider model-refresh and usage responses, defined as zod schemas so
+ * the transports validate against the same contract the `IOAuthService`
+ * returns.
  */
 
 import { z } from 'zod';
@@ -107,3 +108,47 @@ export const refreshOAuthProviderModelsResponseSchema = z.object({
 export type RefreshOAuthProviderModelsResponse = z.infer<
   typeof refreshOAuthProviderModelsResponseSchema
 >;
+
+export const managedUsageRowSchema = z.object({
+  label: z.string(),
+  used: z.number().int().min(0),
+  limit: z.number().int().min(0),
+  reset_hint: z.string().optional(),
+  reset_at: z.string().optional(),
+  window_seconds: z.number().int().positive().optional(),
+});
+export type ManagedUsageRow = z.infer<typeof managedUsageRowSchema>;
+
+export const boosterWalletSchema = z.object({
+  balance_cents: z.number().int().min(0),
+  total_cents: z.number().int().min(0),
+  monthly_charge_limit_enabled: z.boolean(),
+  monthly_charge_limit_cents: z.number().int().min(0),
+  monthly_used_cents: z.number().int().min(0),
+  currency: z.string(),
+});
+export type BoosterWallet = z.infer<typeof boosterWalletSchema>;
+
+export const managedUsageOkSchema = z.object({
+  kind: z.literal('ok'),
+  summary: managedUsageRowSchema.nullable(),
+  limits: z.array(managedUsageRowSchema),
+  extra_usage: boosterWalletSchema.nullable(),
+});
+export type ManagedUsageOk = z.infer<typeof managedUsageOkSchema>;
+
+export const managedUsageErrorCodeSchema = z.enum(['unauthenticated', 'unavailable']);
+export type ManagedUsageErrorCode = z.infer<typeof managedUsageErrorCodeSchema>;
+
+export const managedUsageErrorSchema = z.object({
+  kind: z.literal('error'),
+  code: managedUsageErrorCodeSchema,
+  message: z.string(),
+});
+export type ManagedUsageError = z.infer<typeof managedUsageErrorSchema>;
+
+export const managedUsageResponseSchema = z.discriminatedUnion('kind', [
+  managedUsageOkSchema,
+  managedUsageErrorSchema,
+]);
+export type ManagedUsageResponse = z.infer<typeof managedUsageResponseSchema>;

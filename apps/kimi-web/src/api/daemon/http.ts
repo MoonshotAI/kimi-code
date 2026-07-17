@@ -518,8 +518,10 @@ export class DaemonHttpClient {
     // Unwrap: code 0 = success; allowed non-zero = return data; else throw
     if (envelope.code !== 0 && !allowCodes.includes(envelope.code)) {
       throw new DaemonApiError({
-        code: envelope.code,
-        msg: envelope.msg,
+        // Non-envelope error bodies (e.g. the router's plain 404 JSON) carry no
+        // `code`; fall back to the HTTP status so callers can branch on it.
+        code: envelope.code ?? response.status,
+        msg: envelope.msg ?? response.statusText,
         requestId: envelope.request_id,
         details: envelope.details,
         timestamp: Date.now(),

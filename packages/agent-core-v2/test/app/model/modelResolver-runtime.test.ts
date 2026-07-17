@@ -33,6 +33,7 @@ function stubOAuth(): IOAuthService {
     refreshOAuthProviderModels: () => Promise.reject(new Error('not implemented')),
     resolveTokenProvider: () => undefined,
     getCachedAccessToken: () => Promise.resolve(undefined),
+    getManagedUsage: () => Promise.reject(new Error('not implemented')),
   };
 }
 

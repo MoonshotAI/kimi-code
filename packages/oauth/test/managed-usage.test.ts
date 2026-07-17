@@ -90,6 +90,58 @@ describe('parseManagedUsagePayload', () => {
     expect(parsed.summary?.resetHint).toMatch(/resets in/);
   });
 
+  it('passes the raw resetAt timestamp through for client-side localization', () => {
+    const future = new Date(Date.now() + 3600_000).toISOString();
+    const parsed = parseManagedUsagePayload({ usage: { used: 1, limit: 10, reset_at: future } });
+    expect(parsed.summary?.resetAt).toBe(future);
+  });
+
+  it('exposes the rolling window in seconds for client-side localization', () => {
+    const parsed = parseManagedUsagePayload({
+      limits: [
+        { detail: { used: 1, limit: 100 }, window: { duration: 300, timeUnit: 'MINUTE' } },
+        { detail: { used: 2, limit: 50 }, window: { duration: 24, timeUnit: 'HOUR' } },
+        { detail: { used: 3, limit: 10 }, window: { duration: 7, timeUnit: 'DAY' } },
+        { detail: { used: 4, limit: 10 }, window: { duration: 5, timeUnit: 'FORTNIGHT' } },
+        { detail: { used: 5, limit: 10 } },
+      ],
+    });
+    expect(parsed.limits.map((l) => l.windowSeconds)).toEqual([
+      300 * 60,
+      24 * 3600,
+      7 * 86400,
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it('treats sub-second window units as unknown instead of seconds', () => {
+    const parsed = parseManagedUsagePayload({
+      limits: [
+        { detail: { used: 1, limit: 100 }, window: { duration: 500, timeUnit: 'MILLISECOND' } },
+        { detail: { used: 2, limit: 100 }, window: { duration: 500, timeUnit: 'MILLISECONDS' } },
+        { detail: { used: 3, limit: 100 }, window: { duration: 500, timeUnit: 'MICROSECONDS' } },
+        { detail: { used: 4, limit: 100 }, window: { duration: 500, timeUnit: 'NANOSECONDS' } },
+        { detail: { used: 5, limit: 100 }, window: { duration: 30, timeUnit: 'SECOND' } },
+        { detail: { used: 6, limit: 100 }, window: { duration: 45, timeUnit: 'TIME_UNIT_SECONDS' } },
+      ],
+    });
+    expect(parsed.limits.map((l) => l.windowSeconds)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      30,
+      45,
+    ]);
+    expect(parsed.limits.slice(0, 4).map((l) => l.label)).toEqual([
+      'Limit #1',
+      'Limit #2',
+      'Limit #3',
+      'Limit #4',
+    ]);
+  });
+
   it('extracts extra usage from boosterWallet.balance', () => {
     const parsed = parseManagedUsagePayload({
       usage: { used: 40, limit: 1000, name: 'Weekly limit' },

@@ -801,7 +801,47 @@ export interface KimiWebApi {
   } | null>;
   cancelOAuthLogin(): Promise<{ cancelled: boolean; status: string }>;
   logout(): Promise<{ loggedOut: boolean }>;
+  /** Managed-account usage quotas (5h / weekly / booster wallet) — GET /oauth/usage. */
+  getManagedUsage(): Promise<AppManagedUsage>;
 }
+
+/** Managed-platform quota row (weekly summary, rolling 5h limit, …). */
+export interface AppUsageRow {
+  label: string;
+  used: number;
+  limit: number;
+  resetHint?: string;
+  /** Raw ISO reset timestamp — preferred over `resetHint` for localized display. */
+  resetAt?: string;
+  /** Rolling window length in seconds — preferred over `label` for localized display. */
+  windowSeconds?: number;
+}
+
+/** Booster wallet — pay-as-you-go balance beyond the subscription quota. */
+export interface AppBoosterWallet {
+  balanceCents: number;
+  totalCents: number;
+  monthlyChargeLimitEnabled: boolean;
+  monthlyChargeLimitCents: number;
+  monthlyUsedCents: number;
+  currency: string;
+}
+
+/** Stable failure reason for a usage fetch — the UI binds localized copy to
+ *  the code instead of rendering the raw upstream `message`.
+ *  `unauthenticated` / `unavailable` come from the server; `route_unavailable`
+ *  is synthesized by the client when the backend predates the route (404). */
+export type AppManagedUsageErrorCode = 'unauthenticated' | 'unavailable' | 'route_unavailable';
+
+/** Result of `getManagedUsage()`, mirroring the wire discriminated union. */
+export type AppManagedUsage =
+  | {
+      kind: 'ok';
+      summary: AppUsageRow | null;
+      limits: AppUsageRow[];
+      extraUsage: AppBoosterWallet | null;
+    }
+  | { kind: 'error'; code: AppManagedUsageErrorCode; message: string };
 
 /** Result of `startOAuthLogin()`, mirroring the wire discriminated union. */
 export type OAuthLoginStartResult =
