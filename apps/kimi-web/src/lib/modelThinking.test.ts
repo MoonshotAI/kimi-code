@@ -24,6 +24,7 @@ const apiMock = vi.hoisted(() => ({
   updateSession: vi.fn(),
   listModels: vi.fn(),
   setConfig: vi.fn(),
+  activateSkill: vi.fn(),
 }));
 
 vi.mock('../api', () => ({
@@ -255,6 +256,7 @@ describe('useModelProviderState thinking on model selection', () => {
   // wires localStorage: tests seed storedThinkingLevels and assert writes via
   // saveThinkingToStorageMock.
   const saveThinkingToStorageMock = vi.fn();
+  const persistSessionProfileMock = vi.fn();
   let storedThinkingLevels: Record<string, ThinkingLevel>;
 
   beforeEach(() => {
@@ -264,7 +266,11 @@ describe('useModelProviderState thinking on model selection', () => {
     apiMock.listModels.mockResolvedValue([effortAppModel, booleanAppModel, maxOnlyAppModel]);
     apiMock.setConfig.mockReset();
     apiMock.setConfig.mockResolvedValue({});
+    apiMock.activateSkill.mockReset();
+    apiMock.activateSkill.mockResolvedValue({});
     saveThinkingToStorageMock.mockReset();
+    persistSessionProfileMock.mockReset();
+    persistSessionProfileMock.mockResolvedValue(undefined);
     storedThinkingLevels = {};
   });
 
@@ -277,6 +283,7 @@ describe('useModelProviderState thinking on model selection', () => {
       sessions: options.activeSession ? [options.activeSession] : [],
       thinking: 'off',
       defaultModel: options.defaultModel,
+      inFlightBySession: {},
     } as ExtendedState;
   }
 
@@ -284,7 +291,7 @@ describe('useModelProviderState thinking on model selection', () => {
     const deps: UseModelProviderStateDeps = {
       pushOperationFailure: vi.fn(),
       refreshSessionStatus: vi.fn().mockResolvedValue(undefined),
-      persistSessionProfile: vi.fn().mockResolvedValue(undefined),
+      persistSessionProfile: persistSessionProfileMock,
       activity: computed(() => 'idle'),
       loadThinkingForModel: (modelId) => storedThinkingLevels[modelId],
       saveThinkingToStorage: saveThinkingToStorageMock,
@@ -373,6 +380,27 @@ describe('useModelProviderState thinking on model selection', () => {
 
     expect(switched).toBe(false);
     expect(saveThinkingToStorageMock).not.toHaveBeenCalled();
+  });
+
+  it('applies the resolved level to the session profile before activating a skill', async () => {
+    // Skill activation carries no thinking — the daemon runs at the session
+    // profile effort. The restored per-model level must be persisted there
+    // first, or the skill runs at a stale profile effort the UI no longer shows.
+    storedThinkingLevels = { [effortAppModel.id]: 'low' };
+    const state = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.id },
+      defaultModel: booleanAppModel.id,
+    });
+    const provider = createModelProvider(state);
+
+    await provider.activateSkill('gen-changesets');
+
+    expect(persistSessionProfileMock).toHaveBeenCalledWith({ thinking: 'low' }, 'session-1');
+    expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined);
+    // The profile write precedes the activation, mirroring the new-session path.
+    const persistOrder = persistSessionProfileMock.mock.invocationCallOrder[0]!;
+    const activateOrder = apiMock.activateSkill.mock.invocationCallOrder[0]!;
+    expect(persistOrder).toBeLessThan(activateOrder);
   });
 
   it('pins the catalog default in memory when no thinking preference exists', async () => {

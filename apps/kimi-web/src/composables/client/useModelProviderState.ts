@@ -379,6 +379,16 @@ export function useModelProviderState(
     }
 
     try {
+      // Skill activation carries only name/args — the daemon runs the turn at
+      // the SESSION PROFILE effort. Persist the level resolved for this
+      // session's own model first (awaited, mirroring the new-session skill
+      // path), so a profile that predates the per-model restore can't run the
+      // skill at a stale effort while the UI shows the restored level.
+      const skillModel = rawState.sessions.find((s) => s.id === sid)?.model;
+      await persistSessionProfile(
+        { thinking: thinkingLevelForModelId(skillModel) ?? rawState.thinking },
+        sid,
+      );
       await getKimiWebApi().activateSkill(sid, skillName, args);
     } catch (err) {
       if (guarded) {

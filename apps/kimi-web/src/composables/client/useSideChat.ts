@@ -9,7 +9,7 @@
 
 import { computed, ref } from 'vue';
 import { getKimiWebApi } from '../../api';
-import type { AppMessage, KimiEventConnection } from '../../api/types';
+import type { AppMessage, KimiEventConnection, ThinkingLevel } from '../../api/types';
 import { messagesToTurns } from '../messagesToTurns';
 import type { ChatTurn } from '../../types';
 import type { ExtendedState } from '../useKimiWebClient';
@@ -23,10 +23,20 @@ export interface UseSideChatDeps {
   nextOptimisticMsgId: () => string;
   connectEventsIfNeeded: () => void;
   getEventConn: () => KimiEventConnection | null;
+  /** Resolve the thinking level for an arbitrary model id (its stored pick
+   *  when still declared, else its catalog default); undefined when the model
+   *  is not in the catalog. */
+  thinkingLevelForModelId: (modelId: string | undefined) => ThinkingLevel | undefined;
 }
 
 export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
-  const { pushOperationFailure, nextOptimisticMsgId, connectEventsIfNeeded, getEventConn } = deps;
+  const {
+    pushOperationFailure,
+    nextOptimisticMsgId,
+    connectEventsIfNeeded,
+    getEventConn,
+    thinkingLevelForModelId,
+  } = deps;
 
   const sideChatTargetBySession = ref<Record<string, { agentId: string }>>({});
 
@@ -198,11 +208,14 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
     };
     appendSideChatMessage(agentId, userMsg);
     try {
-      // Carry the parent's current thinking level, model, and permission so a
-      // BTW first-turn reflects the same draft/runtime controls the UI shows —
-      // the parent session profile mirrors them, but the prompt itself is the
-      // only thing the daemon reads for this turn. Thinking goes verbatim
-      // (same as normal prompts and the TUI).
+      // Carry the parent's current model, thinking, and permission so a BTW
+      // first-turn reflects the same draft/runtime controls the UI shows — the
+      // parent session profile mirrors them, but the prompt itself is the only
+      // thing the daemon reads for this turn. Thinking is resolved against the
+      // PARENT's own model (stored pick when declared, else its default) —
+      // never the active-session rawState.thinking: startBtw above may have
+      // spanned a session switch that changed what the active view resolved
+      // to (see submitPromptInternal in useWorkspaceState).
       const promptSession = rawState.sessions.find((s) => s.id === sid);
       const model =
         (promptSession?.model && promptSession.model.length > 0
@@ -212,7 +225,7 @@ export function useSideChat(rawState: ExtendedState, deps: UseSideChatDeps) {
         content: [{ type: 'text', text: trimmed }],
         agentId,
         model,
-        thinking: rawState.thinking,
+        thinking: thinkingLevelForModelId(model) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,

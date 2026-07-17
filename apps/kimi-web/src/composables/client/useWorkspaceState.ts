@@ -1193,20 +1193,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // there is nothing to persist for it.
       const planMode = rawState.planModeBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
-      // Thinking is persisted verbatim — whatever the user picked is what the
-      // first skill turn runs at (same as a normal prompt, and the TUI).
       const promptSession = rawState.sessions.find((s) => s.id === sid);
       const model =
         (promptSession?.model && promptSession.model.length > 0
           ? promptSession.model
           : rawState.defaultModel) ?? undefined;
+      // Thinking is resolved for the new session's own model (its stored pick
+      // when declared, else the catalog default) — never the raw active value,
+      // which can drift while createDraftSession awaits (see submitPromptInternal).
       await persistSessionProfile(
         {
           model,
           planMode,
           swarmMode,
           permissionMode: rawState.permission,
-          thinking: rawState.thinking,
+          thinking: modelProvider.thinkingLevelForModelId(model) ?? rawState.thinking,
         },
         sid,
       );

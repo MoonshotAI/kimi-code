@@ -1958,6 +1958,8 @@ const sideChat = useSideChat(rawState, {
   nextOptimisticMsgId,
   connectEventsIfNeeded,
   getEventConn: () => eventConn,
+  // modelProvider is defined further below; deferred like eventConn above.
+  thinkingLevelForModelId: (modelId) => modelProvider.thinkingLevelForModelId(modelId),
 });
 
 const activeAppTasks = computed<AppTask[]>(() => {
