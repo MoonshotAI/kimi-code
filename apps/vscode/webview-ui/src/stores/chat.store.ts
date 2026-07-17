@@ -3,6 +3,7 @@ import { produce } from "immer";
 import { bridge } from "@/services";
 import { Content } from "@/lib/content";
 import { useApprovalStore } from "./approval.store";
+import { toast } from "@/components/ui/sonner";
 
 import { useSettingsStore } from "./settings.store";
 import { processEvent } from "./event-handlers";
@@ -248,6 +249,14 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   processEvent: (event) => {
+    // Mid-turn warnings (terminal === false) leave the turn, the composer, and
+    // the queued messages untouched — the engine is still streaming, so they
+    // are surfaced as a transient toast only.
+    if (event.type === "error" && "terminal" in event && event.terminal === false) {
+      clearHandshakeTimer();
+      toast.warning(event.message);
+      return;
+    }
     // Clear handshake timeout on receiving valid response
     if (event.type === "TurnBegin" || event.type === "StepBegin" || event.type === "ContentPart") {
       clearHandshakeTimer();

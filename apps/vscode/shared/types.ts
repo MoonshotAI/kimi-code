@@ -43,6 +43,12 @@ export interface StreamError {
   message: string;
   detail?: string; // 原始服务器错误信息
   phase: ErrorPhase;
+  /**
+   * `false` marks a mid-turn warning: the turn is still running, so UIs must
+   * not treat it as turn-ending. Do not unlock the composer, offer Retry, or
+   * flush the queued messages for non-terminal errors.
+   */
+  terminal?: boolean;
 }
 
 export type UIStreamEvent =
