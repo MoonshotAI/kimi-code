@@ -53,6 +53,7 @@ import {
   toolCallStartToSessionUpdate,
   toolProgressToSessionUpdate,
   toolResultToSessionUpdate,
+  sessionUsageToAcpUsage,
   turnEndReasonToStopReason,
 } from './events-map';
 import { acpModeToToggles, DEFAULT_MODE_ID, isAcpModeId, type AcpModeId } from './modes';
@@ -1202,7 +1203,28 @@ export class AcpSession {
             this.currentTurnId = undefined;
             unsub();
           }
-          resolve({ stopReason: turnEndReasonToStopReason(event.reason, event.error) });
+          const stopReason = turnEndReasonToStopReason(event.reason, event.error);
+          // Attach cumulative token usage to the ACP `PromptResponse` so
+          // clients (and orchestration platforms driving kimi over ACP)
+          // can read per-turn cost. Reading usage is async and best-effort:
+          // a failure or an unset total must never turn a completed turn
+          // into a hung or rejected prompt, so we resolve with `stopReason`
+          // alone on any error. The `Promise.resolve().then(...)` wrapper
+          // also converts a synchronous throw (e.g. `getUsage` missing on a
+          // stubbed session) into a caught rejection rather than an
+          // unhandled one that would leave the prompt pending.
+          Promise.resolve()
+            .then(() => this.session.getUsage())
+            .then((usage) => {
+              resolve({ stopReason, usage: sessionUsageToAcpUsage(usage) });
+            })
+            .catch((err) => {
+              log.warn('acp: failed to read session usage for prompt response', {
+                sessionId,
+                error: err instanceof Error ? err.message : String(err),
+              });
+              resolve({ stopReason });
+            });
         }
       });
 

@@ -68,6 +68,7 @@ function makeInMemoryStreamPair(): {
 function makeScriptedSession(
   sessionId: string,
   script: readonly Event[],
+  getUsage?: () => Promise<unknown>,
 ): {
   session: Session;
   unsubscribeCount: () => number;
@@ -84,6 +85,7 @@ function makeScriptedSession(
       }
     },
     cancel: async () => undefined,
+    getUsage,
     onEvent: (fn: (event: Event) => void) => {
       listeners.add(fn);
       return () => {
@@ -172,6 +174,62 @@ describe('AcpServer session/prompt', () => {
 
     expect(response.stopReason).toBe('cancelled');
     expect(unsubscribeCount()).toBe(1);
+  });
+
+  it('reports cumulative token usage on the PromptResponse when the SDK exposes a total', async () => {
+    const sessionId = 'sess-usage';
+    const { session } = makeScriptedSession(
+      sessionId,
+      [{ type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event],
+      async () => ({
+        total: { inputOther: 100, output: 40, inputCacheRead: 10, inputCacheCreation: 5 },
+      }),
+    );
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection(() => new CollectingClient(), clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
+
+    expect(response.stopReason).toBe('end_turn');
+    expect(response.usage).toEqual({
+      inputTokens: 100,
+      outputTokens: 40,
+      cachedReadTokens: 10,
+      cachedWriteTokens: 5,
+      totalTokens: 155,
+    });
+  });
+
+  it('resolves without usage when reading session usage rejects', async () => {
+    const sessionId = 'sess-usage-fail';
+    const { session } = makeScriptedSession(
+      sessionId,
+      [{ type: 'turn.ended', sessionId, agentId: 'main', turnId: 1, reason: 'completed' } as Event],
+      async () => {
+        throw new Error('usage rpc down');
+      },
+    );
+    const harness = {
+      auth: { status: async () => AUTHED_STATUS },
+      createSession: async () => session,
+    } as unknown as KimiHarness;
+
+    const { agentStream, clientStream } = makeInMemoryStreamPair();
+    new AgentSideConnection((c) => new AcpServer(harness, c), agentStream);
+    const client = new ClientSideConnection(() => new CollectingClient(), clientStream);
+
+    await client.newSession({ cwd: '/tmp/x', mcpServers: [] });
+    const response = await client.prompt({ sessionId, prompt: [textBlock('hi')] });
+
+    expect(response.stopReason).toBe('end_turn');
+    expect(response.usage).toBeUndefined();
   });
 
   it('rejects prompt with invalid_params when sessionId is unknown', async () => {
