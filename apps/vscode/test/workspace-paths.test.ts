@@ -377,6 +377,39 @@ describe("Webview workspace paths (selected-directory containment)", () => {
     expect(mention).toBe(`@${outside}`);
   });
 
+  it("quotes an absolute editor mention whose path contains spaces", async () => {
+    const otherRoot = await mkdtemp(join(tmpdir(), "kimi vscode mention space-"));
+    extraRoots.push(otherRoot);
+    const outside = join(otherRoot, "App.java");
+    await writeFile(outside, "class App {}");
+    const bridge = createBridge();
+
+    const mention = await bridge.getEditorMention(
+      "view-1",
+      vscodeHost.Uri.file(outside) as vscode.Uri,
+      emptySelection(),
+    );
+
+    expect(mention).toBe(`@"${outside}"`);
+  });
+
+  it("places the line range after the closing quote of a mention with spaces", async () => {
+    const workDir = join(root, "project");
+    const inside = join(workDir, "some dir", "inside.ts");
+    await mkdir(join(workDir, "some dir"), { recursive: true });
+    await writeFile(inside, "inside");
+    const bridge = createBridge();
+    await bridge.handle({ id: "set", method: Methods.SetWorkDir, params: { workDir } }, "view-1");
+
+    const mention = await bridge.getEditorMention(
+      "view-1",
+      vscodeHost.Uri.file(inside) as vscode.Uri,
+      { isEmpty: false, start: { line: 2 }, end: { line: 4 } } as vscode.Selection,
+    );
+
+    expect(mention).toBe('@"some dir/inside.ts":3-5');
+  });
+
   it("omits an editor mention for a document that is not on the workspace file system", async () => {
     const bridge = createBridge();
     const untitled = vscodeHost.Uri.from({ scheme: "untitled", path: "Untitled-1" });

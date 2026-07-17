@@ -217,11 +217,14 @@ export class BridgeHandler {
     // documents (untitled:, git:, ...) have no meaningful path to mention.
     if (workDirUri === null || documentUri.scheme !== workDirUri.scheme) return null;
     const filePath = relativeWorkspacePath(workDirUri, documentUri) ?? documentUri.fsPath;
+    // Quote paths containing spaces, as the CLI/TUI mention completers do, so
+    // whitespace cannot split the path; any line range goes after the quote.
+    const mentionTarget = filePath.includes(" ") ? `"${filePath}"` : filePath;
 
-    if (selection.isEmpty) return `@${filePath}`;
+    if (selection.isEmpty) return `@${mentionTarget}`;
     return selection.start.line === selection.end.line
-      ? `@${filePath}:${selection.start.line + 1}`
-      : `@${filePath}:${selection.start.line + 1}-${selection.end.line + 1}`;
+      ? `@${mentionTarget}:${selection.start.line + 1}`
+      : `@${mentionTarget}:${selection.start.line + 1}-${selection.end.line + 1}`;
   }
 
   captureFileBaseline(
