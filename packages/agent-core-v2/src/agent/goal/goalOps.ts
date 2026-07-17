@@ -49,13 +49,14 @@ export interface GoalState {
   readonly wallClockResumedAt?: number;
   readonly budgetLimits: GoalBudgetLimits;
   readonly terminalReason?: string;
+  readonly blockedStreak?: number;
 }
 
 export type GoalModelState = GoalState | null;
 
 export const GoalModel = defineModel<GoalModelState>('goal', () => null);
 
-const GoalStatusSchema = z.enum(['active', 'paused', 'blocked', 'complete']);
+const GoalStatusSchema = z.enum(['active', 'paused', 'blocked', 'complete', 'budget_limited', 'usage_limited']);
 
 const GoalActorSchema = z.enum(['user', 'model', 'runtime', 'system']);
 
@@ -122,6 +123,7 @@ export const updateGoal = GoalModel.defineOp('goal.update', {
       wallClockResumedAt: z.number().finite().nonnegative().optional(),
       budgetLimits: GoalBudgetLimitsSchema.optional(),
       actor: GoalActorSchema.optional(),
+      blockedStreak: z.number().int().nonnegative().optional(),
     })
     .strip(),
   apply: (s, p) => {
@@ -154,6 +156,9 @@ export const updateGoal = GoalModel.defineOp('goal.update', {
     }
     if (p.budgetLimits !== undefined && p.budgetLimits !== s.budgetLimits) {
       next = { ...(next ?? s), budgetLimits: p.budgetLimits };
+    }
+    if (p.blockedStreak !== undefined && p.blockedStreak !== s.blockedStreak) {
+      next = { ...(next ?? s), blockedStreak: p.blockedStreak };
     }
     return next ?? s;
   },

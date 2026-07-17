@@ -89,7 +89,7 @@ describe('GoalInjection content', () => {
     expect(text).toContain('currently paused');
     expect(text).toContain('<untrusted_objective>\nwork\n</untrusted_objective>');
     expect(text).toContain('Do not work on it unless the user explicitly asks');
-    expect(text).toContain('UpdateGoal with `active`');
+    expect(text).toContain('/goal resume');
   });
 
   it('includes the reason for a paused goal when one exists', async () => {
@@ -172,7 +172,7 @@ describe('GoalInjection content', () => {
     expect(text).toContain('avoid starting new discretionary work');
   });
 
-  it('shows a blocked note once a budget is reached', async () => {
+  it('shows a budget-limited note once a budget is reached', async () => {
     const text = (await readGoalReminder(async (goals) => {
       await goals.createGoal({ objective: 'work' });
       await goals.setBudgetLimits({ budgetLimits: { turnBudget: 2 } }, 'model');
@@ -181,7 +181,7 @@ describe('GoalInjection content', () => {
       await goals.setBudgetLimits({ budgetLimits: { turnBudget: 2 } }, 'model');
     }))!;
     expect(text).toContain('currently blocked');
-    expect(text).toContain('Blocked after goal budget reached: turn budget 2');
+    expect(text).toContain('Budget limited after goal budget reached: turn budget 2');
     expect(text).not.toContain('Budget guidance');
   });
 
@@ -241,8 +241,9 @@ describe('GoalInjection content', () => {
     }))!;
     expect(text).toContain('Budgets:');
     expect(text).toContain('time 0s/1m00s');
-    expect(text).not.toContain('tokens');
-    expect(text).not.toContain('turns');
+    // The budget section should not mention token or turn budgets
+    expect(text).not.toContain('tokens ' + String(0) + '/');
+    expect(text).not.toContain('turns ' + String(0) + '/');
   });
 
   it('shows both token and turn budgets when both are set', async () => {

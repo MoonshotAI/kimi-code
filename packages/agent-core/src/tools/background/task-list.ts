@@ -3,6 +3,7 @@
  */
 
 import { z } from 'zod';
+import { t } from '../../i18n';
 
 import type { BackgroundManager, BackgroundTaskInfo } from '../../agent/background';
 import type { BuiltinTool } from '../../agent/tool';
@@ -53,7 +54,7 @@ export class TaskListTool implements BuiltinTool<TaskListInput> {
   resolveExecution(args: TaskListInput): ToolExecution {
     const listScope = (args.active_only ?? true) ? 'active' : 'all';
     return {
-      description: 'Listing background tasks',
+      description: t('tools.listingBackgroundTasks'),
       approvalRule: this.name,
       matchesRule: (ruleArgs) => matchesGlobRuleSubject(ruleArgs, listScope),
       execute: async () => {

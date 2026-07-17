@@ -15,6 +15,7 @@ import {
 import { KIMI_SERVER_TASK_NAME, supervisorLogPath as defaultSupervisorLogPath } from './paths';
 import { resolveSupervisorProgram } from './program';
 import { buildScheduledTaskXml, parseSchtasksQuery } from './schtasks-xml';
+import { t } from '../i18n';
 import type {
   InstallArgs,
   InstallResult,
@@ -59,14 +60,14 @@ export function createSchtasksManager(
     if (alreadyInstalled && args.force !== true) {
       return {
         status: 'already-installed',
-        message: `Scheduled task "${KIMI_SERVER_TASK_NAME}" already exists. Rerun with --force to replace it.`,
+        message: t('svc.schtasks.alreadyExists', { name: KIMI_SERVER_TASK_NAME }),
         taskName: KIMI_SERVER_TASK_NAME,
       };
     }
 
     const argString = serializeArguments(plan);
     const xml = buildScheduledTaskXml({
-      description: 'Kimi Code local server (managed by `kimi server install`)',
+      description: t('svc.common.description'),
       command: plan.program,
       ...(argString.length > 0 ? { arguments: argString } : {}),
     });
@@ -100,14 +101,14 @@ export function createSchtasksManager(
 
       return {
         status: alreadyInstalled ? 'replaced' : 'installed',
-        message: `Task ${alreadyInstalled ? 'replaced' : 'installed'} but /Run failed: ${detail(run) ?? 'unknown error'}.`,
+        message: t('svc.schtasks.installButRunFailed', { status: alreadyInstalled ? t('svc.schtasks.statusReplaced') : t('svc.schtasks.statusInstalled'), error: detail(run) ?? 'unknown error' }),
         taskName: KIMI_SERVER_TASK_NAME,
       };
     }
 
     return {
       status: alreadyInstalled ? 'replaced' : 'installed',
-      message: `Kimi server scheduled task ${alreadyInstalled ? 'replaced' : 'installed'} (${KIMI_SERVER_TASK_NAME}, port ${plan.port}).`,
+      message: t('svc.schtasks.installed', { status: alreadyInstalled ? t('svc.schtasks.statusReplaced') : t('svc.schtasks.statusInstalled'), name: KIMI_SERVER_TASK_NAME, port: plan.port }),
       taskName: KIMI_SERVER_TASK_NAME,
     };
   }
@@ -115,7 +116,7 @@ export function createSchtasksManager(
   async function uninstall(): Promise<LifecycleResult> {
     if (!(await deps.taskExists())) {
       deleteInstallPlan();
-      return { ok: true, message: 'Scheduled task was not installed; nothing to remove.' };
+      return { ok: true, message: t('svc.schtasks.nothingToRemove') };
     }
 
     await deps.execSchtasks(['/End', '/TN', KIMI_SERVER_TASK_NAME]).catch(() => undefined);
@@ -123,28 +124,28 @@ export function createSchtasksManager(
     if (del.code !== 0) {
       return {
         ok: false,
-        message: `schtasks /Delete failed: ${detail(del) ?? 'unknown error'}`,
+        message: t('svc.schtasks.deleteFailed', { error: detail(del) ?? 'unknown error' }),
       };
     }
     deleteInstallPlan();
-    return { ok: true, message: `Scheduled task removed (${KIMI_SERVER_TASK_NAME}).` };
+    return { ok: true, message: t('svc.schtasks.removed', { name: KIMI_SERVER_TASK_NAME }) };
   }
 
   async function start(): Promise<LifecycleResult> {
     if (!(await deps.taskExists())) {
       return {
         ok: false,
-        message: 'Scheduled task is not installed. Run `kimi server install` first.',
+        message: t('svc.schtasks.notInstalled'),
       };
     }
     const result = await deps.execSchtasks(['/Run', '/TN', KIMI_SERVER_TASK_NAME]);
     if (result.code !== 0) {
       return {
         ok: false,
-        message: `schtasks /Run failed: ${detail(result) ?? 'unknown error'}`,
+        message: t('svc.schtasks.runFailed', { error: detail(result) ?? 'unknown error' }),
       };
     }
-    return { ok: true, message: `Kimi server started (${KIMI_SERVER_TASK_NAME}).` };
+    return { ok: true, message: t('svc.schtasks.started', { name: KIMI_SERVER_TASK_NAME }) };
   }
 
   async function stop(): Promise<LifecycleResult> {
@@ -152,10 +153,10 @@ export function createSchtasksManager(
     if (result.code !== 0) {
       return {
         ok: false,
-        message: `schtasks /End failed: ${detail(result) ?? 'unknown error'}`,
+        message: t('svc.schtasks.endFailed', { error: detail(result) ?? 'unknown error' }),
       };
     }
-    return { ok: true, message: `Kimi server stopped (${KIMI_SERVER_TASK_NAME}).` };
+    return { ok: true, message: t('svc.schtasks.stopped', { name: KIMI_SERVER_TASK_NAME }) };
   }
 
   async function restart(): Promise<LifecycleResult> {
@@ -163,17 +164,17 @@ export function createSchtasksManager(
     if (end.code !== 0) {
       return {
         ok: false,
-        message: `schtasks /End failed during restart: ${detail(end) ?? 'unknown error'}`,
+        message: t('svc.schtasks.endFailedRestart', { error: detail(end) ?? 'unknown error' }),
       };
     }
     const run = await deps.execSchtasks(['/Run', '/TN', KIMI_SERVER_TASK_NAME]);
     if (run.code !== 0) {
       return {
         ok: false,
-        message: `schtasks /Run failed during restart: ${detail(run) ?? 'unknown error'}`,
+        message: t('svc.schtasks.runFailedRestart', { error: detail(run) ?? 'unknown error' }),
       };
     }
-    return { ok: true, message: `Kimi server restarted (${KIMI_SERVER_TASK_NAME}).` };
+    return { ok: true, message: t('svc.schtasks.restarted', { name: KIMI_SERVER_TASK_NAME }) };
   }
 
   async function status(): Promise<ServiceStatus> {

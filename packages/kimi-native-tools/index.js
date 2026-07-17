@@ -629,6 +629,45 @@ function nativeMcpStdioIsAlive(handle) {
 }
 
 // ============================================================================
+// Goal — state machine, accounting, steering
+// ============================================================================
+
+/** Validate a goal objective. Returns error message or empty string. */
+function nativeGoalValidateObjective(objective) {
+  return binding.nativeGoalValidateObjective(objective);
+}
+
+/** Validate a goal token budget. Returns error message or empty string. */
+function nativeGoalValidateBudget(value) {
+  return binding.nativeGoalValidateBudget(value);
+}
+
+/** Apply a goal state update (JSON in, JSON out). */
+function nativeGoalApplyUpdate(goalJson, updateJson) {
+  return binding.nativeGoalApplyUpdate(goalJson, updateJson);
+}
+
+/** Compute chargeable token delta between two usage snapshots. */
+function nativeGoalComputeTokenDelta(prevInput, prevCached, prevOutput, currInput, currCached, currOutput) {
+  return binding.nativeGoalComputeTokenDelta(prevInput, prevCached, prevOutput, currInput, currCached, currOutput);
+}
+
+/** Render the continuation steering prompt. */
+function nativeGoalRenderContinuation(objective, tokensUsed, tokenBudget) {
+  return binding.nativeGoalRenderContinuation(objective, tokensUsed, tokenBudget);
+}
+
+/** Render the budget-limit wrap-up prompt. */
+function nativeGoalRenderBudgetLimit(objective, tokensUsed, tokenBudget, timeUsedSeconds) {
+  return binding.nativeGoalRenderBudgetLimit(objective, tokensUsed, tokenBudget, timeUsedSeconds);
+}
+
+/** Render the objective-updated prompt. */
+function nativeGoalRenderObjectiveUpdated(objective, tokensUsed, tokenBudget) {
+  return binding.nativeGoalRenderObjectiveUpdated(objective, tokensUsed, tokenBudget);
+}
+
+// ============================================================================
 // Exports
 // ============================================================================
 
@@ -685,4 +724,13 @@ module.exports = {
   GREP_DEFAULT_HEAD_LIMIT,
   BASH_DEFAULT_TIMEOUT,
   BASH_MAX_TIMEOUT,
+
+  // Goal
+  nativeGoalValidateObjective,
+  nativeGoalValidateBudget,
+  nativeGoalApplyUpdate,
+  nativeGoalComputeTokenDelta,
+  nativeGoalRenderContinuation,
+  nativeGoalRenderBudgetLimit,
+  nativeGoalRenderObjectiveUpdated,
 };

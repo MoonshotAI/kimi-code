@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises';
 import { extname, join, normalize, resolve, sep } from 'node:path';
 
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { t } from '../i18n';
 
 interface WebAssetRouteHost {
   get(
@@ -25,7 +26,7 @@ async function assertWebAssets(assetsDir: string): Promise<void> {
   try {
     const info = await stat(join(assetsDir, 'index.html'));
     if (!info.isFile()) {
-      throw new Error('index.html is not a file');
+      throw new Error(t('errors.indexHtmlNotAFile'));
     }
   } catch {
     throw new Error(

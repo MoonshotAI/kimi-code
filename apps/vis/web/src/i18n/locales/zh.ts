@@ -407,4 +407,7 @@ export default {
     cacheCreate: '缓存创建',
     empty: '（空）',
   },
+  drawer: {
+    close: '关闭抽屉',
+  },
 } as const;

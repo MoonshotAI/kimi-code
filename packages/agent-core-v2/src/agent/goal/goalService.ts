@@ -38,6 +38,7 @@ import { isPlainRecord } from '#/_base/utils/canonical-args';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
 import type { ContextMessage, PromptOrigin } from '#/agent/contextMemory/types';
 import { GoalInjection } from '#/agent/goal/injection/goalInjection';
+import { tryNativeGoalApplyUpdate, tryNativeGoalRenderBudgetLimit, tryNativeGoalRenderContinuation } from '#/_base/native-tools';
 import {
   IAgentLoopService,
   type AfterStepContext,
@@ -110,13 +111,13 @@ const GOAL_MODEL_CONFIG_PAUSE_PREFIX = 'Paused after model configuration error';
 const GOAL_RUNTIME_PAUSE_PREFIX = 'Paused after runtime error';
 const GOAL_CONTINUATION_FAILURE_PAUSE_PREFIX = 'Paused after goal continuation failure';
 const GOAL_PROVIDER_FILTERED_PAUSE_REASON = 'Paused after provider safety policy block';
-const GOAL_BUDGET_BLOCK_PREFIX = 'Blocked after goal budget reached';
+const GOAL_BUDGET_BLOCK_PREFIX = 'Budget limited after goal budget reached';
 const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
 
 const GOAL_BUDGET_STOP_REMINDER_NAME = 'goal_budget_stop';
 
 const GOAL_BUDGET_STOP_REMINDER = [
-  "The goal's hard budget was reached and the goal is now blocked; the user can resume it with /goal resume.",
+  "The goal's hard budget was reached and the goal is now budget-limited; the user can set a new budget and resume it with /goal resume.",
   'Stop immediately.',
   'Do not call any more tools: they will be rejected.',
   'Write a brief final status message summarizing the progress so far.',
@@ -127,7 +128,7 @@ const GOAL_BUDGET_TOOLS_REJECTED_MESSAGE =
 const GOAL_STALE_TOOL_RESULT =
   'Goal changed since this turn started; ignored stale goal tool call.';
 
-const GOAL_CONTINUATION_PROMPT = [
+const GOAL_CONTINUATION_PROMPT_FALLBACK = [
   'Continue working toward the active goal.',
   'Keep the self-audit brief. Do not explore unrelated interpretations once the goal can be',
   'decided. If the objective is simple, already answered, impossible, unsafe, or contradictory,',
@@ -157,6 +158,20 @@ const GOAL_CONTINUATION_PROMPT = [
   'external-state change, call UpdateGoal with `blocked`; do not keep reporting the blocker while',
   'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
 ].join(' ');
+
+function buildGoalContinuationPrompt(goal: {
+  objective: string;
+  tokensUsed: number;
+  tokenBudget?: number | null;
+}): string {
+  const nativePrompt = tryNativeGoalRenderContinuation(
+    goal.objective,
+    goal.tokensUsed,
+    goal.tokenBudget ?? null,
+  );
+  if (nativePrompt !== undefined) return nativePrompt;
+  return GOAL_CONTINUATION_PROMPT_FALLBACK;
+}
 
 interface GoalForkNoticeState {
   readonly goalPresent: boolean;
@@ -212,6 +227,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private readonly pendingContinuationGoals = new Map<number, string>();
   private readonly goalTurnTargets = new Map<number, string>();
   private readonly exhaustedTurnBudgetGoals = new Map<number, string>();
+  /** In-memory blocked streak counter per goal. Resets on resume. */
+  private readonly blockedStreakMap = new Map<string, number>();
   private readonly wallClockDeadline = this._register(new MutableDisposable<IDisposable>());
   private liveWallClockStartedAt?: number;
   private pendingContinuation?: PendingContinuation;
@@ -323,7 +340,14 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   getGoal(): GoalToolResult {
     this.assertSupportedAgent();
     const state = this.goalState;
-    return { goal: state === null ? null : this.toSnapshot(state) };
+    if (state === null) return { goal: null };
+    const snapshot = this.toSnapshot(state);
+    // Merge in-memory blockedStreak (wire model doesn't update synchronously)
+    const memStreak = this.blockedStreakMap.get(state.goalId);
+    if (memStreak !== undefined && (snapshot.blockedStreak ?? 0) < memStreak) {
+      return { goal: { ...snapshot, blockedStreak: memStreak } };
+    }
+    return { goal: snapshot };
   }
 
   isGoalToolTarget(turnId: number, goalId: string): boolean {
@@ -417,6 +441,8 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       continuePaused ||
       (actor === 'user' && state.status === 'blocked' && input.continueIfBlocked === true);
     const snapshot = this.applyLifecycle(state, 'active', input.reason, actor);
+    // Clear in-memory blocked streak on resume
+    this.blockedStreakMap.delete(state.goalId);
     if (!shouldContinue) return snapshot;
     const budgetBlocked = this.blockIfBudgetReached(this.requireState());
     if (budgetBlocked !== null) return budgetBlocked;
@@ -483,6 +509,19 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     return snapshot;
   }
 
+  async markBudgetLimited(
+    input: GoalReasonInput = {},
+    actor: GoalActor = 'runtime',
+  ): Promise<GoalSnapshot | null> {
+    this.assertSupportedAgent();
+    const state = this.goalState;
+    if (state === null || state.status !== 'active') return null;
+    const snapshot = this.applyLifecycle(state, 'budget_limited', input.reason, actor, {
+      preserveLiveContinuation: true,
+    });
+    return snapshot;
+  }
+
   async markComplete(
     input: GoalReasonInput = {},
     actor: GoalActor = 'model',
@@ -542,6 +581,23 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     this.assertSupportedAgent();
     return this.incrementGoalTurn();
   }
+
+  async recordBlockedAttempt(): Promise<GoalSnapshot | null> {
+    this.assertSupportedAgent();
+    const state = this.goalState;
+    if (state === null || state.status !== 'active') return null;
+    // blockedStreak is tracked via a local in-memory counter because wire
+    // model dispatches are append-log based and don't update the model
+    // synchronously for subsequent reads in the same turn.
+    const currentKey = state.goalId;
+    const currentStreak = this.blockedStreakMap.get(currentKey) ?? 0;
+    const newStreak = currentStreak + 1;
+    this.blockedStreakMap.set(currentKey, newStreak);
+    const snapshot = this.toSnapshot(state);
+    return { ...snapshot, blockedStreak: newStreak } as GoalSnapshot;
+  }
+
+  /** In-memory blocked streak counter per goal. Resilient to resume (cleared there). */
 
   private incrementGoalTurn(goalId?: string): GoalSnapshot | null {
     const state = this.goalState;
@@ -620,7 +676,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const turnBudgetBlocksCurrentTurn =
       budget?.turnBudgetReached === true &&
       (this.exhaustedTurnBudgetGoals.get(ctx.turnId) === goalId ||
-        (state?.status === 'blocked' &&
+        (state?.status === 'budget_limited' &&
           state.terminalReason?.startsWith(GOAL_BUDGET_BLOCK_PREFIX) === true));
     if (
       goalId === undefined ||
@@ -640,7 +696,14 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       hasStepBudgetRemaining(maxSteps, ctx.step)
     ) {
       this.budgetGraceTurns.add(ctx.turnId);
-      this.reminders.appendSystemReminder(GOAL_BUDGET_STOP_REMINDER, {
+      // Render the budget_limit prompt using native when available
+      const budgetPrompt = tryNativeGoalRenderBudgetLimit(
+        state.objective,
+        state.tokensUsed,
+        state.tokenBudget ?? null,
+        Math.floor(state.wallClockMs / 1000),
+      );
+      this.reminders.appendSystemReminder(budgetPrompt ?? GOAL_BUDGET_STOP_REMINDER, {
         kind: 'system_trigger',
         name: GOAL_BUDGET_STOP_REMINDER_NAME,
       });
@@ -757,9 +820,17 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private launchContinuationTurn(goalId: string): void {
     if (!this.isActiveGoal(goalId)) return;
     if (this.pendingContinuation !== undefined) return;
+    const goal = this.wire.getModel(GoalModel);
+    const prompt = goal
+      ? buildGoalContinuationPrompt({
+          objective: goal.objective,
+          tokensUsed: goal.tokensUsed,
+          tokenBudget: goal.tokenBudget,
+        })
+      : GOAL_CONTINUATION_PROMPT_FALLBACK;
     const message: ContextMessage = {
       role: 'user',
-      content: [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }],
+      content: [{ type: 'text', text: prompt }],
       toolCalls: [],
       origin: GOAL_CONTINUATION_ORIGIN,
     };
@@ -885,6 +956,9 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       readonly cancellationReason?: unknown;
     } = {},
   ): GoalSnapshot {
+    // Validate transition through native when available
+    this.tryNativeValidateTransition(state, status);
+
     const wallClockMs = this.settleWallClock(state);
     const wallClockResumedAt = status === 'active' ? Date.now() : undefined;
     if (status === 'active') {
@@ -926,6 +1000,30 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       throw new Error2(ErrorCodes.GOAL_NOT_FOUND, 'No current goal');
     }
     return state;
+  }
+
+  /**
+   * Validates a state transition through the native Rust module (best-effort).
+   * If native is available and rejects the transition (e.g. wrong expected_goal_id),
+   * the mutation will still proceed through TS logic (TS is the source of truth).
+   * This is a secondary validation / telemetry aid.
+   */
+  private tryNativeValidateTransition(state: GoalState, newStatus: GoalStatus): void {
+    const goalJson = JSON.stringify({
+      goalId: state.goalId,
+      objective: state.objective,
+      status: state.status,
+      tokenBudget: state.budgetLimits.tokenBudget ?? null,
+      tokensUsed: state.tokensUsed,
+      timeUsedSeconds: Math.floor(state.wallClockMs / 1000),
+      blockedStreak: state.blockedStreak ?? 0,
+    });
+    const updateJson = JSON.stringify({
+      status: newStatus,
+      expectedGoalId: state.goalId,
+    });
+    // Returns undefined if native unavailable — silently ignored
+    tryNativeGoalApplyUpdate(goalJson, updateJson);
   }
 
   private emitGoalUpdated(snapshot: GoalSnapshot | null, change?: GoalChange): void {
@@ -985,7 +1083,10 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (state.status !== 'active') return null;
     const reason = goalBudgetBlockReason(this.toSnapshot(state).budget);
     if (reason === undefined) return null;
-    return this.applyLifecycle(state, 'blocked', reason, 'runtime', {
+    // Budget exhaustion sets budget_limited (not blocked) so the model may
+    // produce one final wrap-up message. budget_limited is not resumable
+    // without a new budget.
+    return this.applyLifecycle(state, 'budget_limited', reason, 'runtime', {
       preserveLiveContinuation: true,
     });
   }
@@ -1021,7 +1122,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     const cancellation = abortError(reason);
     const liveTurnId = this.liveTurnId;
     const pendingTurnId = this.pendingContinuation?.turnId;
-    this.applyLifecycle(state, 'blocked', reason, 'runtime', {
+    this.applyLifecycle(state, 'budget_limited', reason, 'runtime', {
       cancellationReason: cancellation,
     });
     if (liveTurnId !== undefined && liveTurnId !== pendingTurnId) {

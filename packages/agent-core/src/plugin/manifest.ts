@@ -97,7 +97,7 @@ export async function parseManifest(pluginRoot: string): Promise<ParsedManifestR
   if (!PLUGIN_NAME_REGEX.test(name)) {
     diagnostics.push({
       severity: 'error',
-      message: t('plugin.nameMustMatch', { regex: PLUGIN_NAME_REGEX.source.source, name }),
+      message: t('plugin.nameMustMatch', { regex: PLUGIN_NAME_REGEX.source, name }),
     });
     return { manifestKind, manifestPath, shadowedManifestPath, diagnostics };
   }

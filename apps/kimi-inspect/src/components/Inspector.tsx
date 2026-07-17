@@ -34,6 +34,7 @@ import {
   type ServicePanelDef,
 } from '../panels';
 import { ActionButton, Badge, ErrorLine, JsonView, relTime } from '../ui';
+import { t } from '../i18n';
 
 type Tab = 'app' | 'session' | 'agent' | 'events';
 type Scope = 'app' | 'session' | 'agent';
@@ -193,8 +194,7 @@ export function Inspector({
           </select>
           {stoppedAgents.has(effectiveAgent) ? (
             <div className="mt-1 text-[10px] text-neutral-600">
-              this agent is not materialized in the running server (e.g. created before a
-              restart) — calls will fail; its persisted records remain on disk
+              {t('inspector.agentNotMaterialized')}
             </div>
           ) : null}
           {meta.isError ? <div className="mt-1"><ErrorLine error={meta.error} /></div> : null}
@@ -203,15 +203,15 @@ export function Inspector({
 
       {/* Tabs */}
       <div className="flex border-b border-neutral-800 text-[11px]">
-        {(['app', 'session', 'agent', 'events'] as const).map((t) => (
+        {(['app', 'session', 'agent', 'events'] as const).map((tabId) => (
           <button
-            key={t}
+            key={tabId}
             className={`flex-1 px-2 py-2 font-medium uppercase tracking-wider ${
-              tab === t ? 'bg-neutral-800 text-sky-400' : 'text-neutral-500 hover:text-neutral-300'
+              tab === tabId ? 'bg-neutral-800 text-sky-400' : 'text-neutral-500 hover:text-neutral-300'
             }`}
-            onClick={() => setTab(t)}
+            onClick={() => setTab(tabId)}
           >
-            {t === 'app' ? 'App' : t === 'session' ? 'Session' : t === 'agent' ? 'Agent' : 'Events'}
+            {tabId === 'app' ? t('inspector.tabs.app') : tabId === 'session' ? t('inspector.tabs.session') : tabId === 'agent' ? t('inspector.tabs.agent') : t('inspector.tabs.events')}
           </button>
         ))}
       </div>
@@ -223,7 +223,7 @@ export function Inspector({
           <EventLog />
         ) : sessionBlocked ? (
           <div className="text-[12px] text-neutral-600">
-            {sessionId === null ? 'No session selected.' : 'Loading session…'}
+            {sessionId === null ? t('inspector.noSessionSelected') : t('inspector.loadingSession')}
           </div>
         ) : tab === 'session' ? (
           <>
@@ -287,7 +287,7 @@ function ServiceCard({
         </div>
         {def.fetch !== undefined ? (
           <ActionButton onClick={() => void refresh()} disabled={svc === null}>
-            {loaded ? 'Refresh' : 'Load'}
+            {loaded ? t('inspector.refresh') : t('inspector.load')}
           </ActionButton>
         ) : null}
       </div>
@@ -373,7 +373,7 @@ function DynamicServiceCard({
         try {
           arg = JSON.parse(raw);
         } catch {
-          setErrors((prev) => ({ ...prev, [method.name]: new Error('arg is not valid JSON') }));
+          setErrors((prev) => ({ ...prev, [method.name]: new Error(t('inspector.argNotValidJson')) }));
           return;
         }
       }
@@ -382,7 +382,7 @@ function DynamicServiceCard({
     setErrors((prev) => ({ ...prev, [method.name]: null }));
     try {
       const result = await call(svc, method.name, arg);
-      setResults((prev) => ({ ...prev, [method.name]: result ?? '(no result)' }));
+      setResults((prev) => ({ ...prev, [method.name]: result ?? t('inspector.noResult') }));
     } catch (error) {
       setErrors((prev) => ({ ...prev, [method.name]: error }));
       onError?.(error);
@@ -587,7 +587,7 @@ function QuestionView({
                 if (raw !== null) onAnswer(q.question, raw);
               }}
             >
-              Other…
+              {t('inspector.other')}
             </ActionButton>
           </div>
         </div>
@@ -595,7 +595,7 @@ function QuestionView({
       {questions.length === 0 ? <JsonView data={payload} /> : null}
       <div className="mt-1.5">
         <ActionButton danger onClick={onDismiss}>
-          Dismiss
+          {t('inspector.dismiss')}
         </ActionButton>
       </div>
     </>
@@ -631,8 +631,8 @@ function EventLog() {
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
         />
-        <ActionButton onClick={() => setPaused((v) => !v)}>{paused ? 'Resume' : 'Pause'}</ActionButton>
-        <ActionButton onClick={() => setEvents([])}>Clear</ActionButton>
+        <ActionButton onClick={() => setPaused((v) => !v)}>{paused ? t('inspector.resume') : t('inspector.pause')}</ActionButton>
+        <ActionButton onClick={() => setEvents([])}>{t('inspector.clear')}</ActionButton>
       </div>
       <div className="text-[10px] text-neutral-600">{filtered.length} events (newest first)</div>
       <div className="mt-2">
@@ -642,7 +642,7 @@ function EventLog() {
               <Badge tone={event.source === 'core' ? 'sky' : event.source === 'session' ? 'amber' : 'green'}>
                 {event.source}
               </Badge>
-              <span className="font-mono text-[10px] text-neutral-400">{eventType(event) || '(payload)'}</span>
+              <span className="font-mono text-[10px] text-neutral-400">{eventType(event) || t('inspector.payload')}</span>
               <span className="text-[10px] text-neutral-600">{new Date(event.at).toLocaleTimeString()}</span>
             </div>
             <JsonView data={event.data} />

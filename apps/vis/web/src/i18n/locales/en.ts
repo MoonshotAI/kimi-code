@@ -407,4 +407,7 @@ export default {
     cacheCreate: 'cache_create',
     empty: '(empty)',
   },
+  drawer: {
+    close: 'Close drawer',
+  },
 } as const;

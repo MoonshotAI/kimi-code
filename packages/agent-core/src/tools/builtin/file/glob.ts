@@ -27,6 +27,7 @@
 import type { Kaos } from '@moonshot-ai/kaos';
 import { normalize, resolve } from 'pathe';
 import { z } from 'zod';
+import { t } from '../../../i18n';
 
 import type { BuiltinTool } from '../../../agent/tool';
 import { isAbortError } from '../../../loop/errors';
@@ -274,7 +275,7 @@ export class GlobTool implements BuiltinTool<GlobInput> {
           output: `No non-sensitive matches found (${String(filteredSensitive)} sensitive file(s) filtered).`,
         };
       }
-      return { output: 'No matches found' };
+      return { output: t('tools.noMatchesFound') };
     }
 
     // Content shown to the LLM uses paths relative to the search base to

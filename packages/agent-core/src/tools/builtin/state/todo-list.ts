@@ -14,6 +14,7 @@
  */
 
 import { z } from 'zod';
+import { t } from '../../../i18n';
 
 import type { BuiltinTool } from '../../../agent/tool';
 import type { ToolExecution } from '../../../loop/types';
@@ -99,10 +100,10 @@ export class TodoListTool implements BuiltinTool<TodoListInput> {
   resolveExecution(args: TodoListInput): ToolExecution {
     const description =
       args.todos === undefined
-        ? 'Reading todo list'
+        ? t('tools.readingTodoList')
         : args.todos.length === 0
-          ? 'Clearing todo list'
-          : 'Updating todo list';
+          ? t('tools.clearingTodoList')
+          : t('tools.updatingTodoList');
     return {
       description,
       display: {

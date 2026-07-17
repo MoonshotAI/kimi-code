@@ -25,7 +25,7 @@ export class GoalInjection extends Disposable {
     const goal = this.options.getGoal();
     if (goal === null) return undefined;
     if (goal.status === 'active') return buildGoalReminder(goal);
-    if (goal.status === 'blocked') return buildBlockedNote(goal);
+    if (goal.status === 'blocked' || goal.status === 'budget_limited' || goal.status === 'usage_limited') return buildBlockedNote(goal);
     if (goal.status === 'paused') return buildPausedNote(goal);
     return undefined;
   }

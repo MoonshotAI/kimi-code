@@ -7,6 +7,16 @@ import {
 import { isoDateTimeSchema } from './time';
 import { workspaceIdSchema } from './workspace';
 
+export const sessionStatusSchema = z.enum([
+  'idle',
+  'running',
+  'awaiting_approval',
+  'awaiting_question',
+  'aborted',
+]);
+
+export type SessionStatus = z.infer<typeof sessionStatusSchema>;
+
 export const sessionUsageSchema = z.object({
   input_tokens: z.number().int().nonnegative(),
   output_tokens: z.number().int().nonnegative(),

@@ -37,6 +37,7 @@ import { IAgentSwarmService } from '@moonshot-ai/agent-core-v2/agent/swarm/swarm
 import { IAgentTaskService } from '@moonshot-ai/agent-core-v2/agent/task/task';
 import { IAgentToolRegistryService } from '@moonshot-ai/agent-core-v2/agent/toolRegistry/toolRegistry';
 import { IAgentUsageService } from '@moonshot-ai/agent-core-v2/agent/usage/usage';
+import { t } from './i18n';
 
 /** Loosely-typed view of a scoped service proxy (every member is a remote call). */
 export type AnyService = Record<string, (arg?: unknown) => Promise<unknown>>;
@@ -255,7 +256,7 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     scope: 'agent',
     fetch: (svc) => call(svc, 'list'),
     actions: [
-      { label: 'Reconnect server', input: 'Server name', run: (svc, name) => call(svc, 'reconnect', name) },
+      { label: t('panels.reconnectServer'), input: t('panels.serverName'), run: (svc, name) => call(svc, 'reconnect', name) },
     ],
     refreshOn: ['mcp.server.status'],
   },
@@ -265,7 +266,7 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     scope: 'agent',
     fetch: (svc) => call(svc, 'isActive'),
     actions: [
-      { label: 'enter (manual)', run: (svc) => call(svc, 'enter', 'manual') },
+      { label: t('panels.enterManual'), run: (svc) => call(svc, 'enter', 'manual') },
       { label: 'exit', run: (svc) => call(svc, 'exit') },
     ],
   },
@@ -274,10 +275,10 @@ export const AGENT_PANELS: readonly ServicePanelDef[] = [
     label: 'AgentRPCService',
     scope: 'agent',
     actions: [
-      { label: 'cancel turn', run: (svc) => call(svc, 'cancel', {}) },
+      { label: t('panels.cancelTurn'), run: (svc) => call(svc, 'cancel', {}) },
       {
         label: 'undoHistory',
-        input: 'Steps',
+        input: t('panels.steps'),
         run: (svc, n) => call(svc, 'undoHistory', { count: Number(n) }),
       },
       { label: 'beginCompaction', run: (svc) => call(svc, 'beginCompaction', {}) },

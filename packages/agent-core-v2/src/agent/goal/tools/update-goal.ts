@@ -1,7 +1,10 @@
 /**
  * UpdateGoalTool — the model's single lever over the goal lifecycle. It updates
  * the goal's status directly; the turn driver reads the status at each turn
- * boundary and stops (`complete` / `blocked`) or keeps going (`active`).
+ * boundary and stops (`complete` / `blocked`) or keeps going.
+ *
+ * The model can only set `complete` or `blocked`. Pause/resume/budget changes
+ * are controlled by the user or system through dedicated commands/tools.
  *
  * The argument is intentionally just a status enum — no reason or evidence. The
  * model explains itself in its own reply; the status is the machine-readable
@@ -27,9 +30,9 @@ import DESCRIPTION from './update-goal.md?raw';
 export const UpdateGoalToolInputSchema = z
   .object({
     status: z
-      .enum(['active', 'complete', 'blocked'])
+      .enum(['complete', 'blocked'])
       .describe(
-        'The lifecycle status to set for the current goal. Use `blocked` for impossible, unsafe, or contradictory objectives, or after the same non-terminal blocking condition repeats for at least 3 consecutive goal turns.',
+        'The lifecycle status to set for the current goal. Use `complete` only when the objective has actually been achieved and no required work remains, verified against the actual current state. Use `blocked` for impossible, unsafe, or contradictory objectives, or after the same blocking condition repeats for at least 3 consecutive goal turns and you cannot make meaningful progress without user input or an external-state change.',
       ),
   })
   .strict();
@@ -50,7 +53,7 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
     if (!isUpdateGoalStatus(args.status)) {
       return {
         isError: true,
-        output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+        output: 'Invalid goal status. Use `complete` or `blocked`.',
       };
     }
 
@@ -60,11 +63,11 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
 
     return {
       description: `Setting goal status: ${status}`,
-      stopBatchAfterThis: status !== 'active' && goalIsActive,
+      stopBatchAfterThis: goalIsActive,
       approvalRule: this.name,
       execute: async ({ turnId }) => {
         const goalAtExecution = this.goal.getGoal().goal;
-        if (goalAtExecution === null || (currentGoal === null && status === 'active')) {
+        if (goalAtExecution === null) {
           return { output: missingGoalOutput(status) };
         }
         if (
@@ -72,10 +75,6 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
           !this.goal.isGoalToolTarget(turnId, goalAtExecution.goalId)
         ) {
           return { output: changedGoalOutput(status) };
-        }
-        if (status === 'active') {
-          await this.goal.resumeGoal({}, 'model');
-          return { output: 'Goal resumed.' };
         }
         if (status === 'complete') {
           // Ask the judge to independently verify goal completion.
@@ -102,6 +101,17 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
           return { output: buildGoalCompletionSummaryPrompt(completed), stopTurn: true };
         }
         if (status === 'blocked') {
+          if (goalAtExecution.status !== 'active') {
+            return { output: 'Goal not blocked: no active goal.' };
+          }
+          const streak = currentGoal?.blockedStreak ?? 0;
+          const MIN_BLOCKED_STREAK = 2; // 0-indexed: 0,1,2 = 3 turns
+          if (streak < MIN_BLOCKED_STREAK) {
+            await this.goal.recordBlockedAttempt();
+            return {
+              output: `Blocking condition noted (attempt ${streak + 1}/3). The same blocking condition must repeat for at least 3 consecutive goal turns before calling UpdateGoal with "blocked". Continue working or adjust your approach.`,
+            };
+          }
           const blocked = await this.goal.markBlocked({}, 'model');
           if (blocked === null) {
             return { output: 'Goal not blocked: no active goal.' };
@@ -110,7 +120,7 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
         }
         return {
           isError: true,
-          output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+          output: 'Invalid goal status. Use `complete` or `blocked`.',
         };
       },
     };
@@ -118,17 +128,15 @@ export class UpdateGoalTool implements BuiltinTool<UpdateGoalToolInput> {
 }
 
 function isUpdateGoalStatus(status: unknown): status is UpdateGoalToolInput['status'] {
-  return status === 'active' || status === 'complete' || status === 'blocked';
+  return status === 'complete' || status === 'blocked';
 }
 
 function missingGoalOutput(status: UpdateGoalToolInput['status']): string {
-  if (status === 'active') return 'Goal not resumed: no current goal.';
   if (status === 'complete') return 'Goal not completed: no active goal.';
   return 'Goal not blocked: no active goal.';
 }
 
 function changedGoalOutput(status: UpdateGoalToolInput['status']): string {
-  if (status === 'active') return 'Goal not resumed: the current goal changed.';
   if (status === 'complete') return 'Goal not completed: the current goal changed.';
   return 'Goal not blocked: the current goal changed.';
 }

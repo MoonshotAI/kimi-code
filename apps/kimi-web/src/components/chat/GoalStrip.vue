@@ -83,7 +83,7 @@ async function onCancel(): Promise<void> {
     <template #default>
       <div class="goal-full">{{ goal.objective }}</div>
       <div v-if="goal.completionCriterion" class="goal-criterion">
-        <span>Done when</span>
+        <span>{{ t('app.goalDoneWhen') }}</span>
         <p>{{ goal.completionCriterion }}</p>
       </div>
     </template>

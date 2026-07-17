@@ -6,6 +6,7 @@ mod edit;
 mod escape;
 mod file_type;
 mod glob;
+mod goal;
 mod grep;
 mod image_compress;
 mod line_endings;

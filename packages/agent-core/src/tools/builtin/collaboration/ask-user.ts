@@ -12,6 +12,7 @@
  */
 
 import { z } from 'zod';
+import { t } from '../../../i18n';
 
 import type { Agent } from '../../../agent';
 import { QuestionBackgroundTask } from '../../../agent/background';
@@ -145,7 +146,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     return {
       description: isBackground
         ? `Starting background question: ${questionDescription(args.questions)}`
-        : 'Asking user questions',
+        : t('tools.askingUserQuestions'),
       approvalRule: this.name,
       execute: (ctx) => this.execution(args, ctx),
     };
@@ -307,7 +308,7 @@ function numericTurnId(turnId: string): number | undefined {
 
 function questionDescription(questions: AskUserQuestionInput['questions']): string {
   const first = questions[0]?.question.trim();
-  const label = first === undefined || first.length === 0 ? 'Ask user question' : first;
+  const label = first === undefined || first.length === 0 ? t('tools.askUserQuestion') : first;
   if (questions.length <= 1) return label;
   return `${label} (+${String(questions.length - 1)} more)`;
 }

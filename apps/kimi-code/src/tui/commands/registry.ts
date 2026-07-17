@@ -435,3 +435,7 @@ export function sortSlashCommands(commands: readonly KimiSlashCommand[]): KimiSl
     (a, b) => (b.priority ?? 0) - (a.priority ?? 0) || a.name.localeCompare(b.name),
   );
 }
+
+export function getBuiltinSlashCommands(): readonly KimiSlashCommand[] {
+  return BUILTIN_SLASH_COMMANDS;
+}

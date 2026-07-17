@@ -24,6 +24,8 @@ import {
   toKimiErrorPayload,
 } from '#/errors';
 import { isAbortError, isMaxStepsExceededError } from '../../loop/errors';
+import { t } from '../../i18n';
+import { tryNativeGoalRenderBudgetLimit, tryNativeGoalRenderContinuation } from '../../tools/builtin/native-tools';
 import {
   createLoopEventDispatcher,
   runTurn,
@@ -89,7 +91,7 @@ const GOAL_PROVIDER_FILTERED_PAUSE_REASON = 'Paused after provider safety policy
  * autonomous stand-in for the user typing "continue". The model decides when to
  * stop by calling `UpdateGoal`; otherwise the driver runs another turn.
  */
-const GOAL_CONTINUATION_PROMPT = [
+const GOAL_CONTINUATION_PROMPT_FALLBACK = [
   'Continue working toward the active goal.',
   'Keep the self-audit brief. Do not explore unrelated interpretations once the goal can be',
   'decided. If the objective is simple, already answered, impossible, unsafe, or contradictory,',
@@ -119,6 +121,26 @@ const GOAL_CONTINUATION_PROMPT = [
   'external-state change, call UpdateGoal with `blocked`; do not keep reporting the blocker while',
   'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
 ].join(' ');
+
+/**
+ * Render the goal continuation prompt — tries native Rust rendering first.
+ * The native template includes richer details (token budget, remaining tokens, XML-escaped
+ * objective, completion audit, blocked audit). Falls back to the static prompt when native
+ * is unavailable.
+ */
+function buildGoalContinuationPrompt(goal: {
+  objective: string;
+  tokensUsed: number;
+  tokenBudget?: number | null;
+}): string {
+  const nativePrompt = tryNativeGoalRenderContinuation(
+    goal.objective,
+    goal.tokensUsed,
+    goal.tokenBudget ?? null,
+  );
+  if (nativePrompt !== undefined) return nativePrompt;
+  return GOAL_CONTINUATION_PROMPT_FALLBACK;
+}
 
 export class TurnFlow {
   private steerBuffer: BufferedSteer[] = [];
@@ -407,12 +429,16 @@ export class TurnFlow {
         // first active goal turn before the continuation driver takes over.
         const countedGoal = await this.agent.goal.incrementTurn();
         if (countedGoal?.budget.overBudget === true) {
-          await this.agent.goal.markBlocked({ reason: 'A configured budget was reached' });
+          await this.agent.goal.markBudgetLimited({ reason: 'A configured budget was reached' });
           return end;
         }
         return await this.driveGoal(
           this.allocateTurnId(),
-          [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }],
+          [{ type: 'text', text: buildGoalContinuationPrompt({
+            objective: this.agent.goal.getGoal().goal?.objective ?? '',
+            tokensUsed: this.agent.goal.getGoal().goal?.tokensUsed ?? 0,
+            tokenBudget: this.agent.goal.getGoal().goal?.budget?.tokenBudget,
+          }) }],
           GOAL_CONTINUATION_ORIGIN,
           signal,
         );
@@ -447,7 +473,7 @@ export class TurnFlow {
     while (true) {
       const goalBeforeTurn = this.agent.goal.getGoal().goal;
       if (goalBeforeTurn?.status === 'active' && goalBeforeTurn.budget.overBudget) {
-        await this.agent.goal.markBlocked({ reason: 'A configured budget was reached' });
+        await this.agent.goal.markBudgetLimited({ reason: 'A configured budget was reached' });
         const ended = await this.endGoalTurnWithoutModel(turnId, turnInput, turnOrigin);
         return { event: ended };
       }
@@ -460,7 +486,7 @@ export class TurnFlow {
       const end = await this.runOneTurn(turnId, turnInput, turnOrigin, signal, false);
 
       if (end.event.reason === 'cancelled') {
-        await this.agent.goal.pauseOnInterrupt({ reason: 'Paused after interruption' });
+        await this.agent.goal.pauseOnInterrupt({ reason: t('shell.pausedAfterInterruption') });
         return end;
       }
       if (end.event.reason === 'failed') {
@@ -483,12 +509,16 @@ export class TurnFlow {
       // Hard budgets (turn / token / wall-clock, set via the SDK) are a
       // deterministic ceiling: block when reached. `blocked` is resumable.
       if (goal.budget.overBudget) {
-        await this.agent.goal.markBlocked({ reason: 'A configured budget was reached' });
+        await this.agent.goal.markBudgetLimited({ reason: 'A configured budget was reached' });
         return end;
       }
 
       turnId = this.allocateTurnId();
-      turnInput = [{ type: 'text', text: GOAL_CONTINUATION_PROMPT }];
+      turnInput = [{ type: 'text', text: buildGoalContinuationPrompt({
+        objective: this.agent.goal.getGoal().goal?.objective ?? '',
+        tokensUsed: this.agent.goal.getGoal().goal?.tokensUsed ?? 0,
+        tokenBudget: this.agent.goal.getGoal().goal?.budget?.tokenBudget,
+      }) }];
       turnOrigin = GOAL_CONTINUATION_ORIGIN;
     }
   }

@@ -324,3 +324,49 @@ export function tryNativeDetectFileType(path: string, header: Uint8Array): Nativ
   }
   return undefined;
 }
+
+// ============================================================================
+// Goal — state machine, accounting, steering
+// ============================================================================
+
+/** Validate a goal objective. Returns error message on failure, or empty string on success. */
+export function tryNativeGoalValidateObjective(objective: string): string | undefined {
+  return callNativeSync<string>('nativeGoalValidateObjective', objective);
+}
+
+/** Apply a goal state update. Returns updated goal object or error. */
+export function tryNativeGoalApplyUpdate(
+  goalJson: string,
+  updateJson: string,
+): { ok: boolean; goal?: Record<string, unknown>; error?: string } | undefined {
+  return callNativeSync('nativeGoalApplyUpdate', goalJson, updateJson);
+}
+
+/** Compute the chargeable token delta between two usage snapshots. */
+export function tryNativeGoalComputeTokenDelta(
+  prevInput: number, prevCached: number, prevOutput: number,
+  currInput: number, currCached: number, currOutput: number,
+): number | undefined {
+  return callNativeSync<number>('nativeGoalComputeTokenDelta', prevInput, prevCached, prevOutput, currInput, currCached, currOutput);
+}
+
+/** Render the continuation steering prompt. */
+export function tryNativeGoalRenderContinuation(
+  objective: string, tokensUsed: number, tokenBudget: number | null,
+): string | undefined {
+  return callNativeSync<string>('nativeGoalRenderContinuation', objective, tokensUsed, tokenBudget);
+}
+
+/** Render the budget-limit wrap-up prompt. */
+export function tryNativeGoalRenderBudgetLimit(
+  objective: string, tokensUsed: number, tokenBudget: number | null, timeUsedSeconds: number,
+): string | undefined {
+  return callNativeSync<string>('nativeGoalRenderBudgetLimit', objective, tokensUsed, tokenBudget, timeUsedSeconds);
+}
+
+/** Render the objective-updated prompt. */
+export function tryNativeGoalRenderObjectiveUpdated(
+  objective: string, tokensUsed: number, tokenBudget: number | null,
+): string | undefined {
+  return callNativeSync<string>('nativeGoalRenderObjectiveUpdated', objective, tokensUsed, tokenBudget);
+}

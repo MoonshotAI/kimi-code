@@ -15,6 +15,7 @@ import {
 
 import type { Agent } from '..';
 import { ErrorCodes, KimiError } from '../../errors';
+import { t } from '../../i18n';
 import type { AgentConfigData, AgentConfigUpdateData } from './types';
 import {
   resolveThinkingEffort,
@@ -157,7 +158,7 @@ export class ConfigState {
   get providerConfig(): ProviderConfig {
     const provider = this.resolvedProviderConfig?.provider;
     if (provider === undefined) {
-      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, 'Provider not set');
+      throw new KimiError(ErrorCodes.MODEL_NOT_CONFIGURED, t('errors.providerNotSet'));
     }
     return provider;
   }

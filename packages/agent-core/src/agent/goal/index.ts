@@ -1,8 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
 import { ErrorCodes, KimiError } from '#/errors';
+import { t } from '#/i18n';
 import type { Agent } from '..';
 import type { AgentRecordOf } from '../records/types';
+import {
+  tryNativeGoalApplyUpdate,
+  tryNativeGoalValidateObjective,
+} from '../../tools/builtin/native-tools';
 import {
   type TelemetryProperties,
 } from '../../telemetry';
@@ -101,7 +106,19 @@ export type GoalStatus =
    * — `markComplete` emits the completion event and then clears the durable
    * record, so the goal box disappears and `complete` never rests on disk.
    */
-  | 'complete';
+  | 'complete'
+  /**
+   * The configured token budget has been reached. The goal is not automatically
+   * continued, but the model may produce one final wrap-up message. Usage
+   * (tokens, time) continues to accumulate for audit. Set by the runtime when
+   * `tokensUsed >= tokenBudget`. Not resumable without a new budget.
+   */
+  | 'budget_limited'
+  /**
+   * An API usage limit has been reached. Set by the runtime when the provider
+   * reports usage limit exceeded. Not resumable.
+   */
+  | 'usage_limited';
 
 /** Who performed a goal action. `cleared` is a record action, not a status. */
 export type GoalActor = 'user' | 'model' | 'runtime' | 'system';
@@ -132,6 +149,8 @@ interface GoalState {
   budgetLimits: GoalBudgetLimits;
   /** Human-readable reason for a stopped or completed goal. */
   terminalReason?: string;
+  /** Consecutive goal turns that encountered blocking conditions. Reset on resume. */
+  blockedStreak?: number;
 }
 
 /** Computed budget view exposed through snapshots and tools. */
@@ -159,6 +178,7 @@ export interface GoalSnapshot {
   readonly wallClockMs: number;
   readonly budget: GoalBudgetReport;
   readonly terminalReason?: string;
+  readonly blockedStreak?: number;
 }
 
 /** Wrapper returned by goal read operations and tools. */
@@ -354,6 +374,11 @@ export class GoalMode {
     if (objective.length === 0) {
       throw new KimiError(ErrorCodes.GOAL_OBJECTIVE_EMPTY, 'Goal objective cannot be empty');
     }
+    // Use native validation when available (supports length cap)
+    const nativeError = tryNativeGoalValidateObjective(objective);
+    if (nativeError !== undefined && nativeError.length > 0) {
+      throw new KimiError(ErrorCodes.GOAL_OBJECTIVE_TOO_LONG, nativeError);
+    }
     if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
       throw new KimiError(
         ErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
@@ -413,6 +438,8 @@ export class GoalMode {
         `Cannot pause a goal in status "${state.status}"`,
       );
     }
+    // Validate transition through native when available
+    this.tryNativeStateTransition('paused');
     this.applyStatus(state, 'paused');
     state.terminalReason = input.reason;
     this.persistState(state, {
@@ -451,9 +478,12 @@ export class GoalMode {
         `Cannot resume a goal in status "${state.status}"`,
       );
     }
+    // Validate transition through native when available
+    this.tryNativeStateTransition('active');
     // Resuming is a fresh attempt: clear the stop reason so a re-activated goal
     // starts clean.
     state.terminalReason = undefined;
+    state.blockedStreak = 0; // reset blocked audit counter on resume
     this.applyStatus(state, 'active');
     this.persistState(state, {
       change: { kind: 'lifecycle', status: 'active', reason: input.reason, actor },
@@ -515,10 +545,34 @@ export class GoalMode {
   ): Promise<GoalSnapshot | null> {
     const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
+    // Validate transition through native when available
+    this.tryNativeStateTransition('blocked');
     this.applyStatus(state, 'blocked');
     state.terminalReason = input.reason;
     this.persistState(state, {
       change: { kind: 'lifecycle', status: 'blocked', reason: input.reason, actor },
+    });
+    this.appendStatusUpdate(state, actor, input.reason);
+    return this.toSnapshot(state);
+  }
+
+  /**
+   * Marks the goal as budget_limited: the configured token/turn/time budget was
+   * reached. Unlike `blocked`, this is not resumable without a new budget.
+   * The goal remains in place (not cleared) so the model can produce one final
+   * wrap-up message. No-ops for a goal that is missing or not active.
+   */
+  async markBudgetLimited(
+    input: GoalReasonInput = {},
+    actor: GoalActor = 'runtime',
+  ): Promise<GoalSnapshot | null> {
+    const state = this.state;
+    if (state === undefined || state.status !== 'active') return null;
+    this.tryNativeStateTransition('budget_limited');
+    this.applyStatus(state, 'budget_limited');
+    state.terminalReason = input.reason;
+    this.persistState(state, {
+      change: { kind: 'lifecycle', status: 'budget_limited', reason: input.reason, actor },
     });
     this.appendStatusUpdate(state, actor, input.reason);
     return this.toSnapshot(state);
@@ -537,6 +591,8 @@ export class GoalMode {
   ): Promise<GoalSnapshot | null> {
     const state = this.state;
     if (state === undefined || state.status !== 'active') return null;
+    // Validate transition through native when available
+    this.tryNativeStateTransition('complete');
     this.applyStatus(state, 'complete');
     state.terminalReason = input.reason;
     const snapshot = this.toSnapshot(state);
@@ -569,6 +625,19 @@ export class GoalMode {
   }
 
   // --- Accounting & reporting -------------------------------------------
+
+  /**
+   * Increments the blocked streak (used by UpdateGoalTool for 3-turn audit).
+   * Returns the updated snapshot, or null if no active goal.
+   */
+  async recordBlockedAttempt(): Promise<GoalSnapshot | null> {
+    const state = this.state;
+    if (state === undefined || state.status !== 'active') return null;
+    state.blockedStreak = (state.blockedStreak ?? 0) + 1;
+    this.persistState(state, { silent: true });
+    this.appendGoalUpdate({ blockedStreak: state.blockedStreak });
+    return this.toSnapshot(state);
+  }
 
   async recordTokenUsage(tokenDelta: number): Promise<GoalSnapshot | null> {
     const state = this.state;
@@ -647,6 +716,44 @@ export class GoalMode {
     this.agent.telemetry.track(event, properties);
   }
 
+  /**
+   * Attempts a state transition through the native Rust module.
+   * Returns the updated status if native accepted the transition, or undefined
+   * if native is unavailable or disagrees (caller should use TS logic).
+   *
+   * This is a best-effort secondary validation — the TS logic is the source of
+   * truth. Native is called to validate expected_goal_id and check for illegal
+   * transitions.
+   */
+  private tryNativeStateTransition(
+    newStatus: GoalStatus,
+    expectedGoalId?: string,
+  ): GoalStatus | undefined {
+    const state = this.state;
+    if (state === undefined) return undefined;
+
+    const goalJson = JSON.stringify({
+      goalId: state.goalId,
+      objective: state.objective,
+      status: state.status,
+      tokenBudget: state.budgetLimits.tokenBudget ?? null,
+      tokensUsed: state.tokensUsed,
+      timeUsedSeconds: Math.floor(state.wallClockMs / 1000),
+      blockedStreak: state.blockedStreak ?? 0,
+    });
+    const updateJson = JSON.stringify({
+      status: newStatus,
+      expectedGoalId: expectedGoalId ?? state.goalId,
+    });
+
+    const result = tryNativeGoalApplyUpdate(goalJson, updateJson);
+    if (result === undefined || !result.ok) {
+      return undefined; // native unavailable or rejected — fall back to TS
+    }
+    // Native accepted the transition; use native's updated status
+    return result.goal?.['status'] as GoalStatus | undefined;
+  }
+
   private applyStatus(
     state: GoalState,
     status: GoalStatus,
@@ -668,7 +775,7 @@ export class GoalMode {
   private requireState(): GoalState {
     const state = this.state;
     if (state === undefined) {
-      throw new KimiError(ErrorCodes.GOAL_NOT_FOUND, 'No current goal');
+      throw new KimiError(ErrorCodes.GOAL_NOT_FOUND, t('errors.noCurrentGoal'));
     }
     return state;
   }
@@ -713,6 +820,7 @@ export class GoalMode {
       wallClockMs: liveWallClockMs(state, Date.now()),
       budget: computeBudgetReport(state, Date.now()),
       terminalReason: state.terminalReason,
+      blockedStreak: state.blockedStreak,
     };
   }
 }

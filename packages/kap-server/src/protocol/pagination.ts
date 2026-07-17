@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ErrorCode } from './error-codes';
+import { t } from '../i18n';
 
 export const cursorQuerySchema = z
   .object({
@@ -12,7 +13,7 @@ export const cursorQuerySchema = z
     if (value.before_id !== undefined && value.after_id !== undefined) {
       ctx.addIssue({
         code: 'custom',
-        message: 'before_id and after_id are mutually exclusive',
+        message: t('errors.paginationMutuallyExclusive'),
         path: ['before_id'],
         params: { code: ErrorCode.VALIDATION_FAILED },
       });

@@ -278,7 +278,7 @@ export class EditorKeyboardController {
         } catch (error) {
           // Cache copy failed (e.g. the pasted video's source vanished) —
           // leave the queue and the editor draft untouched.
-          host.showError(`Failed to prepare media attachment: ${formatErrorMessage(error)}`);
+          host.showError(t('tui.statusMessages.failedToPrepareMediaAttachment', { error: formatErrorMessage(error) }));
           return;
         }
         items.push({

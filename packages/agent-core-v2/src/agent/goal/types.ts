@@ -2,7 +2,7 @@
  * `goal` domain (L4) — public goal lifecycle and budget models.
  */
 
-export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete';
+export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete' | 'budget_limited' | 'usage_limited';
 
 export type GoalActor = 'user' | 'model' | 'runtime' | 'system';
 
@@ -35,6 +35,7 @@ export interface GoalSnapshot {
   readonly wallClockMs: number;
   readonly budget: GoalBudgetReport;
   readonly terminalReason?: string;
+  readonly blockedStreak?: number;
 }
 
 export interface GoalToolResult {

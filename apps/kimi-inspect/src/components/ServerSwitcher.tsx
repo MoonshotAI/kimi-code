@@ -9,6 +9,7 @@
 
 import { useConnection } from '../connection';
 import { useServerDiscovery } from '../servers';
+import { t } from '../i18n';
 
 export function ServerSwitcher() {
   const { baseUrl, connect } = useConnection();
@@ -39,8 +40,8 @@ export function ServerSwitcher() {
       {data.servers.map((s) => (
         <option key={s.id} value={s.id}>
           {s.url.replace(/^https?:\/\//, '')}
-          {s.pid !== undefined ? ` · pid ${s.pid}` : ''}
-          {s.source === 'proxy' ? ' · proxy' : ''}
+          {s.pid !== undefined ? t('server.pid', { pid: s.pid }) : ''}
+          {s.source === 'proxy' ? t('server.proxy') : ''}
         </option>
       ))}
     </select>

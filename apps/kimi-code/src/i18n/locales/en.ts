@@ -914,6 +914,7 @@ export default {
       failedToCancelShell: 'Failed to cancel shell command: {{message}}',
       modelNoImageInput: 'Current model does not support image input.',
       modelNoVideoInput: 'Current model does not support video input.',
+      failedToPrepareMediaAttachment: 'Failed to prepare media attachment: {{error}}',
       failedToSend: 'Failed to send: {{message}}',
       skillFailed: 'Skill "{{skillName}}" failed: {{message}}',
       pluginCommandFailed: 'Command "{{pluginId}}:{{commandName}}" failed: {{message}}',
@@ -1773,7 +1774,8 @@ export default {
       registryDiscussRoles: 'Specify participant roles',
       registryAddDirShow: 'Show configured additional workspace directories',
       // tui/commands/discuss.ts
-      discussUsage: 'Usage: /discuss <topic> with <role1>,<role2>,...',
+      discussUsage: 'Usage: /discuss [--debate] <topic> with <role1>[:stance],<role2>[:stance],...',
+      discussUsageDebate: '  --debate  Use structured debate mode (opening → free debate → closing → consensus).',
       discussNeedTopic: 'Please provide a discussion topic.',
       discussNeedRoles: 'Please specify at least 2 roles for the discussion.',
       // tui/commands/workflow.ts

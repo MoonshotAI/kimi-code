@@ -49,7 +49,7 @@ function outcomeToPhase(outcome: string): AppSubagentPhase {
 function resultRow(sub: SwarmResultSubagent, index: number): SwarmCardRow {
   return {
     id: sub.agentId ?? sub.item ?? `result-${index}`,
-    name: sub.item ?? `subagent ${index + 1}`,
+    name: sub.item ?? `#${index + 1}`,
     activity: sub.body.split('\n')[0] ?? '',
     phase: outcomeToPhase(sub.outcome),
     body: sub.body,

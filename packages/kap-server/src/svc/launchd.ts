@@ -19,6 +19,7 @@ import {
   supervisorLogPath as defaultSupervisorLogPath,
 } from './paths';
 import { resolveSupervisorProgram } from './program';
+import { t } from '../i18n';
 import type {
   InstallArgs,
   InstallResult,
@@ -69,7 +70,7 @@ export function createLaunchdManager(
     if (alreadyInstalled && args.force !== true) {
       return {
         status: 'already-installed',
-        message: `LaunchAgent already installed at ${plistPath}. Rerun with --force to replace it.`,
+        message: t('svc.launchd.alreadyExists', { path: plistPath }),
         plistPath,
       };
     }
@@ -91,7 +92,7 @@ export function createLaunchdManager(
 
     return {
       status: alreadyInstalled ? 'replaced' : 'installed',
-      message: `Kimi server LaunchAgent ${alreadyInstalled ? 'replaced' : 'installed'} at ${plistPath} (port ${plan.port}).`,
+      message: t('svc.launchd.installed', { status: alreadyInstalled ? t('svc.schtasks.statusReplaced') : t('svc.schtasks.statusInstalled'), path: plistPath, port: plan.port }),
       plistPath,
     };
   }
@@ -101,7 +102,7 @@ export function createLaunchdManager(
     const installed = existsSync(plistPath);
     if (!installed) {
       deleteInstallPlan();
-      return { ok: true, message: 'LaunchAgent was not installed; nothing to remove.' };
+      return { ok: true, message: t('svc.launchd.nothingToRemove') };
     }
     const bootout = await deps.execLaunchctl([
       'bootout',
@@ -117,7 +118,7 @@ export function createLaunchdManager(
       );
     }
     deleteInstallPlan();
-    return { ok: true, message: `LaunchAgent removed (${plistPath}).` };
+    return { ok: true, message: t('svc.launchd.removed', { path: plistPath }) };
   }
 
   async function start(): Promise<LifecycleResult> {
@@ -125,7 +126,7 @@ export function createLaunchdManager(
     if (!existsSync(plistPath)) {
       return {
         ok: false,
-        message: 'LaunchAgent is not installed. Run `kimi server install` first.',
+        message: t('svc.launchd.notInstalled'),
       };
     }
     const target = `${deps.guiDomain()}/${KIMI_SERVER_LABEL}`;
@@ -137,18 +138,18 @@ export function createLaunchdManager(
       if (bootstrap.code !== 0 && !isAlreadyLoaded(bootstrap)) {
         return {
           ok: false,
-          message: `launchctl kickstart + bootstrap both failed: ${detail(result) ?? 'unknown'} / ${detail(bootstrap) ?? 'unknown'}`,
+          message: t('svc.launchd.kickstartBootstrapFailed', { error1: detail(result) ?? 'unknown', error2: detail(bootstrap) ?? 'unknown' }),
         };
       }
       const retry = await deps.execLaunchctl(['kickstart', target]);
       if (retry.code !== 0) {
         return {
           ok: false,
-          message: `launchctl kickstart failed after bootstrap: ${detail(retry) ?? 'unknown error'}`,
+          message: t('svc.launchd.kickstartFailedAfterBootstrap', { error: detail(retry) ?? 'unknown error' }),
         };
       }
     }
-    return { ok: true, message: `Kimi server started (${KIMI_SERVER_LABEL}).` };
+    return { ok: true, message: t('svc.launchd.started', { name: KIMI_SERVER_LABEL }) };
   }
 
   async function stop(): Promise<LifecycleResult> {
@@ -160,11 +161,11 @@ export function createLaunchdManager(
       if (bootout.code !== 0) {
         return {
           ok: false,
-          message: `launchctl kill + bootout both failed: ${detail(result) ?? 'unknown'} / ${detail(bootout) ?? 'unknown'}`,
+          message: t('svc.launchd.killBootoutFailed', { error1: detail(result) ?? 'unknown', error2: detail(bootout) ?? 'unknown' }),
         };
       }
     }
-    return { ok: true, message: `Kimi server stopped (${KIMI_SERVER_LABEL}).` };
+    return { ok: true, message: t('svc.launchd.stopped', { name: KIMI_SERVER_LABEL }) };
   }
 
   async function restart(): Promise<LifecycleResult> {
@@ -173,10 +174,10 @@ export function createLaunchdManager(
     if (result.code !== 0) {
       return {
         ok: false,
-        message: `launchctl kickstart -k failed: ${detail(result) ?? 'unknown error'}`,
+        message: t('svc.launchd.kickstartRestartFailed', { error: detail(result) ?? 'unknown error' }),
       };
     }
-    return { ok: true, message: `Kimi server restarted (${KIMI_SERVER_LABEL}).` };
+    return { ok: true, message: t('svc.launchd.restarted', { name: KIMI_SERVER_LABEL }) };
   }
 
   async function status(): Promise<ServiceStatus> {

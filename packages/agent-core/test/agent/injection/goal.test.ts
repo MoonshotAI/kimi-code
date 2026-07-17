@@ -55,7 +55,7 @@ describe('GoalInjector content', () => {
     expect(text).toContain('currently paused');
     expect(text).toContain('<untrusted_objective>\nwork\n</untrusted_objective>');
     expect(text).toContain('Do not work on it unless the user explicitly asks');
-    expect(text).toContain('UpdateGoal with `active`');
+    expect(text).toContain('/goal resume');
   });
 
   it('includes the reason for a paused goal when one exists', async () => {

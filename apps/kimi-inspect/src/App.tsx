@@ -18,6 +18,7 @@ import { Sidebar } from './components/Sidebar';
 import { useConnection } from './connection';
 import { LiveBusProvider, type Emit, type LiveEvent } from './live';
 import { Badge, errorMessage } from './ui';
+import { t } from './i18n';
 
 export function App() {
   const { klient, wsState, baseUrl, disconnect } = useConnection();
@@ -94,21 +95,21 @@ export function App() {
           <span className="text-[12px] font-bold tracking-widest text-neutral-200">KIMI INSPECT</span>
           <ServerSwitcher />
           <Badge tone={wsState === 'open' ? 'green' : wsState === 'connecting' ? 'amber' : 'red'}>
-            ws: {wsState}
+            {t('app.wsLabel', { state: wsState })}
           </Badge>
           <div className="flex-1" />
           <button
             className="text-[11px] text-neutral-500 hover:text-neutral-300"
             onClick={disconnect}
           >
-            Disconnect
+            {t('app.disconnect')}
           </button>
         </header>
         <div className="flex min-h-0 flex-1">
           <Sidebar activeSessionId={sessionId} onSelectSession={setSessionId} />
           {resumeError !== null ? (
             <div className="flex flex-1 items-center justify-center p-6 text-center text-[12px] text-red-400">
-              Failed to open session: {errorMessage(resumeError)}
+              {t('app.failedToOpenSession', { message: errorMessage(resumeError) })}
             </div>
           ) : (
             <ChatView sessionId={sessionId} agentId={agentId} ready={ready} />

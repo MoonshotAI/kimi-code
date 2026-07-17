@@ -341,10 +341,11 @@ describe('UpdateGoalTool', () => {
   }
 
   it('accepts only active / complete / blocked', () => {
-    for (const status of ['active', 'complete', 'blocked']) {
+    for (const status of ['complete', 'blocked']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(true);
     }
     expect(UpdateGoalToolInputSchema.safeParse({ status: 'blocked', reason: 'x' }).success).toBe(false);
+    expect(UpdateGoalToolInputSchema.safeParse({ status: 'active' }).success).toBe(false);
     for (const status of ['paused', 'impossible', 'cancelled', '']) {
       expect(UpdateGoalToolInputSchema.safeParse({ status }).success).toBe(false);
     }
@@ -361,7 +362,7 @@ describe('UpdateGoalTool', () => {
     const execution = tool.resolveExecution({ status: 'paused' } as never);
     expect(execution).toMatchObject({
       isError: true,
-      output: 'Invalid goal status. Use `active`, `complete`, or `blocked`.',
+      output: 'Invalid goal status. Use `complete` or `blocked`.',
     });
     expect(store.getGoal().goal?.status).toBe('active');
   });
@@ -382,34 +383,43 @@ describe('UpdateGoalTool', () => {
     expect(reminders).toHaveLength(0);
   });
 
-  it('`blocked` marks the goal blocked (resumable) and asks for a blocker reason', async () => {
+  it('`blocked` requires 3 consecutive attempts before marking goal blocked', async () => {
     const store = makeStore();
     const reminders: Array<{ readonly content: string; readonly origin: unknown }> = [];
     await store.createGoal({ objective: 'work' });
-    const result = await executeTool(
-      new UpdateGoalTool(agentWithContext(store, reminders)),
-      ctx({ status: 'blocked' }),
-    );
-    expect(result.stopTurn).toBe(true);
-    expect(result.output).toContain('Goal blocked.');
-    expect(result.output).toContain('concrete blocker');
+    const tool = new UpdateGoalTool(agentWithContext(store, reminders));
+
+    // Attempt 1/3: blocked streak noted, not yet blocked
+    const result1 = await executeTool(tool, ctx({ status: 'blocked' }));
+    expect(result1.stopTurn).toBeFalsy();
+    expect(result1.output).toContain('attempt 1/3');
+    expect(store.getGoal().goal?.status).toBe('active');
+
+    // Attempt 2/3
+    const result2 = await executeTool(tool, ctx({ status: 'blocked' }));
+    expect(result2.stopTurn).toBeFalsy();
+    expect(result2.output).toContain('attempt 2/3');
+    expect(store.getGoal().goal?.status).toBe('active');
+
+    // Attempt 3/3: now actually blocked
+    const result3 = await executeTool(tool, ctx({ status: 'blocked' }));
+    expect(result3.stopTurn).toBe(true);
+    expect(result3.output).toContain('Goal blocked.');
+    expect(result3.output).toContain('concrete blocker');
     expect(store.getGoal().goal?.status).toBe('blocked');
     expect(store.getGoal().goal?.terminalReason).toBeUndefined();
     expect(reminders).toHaveLength(0);
   });
 
-  it('`active` resumes a paused goal', async () => {
+  // 'active' is no longer accepted by UpdateGoal; resume via /goal resume
+  it('`active` is rejected by UpdateGoal', async () => {
     const store = makeStore();
     await store.createGoal({ objective: 'work' });
-    await store.pauseGoal();
-    const result = await executeTool(new UpdateGoalTool(agentWithContext(store)), ctx({ status: 'active' }));
-    expect(result.isError).toBeFalsy();
-    expect(result.output).toBe('Goal resumed.');
-    expect(store.getGoal().goal?.status).toBe('active');
+    const result = UpdateGoalToolInputSchema.safeParse({ status: 'active' });
+    expect(result.success).toBe(false);
   });
 
   it.each([
-    ['active', 'Goal not resumed: no current goal.'],
     ['complete', 'Goal not completed: no active goal.'],
     ['blocked', 'Goal not blocked: no active goal.'],
   ] as const)('reports a no-goal result for `%s` without stopping the turn', async (status, output) => {

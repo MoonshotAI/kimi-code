@@ -1062,3 +1062,209 @@ pub fn native_is_mcp_tool_name(name: String) -> bool {
 pub fn native_qualify_mcp_tool_name(server_name: String, tool_name: String) -> String {
     tool_naming::qualify_mcp_tool_name(&server_name, &tool_name)
 }
+
+// ============================================================================
+// Goal — state machine, accounting, steering
+// ============================================================================
+
+use crate::goal::{accounting, state, steering};
+
+/// Validate a goal objective. Returns an error message, or empty string on success.
+#[napi]
+pub fn native_goal_validate_objective(objective: String) -> String {
+    match state::validate_goal_objective(&objective) {
+        Ok(_) => String::new(),
+        Err(err) => err,
+    }
+}
+
+/// Validate a goal token budget. Returns an error message, or empty string on success.
+/// A value of `null` or `undefined` means no budget (valid).
+#[napi]
+pub fn native_goal_validate_budget(value: Option<i64>) -> String {
+    match state::validate_goal_budget(value) {
+        Ok(_) => String::new(),
+        Err(err) => err,
+    }
+}
+
+/// Apply a goal state update. Takes JSON of the current goal and the update,
+/// returns JSON of the new goal (or an error object).
+///
+/// Goal JSON: `{ goalId, objective, status, tokenBudget, tokensUsed, timeUsedSeconds, blockedStreak, terminalReason? }`
+/// Update JSON: `{ objective?, status?, tokenBudget?, tokensUsed?, timeUsedSeconds?, blockedStreak?, terminalReason?, expectedGoalId? }`
+/// Returns: `{ ok: true, goal: {...} }` or `{ ok: false, error: "..." }`
+#[napi]
+pub fn native_goal_apply_update(goal_json: String, update_json: String) -> String {
+    let result = (|| -> Result<String, String> {
+        let goal: serde_json::Value =
+            serde_json::from_str(&goal_json).map_err(|e| format!("invalid goal JSON: {e}"))?;
+        let update: serde_json::Value =
+            serde_json::from_str(&update_json).map_err(|e| format!("invalid update JSON: {e}"))?;
+
+        let g = parse_goal(&goal)?;
+        let u = parse_update(&update)?;
+
+        match g.apply_update(u) {
+            state::GoalUpdateOutcome::Updated(new_goal) => {
+                Ok(json!({ "ok": true, "goal": serialize_goal(&new_goal) }).to_string())
+            }
+            state::GoalUpdateOutcome::Unchanged => {
+                Ok(json!({ "ok": true, "goal": goal }).to_string())
+            }
+            state::GoalUpdateOutcome::GoalIdMismatch { current, expected } => {
+                Ok(json!({
+                    "ok": false,
+                    "error": format!("goal_id mismatch: current={current}, expected={expected}"),
+                })
+                .to_string())
+            }
+        }
+    })();
+
+    match result {
+        Ok(r) => r,
+        Err(e) => json!({ "ok": false, "error": e }).to_string(),
+    }
+}
+
+/// Compute the chargeable token delta between two usage snapshots.
+#[napi]
+pub fn native_goal_compute_token_delta(
+    prev_input: i64,
+    prev_cached: i64,
+    prev_output: i64,
+    curr_input: i64,
+    curr_cached: i64,
+    curr_output: i64,
+) -> i64 {
+    let prev = accounting::TokenUsage {
+        input_tokens: prev_input,
+        cached_input_tokens: prev_cached,
+        output_tokens: prev_output,
+        reasoning_output_tokens: 0,
+        total_tokens: prev_input + prev_output,
+    };
+    let curr = accounting::TokenUsage {
+        input_tokens: curr_input,
+        cached_input_tokens: curr_cached,
+        output_tokens: curr_output,
+        reasoning_output_tokens: 0,
+        total_tokens: curr_input + curr_output,
+    };
+    accounting::goal_token_delta(&prev, &curr)
+}
+
+/// Render the continuation steering prompt.
+#[napi]
+pub fn native_goal_render_continuation(
+    objective: String,
+    tokens_used: i64,
+    token_budget: Option<i64>,
+) -> String {
+    steering::render_continuation(&objective, tokens_used, token_budget)
+}
+
+/// Render the budget-limit wrap-up prompt.
+#[napi]
+pub fn native_goal_render_budget_limit(
+    objective: String,
+    tokens_used: i64,
+    token_budget: Option<i64>,
+    time_used_seconds: i64,
+) -> String {
+    steering::render_budget_limit(&objective, tokens_used, token_budget, time_used_seconds)
+}
+
+/// Render the objective-updated prompt.
+#[napi]
+pub fn native_goal_render_objective_updated(
+    objective: String,
+    tokens_used: i64,
+    token_budget: Option<i64>,
+) -> String {
+    steering::render_objective_updated(&objective, tokens_used, token_budget)
+}
+
+// ---------------------------------------------------------------------------
+// Internal JSON helpers
+// ---------------------------------------------------------------------------
+
+use serde_json::json;
+
+fn parse_goal(v: &serde_json::Value) -> Result<state::GoalState, String> {
+    let status_str = get_str(v, "status")?;
+    Ok(state::GoalState {
+        goal_id: get_str(v, "goalId")?.to_string(),
+        objective: get_str(v, "objective")?.to_string(),
+        status: state::GoalStatus::from_str(status_str)
+            .ok_or_else(|| format!("invalid status: {status_str}"))?,
+        token_budget: v.get("tokenBudget").and_then(|x| x.as_i64()),
+        tokens_used: get_i64(v, "tokensUsed")?,
+        time_used_seconds: get_i64(v, "timeUsedSeconds")?,
+        blocked_streak: v
+            .get("blockedStreak")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0) as u32,
+        wall_clock_resumed_at: v.get("wallClockResumedAt").and_then(|x| x.as_i64()),
+        terminal_reason: v
+            .get("terminalReason")
+            .and_then(|x| x.as_str().map(|s| s.to_string())),
+    })
+}
+
+fn parse_update(v: &serde_json::Value) -> Result<state::GoalUpdate, String> {
+    Ok(state::GoalUpdate {
+        objective: v.get("objective").and_then(|x| x.as_str().map(|s| s.to_string())),
+        status: v
+            .get("status")
+            .and_then(|x| x.as_str())
+            .and_then(state::GoalStatus::from_str),
+        token_budget: match v.get("tokenBudget") {
+            Some(val) if val.is_null() => Some(None),
+            Some(val) => Some(val.as_i64()),
+            None => None,
+        },
+        tokens_used: v.get("tokensUsed").and_then(|x| x.as_i64()),
+        time_used_seconds: v.get("timeUsedSeconds").and_then(|x| x.as_i64()),
+        blocked_streak: v.get("blockedStreak").and_then(|x| x.as_u64().map(|x| x as u32)),
+        wall_clock_resumed_at: match v.get("wallClockResumedAt") {
+            Some(val) if val.is_null() => Some(None),
+            Some(val) => Some(val.as_i64()),
+            None => None,
+        },
+        terminal_reason: match v.get("terminalReason") {
+            Some(val) if val.is_null() => Some(None),
+            Some(val) => Some(val.as_str().map(|s| s.to_string())),
+            None => None,
+        },
+        expected_goal_id: v
+            .get("expectedGoalId")
+            .and_then(|x| x.as_str().map(|s| s.to_string())),
+    })
+}
+
+fn serialize_goal(g: &state::GoalState) -> serde_json::Value {
+    json!({
+        "goalId": g.goal_id,
+        "objective": g.objective,
+        "status": g.status.as_str(),
+        "tokenBudget": g.token_budget,
+        "tokensUsed": g.tokens_used,
+        "timeUsedSeconds": g.time_used_seconds,
+        "blockedStreak": g.blocked_streak,
+        "terminalReason": g.terminal_reason,
+    })
+}
+
+fn get_str<'a>(v: &'a serde_json::Value, key: &str) -> Result<&'a str, String> {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| format!("missing or non-string field: {key}"))
+}
+
+fn get_i64(v: &serde_json::Value, key: &str) -> Result<i64, String> {
+    v.get(key)
+        .and_then(|x| x.as_i64())
+        .ok_or_else(|| format!("missing or non-integer field: {key}"))
+}

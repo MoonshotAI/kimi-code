@@ -356,7 +356,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
         ? 'No non-sensitive matches found'
         : contentBody;
     const emptyResultMessage =
-      SENSITIVE_GLOBS_TO_EXCLUDE.length > 0 ? 'No non-sensitive matches found' : 'No matches found';
+      SENSITIVE_GLOBS_TO_EXCLUDE.length > 0 ? t('tools.noNonSensitiveMatches') : t('tools.noMatchesFound');
     const body =
       visibleBody === '' && headerLines.length === 0 && messages.length === 0
         ? emptyResultMessage

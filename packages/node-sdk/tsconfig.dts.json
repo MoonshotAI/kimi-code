@@ -15,7 +15,8 @@
     "../agent-core/src/prompt-modules.d.ts",
     "../kaos/src/**/*.ts",
     "../kosong/src/**/*.ts",
-    "../oauth/src/**/*.ts"
+    "../oauth/src/**/*.ts",
+    "../protocol/src/**/*.ts"
   ],
   "exclude": ["dist", ".tmp-api-extractor", "examples", "test", "../*/dist", "../*/test"]
 }

@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
+import { t } from '../../i18n';
 
 interface DrawerProps {
   open: boolean;
@@ -38,7 +39,7 @@ export function Drawer({ open, onClose, title, children, width = 560 }: DrawerPr
           <button
             onClick={onClose}
             className="font-mono text-[11px] text-fg-2 hover:text-fg-0"
-            aria-label="Close drawer"
+            aria-label={t('drawer.close')}
           >
             esc ✕
           </button>

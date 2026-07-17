@@ -19,6 +19,7 @@ import {
 import { resolveSupervisorProgram } from './program';
 import { buildSystemdUnit, parseSystemctlShow } from './systemd-unit';
 import { ServiceUnavailableError } from './types';
+import { t } from '../i18n';
 import type {
   InstallArgs,
   InstallResult,
@@ -63,7 +64,7 @@ export function createSystemdManager(
     if (alreadyInstalled && args.force !== true) {
       return {
         status: 'already-installed',
-        message: `systemd unit already installed at ${unitPath}. Rerun with --force to replace it.`,
+        message: t('svc.systemd.alreadyExists', { path: unitPath }),
         unitPath,
       };
     }
@@ -89,7 +90,7 @@ export function createSystemdManager(
 
     return {
       status: alreadyInstalled ? 'replaced' : 'installed',
-      message: `Kimi server systemd unit ${alreadyInstalled ? 'replaced' : 'installed'} at ${unitPath} (port ${plan.port}).`,
+      message: t('svc.systemd.installed', { status: alreadyInstalled ? t('svc.schtasks.statusReplaced') : t('svc.schtasks.statusInstalled'), path: unitPath, port: plan.port }),
       unitPath,
     };
   }
@@ -98,7 +99,7 @@ export function createSystemdManager(
     const unitPath = deps.unitPath();
     if (!existsSync(unitPath)) {
       deleteInstallPlan();
-      return { ok: true, message: 'systemd unit was not installed; nothing to remove.' };
+      return { ok: true, message: t('svc.systemd.nothingToRemove') };
     }
     await deps.execSystemctl(['disable', '--now', KIMI_SERVER_SYSTEMD_UNIT]).catch(() => undefined);
     try {
@@ -110,24 +111,24 @@ export function createSystemdManager(
     }
     await deps.execSystemctl(['daemon-reload']).catch(() => undefined);
     deleteInstallPlan();
-    return { ok: true, message: `systemd unit removed (${unitPath}).` };
+    return { ok: true, message: t('svc.systemd.removed', { path: unitPath }) };
   }
 
   async function start(): Promise<LifecycleResult> {
     if (!existsSync(deps.unitPath())) {
       return {
         ok: false,
-        message: 'systemd unit is not installed. Run `kimi server install` first.',
+        message: t('svc.systemd.notInstalled'),
       };
     }
     const result = await deps.execSystemctl(['start', KIMI_SERVER_SYSTEMD_UNIT]);
     if (result.code !== 0) {
       return {
         ok: false,
-        message: `systemctl --user start failed: ${detail(result) ?? 'unknown error'}`,
+        message: t('svc.systemd.startFailed', { error: detail(result) ?? 'unknown error' }),
       };
     }
-    return { ok: true, message: `Kimi server started (${KIMI_SERVER_SYSTEMD_UNIT}).` };
+    return { ok: true, message: t('svc.systemd.started', { name: KIMI_SERVER_SYSTEMD_UNIT }) };
   }
 
   async function stop(): Promise<LifecycleResult> {
@@ -135,10 +136,10 @@ export function createSystemdManager(
     if (result.code !== 0) {
       return {
         ok: false,
-        message: `systemctl --user stop failed: ${detail(result) ?? 'unknown error'}`,
+        message: t('svc.systemd.stopFailed', { error: detail(result) ?? 'unknown error' }),
       };
     }
-    return { ok: true, message: `Kimi server stopped (${KIMI_SERVER_SYSTEMD_UNIT}).` };
+    return { ok: true, message: t('svc.systemd.stopped', { name: KIMI_SERVER_SYSTEMD_UNIT }) };
   }
 
   async function restart(): Promise<LifecycleResult> {
@@ -146,10 +147,10 @@ export function createSystemdManager(
     if (result.code !== 0) {
       return {
         ok: false,
-        message: `systemctl --user restart failed: ${detail(result) ?? 'unknown error'}`,
+        message: t('svc.systemd.restartFailed', { error: detail(result) ?? 'unknown error' }),
       };
     }
-    return { ok: true, message: `Kimi server restarted (${KIMI_SERVER_SYSTEMD_UNIT}).` };
+    return { ok: true, message: t('svc.systemd.restarted', { name: KIMI_SERVER_SYSTEMD_UNIT }) };
   }
 
   async function status(): Promise<ServiceStatus> {
@@ -213,7 +214,7 @@ async function assertUserSystemdAvailable(deps: SystemdManagerDeps): Promise<voi
 
 function writeUnit(unitPath: string, plan: InstallPlan): void {
   const text = buildSystemdUnit({
-    description: 'Kimi Code local server (managed by `kimi server install`)',
+    description: t('svc.common.description'),
     programArguments: plan.programArguments,
   });
   mkdirSync(dirname(unitPath), { recursive: true, mode: UNIT_DIR_MODE });

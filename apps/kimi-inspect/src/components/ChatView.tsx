@@ -18,6 +18,7 @@ import { IAgentRPCService } from '@moonshot-ai/agent-core-v2/agent/rpc/rpc';
 import { useConnection } from '../connection';
 import { eventType, payloadField, useLiveEvent } from '../live';
 import { ActionButton, Badge, ErrorLine } from '../ui';
+import { t } from '../i18n';
 
 interface ChatEntry {
   readonly id: string;
@@ -230,7 +231,7 @@ export function ChatView({
   if (!ready) {
     return (
       <div className="flex flex-1 items-center justify-center text-sm text-neutral-600">
-        Loading session…
+        {t('chat.loadingSession')}
       </div>
     );
   }
@@ -239,14 +240,14 @@ export function ChatView({
     <div className="flex min-w-0 flex-1 flex-col">
       <div className="flex items-center gap-2 border-b border-neutral-800 px-4 py-2">
         <span className="font-mono text-[11px] text-neutral-400">{sessionId}</span>
-        <Badge tone="sky">agent: {agentId}</Badge>
-        {running ? <Badge tone="amber">turn running</Badge> : <Badge tone="green">idle</Badge>}
+        <Badge tone="sky">{t('chat.agentLabel', { agentId })}</Badge>
+        {running ? <Badge tone="amber">{t('chat.turnRunning')}</Badge> : <Badge tone="green">{t('chat.idle')}</Badge>}
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-3">
         {history.isError ? <ErrorLine error={history.error} /> : null}
         {entries.length === 0 && !history.isLoading ? (
-          <div className="text-[12px] text-neutral-600 italic">Empty context — send a prompt below.</div>
+          <div className="text-[12px] text-neutral-600 italic">{t('chat.emptyContext')}</div>
         ) : null}
         {entries.map((entry) => (
           <EntryView key={entry.id} entry={entry} />
@@ -259,7 +260,7 @@ export function ChatView({
         <div className="flex gap-2">
           <textarea
             className="min-h-[40px] flex-1 resize-y rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-[13px] text-neutral-100 outline-none focus:border-sky-600"
-            placeholder="Send a prompt to the active agent… (Enter to send, Shift+Enter for newline)"
+            placeholder={t('chat.promptPlaceholder')}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -271,10 +272,10 @@ export function ChatView({
           />
           <div className="flex flex-col gap-2">
             <ActionButton onClick={() => void send()} disabled={running || input.trim() === ''}>
-              Send
+              {t('chat.send')}
             </ActionButton>
             <ActionButton onClick={() => void cancel()} danger disabled={!running}>
-              Cancel
+              {t('chat.cancel')}
             </ActionButton>
           </div>
         </div>

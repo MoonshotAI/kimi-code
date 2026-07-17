@@ -13,6 +13,7 @@ import { ISessionIndex, type SessionSummary } from '@moonshot-ai/agent-core-v2/a
 import { IWorkspaceRegistry, type Workspace } from '@moonshot-ai/agent-core-v2/app/workspaceRegistry/workspaceRegistry';
 
 import { useConnection } from '../connection';
+import { t } from '../i18n';
 import { useLiveEvent } from '../live';
 import { Badge, ErrorLine, relTime } from '../ui';
 
@@ -57,7 +58,7 @@ export function Sidebar({
   const sortedSessions = (sessions.data?.items ?? []).toSorted((a, b) => b.updatedAt - a.updatedAt);
 
   const createSession = async (ws: Workspace | null) => {
-    const cwd = window.prompt('Working directory for the new session:', ws?.root ?? '');
+    const cwd = window.prompt(t('sidebar.workingDirectoryPrompt'), ws?.root ?? '');
     if (cwd === null || cwd.trim() === '') return;
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (config.token.trim() !== '') headers['authorization'] = `Bearer ${config.token.trim()}`;
@@ -68,7 +69,7 @@ export function Sidebar({
     });
     const envelope = (await res.json()) as { code: number; msg: string; data: { id: string } };
     if (envelope.code !== 0) {
-      window.alert(`create session failed: ${envelope.msg}`);
+      window.alert(t('sidebar.createSessionFailed', { message: envelope.msg }));
       return;
     }
     await queryClient.invalidateQueries({ queryKey: ['sessions'] });
@@ -80,10 +81,10 @@ export function Sidebar({
       {/* Workspaces */}
       <div className="flex w-1/2 flex-col border-r border-neutral-800">
         <div className="flex items-center justify-between px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
-          <span>Workspaces</span>
+          <span>{t('sidebar.workspaces')}</span>
           <button
             className="text-sky-500 hover:text-sky-400"
-            title="New session (no workspace)"
+            title={t('sidebar.newSessionNoWorkspace')}
             onClick={() => void createSession(null)}
           >
             +
@@ -101,7 +102,7 @@ export function Sidebar({
             />
           ))}
           {workspaces.isLoading ? (
-            <div className="px-3 py-2 text-[11px] text-neutral-600">loading…</div>
+            <div className="px-3 py-2 text-[11px] text-neutral-600">{t('sidebar.loading')}</div>
           ) : null}
         </div>
       </div>
@@ -109,7 +110,7 @@ export function Sidebar({
       {/* Sessions */}
       <div className="flex w-1/2 flex-col">
         <div className="px-3 py-2 text-[11px] font-semibold uppercase tracking-wider text-neutral-500">
-          Sessions {workspaceId === null ? '(all)' : ''}
+          {t('sidebar.sessions')} {workspaceId === null ? t('sidebar.all') : ''}
         </div>
         <div className="flex-1 overflow-y-auto">
           {sessions.isError ? <ErrorLine error={sessions.error} /> : null}
@@ -122,10 +123,10 @@ export function Sidebar({
             />
           ))}
           {sessions.isLoading ? (
-            <div className="px-3 py-2 text-[11px] text-neutral-600">loading…</div>
+            <div className="px-3 py-2 text-[11px] text-neutral-600">{t('sidebar.loading')}</div>
           ) : null}
           {!sessions.isLoading && sortedSessions.length === 0 ? (
-            <div className="px-3 py-2 text-[11px] text-neutral-600">no sessions</div>
+            <div className="px-3 py-2 text-[11px] text-neutral-600">{t('sidebar.noSessions')}</div>
           ) : null}
         </div>
       </div>
@@ -159,7 +160,7 @@ function WorkspaceRow({
       </div>
       <button
         className="ml-2 hidden shrink-0 text-sky-500 hover:text-sky-400 group-hover:block"
-        title="New session in this workspace"
+        title={t('sidebar.newSessionInWorkspace')}
         onClick={(e) => {
           e.stopPropagation();
           onNew();
@@ -181,7 +182,7 @@ function SessionRow({ s, active, onClick }: { s: SessionSummary; active: boolean
         <span className="min-w-0 flex-1 truncate text-[12px] text-neutral-200">
           {s.title ?? s.lastPrompt ?? s.id}
         </span>
-        {s.archived ? <Badge tone="neutral">archived</Badge> : null}
+        {s.archived ? <Badge tone="neutral">{t('sidebar.archived')}</Badge> : null}
       </div>
       <div className="mt-0.5 flex items-center gap-2 text-[10px] text-neutral-500">
         <span className="truncate font-mono">{s.id.slice(0, 12)}</span>

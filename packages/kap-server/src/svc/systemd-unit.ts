@@ -1,10 +1,12 @@
 
 
+import { t } from '../i18n';
+
 const FORBIDDEN = /[\r\n]/;
 
 function assertNoLineBreaks(value: string, label: string): void {
   if (FORBIDDEN.test(value)) {
-    throw new Error(`${label} cannot contain CR or LF characters.`);
+    throw new Error(t('svc.systemdUnit.cannotContainCRLF', { label }));
   }
 }
 

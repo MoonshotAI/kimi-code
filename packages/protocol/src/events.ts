@@ -157,7 +157,7 @@ export type PromptOrigin =
   | HookResultOrigin
   | RetryOrigin;
 
-export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete';
+export type GoalStatus = 'active' | 'paused' | 'blocked' | 'complete' | 'budget_limited' | 'usage_limited';
 export type GoalActor = 'user' | 'model' | 'runtime' | 'system';
 
 export interface GoalBudgetLimits {
@@ -1072,7 +1072,7 @@ export const promptOriginSchema = z.discriminatedUnion('kind', [
   retryOriginSchema,
 ]) satisfies z.ZodType<PromptOrigin>;
 
-export const goalStatusSchema = z.enum(['active', 'paused', 'blocked', 'complete']) satisfies z.ZodType<GoalStatus>;
+export const goalStatusSchema = z.enum(['active', 'paused', 'blocked', 'complete', 'budget_limited', 'usage_limited']) satisfies z.ZodType<GoalStatus>;
 
 export const goalActorSchema = z.enum(['user', 'model', 'runtime', 'system']) satisfies z.ZodType<GoalActor>;
 
