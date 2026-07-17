@@ -296,17 +296,12 @@ export type PromptAttachment = {
 };
 
 /** A prompt waiting for the session to go idle. Keeps the uploaded
-    fileIds so attachments survive queueing (not just the text). The id is
-    the entry's stable identity for cross-tab merge/dedupe; enqueuedAt orders
-    merged snapshots and is re-stamped on manual reorder; ownerTabId marks
-    the only tab allowed to flush it (turn-end events reach every tab).
-    All three are assigned at enqueue time and persisted. */
+    fileIds so attachments survive queueing (not just the text). The id keys
+    the per-entry flush failure budget locally (assigned at enqueue). */
 interface QueuedPrompt {
   text: string;
   attachments?: PromptAttachment[];
   id?: string;
-  enqueuedAt?: number;
-  ownerTabId?: string;
 }
 
 export interface ExtendedState extends KimiClientState {
@@ -512,12 +507,6 @@ if (typeof window !== 'undefined') {
       rawState.unreadBySession = loadUnread();
       clearActiveUnread();
     }
-    // Another tab enqueued/flushed/discarded queued prompts — adopt its queue
-    // so both tabs don't flush the same entries twice. workspaceState is
-    // referenced lazily inside the event callback, after module init.
-    if (event.key === STORAGE_KEYS.promptQueue) {
-      workspaceState.syncQueuedPromptsFromStorage();
-    }
   });
 }
 
@@ -632,10 +621,9 @@ function forgetSession(sessionId: string): void {
   // In-flight / queued prompt state: drop these too so a queued follow-up
   // can't be submitted to a session that was just archived when its turn later
   // ends (onMainTurnEnd drains queuedBySession[sid] without re-checking
-  // that the session still exists). discardQueuedPrompts also tombstones the
-  // entries in the shared snapshot so another tab can't merge them back.
+  // that the session still exists).
   forgetLocalTurnState(sessionId);
-  workspaceState.discardQueuedPrompts(sessionId);
+  delete rawState.queuedBySession[sessionId];
   delete rawState.promptIdBySession[sessionId];
   delete rawState.inFlightBySession[sessionId];
   delete rawState.turnActiveBySession[sessionId];

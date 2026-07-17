@@ -34,8 +34,6 @@ export const STORAGE_KEYS = {
   notifyOnApproval: 'kimi-web.notify-on-approval',
   soundOnComplete: 'kimi-web.sound-on-complete',
   inputHistory: 'kimi-web.input-history',
-  // useWorkspaceState — per-session local prompt queue
-  promptQueue: 'kimi-web.prompt-queue',
   // cross-file
   locale: 'kimi-locale',
   clientId: 'kimi-web.client-id',

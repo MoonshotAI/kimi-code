@@ -3,13 +3,13 @@
 // Wiring: the composable is real; daemon requests and unrelated facade collaborators are stubbed.
 // Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/workspace-state.test.ts
 
-import { computed, nextTick, reactive, ref, type Ref } from 'vue';
+import { computed, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
 import { DaemonApiError } from '../src/api/errors';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
-import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides, STORAGE_KEYS } from '../src/lib/storage';
+import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
 import { useWorkspaceState, forgetLocalTurnState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 import { clearTrace, traceKeyEvent } from '../src/debug/trace';
@@ -1792,252 +1792,17 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
       }),
     );
   });
-});
-
-describe('useWorkspaceState — prompt queue persistence', () => {
-  function deps(overrides: Partial<UseWorkspaceStateDeps> = {}): UseWorkspaceStateDeps {
-    return {
-      ...createDeps(),
-      modelProvider: { models: ref([]) } as unknown as UseWorkspaceStateDeps['modelProvider'],
-      ...overrides,
-    };
-  }
-
-  beforeEach(() => {
-    installStorage(createMemoryStorage());
-    apiMock.submitPrompt.mockReset();
-    apiMock.submitPrompt.mockResolvedValue({ promptId: 'prompt_new' });
-    // Module-level flush failure budget must not leak between tests.
-    forgetLocalTurnState('sess_1');
-  });
-
-  it('restores a persisted queue on startup so a refresh loses nothing', () => {
-    localStorage.setItem(
-      STORAGE_KEYS.promptQueue,
-      JSON.stringify({
-        sess_1: [{ text: 'old queued', attachments: [{ fileId: 'f_old', kind: 'image' }] }],
-      }),
-    );
-    const state = createState();
-    useWorkspaceState(state, deps());
-
-    expect(state.queuedBySession.sess_1).toEqual([
-      { text: 'old queued', attachments: [{ fileId: 'f_old', kind: 'image' }] }],
-    );
-  });
-
-  it('keeps only well-formed persisted entries and ignores the rest', () => {
-    localStorage.setItem(
-      STORAGE_KEYS.promptQueue,
-      JSON.stringify({
-        sess_1: [{ text: 5 }, 'nope', { text: 'ok', attachments: [{ fileId: 'f', kind: 'file' }] }],
-        sess_2: 'not-an-array',
-        sess_3: [{ text: 'bad kind', attachments: [{ fileId: 'f', kind: 'exe' }] }],
-      }),
-    );
-    const state = createState();
-    useWorkspaceState(state, deps());
-
-    expect(state.queuedBySession).toEqual({
-      sess_1: [{ text: 'ok', attachments: [{ fileId: 'f', kind: 'file' }] }],
-    });
-  });
-
-  it('does not clobber an in-memory queue with the persisted one', () => {
-    localStorage.setItem(STORAGE_KEYS.promptQueue, JSON.stringify({ sess_1: [{ text: 'stored' }] }));
-    const state = createState();
-    state.queuedBySession = { sess_1: [{ text: 'in memory', attachments: undefined }] };
-    useWorkspaceState(state, deps());
-
-    expect(state.queuedBySession.sess_1).toEqual([{ text: 'in memory', attachments: undefined }]);
-  });
-
-  it('persists enqueue, flush, and session-forget mutations', async () => {
-    // reactive() so the persistence watch actually tracks the state, the same
-    // way the facade wraps rawState in production.
-    const state = reactive(createState());
-    const ws = useWorkspaceState(state, deps());
-    const readStored = () =>
-      JSON.parse(localStorage.getItem(STORAGE_KEYS.promptQueue) ?? '{}') as Record<
-        string,
-        { entries: Array<Record<string, unknown>>; gone?: Record<string, number> }
-      >;
-    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
-
-    // A send while the session is running lands in the queue AND in storage,
-    // stamped with a stable id for cross-tab merge/dedupe.
-    await ws.sendPrompt('queued while running', [{ fileId: 'f_q', kind: 'image' }]);
-    await nextTick();
-    let stored = readStored();
-    expect(
-      stored.sess_1?.entries.map((e) => ({ text: e.text, attachments: e.attachments })),
-    ).toEqual([{ text: 'queued while running', attachments: [{ fileId: 'f_q', kind: 'image' }] }]);
-    const firstId = stored.sess_1?.entries[0]?.id as string;
-    expect(firstId).toBeTruthy();
-
-    // A witnessed turn end flushes the head — the entry leaves the stored
-    // queue and its id lands in the shared removal set.
-    ws.finishPromptLocal('sess_1', { turnWasActive: true });
-    await nextTick();
-    await settle();
-    stored = readStored();
-    expect(stored.sess_1?.entries ?? []).toEqual([]);
-    expect(Object.keys(stored.sess_1?.gone ?? {})).toEqual([firstId]);
-
-    // The facade's session-forget path discards the queue too.
-    state.queuedBySession = {
-      sess_1: [{ text: 'a', attachments: undefined }],
-      sess_2: [{ text: 'b', attachments: undefined }],
-    };
-    await nextTick();
-    ws.discardQueuedPrompts('sess_1');
-    await nextTick();
-    stored = readStored();
-    expect(stored.sess_2?.entries.map((e) => e.text)).toEqual(['b']);
-    expect(stored.sess_1?.entries ?? []).toEqual([]);
-  });
-
-  it('union-merges a queue another tab persisted instead of discarding concurrent entries', async () => {
-    const state = reactive(createState());
-    state.queuedBySession = {
-      sess_1: [{ text: 'from tab A', attachments: undefined, id: 'id-a', enqueuedAt: 1000 }],
-    };
-    const ws = useWorkspaceState(state, deps());
-
-    // Tab B persisted its own entry close in time — tab A's write lost the
-    // race in storage, but A's entry must not be silently discarded.
-    localStorage.setItem(
-      STORAGE_KEYS.promptQueue,
-      JSON.stringify({
-        sess_1: {
-          entries: [{ text: 'from tab B', attachments: undefined, id: 'id-b', enqueuedAt: 2000 }],
-        },
-      }),
-    );
-    ws.syncQueuedPromptsFromStorage();
-
-    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['from tab A', 'from tab B']);
-    await nextTick();
-    // The merged queue converges back into storage for tab B to adopt.
-    const stored = JSON.parse(localStorage.getItem(STORAGE_KEYS.promptQueue)!) as Record<
-      string,
-      { entries: Array<{ text: string }> }
-    >;
-    expect(stored.sess_1?.entries.map((e) => e.text)).toEqual(['from tab A', 'from tab B']);
-  });
-
-  it('drops entries the shared removal set says another tab already flushed', () => {
-    const state = createState();
-    state.queuedBySession = {
-      sess_1: [{ text: 'stale local', attachments: undefined, id: 'id-x', enqueuedAt: 1000 }],
-    };
-    const ws = useWorkspaceState(state, deps());
-
-    localStorage.setItem(
-      STORAGE_KEYS.promptQueue,
-      JSON.stringify({ sess_1: { entries: [], gone: { 'id-x': Date.now() } } }),
-    );
-    ws.syncQueuedPromptsFromStorage();
-
-    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
-  });
-
-  it('hydrates the v2 snapshot shape and filters entries already removed elsewhere', () => {
-    localStorage.setItem(
-      STORAGE_KEYS.promptQueue,
-      JSON.stringify({
-        sess_1: {
-          entries: [
-            { text: 'kept', id: 'id-keep', enqueuedAt: 1 },
-            { text: 'gone', id: 'id-gone', enqueuedAt: 2 },
-          ],
-          gone: { 'id-gone': Date.now() },
-        },
-      }),
-    );
-    const state = createState();
-    useWorkspaceState(state, deps());
-
-    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['kept']);
-  });
-
-  it('does not resurrect an entry this tab already flushed when adopting a stale snapshot', async () => {
-    const state = reactive(createState());
-    state.queuedBySession = {
-      sess_1: [{ text: 'mine', attachments: undefined, id: 'id-mine', enqueuedAt: 1000 }],
-    };
-    const ws = useWorkspaceState(state, deps());
-
-    // This tab flushes its entry successfully...
-    ws.finishPromptLocal('sess_1', { turnWasActive: true });
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
-
-    // ...but a snapshot from another tab (written with the removal set
-    // preserved) still holds the entry. It must not resurrect and flush twice.
-    localStorage.setItem(
-      STORAGE_KEYS.promptQueue,
-      JSON.stringify({
-        sess_1: {
-          entries: [{ text: 'mine', attachments: undefined, id: 'id-mine', enqueuedAt: 1000 }],
-          gone: { 'id-mine': Date.now() },
-        },
-      }),
-    );
-    ws.syncQueuedPromptsFromStorage();
-
-    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
-  });
-
-  it('keeps a submitting entry out of adopted snapshots until its submit resolves', async () => {
-    let rejectSubmit!: (err: Error) => void;
-    apiMock.submitPrompt.mockImplementation(
-      () =>
-        new Promise<{ promptId: string }>((_resolve, reject) => {
-          rejectSubmit = reject;
-        }),
-    );
-    const state = createState();
-    state.queuedBySession = {
-      sess_1: [{ text: 'submitting', attachments: undefined, id: 'id-busy', enqueuedAt: 1000 }],
-    };
-    const ws = useWorkspaceState(state, deps());
-
-    ws.finishPromptLocal('sess_1', { turnWasActive: true });
-    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
-
-    // A stale snapshot still containing the entry must not bring it back
-    // while its submit is in flight.
-    localStorage.setItem(
-      STORAGE_KEYS.promptQueue,
-      JSON.stringify({
-        sess_1: {
-          entries: [{ text: 'submitting', attachments: undefined, id: 'id-busy', enqueuedAt: 1000 }],
-        },
-      }),
-    );
-    ws.syncQueuedPromptsFromStorage();
-    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
-
-    // The submit fails: the entry is re-queued ONCE under the same id, and a
-    // follow-up adopt still holds exactly one copy (dedupe by id).
-    rejectSubmit(new Error('turn.agent_busy'));
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['submitting']);
-    ws.syncQueuedPromptsFromStorage();
-    expect(state.queuedBySession.sess_1?.length).toBe(1);
-  });
 
   it('resets the flush failure budget when the queue head changes', async () => {
     apiMock.submitPrompt.mockRejectedValue(new Error('turn.agent_busy'));
     const state = createState();
     state.queuedBySession = {
       sess_1: [
-        { text: 'first', attachments: undefined, id: 'id-first', enqueuedAt: 1 },
-        { text: 'second', attachments: undefined, id: 'id-second', enqueuedAt: 2 },
+        { text: 'first', attachments: undefined, id: 'id-first' },
+        { text: 'second', attachments: undefined, id: 'id-second' },
       ],
     };
-    const ws = useWorkspaceState(state, deps());
+    const ws = useWorkspaceState(state, promptDeps());
     const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
     const flushOnce = async () => {
       state.inFlightBySession = { sess_1: true };
@@ -2059,111 +1824,6 @@ describe('useWorkspaceState — prompt queue persistence', () => {
     expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
   });
 
-  it('keeps a manual reorder stable across cross-tab adoption', () => {
-    const state = createState();
-    state.queuedBySession = {
-      sess_1: [
-        { text: 'a', attachments: undefined, id: 'id-a', enqueuedAt: 1 },
-        { text: 'b', attachments: undefined, id: 'id-b', enqueuedAt: 2 },
-      ],
-    };
-    const ws = useWorkspaceState(state, deps());
-
-    ws.reorderQueue(1, 0);
-    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['b', 'a']);
-
-    // Adopting an older snapshot must not un-reorder: reorder re-stamps
-    // enqueuedAt, and the merge sorts by it (dedupe by id).
-    localStorage.setItem(
-      STORAGE_KEYS.promptQueue,
-      JSON.stringify({
-        sess_1: {
-          entries: [
-            { text: 'a', attachments: undefined, id: 'id-a', enqueuedAt: 1 },
-            { text: 'b', attachments: undefined, id: 'id-b', enqueuedAt: 2 },
-          ],
-        },
-      }),
-    );
-    ws.syncQueuedPromptsFromStorage();
-
-    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['b', 'a']);
-  });
-
-  it('does not flush a queue entry owned by another tab on a witnessed turn end', () => {
-    const state = createState();
-    state.queuedBySession = {
-      sess_1: [
-        { text: 'foreign', attachments: undefined, id: 'id-foreign', enqueuedAt: 1, ownerTabId: 'tab_other' },
-      ],
-    };
-    const ws = useWorkspaceState(state, deps());
-
-    // Both tabs witness the same turn end; only the owner tab may submit —
-    // the server would otherwise accept both as distinct prompts.
-    ws.finishPromptLocal('sess_1', { turnWasActive: true });
-
-    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
-    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['foreign']);
-  });
-
-  it('adopts foreign-owned entries on an idle send so a stranded queue can flush', async () => {
-    const state = createState();
-    state.queuedBySession = {
-      sess_1: [
-        { text: 'foreign head', attachments: undefined, id: 'id-f', enqueuedAt: 1, ownerTabId: 'tab_other' },
-      ],
-    };
-    const ws = useWorkspaceState(state, deps({ activity: computed(() => 'idle') }));
-
-    await ws.sendPrompt('mine');
-
-    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
-    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
-      'sess_1',
-      expect.objectContaining({ content: [{ type: 'text', text: 'foreign head' }] }),
-    );
-    // Ownership transferred to this tab — nothing stays owned by the dead tab.
-    expect(state.queuedBySession.sess_1?.every((e) => e.ownerTabId !== 'tab_other')).toBe(true);
-    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['mine']);
-  });
-
-  it('prefers the newer enqueuedAt per id so a reorder converges instead of ping-ponging', async () => {
-    const state = reactive(createState());
-    state.queuedBySession = {
-      sess_1: [
-        { text: 'a', attachments: undefined, id: 'id-a', enqueuedAt: 1 },
-        { text: 'b', attachments: undefined, id: 'id-b', enqueuedAt: 2 },
-      ],
-    };
-    const ws = useWorkspaceState(state, deps());
-
-    // Another tab reordered (b first — reorder re-stamps display order as
-    // ascending timestamps, so b carries the SMALLER newer stamp) and
-    // persisted that; this tab must adopt the newer order even though its
-    // own copy disagrees.
-    localStorage.setItem(
-      STORAGE_KEYS.promptQueue,
-      JSON.stringify({
-        sess_1: {
-          entries: [
-            { text: 'b', attachments: undefined, id: 'id-b', enqueuedAt: 1001 },
-            { text: 'a', attachments: undefined, id: 'id-a', enqueuedAt: 1002 },
-          ],
-        },
-      }),
-    );
-    ws.syncQueuedPromptsFromStorage();
-
-    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['b', 'a']);
-    // ...and convergence is stable: a second adopt writes nothing new.
-    await nextTick();
-    const once = localStorage.getItem(STORAGE_KEYS.promptQueue);
-    ws.syncQueuedPromptsFromStorage();
-    await nextTick();
-    expect(localStorage.getItem(STORAGE_KEYS.promptQueue)).toBe(once);
-  });
-
   it('does not resurrect the queue when a submit fails after the session was forgotten', async () => {
     let rejectSubmit!: (err: Error) => void;
     apiMock.submitPrompt.mockImplementation(
@@ -2174,16 +1834,16 @@ describe('useWorkspaceState — prompt queue persistence', () => {
     );
     const state = createState();
     state.queuedBySession = {
-      sess_1: [{ text: 'doomed', attachments: undefined, id: 'id-doomed', enqueuedAt: 1 }],
+      sess_1: [{ text: 'doomed', attachments: undefined, id: 'id-doomed' }],
     };
-    const ws = useWorkspaceState(state, deps());
+    const ws = useWorkspaceState(state, promptDeps());
 
     ws.finishPromptLocal('sess_1', { turnWasActive: true });
     expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
 
-    // Session archived (facade forget path) while the submit is pending.
+    // Facade forget path (e.g. archive) while the submit is pending.
     state.sessions = [];
-    ws.discardQueuedPrompts('sess_1');
+    delete state.queuedBySession.sess_1;
     rejectSubmit(new Error('network down'));
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
