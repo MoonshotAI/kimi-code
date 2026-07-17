@@ -224,6 +224,9 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --color-surface: #fafbfc;
   --color-surface-raised: #ffffff;
   --color-surface-sunken: #f3f5f8;
+  /* Inline-code chip fill — light reuses the sunken surface; dark needs a
+     translucent lift because sunken == --color-bg there (the chip vanishes). */
+  --color-inline-code-bg: var(--color-surface-sunken);
   /* Foreground text colours. `--color-text` is the default solid body / UI
      colour (headings and emphasis share it); muted / faint step down for
      secondary and tertiary copy; on-accent is text drawn on the accent fill. */
@@ -239,7 +242,7 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   /* Row hover wash — lighter than the selected fill (hover < selected); both
      are translucent black so they sit naturally on any light surface. */
   --color-hover: #0000000d;
-  /* Sidebar surface — one step off --color-bg (warm off-white / near-black)
+  /* Sidebar surface — one step off --color-bg (warm off-white / dark blue-gray)
      so the session column reads as its own plane. */
   --color-sidebar-bg: #fbfaf9;
   --color-accent: var(--accent-primary);
@@ -378,14 +381,15 @@ html[data-color-scheme="dark"] {
   --color-surface: #161b22;
   --color-surface-raised: #1c2128;
   --color-surface-sunken: #0d1117;
-  --color-text: #c9cdd4;
+  --color-inline-code-bg: #ffffff1a;
+  --color-text: #e8eaed;
   --color-text-muted: #9aa0a8;
   --color-text-faint: #6b7280;
   --color-line: #2d333b;
   --color-line-strong: #3d444d;
   --color-selected: #ffffff14;
   --color-hover: #ffffff0d;
-  --color-sidebar-bg: #181817;
+  --color-sidebar-bg: #13181e;
   --color-accent: #58a6ff;
   --color-accent-hover: #79b8ff;
   --color-accent-soft: rgba(88, 166, 255, 0.14);
@@ -425,14 +429,15 @@ html[data-color-scheme="dark"] {
     --color-surface: #161b22;
     --color-surface-raised: #1c2128;
     --color-surface-sunken: #0d1117;
-    --color-text: #c9cdd4;
+    --color-inline-code-bg: #ffffff1a;
+    --color-text: #e8eaed;
     --color-text-muted: #9aa0a8;
     --color-text-faint: #6b7280;
     --color-line: #2d333b;
     --color-line-strong: #3d444d;
     --color-selected: #ffffff14;
     --color-hover: #ffffff0d;
-    --color-sidebar-bg: #181817;
+    --color-sidebar-bg: #13181e;
     --color-accent: #58a6ff;
     --color-accent-hover: #79b8ff;
     --color-accent-soft: rgba(88, 166, 255, 0.14);

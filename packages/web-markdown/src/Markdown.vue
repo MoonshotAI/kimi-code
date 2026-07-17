@@ -512,8 +512,8 @@ function copyDiff(code: string, idx: number) {
   --markstream-code-fallback-bg: var(--color-surface-sunken);
   --markstream-code-fallback-fg: var(--color-text);
   --markstream-code-border-color: var(--color-line);
-  --inline-code-bg: var(--color-surface-sunken);
-  --inline-code-fg: var(--color-fg);
+  --inline-code-bg: var(--color-inline-code-bg);
+  --inline-code-fg: var(--color-text);
   --inline-code-border: transparent;
 }
 .md :deep(.md-file-link) {
@@ -595,8 +595,8 @@ function copyDiff(code: string, idx: number) {
 .md :deep(:not(pre) > code),
 .md :deep(.inline-code) {
   font: .9em var(--font-mono);
-  background: var(--color-surface-sunken);
-  color: var(--color-fg);
+  background: var(--color-inline-code-bg);
+  color: var(--color-text);
   border: 0;
   padding: 0 4px;
   border-radius: var(--radius-sm);
