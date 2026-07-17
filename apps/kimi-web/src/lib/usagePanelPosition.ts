@@ -27,6 +27,7 @@ const VIEWPORT_GUTTER_PX = 8;
 export function calculateUsagePanelPosition(
   anchor: UsagePanelAnchorRect,
   viewport: UsagePanelViewport,
+  panelWidth: number,
 ): UsagePanelPosition {
   const above = Math.max(
     0,
@@ -36,7 +37,12 @@ export function calculateUsagePanelPosition(
     0,
     Math.floor(viewport.height - anchor.bottom - PANEL_GAP_PX - VIEWPORT_GUTTER_PX),
   );
-  const right = Math.max(0, Math.round(viewport.width - anchor.right));
+  const alignedRight = Math.round(viewport.width - anchor.right);
+  const maxRight = Math.max(
+    0,
+    Math.floor(viewport.width - panelWidth - VIEWPORT_GUTTER_PX),
+  );
+  const right = Math.max(0, Math.min(alignedRight, maxRight));
 
   if (above >= below) {
     return {

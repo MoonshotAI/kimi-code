@@ -75,6 +75,7 @@ const panelRef = ref<HTMLElement | null>(null);
 const panelStyle = ref<Record<string, string>>({});
 let documentListenerTimer: ReturnType<typeof setTimeout> | undefined;
 let positionFrame: number | undefined;
+let panelResizeObserver: ResizeObserver | undefined;
 
 const REFRESH_INTERVAL_MS = 60_000;
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
@@ -94,12 +95,17 @@ function stopRefreshLoop(): void {
 }
 
 function positionPanel(): void {
-  const r = triggerRef.value?.getBoundingClientRect();
-  if (!r) return;
-  const position = calculateUsagePanelPosition(r, {
-    width: window.innerWidth,
-    height: window.innerHeight,
-  });
+  const triggerRect = triggerRef.value?.getBoundingClientRect();
+  const panelRect = panelRef.value?.getBoundingClientRect();
+  if (!triggerRect || !panelRect) return;
+  const position = calculateUsagePanelPosition(
+    triggerRect,
+    {
+      width: window.innerWidth,
+      height: window.innerHeight,
+    },
+    panelRect.width,
+  );
   const style: Record<string, string> = {
     right: `${String(position.right)}px`,
     maxHeight: `${String(position.maxHeight)}px`,
@@ -123,6 +129,18 @@ function cancelScheduledPosition(): void {
   positionFrame = undefined;
 }
 
+function observePanelSize(): void {
+  const panel = panelRef.value;
+  if (!panel) return;
+  panelResizeObserver = new ResizeObserver(schedulePositionPanel);
+  panelResizeObserver.observe(panel);
+}
+
+function stopObservingPanelSize(): void {
+  panelResizeObserver?.disconnect();
+  panelResizeObserver = undefined;
+}
+
 function togglePanel(): void {
   if (open.value) {
     closePanel();
@@ -130,11 +148,14 @@ function togglePanel(): void {
   }
   // Let the composer close its own menus so toolbar popups never overlap.
   emit('open');
-  positionPanel();
   open.value = true;
   window.addEventListener('resize', schedulePositionPanel);
   startRefreshLoop();
-  void nextTick(() => panelRef.value?.focus());
+  void nextTick(() => {
+    positionPanel();
+    observePanelSize();
+    panelRef.value?.focus();
+  });
   documentListenerTimer = setTimeout(() => {
     documentListenerTimer = undefined;
     if (!open.value) return;
@@ -145,6 +166,7 @@ function togglePanel(): void {
 
 function closePanel(restoreFocus = false): void {
   open.value = false;
+  stopObservingPanelSize();
   cancelDocumentListenerRegistration();
   cancelScheduledPosition();
   invalidateUsage();
@@ -177,6 +199,7 @@ function cancelDocumentListenerRegistration(): void {
 }
 
 onUnmounted(() => {
+  stopObservingPanelSize();
   cancelDocumentListenerRegistration();
   cancelScheduledPosition();
   invalidateUsage();
