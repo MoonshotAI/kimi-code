@@ -57,6 +57,8 @@ api_key = "sk-xxxxx"
 
 > 使用 Kimi Code 托管服务时，`/login` 登录后会自动配置 `base_url` 和凭证，无需手动填写。
 
+**模型列表自动刷新**。当 `type = "kimi"` 的 provider 把 `base_url` 精确指向 Kimi Code 托管端点（`https://api.kimi.com/coding/v1`，或 `KIMI_CODE_BASE_URL` 覆盖值），并使用 API 密钥认证（托管服务分发的密钥，写在 `api_key` 或 `env` 子表的 `KIMI_API_KEY`）时，CLI 会在启动时和 daemon 定时刷新时从 `<base_url>/models` 刷新该 provider 的模型列表，与 OAuth 登录一致。上游拥有的字段（上下文长度、能力、显示名）以服务端为准；服务端不再列出的模型会被移除；你自己命名的别名（不以 `<provider>/` 开头的）会保留。如果密钥只开通了部分模型，列表会裁剪到该子集。指向其他地址（代理、网关）的 provider 永远不会自动刷新。
+
 ## `anthropic`
 
 用于对接 Claude API。标准 Claude 模型自动启用视觉、工具调用及 Thinking（如支持）；自定义或未覆盖的模型需在 `[models.<alias>]` 里显式声明 `capabilities`。
