@@ -71,14 +71,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          version=$(node -p "require('./apps/desktop/package.json').version")
+          # 判定完全基于本次 push 的 SHA，不读工作区：前面的 changesets/action
+          # 会把工作区切到 changeset-release 分支（版本已 bump），读工作区会把
+          # 版本 PR 未合并期间的每次 push 都误判成"版本变了"，重复触发打包。
+          git show "${GITHUB_SHA}:apps/desktop/package.json" > /tmp/desktop-pkg.json
+          version=$(node -p "require('/tmp/desktop-pkg.json').version")
           tag="v${version}"
           # 发版 = 版本 PR（ci: release desktop）合入。判定依据：本次 push
           # 改动了桌面版本号（而不是"版本号恰好没有 tag"——发版 CI 自身合入、
           # 手动改版本基线等情况不该触发发版）。版本 PR 之外直接改版本号视为
           # 手动发版，同样放行。
           prev_version=""
-          if git show "HEAD~1:apps/desktop/package.json" > /tmp/prev-desktop-pkg.json 2> /dev/null; then
+          if git show "${GITHUB_SHA}~1:apps/desktop/package.json" > /tmp/prev-desktop-pkg.json 2> /dev/null; then
             prev_version=$(node -p "require('/tmp/prev-desktop-pkg.json').version")
           fi
           if [ "$prev_version" = "$version" ]; then
@@ -122,6 +126,12 @@ jobs:
     permissions:
       contents: write # gh release create / upload
     steps:
+      # checkout 提供 git 上下文：gh release create --generate-notes 需要
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
       - name: Download installer artifacts
         uses: actions/download-artifact@v8
         with:
