@@ -7,6 +7,7 @@ import {
   IAgentGoalService,
   IAgentLifecycleService,
   IAgentRPCService,
+  IAppendLogStore,
   IEventService,
   IPluginService,
   ISessionIndex,
@@ -655,5 +656,101 @@ describe('server-v2 /api/v2 RPC auth', () => {
     expect(res.status).toBe(401);
     const body = (await res.json()) as Envelope<null>;
     expect(body.code).toBe(40101);
+  });
+});
+
+describe('server-v2 /api/v1/debug RPC (dev-only, whitelist-free)', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-debug-rpc-'));
+    server = await startServer({
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      debugEndpoints: true,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 25 } as never);
+      home = undefined;
+    }
+  });
+
+  async function call<T>(
+    method: 'GET' | 'POST',
+    path: string,
+    arg?: unknown,
+  ): Promise<{ status: number; body: Envelope<T> }> {
+    const headers: Record<string, string> = {
+      authorization: `Bearer ${(server as RunningServer).authTokenService.getToken()}`,
+    };
+    const init: { method: string; headers: Record<string, string>; body?: string } = {
+      method,
+      headers,
+    };
+    if (arg !== undefined) {
+      headers['content-type'] = 'application/json';
+      init.body = JSON.stringify(arg);
+    }
+    const res = await fetch(`${base}${path}`, init);
+    return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  it('describes every scoped Service via GET /api/v1/debug/channels', async () => {
+    const { status, body } = await call<readonly { name: string; scope: string }[]>(
+      'GET',
+      '/api/v1/debug/channels',
+    );
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+    // Well past the /api/v2 whitelist size: the debug surface spans the whole
+    // scoped DI registry (App + Session + Agent).
+    expect(body.data.length).toBeGreaterThan(50);
+    const names = body.data.map((c) => c.name);
+    // Internal (non-whitelisted) Services are included...
+    expect(names).toContain(String(IAppendLogStore));
+    // ...alongside the regular whitelisted ones.
+    expect(names).toContain(String(ISessionIndex));
+  });
+
+  it('calls a non-whitelisted Service method', async () => {
+    const { status, body } = await call(
+      'POST',
+      `/api/v1/debug/${String(IAppendLogStore)}/flush`,
+      [],
+    );
+    expect(status).toBe(200);
+    expect(body.code).toBe(0);
+  });
+
+  it('also reaches whitelisted Services by the same wire names', async () => {
+    const { body } = await call<{ items: unknown[] }>(
+      'POST',
+      `/api/v1/debug/${String(ISessionIndex)}/list`,
+      [{ limit: 1 }],
+    );
+    expect(body.code).toBe(0);
+    expect(Array.isArray(body.data.items)).toBe(true);
+  });
+
+  it('rejects an unknown service with 40001', async () => {
+    const { body } = await call('POST', '/api/v1/debug/noSuchService/whatever', []);
+    expect(body.code).toBe(40001);
+  });
+
+  it('is gated by the same bearer auth as the rest of /api/*', async () => {
+    const res = await fetch(`${base}/api/v1/debug/channels`);
+    expect(res.status).toBe(401);
   });
 });

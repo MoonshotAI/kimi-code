@@ -12,6 +12,10 @@
  * Body (POST) or `?arg=<json>` (GET) is the method's single argument. Responses
  * are always the project envelope (HTTP 200; business outcome in `code`). Body
  * size, connection timeout, and graceful close are Fastify's.
+ *
+ * `registerServiceDispatcherRoutes` is the shared, path-agnostic core: the
+ * dev-only `/api/v1/debug` surface (`registerDebugRoutes.ts`) mounts the same
+ * dispatcher with a different base path and a whitelist-free channel lookup.
  */
 
 import type { Scope } from '@moonshot-ai/agent-core-v2';
@@ -20,8 +24,8 @@ import { requestLog } from '../lib/requestLog';
 import { okEnvelope } from '../protocol/envelope';
 import { ErrorCode } from '../protocol/error-codes';
 import type { ScopeKind } from './channel';
-import { describeChannels } from './channelRegistry';
-import { dispatch } from './dispatcher';
+import { type ChannelDescriptor, describeChannels, resolveChannel } from './channelRegistry';
+import { type ChannelLookup, dispatch } from './dispatcher';
 import { mapError, validationEnvelope, withTimeout } from './errors';
 
 interface RpcRequest {
@@ -38,7 +42,7 @@ interface RpcReply {
   send(payload: unknown): unknown;
 }
 
-interface RouteHost {
+export interface RouteHost {
   get(path: string, handler: (req: RpcRequest, reply: RpcReply) => Promise<unknown>): unknown;
   post(path: string, handler: (req: RpcRequest, reply: RpcReply) => Promise<unknown>): unknown;
 }
@@ -55,34 +59,63 @@ export interface RegisterRpcRoutesOptions {
   readonly callTimeoutMs?: number;
 }
 
-const SCOPE_ROUTES: { path: string; scopeKind: ScopeKind }[] = [
-  { path: '/api/v2/:service/:method', scopeKind: 'core' },
-  { path: '/api/v2/session/:session_id/:service/:method', scopeKind: 'session' },
-  { path: '/api/v2/session/:session_id/agent/:agent_id/:service/:method', scopeKind: 'agent' },
-];
+export interface ServiceDispatcherRouteOptions {
+  /** Per-call deadline in ms. Default 30s. */
+  readonly callTimeoutMs?: number;
+  /** Channel name → identifier resolution. Default: the `/api/v2` whitelist registry. */
+  readonly lookup?: ChannelLookup;
+  /** Descriptor source for `GET {basePath}/channels`. Default: the whitelist set. */
+  readonly describe?: () => readonly ChannelDescriptor[];
+}
+
+/**
+ * Mount the reflection dispatcher under `basePath` (e.g. `/api/v2`, or
+ * `/debug` inside the prefixed `/api/v1` plugin): the three scope routes plus
+ * `GET {basePath}/channels` for introspection. `channels` is a single segment,
+ * so it cannot collide with `:service/:method`.
+ */
+export function registerServiceDispatcherRoutes(
+  app: RouteHost,
+  core: Scope,
+  basePath: string,
+  opts: ServiceDispatcherRouteOptions = {},
+): void {
+  const lookup = opts.lookup ?? resolveChannel;
+  const scopeRoutes: { path: string; scopeKind: ScopeKind }[] = [
+    { path: `${basePath}/:service/:method`, scopeKind: 'core' },
+    { path: `${basePath}/session/:session_id/:service/:method`, scopeKind: 'session' },
+    {
+      path: `${basePath}/session/:session_id/agent/:agent_id/:service/:method`,
+      scopeKind: 'agent',
+    },
+  ];
+  for (const { path, scopeKind } of scopeRoutes) {
+    const handler = makeHandler(core, scopeKind, opts, lookup);
+    app.get(path, handler);
+    app.post(path, handler);
+  }
+
+  // Introspection: the dynamic service browser (kimi-inspect) reads this once
+  // per connection.
+  const describe = opts.describe ?? describeChannels;
+  app.get(`${basePath}/channels`, async (req, reply) =>
+    reply.send(okEnvelope(describe(), req.id)),
+  );
+}
 
 export function registerRpcRoutes(
   app: RouteHost,
   core: Scope,
   opts: RegisterRpcRoutesOptions = {},
 ): void {
-  for (const { path, scopeKind } of SCOPE_ROUTES) {
-    const handler = makeHandler(core, scopeKind, opts);
-    app.get(path, handler);
-    app.post(path, handler);
-  }
-
-  // Introspection: the dynamic service browser (kimi-inspect) reads this once
-  // per connection. Single segment, so it cannot collide with `:service/:method`.
-  app.get('/api/v2/channels', async (req, reply) =>
-    reply.send(okEnvelope(describeChannels(), req.id)),
-  );
+  registerServiceDispatcherRoutes(app, core, '/api/v2', opts);
 }
 
 function makeHandler(
   core: Scope,
   scopeKind: ScopeKind,
-  opts: RegisterRpcRoutesOptions,
+  opts: ServiceDispatcherRouteOptions,
+  lookup: ChannelLookup,
 ): (req: RpcRequest, reply: RpcReply) => Promise<unknown> {
   return async (req, reply) => {
     const requestId = req.id;
@@ -113,6 +146,7 @@ function makeHandler(
           service,
           method,
           arg,
+          lookup,
         ),
         opts.callTimeoutMs ?? 30_000,
       );
