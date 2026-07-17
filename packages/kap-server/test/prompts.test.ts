@@ -7,6 +7,7 @@ import {
   IAgentContextMemoryService,
   IAgentLifecycleService,
   IAgentProfileService,
+  IAgentToolPolicyService,
   ISessionLifecycleService,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -761,10 +762,10 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
     if (session === undefined) throw new Error(`session ${id} not found`);
-    const profile = session.accessor.get(IAgentLifecycleService).get('main')?.accessor
-      .get(IAgentProfileService);
-    expect(profile?.isToolActive('Bash')).toBe(false);
-    expect(profile?.isToolActive('Read')).toBe(true);
+    const toolPolicy = session.accessor.get(IAgentLifecycleService).get('main')?.accessor
+      .get(IAgentToolPolicyService);
+    expect(toolPolicy?.isToolActive('Bash')).toBe(false);
+    expect(toolPolicy?.isToolActive('Read')).toBe(true);
 
     // Each submission fully replaces the client-managed portion.
     const replaced = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
@@ -772,8 +773,8 @@ describe('server-v2 /api/v1 prompts', () => {
       disabled_tools: ['Write'],
     });
     expect(replaced.body.code).toBe(0);
-    expect(profile?.isToolActive('Bash')).toBe(true);
-    expect(profile?.isToolActive('Write')).toBe(false);
+    expect(toolPolicy?.isToolActive('Bash')).toBe(true);
+    expect(toolPolicy?.isToolActive('Write')).toBe(false);
 
     // An empty list clears the client-managed portion.
     const cleared = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
@@ -781,7 +782,7 @@ describe('server-v2 /api/v1 prompts', () => {
       disabled_tools: [],
     });
     expect(cleared.body.code).toBe(0);
-    expect(profile?.isToolActive('Write')).toBe(true);
+    expect(toolPolicy?.isToolActive('Write')).toBe(true);
   });
 
   it('shares disabled_tools with agents created after the request', async () => {
@@ -804,9 +805,9 @@ describe('server-v2 /api/v1 prompts', () => {
       },
     });
 
-    const childProfile = child.accessor.get(IAgentProfileService);
-    expect(childProfile.isToolActive('Bash')).toBe(false);
-    expect(childProfile.isToolActive('Read')).toBe(true);
+    const childToolPolicy = child.accessor.get(IAgentToolPolicyService);
+    expect(childToolPolicy.isToolActive('Bash')).toBe(false);
+    expect(childToolPolicy.isToolActive('Read')).toBe(true);
   });
 
   it('rejects disabled_tools before the agent profile is bound', async () => {
@@ -844,9 +845,9 @@ describe('server-v2 /api/v1 prompts', () => {
 
     const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
     if (session === undefined) throw new Error(`session ${id} not found`);
-    const profile = session.accessor.get(IAgentLifecycleService).get('main')?.accessor
-      .get(IAgentProfileService);
-    expect(profile?.isToolActive('Bash')).toBe(false);
-    expect(profile?.isToolActive('Read')).toBe(true);
+    const toolPolicy = session.accessor.get(IAgentLifecycleService).get('main')?.accessor
+      .get(IAgentToolPolicyService);
+    expect(toolPolicy?.isToolActive('Bash')).toBe(false);
+    expect(toolPolicy?.isToolActive('Read')).toBe(true);
   });
 });

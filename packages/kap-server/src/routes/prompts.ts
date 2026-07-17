@@ -16,6 +16,7 @@ import {
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
+  IAgentToolPolicyService,
   IAgentPromptService,
   IAuthSummaryService,
   IEventService,
@@ -134,6 +135,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     prompt: agent.accessor.get(IAgentPromptService),
     auth: agent.accessor.get(IAuthSummaryService),
     profile: agent.accessor.get(IAgentProfileService),
+    toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
   };
 }
@@ -264,7 +266,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           // A session denylist before bind throws `profile.not_bound` — map it
           // onto 40001 like the profile-selection errors above.
           try {
-            await resolved.profile.setSessionDisabledTools(resolvedBody.disabled_tools);
+            await resolved.toolPolicy.setSessionDisabledTools(resolvedBody.disabled_tools);
           } catch (error) {
             if (error instanceof ProfileError) {
               throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);

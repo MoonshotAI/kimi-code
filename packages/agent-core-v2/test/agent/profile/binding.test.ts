@@ -7,12 +7,17 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Event } from '#/_base/event';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
+import type { ToolCall } from '#/app/llmProtocol/message';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
+import { IAgentToolExecutorService } from '#/agent/toolExecutor/toolExecutor';
+import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAtomicDocumentStore, type IAtomicDocumentStore as AtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { IWireService } from '#/wire/wire';
+import type { ExecutableTool, ToolExecution, ToolResult, ToolSource } from '#/tool/toolContract';
 
 import {
   InMemoryWireRecordPersistence,
@@ -24,6 +29,18 @@ import {
 } from '../../harness';
 
 const MOCK_MODEL = 'mock-model';
+
+type ProfileWithToolPolicy = IAgentProfileService &
+  Pick<IAgentToolPolicyService, 'isToolActive' | 'setSessionDisabledTools'>;
+
+function profileWithToolPolicy(ctx: TestAgentContext): ProfileWithToolPolicy {
+  const profile = ctx.get(IAgentProfileService);
+  const toolPolicy = ctx.get(IAgentToolPolicyService);
+  return Object.assign(profile, {
+    isToolActive: toolPolicy.isToolActive.bind(toolPolicy),
+    setSessionDisabledTools: toolPolicy.setSessionDisabledTools.bind(toolPolicy),
+  });
+}
 
 function createAtomicDocumentStore(): AtomicDocumentStore {
   const documents = new Map<string, unknown>();
@@ -59,9 +76,9 @@ describe('AgentProfileService.bind', () => {
     await rm(homeDir, { recursive: true, force: true });
   });
 
-  function buildContext(): { ctx: TestAgentContext; profile: IAgentProfileService } {
+  function buildContext(): { ctx: TestAgentContext; profile: ProfileWithToolPolicy } {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
-    return { ctx, profile: ctx.get(IAgentProfileService) };
+    return { ctx, profile: profileWithToolPolicy(ctx) };
   }
 
   it('binds a profile + model atomically and becomes runnable', async () => {
@@ -102,7 +119,7 @@ describe('AgentProfileService.bind', () => {
         max_context_tokens: 1_000_000,
       },
     });
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
     await ctx.get(IWireService).flush();
     const start = persistence.records.length;
 
@@ -193,7 +210,7 @@ describe('AgentProfileService.bind', () => {
       },
       hostEnvironmentServices(homeDir),
     );
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
 
     await expect(
       svc.bind({
@@ -230,7 +247,7 @@ describe('AgentProfileService.bind', () => {
       },
       hostEnvironmentServices(homeDir),
     );
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
 
     // Spawn paths pass inherited (possibly drifted) thinking without
     // strictThinking: the bind must succeed and clamp to a supported effort.
@@ -256,7 +273,7 @@ describe('AgentProfileService.bind', () => {
         max_context_tokens: 1_000_000,
       },
     });
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL, thinking: 'off' });
     expect(svc.data().thinkingLevel).toBe('off');
 
@@ -302,9 +319,9 @@ describe('AgentProfileService tool denylist', () => {
     await rm(homeDir, { recursive: true, force: true });
   });
 
-  async function bindProfile(name: string): Promise<IAgentProfileService> {
+  async function bindProfile(name: string): Promise<ProfileWithToolPolicy> {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
     await svc.bind({ profile: name, model: MOCK_MODEL });
     return svc;
   }
@@ -331,7 +348,7 @@ describe('AgentProfileService tool denylist', () => {
 
   it('lists available profiles when binding an unknown profile', async () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
     await expect(svc.bind({ profile: 'does-not-exist', model: MOCK_MODEL })).rejects.toThrow(
       /Available profiles: .*agent/,
     );
@@ -340,7 +357,7 @@ describe('AgentProfileService tool denylist', () => {
   it('persists the denylist in the bind records', async () => {
     const persistence = new InMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
 
     await svc.bind({ profile: 'deny-builtin', model: MOCK_MODEL });
     await ctx.get(IWireService).flush();
@@ -352,7 +369,7 @@ describe('AgentProfileService tool denylist', () => {
   it('writes no tools.set_active_tools record when the profile has no allowlist', async () => {
     const persistence = new InMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
 
     await svc.bind({ profile: 'deny-builtin', model: MOCK_MODEL });
     await ctx.get(IWireService).flush();
@@ -367,7 +384,7 @@ describe('AgentProfileService tool denylist', () => {
   it('restores the denylist from persisted records on resume without catalog resolution', async () => {
     const persistence = new InMemoryWireRecordPersistence();
     ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
     await svc.bind({ profile: 'deny-builtin', model: MOCK_MODEL });
     await ctx.get(IWireService).flush();
     await ctx.dispose();
@@ -394,7 +411,7 @@ describe('AgentProfileService tool denylist', () => {
       sessionService(ISessionAgentProfileCatalog, emptyCatalog),
     );
     await ctx.restorePersisted();
-    const resumed = ctx.get(IAgentProfileService);
+    const resumed = profileWithToolPolicy(ctx);
 
     expect(resumed.data().profileName).toBe('deny-builtin');
     expect(resumed.isToolActive('Bash')).toBe(false);
@@ -427,9 +444,9 @@ describe('AgentProfileService global [tools] config', () => {
   async function bindWithToolsConfig(
     tools: Record<string, readonly string[]>,
     profile: string = DEFAULT_AGENT_PROFILE_NAME,
-  ): Promise<IAgentProfileService> {
+  ): Promise<ProfileWithToolPolicy> {
     ctx = createTestAgent({ initialConfig: { tools } }, hostEnvironmentServices(homeDir));
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
     await svc.bind({ profile, model: MOCK_MODEL });
     return svc;
   }
@@ -491,16 +508,16 @@ describe('AgentProfileService.setSessionDisabledTools', () => {
     await rm(homeDir, { recursive: true, force: true });
   });
 
-  async function bind(profile: string): Promise<IAgentProfileService> {
+  async function bind(profile: string): Promise<ProfileWithToolPolicy> {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
     await svc.bind({ profile, model: MOCK_MODEL });
     return svc;
   }
 
   it('rejects when no profile is bound yet', async () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
 
     await expect(svc.setSessionDisabledTools(['Bash'])).rejects.toThrow(/not bound/);
     expect(svc.isToolActive('Bash')).toBe(true);
@@ -539,7 +556,7 @@ describe('AgentProfileService.setSessionDisabledTools', () => {
       documentServices,
       hostEnvironmentServices(homeDir),
     );
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
     await svc.bind({ profile: 'session-deny', model: MOCK_MODEL });
     await svc.setSessionDisabledTools(['Bash']);
     await ctx.get(IWireService).flush();
@@ -569,7 +586,7 @@ describe('AgentProfileService.setSessionDisabledTools', () => {
     );
     await ctx.restorePersisted();
     await ctx.get(ISessionToolPolicy).ready;
-    const resumed = ctx.get(IAgentProfileService);
+    const resumed = profileWithToolPolicy(ctx);
 
     expect(resumed.isToolActive('Bash')).toBe(false);
     expect(resumed.isToolActive('Write')).toBe(false);
@@ -594,7 +611,7 @@ describe('AgentProfileService.setSessionDisabledTools', () => {
         reload: async () => {},
       }),
     );
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
     expect(svc.getSystemPrompt()).toContain(skillMarker);
 
@@ -618,10 +635,128 @@ describe('AgentProfileService.setSessionDisabledTools', () => {
         reload: async () => {},
       }),
     );
-    const svc = ctx.get(IAgentProfileService);
+    const svc = profileWithToolPolicy(ctx);
     await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
 
     expect(svc.isToolActive('Skill')).toBe(false);
     expect(svc.getSystemPrompt()).not.toContain(skillMarker);
   });
 });
+
+describe('AgentToolPolicyService executor enforcement', () => {
+  let ctx: TestAgentContext;
+  let homeDir: string;
+
+  beforeAll(() => {
+    registerAgentProfile({
+      name: 'executor-deny-builtin',
+      disallowedTools: ['PolicyProbe'],
+      systemPrompt: () => 'executor policy test',
+    });
+    registerAgentProfile({
+      name: 'executor-deny-mcp',
+      disallowedTools: ['mcp__blocked__*'],
+      systemPrompt: () => 'executor policy test',
+    });
+  });
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-executor-policy-home-'));
+  });
+
+  afterEach(async () => {
+    await ctx?.dispose();
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  it.each([
+    {
+      name: 'profile denylist',
+      options: {},
+      profile: 'executor-deny-builtin',
+      disable: undefined,
+    },
+    {
+      name: 'global tools config',
+      options: { initialConfig: { tools: { disabled: ['PolicyProbe'] } } },
+      profile: DEFAULT_AGENT_PROFILE_NAME,
+      disable: undefined,
+    },
+    {
+      name: 'session denylist',
+      options: {},
+      profile: DEFAULT_AGENT_PROFILE_NAME,
+      disable: ['PolicyProbe'],
+    },
+  ])('blocks a direct builtin call through $name', async ({ options, profile, disable }) => {
+    ctx = createTestAgent(options, hostEnvironmentServices(homeDir));
+    const profileService = ctx.get(IAgentProfileService);
+    await profileService.bind({ profile, model: MOCK_MODEL });
+    if (disable !== undefined) {
+      await ctx.get(IAgentToolPolicyService).setSessionDisabledTools(disable);
+    }
+    const probe = new PolicyProbeTool('PolicyProbe');
+    ctx.get(IAgentToolRegistryService).register(probe);
+
+    const result = await executeDirectToolCall(ctx, 'PolicyProbe');
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: 'Tool "PolicyProbe" is disabled by the active tool policy',
+    });
+    expect(probe.calls).toBe(0);
+  });
+
+  it('blocks a direct MCP call by glob before execution', async () => {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
+    await ctx.get(IAgentProfileService).bind({ profile: 'executor-deny-mcp', model: MOCK_MODEL });
+    const probe = new PolicyProbeTool('mcp__blocked__write');
+    ctx.get(IAgentToolRegistryService).register(probe, { source: 'mcp' });
+
+    const result = await executeDirectToolCall(ctx, probe.name);
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: `Tool "${probe.name}" is disabled by the active tool policy`,
+    });
+    expect(probe.calls).toBe(0);
+  });
+
+});
+
+async function executeDirectToolCall(ctx: TestAgentContext, name: string): Promise<ToolResult> {
+  const call: ToolCall = {
+    type: 'function',
+    id: `call_${name}`,
+    name,
+    arguments: '{}',
+  };
+  for await (const result of ctx.get(IAgentToolExecutorService).execute([call], {
+    signal: new AbortController().signal,
+    turnId: 1,
+  })) {
+    return result.result;
+  }
+  throw new Error(`No result for tool ${name}`);
+}
+
+class PolicyProbeTool implements ExecutableTool<Record<string, never>> {
+  readonly description = 'Policy enforcement probe.';
+  readonly parameters = { type: 'object', additionalProperties: false };
+  calls = 0;
+
+  constructor(
+    readonly name: string,
+    readonly source?: ToolSource,
+  ) {}
+
+  resolveExecution(): ToolExecution {
+    return {
+      approvalRule: this.name,
+      execute: async () => {
+        this.calls += 1;
+        return { isError: false, output: 'executed' };
+      },
+    };
+  }
+}

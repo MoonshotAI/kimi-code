@@ -9,7 +9,7 @@
  * The `tools` section is the global tool switch: `enabled` is an allowlist
  * (when non-empty, only listed tools are active) and `disabled` a denylist,
  * applied on top of every profile's own `tools` / `disallowedTools` policy by
- * `IAgentProfileService.isToolActive`.
+ * `IAgentToolPolicyService`.
  */
 
 import { z } from 'zod';

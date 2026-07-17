@@ -35,6 +35,7 @@ import { IAgentActivityView } from '#/agent/activityView/activityView';
 import { ISessionExternalHooksService } from '#/session/externalHooks/externalHooks';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionIndex, type SessionSummary } from '#/app/sessionIndex/sessionIndex';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -283,6 +284,16 @@ function atomicDocumentStoreStub(): IAtomicDocumentStore {
   };
 }
 
+function sessionToolPolicyStub(): ISessionToolPolicy {
+  return {
+    _serviceBrand: undefined,
+    ready: Promise.resolve(),
+    onDidChange: () => ({ dispose: () => {} }),
+    disabledTools: () => [],
+    setDisabledTools: () => Promise.resolve(),
+  };
+}
+
 function agentLifecycleStub(): IAgentLifecycleService {
   return {
     _serviceBrand: undefined,
@@ -449,6 +460,7 @@ describe('SessionLifecycleService', () => {
       stubPair(ISessionMetadata, metadataStub()),
       stubPair(IHostEnvironment, hostEnvironmentStub()),
       stubPair(ISessionSkillCatalog, skillCatalogStub()),
+      stubPair(ISessionToolPolicy, sessionToolPolicyStub()),
       stubPair(ISessionAgentProfileCatalog, agentProfileCatalogStub()),
       stubPair(IWorkspaceRegistry, workspaceRegistryStub()),
       stubPair(ISessionIndex, sessionIndexStub()),

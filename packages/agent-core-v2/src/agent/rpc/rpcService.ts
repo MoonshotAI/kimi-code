@@ -17,6 +17,7 @@ import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { expandCommandArguments } from '#/app/plugin/commands';
 import { IPluginService } from '#/app/plugin/plugin';
 import { IAgentProfileService, ProfileError } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentShellCommandService } from '#/agent/shellCommand/shellCommand';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -87,6 +88,7 @@ export class AgentRPCService implements IAgentRPCService {
     @IAgentShellCommandService private readonly shellCommand: IAgentShellCommandService,
     @IAgentLoopService private readonly loop: IAgentLoopService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @IAgentPermissionModeService private readonly permissionMode: IAgentPermissionModeService,
     @IAgentPermissionGate private readonly permission: IAgentPermissionGate,
     @IAgentPlanService private readonly planMode: IAgentPlanService,
@@ -113,7 +115,7 @@ export class AgentRPCService implements IAgentRPCService {
   async prompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
     if (payload.disabledTools !== undefined) {
       try {
-        await this.profile.setSessionDisabledTools(payload.disabledTools);
+        await this.toolPolicy.setSessionDisabledTools(payload.disabledTools);
       } catch (error) {
         if (error instanceof ProfileError) {
           throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
@@ -371,7 +373,7 @@ export class AgentRPCService implements IAgentRPCService {
     return this.toolRegistry.list().map((tool) => ({
       name: tool.name,
       description: tool.description,
-      active: this.profile.isToolActive(tool.name, tool.source),
+      active: this.toolPolicy.isToolActive(tool.name, tool.source),
       source: tool.source,
     }));
   }

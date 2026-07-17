@@ -8,7 +8,7 @@
  * context injection intact. Explicit files are marked as builtin overrides;
  * directory files must opt in through frontmatter. `tools` passes through as the allowlist
  * (`undefined` = every tool active); `disallowedTools` passes through as the
- * denylist evaluated by `IAgentProfileService.isToolActive`.
+ * denylist evaluated by `IAgentToolPolicyService`.
  */
 
 import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';

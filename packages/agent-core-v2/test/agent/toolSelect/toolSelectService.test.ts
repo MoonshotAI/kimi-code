@@ -33,6 +33,7 @@ import {
 } from '#/agent/loop/loop';
 import type { StepRequest } from '#/agent/loop/stepRequest';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import type { ExecutableTool, ToolExecution } from '#/tool/toolContract';
@@ -297,6 +298,8 @@ function registerSharedServices(
   reg.defineInstance(IAgentContextMemoryService, contextMemory);
   reg.definePartialInstance(IAgentProfileService, {
     getModelCapabilities: () => capabilities,
+  });
+  reg.definePartialInstance(IAgentToolPolicyService, {
     isToolActive: (name: string) => activeToolNames === undefined || activeToolNames.has(name),
   });
   reg.definePartialInstance(IFlagService, {

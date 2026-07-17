@@ -29,7 +29,8 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { resolveActiveToolNames } from '#/agent/profile/toolActive';
+import { resolveActiveToolNames } from '#/agent/toolPolicy/evaluate';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentLoopService } from '#/agent/loop/loop';
@@ -150,6 +151,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
@@ -159,9 +161,9 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   ) {
     this.callerAgentId = scopeContext.agentId;
     this.canRunInBackground = () =>
-      this.profile.isToolActive('TaskList') &&
-      this.profile.isToolActive('TaskOutput') &&
-      this.profile.isToolActive('TaskStop');
+      this.toolPolicy.isToolActive('TaskList') &&
+      this.toolPolicy.isToolActive('TaskOutput') &&
+      this.toolPolicy.isToolActive('TaskStop');
   }
 
   get description(): string {

@@ -27,6 +27,7 @@ import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import type { PermissionRule } from '#/agent/permissionRules/permissionRules';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import type { AgentAPI } from '#/agent/rpc/core-api';
 import { IAgentSkillService } from '#/agent/skill/skill';
@@ -1244,11 +1245,11 @@ export class AgentTestContext {
   toolsData(): Array<
     ReturnType<IAgentToolRegistryService['list']>[number] & { readonly active: boolean }
   > {
-    const profile = this.get(IAgentProfileService);
+    const toolPolicy = this.get(IAgentToolPolicyService);
     const toolRegistry = this.get(IAgentToolRegistryService);
     return toolRegistry.list().map((tool) => ({
       ...tool,
-      active: profile.isToolActive(tool.name, tool.source),
+      active: toolPolicy.isToolActive(tool.name, tool.source),
     }));
   }
 

@@ -1,9 +1,8 @@
 /**
- * `profile` domain (L3) — shared active-tool policy evaluation.
+ * `toolPolicy` domain (L4) — pure tool-activation policy evaluation.
  *
- * Applies a profile's allowlist and denylist with the same builtin/MCP matching
- * semantics for runtime execution and capability descriptions. Pure data
- * helper with no scoped state.
+ * Applies allowlists and denylists with builtin/MCP matching semantics shared
+ * by Agent authorization, profile prompt construction, and child-agent setup.
  */
 
 import picomatch from 'picomatch';

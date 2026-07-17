@@ -151,6 +151,7 @@ const DOMAIN_LAYER = new Map([
   ['runtime', 4],
   ['toolDedupe', 4],
   ['toolSelect', 4],
+  ['toolPolicy', 4],
   ['contextMemory', 4],
   ['contextInjector', 4],
   ['agentPlugin', 4],

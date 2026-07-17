@@ -14,11 +14,8 @@
  * the ephemeral per-tool deltas from `addActiveTool` / `removeActiveTool`
  * (used by `userTool`; intentionally not persisted, re-derived on resume); the
  * live overlay is cached in a field and falls back to the Model when unset, so
- * no restore-ordering coupling with `userTool` arises. `isToolActive`
- * additionally intersects the global `[tools]` config section (`enabled` /
- * `disabled`) and the Session-scoped client denylist. Profile and client
- * policy are persisted independently. `setSessionDisabledTools` replaces the
- * Session policy and awaits prompt refreshes for existing agents. The `agent.status.updated`
+ * no restore-ordering coupling with `userTool` arises. Profile and client
+ * policy are persisted independently. The `agent.status.updated`
  * / `warning` events now ride `IEventBus` (`agent.status.updated` canonical in
  * `usageOps`). `chdir` and
  * `emitStatusUpdated` run live-only after the dispatch, so `wire.replay`
@@ -79,7 +76,7 @@ import {
   type ThinkingConfig,
   type ToolsConfig,
 } from './configSection';
-import { isToolActive as evaluateToolActive } from './toolActive';
+import { isToolActive as evaluateToolActive } from '#/agent/toolPolicy/evaluate';
 import {
   ActiveToolsModel,
   configUpdate,
@@ -331,6 +328,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
       thinkingLevel: this.thinkingLevel,
       systemPrompt: this.systemPrompt,
       activeToolNames: this.activeToolNames === undefined ? undefined : [...this.activeToolNames],
+      disallowedTools: [...(this.profileState.disallowedTools ?? [])],
     };
   }
 
@@ -436,36 +434,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     return this.activeToolNames;
   }
 
-  isToolActive(name: string, source: ToolSource = 'builtin'): boolean {
-    const globalTools = this.config.get<ToolsConfig>(TOOLS_SECTION);
-    return (
-      evaluateToolActive(
-        {
-          tools: this.activeToolNames,
-          disallowedTools: this.profileState.disallowedTools,
-        },
-        name,
-        source,
-      ) &&
-      evaluateToolActive(
-        {
-          // An empty `enabled` list is treated as "no allowlist", unlike a
-          // profile's `tools: []` — a global "disable every tool" foot-gun is
-          // not a useful config state.
-          tools: globalTools?.enabled?.length ? globalTools.enabled : undefined,
-          disallowedTools: globalTools?.disabled,
-        },
-        name,
-        source,
-      ) &&
-      evaluateToolActive(
-        { disallowedTools: this.sessionToolPolicy.disabledTools() },
-        name,
-        source,
-      )
-    );
-  }
-
   addActiveTool(name: string): void {
     const activeToolNames = this.activeToolNames;
     if (activeToolNames === undefined || activeToolNames.includes(name)) return;
@@ -476,16 +444,6 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     const activeToolNames = this.activeToolNames;
     if (activeToolNames === undefined || !activeToolNames.includes(name)) return;
     this.activeToolNamesOverlay = activeToolNames.filter((candidate) => candidate !== name);
-  }
-
-  async setSessionDisabledTools(names: readonly string[]): Promise<void> {
-    if (this.profileName === undefined) {
-      throw new ProfileError(
-        ProfileErrors.codes.PROFILE_NOT_BOUND,
-        'Cannot set session disabled tools: agent profile is not bound',
-      );
-    }
-    await this.sessionToolPolicy.setDisabledTools(names);
   }
 
   private resolveConfigPayload(

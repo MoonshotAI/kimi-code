@@ -217,6 +217,9 @@ export * from '#/agent/toolSelect/toolSelect';
 export * from '#/agent/toolSelect/toolSelectService';
 export * from '#/agent/toolSelect/toolSelectAnnouncements';
 export * from '#/agent/toolSelect/toolSelectAnnouncementsService';
+export * from '#/agent/toolPolicy/evaluate';
+export * from '#/agent/toolPolicy/toolPolicy';
+export * from '#/agent/toolPolicy/toolPolicyService';
 
 import '#/agent/task/configSection';
 export {

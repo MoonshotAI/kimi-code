@@ -112,6 +112,25 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
+  it('rejects by policy before dynamic availability when a tool-call guard denies it', async () => {
+    const tool = new TestTool('blocked');
+    registry.register(tool, { source: 'mcp' });
+    executor.registerUnavailableToolDescriber(() => 'Tool "blocked" is not loaded');
+    executor.registerToolCallGuard(({ name, source }) =>
+      name === 'blocked' && source === 'mcp' ? 'Tool "blocked" is disabled' : undefined,
+    );
+
+    const results = await execute([toolCall('call_blocked', 'blocked', {})]);
+
+    expect(results).toEqual([
+      expect.objectContaining({
+        isError: true,
+        output: 'Tool "blocked" is disabled',
+      }),
+    ]);
+    expect(tool.calls).toEqual([]);
+  });
+
   it('tags tool_call telemetry with recorded dup types, defaulting to normal', async () => {
     const tool = new TestTool('echo');
     registry.register(tool);

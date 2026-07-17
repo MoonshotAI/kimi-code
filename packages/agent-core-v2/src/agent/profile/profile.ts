@@ -6,7 +6,6 @@ import type { Model } from '#/app/model/modelInstance';
 import { createDecorator } from "#/_base/di/instantiation";
 import type { ErrorCode } from '#/errors';
 import { Error2 } from '#/_base/errors/errors';
-import type { ToolSource } from '#/tool/toolContract';
 
 import { ProfileErrors } from './errors';
 
@@ -46,6 +45,7 @@ export type ResolvedAgentProfile = AgentProfile;
 
 export interface ProfileData extends AgentConfigData {
   readonly activeToolNames?: readonly string[];
+  readonly disallowedTools?: readonly string[];
 }
 
 export type ProfileUpdateData = Partial<{
@@ -130,16 +130,8 @@ export interface IAgentProfileService {
   hasProvider(): boolean;
   getSystemPrompt(): string;
   getActiveToolNames(): readonly string[] | undefined;
-  isToolActive(name: string, source?: ToolSource): boolean;
   addActiveTool(name: string): void;
   removeActiveTool(name: string): void;
-  /**
-   * Persist the client-managed Session denylist as a full replacement.
-   * Profile-owned restrictions remain independent and are intersected at
-   * evaluation time. Requires a bound profile and awaits prompt refreshes for
-   * every existing Agent in the Session.
-   */
-  setSessionDisabledTools(names: readonly string[]): Promise<void>;
 }
 
 export const IAgentProfileService = createDecorator<IAgentProfileService>('agentProfileService');
