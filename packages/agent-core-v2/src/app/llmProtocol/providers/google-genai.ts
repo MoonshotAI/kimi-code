@@ -543,7 +543,7 @@ export class GoogleGenAIStreamedMessage implements StreamedMessage {
           : 0;
       this._usage = {
         inputOther: Math.max(promptTokenCount - cachedContentTokenCount, 0),
-        output: (usageMetadata['candidatesTokenCount'] as number) ?? 0,
+        output: typeof usageMetadata['candidatesTokenCount'] === 'number' ? usageMetadata['candidatesTokenCount'] : 0,
         inputCacheRead: cachedContentTokenCount,
         inputCacheCreation: 0,
       };
