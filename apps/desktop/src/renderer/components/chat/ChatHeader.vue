@@ -339,7 +339,7 @@ function startArchive(): void {
   display: flex;
   align-items: center;
   gap: 14px;
-  height: 48px;
+  height: var(--panel-head-h, 48px);
   padding: 0 16px;
   border-bottom: 0.5px solid var(--color-line);
   background: var(--color-bg);

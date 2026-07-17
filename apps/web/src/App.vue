@@ -1365,6 +1365,10 @@ function openPr(url: string): void {
      share the same 48px height as the conversation header so the hairline reads as
      one continuous line across the layout. */
   --panel-head-h: 48px;
+  /* Inset of the header's sm icon buttons from the header edges — derived (not
+     hardcoded) so the PanelHeader close slot stays equidistant from the top
+     and right edges when the header height or the button size changes. */
+  --panel-head-inset: calc((var(--panel-head-h) - var(--icon-button-sm)) / 2);
 }
 
 /* Sidebar collapsed (desktop): the conversation header pads left so its
@@ -1381,5 +1385,17 @@ function openPr(url: string): void {
 }
 .app.sidebar-collapsed.macos-desktop .chat-header {
   padding-left: 134px;
+}
+
+/* macOS desktop (hidden title bar): the right panel's header row continues the
+   conversation header's 48px top strip, so it joins the window-drag region.
+   Interactive controls inside opt out (same pattern as ChatHeader). Cross-
+   component rule (the header is web-ui's PanelHeader), so it lives here. */
+.app.macos-desktop .global-preview .ui-panel-header {
+  -webkit-app-region: drag;
+}
+.app.macos-desktop .global-preview .ui-panel-header button,
+.app.macos-desktop .global-preview .ui-panel-header input {
+  -webkit-app-region: no-drag;
 }
 </style>

@@ -57,7 +57,7 @@ defineExpose({ el });
 .ui-icon-button:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
 .ui-icon-button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-.ui-icon-button--sm { width: 26px; height: 26px; border-radius: var(--radius-sm); }
+.ui-icon-button--sm { width: var(--icon-button-sm); height: var(--icon-button-sm); border-radius: var(--radius-sm); }
 .ui-icon-button--md { width: 32px; height: 32px; }
 .ui-icon-button--lg { width: 44px; height: 44px; }
 

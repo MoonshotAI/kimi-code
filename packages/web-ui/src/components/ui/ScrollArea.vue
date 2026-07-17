@@ -61,8 +61,19 @@ function metric(viewportSize: number, contentSize: number, scrollOffset: number)
 function updateMetrics(): void {
   const el = viewport.value;
   if (!el) return;
-  vertical.value = metric(el.clientHeight, el.scrollHeight, el.scrollTop);
-  horizontal.value = metric(el.clientWidth, el.scrollWidth, el.scrollLeft);
+  const v = metric(el.clientHeight, el.scrollHeight, el.scrollTop);
+  const h = metric(el.clientWidth, el.scrollWidth, el.scrollLeft);
+  // Only write the refs when a value actually changed. Assigning a fresh
+  // object every time re-renders the component on each observer callback;
+  // with mutating slot content (e.g. an entering TransitionGroup) that
+  // re-render itself mutates the observed subtree, re-firing the
+  // MutationObserver and looping the renderer at 100% CPU.
+  if (v.overflow !== vertical.value.overflow || v.size !== vertical.value.size || v.offset !== vertical.value.offset) {
+    vertical.value = v;
+  }
+  if (h.overflow !== horizontal.value.overflow || h.size !== horizontal.value.size || h.offset !== horizontal.value.offset) {
+    horizontal.value = h;
+  }
 }
 
 function cancelHide(): void {

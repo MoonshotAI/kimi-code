@@ -51,7 +51,7 @@ defineEmits<{ close: [] }>();
   align-items: center;
   gap: var(--space-2);
   height: var(--panel-head-h, 48px);
-  padding: 0 6px 0 var(--space-3);
+  padding: 0 var(--panel-head-inset, 11px) 0 var(--space-3);
   box-sizing: border-box;
   min-width: 0;
   border-bottom: 0.5px solid var(--color-line);

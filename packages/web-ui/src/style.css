@@ -358,6 +358,9 @@ html[data-color-scheme="dark"][data-accent="mono"] {
   --p-ic-md: 16px;
   --p-ic-lg: 20px;
 
+  /* -- IconButton box sizes (design-system §03) ----------------------------- */
+  --icon-button-sm: 26px;
+
   /* -- layout & breakpoints (design-system §02) ---------------------------- */
   --p-sidebar-w: 264px;
   --p-content-max: 760px;

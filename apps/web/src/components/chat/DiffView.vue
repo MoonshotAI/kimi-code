@@ -223,7 +223,6 @@ function treeRowStyle(depth: number): Record<string, string> {
         :title="t('diff.title')"
         :closable="closable"
         :close-label="t('diff.close')"
-        close-icon="panel-collapse-right"
         @close="onClose"
       >
         <Tooltip :text="selectedDiffPath ?? ''">
@@ -259,7 +258,6 @@ function treeRowStyle(depth: number): Record<string, string> {
         :title="t('diff.title')"
         :closable="closable"
         :close-label="t('diff.close')"
-        close-icon="panel-collapse-right"
         @close="onClose"
       >
         <span class="dv-change-count">{{ formatFileCount(changes.length) }}</span>
@@ -501,7 +499,6 @@ function treeRowStyle(depth: number): Record<string, string> {
 .tree-list {
   list-style: none;
   margin: 0;
-  padding: 0;
 }
 .tree-node {
   overflow: hidden;
@@ -532,6 +529,7 @@ function treeRowStyle(depth: number): Record<string, string> {
   align-items: center;
   gap: 6px;
   width: 100%;
+  margin-top: 1px;
   padding: 3px 8px;
   background: none;
   border: none;
