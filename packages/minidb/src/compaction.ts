@@ -153,9 +153,11 @@ export async function compact(db: CompactionTarget): Promise<void> {
   db._compactDone = (async () => {
     try {
       await runCompaction(db);
+      // The onCompacted hook is part of the compaction: a run whose hook
+      // throws is counted as a compactError, not a successful compaction.
+      db.onCompacted?.();
       db.stats.compactions++;
       db.lastCompactError = null;
-      db.onCompacted?.();
     } catch (err) {
       db.stats.compactErrors = (db.stats.compactErrors ?? 0) + 1;
       db.lastCompactError = err;
@@ -219,10 +221,39 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
   // old WAL sealed, its head no longer moves after this drain loop, so the
   // loop provably terminates — at the cost of a write pause proportional to
   // the tail the pre-copy could not drain.
+  //
+  // Recovery: the seal is one-way and the old WAL object is single-use, so a
+  // failure anywhere between the seal and the new WAL's open would leave every
+  // later write hitting WAL_SEALED/'WAL is closed' forever. The catch below
+  // rolls the db forward to a writable state by swapping in a FRESH WAL on
+  // db.walPath (it appends at the real EOF of whatever file the path now
+  // holds). `rotated` tracks the commit point: before the WAL rename the old
+  // full WAL is still at db.walPath and the old store pointers stay valid (a
+  // renamed-in new snapshot paired with the old WAL is consistent — see the
+  // crash-safety note above); past it, the new layout is on disk and recovery
+  // must additionally apply the store-pointer remap + reader reopen. If the
+  // rollback itself also fails (e.g. persistent EMFILE), the db stays
+  // unwritable but the on-disk snapshot/WAL pair is consistent either way, so
+  // the next process open still recovers.
   let releaseRotation!: () => void;
   db._rotateLock = new Promise<void>((resolve) => {
     releaseRotation = resolve;
   });
+  let rotated = false;
+  let remapped = false;
+  // Remap disk-backed value pointers to the new snapshot/WAL files. Guarded
+  // against double application: the wal-offset shift is NOT idempotent.
+  const remap = (): void => {
+    if (remapped) return;
+    const snapLocs = snapRes.locs;
+    db.store.remapLocs((k: string, loc: ValueLoc) => {
+      if (loc.file === 'wal' && loc.off >= baseOffset) {
+        return { file: 'wal', off: loc.off - baseOffset, len: loc.len };
+      }
+      return snapLocs.get(k);
+    });
+    remapped = true;
+  };
   try {
     db.wal.seal();
     for (;;) {
@@ -242,22 +273,35 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
     await fs.rename(tmp, snap);
     await fsyncDir(db.dir);
     await fs.rename(walTmp, db.walPath);
+    rotated = true;
     await fsyncDir(db.dir);
 
-    db.wal = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, stats: db.stats });
-    await db.wal.open();
+    const fresh = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, stats: db.stats });
+    db.wal = fresh;
+    await fresh.open();
 
-    // Remap disk-backed value pointers to the new snapshot/WAL files. Do this in
-    // the same synchronous segment as the fd reopen, so synchronous readers can
-    // never observe a new pointer against an old fd or vice versa.
-    const snapLocs = snapRes.locs;
-    db.store.remapLocs((k: string, loc: ValueLoc) => {
-      if (loc.file === 'wal' && loc.off >= baseOffset) {
-        return { file: 'wal', off: loc.off - baseOffset, len: loc.len };
-      }
-      return snapLocs.get(k);
-    });
+    // Commit the in-memory view to the new files. Do this in the same
+    // synchronous segment as the fd reopen, so synchronous readers can never
+    // observe a new pointer against an old fd or vice versa.
+    remap();
     db.valueReader?.reopenBoth();
+  } catch (err) {
+    try {
+      // Swap the sealed/closed WAL for a fresh handle on db.walPath. The swap
+      // comes first: it both restores appendability and stops late in-flight
+      // writers from publishing old-file value pointers against the fresh WAL.
+      await db.wal.close().catch(() => {});
+      const fresh = new WAL(db.walPath, { fsyncPolicy: db.fsyncPolicy, stats: db.stats });
+      await fresh.open();
+      db.wal = fresh;
+      if (rotated) {
+        remap();
+        db.valueReader?.reopenBoth();
+      }
+    } catch {
+      // Best-effort recovery only — on-disk state is consistent regardless.
+    }
+    throw err;
   } finally {
     releaseRotation();
     db._rotateLock = null;

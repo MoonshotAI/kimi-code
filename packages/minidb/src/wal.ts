@@ -207,11 +207,19 @@ export class WAL {
       clearInterval(this.timer);
       this.timer = null;
     }
-    await this.flush();
-    if (this.fh) {
-      await this.sync();
-      await this.fh.close();
+    // Release the file handle even when the final flush/fsync fails: the error
+    // still propagates to the caller, but a half-closed WAL must not leak its
+    // fd (a compaction rotation recovering from a failed close swaps in a
+    // fresh WAL on the same path and abandons this handle). An fh.close()
+    // error itself is swallowed: with the fsync above already durable there
+    // is nothing actionable left to report.
+    try {
+      await this.flush();
+      if (this.fh) await this.sync();
+    } finally {
+      const fh = this.fh;
       this.fh = null;
+      if (fh) await fh.close().catch(() => {});
     }
   }
 }

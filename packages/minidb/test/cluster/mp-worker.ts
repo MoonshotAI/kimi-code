@@ -5,6 +5,7 @@
 // Always prints a final JSON report line and exits non-zero on failure.
 
 import { ClusterDb } from '../../src/cluster/index.js';
+import { shardFor } from '../../src/cluster/utils.js';
 import { LockError } from '../../src/lockfile.js';
 
 const [, , mode, ...rest] = process.argv;
@@ -140,6 +141,85 @@ async function main(): Promise<void> {
     await db.set(key!, { heldBy: process.pid });
     out({ ok: 1, mode, holding: key, pid: process.pid });
     setInterval(() => {}, 60_000); // stay alive; killed by the parent
+    return;
+  }
+
+  if (mode === 'storm') {
+    // storm <dir> <shardCount> <shard> <seed> <n> [compactThresholdBytes] [doCompact]
+    // Deterministic mixed write storm onto ONE shard: sets, same-key updates,
+    // dels, same-shard atomic batches (TYPE_BATCH frames), short/long TTL sets
+    // and dt changes. Reports the exact appended frame count.
+    const [dir, shardCount, shard, seed, n, compactThresholdBytes = '0', doCompact = '0'] = rest;
+    const shards = Number(shardCount);
+    const target = Number(shard);
+    const db = await ClusterDb.open({
+      dir: dir!,
+      shardCount: shards,
+      valueCodec: 'json',
+      fsyncPolicy: 'no',
+      lockHoldMs: 0,
+      compactThresholdBytes: Number(compactThresholdBytes) > 0 ? Number(compactThresholdBytes) : undefined,
+    });
+    const doc = (i: number) => ({ n: i, c: `c${i % 7}`, u: `${seed}-u${i}`, t: `alpha beta w${i % 13}` });
+    const keys = (function* (): Generator<string> {
+      for (let seq = 0; ; seq++) {
+        const key = `${seed}:${seq}`;
+        if (shardFor(key, shards) === target) yield key;
+      }
+    })();
+    // Loop keys aligned with i (batch keys are NOT tracked here): updates and
+    // dels always target a key whose unique value only ever lives on itself.
+    const loopKeys: string[] = [];
+    let frames = 0;
+    const count = Number(n);
+    for (let i = 0; i < count; i++) {
+      const key = keys.next().value!;
+      await withRetry(() => db.set(key, doc(i), { dt: { created: 1700000000000 + i } }), stats);
+      frames++;
+      loopKeys.push(key);
+      if (i % 5 === 1) {
+        const j = i - 1;
+        await withRetry(
+          () => db.set(loopKeys[j]!, { ...doc(j), n: j * 10, t: `alpha changed w${j % 13}` }, { dt: { created: 1700000009000 + j } }),
+          stats,
+        );
+        frames++;
+      }
+      if (i % 7 === 3) {
+        await withRetry(() => db.del(loopKeys[i - 3]!), stats);
+        frames++;
+      }
+      if (i % 50 === 10) {
+        // Atomic single-shard batch: three fresh keys plus a del of the first.
+        const b1 = keys.next().value!;
+        const b2 = keys.next().value!;
+        const b3 = keys.next().value!;
+        await withRetry(
+          () =>
+            db.batch([
+              { op: 'set', key: b1, value: { ...doc(i + 100000), u: `${seed}-ub${i}a` }, dt: { created: 1700001000000 + i } },
+              { op: 'set', key: b2, value: { ...doc(i + 100001), u: `${seed}-ub${i}b`, t: 'alpha batch' } },
+              { op: 'set', key: b3, value: { ...doc(i + 100002), u: `${seed}-ub${i}c` } },
+              { op: 'del', key: b1 },
+            ]),
+          stats,
+        );
+        frames++;
+      }
+      if (i % 11 === 5) {
+        // TTL keys come from the same shard-targeted generator, so every op
+        // of the storm appends to this one shard's WAL.
+        await withRetry(() => db.set(keys.next().value!, { ...doc(i + 200000), u: `${seed}-uts${i}` }, { ttl: 50 }), stats);
+        frames++;
+      }
+      if (i % 11 === 6) {
+        await withRetry(() => db.set(keys.next().value!, { ...doc(i + 300000), u: `${seed}-utl${i}` }, { ttl: 3_600_000 }), stats);
+        frames++;
+      }
+    }
+    if (doCompact === '1') await db.compact();
+    out({ ok: 1, mode, frames, retries: stats.retries });
+    await db.close();
     return;
   }
 

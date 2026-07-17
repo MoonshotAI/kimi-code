@@ -107,8 +107,14 @@ export interface ClusterStats {
   writerOpens: number;
   /** Total shard reader opens performed by this process. */
   readerOpens: number;
-  /** Reader cache reopens triggered by on-disk changes from other processes. */
+  /** Reader cache reopens triggered by on-disk changes from other processes
+   *  (the full-replay path; contrast incrementalCatchups). */
   readerReopens: number;
+  /** Reader refreshes satisfied by applying only the appended WAL frames
+   *  instead of a full reopen. */
+  incrementalCatchups: number;
+  /** Total WAL frames applied by incremental reader catch-ups. */
+  catchupFramesApplied: number;
   /** Times a write-lock acquisition had to wait/retry on a live holder. */
   lockWaits: number;
   /** LRU evictions of cached writers/readers. */

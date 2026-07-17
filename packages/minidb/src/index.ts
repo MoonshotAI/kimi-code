@@ -13,7 +13,7 @@ import { Store } from './store.js';
 import type { StoreRecord, ValueLoc } from './store.js';
 import { WAL } from './wal.js';
 import { ValueReader } from './value-reader.js';
-import { recover } from './recovery.js';
+import { recover, catchUpWal, frameToOps } from './recovery.js';
 import { compact, shouldCompact } from './compaction.js';
 import { IndexManager, UniqueViolationError } from './index-manager.js';
 import { DtIndex } from './dt-index.js';
@@ -22,9 +22,9 @@ import { CompoundIndexManager } from './compound-index.js';
 import { getPath, match, project } from './query.js';
 import { LockFile, LockError } from './lockfile.js';
 import { encodeFrame, encodeBatchOps, scanBatchOpRefs, HEADER_SIZE, TYPE_SET, TYPE_DEL, TYPE_BATCH } from './codec.js';
-import type { BatchOp as EncodedBatchOp } from './codec.js';
+import type { BatchOp as EncodedBatchOp, FrameRef } from './codec.js';
 import type { FsyncPolicy } from './wal.js';
-import type { RecoveryMode, RecoveryInfo, ValueMode } from './recovery.js';
+import type { RecoveryMode, RecoveryInfo, ValueMode, RecoveredOp } from './recovery.js';
 import type { IndexDef, IndexInfo } from './index-manager.js';
 import type { CompoundIndexDef, CompoundIndexInfo } from './compound-index.js';
 import type { DtRangeEntry } from './dt-index.js';
@@ -220,6 +220,10 @@ export class MiniDb<V = unknown> {
   fsyncPolicy: FsyncPolicy = 'everysec';
   private closed = false;
   recoveryInfo: RecoveryInfo | null = null;
+  /** Continuation watermark for catchUpFromWal: the WAL inode + applied
+   *  offset as advanced by the last successful catch-up (recoveryInfo's scan
+   *  endpoint anchors the first call). */
+  private walTail: { dev: number; ino: number; size: number } | null = null;
   readOnly = false;
   private lock: LockFile | null = null;
 
@@ -307,6 +311,13 @@ export class MiniDb<V = unknown> {
         'db.compound-indexes.json.tmp',
       ]) {
         await fs.rm(path.join(db.dir, tmp), { force: true });
+      }
+      // A failed postings rebuild orphans `db.text-*.postings.tmp` (its atomic
+      // rename never ran). Postings are pure derived state — rebuilt from the
+      // Store on open and after compaction — so such temps are always safe to
+      // delete, for any index name.
+      for (const f of await fs.readdir(db.dir)) {
+        if (/^db\.text-.*\.postings\.tmp$/.test(f)) await fs.rm(path.join(db.dir, f), { force: true });
       }
     }
 
@@ -543,15 +554,21 @@ export class MiniDb<V = unknown> {
    * Run a write-op commit body, transparently retrying once when the commit
    * raced a compaction rotation: an op that passed the _rotateLock gate check
    * just before it was set can hit the freshly-sealed old WAL (code
-   * 'WAL_SEALED') between the gate and its append. The op rolls its in-memory
-   * side effects back on a failed append, so re-running the (idempotent) commit
+   * 'WAL_SEALED') between the gate and its append, or — one step later in the
+   * rotation — the already-closed but not-yet-replaced old WAL (the untyped
+   * 'WAL is closed'; only retried while a rotation is actually in flight, so a
+   * write after db.close() still fails). The op rolls its in-memory side
+   * effects back on a failed append, so re-running the (idempotent) commit
    * body against the post-rotation WAL is safe.
    */
   private async retryOnWalSeal(commit: () => Promise<void>): Promise<void> {
     try {
       await commit();
     } catch (e) {
-      if ((e as { code?: string }).code !== 'WAL_SEALED') throw e;
+      const sealed = (e as { code?: string }).code === 'WAL_SEALED';
+      const closedMidRotation =
+        this._rotateLock !== null && e instanceof Error && e.message === 'WAL is closed';
+      if (!sealed && !closedMidRotation) throw e;
       if (this._rotateLock) await this._rotateLock;
       await commit();
     }
@@ -601,15 +618,25 @@ export class MiniDb<V = unknown> {
     const bytes = this.store.recordBytes(pk);
     if (!bytes) return;
     const op = this.prepareDel(Buffer.from(pk, 'binary'));
-    const appended = this.wal.append(encodeFrame({ type: TYPE_DEL, key: op.key }));
-    const prev = this.applyOp(op);
-    try {
-      await appended;
-      this.stats.evictions++;
-    } catch (e) {
-      this.restoreKey(op.pk, prev);
-      throw e;
-    }
+    // Committed through retryOnWalSeal like any other write: an evict that
+    // passed the writer gate just before a compaction rotation can land its
+    // DEL on the freshly-sealed (or just-closed, soon-to-be-replaced) old WAL,
+    // and the user write that triggered the eviction must never see that race.
+    // A failed attempt restores the victim via restoreKey, so re-running the
+    // idempotent DEL body against the post-rotation WAL is safe.
+    const commit = async (): Promise<void> => {
+      const appended = this.wal.append(encodeFrame({ type: TYPE_DEL, key: op.key }));
+      const prev = this.applyOp(op);
+      const seq = this.store.map.get(op.pk)?.seq;
+      try {
+        await appended;
+        this.stats.evictions++;
+      } catch (e) {
+        this.restoreKey(op.pk, prev, seq);
+        throw e;
+      }
+    };
+    await this.retryOnWalSeal(commit);
   }
 
   private async ensureMemoryFor(ops: readonly PreparedOp<V>[]): Promise<void> {
@@ -712,7 +739,7 @@ export class MiniDb<V = unknown> {
       try {
         await appended.done;
       } catch (e) {
-        this.restoreKey(op.pk, prev);
+        this.restoreKey(op.pk, prev, seq);
         throw e;
       }
       if (this.valueMode === 'disk') {
@@ -743,10 +770,11 @@ export class MiniDb<V = unknown> {
     const commit = async (): Promise<void> => {
       const appended = this.wal.append(encodeFrame({ type: TYPE_DEL, key: op.key }));
       const prev = this.applyOp(op);
+      const seq = this.store.map.get(op.pk)?.seq;
       try {
         await appended;
       } catch (e) {
-        this.restoreKey(op.pk, prev);
+        this.restoreKey(op.pk, prev, seq);
         throw e;
       }
       this.maybeAutoCompact();
@@ -787,6 +815,11 @@ export class MiniDb<V = unknown> {
         const prev = this.applyOp(op);
         if (!prevs.has(op.pk)) prevs.set(op.pk, prev);
       }
+      // Seq identity of each record as this batch left it (undefined where the
+      // batch's last op deleted the key): guards both the rollback and the WAL
+      // pointer publish against interleaved same-key commits.
+      const seqs = new Map<string, number | undefined>();
+      for (const pk of prevs.keys()) seqs.set(pk, this.store.map.get(pk)?.seq);
       // In valueMode 'disk' the applied records hold in-memory refs for now
       // (see set()); their WAL pointers are published after `done` resolves.
       // Only the LAST set per key may publish — an earlier op's frame range
@@ -799,15 +832,14 @@ export class MiniDb<V = unknown> {
           const op = prepared[i]!;
           const ref = opRefs[i];
           if (op.type === TYPE_SET && ref) {
-            lastSet.set(op.pk, { op, loc: { file: 'wal', off: bodyOff + ref.valueOff, len: ref.valLen }, seq: undefined });
+            lastSet.set(op.pk, { op, loc: { file: 'wal', off: bodyOff + ref.valueOff, len: ref.valLen }, seq: seqs.get(op.pk) });
           }
         }
-        for (const [pk, e] of lastSet) e.seq = this.store.map.get(pk)?.seq;
       }
       try {
         await appended.done;
       } catch (e) {
-        for (const [pk, prev] of prevs) this.restoreKey(pk, prev);
+        for (const [pk, prev] of prevs) this.restoreKey(pk, prev, seqs.get(pk));
         throw e;
       }
       for (const [pk, { op, loc, seq }] of lastSet) {
@@ -883,8 +915,16 @@ export class MiniDb<V = unknown> {
   }
 
   /** Roll a key back to its pre-op record across the store and every derived
-   *  index. Used when a WAL write fails after applyOp already mutated state. */
-  private restoreKey(pk: string, prev: StoreRecord | undefined): void {
+   *  index. Used when a WAL write fails after applyOp already mutated state.
+   *  `appliedSeq` is the store record's seq captured right after THIS attempt's
+   *  own apply (undefined when the op left the key absent, i.e. a DEL). The
+   *  restore is skipped when the key's current state no longer matches it —
+   *  the same seq-identity guard publishWalRef uses — because a later same-key
+   *  op committed (or an expiry reaped the key) meanwhile, and rolling back
+   *  over it would wipe state that is already durable. */
+  private restoreKey(pk: string, prev: StoreRecord | undefined, appliedSeq: number | undefined): void {
+    const cur = this.store.map.get(pk);
+    if (appliedSeq === undefined ? cur !== undefined : cur?.seq !== appliedSeq) return;
     if (this.indexes.indexes.size) this.indexes.remove(pk, undefined);
     for (const ti of this.text.values()) ti.remove(pk);
     this.dt.del(pk);
@@ -903,6 +943,56 @@ export class MiniDb<V = unknown> {
     for (const ti of this.text.values()) {
       if (this.indexable(doc)) ti.add(pk, doc);
     }
+  }
+
+  /** Apply one recovered WAL frame during catchUpFromWal: the same ops
+   *  open-time recovery derives from it (frameToOps), plus the incremental
+   *  derived-index maintenance applyOp performs on the write path — minus
+   *  unique checks: the writer already validated, and intermediate frame
+   *  states must apply literally (LWW). */
+  private applyRecoveredFrame(f: FrameRef, fd: number): void {
+    for (const op of frameToOps(f, 'wal', fd, this.valueMode)) this.applyRecoveredOp(op);
+  }
+
+  private applyRecoveredOp(op: RecoveredOp): void {
+    const pk = this.pk(op.key);
+    // Old doc for derived-index removal; decoded before the overwrite, like
+    // applyOp. This get also lazy-reaps an expired old record, whose onExpire
+    // hook then removes its derived entries for us.
+    const oldDoc = this.indexes.indexes.size ? this.decode(this.store.get(pk)) : undefined;
+    if (op.type === TYPE_DEL) {
+      if (!this.store.del(pk)) return;
+      this.access.delete(pk);
+      this.dt.del(pk);
+      this.compound.remove(pk);
+      if (this.indexes.indexes.size && this.indexable(oldDoc)) this.indexes.remove(pk, oldDoc);
+      for (const ti of this.text.values()) ti.remove(pk);
+      return;
+    }
+    this.store.setRef(op.key, op.ref!, op.expireAt, op.dt);
+    // Re-read through the store: a TTL too short to survive the few
+    // microseconds since the replay-time expiry check was already reaped
+    // here, with onExpire dropping derived state — exactly what a fresh
+    // reopen leaves for the key. Otherwise dt/compound/secondary/text indexes
+    // would be resurrected for a key the store no longer holds.
+    const buf = this.store.get(pk);
+    if (buf === undefined) return;
+    this.dt.set(pk, op.dt);
+    // Values are only decoded when a value-derived index exists (all of them
+    // require the json codec): with none, recovery never copies them either.
+    if (this.indexes.indexes.size || this.text.size || this.compound.list().length) {
+      const doc = this.decode(buf)!;
+      this.compound.add(pk, doc, op.dt);
+      if (this.indexes.indexes.size) {
+        if (this.indexable(oldDoc)) this.indexes.remove(pk, oldDoc);
+        if (this.indexable(doc)) this.indexes.add(pk, doc);
+      }
+      for (const ti of this.text.values()) {
+        if (this.indexable(doc)) ti.add(pk, doc);
+        else ti.remove(pk);
+      }
+    }
+    this.touchAccess(pk);
   }
 
   has(key: string | Buffer): boolean {
@@ -940,15 +1030,16 @@ export class MiniDb<V = unknown> {
       const wal = this.wal;
       const appended = wal.appendLoc(frame);
       // In-memory ref first (see set()); the disk pointer is published once the
-      // frame's bytes are durably in db.wal.
+      // frame's bytes are durably in db.wal. prev/seq are captured per attempt
+      // (as in set()): a rotation retry can find a different record in place,
+      // and restoreKey's seq guard then leaves that newer durable state alone.
+      const prev = this.store.map.get(k);
       this.store.set(k, curValue, expireAt, cur.dt);
       const seq = this.store.map.get(k)?.seq;
       try {
         await appended.done;
       } catch (e) {
-        // Value/dt are unchanged (only the TTL moved), so restoring the store
-        // record is enough; derived indexes were never touched.
-        this.store.setRef(k, cur.ref, cur.expireAt, cur.dt);
+        this.restoreKey(k, prev, seq);
         throw e;
       }
       if (this.valueMode === 'disk') {
@@ -1110,11 +1201,25 @@ export class MiniDb<V = unknown> {
     if (this.codecName !== 'json') throw new Error('text indexes require valueCodec: "json"');
     if (this.text.has(name)) throw new Error(`text index "${name}" already exists`);
     const ti = new TextIndex({ fields, postingsPath: this.textPostingsPath(name) });
-    this.text.set(name, ti);
     const def = { name, fields: fields ?? null };
-    this.textDefs.push(def);
+    // Build BEFORE registering: a failed build must leave no phantom index
+    // behind — a registered-but-unbuilt index would both poison every write
+    // path that walks this.text and make a retry fail with "already exists".
     ti.build(this.textRecords());
-    await this.persistTextIndexDefinitions();
+    this.text.set(name, ti);
+    this.textDefs.push(def);
+    try {
+      await this.persistTextIndexDefinitions();
+    } catch (e) {
+      // Unwind so the in-memory state and the definition sidecar (which does
+      // not name this index) do not diverge; drop the derived postings file
+      // with it, exactly like dropTextIndex would.
+      this.text.delete(name);
+      this.textDefs = this.textDefs.filter((d) => d.name !== name);
+      ti.close();
+      await fs.rm(this.textPostingsPath(name), { force: true }).catch(() => {});
+      throw e;
+    }
   }
   async dropTextIndex(name: string): Promise<boolean> {
     this.ensureOpen();
@@ -1269,8 +1374,6 @@ export class MiniDb<V = unknown> {
 
     const limit = q.limit;
     const skip = q.skip ?? 0;
-    // Only the range bounds are honored here; ignore any stray count/offset a
-    // caller put on the dt cond so they cannot truncate the walk prematurely.
     const iterOpts: RangeOptions<number> = { reverse };
     if (cond.gte !== undefined) iterOpts.gte = cond.gte;
     if (cond.gt !== undefined) iterOpts.gt = cond.gt;
@@ -1500,6 +1603,33 @@ export class MiniDb<V = unknown> {
    *  cluster shard pool, which renew on a timer to prove liveness. */
   async renewLock(): Promise<void> {
     await this.lock?.renew();
+  }
+
+  /** Advanced/internal (read-replica owners such as the cluster shard pool):
+   *  incrementally apply WAL frames appended to db.wal after `offset` — the
+   *  same frames open-time recovery would replay, interpreted identically
+   *  (frameToOps: valueMode memory/disk refs, expired-SET drop with LWW,
+   *  TYPE_BATCH unrolling, dt meta) — plus incremental maintenance of every
+   *  derived index (dt, compound, secondary, text). Unique constraints are
+   *  NOT checked: the writer already validated, and intermediate frame states
+   *  must apply literally, last-writer-wins.
+   *
+   *  The instance tracks its own continuation: the first call must pass
+   *  recoveryInfo.walScanEnd, every later call the previous call's returned
+   *  offset, and the fs identity of the WAL opened for reading must match the
+   *  inode recovery (or the last catch-up) scanned — an offset too old/new, a
+   *  rotated file and a shrunken one all return null, meaning: reopen from
+   *  scratch. A partial/torn tail left by a writer mid-writev is NOT an
+   *  error: the scan stops at the last fully-valid frame; call again later
+   *  and its CRC validates once the writev landed. */
+  async catchUpFromWal(offset: number): Promise<{ offset: number; appliedFrames: number } | null> {
+    this.ensureOpen();
+    const ri = this.recoveryInfo;
+    const anchor = this.walTail ?? (ri && ri.walIno ? { dev: ri.walDev, ino: ri.walIno, size: ri.walScanEnd } : null);
+    if (!anchor || offset !== anchor.size) return null;
+    const res = catchUpWal(this.walPath, offset, anchor, (f, fd) => this.applyRecoveredFrame(f, fd));
+    if (res) this.walTail = { dev: anchor.dev, ino: anchor.ino, size: res.offset };
+    return res;
   }
 
   async compact(): Promise<void> {

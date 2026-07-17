@@ -11,9 +11,15 @@
 // does not currently hold. A MiniDb reader replays snapshot+WAL only at open
 // time and would go stale afterwards, so every reader use is guarded by a
 // cheap file fingerprint (mtime+size of the shard's WAL, snapshot and index
-// definition files); a change closes and reopens the reader first. Because a
-// writer's WAL append is complete before its set() resolves, a read that
-// starts after another process's write resolved always observes it.
+// definition files). A change refreshes the reader first:
+//  - when only the WAL changed as pure appends on the same inode (tracked by
+//    a {dev, ino, size} watermark), the appended frames are scanned and
+//    applied incrementally (MiniDb.catchUpFromWal) — O(delta);
+//  - anything else (rotation, truncation, snapshot/index-def changes, an
+//    offset that turns out not to be a frame boundary) falls back to a close
+//    + full reopen — O(shard size).
+// Because a writer's WAL append is complete before its set() resolves, a read
+// that starts after another process's write resolved always observes it.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -50,6 +56,12 @@ interface WriterEntry {
 interface ReaderEntry {
   handle: ShardHandle;
   fingerprint: string;
+  /** Per-file fingerprint parts, in FINGERPRINT_FILES order. */
+  fpParts: string[];
+  /** WAL watermark the instance's data represents: the {dev, ino} anchor of
+   *  the WAL inode recovery (or the last catch-up) read, and the byte offset
+   *  up to which frames were applied. null when the shard has no WAL yet. */
+  walMark: { dev: number; ino: number; size: number } | null;
   lastUsedAt: number;
   busy: number;
 }
@@ -66,11 +78,20 @@ async function statFingerprint(file: string): Promise<string> {
 /** Cheap change detector for a shard directory. WAL appends change size (and
  *  usually mtime); compaction swaps both snapshot and WAL; index definition
  *  changes rewrite their JSON files. */
-async function shardFingerprint(dir: string): Promise<string> {
-  const parts = await Promise.all(
-    ['db.wal', 'db.snapshot', 'db.indexes.json', 'db.textindexes.json'].map((f) => statFingerprint(path.join(dir, f))),
-  );
-  return parts.join('|');
+const FINGERPRINT_FILES = ['db.wal', 'db.snapshot', 'db.indexes.json', 'db.textindexes.json'] as const;
+
+async function shardFingerprint(dir: string): Promise<string[]> {
+  return Promise.all(FINGERPRINT_FILES.map((f) => statFingerprint(path.join(dir, f))));
+}
+
+/** WAL watermark for a freshly opened reader: the exact inode recovery
+ *  scanned and the offset up to which frames were replayed — never an offset
+ *  beyond the replayed state, so frames appended during/after the open are
+ *  picked up by a later incremental catch-up instead of being skipped. */
+function readerWalMark(handle: ShardHandle): ReaderEntry['walMark'] {
+  const ri = handle.db.recoveryInfo;
+  if (!ri || !ri.walIno) return null;
+  return { dev: ri.walDev, ino: ri.walIno, size: ri.walScanEnd };
 }
 
 export class ShardLockPool {
@@ -80,7 +101,15 @@ export class ShardLockPool {
   private readonly openingReaders = new Map<number, Promise<ReaderEntry>>();
   private closed = false;
 
-  readonly stats = { writerOpens: 0, readerOpens: 0, readerReopens: 0, lockWaits: 0, evictions: 0 };
+  readonly stats = {
+    writerOpens: 0,
+    readerOpens: 0,
+    readerReopens: 0,
+    incrementalCatchups: 0,
+    catchupFramesApplied: 0,
+    lockWaits: 0,
+    evictions: 0,
+  };
 
   constructor(private readonly opts: LockPoolOptions) {}
 
@@ -251,14 +280,22 @@ export class ShardLockPool {
 
   private async refreshReader(shardId: number, dir: string): Promise<ReaderEntry> {
     const cached = this.readers.get(shardId);
-    const fp = await shardFingerprint(dir);
+    const parts = await shardFingerprint(dir);
+    const fp = parts.join('|');
     if (cached && cached.fingerprint === fp) {
       cached.lastUsedAt = Date.now();
       return cached;
     }
     if (cached) {
-      // A write from another process landed: reopen to see it. Wait for any
-      // in-flight user of the stale instance to drain first.
+      // Something in the shard changed. When the change is confined to WAL
+      // appends on the same inode, apply just those frames instead of paying
+      // for a full replay (fallback: a clean full reopen below).
+      if (parts[1] === cached.fpParts[1] && parts[2] === cached.fpParts[2] && parts[3] === cached.fpParts[3]) {
+        if (await this.tryCatchUpReader(cached, dir, parts)) return cached;
+      }
+      // A change the watermark cannot advance over (rotation, truncation,
+      // snapshot/index-def rewrite, broken boundary): reopen to see it. Wait
+      // for any in-flight user of the stale instance to drain first.
       while (cached.busy > 0) await sleep(5);
       this.readers.delete(shardId);
       this.stats.readerReopens++;
@@ -271,7 +308,15 @@ export class ShardLockPool {
       try {
         const handle = await ShardHandle.openReader(shardId, dir, this.opts.readerOpts);
         this.stats.readerOpens++;
-        const entry: ReaderEntry = { handle, fingerprint: await shardFingerprint(dir), lastUsedAt: Date.now(), busy: 0 };
+        const openedParts = await shardFingerprint(dir);
+        const entry: ReaderEntry = {
+          handle,
+          fingerprint: openedParts.join('|'),
+          fpParts: openedParts,
+          walMark: readerWalMark(handle),
+          lastUsedAt: Date.now(),
+          busy: 0,
+        };
         this.readers.set(shardId, entry);
         return entry;
       } catch (e) {
@@ -280,6 +325,42 @@ export class ShardLockPool {
       }
     }
     throw lastErr;
+  }
+
+  /** Incremental reader refresh: apply the WAL frames appended after the
+   *  cached reader's watermark. Only safe when the fingerprint change is
+   *  WAL-only (caller checked), the WAL is still the inode the watermark is
+   *  anchored to, and it never shrank below the applied offset. Returns false
+   *  on every divergence, leaving the cached reader untouched for the caller
+   *  to fully reopen. */
+  private async tryCatchUpReader(cached: ReaderEntry, dir: string, parts: string[]): Promise<boolean> {
+    const mark = cached.walMark;
+    if (!mark) return false;
+    const st = await fs.stat(path.join(dir, 'db.wal')).catch(() => null);
+    if (!st || st.dev !== mark.dev || st.ino !== mark.ino || st.size < mark.size) return false;
+    // Serialize against in-flight users of the cached instance (the reopen
+    // path does the same drain) and hold it busy so eviction skips it.
+    while (cached.busy > 0) await sleep(5);
+    cached.busy++;
+    let res: { offset: number; appliedFrames: number } | null = null;
+    try {
+      res = await cached.handle.db.catchUpFromWal(mark.size);
+    } catch {
+      res = null; // raced a rotation/truncation: caller falls back to a full reopen
+    } finally {
+      cached.busy--;
+    }
+    if (res === null) return false;
+    // Advance the watermark only to what was actually applied — a frame
+    // appended after this stat (or after catch-up scanned) sits beyond
+    // res.offset and is picked up by the next fingerprint miss.
+    cached.walMark = { dev: st.dev, ino: st.ino, size: res.offset };
+    cached.fpParts = parts;
+    cached.fingerprint = parts.join('|');
+    cached.lastUsedAt = Date.now();
+    this.stats.incrementalCatchups++;
+    this.stats.catchupFramesApplied += res.appliedFrames;
+    return true;
   }
 
   private async evictReaders(): Promise<void> {
