@@ -14,6 +14,7 @@ import {
   mkdir,
   realpath as nodeRealpath,
   rm,
+  stat as nodeStat,
   writeFile,
 } from 'node:fs/promises';
 
@@ -187,9 +188,9 @@ export class HostFileSystem implements IHostFileSystem {
     }
   }
 
-  async stat(path: string): Promise<HostFileStat> {
+  async stat(path: string, options?: { followSymlinks?: boolean }): Promise<HostFileStat> {
     try {
-      const s = await lstat(path);
+      const s = options?.followSymlinks === true ? await nodeStat(path) : await lstat(path);
       return {
         isFile: s.isFile(),
         isDirectory: s.isDirectory(),

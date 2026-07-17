@@ -44,7 +44,8 @@ export interface IHostFileSystem {
     options?: { encoding?: BufferEncoding; errors?: TextDecodeErrors },
   ): AsyncGenerator<string>;
   createExclusive(path: string, data: Uint8Array): Promise<boolean>;
-  stat(path: string): Promise<HostFileStat>;
+  /** Stats the entry itself (Node `lstat` semantics) unless `followSymlinks` resolves links to their target. */
+  stat(path: string, options?: { followSymlinks?: boolean }): Promise<HostFileStat>;
   readdir(path: string): Promise<readonly HostDirEntry[]>;
   mkdir(path: string, options?: { readonly recursive?: boolean }): Promise<void>;
   remove(path: string): Promise<void>;
