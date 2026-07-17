@@ -45,6 +45,7 @@ interface FakeSessionBoundary {
   readonly subscriptionCount: () => number;
   readonly cancelCount: () => number;
   readonly cancelCompactionCount: () => number;
+  readonly undoCounts: readonly number[];
   readonly closeCount: () => number;
   emit(event: Event): void;
   rejectNextPrompt(error: Error): void;
@@ -69,6 +70,7 @@ function createFakeSession(): FakeSessionBoundary {
   let subscriptions = 0;
   let cancellations = 0;
   let compactionCancellations = 0;
+  const undoCounts: number[] = [];
   let closes = 0;
   let permission: PermissionMode = "manual";
 
@@ -115,6 +117,9 @@ function createFakeSession(): FakeSessionBoundary {
     async cancelCompaction() {
       compactionCancellations += 1;
     },
+    async undoHistory(count: number) {
+      undoCounts.push(count);
+    },
     async getStatus() {
       return {
         thinkingEffort: "off",
@@ -152,6 +157,7 @@ function createFakeSession(): FakeSessionBoundary {
     subscriptionCount: () => subscriptions,
     cancelCount: () => cancellations,
     cancelCompactionCount: () => compactionCancellations,
+    undoCounts,
     closeCount: () => closes,
     emit(event) {
       for (const listener of listeners) listener(event);
@@ -506,6 +512,32 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     await runtime.cancel();
 
     expect(sdk.cancelCount()).toBe(1);
+  });
+
+  it("still reaches the SDK cancel when the host lost track of active work", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    await runtime.cancel();
+
+    expect(sdk.cancelCount()).toBe(1);
+  });
+
+  it("forwards undoHistory to the SDK while the session is idle", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    await runtime.undoHistory(2);
+
+    expect([...sdk.undoCounts]).toEqual([2]);
+  });
+
+  it("rejects undoHistory while a response is still generating", async () => {
+    const { runtime, sdk } = createRuntime();
+    void runtime.prompt("hello");
+
+    await expect(runtime.undoHistory(1)).rejects.toThrow(
+      "Wait for the current response to finish before undoing.",
+    );
+    expect(sdk.undoCounts).toEqual([]);
   });
 
   it("converts legacy media keys when steering an active response", async () => {

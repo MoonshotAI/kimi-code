@@ -37,6 +37,7 @@ export const Methods = {
   ResetSession: "resetSession",
   SetPlanMode: "setPlanMode",
   SteerChat: "steerChat",
+  UndoChat: "undoChat",
   RespondApproval: "respondApproval",
 
   GetKimiSessions: "getKimiSessions",
@@ -183,6 +184,12 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
       return hasBoolean(params, "enabled");
     case Methods.SteerChat:
       return isPlainObject(params) && isContent(params["content"]);
+    case Methods.UndoChat:
+      return params === undefined || (
+        isPlainObject(params)
+        && (params["count"] === undefined
+          || (Number.isInteger(params["count"]) && (params["count"] as number) >= 1))
+      );
     case Methods.GetProjectFiles:
       return params === undefined || (
         isPlainObject(params)

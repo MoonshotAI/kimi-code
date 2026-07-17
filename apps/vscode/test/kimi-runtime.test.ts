@@ -343,13 +343,14 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     expect(boundary.handlerInstallations).toEqual({ approval: 1, question: 1 });
   });
 
-  it("updates the SDK model when the resumed session has a different model", async () => {
+  it("preserves the resumed session's model instead of reapplying the configured default", async () => {
     const { runtime, sdk } = createRuntime();
     const session = sdk.addSession("saved-1", "/workspace", { model: "old-model" });
 
-    await runtime.openSession(openOptions({ sessionId: "saved-1", model: "new-model" }));
+    const opened = await runtime.openSession(openOptions({ sessionId: "saved-1", model: "new-model" }));
 
-    expect(session.setModels).toEqual(["new-model"]);
+    expect(session.setModels).toEqual([]);
+    await expect(opened.session.getStatus()).resolves.toMatchObject({ model: "old-model" });
   });
 
   it("preserves the resumed session's thinking effort instead of reapplying the configured default", async () => {

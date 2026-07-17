@@ -4,8 +4,9 @@ import { isKimiError } from "@moonshot-ai/kimi-code-sdk";
 import { Events, Methods } from "../../shared/bridge";
 import type { ApprovalResponse, ContentPart } from "../../shared/legacy-sdk";
 import { getUserMessage } from "../../shared/errors";
-import type { ErrorPhase } from "../../shared/types";
+import type { ErrorPhase, UIStreamEvent } from "../../shared/types";
 import { VSCodeSettings } from "../config/vscode-settings";
+import { replaySessionToWebviewEvents } from "../runtime/replay-adapter";
 import type { SessionRuntime } from "../runtime/session-runtime";
 import { isWorkspacePathContained, relativeWorkspacePath } from "../utils/workspace-path";
 import { parseHostSlashCommand, runHostSlashCommand } from "./slash-command";
@@ -133,7 +134,10 @@ const streamChat: Handler<StreamChatParams, { done: boolean }> = async (params, 
 
 const abortChat: Handler<void, { aborted: boolean }> = async (_, ctx) => {
   const runtime = ctx.getSession();
-  if (runtime !== undefined) await runtime.cancel();
+  // Do not claim an abort when there is no runtime to cancel — the webview
+  // would otherwise show the task as stopped while the engine keeps running.
+  if (runtime === undefined) return { aborted: false };
+  await runtime.cancel();
   return { aborted: true };
 };
 
@@ -160,6 +164,22 @@ const steerChat: Handler<{ content: string | ContentPart[] }, { ok: boolean }> =
   return { ok: true };
 };
 
+const undoChat: Handler<{ count?: number }, { events: UIStreamEvent[] }> = async (params, ctx) => {
+  const runtime = ctx.getSession();
+  if (runtime === undefined) throw new Error("There is no conversation to undo.");
+  const requested = Number(params?.count);
+  const count = Number.isFinite(requested) && requested >= 1 ? Math.floor(requested) : 1;
+  await runtime.undoHistory(count);
+
+  // Return a fresh replay so the webview can re-render the truncated
+  // conversation, mirroring how LoadKimiSessionHistory re-hydrates views.
+  const resumeState = runtime.session.getResumeState();
+  if (resumeState?.agents["main"] === undefined) {
+    throw new Error("Session history is unavailable.");
+  }
+  return { events: replaySessionToWebviewEvents(resumeState, runtime.id) };
+};
+
 const resetSession: Handler<void, { ok: boolean }> = async (_, ctx) => {
   const runtime = ctx.getSession();
   if (runtime !== undefined) injectedEditorContextSessions.delete(runtime.id);
@@ -175,6 +195,7 @@ export const chatHandlers: Record<string, Handler<any, any>> = {
   [Methods.RespondQuestion]: respondQuestion,
   [Methods.SetPlanMode]: setPlanMode,
   [Methods.SteerChat]: steerChat,
+  [Methods.UndoChat]: undoChat,
   [Methods.ResetSession]: resetSession,
 };
 

@@ -1018,6 +1018,17 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     await expect(runtime.session.getContext()).resolves.toEqual({ history: [], tokenCount: 0 });
   });
 
+  it("undoes the last user turn on a real session", async () => {
+    const rig = await createRuntimeRig();
+    routeSuccessfulPrompt(rig.provider);
+    const runtime = await openRuntimeSession(rig);
+    await expect(runtime.prompt("hello")).resolves.toEqual({ status: "finished" });
+
+    await runtime.undoHistory(1);
+
+    await expect(runtime.session.getContext()).resolves.toMatchObject({ history: [] });
+  });
+
   it("toggles plan mode through the public session without calling the model", async () => {
     const rig = await createRuntimeRig();
     const runtime = await openRuntimeSession(rig);

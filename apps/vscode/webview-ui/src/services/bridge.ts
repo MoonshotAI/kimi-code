@@ -191,6 +191,10 @@ class Bridge {
     return this.call<{ aborted: boolean }>(Methods.AbortChat);
   }
 
+  undoChat(count = 1) {
+    return this.call<{ events: import("shared/types").UIStreamEvent[] }>(Methods.UndoChat, { count });
+  }
+
   resetSession() {
     return this.call<{ ok: boolean }>(Methods.ResetSession);
   }

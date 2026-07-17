@@ -106,6 +106,7 @@ export interface ChatState {
   retryLastMessage: () => void;
   processEvent: (event: UIStreamEvent) => void;
   loadSession: (sessionId: string, events: UIStreamEvent[]) => Promise<void>;
+  undoLastTurn: () => Promise<void>;
   startNewConversation: () => Promise<void>;
   abort: () => void;
   addDraftMedia: (id: string, dataUri?: string) => void;
@@ -330,6 +331,18 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }),
     );
     useApprovalStore.getState().clearRequests();
+  },
+
+  undoLastTurn: async () => {
+    const { sessionId, isStreaming } = get();
+    if (sessionId === null || isStreaming) return;
+    try {
+      const { events } = await bridge.undoChat(1);
+      await get().loadSession(sessionId, events);
+      toast.success("Undid the last turn.");
+    } catch (error) {
+      toast.error(`Failed to undo: ${error instanceof Error ? error.message : String(error)}`);
+    }
   },
 
   startNewConversation: async () => {

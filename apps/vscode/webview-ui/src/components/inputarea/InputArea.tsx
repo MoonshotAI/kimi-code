@@ -1,6 +1,6 @@
 import { Fragment, useRef, useMemo, useState, useEffect, useCallback } from "react";
 import { useMemoizedFn } from "ahooks";
-import { IconSend, IconPlayerStop, IconChevronDown, IconPlus } from "@tabler/icons-react";
+import { IconSend, IconPlayerStop, IconChevronDown, IconPlus, IconArrowBackUp } from "@tabler/icons-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -50,7 +50,7 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
   const [cursorPos, setCursorPos] = useState(0);
   const [previewMedia, setPreviewMedia] = useState<string | null>(null);
 
-  const { isStreaming, sendMessage, abort, draftMedia, removeDraftMedia, hasProcessingMedia, getMediaInConversation, pendingInput, planMode } = useChatStore();
+  const { isStreaming, sendMessage, abort, draftMedia, removeDraftMedia, hasProcessingMedia, getMediaInConversation, pendingInput, planMode, undoLastTurn, sessionId, messages } = useChatStore();
   const { currentModel, thinkingEffort, updateModel, toggleThinking, selectThinkingEffort, models, extensionConfig, getCurrentThinkingMode } = useSettingsStore();
 
   const isProcessing = hasProcessingMedia();
@@ -463,6 +463,21 @@ export function InputArea({ onAuthAction }: InputAreaProps) {
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={() => void undoLastTurn()}
+                    disabled={isStreaming || sessionId === null || messages.length === 0}
+                    className="text-muted-foreground"
+                  >
+                    <IconArrowBackUp className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Undo last turn</TooltipContent>
+              </Tooltip>
+
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button variant="ghost" size="icon-xs" onClick={handleAddButtonClick} className="text-muted-foreground">
