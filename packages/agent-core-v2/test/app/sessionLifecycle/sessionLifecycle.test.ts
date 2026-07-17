@@ -539,6 +539,38 @@ describe('SessionLifecycleService', () => {
     ]);
   });
 
+  it('does not index and removes a fresh session when initial agent binding fails', async () => {
+    const appended: unknown[] = [];
+    const remove = vi.fn(() => Promise.resolve());
+    const create = vi.fn(() => Promise.reject(new Error('Unknown agent profile')));
+    const svc = build([
+      stubPair(IAppendLogStore, {
+        ...appendLogStoreStub(),
+        append: (_scope: string, _key: string, record: unknown) => appended.push(record),
+      }),
+      stubPair(IHostFileSystem, {
+        ...new HostFileSystem(),
+        remove,
+      } as unknown as IHostFileSystem),
+      stubPair(IAgentLifecycleService, {
+        ...agentLifecycleStub(),
+        create,
+      }),
+    ]);
+
+    await expect(
+      svc.create({
+        sessionId: 's1',
+        workDir: '/tmp/proj',
+        mainAgentBinding: { profile: 'missing', model: 'mock' },
+      }),
+    ).rejects.toThrow('Unknown agent profile');
+
+    expect(appended).toEqual([]);
+    expect(svc.get('s1')).toBeUndefined();
+    expect(remove).toHaveBeenCalledOnce();
+  });
+
   it('registers the workspace during create so a cold resume can resolve the workdir', async () => {
     const workDir = '/tmp/proj';
     const workspaceRegistry = persistentWorkspaceRegistryStub();

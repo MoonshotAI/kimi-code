@@ -23,10 +23,9 @@
  * silently.
  *
  * Also declares `ActiveToolsModel` (`readonly string[] | undefined`, initial
- * `undefined` = every tool active) and the `tools.set_active_tools` Op
- * (`setActiveTools`), a pure whole-set replace whose type matches the legacy
- * record so `wire.replay` restores the base set; an omitted `names` resets to
- * `undefined`, letting a profile with no allowlist restore the default. The
+ * `undefined` = every tool active), the `tools.set_active_tools` whole-set
+ * replace, and the v2-only `tools.reset_active_tools` transition back to the
+ * unrestricted default. Both persisted transitions replay the base set. The
  * ephemeral per-tool
  * `addActiveTool` / `removeActiveTool` deltas (used by `userTool`) are NOT Ops —
  * they are intentionally not persisted and are re-derived on resume.
@@ -134,10 +133,16 @@ declare module '#/wire/types' {
   interface PersistedOpMap {
     'config.update': typeof configUpdate;
     'tools.set_active_tools': typeof setActiveTools;
+    'tools.reset_active_tools': typeof resetActiveTools;
   }
 }
 
 export const setActiveTools = ActiveToolsModel.defineOp('tools.set_active_tools', {
-  schema: z.object({ names: z.array(z.string()).readonly().optional() }),
+  schema: z.object({ names: z.array(z.string()).readonly() }),
   apply: (s, p) => (p.names === s ? s : p.names),
+});
+
+export const resetActiveTools = ActiveToolsModel.defineOp('tools.reset_active_tools', {
+  schema: z.object({}),
+  apply: (s) => (s === undefined ? s : undefined),
 });

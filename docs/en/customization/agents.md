@@ -103,7 +103,7 @@ Unknown fields are ignored, so newer files stay readable by older versions.
 A file with invalid content discovered in a directory is skipped with a warning and does not affect other files. A file passed explicitly via `--agent-file` must be valid — otherwise the CLI reports the error and exits.
 
 ::: warning Note
-`tools` and `disallowedTools` only shape which tools the model is told about — they are not an execution-time sandbox. For a hard guarantee that a tool cannot run, tighten the corresponding permission rule instead.
+`tools` and `disallowedTools` shape the tools shown to the model and are enforced again before execution. Permission rules remain a separate control for operations that require approval.
 :::
 
 Custom agents delegated as sub-agents run without the built-in sub-agent framing ("your final message is the entire handoff"). If you write an agent meant for delegation, state in the body that its last message should be the complete, self-contained result for the caller.

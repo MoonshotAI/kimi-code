@@ -58,6 +58,16 @@ export type ProfileUpdateData = Partial<{
   activeToolNames: readonly string[];
 }>;
 
+export interface ProfileBindingSnapshot {
+  readonly cwd: string;
+  readonly modelAlias?: string;
+  readonly profileName?: string;
+  readonly thinkingLevel: string;
+  readonly systemPrompt: string;
+  readonly activeToolNames?: readonly string[];
+  readonly disallowedTools?: readonly string[];
+}
+
 export interface ProfileServiceOptions {
   readonly cwd?: string | (() => string | undefined);
   readonly chdir?: (cwd: string) => void | Promise<void>;
@@ -109,6 +119,7 @@ export interface IAgentProfileService {
 
   configure(options: ProfileServiceOptions): void;
   update(changed: ProfileUpdateData): void;
+  applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void;
   bind(input: BindAgentInput): Promise<void>;
   setModel(model: string): Promise<ProfileSetModelResult>;
   setThinking(level: string): void;

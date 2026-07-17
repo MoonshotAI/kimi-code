@@ -378,9 +378,12 @@ async function resolveNativeSession(
   const session = await lifecycle.create({
     workDir,
     additionalDirs: opts.addDirs?.length ? opts.addDirs : undefined,
+    mainAgentBinding: {
+      profile: agentProfileName ?? 'agent',
+      model,
+    },
   });
   const agent = await ensureMainAgent(session);
-  await applyProfileSelection(agent.accessor.get(IAgentProfileService), model);
   agent.accessor.get(IAgentPermissionModeService).setMode('auto');
   return {
     session,

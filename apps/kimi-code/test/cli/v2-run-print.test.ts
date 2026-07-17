@@ -295,7 +295,7 @@ describe('runV2Print', () => {
   it('seeds explicit agent files from --agentFile and binds the --agent profile', async () => {
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, agentServices } = makeFakeHarness();
+    const { app, agent, appServices, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue(agent);
@@ -310,12 +310,16 @@ describe('runV2Print', () => {
     const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
     expect(seeded?.[1]).toMatchObject({ explicitFiles: ['/agents/reviewer.md'] });
 
-    const profile = agentServices.get(IAgentProfileService) as {
-      bind: ReturnType<typeof vi.fn>;
-      setModel: ReturnType<typeof vi.fn>;
+    const lifecycle = appServices.get(ISessionLifecycleService) as {
+      create: ReturnType<typeof vi.fn>;
     };
-    expect(profile.bind).toHaveBeenCalledWith({ profile: 'reviewer', model: 'k2' });
-    expect(profile.setModel).not.toHaveBeenCalled();
+    expect(lifecycle.create).toHaveBeenCalledWith({
+      workDir: process.cwd(),
+      additionalDirs: undefined,
+      mainAgentBinding: { profile: 'reviewer', model: 'k2' },
+    });
+    const profile = agentServices.get(IAgentProfileService) as { bind: ReturnType<typeof vi.fn> };
+    expect(profile.bind).not.toHaveBeenCalled();
   });
 
   it('binds the profile named by --agent-file when --agent is absent', async () => {
@@ -327,7 +331,7 @@ describe('runV2Print', () => {
     );
     const stdout = writer();
     const stderr = writer();
-    const { app, agent, agentServices } = makeFakeHarness();
+    const { app, agent, appServices, agentServices } = makeFakeHarness();
 
     mocks.bootstrap.mockReturnValue({ app });
     mocks.ensureMainAgent.mockResolvedValue(agent);
@@ -341,10 +345,33 @@ describe('runV2Print', () => {
     const seeded = seeds.find(([id]) => id === IAgentCatalogRuntimeOptions);
     expect(seeded?.[1]).toMatchObject({ explicitFiles: [agentFile] });
 
-    const profile = agentServices.get(IAgentProfileService) as {
-      bind: ReturnType<typeof vi.fn>;
+    const lifecycle = appServices.get(ISessionLifecycleService) as {
+      create: ReturnType<typeof vi.fn>;
     };
-    expect(profile.bind).toHaveBeenCalledWith({ profile: 'file-reviewer', model: 'k2' });
+    expect(lifecycle.create).toHaveBeenCalledWith({
+      workDir: process.cwd(),
+      additionalDirs: undefined,
+      mainAgentBinding: { profile: 'file-reviewer', model: 'k2' },
+    });
+    const profile = agentServices.get(IAgentProfileService) as { bind: ReturnType<typeof vi.fn> };
+    expect(profile.bind).not.toHaveBeenCalled();
+  });
+
+  it('does not materialize a main agent after fresh profile binding fails', async () => {
+    const stdout = writer();
+    const stderr = writer();
+    const { app, appServices } = makeFakeHarness();
+    const lifecycle = appServices.get(ISessionLifecycleService) as {
+      create: ReturnType<typeof vi.fn>;
+    };
+    lifecycle.create.mockRejectedValueOnce(new Error('Unknown agent profile'));
+    mocks.bootstrap.mockReturnValue({ app });
+
+    await expect(
+      runV2Print(opts({ agent: 'missing' }) as never, '1.2.3-test', { stdout, stderr }),
+    ).rejects.toThrow('Unknown agent profile');
+
+    expect(mocks.ensureMainAgent).not.toHaveBeenCalled();
   });
 
   it('fails before any turn when --agent-file is invalid', async () => {

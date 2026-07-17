@@ -126,6 +126,26 @@ describe('discoverAgentFiles', () => {
     });
   });
 
+  it('rejects when a file cannot be read during a filesystem outage', async () => {
+    await writeFile(join(root, 'agent.md'), agentMd('agent'));
+    const failingFs = {
+      _serviceBrand: undefined,
+      readdir: hostFs.readdir.bind(hostFs),
+      stat: hostFs.stat.bind(hostFs),
+      realpath: hostFs.realpath.bind(hostFs),
+      readText: async () => {
+        throw new HostFsError(
+          OsFsErrors.codes.OS_FS_UNAVAILABLE,
+          'read failed: filesystem resource unavailable',
+        );
+      },
+    } as unknown as IHostFileSystem;
+
+    await expect(discoverAgentFiles(failingFs, [fileRoot(root)])).rejects.toMatchObject({
+      code: OsFsErrors.codes.OS_FS_UNAVAILABLE,
+    });
+  });
+
   it('treats a directory that disappears during scanning as absent', async () => {
     const disappearingFs = {
       readdir: async () => {

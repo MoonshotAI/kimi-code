@@ -136,10 +136,26 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
     const handle = await this.materializeSession({ ...opts, sessionId });
-    await this.appendSessionIndexEntry(sessionId, opts.workDir);
-    if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
-      const main = await ensureMainAgent(handle);
-      await main.accessor.get(IAgentPlanService).enter();
+    try {
+      const main =
+        opts.mainAgentBinding === undefined
+          ? undefined
+          : await handle.accessor.get(IAgentLifecycleService).create({
+              agentId: MAIN_AGENT_ID,
+              binding: opts.mainAgentBinding,
+            });
+      if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
+        const planAgent = main ?? (await ensureMainAgent(handle));
+        await planAgent.accessor.get(IAgentPlanService).enter();
+      }
+      await this.appendSessionIndexEntry(sessionId, opts.workDir);
+    } catch (error) {
+      const sessionDir = handle.accessor.get(ISessionContext).sessionDir;
+      this.sessions.delete(sessionId);
+      await this.drainAgents(handle).catch(() => {});
+      handle.dispose();
+      await this.hostFs.remove(sessionDir).catch(() => {});
+      throw error;
     }
     await this.announceCreated({ sessionId, handle, source: 'startup' });
     return handle;

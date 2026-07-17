@@ -60,6 +60,12 @@ export async function discoverAgentFiles(
         byName.set(agent.name, agent);
       }
     } catch (error) {
+      if (
+        error instanceof HostFsError &&
+        error.code === OsFsErrors.codes.OS_FS_UNAVAILABLE
+      ) {
+        throw error;
+      }
       if (error instanceof AgentFileParseError) {
         skipped.push({ path: filePath, reason: error.message });
         warnCapped(filePath, `Skipping invalid agent file at ${filePath}: ${error.message}`, error);

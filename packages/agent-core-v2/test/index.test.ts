@@ -62,6 +62,7 @@ const V1_RECORD_TYPES: ReadonlySet<string> = new Set([
   'llm.request',
   'mcp.tools_discovered',
 ]);
+const V2_ONLY_RECORD_TYPES: ReadonlySet<string> = new Set(['tools.reset_active_tools']);
 
 describe('v1 wire vocabulary', () => {
   const SCOPE = 'wire';
@@ -90,10 +91,13 @@ describe('v1 wire vocabulary', () => {
     return out;
   }
 
-  it('every persisted op type is a v1 record type', () => {
+  it('every persisted op type is either shared with v1 or explicitly v2-only', () => {
     for (const [type, descriptor] of OP_REGISTRY) {
       if (descriptor.persist === false) continue;
-      expect(V1_RECORD_TYPES.has(type), `op "${type}" persists a non-v1 record type`).toBe(true);
+      expect(
+        V1_RECORD_TYPES.has(type) || V2_ONLY_RECORD_TYPES.has(type),
+        `op "${type}" is not classified as shared or v2-only`,
+      ).toBe(true);
     }
   });
 

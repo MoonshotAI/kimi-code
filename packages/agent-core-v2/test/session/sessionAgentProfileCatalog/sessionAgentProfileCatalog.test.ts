@@ -373,7 +373,7 @@ describe('SessionAgentProfileCatalogService', () => {
     });
   });
 
-  it('gates the highest-priority same-name file against the builtin default', async () => {
+  it('falls back to a valid lower-priority builtin override', async () => {
     await withFixture(async (fixture) => {
       await writeAgent(
         join(fixture.homeDir, 'agents'),
@@ -389,7 +389,7 @@ describe('SessionAgentProfileCatalogService', () => {
       const catalog = session.accessor.get(ISessionAgentProfileCatalog);
       await catalog.load();
 
-      expect(catalog.getDefault().description).not.toBe('user default override');
+      expect(catalog.getDefault().description).toBe('user default override');
       expect(catalog.getDefault().description).not.toBe('project default without override');
       host.dispose();
     });

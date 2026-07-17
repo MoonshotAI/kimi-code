@@ -5,7 +5,7 @@ import { DisposableStore } from '#/_base/di/lifecycle';
 import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentProfileService } from '#/agent/profile/profile';
 import { AgentProfileService } from '#/agent/profile/profileService';
-import { ProfileModel } from '#/agent/profile/profileOps';
+import { ActiveToolsModel, ProfileModel } from '#/agent/profile/profileOps';
 import { DEFAULT_AGENT_PROFILE_NAME } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -152,6 +152,10 @@ function modelOf(target: IWireService) {
   return target.getModel(ProfileModel);
 }
 
+function activeToolsOf(target: IWireService) {
+  return target.getModel(ActiveToolsModel);
+}
+
 function createRecordingModel(
   generationKwargs: GenerationKwargs[],
   thinkingEfforts: ThinkingEffort[],
@@ -238,6 +242,34 @@ describe('AgentProfileService (wire-backed config.update)', () => {
     const before = modelOf(wire);
     svc.update({ profileName: DEFAULT_AGENT_PROFILE_NAME });
     expect(modelOf(wire)).toBe(before);
+  });
+
+  it('persists and replays an allowlist reset to unrestricted', async () => {
+    svc.applyBindingSnapshot({
+      cwd: '/work',
+      profileName: 'restricted',
+      thinkingLevel: 'off',
+      systemPrompt: 'restricted',
+      activeToolNames: ['Read'],
+    });
+    svc.applyBindingSnapshot({
+      cwd: '/work',
+      profileName: 'unrestricted',
+      thinkingLevel: 'off',
+      systemPrompt: 'unrestricted',
+      activeToolNames: undefined,
+    });
+    expect(activeToolsOf(wire)).toBeUndefined();
+
+    const replay = buildHost('profile-replay-active-tools');
+    await restoreTestAgentWire(
+      replay.wire,
+      log,
+      testWireScope(SCOPE, KEY),
+      await readRecords(),
+    );
+    expect(activeToolsOf(replay.wire)).toBeUndefined();
+    replay.ix.dispose();
   });
 
   it('chdir and emitStatusUpdated run live-only and are silent during replay', async () => {

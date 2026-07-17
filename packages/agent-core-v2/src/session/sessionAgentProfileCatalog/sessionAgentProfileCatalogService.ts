@@ -184,23 +184,30 @@ export class SessionAgentProfileCatalogService
     for (const profile of this.builtin.list()) {
       m.set(profile.name, profile);
     }
-    const fileProfiles = new Map<string, AgentProfile>();
+    const fileProfiles = new Map<string, AgentProfile[]>();
     const ordered = [...this.contributions.values()].toSorted(
-      (a, b) => a.priority - b.priority,
+      (a, b) => b.priority - a.priority,
     );
     for (const { c } of ordered) {
-      for (const profile of c.profiles) {
-        fileProfiles.set(profile.name, profile);
+      const sourceProfiles = new Map<string, AgentProfile>();
+      for (const profile of c.profiles) sourceProfiles.set(profile.name, profile);
+      for (const profile of sourceProfiles.values()) {
+        const candidates = fileProfiles.get(profile.name) ?? [];
+        candidates.push(profile);
+        fileProfiles.set(profile.name, candidates);
       }
     }
-    for (const profile of fileProfiles.values()) {
-      if (m.has(profile.name) && profile.override !== true) {
-        this.log.warn(
-          `agent file profile "${profile.name}" ignored: a same-name builtin profile exists; set "override: true" in the frontmatter to replace it`,
-        );
-        continue;
+    for (const candidates of fileProfiles.values()) {
+      for (const profile of candidates) {
+        if (m.has(profile.name) && profile.override !== true) {
+          this.log.warn(
+            `agent file profile "${profile.name}" ignored: a same-name builtin profile exists; set "override: true" in the frontmatter to replace it`,
+          );
+          continue;
+        }
+        m.set(profile.name, profile);
+        break;
       }
-      m.set(profile.name, profile);
     }
     this.merged = m;
   }

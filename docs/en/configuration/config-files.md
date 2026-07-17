@@ -247,7 +247,7 @@ disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
 ```
 
 ::: warning Note
-Like the `tools` / `disallowedTools` fields of an agent file, this section only shapes which tools the model is told about — it is not an execution-time sandbox. For a hard guarantee that a tool cannot run, tighten the corresponding [permission rule](#permission) instead. It currently takes effect only under the v2 engine (`KIMI_CODE_EXPERIMENTAL_FLAG=1`); the v1 engine ignores it.
+Like the `tools` / `disallowedTools` fields of an agent file, this section shapes the tools shown to the model and is enforced again before execution. [Permission rules](#permission) remain a separate control for operations that require approval.
 :::
 
 ## `image`

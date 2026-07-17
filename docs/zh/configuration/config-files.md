@@ -247,7 +247,7 @@ disabled = ["EnterPlanMode", "ExitPlanMode", "mcp__github__*"]
 ```
 
 ::: warning 注意
-与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节只决定模型能"看到"哪些工具，并不是执行时的沙箱；如需保证某个工具无法运行，请收紧相应的[权限规则](#permission)。本节目前仅在 v2 引擎下生效（`KIMI_CODE_EXPERIMENTAL_FLAG=1`），v1 引擎会忽略它。
+与 Agent 文件中的 `tools` / `disallowedTools` 一样，本节不仅决定模型能"看到"哪些工具，还会在执行前再次强制检查。[权限规则](#permission)仍是独立的控制层，用于决定哪些操作需要审批。
 :::
 
 ## `image`

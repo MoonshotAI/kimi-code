@@ -63,6 +63,7 @@ import { prepareSystemPromptContext } from './context';
 import type {
   ApplyProfileOptions,
   BindAgentInput,
+  ProfileBindingSnapshot,
   ProfileData,
   ProfileModelContext,
   ProfileServiceOptions,
@@ -82,6 +83,7 @@ import {
   configUpdate,
   ProfileModel,
   setActiveTools,
+  resetActiveTools,
   type ActiveToolsState,
   type ProfileModelState,
 } from './profileOps';
@@ -168,6 +170,31 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
     if (activeToolNames !== undefined) {
       this.setActiveTools(activeToolNames);
     }
+  }
+
+  applyBindingSnapshot(snapshot: ProfileBindingSnapshot): void {
+    this.activeProfile = undefined;
+    this.wire.dispatch(
+      configUpdate(
+        this.resolveConfigPayload({
+          cwd: snapshot.cwd,
+          modelAlias: snapshot.modelAlias,
+          profileName: snapshot.profileName,
+          thinkingLevel: snapshot.thinkingLevel,
+          systemPrompt: snapshot.systemPrompt,
+          disallowedTools: snapshot.disallowedTools ?? [],
+        }),
+      ),
+    );
+    this.afterConfigDispatch({
+      cwd: snapshot.cwd,
+      modelAlias: snapshot.modelAlias,
+      profileName: snapshot.profileName,
+      thinkingLevel: snapshot.thinkingLevel,
+      systemPrompt: snapshot.systemPrompt,
+      disallowedTools: snapshot.disallowedTools ?? [],
+    });
+    this.setActiveTools(snapshot.activeToolNames);
   }
 
   async bind(input: BindAgentInput): Promise<void> {
@@ -526,15 +553,7 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
   private setActiveTools(names: readonly string[] | undefined): void {
     this.activeToolNamesOverlay = undefined;
     if (names === undefined) {
-      // A `tools.set_active_tools` record without `names` crashes v1 replay
-      // (v1 clients discover v2 sessions through the shared session index).
-      // At first bind the persisted base is already `undefined` (= every tool
-      // active), so skipping the write changes nothing. Known gap: resetting
-      // an allowlist back to "all tools" on a same-name rebind has no v1-safe
-      // encoding (`[]` means *no* tools active) and no production caller
-      // today (edges no-op same-name reselects) — if it ever needs one, add a
-      // `tools.reset_active_tools` Op; v1's restoreAgentRecord silently
-      // no-ops unknown record types, so that shape is safe.
+      this.wire.dispatch(resetActiveTools({}));
       return;
     }
     this.wire.dispatch(setActiveTools({ names: [...names] }));
