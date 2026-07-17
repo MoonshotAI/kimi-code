@@ -385,6 +385,13 @@ export const BUILTIN_SLASH_COMMANDS = [
     priority: 40,
   },
   {
+    name: 'copy',
+    aliases: [],
+    description: 'Copy the last assistant message to the clipboard',
+    priority: 40,
+    availability: 'always',
+  },
+  {
     name: 'web',
     aliases: [],
     description: 'Open the current session in the Web UI and exit the terminal',
