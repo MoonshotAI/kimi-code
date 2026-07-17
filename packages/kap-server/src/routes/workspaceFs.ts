@@ -14,7 +14,7 @@
  *
  * Routes (registered exactly as v1 declares them):
  *
- *   GET /fs::browse?path=<abs-path>   list sub-directories (+ git metadata)
+ *   GET /fs::browse?path=<abs-path>   list sub-directories
  *   GET /fs::home                     $HOME + recent workspace roots
  *
  * **Wire path vs source path.** The source path strings carry a double colon

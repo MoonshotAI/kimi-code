@@ -34,6 +34,8 @@ interface FakeSessionBoundary {
   readonly handlerInstallations: { approval: number; question: number };
   readonly subscriptionCount: () => number;
   readonly closeCount: () => number;
+  readonly emit: (event: Event) => void;
+  readonly setPromptImpl: (impl: (input: string | PromptInput) => Promise<void>) => void;
 }
 
 function createFakeSession(
@@ -50,6 +52,7 @@ function createFakeSession(
   const handlerInstallations = { approval: 0, question: 0 };
   let subscriptions = 0;
   let closes = 0;
+  let promptImpl: (input: string | PromptInput) => Promise<void> = async () => {};
   let status: SessionStatus = {
     model: initial.model ?? "kimi-test",
     thinkingEffort: initial.thinkingEffort ?? "off",
@@ -88,7 +91,9 @@ function createFakeSession(
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
-    async prompt(_input: string | PromptInput) {},
+    async prompt(input: string | PromptInput) {
+      await promptImpl(input);
+    },
     async steer(_input: string | PromptInput) {},
     async cancel() {},
     async getStatus() {
@@ -124,6 +129,12 @@ function createFakeSession(
     handlerInstallations,
     subscriptionCount: () => subscriptions,
     closeCount: () => closes,
+    emit: (event: Event) => {
+      for (const listener of [...listeners]) listener(event);
+    },
+    setPromptImpl: (impl) => {
+      promptImpl = impl;
+    },
   };
 }
 
@@ -550,5 +561,125 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
 
     expect(runtime.getSession("foreign-1")).toBeUndefined();
     expect(foreign.closeCount()).toBe(1);
+  });
+
+  function createRecordingRuntime() {
+    const sdk = createFakeHarness();
+    const broadcasts: Array<{ event: string; data: unknown }> = [];
+    const runtime = new KimiRuntime({
+      version: "test",
+      harness: sdk.harness,
+      broadcast: (event, data) => {
+        broadcasts.push({ event, data });
+      },
+      captureBaseline: () => undefined,
+      log: () => undefined,
+    });
+    return { runtime, sdk, broadcasts };
+  }
+
+  it("fails a reentrant prompt without disturbing the running turn", async () => {
+    const { runtime, sdk, broadcasts } = createRecordingRuntime();
+    const opened = await runtime.openSession(openOptions());
+    const boundary = sdk.sessions.get(opened.id)!;
+
+    let releaseTurn!: () => void;
+    boundary.setPromptImpl(() => new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    }));
+    const first = opened.prompt("first message");
+    boundary.emit({ type: "turn.started", agentId: "main", sessionId: opened.id, turnId: "t1" } as unknown as Event);
+    expect(opened.isBusy).toBe(true);
+
+    await expect(opened.prompt("concurrent message")).resolves.toEqual({ status: "failed" });
+
+    // The rejection surfaces as a mid-turn warning; the active turn is untouched.
+    expect(opened.isBusy).toBe(true);
+    const busyWarning = broadcasts.find(({ data }) => (data as { type?: string }).type === "error");
+    expect(busyWarning?.data).toMatchObject({
+      type: "error",
+      phase: "runtime",
+      detail: "A response is already being generated for this session.",
+      terminal: false,
+    });
+
+    boundary.emit({ type: "turn.ended", agentId: "main", sessionId: opened.id, turnId: "t1", reason: "completed" } as unknown as Event);
+    releaseTurn();
+    await expect(first).resolves.toEqual({ status: "finished" });
+    expect(opened.isBusy).toBe(false);
+  });
+
+  it("rejects a prompt during an exclusive operation with a terminal error", async () => {
+    const { runtime, broadcasts } = createRecordingRuntime();
+    const opened = await runtime.openSession(openOptions());
+
+    let releaseExclusive!: () => void;
+    const exclusive = opened.runExclusiveAfterCancelling(
+      () => new Promise<void>((resolve) => {
+        releaseExclusive = resolve;
+      }),
+    );
+    // No active work means no later stream_complete: the rejection must be
+    // terminal so the caller's composer can unlock.
+    expect(opened.isBusy).toBe(true);
+
+    await expect(opened.prompt("during fork")).resolves.toEqual({ status: "failed" });
+    const rejection = broadcasts.find(({ data }) => (data as { type?: string }).type === "error");
+    expect(rejection?.data).toMatchObject({ type: "error", phase: "runtime" });
+    expect((rejection?.data as Record<string, unknown>)["terminal"]).toBeUndefined();
+
+    releaseExclusive();
+    await exclusive;
+    expect(opened.isBusy).toBe(false);
+  });
+
+  it("marks a mid-turn core error as non-terminal until the turn ends", async () => {
+    const { runtime, sdk, broadcasts } = createRecordingRuntime();
+    const opened = await runtime.openSession(openOptions());
+    const boundary = sdk.sessions.get(opened.id)!;
+
+    let releaseTurn!: () => void;
+    boundary.setPromptImpl(() => new Promise<void>((resolve) => {
+      releaseTurn = resolve;
+    }));
+    const first = opened.prompt("first message");
+    boundary.emit({ type: "turn.started", agentId: "main", sessionId: opened.id, turnId: "t1" } as unknown as Event);
+
+    boundary.emit({
+      type: "error",
+      agentId: "main",
+      sessionId: opened.id,
+      code: "records.write_failed",
+      message: "Failed to write agent records: EACCES",
+    } as unknown as Event);
+
+    // The turn is still running: no settlement, no terminal error on the wire.
+    expect(opened.isBusy).toBe(true);
+    const warning = broadcasts.find(({ data }) => (data as { type?: string }).type === "error");
+    expect(warning?.data).toMatchObject({
+      type: "error",
+      code: "records.write_failed",
+      phase: "runtime",
+      terminal: false,
+    });
+
+    boundary.emit({ type: "turn.ended", agentId: "main", sessionId: opened.id, turnId: "t1", reason: "completed" } as unknown as Event);
+    releaseTurn();
+    await expect(first).resolves.toEqual({ status: "finished" });
+    expect(opened.isBusy).toBe(false);
+  });
+
+  it("keeps preflight failures terminal", async () => {
+    const { runtime, sdk, broadcasts } = createRecordingRuntime();
+    const opened = await runtime.openSession(openOptions());
+    const boundary = sdk.sessions.get(opened.id)!;
+
+    boundary.setPromptImpl(() => Promise.reject(new Error("provider down")));
+
+    await expect(opened.prompt("hi")).resolves.toEqual({ status: "failed" });
+    const failure = broadcasts.find(({ data }) => (data as { type?: string }).type === "error");
+    expect(failure?.data).toMatchObject({ type: "error", phase: "preflight" });
+    expect((failure?.data as Record<string, unknown>)["terminal"]).toBeUndefined();
+    expect(opened.isBusy).toBe(false);
   });
 });

@@ -68,7 +68,7 @@ export function defineKlientConformance(
     it('sessions index responds with a page shape', async () => {
       const page = await target.klient.global.sessions.list({});
       expect(Array.isArray(page.items)).toBe(true);
-      const count = await target.klient.global.sessions.countActive('no-such-workspace');
+      const count = await target.klient.global.sessions.countActive(['no-such-workspace']);
       expect(typeof count).toBe('number');
     });
 

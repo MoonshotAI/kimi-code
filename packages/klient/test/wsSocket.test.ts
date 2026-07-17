@@ -166,7 +166,7 @@ describe('WsSocket', () => {
     const server = new FakeServer();
     const socket = await openSocket(server);
 
-    const core = await socket.call('core', 'sessionIndex', 'list', [{ workspaceId: 'w1' }]);
+    const core = await socket.call('core', 'sessionIndex', 'list', [{ workspaceIds: ['w1'] }]);
     const agent = await socket.call('agent', 'sessionMetadata', 'read', undefined, {
       sessionId: 's1',
       agentId: 'a1',
@@ -292,7 +292,7 @@ describe('WsSocket', () => {
     socket.listen('agent', 'events', { sessionId: 's1', agentId: 'a1' }, (data) => seen.push(data));
     await tick(5);
 
-    const inFlight = socket.call('core', 'sessionIndex', 'countActive', ['w1']);
+    const inFlight = socket.call('core', 'sessionIndex', 'countActive', [['w1']]);
     server.drop();
     await expect(inFlight).rejects.toThrow('ws closed');
     expect(socket.currentState).toBe('connecting');
@@ -307,7 +307,7 @@ describe('WsSocket', () => {
     await tick(5);
     expect(seen).toEqual([{ type: 'turn.started' }]);
 
-    const data = await socket.call('core', 'sessionIndex', 'countActive', ['w1']);
+    const data = await socket.call('core', 'sessionIndex', 'countActive', [['w1']]);
     expect(data).toMatchObject({ method: 'countActive' });
     expect(states).toContain('connecting');
     socket.close();

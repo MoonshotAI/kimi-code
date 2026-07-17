@@ -169,6 +169,15 @@ export interface KimiCoreOptions {
   readonly runtime?: ToolServices | undefined;
   readonly kimiRequestHeaders?: Record<string, string> | undefined;
   readonly resolveOAuthTokenProvider?: OAuthTokenProviderResolver | undefined;
+  /**
+   * Workspace-id resolver handed to the session store: the registered
+   * workspace id for the same physical root as a session's workDir (identity
+   * comparison folds case/slashes for Windows-shaped paths), so bucket
+   * derivation reuses the registered id instead of minting a split bucket.
+   * Wired by the services layer from the workspace registry; when omitted the
+   * store always mints (legacy behavior).
+   */
+  readonly resolveWorkspaceId?: (workDir: string) => Promise<string | undefined>;
   readonly skillDirs?: readonly string[];
   readonly telemetry?: TelemetryClient | undefined;
   readonly appVersion?: string;
@@ -248,7 +257,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       this.config.experimental,
     );
     this.imageLimits = new ImageLimits(process.env, this.config.image);
-    this.sessionStore = new SessionStore(this.homeDir);
+    this.sessionStore = new SessionStore(this.homeDir, {
+      resolveWorkspaceId: options.resolveWorkspaceId,
+    });
     this.globalMcpConfig = new GlobalMcpConfigStore(this.homeDir);
     this.globalMcpOAuth = new McpOAuthService({ kimiHomeDir: this.homeDir });
     this.plugins = new PluginManager({ kimiHomeDir: this.homeDir });

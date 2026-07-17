@@ -33,6 +33,7 @@ import {
   STORAGE_KEYS,
 } from '../../lib/storage';
 import { parseDiff } from '../../lib/parseDiff';
+import { workspaceRootKey } from '../../lib/rootKey';
 import { sessionExportTraceToJsonl, traceKeyEvent } from '../../debug/trace';
 import { readSessionIdFromLocation, sessionUrl } from '../../lib/sessionRoute';
 import type { SessionUrlMode } from '../../lib/sessionRoute';
@@ -963,9 +964,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // clobber the name with the default basename.
     const override = loadWorkspaceNameOverrides()[workspace.root];
     const ws = override !== undefined ? { ...workspace, name: override } : workspace;
-    // Re-adding a path the user previously removed should bring it back.
-    if (rawState.hiddenWorkspaceRoots.includes(ws.root)) {
-      rawState.hiddenWorkspaceRoots = rawState.hiddenWorkspaceRoots.filter((r) => r !== ws.root);
+    // Re-adding a path the user previously removed should bring it back. The
+    // hidden match in mergeWorkspaces is folded, so the removal must fold too
+    // — otherwise hiding `C:\Foo` and re-adding `c:\foo` leaves the folded
+    // entry hiding the workspace forever.
+    const wsKey = workspaceRootKey(ws.root);
+    if (rawState.hiddenWorkspaceRoots.some((r) => workspaceRootKey(r) === wsKey)) {
+      rawState.hiddenWorkspaceRoots = rawState.hiddenWorkspaceRoots.filter(
+        (r) => workspaceRootKey(r) !== wsKey,
+      );
       saveHiddenWorkspacesToStorage(rawState.hiddenWorkspaceRoots);
     }
     const index = rawState.workspaces.findIndex(

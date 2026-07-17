@@ -5,4 +5,4 @@ export type {
   SessionStoreOptions,
 } from '#/session/store/session-store';
 export { sessionIndexPath } from '#/session/store/session-index';
-export { encodeWorkDirKey, normalizeWorkDir } from '#/session/store/workdir-key';
+export { encodeWorkDirKey, normalizeWorkDir, workspaceRootKey } from '#/session/store/workdir-key';

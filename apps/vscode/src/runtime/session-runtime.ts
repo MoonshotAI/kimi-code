@@ -45,6 +45,8 @@ interface ActivePrompt {
   resolve: (result: PromptResult) => void;
 }
 
+const ALREADY_GENERATING_MESSAGE = "A response is already being generated for this session.";
+
 export interface PromptResult {
   readonly status: "finished" | "cancelled" | "failed";
 }
@@ -179,28 +181,40 @@ export class SessionRuntime {
   ): Promise<PromptResult> {
     this.ensureOpen();
     if (this.isBusy) {
-      throw new Error("A response is already being generated for this session.");
+      // A re-entrant turn request must never disturb the active turn — it fails
+      // only itself. When a turn or host action is running, its later terminal
+      // stream event unlocks every subscribed view, so a non-terminal warning
+      // is enough. An exclusive operation (e.g. fork materialization) emits no
+      // such terminal event, so reject terminally: the caller's composer must
+      // unlock rather than hang until the handshake timeout.
+      this.emitError(
+        new Error(ALREADY_GENERATING_MESSAGE),
+        "runtime",
+        { terminal: this.hasActiveWork ? false : undefined },
+      );
+      return { status: "failed" };
     }
 
     let resolveCompletion!: (result: PromptResult) => void;
     const completion = new Promise<PromptResult>((resolve) => {
       resolveCompletion = resolve;
     });
-    this.activePrompt = {
+    const active: ActivePrompt = {
       input,
       started: false,
       settled: false,
       resolve: resolveCompletion,
     };
+    this.activePrompt = active;
 
     try {
       await action();
     } catch (error) {
-      if (this.activePrompt !== undefined && !this.activePrompt.started) {
-        this.emitError(error, "preflight");
-        this.settlePrompt({ status: "failed" });
-      } else {
-        this.emitError(error, "runtime");
+      // Only settle the prompt this call created. Once the event pipeline or a
+      // cancel has settled it, the failure was already reported — settling it
+      // again would misreport the active turn and could emit a duplicate error.
+      if (!active.settled) {
+        this.emitError(error, active.started ? "runtime" : "preflight");
         this.settlePrompt({ status: "failed" });
       }
     }
@@ -211,7 +225,7 @@ export class SessionRuntime {
   beginHostAction(input: string | LegacyContentPart[], forkable = false): number {
     this.ensureOpen();
     if (this.isBusy) {
-      throw new Error("A response is already being generated for this session.");
+      throw new Error(ALREADY_GENERATING_MESSAGE);
     }
     const actionId = ++this.hostActionSequence;
     this.hostActionActive = true;
@@ -461,7 +475,15 @@ export class SessionRuntime {
     }
 
     if (adapted.event !== undefined) {
-      this.emitStreamEvent(adapted.event);
+      // Errors the core reports while the active turn keeps running (they are
+      // not followed by a terminal turn.ended) must not look turn-ending to the
+      // Webview — otherwise the UI unlocks mid-turn and the next send collides
+      // with the still-active prompt.
+      const wireEvent =
+        adapted.event.type === "error" && this.activePrompt?.started === true
+          ? { ...adapted.event, terminal: false as const }
+          : adapted.event;
+      this.emitStreamEvent(wireEvent);
       if (adapted.event.type === "error" && this.activePrompt !== undefined && !this.activePrompt.started) {
         this.settlePrompt({ status: "failed" });
       }
@@ -537,7 +559,7 @@ export class SessionRuntime {
     return suppressed.code === code && suppressed.message === message;
   }
 
-  private emitError(error: unknown, phase: ErrorPhase): void {
+  private emitError(error: unknown, phase: ErrorPhase, options?: { readonly terminal?: boolean }): void {
     const code = isKimiError(error) ? error.code : "internal";
     const detail = error instanceof Error ? error.message : String(error);
     this.log(`Session ${phase} error`, error);
@@ -548,6 +570,7 @@ export class SessionRuntime {
       detail,
       phase,
       _sessionId: this.session.id,
+      terminal: options?.terminal,
     });
   }
 

@@ -9,7 +9,8 @@
   "ignore": [
     "@moonshot-ai/vis",
     "@moonshot-ai/vis-server",
-    "@moonshot-ai/vis-web"
+    "@moonshot-ai/vis-web",
+    "@moonshot-ai/kimi-inspect"
   ],
   "snapshot": {
     "useCalculatedVersion": true,

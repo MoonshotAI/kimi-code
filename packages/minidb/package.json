@@ -33,6 +33,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./cluster": {
+      "types": "./src/cluster/index.ts",
+      "default": "./src/cluster/index.ts"
     }
   },
   "scripts": {
@@ -40,6 +44,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "bench": "node --import tsx bench/bench.ts",
+    "bench:cluster": "node --import tsx bench/cluster.ts",
     "clean": "rm -rf dist"
   }
 }

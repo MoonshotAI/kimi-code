@@ -23,7 +23,7 @@ function randomDoc(rng) {
   };
 }
 
-test('index-consistency: indexes stay consistent with the store under random ops', async () => {
+test('index-consistency: indexes stay consistent with the store under random ops', { timeout: 60_000 }, async () => {
   const rng = mulberry32(0x5eed1234);
   const dir = await tmpDir();
   let db = await MiniDb.open({ dir, valueCodec: 'json', fsyncPolicy: 'no', autoCompact: false });

@@ -697,7 +697,6 @@ describe('useKimiWebClient (resync integration)', () => {
           id: 'workspace-1',
           root: '/workspace',
           name: 'Workspace',
-          isGitRepo: false,
           sessionCount: 1,
         },
       ]),

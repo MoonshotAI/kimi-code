@@ -3,7 +3,7 @@
   "publisher": "moonshot-ai",
   "displayName": "Kimi Code",
   "description": "Official Kimi Code plugin for VS Code",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",

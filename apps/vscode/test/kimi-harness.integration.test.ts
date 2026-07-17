@@ -1054,6 +1054,26 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     expect(runtime.isBusy).toBe(false);
   });
 
+  it("fails a prompt sent while a turn is running without disturbing the active turn", async () => {
+    const rig = await createRuntimeRig();
+    const blocked = routeBlockedPrompt(rig.provider);
+    const runtime = await openRuntimeSession(rig);
+    const first = runtime.prompt("first message");
+    await blocked.started;
+
+    await expect(runtime.prompt("concurrent message")).resolves.toEqual({ status: "failed" });
+
+    // The rejection surfaces as a mid-turn warning; the active turn is untouched.
+    expect(runtime.isBusy).toBe(true);
+    expect(streamEvents(rig.broadcasts)).toContainEqual(
+      expect.objectContaining({ type: "error", terminal: false }),
+    );
+
+    blocked.release();
+    await expect(first).resolves.toEqual({ status: "finished" });
+    expect(runtime.isBusy).toBe(false);
+  });
+
   it("stops a running init command without surfacing its late result", async () => {
     const rig = await createRuntimeRig();
     const blocked = routeBlockedPrompt(rig.provider);

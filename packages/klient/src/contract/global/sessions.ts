@@ -21,7 +21,7 @@ export const sessionSummarySchema = z.object({
 });
 
 export const sessionListQuerySchema = z.object({
-  workspaceId: z.string().optional(),
+  workspaceIds: z.array(z.string()).optional(),
   sessionId: z.string().optional(),
   includeArchived: z.boolean().optional(),
   cursor: z.string().optional(),
@@ -32,5 +32,5 @@ export const sessionListQuerySchema = z.object({
 export const sessionsContract = {
   list: { input: z.tuple([sessionListQuerySchema]), output: pageOf(sessionSummarySchema) },
   get: { input: z.tuple([z.string()]), output: maybe(sessionSummarySchema) },
-  countActive: { input: z.tuple([z.string()]), output: z.number() },
+  countActive: { input: z.tuple([z.array(z.string())]), output: z.number() },
 } satisfies ServiceContract;
