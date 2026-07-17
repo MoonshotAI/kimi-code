@@ -548,8 +548,12 @@ describe('ModelCatalogService', () => {
       { provider_id: 'my-kimi', provider_name: 'my-kimi', added: 1, removed: 1 },
     ]);
     // The dropped alias was the default: an explicit undefined in the patch
-    // must clear the section instead of leaving the default dangling.
-    expect(configSet).toHaveBeenCalledWith('defaultModel', undefined);
+    // must clear the section instead of leaving the default dangling. It has
+    // to go through `replace` — `set()`'s deepMerge would resolve undefined
+    // back to the stale base value.
+    expect(configReplace).toHaveBeenCalledWith('defaultModel', undefined);
+    expect(configReplace).toHaveBeenCalledWith('thinking', undefined);
+    expect(configSet).not.toHaveBeenCalled();
     expect(backing.defaultModel).toBeUndefined();
     expect(backing.thinking).toBeUndefined();
     expect(backing.models['my-kimi/kimi-k3']).toBeDefined();

@@ -423,6 +423,33 @@ describe('ConfigService env overlay (live)', () => {
 
     disposables.dispose();
   });
+
+  it('deletes a scalar section on replace(undefined) — set(undefined) cannot', async () => {
+    // Contract the refresh host relies on: an explicit undefined in a refresh
+    // patch must DELETE the section. `set()` deep-merges, so an undefined
+    // scalar patch resolves back to the base value; only `replace()` deletes.
+    const disposables = new DisposableStore();
+    const ix = disposables.add(new TestInstantiationService());
+    ix.stub(ILogService, stubLog());
+    ix.stub(IBootstrapService, stubBootstrap('/tmp/kimi-cfg'));
+    ix.stub(IFileSystemStorageService, new InMemoryStorageService());
+    ix.set(IAtomicTomlDocumentStore, new SyncDescriptor(TomlAtomicDocumentStore));
+    ix.set(IConfigRegistry, new SyncDescriptor(ConfigRegistry));
+    ix.set(IConfigService, new SyncDescriptor(ConfigService));
+    const config = ix.get(IConfigService);
+    await config.ready;
+
+    await config.replace('defaultModel', 'kimi-code/kimi-k2');
+    expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k2');
+
+    await config.set('defaultModel', undefined);
+    expect(config.get<string>('defaultModel')).toBe('kimi-code/kimi-k2');
+
+    await config.replace('defaultModel', undefined);
+    expect(config.get<string>('defaultModel')).toBeUndefined();
+
+    disposables.dispose();
+  });
 });
 
 describe('skill config sections', () => {
