@@ -629,6 +629,7 @@ function forgetSession(sessionId: string): void {
   delete rawState.promptIdBySession[sessionId];
   delete rawState.inFlightBySession[sessionId];
   delete rawState.turnActiveBySession[sessionId];
+  delete rawState.turnEndedPromptIdBySession[sessionId];
   // Drop per-session mode toggles and re-persist so a deleted session's entry
   // doesn't linger in localStorage.
   delete rawState.planModeBySession[sessionId];
@@ -824,6 +825,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
     goalVersionBySession: rawState.goalVersionBySession,
     lastSeqBySession: rawState.lastSeqBySession,
     turnActiveBySession: rawState.turnActiveBySession,
+    turnEndedPromptIdBySession: rawState.turnEndedPromptIdBySession,
     compactionBySession: rawState.compactionBySession,
     config: rawState.config,
     warnings: rawState.warnings,
@@ -843,6 +845,7 @@ function applyEvent(event: ReturnType<typeof toAppEvent>, sessionId: string, seq
   rawState.goalVersionBySession = next.goalVersionBySession;
   rawState.lastSeqBySession = next.lastSeqBySession;
   rawState.turnActiveBySession = next.turnActiveBySession;
+  rawState.turnEndedPromptIdBySession = next.turnEndedPromptIdBySession;
   rawState.compactionBySession = next.compactionBySession;
   rawState.config = next.config ?? null;
   rawState.warnings = next.warnings;
@@ -1402,6 +1405,12 @@ async function syncSessionFromSnapshot(sessionId: string): Promise<SyncSessionRe
       // for the heavy fields); keep the live usage folded in from /status and
       // the WS status stream instead of zeroing it on every snapshot sync.
       usage: snapUsagePlaceholder ? s.usage : snap.session.usage,
+      // Recency never moves backwards on a snapshot: the server's updatedAt
+      // is prompt-submit-grained while the client bumps at turn end and on
+      // approval/question requests. Blindly taking the server value re-sorted
+      // the sidebar on every click (and could even downgrade a newer local
+      // bump), so keep whichever timestamp is newer.
+      updatedAt: snap.session.updatedAt > s.updatedAt ? snap.session.updatedAt : s.updatedAt,
     }));
     // The snapshot only carries the most recent page; keep any older pages the
     // user already loaded so reopening does not reset scrollback.

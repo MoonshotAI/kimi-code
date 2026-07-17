@@ -81,6 +81,11 @@ export interface KimiClientState {
    *  (main-only) inFlightTurn. Half of the working moon; subagent turns never
    *  reach the events that set this. */
   turnActiveBySession: Record<string, boolean>;
+  /** promptId served by the most recently ended main turn, per session. When
+   *  prompt.aborted arrives for that same prompt it is an active-turn abort —
+   *  turn.ended already provided the recency moment, so promptAborted skips
+   *  its (no-turn) bump. Cleared when the next main turn starts. */
+  turnEndedPromptIdBySession: Record<string, string>;
   compactionBySession: Record<string, CompactionStatus>;
   config?: AppConfig | null;
   warnings: AppWarning[];
@@ -99,6 +104,7 @@ export function createInitialState(): KimiClientState {
     goalVersionBySession: {},
     lastSeqBySession: {},
     turnActiveBySession: {},
+    turnEndedPromptIdBySession: {},
     compactionBySession: {},
     warnings: [],
   };
@@ -127,6 +133,7 @@ function cloneState(s: KimiClientState): KimiClientState {
     goalVersionBySession: { ...s.goalVersionBySession },
     lastSeqBySession: { ...s.lastSeqBySession },
     turnActiveBySession: { ...s.turnActiveBySession },
+    turnEndedPromptIdBySession: { ...s.turnEndedPromptIdBySession },
     compactionBySession: { ...s.compactionBySession },
     warnings: [...s.warnings],
   };
@@ -139,6 +146,27 @@ function advanceSeq(state: KimiClientState, sessionId: string | undefined, seq: 
       state.lastSeqBySession[sessionId] = seq;
     }
   }
+}
+
+/** Float a session to the top of the sidebar by bumping its `updatedAt` to now
+ *  (never backwards). Recency is deliberately coarse: only moments the user
+ *  should look at bump it — main-turn end and new approval/question requests.
+ *  Per-step and per-tool-call messages do NOT (they re-sorted the session list
+ *  mid-turn). */
+function bumpSessionRecency(state: KimiClientState, sessionId: string): void {
+  const now = new Date().toISOString();
+  state.sessions = state.sessions.map((s) =>
+    s.id === sessionId && now > s.updatedAt ? { ...s, updatedAt: now } : s,
+  );
+}
+
+/** True when the event actually advances the session's durable seq cursor —
+ *  i.e. it is fresh, not a stale/replayed frame arriving after a snapshot
+ *  resync already moved the cursor past it (the same gate processEvent
+ *  applies to its turn-end side effects). Recency bumps must only fire for
+ *  fresh events, or a replay floats an idle session to the top. */
+function isFreshEvent(state: KimiClientState, meta: EventMeta): boolean {
+  return meta.seq > (state.lastSeqBySession[meta.sessionId] ?? 0);
 }
 
 function isOptimisticUserMessage(message: AppMessage): boolean {
@@ -358,6 +386,7 @@ export function reduceAppEvent(
       delete next.questionsBySession[id];
       delete next.lastSeqBySession[id];
       delete next.turnActiveBySession[id];
+      delete next.turnEndedPromptIdBySession[id];
       if (next.activeSessionId === id) {
         next.activeSessionId = undefined;
       }
@@ -382,6 +411,14 @@ export function reduceAppEvent(
       if (event.mainTurnActive === true) {
         next.turnActiveBySession[event.sessionId] = true;
       } else if (event.mainTurnActive === false || !event.busy) {
+        // The fallback end-of-turn path: turn.ended was lost (abrupt agent
+        // disposal) and this work_changed retires the main turn instead.
+        // Give the turn its recency bump — but only when the flag was still
+        // set (a normal turn.ended already cleared it and bumped) and the
+        // event is fresh.
+        if (state.turnActiveBySession[event.sessionId] && isFreshEvent(state, meta)) {
+          bumpSessionRecency(next, event.sessionId);
+        }
         delete next.turnActiveBySession[event.sessionId];
       }
       break;
@@ -480,14 +517,10 @@ export function reduceAppEvent(
     // -------------------------------------------------------------------------
     case 'messageCreated': {
       const sid = event.message.sessionId;
-      // A new message is activity on the session: bump its recency so it floats
-      // to the top of its workspace group in the sidebar immediately. The daemon
-      // does not always broadcast a fresh `session.updated` for message activity,
-      // so we rely on the message's own timestamp (and never move it backwards).
-      const createdAt = event.message.createdAt;
-      next.sessions = next.sessions.map((s) =>
-        s.id === sid && createdAt > s.updatedAt ? { ...s, updatedAt: createdAt } : s,
-      );
+      // Deliberately NOT bumping the session's `updatedAt` here: messages are
+      // created per step (assistant bubble) and per tool call, and bumping
+      // recency on each one re-sorted the sidebar session list mid-turn.
+      // Recency is turn-grained — see the `turnActiveChanged` case.
       const msgs = next.messagesBySession[sid] ?? [];
       const exists = msgs.some((m) => m.id === event.message.id);
       if (!exists) {
@@ -588,6 +621,13 @@ export function reduceAppEvent(
       const exists = list.some((a) => a.approvalId === event.approval.approvalId);
       if (!exists) {
         next.approvalsBySession[sid] = [...list, event.approval];
+        // A fresh approval waits on the user: float the session to the top.
+        // Freshness gate: a replayed request whose approval has since been
+        // resolved (so the id dedupe misses it) must not float an idle
+        // session.
+        if (isFreshEvent(state, meta)) {
+          bumpSessionRecency(next, sid);
+        }
       }
       // Preserve a plan_review display so the plan stays visible in the
       // ExitPlanMode tool card after the approval resolves.
@@ -624,6 +664,13 @@ export function reduceAppEvent(
       const exists = list.some((q) => q.questionId === event.question.questionId);
       if (!exists) {
         next.questionsBySession[sid] = [...list, event.question];
+        // A fresh question waits on the user: float the session to the top.
+        // Freshness gate: a replayed request whose question has since been
+        // answered (so the id dedupe misses it) must not float an idle
+        // session.
+        if (isFreshEvent(state, meta)) {
+          bumpSessionRecency(next, sid);
+        }
       }
       break;
     }
@@ -753,11 +800,28 @@ export function reduceAppEvent(
 
     // -------------------------------------------------------------------------
     // Prompt-level lifecycle events drive the web layer's in-flight cleanup
-    // (see useKimiWebClient.processEvent), not reducer state. Advance seq
-    // silently.
-    case 'promptCompleted':
-    case 'promptAborted':
+    // (see useKimiWebClient.processEvent), not reducer state — with two
+    // recency exceptions: the no-turn prompt paths. A prompt blocked before
+    // any turn started (promptCompleted reason 'blocked') and a queued prompt
+    // aborted before launch (promptAborted) produce no turn.ended, so without
+    // this the prompt's activity never bumps the session's recency.
+    case 'promptCompleted': {
+      if (event.reason === 'blocked' && isFreshEvent(state, meta)) {
+        bumpSessionRecency(next, event.sessionId);
+      }
       break;
+    }
+    case 'promptAborted': {
+      // An active-turn abort arrives right after that turn's turn.ended —
+      // the turn end already bumped, so a second bump would only re-sort the
+      // list a moment later (and could slip the session ahead of one that
+      // finished in between). This case is for the queued no-turn abort only.
+      if (event.promptId === state.turnEndedPromptIdBySession[event.sessionId]) break;
+      if (isFreshEvent(state, meta)) {
+        bumpSessionRecency(next, event.sessionId);
+      }
+      break;
+    }
 
     // -------------------------------------------------------------------------
     case 'turnActiveChanged': {
@@ -768,8 +832,17 @@ export function reduceAppEvent(
       );
       if (event.active) {
         next.turnActiveBySession[event.sessionId] = true;
+        delete next.turnEndedPromptIdBySession[event.sessionId];
       } else {
         delete next.turnActiveBySession[event.sessionId];
+        if (event.promptId !== undefined) {
+          next.turnEndedPromptIdBySession[event.sessionId] = event.promptId;
+        }
+        // The main turn's end is one of the coarse recency moments — but only
+        // a fresh one; a stale/replayed turn.ended must not float the session.
+        if (isFreshEvent(state, meta)) {
+          bumpSessionRecency(next, event.sessionId);
+        }
       }
       break;
     }

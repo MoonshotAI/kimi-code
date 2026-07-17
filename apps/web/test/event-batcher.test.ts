@@ -778,6 +778,157 @@ describe('useKimiWebClient (resync integration)', () => {
   });
 });
 
+describe('useKimiWebClient (snapshot recency guard)', () => {
+  it('keeps the newer updatedAt when a snapshot replaces the session object', async () => {
+    vi.stubGlobal('WebSocket', class {});
+    // Fresh module state: useKimiWebClient holds a module-level singleton
+    // (rawState), and the resync test above already populated it.
+    vi.resetModules();
+
+    const usage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+      totalCostUsd: 0,
+      contextTokens: 0,
+      contextLimit: 0,
+      turnCount: 0,
+    };
+    const makeSession = (id: string, updatedAt: string): AppSession => ({
+      id,
+      title: id,
+      createdAt: updatedAt,
+      updatedAt,
+      busy: false,
+      archived: false,
+      cwd: '/workspace',
+      model: 'model-1',
+      usage: { ...usage },
+      messageCount: 0,
+      lastSeq: 1,
+      workspaceId: 'workspace-1',
+    });
+    const snapshotFor = (session: AppSession, serverUpdatedAt: string): AppSessionSnapshot => ({
+      asOfSeq: 1,
+      epoch: 'epoch-1',
+      session: { ...session, updatedAt: serverUpdatedAt },
+      messages: [],
+      hasMoreMessages: false,
+      inFlightTurn: null,
+      subagents: [],
+      pendingApprovals: [],
+      pendingQuestions: [],
+    });
+    // The server is prompt-submit-grained, the client bumps at turn end: for
+    // s-local-newer the client value is ahead (keep it); for s-local-older
+    // the server recorded newer activity the client missed (adopt it).
+    const serverUpdatedAtById: Record<string, string> = {
+      's-local-newer': '2026-05-01T00:00:00.000Z',
+      's-local-older': '2026-03-01T00:00:00.000Z',
+    };
+    const localNewer = makeSession('s-local-newer', '2026-06-01T12:00:00.000Z');
+    const localOlder = makeSession('s-local-older', '2026-01-01T00:00:00.000Z');
+    const getSessionSnapshot = vi.fn((id: string) =>
+      Promise.resolve(
+        snapshotFor(id === 's-local-newer' ? localNewer : localOlder, serverUpdatedAtById[id]!),
+      ),
+    );
+    const connection: KimiEventConnection = {
+      subscribe: vi.fn(),
+      unsubscribe: vi.fn(),
+      bindNextPromptId: vi.fn(),
+      seedSnapshot: vi.fn(),
+      abort: vi.fn(),
+      terminalAttach: vi.fn(),
+      terminalInput: vi.fn(),
+      terminalResize: vi.fn(),
+      terminalDetach: vi.fn(),
+      terminalClose: vi.fn(),
+      markSideChannelAgent: vi.fn(),
+      health: () => ({ connected: true, open: true, stale: false }),
+      reconnect: vi.fn(),
+      close: vi.fn(),
+    };
+    const api: Partial<KimiWebApi> = {
+      getAuth: vi.fn(async () => ({
+        ready: true,
+        defaultModel: 'model-1',
+        managedProvider: null,
+      })),
+      getHealth: vi.fn(async () => ({ status: 'ok', uptimeSec: 1 })),
+      getMeta: vi.fn(async () => ({
+        serverVersion: '0.0.0',
+        serverId: 'server-1',
+        startedAt: '2026-01-01T00:00:00.000Z',
+        capabilities: {},
+        openInApps: [],
+        dangerousBypassAuth: false,
+        backend: 'v2',
+      })),
+      getConfig: vi.fn(async () => ({ providers: {}, defaultModel: 'model-1' })),
+      listModels: vi.fn(async () => []),
+      listProviders: vi.fn(async () => []),
+      listWorkspaces: vi.fn(async () => [
+        {
+          id: 'workspace-1',
+          root: '/workspace',
+          name: 'Workspace',
+          isGitRepo: false,
+          sessionCount: 2,
+        },
+      ]),
+      getFsHome: vi.fn(async () => ({ home: '/home/test', recentRoots: [] })),
+      listSessions: vi.fn(async () => ({ items: [localNewer, localOlder], hasMore: false })),
+      getSessionSnapshot,
+      getSessionStatus: vi.fn(async () => ({
+        model: 'model-1',
+        thinkingEffort: 'high',
+        permission: 'manual',
+        planMode: false,
+        swarmMode: false,
+        contextTokens: 0,
+        maxContextTokens: 0,
+        contextUsage: 0,
+      })),
+      getSessionGoal: vi.fn(async () => null),
+      getSessionWarnings: vi.fn(async () => []),
+      getGitStatus: vi.fn(async () => ({
+        branch: '',
+        ahead: 0,
+        behind: 0,
+        entries: {},
+        additions: 0,
+        deletions: 0,
+        pullRequest: null,
+      })),
+      listTasks: vi.fn(async () => []),
+      listSkills: vi.fn(async () => []),
+      listSkillsForWorkspace: vi.fn(async () => []),
+      getFileUrl: (fileId) => `file:${fileId}`,
+      connectEvents: vi.fn(() => connection),
+    };
+    for (const key of Object.keys(clientApiMock)) delete clientApiMock[key];
+    Object.assign(clientApiMock, api);
+
+    try {
+      const { useKimiWebClient } = await import('../src/composables/useKimiWebClient');
+      const client = useKimiWebClient();
+      await client.load();
+      await client.selectSession('s-local-newer');
+      await client.selectSession('s-local-older');
+
+      const byId = (id: string) =>
+        client.workspaceGroups.value.flatMap((g) => g.sessions).find((s) => s.id === id);
+      expect(byId('s-local-newer')?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+      expect(byId('s-local-older')?.updatedAt).toBe('2026-03-01T00:00:00.000Z');
+    } finally {
+      connection.close();
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
 describe('isRenderEvent (queue classification)', () => {
   it.each(['assistantDelta', 'agentDelta', 'toolOutput', 'taskProgress'])(
     'classifies %s as a render event',

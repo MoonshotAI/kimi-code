@@ -238,7 +238,7 @@ describe('main-turn liveness projection', () => {
     expect(events).toContainEqual({ type: 'turnActiveChanged', sessionId: 's1', active: true });
   });
 
-  it('turn.ended clears it and carries the reason', () => {
+  it('turn.ended clears it and carries the reason and the served promptId', () => {
     const projector = createAgentProjector();
     projector.project('turn.started', { agentId: 'main', turnId: 1 }, 's1');
     const events = projector.project('turn.ended', { agentId: 'main', turnId: 1, reason: 'cancelled' }, 's1');
@@ -247,6 +247,8 @@ describe('main-turn liveness projection', () => {
       sessionId: 's1',
       active: false,
       reason: 'cancelled',
+      // No prompt.submitted preceded the turn, so the projector synthesized one.
+      promptId: expect.any(String),
     });
   });
 

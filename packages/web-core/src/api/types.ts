@@ -480,7 +480,17 @@ export type AppEvent =
   // streaming reveal). Deliberately NOT derived from session status: a
   // background subagent or BTW side chat keeps the session busy but must not
   // light up the main conversation's moon. `reason` rides on deactivation.
-  | { type: 'turnActiveChanged'; sessionId: string; active: boolean; reason?: string }
+  | {
+      type: 'turnActiveChanged';
+      sessionId: string;
+      active: boolean;
+      reason?: string;
+      /** Present on deactivation: the prompt this turn served. Lets the
+       *  reducer tell an active-turn abort (prompt.aborted for a prompt whose
+       *  turn already ended — not a second recency moment) from a queued abort
+       *  (no turn ever started — the recency moment turn.ended never gave). */
+      promptId?: string;
+    }
   | { type: 'goalUpdated'; sessionId: string; goal: AppGoal | null }
   | { type: 'configChanged'; changedFields: string[]; config: AppConfig }
   | {

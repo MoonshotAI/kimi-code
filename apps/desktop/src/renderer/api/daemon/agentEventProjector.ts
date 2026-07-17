@@ -936,6 +936,12 @@ export function createAgentProjector(): AgentProjector {
         const msgId = s.currentAssistantMsgId;
         const reason: string = p?.reason ?? 'completed';
         const durationMs = numberField(p ?? {}, 'durationMs');
+        // Which prompt this turn served — recorded so the web layer can tell
+        // an active-turn abort (prompt already ended with this turn) from a
+        // queued abort (no turn ever started) when prompt.aborted arrives.
+        const turnId: number | undefined = p?.turnId;
+        const turnPromptId: string | undefined =
+          (turnId !== undefined ? s.turnPromptId.get(turnId) : undefined) ?? s.currentPromptId;
 
         // Main-conversation liveness: the prompt this turn served is done.
         // This — not the session-busy status — is what ends the working moon.
@@ -945,7 +951,13 @@ export function createAgentProjector(): AgentProjector {
         // equal and the prompt-finish cleanup (moon, queue drain) would never
         // fire (observed: moon stuck when a turn ends with background tasks
         // still running, where no work_changed(busy:false) fallback exists).
-        out.push({ type: 'turnActiveChanged', sessionId, active: false, reason: p?.reason });
+        out.push({
+          type: 'turnActiveChanged',
+          sessionId,
+          active: false,
+          reason: p?.reason,
+          promptId: turnPromptId,
+        });
 
         if (msgId) {
           finishAssistantMessage(s, msgId);

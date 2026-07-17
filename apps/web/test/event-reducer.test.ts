@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createInitialState, reduceAppEvent } from '@moonshot-ai/web-core/api';
-import type { AppMessage, AppSession, AppTask } from '../src/api/types';
+import type { AppApprovalRequest, AppMessage, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
 import { i18n } from '../src/i18n';
 
 function makeSession(id: string, updatedAt: string): AppSession {
@@ -49,6 +49,28 @@ function makeSubagentTask(id: string, sessionId: string): AppTask {
   };
 }
 
+function makeApproval(sessionId: string): AppApprovalRequest {
+  return {
+    approvalId: 'ap_1',
+    sessionId,
+    toolCallId: 'tc_1',
+    toolName: 'Bash',
+    action: 'run',
+    display: null,
+    expiresAt: '2026-06-01T12:05:00.000Z',
+    createdAt: '2026-06-01T12:00:00.000Z',
+  };
+}
+
+function makeQuestion(sessionId: string): AppQuestionRequest {
+  return {
+    questionId: 'q_1',
+    sessionId,
+    questions: [{ id: 'q1', question: 'pick one', options: [{ id: 'a', label: 'A' }] }],
+    createdAt: '2026-06-01T12:00:00.000Z',
+  };
+}
+
 describe('reduceAppEvent turnActiveChanged', () => {
   it('sets and clears the per-session main-turn liveness flag', () => {
     const state = {
@@ -79,6 +101,365 @@ describe('reduceAppEvent turnActiveChanged', () => {
     };
     const next = reduceAppEvent(state, { type: 'sessionDeleted', sessionId: 's1' }, { sessionId: 's1', seq: 1 });
     expect(next.turnActiveBySession['s1']).toBeUndefined();
+  });
+
+  it('bumps the session updatedAt when the main turn ends', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+        turnActiveBySession: { s1: true },
+      };
+      const next = reduceAppEvent(
+        state,
+        { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'completed' },
+        { sessionId: 's1', seq: 1 },
+      );
+      expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not touch updatedAt when a turn starts', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: 's1', active: true },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.sessions[0]?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('never moves updatedAt backwards on turn end', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-06-01T12:00:00.000Z')],
+      };
+      const next = reduceAppEvent(
+        state,
+        { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'completed' },
+        { sessionId: 's1', seq: 1 },
+      );
+      expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('leaves other sessions untouched on turn end', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [
+        makeSession('s-a', '2026-01-01T00:00:00.000Z'),
+        makeSession('s-b', '2026-01-01T00:00:00.000Z'),
+      ],
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: 's-a', active: false, reason: 'completed' },
+      { sessionId: 's-a', seq: 1 },
+    );
+    expect(next.sessions.find((s) => s.id === 's-b')?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+});
+
+describe('reduceAppEvent stale-replay recency gate', () => {
+  it('does not bump updatedAt for a stale/replayed turn end', () => {
+    // A snapshot resync advanced the cursor to seq 10; a late duplicate
+    // turn.ended (seq 5) must not float the session again.
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      lastSeqBySession: { s1: 10 },
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'completed' },
+      { sessionId: 's1', seq: 5 },
+    );
+    expect(next.sessions[0]?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('does not bump updatedAt for a stale/replayed prompt abort', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      lastSeqBySession: { s1: 10 },
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'promptAborted', sessionId: 's1', promptId: 'pr_1' },
+      { sessionId: 's1', seq: 5 },
+    );
+    expect(next.sessions[0]?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('does not bump updatedAt for a stale/replayed approval request (already resolved)', () => {
+    // The approval resolved before the snapshot, so the pending list no
+    // longer dedupes the replay — freshness must catch it instead.
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      lastSeqBySession: { s1: 10 },
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'approvalRequested', sessionId: 's1', approval: makeApproval('s1') },
+      { sessionId: 's1', seq: 5 },
+    );
+    expect(next.sessions[0]?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('does not bump updatedAt for a stale/replayed question request', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      lastSeqBySession: { s1: 10 },
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'questionRequested', sessionId: 's1', question: makeQuestion('s1') },
+      { sessionId: 's1', seq: 5 },
+    );
+    expect(next.sessions[0]?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+});
+
+describe('reduceAppEvent prompt terminal recency', () => {
+  it('bumps updatedAt when a queued prompt is aborted before any turn', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      };
+      const next = reduceAppEvent(
+        state,
+        { type: 'promptAborted', sessionId: 's1', promptId: 'pr_1' },
+        { sessionId: 's1', seq: 1 },
+      );
+      expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bumps updatedAt when a prompt is blocked before any turn starts', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      };
+      const next = reduceAppEvent(
+        state,
+        { type: 'promptCompleted', sessionId: 's1', promptId: 'pr_1', reason: 'blocked' },
+        { sessionId: 's1', seq: 1 },
+      );
+      expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not bump updatedAt for a normal-turn prompt completion', () => {
+    // The turn's own turn.ended already bumped; promptCompleted(reason
+    // 'completed') must not be a second recency moment.
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'promptCompleted', sessionId: 's1', promptId: 'pr_1', reason: 'completed' },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.sessions[0]?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('does not bump again for an active-turn abort (turn.ended already did)', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+        turnActiveBySession: { s1: true },
+      };
+      const ended = reduceAppEvent(
+        state,
+        { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'cancelled', promptId: 'pr_1' },
+        { sessionId: 's1', seq: 1 },
+      );
+      vi.setSystemTime(new Date('2026-06-01T12:00:01.000Z'));
+      const aborted = reduceAppEvent(
+        ended,
+        { type: 'promptAborted', sessionId: 's1', promptId: 'pr_1' },
+        { sessionId: 's1', seq: 2 },
+      );
+      expect(aborted.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still bumps for an abort of a different (queued) prompt', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+        turnEndedPromptIdBySession: { s1: 'pr_1' },
+      };
+      const next = reduceAppEvent(
+        state,
+        { type: 'promptAborted', sessionId: 's1', promptId: 'pr_2' },
+        { sessionId: 's1', seq: 1 },
+      );
+      expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('reduceAppEvent sessionWorkChanged fallback recency', () => {
+  it('bumps updatedAt when a lost turn.ended retires via work_changed', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+        turnActiveBySession: { s1: true },
+      };
+      const next = reduceAppEvent(
+        state,
+        { type: 'sessionWorkChanged', sessionId: 's1', busy: false, mainTurnActive: false },
+        { sessionId: 's1', seq: 1 },
+      );
+      expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not bump updatedAt for an idle work_changed without an active turn', () => {
+    const state = {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+    };
+    const next = reduceAppEvent(
+      state,
+      { type: 'sessionWorkChanged', sessionId: 's1', busy: false },
+      { sessionId: 's1', seq: 1 },
+    );
+    expect(next.sessions[0]?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+  });
+
+  it('does not double-bump when turn.ended already retired the turn', () => {
+    // turnActiveChanged cleared the flag; the trailing work_changed finds it
+    // unset and must skip its fallback bump.
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+        turnActiveBySession: { s1: true },
+      };
+      const ended = reduceAppEvent(
+        state,
+        { type: 'turnActiveChanged', sessionId: 's1', active: false, reason: 'completed', promptId: 'pr_1' },
+        { sessionId: 's1', seq: 1 },
+      );
+      vi.setSystemTime(new Date('2026-06-01T12:00:01.000Z'));
+      const after = reduceAppEvent(
+        ended,
+        { type: 'sessionWorkChanged', sessionId: 's1', busy: false, mainTurnActive: false },
+        { sessionId: 's1', seq: 2 },
+      );
+      expect(after.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('reduceAppEvent pending-interaction recency', () => {
+  it('bumps the session updatedAt when a new approval is requested', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      };
+      const next = reduceAppEvent(
+        state,
+        { type: 'approvalRequested', sessionId: 's1', approval: makeApproval('s1') },
+        { sessionId: 's1', seq: 1 },
+      );
+      expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not re-bump updatedAt for a duplicate approval request', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      };
+      const first = reduceAppEvent(
+        state,
+        { type: 'approvalRequested', sessionId: 's1', approval: makeApproval('s1') },
+        { sessionId: 's1', seq: 1 },
+      );
+      vi.setSystemTime(new Date('2026-06-01T12:01:00.000Z'));
+      const second = reduceAppEvent(
+        first,
+        { type: 'approvalRequested', sessionId: 's1', approval: makeApproval('s1') },
+        { sessionId: 's1', seq: 2 },
+      );
+      expect(second.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('bumps the session updatedAt when a new question is requested', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const state = {
+        ...createInitialState(),
+        sessions: [makeSession('s1', '2026-01-01T00:00:00.000Z')],
+      };
+      const next = reduceAppEvent(
+        state,
+        { type: 'questionRequested', sessionId: 's1', question: makeQuestion('s1') },
+        { sessionId: 's1', seq: 1 },
+      );
+      expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -214,7 +595,10 @@ describe('reduceAppEvent sessionWorkChanged', () => {
 });
 
 describe('reduceAppEvent messageCreated', () => {
-  it('bumps the session updatedAt so it floats to the top of the sidebar', () => {
+  it('does not bump the session updatedAt (recency is turn-grained)', () => {
+    // Messages are created per step and per tool call; bumping recency on each
+    // one re-sorted the sidebar mid-turn. The bump moved to turn end
+    // (see reduceAppEvent turnActiveChanged).
     const state = {
       ...createInitialState(),
       sessions: [makeSession('s-old', '2026-01-01T00:00:00.000Z')],
@@ -224,37 +608,7 @@ describe('reduceAppEvent messageCreated', () => {
       { type: 'messageCreated', message: makeMessage('s-old', '2026-06-01T12:00:00.000Z') },
       { sessionId: 's-old', seq: 1 },
     );
-    expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
-  });
-
-  it('does not move a session backwards when an older message arrives', () => {
-    const state = {
-      ...createInitialState(),
-      sessions: [makeSession('s-new', '2026-06-01T12:00:00.000Z')],
-    };
-    const next = reduceAppEvent(
-      state,
-      { type: 'messageCreated', message: makeMessage('s-new', '2026-01-01T00:00:00.000Z') },
-      { sessionId: 's-new', seq: 1 },
-    );
-    expect(next.sessions[0]?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
-  });
-
-  it('leaves other sessions untouched', () => {
-    const state = {
-      ...createInitialState(),
-      sessions: [
-        makeSession('s-a', '2026-01-01T00:00:00.000Z'),
-        makeSession('s-b', '2026-01-01T00:00:00.000Z'),
-      ],
-    };
-    const next = reduceAppEvent(
-      state,
-      { type: 'messageCreated', message: makeMessage('s-a', '2026-06-01T12:00:00.000Z') },
-      { sessionId: 's-a', seq: 1 },
-    );
-    expect(next.sessions.find((s) => s.id === 's-a')?.updatedAt).toBe('2026-06-01T12:00:00.000Z');
-    expect(next.sessions.find((s) => s.id === 's-b')?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+    expect(next.sessions[0]?.updatedAt).toBe('2026-01-01T00:00:00.000Z');
   });
 
   it('reconciles a resolved video echo into the optimistic user message', () => {
