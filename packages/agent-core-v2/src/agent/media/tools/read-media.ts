@@ -329,7 +329,7 @@ export class ReadMediaFileTool implements BuiltinTool<ReadMediaFileInput> {
         };
       }
 
-      const stat = await this.fs.stat(safePath);
+      const stat = await this.fs.stat(safePath, { followSymlinks: true });
       if (stat.size === 0) {
         return { isError: true, output: `"${args.path}" is empty.` };
       }

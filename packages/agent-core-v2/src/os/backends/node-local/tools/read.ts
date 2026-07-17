@@ -280,7 +280,7 @@ export class ReadTool implements BuiltinTool<ReadInput> {
     try {
       let stat: Awaited<ReturnType<IHostFileSystem['stat']>>;
       try {
-        stat = await this.fs.stat(safePath);
+        stat = await this.fs.stat(safePath, { followSymlinks: true });
       } catch (error) {
         if (isFileNotFoundError(error)) {
           return { isError: true, output: `"${args.path}" does not exist.` };
