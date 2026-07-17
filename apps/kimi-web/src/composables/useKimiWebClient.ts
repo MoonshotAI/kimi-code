@@ -183,6 +183,12 @@ function loadLegacyThinkingValue(): ThinkingLevel | undefined {
   return raw && PERSISTED_THINKING_LEVEL_RE.test(raw) ? (raw as ThinkingLevel) : undefined;
 }
 
+// Map key for the migrated legacy value — never a real model id. Kept INSIDE
+// the map (not a sidecar variable) so the first per-model write, which rewrites
+// the raw legacy string into map format, carries the fallback forward instead
+// of deleting it for every model without its own entry.
+const LEGACY_THINKING_PICK_KEY = '*';
+
 // The RUNTIME source of truth for per-model picks is this in-memory map,
 // hydrated from localStorage once at startup. Explicit picks update it first
 // (see saveThinkingToStorage), so a pick takes effect even when persistence is
@@ -193,21 +199,26 @@ function loadLegacyThinkingValue(): ThinkingLevel | undefined {
 // saveUnread) so concurrent tabs' entries survive, and re-read from scratch on
 // the next startup.
 const thinkingPicks: Record<string, ThinkingLevel> = loadThinkingMap();
-const legacyThinkingPick: ThinkingLevel | undefined =
-  Object.keys(thinkingPicks).length === 0 ? loadLegacyThinkingValue() : undefined;
+if (Object.keys(thinkingPicks).length === 0) {
+  const legacy = loadLegacyThinkingValue();
+  if (legacy !== undefined) thinkingPicks[LEGACY_THINKING_PICK_KEY] = legacy;
+}
 
 function loadThinkingForModel(modelId: string): ThinkingLevel | undefined {
-  // Per-model entries win. A legacy pre-map global pick stays as a fallback for
-  // models without their own entry — useModelProviderState validates it against
-  // each model's catalog entry, so it only ever applies to models that declare
-  // it (a max-only model still falls through to its default).
-  return thinkingPicks[modelId] ?? legacyThinkingPick;
+  // Per-model entries win; the '*' entry is the migrated legacy pre-map global
+  // pick — useModelProviderState validates it against each model's catalog
+  // entry, so it only ever applies to models that declare it (a max-only model
+  // still falls through to its default).
+  return thinkingPicks[modelId] ?? thinkingPicks[LEGACY_THINKING_PICK_KEY];
 }
 
 function saveThinkingToStorage(modelId: string, level: ThinkingLevel): void {
   thinkingPicks[modelId] = level;
+  // Read-modify-write: merge this tab's in-memory entries (including any '*'
+  // legacy fallback) over the stored map, so concurrent tabs' entries survive
+  // and the legacy value is rewritten in map format rather than dropped.
   const map = loadThinkingMap();
-  map[modelId] = level;
+  for (const [id, pick] of Object.entries(thinkingPicks)) map[id] = pick;
   safeSetJson(THINKING_STORAGE_KEY, map);
 }
 
