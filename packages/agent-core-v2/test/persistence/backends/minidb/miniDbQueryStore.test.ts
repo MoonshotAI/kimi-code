@@ -161,18 +161,24 @@ describe('MiniDbQueryStore', () => {
     }
   });
 
-  it('rebuilds a clean store after on-disk corruption', async () => {
+  it('preserves data and drops a corrupt index sidecar on reopen', async () => {
     const first = build();
-    await first.put(COLLECTION, 'a', { v: 1 });
+    await first.put(COLLECTION, 'a', { id: 'a', v: 1 });
     await first.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
     await first.close();
     disposeHost?.();
     disposeHost = undefined;
 
+    // A corrupt index-definition sidecar holds only derived metadata. The
+    // opener must not wipe the database over it: the sidecar is dropped, the
+    // data is preserved, and the caller can re-register the definition.
     const indexFile = join(homeDir, 'cache', 'query-store', 'db.indexes.json');
     await fsp.writeFile(indexFile, '{ definitely not valid json');
 
     const second = build();
-    expect(await second.get(COLLECTION, 'a')).toBeUndefined();
+    expect(await second.get(COLLECTION, 'a')).toEqual({ id: 'a', v: 1 });
+    await second.ensureIndex(COLLECTION, { kind: 'value', name: 'byV', field: 'v' });
+    const page = await second.query<{ id: string; v: number }>(COLLECTION).where({ v: 1 }).execute();
+    expect(page.items).toEqual([{ id: 'a', v: 1 }]);
   });
 });

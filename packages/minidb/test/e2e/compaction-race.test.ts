@@ -250,7 +250,7 @@ test(
       }
       stop = true;
       await Promise.all(writers);
-      assert.equal(writeError, null, `write failed during compaction storm: ${writeError}`);
+      assert.equal(writeError, null, `write failed during compaction storm: ${String(writeError)}`);
       assert.ok(
         db.stats.compactions >= 2,
         `expected auto compactions to complete during the storm, got ${db.stats.compactions} (written=${written})`,
