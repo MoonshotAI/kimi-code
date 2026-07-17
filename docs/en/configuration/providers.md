@@ -57,8 +57,6 @@ api_key = "sk-xxxxx"
 
 > When using the Kimi Code managed service, running `/login` automatically configures `base_url` and credentials — no manual setup needed.
 
-**Automatic model list refresh.** When a `type = "kimi"` provider points its `base_url` at the Kimi Code managed endpoint (`https://api.kimi.com/coding/v1`, or the `KIMI_CODE_BASE_URL` override) and authenticates with an API key — a key distributed for the managed service, written inline as `api_key` or as `KIMI_API_KEY` in the `env` sub-table — the CLI refreshes that provider's model list from `<base_url>/models` on startup and during the daemon's periodic refresh, just like the OAuth login flow. Upstream-owned fields (context size, capabilities, display name) follow the server, models the server stops listing are removed, and aliases you named yourself (anything not prefixed with `<provider>/`) are kept. If the key only has access to a subset of models, the list is trimmed to that subset. Providers pointing anywhere else (proxies, gateways) are never auto-refreshed.
-
 ## `anthropic`
 
 For connecting to the Claude API. Standard Claude models automatically enable vision, tool use, and Thinking (where supported); custom or uncovered models need `capabilities` declared explicitly on `[models.<alias>]`.
