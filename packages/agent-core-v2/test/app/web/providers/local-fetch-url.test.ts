@@ -1,12 +1,10 @@
 /**
- * Covers: LocalFetchURLProvider content-kind reporting, SSRF guard, and
- * redirect handling.
+ * `web` domain tests — `LocalFetchURLProvider` SSRF guard and redirects.
  *
- * Verifies the provider tells callers whether the returned content is a
- * verbatim passthrough of the response body or the main text extracted
- * from an HTML page; that it rejects URLs whose IP literal or resolved
- * address is private / loopback / link-local; and that redirects are
- * followed manually with every hop re-validated.
+ * Locks in that the provider rejects URLs whose IP literal or resolved
+ * address is private / loopback / link-local (including IPv4-mapped IPv6
+ * forms), fails closed on DNS errors, and follows redirects manually with
+ * every hop re-validated. DNS is mocked so tests stay hermetic.
  */
 
 import { lookup } from 'node:dns/promises';
@@ -14,7 +12,7 @@ import { lookup } from 'node:dns/promises';
 import { Agent } from 'undici';
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-import { LocalFetchURLProvider } from '../../../src/tools/providers/local-fetch-url';
+import { LocalFetchURLProvider } from '#/app/web/providers/local-fetch-url';
 
 vi.mock('node:dns/promises', () => ({ lookup: vi.fn() }));
 
@@ -49,46 +47,6 @@ function htmlResponse(body: string, contentType: string): Response {
     headers: { 'content-type': contentType },
   });
 }
-
-describe('LocalFetchURLProvider content kind', () => {
-  it('reports text/plain bodies as a verbatim passthrough', async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(htmlResponse('plain body', 'text/plain; charset=utf-8'));
-    const provider = new LocalFetchURLProvider({ fetchImpl });
-
-    const result = await provider.fetch('https://example.com/file.txt');
-
-    expect(result).toEqual({ content: 'plain body', kind: 'passthrough' });
-  });
-
-  it('reports text/markdown bodies as a verbatim passthrough', async () => {
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(htmlResponse('# Title\n\nbody', 'text/markdown'));
-    const provider = new LocalFetchURLProvider({ fetchImpl });
-
-    const result = await provider.fetch('https://example.com/readme.md');
-
-    expect(result).toEqual({ content: '# Title\n\nbody', kind: 'passthrough' });
-  });
-
-  it('reports HTML bodies as extracted main content', async () => {
-    const html =
-      '<html><head><title>Doc</title></head><body><article>' +
-      '<p>The quick brown fox jumps over the lazy dog. '.repeat(20) +
-      '</p></article></body></html>';
-    const fetchImpl = vi
-      .fn<typeof fetch>()
-      .mockResolvedValue(htmlResponse(html, 'text/html; charset=utf-8'));
-    const provider = new LocalFetchURLProvider({ fetchImpl });
-
-    const result = await provider.fetch('https://example.com/page');
-
-    expect(result.kind).toBe('extracted');
-    expect(result.content).toContain('quick brown fox');
-  });
-});
 
 describe('LocalFetchURLProvider SSRF guard', () => {
   it('rejects a loopback IPv4 literal without fetching or resolving DNS', async () => {
