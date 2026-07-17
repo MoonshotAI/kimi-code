@@ -395,7 +395,11 @@ export function useModelProviderState(
       // skill at a stale effort while the UI shows the restored level. When
       // the persist fails (it surfaces the error itself), activating would
       // launch the skill at exactly that stale effort — abort instead.
-      const skillModel = rawState.sessions.find((s) => s.id === sid)?.model;
+      // Session models can be '' transiently (daemon profile echo) — treat
+      // that as "unset" and resolve through the configured default, same as
+      // the prompt/BTW/steer paths, before selecting the thinking level.
+      const rawModel = rawState.sessions.find((s) => s.id === sid)?.model;
+      const skillModel = (rawModel && rawModel.length > 0 ? rawModel : rawState.defaultModel) ?? undefined;
       const persisted = await persistSessionProfile(
         { thinking: thinkingLevelForModelId(skillModel) ?? rawState.thinking },
         sid,

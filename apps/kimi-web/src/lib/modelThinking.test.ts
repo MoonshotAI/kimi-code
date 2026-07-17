@@ -422,6 +422,23 @@ describe('useModelProviderState thinking on model selection', () => {
     expect(state.inFlightBySession['session-1']).toBe(false);
   });
 
+  it('resolves an empty session model through the default model before activating a skill', async () => {
+    // The daemon's profile echo can leave session.model '' — the same fallback
+    // the prompt/BTW/steer paths apply must hold here too, or the profile gets
+    // the raw active level instead of the target session model's pick.
+    storedThinkingLevels = { [effortAppModel.id]: 'low' };
+    const state = createState({
+      activeSession: { id: 'session-1', model: '' },
+      defaultModel: effortAppModel.id,
+    });
+    const provider = createModelProvider(state);
+
+    await provider.activateSkill('gen-changesets');
+
+    expect(persistSessionProfileMock).toHaveBeenCalledWith({ thinking: 'low' }, 'session-1');
+    expect(apiMock.activateSkill).toHaveBeenCalledWith('session-1', 'gen-changesets', undefined);
+  });
+
   it('treats a legacy pre-map pick as a fallback only for models that declare it', async () => {
     // Upgrade migration: the facade serves the old global pick for models
     // without their own entry; validation keeps it off models that can't run it.
