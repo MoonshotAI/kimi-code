@@ -162,9 +162,12 @@ export function useModelProviderState(
   }
 
   function applyThinkingLevel(level: ThinkingLevel | undefined): ThinkingLevel | undefined {
-    // Whatever the user picked is what gets submitted to the daemon (same as
-    // the TUI). Persisted under the CURRENT model id — per-model storage keeps
-    // a pick from leaking onto models that never declared it. Only concrete
+    // The explicit-picker path (setThinking) — the ONLY writer of thinking
+    // storage. Model switches (setModel) and passive resolution update
+    // rawState.thinking in-memory instead, so a level the user never actually
+    // picked (e.g. a derived catalog default) is never mistaken for a stored
+    // choice. Persisted under the CURRENT model id — per-model storage keeps a
+    // pick from leaking onto models that never declared it. Only concrete
     // levels are persisted; "no preference" stays in-memory.
     rawState.thinking = level;
     const modelId = currentModelId();
@@ -279,8 +282,11 @@ export function useModelProviderState(
     if (!sid) {
       // New-session draft (onboarding composer): no backend session to update.
       // Remember the pick — startSessionAndSendPrompt applies it at create time.
+      // In-memory only: a model switch is not a thinking pick, so nothing is
+      // persisted (a derived default would otherwise masquerade as an explicit
+      // choice later). Storage writes stay with setThinking.
       draftModel.value = modelId;
-      applyThinkingLevel(nextThinking);
+      rawState.thinking = nextThinking;
       if (nextThinking !== prevThinking && nextThinking !== undefined) {
         persistGlobalThinking(nextThinking);
       }
@@ -290,7 +296,7 @@ export function useModelProviderState(
     // one so we can roll back if the switch never reaches the daemon.
     updateSession(sid, (s) => ({ ...s, model: modelId }));
     if (nextThinking !== prevThinking) {
-      applyThinkingLevel(nextThinking);
+      rawState.thinking = nextThinking;
     }
     try {
       await getKimiWebApi().updateSession(sid, {
@@ -304,7 +310,7 @@ export function useModelProviderState(
       // new one as if the switch succeeded, then surface the failure.
       updateSession(sid, (s) => ({ ...s, model: prevSessionModel ?? s.model }));
       if (nextThinking !== prevThinking) {
-        applyThinkingLevel(prevThinking);
+        rawState.thinking = prevThinking;
       }
       pushOperationFailure('setModel', err, { sessionId: sid });
       return false;

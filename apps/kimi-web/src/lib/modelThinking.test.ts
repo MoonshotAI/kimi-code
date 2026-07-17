@@ -347,6 +347,34 @@ describe('useModelProviderState thinking on model selection', () => {
     expect(state.thinking).toBe('high');
   });
 
+  it('does not persist a derived default on model switch — storage stays pick-only', async () => {
+    const state = createState({ defaultModel: booleanAppModel.id });
+    const provider = createModelProvider(state);
+
+    await provider.setModel(effortAppModel.id);
+
+    // The in-memory level follows the switch (catalog default 'high')...
+    expect(state.thinking).toBe('high');
+    // ...but nothing is written to storage: a level the user never explicitly
+    // picked must not masquerade as a stored choice (it would override a future
+    // catalog default change). Only setThinking writes.
+    expect(saveThinkingToStorageMock).not.toHaveBeenCalled();
+  });
+
+  it('does not persist the rolled-back level when a switch fails', async () => {
+    const state = createState({
+      activeSession: { id: 'session-1', model: booleanAppModel.id },
+      defaultModel: booleanAppModel.id,
+    });
+    apiMock.updateSession.mockRejectedValueOnce(new Error('daemon unreachable'));
+    const provider = createModelProvider(state);
+
+    const switched = await provider.setModel(effortAppModel.id);
+
+    expect(switched).toBe(false);
+    expect(saveThinkingToStorageMock).not.toHaveBeenCalled();
+  });
+
   it('pins the catalog default in memory when no thinking preference exists', async () => {
     const state = createState({ defaultModel: effortAppModel.id });
     state.thinking = undefined;
