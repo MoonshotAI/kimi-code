@@ -6,6 +6,7 @@ import {
   APIContextOverflowError,
   APIEmptyResponseError,
   APIProviderOverloadedError,
+  APIProviderQuotaExhaustedError,
   APIStatusError,
   APITimeoutError,
   ChatProviderError,
@@ -150,6 +151,22 @@ describe('translateProviderError', () => {
       expect(translateProviderError(new APIStatusError(401, 'Unauthorized')).code).toBe(
         'provider.auth_error',
       );
+    });
+  });
+
+  describe('quota-exhausted 429', () => {
+    it('maps to provider.api_error, not provider.rate_limit', () => {
+      // provider.rate_limit drives retry/requeue reactions, which cannot help
+      // until the account is recharged.
+      const translated = translateProviderError(
+        new APIProviderQuotaExhaustedError(
+          'Your account is suspended due to insufficient balance, please recharge your account',
+          'req-quota',
+        ),
+      );
+      expect(translated.code).toBe('provider.api_error');
+      expect(translated.message).toContain('recharge');
+      expect(translated.details).toMatchObject({ statusCode: 429, requestId: 'req-quota' });
     });
   });
 });

@@ -1,6 +1,7 @@
 import {
   APIConnectionError,
   APIContextOverflowError,
+  APIProviderQuotaExhaustedError,
   APIProviderRateLimitError,
   APIStatusError,
   APITimeoutError,
@@ -391,5 +392,45 @@ describe('convertOpenAIError: non-Error values', () => {
     const result = convertOpenAIError(new Error('plain error'));
     expect(result.constructor).toBe(ChatProviderError);
     expect(result.message).toContain('plain error');
+  });
+});
+
+describe('convertOpenAIError: quota-exhausted 429', () => {
+  const QUOTA_MESSAGE =
+    'Your account org-0123456789abcdef <ak-test> is suspended due to insufficient balance, please recharge your account or check your plan and billing details';
+
+  it('classifies a structured exceeded_current_quota_error body as quota-exhausted', () => {
+    // The SDK parses the body's inner error object onto the APIError, exposing
+    // `type` — the structured path must win regardless of message wording.
+    const err = new OpenAIAPIError(
+      429,
+      { message: QUOTA_MESSAGE, type: 'exceeded_current_quota_error' },
+      `429 ${QUOTA_MESSAGE}`,
+      new Headers(),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect((result as APIProviderQuotaExhaustedError).statusCode).toBe(429);
+    expect(isRetryableGenerateError(result)).toBe(false);
+  });
+
+  it('falls back to message wording when no structured body is present', () => {
+    const err = new OpenAIAPIError(429, undefined, QUOTA_MESSAGE, new Headers());
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(result)).toBe(false);
+  });
+
+  it('keeps a transient structured 429 an APIProviderRateLimitError', () => {
+    const err = new OpenAIAPIError(
+      429,
+      { message: 'Too many requests', type: 'rate_limit_reached_error' },
+      'Too many requests',
+      new Headers(),
+    );
+    const result = convertOpenAIError(err);
+    expect(result).toBeInstanceOf(APIProviderRateLimitError);
+    expect(result).not.toBeInstanceOf(APIProviderQuotaExhaustedError);
+    expect(isRetryableGenerateError(result)).toBe(true);
   });
 });

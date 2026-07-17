@@ -5,6 +5,7 @@ import {
   APIConnectionError,
   APIContextOverflowError,
   APIEmptyResponseError,
+  APIProviderQuotaExhaustedError,
   APIStatusError,
   APITimeoutError,
   inputTotal,
@@ -1437,6 +1438,11 @@ interface ApiErrorClassification {
 }
 
 function classifyApiError(error: unknown, summary: KimiErrorPayload): ApiErrorClassification {
+  // Quota/balance exhaustion shares status 429 with rate limits but fails
+  // fast instead of retrying — keep the two apart in telemetry.
+  if (error instanceof APIProviderQuotaExhaustedError) {
+    return { errorType: 'quota_exhausted', statusCode: error.statusCode };
+  }
   const statusCode = apiStatusCode(error) ?? summaryStatusCode(summary);
   if (statusCode !== undefined) {
     if (statusCode === 429) return { errorType: 'rate_limit', statusCode };

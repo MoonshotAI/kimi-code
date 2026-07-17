@@ -82,6 +82,21 @@ export class APIProviderRateLimitError extends APIStatusError {
   }
 }
 
+// HTTP 429 caused by an exhausted account quota/balance — deterministic until
+// the account is recharged, so unlike a rate limit it is neither retried nor
+// requeued. Deliberately not a subclass of APIProviderRateLimitError.
+export class APIProviderQuotaExhaustedError extends APIStatusError {
+  constructor(
+    message: string,
+    requestId?: string | null,
+    retryAfterMs?: number | null,
+    traceId?: string | null,
+  ) {
+    super(429, message, requestId, retryAfterMs, traceId);
+    this.name = 'APIProviderQuotaExhaustedError';
+  }
+}
+
 export class APIProviderOverloadedError extends APIStatusError {
   constructor(
     statusCode: number,
@@ -158,6 +173,11 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIStatusError) {
+    // Quota/balance exhaustion is a 429 but deterministic until the account
+    // is recharged — retrying can never succeed.
+    if (error instanceof APIProviderQuotaExhaustedError) {
+      return false;
+    }
     return [408, 409, 429, 500, 502, 503, 504, 529].includes(error.statusCode);
   }
   return error instanceof ChatProviderError && !isImageFormatError(error);
@@ -198,6 +218,24 @@ const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
 ] as const;
 
 const PROVIDER_OVERLOAD_MESSAGE_PATTERNS = [/overload/] as const;
+
+// Structured error `type`/`code` values that mean the account's quota or
+// balance is exhausted: Moonshot `exceeded_current_quota_error` (body
+// `error.type`), OpenAI `insufficient_quota` (both `type` and `code`).
+const QUOTA_EXHAUSTED_ERROR_CODES = new Set(['exceeded_current_quota_error', 'insufficient_quota']);
+
+// Message fallback for gateways that flatten the body to text, matched against
+// the lowercased message of a 429. Anchored to billing wording — deliberately
+// no bare /quota/ or /balance/, which would also match transient throttle
+// messages like "token quota per minute".
+const QUOTA_EXHAUSTED_MESSAGE_PATTERNS = [
+  /exceeded your current (?:token )?quota/,
+  /check your account balance/,
+  /insufficient balance/,
+  /recharge your account|please recharge/,
+  /account (?:is )?in arrears/,
+  /insufficient_quota/,
+] as const;
 
 const REQUEST_TOO_LARGE_MESSAGE_PATTERNS = [
   /request exceeds the maximum size/,
@@ -242,8 +280,12 @@ export function normalizeAPIStatusError(
   requestId?: string | null,
   retryAfterMs?: number | null,
   traceId?: string | null,
+  options?: { readonly errorCode?: string | null; readonly errorType?: string | null },
 ): APIStatusError {
   if (statusCode === 429) {
+    if (isQuotaExhaustedStatusError(statusCode, message, options)) {
+      return new APIProviderQuotaExhaustedError(message, requestId, retryAfterMs, traceId);
+    }
     return new APIProviderRateLimitError(message, requestId, retryAfterMs, traceId);
   }
   if (isContextOverflowStatusError(statusCode, message)) {
@@ -307,6 +349,23 @@ export function isRequestTooLargeStatusError(statusCode: number, message: string
   return REQUEST_TOO_LARGE_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
+// Whether a 429 means the account's quota/balance is exhausted rather than a
+// transient rate limit. Structured `type`/`code` is authoritative when
+// forwarded; message patterns only backstop text-flattening gateways.
+export function isQuotaExhaustedStatusError(
+  statusCode: number,
+  message: string,
+  options?: { readonly errorCode?: string | null; readonly errorType?: string | null },
+): boolean {
+  if (statusCode !== 429) return false;
+  const errorCode = options?.errorCode;
+  if (typeof errorCode === 'string' && QUOTA_EXHAUSTED_ERROR_CODES.has(errorCode)) return true;
+  const errorType = options?.errorType;
+  if (typeof errorType === 'string' && QUOTA_EXHAUSTED_ERROR_CODES.has(errorType)) return true;
+  const lowerMessage = message.toLowerCase();
+  return QUOTA_EXHAUSTED_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
+}
+
 const TOOL_EXCHANGE_ADJACENCY_MESSAGE_PATTERNS = [
   /tool_use[\s\S]*tool_result/,
   /tool_result[\s\S]*tool_use/,
@@ -345,6 +404,9 @@ export function isRecoverableRequestStructureError(error: unknown): boolean {
 }
 
 export function isProviderRateLimitError(error: unknown): boolean {
+  // Quota exhaustion is a 429 but not a rate limit: the rate-limit reactions
+  // (retry, requeue, suspend) cannot help until the account is recharged.
+  if (error instanceof APIProviderQuotaExhaustedError) return false;
   if (error instanceof APIProviderRateLimitError) return true;
 
   const statusCode = getStatusCode(error);
