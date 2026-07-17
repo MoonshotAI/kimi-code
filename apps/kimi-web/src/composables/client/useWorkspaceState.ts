@@ -1429,8 +1429,16 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /** Internal: submit a prompt to a specific session, bypassing the queue check.
-      Returns true when the daemon accepted the prompt. */
-  async function submitPromptInternal(sid: string, text: string, attachments?: PromptAttachment[]): Promise<boolean> {
+      Returns 'ok' when the daemon accepted the prompt, 'rejected' on a
+      definitive refusal (structured API error — the server holds nothing, so
+      re-queueing is safe), and 'uncertain' when the failure was ambiguous
+      (dropped response, network error): the merged prompt may already be
+      queued server-side, and callers must NOT re-queue or they'd duplicate it. */
+  async function submitPromptInternal(
+    sid: string,
+    text: string,
+    attachments?: PromptAttachment[],
+  ): Promise<'ok' | 'rejected' | 'uncertain'> {
     // Mark this session as having a prompt in flight BEFORE any await, so a racing
     // sendPrompt sees it and enqueues. Cleared when the main turn ends (or the
     // prompt dies without one). beginLocalTurn also bumps the snapshot generation
@@ -1457,7 +1465,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
       if (content.length === 0) {
         rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
-        return false;
+        return 'rejected';
       }
 
       // OPTIMISTICALLY add the user message to local state BEFORE awaiting the
@@ -1498,7 +1506,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
           updateSessionMessages(sid, (msgs) =>
             msgs.some((m) => m.id === tempId) ? msgs.filter((m) => m.id !== tempId) : msgs,
           );
-          return false;
+          return 'rejected';
         }
       }
 
@@ -1547,18 +1555,20 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // session.meta.updated (projected to sessionMetaUpdated). PATCHing a title
       // locally would mark the session isCustomTitle=true and SUPPRESS the
       // daemon's auto-title, so we let the daemon own it.
-      return true;
+      return 'ok';
     } catch (err) {
       // Submit failed — clear the in-flight flag so the next prompt isn't stuck
       // queued forever (turn.ended will never arrive), and roll back the
       // optimistic user message so the transcript doesn't show a delivered-
-      // looking message the daemon never received.
+      // looking message the daemon never received. A structured API error is a
+      // definitive refusal; anything else (network, truncated response) is
+      // ambiguous — the prompt may already sit in the server's queue.
       rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
       updateSessionMessages(sid, (msgs) =>
         msgs.some((m) => m.id === tempId) ? msgs.filter((m) => m.id !== tempId) : msgs,
       );
       pushOperationFailure('sendPrompt', err, { sessionId: sid });
-      return false;
+      return isDaemonApiError(err) ? 'rejected' : 'uncertain';
     } finally {
       // The daemon answered the submit (accepted or rejected) — the pending
       // window in which a snapshot can't reflect this turn is over.
@@ -1635,8 +1645,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
     // Idle and nothing in flight — there is no turn to steer into; normal send.
     if (activity.value === 'idle' && !rawState.inFlightBySession[sid]) {
-      const ok = await submitPromptInternal(sid, merged, mergedAttachments);
-      if (!ok) restoreQueue();
+      const outcome = await submitPromptInternal(sid, merged, mergedAttachments);
+      // Same never-duplicate rule as the running-path catch below: restore
+      // the merged entries only on a definitive rejection.
+      if (outcome === 'rejected') restoreQueue();
       return;
     }
 
@@ -1712,10 +1724,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
     } catch (err) {
       // Submit failed: drop the optimistic echo so the transcript doesn't show
-      // a delivered-looking message the daemon never received, and put the
-      // merged queue entries back for a later steer/drain.
+      // a delivered-looking message the daemon never received.
       updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
-      restoreQueue();
+      // Restore the merged queue entries ONLY on a definitive daemon rejection
+      // (a structured API error means nothing was accepted). On an ambiguous
+      // failure — dropped response, network error — the merged prompt may
+      // already be queued server-side; re-queueing the originals would
+      // duplicate it (the exact ghost-send behavior this change exists to
+      // prevent). The failure toast below tells the user what happened.
+      if (isDaemonApiError(err)) restoreQueue();
       pushOperationFailure('steer', err, { sessionId: sid });
     } finally {
       settleLocalTurn(sid, localTurnToken);
@@ -1766,13 +1783,21 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     const [next, ...rest] = rawState.queuedBySession[sid] ?? [];
     if (next === undefined) return;
     rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: rest };
-    void submitPromptInternal(sid, next.text, next.attachments).then((ok) => {
-      if (ok) {
+    void submitPromptInternal(sid, next.text, next.attachments).then((outcome) => {
+      if (outcome === 'ok') {
         queueFlushFailures.delete(sid);
         return;
       }
-      // The session was forgotten (e.g. archived) while the submit was
-      // pending — its queue was already discarded, so don't resurrect it.
+      // Ambiguous failure: the daemon may have accepted the prompt and lost
+      // the response — the entry is dropped (the failure was already toasted)
+      // rather than re-queued and possibly submitted twice.
+      if (outcome === 'uncertain') {
+        queueFlushFailures.delete(sid);
+        return;
+      }
+      // Definitively rejected below this point. If the session was forgotten
+      // (e.g. archived) while the submit was pending, its queue was already
+      // discarded — don't resurrect it.
       if (!rawState.sessions.some((s) => s.id === sid)) {
         queueFlushFailures.delete(sid);
         return;
@@ -1784,6 +1809,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const count = previous !== undefined && previous.key === key ? previous.count + 1 : 1;
       if (count >= MAX_QUEUE_FLUSH_FAILURES) {
         queueFlushFailures.delete(sid);
+        // Advance the queue instead of stranding the entries behind the
+        // dropped head: the failed submit produced no turn, so nothing else
+        // will drive the next entry until the user sends again. The new head
+        // carries its own budget, so a poisoned successor just goes through
+        // the same retry cycle.
+        if ((rawState.queuedBySession[sid]?.length ?? 0) > 0) {
+          flushQueueHead(sid);
+        }
         return;
       }
       queueFlushFailures.set(sid, { key, count });

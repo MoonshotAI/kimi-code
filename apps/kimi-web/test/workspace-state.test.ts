@@ -1654,7 +1654,9 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
   it('re-queues a failed flush at the head and drops it after repeated failures', async () => {
     const state = createState();
     state.queuedBySession = { sess_1: [{ text: 'first queued', attachments: undefined }] };
-    apiMock.submitPrompt.mockRejectedValue(new Error('turn.agent_busy'));
+    apiMock.submitPrompt.mockRejectedValue(
+      new DaemonApiError({ code: 50000, msg: 'turn.agent_busy', requestId: 'r' }),
+    );
     const ws = useWorkspaceState(state, promptDeps());
     const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
@@ -1676,13 +1678,15 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3);
   });
 
-  it('restores the merged queue entries when a steer submit fails', async () => {
+  it('restores the merged queue entries when a steer submit is definitively rejected', async () => {
     const state = createState();
     state.inFlightBySession = { sess_1: true };
     state.queuedBySession = {
       sess_1: [{ text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
     };
-    apiMock.submitPrompt.mockRejectedValue(new Error('boom'));
+    apiMock.submitPrompt.mockRejectedValue(
+      new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }),
+    );
     const ws = useWorkspaceState(state, promptDeps());
 
     await ws.steerPrompt('live text', [{ fileId: 'f_live', kind: 'image' }]);
@@ -1692,10 +1696,28 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     );
   });
 
+  it('does NOT restore merged queue entries when a steer failure is network-ambiguous', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [{ text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
+    };
+    // Response lost mid-flight: the merged prompt may already be queued
+    // server-side, so restoring would duplicate it on a later drain.
+    apiMock.submitPrompt.mockRejectedValue(new TypeError('fetch failed'));
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerPrompt('live text', [{ fileId: 'f_live', kind: 'image' }]);
+
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
   it('restores the queue when an idle steer falls back to a normal send that fails', async () => {
     const state = createState();
     state.queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
-    apiMock.submitPrompt.mockRejectedValue(new Error('boom'));
+    apiMock.submitPrompt.mockRejectedValue(
+      new DaemonApiError({ code: 50000, msg: 'boom', requestId: 'r' }),
+    );
     const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => 'idle') }));
 
     await ws.steerPrompt('live text');
@@ -1793,8 +1815,58 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     );
   });
 
+  it('advances to the next queued entry after dropping an exhausted head', async () => {
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'poisoned head', attachments: undefined, id: 'id-bad' },
+        { text: 'good next', attachments: undefined, id: 'id-good' },
+      ],
+    };
+    apiMock.submitPrompt
+      .mockRejectedValueOnce(new DaemonApiError({ code: 50000, msg: 'gone', requestId: 'r' }))
+      .mockRejectedValueOnce(new DaemonApiError({ code: 50000, msg: 'gone', requestId: 'r' }))
+      .mockRejectedValueOnce(new DaemonApiError({ code: 50000, msg: 'gone', requestId: 'r' }))
+      .mockResolvedValueOnce({ promptId: 'prompt_good' });
+    const ws = useWorkspaceState(state, promptDeps());
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    for (let i = 0; i < 3; i += 1) {
+      state.inFlightBySession = { sess_1: true };
+      ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+      await settle();
+    }
+
+    // The exhausted head is gone AND the next entry was submitted right
+    // away — entries behind a dropped head must not wait for another send.
+    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(4);
+    expect(apiMock.submitPrompt).toHaveBeenLastCalledWith(
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'good next' }] }),
+    );
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
+  it('drops (never duplicates) a flush whose failure was network-ambiguous', async () => {
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'maybe sent', attachments: undefined, id: 'id-x' }] };
+    apiMock.submitPrompt.mockRejectedValue(new TypeError('fetch failed'));
+    const ws = useWorkspaceState(state, promptDeps());
+
+    state.inFlightBySession = { sess_1: true };
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    // The response was lost mid-flight — the daemon may already hold the
+    // prompt. Re-queueing could submit it twice, so the entry is dropped
+    // instead (the failure was surfaced via pushOperationFailure).
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+  });
+
   it('resets the flush failure budget when the queue head changes', async () => {
-    apiMock.submitPrompt.mockRejectedValue(new Error('turn.agent_busy'));
+    apiMock.submitPrompt.mockRejectedValue(
+      new DaemonApiError({ code: 50000, msg: 'turn.agent_busy', requestId: 'r' }),
+    );
     const state = createState();
     state.queuedBySession = {
       sess_1: [
@@ -1841,10 +1913,11 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     ws.finishPromptLocal('sess_1', { turnWasActive: true });
     expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
 
-    // Facade forget path (e.g. archive) while the submit is pending.
+    // Facade forget path (e.g. archive) while the submit is pending. The
+    // daemon definitively rejects afterwards — even then, no resurrection.
     state.sessions = [];
     delete state.queuedBySession.sess_1;
-    rejectSubmit(new Error('network down'));
+    rejectSubmit(new DaemonApiError({ code: 50000, msg: 'network down', requestId: 'r' }));
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
 
     expect(state.queuedBySession.sess_1).toBeUndefined();
