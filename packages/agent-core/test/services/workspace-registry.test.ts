@@ -675,7 +675,7 @@ describe('touchWorkspaceRegistry', () => {
     expect(file.workspaces[result.workspaceId]?.root).toBe(root);
   });
 
-it('touches a workspace with a trailing slash root does not duplicate entries', async () => {
+  it('touches a workspace with a trailing slash root does not duplicate entries', async () => {
     const root = await makeProjectRoot('trailing');
     const first = await touchWorkspaceRegistry(homeDir, root);
     const second = await touchWorkspaceRegistry(homeDir, `${root}/`);
@@ -698,6 +698,7 @@ it('touches a workspace with a trailing slash root does not duplicate entries', 
     const { ctx: localCtx } = await setupEmptyRegistry();
     await expect(localCtx.registry.createOrTouch('')).rejects.toThrow();
   });
+
 
   it('folds a Windows case-variant spelling onto the existing entry instead of minting a duplicate', async () => {
     // The runtime touch path must mirror the service's identity folding:

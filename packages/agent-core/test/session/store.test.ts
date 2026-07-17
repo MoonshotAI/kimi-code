@@ -471,3 +471,158 @@ describe('SessionStore resolveWorkspaceId option', () => {
     expect((await resolved.list({})).map((s) => s.id)).toEqual([sessionId]);
   });
 });
+
+
+describe('workspaceRootKey', () => {
+  it('folds drive-letter Windows paths regardless of casing', () => {
+    expect(workspaceRootKey('C:\\Users\\Dev\\Project')).toBe('c:/users/dev/project');
+    expect(workspaceRootKey('c:/Users/DEV/Project')).toBe('c:/users/dev/project');
+  });
+
+  it('folds drive roots before separator stripping can mask the shape', () => {
+    // `C:\` would strip to `C:` and stop reading as Windows-shaped.
+    expect(workspaceRootKey('C:\\')).toBe('c:');
+    expect(workspaceRootKey('C:\\')).toBe(workspaceRootKey('c:\\'));
+    expect(workspaceRootKey('C:\\')).toBe(workspaceRootKey('c:/'));
+  });
+
+  it('unifies slashes and strips trailing separators', () => {
+    expect(workspaceRootKey('C:\\Users\\Dev\\Project\\')).toBe('c:/users/dev/project');
+    expect(workspaceRootKey('C:/Users/Dev/Project/')).toBe('c:/users/dev/project');
+  });
+
+  it('folds UNC paths (both slash styles)', () => {
+    expect(workspaceRootKey('\\\\Host\\Share\\Dir')).toBe('//host/share/dir');
+    expect(workspaceRootKey('//Host/Share/Dir')).toBe('//host/share/dir');
+  });
+
+  it('never folds POSIX paths — case variants stay distinct', () => {
+    expect(workspaceRootKey('/Home/Dev/Project')).toBe('/Home/Dev/Project');
+    expect(workspaceRootKey('/Home/Dev/Project')).not.toBe(workspaceRootKey('/home/dev/project'));
+  });
+
+  it('strips trailing separators on POSIX paths', () => {
+    expect(workspaceRootKey('/home/dev/project/')).toBe('/home/dev/project');
+  });
+});
+
+describe('SessionStore resolveWorkspaceId option', () => {
+  let homeDir: string;
+  let store: SessionStore;
+  const tempRoots: string[] = [];
+  const registeredId = 'wd_registered_0123456789ab';
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-store-home-'));
+    store = new SessionStore(homeDir);
+  });
+
+  afterEach(async () => {
+    await rm(homeDir, { recursive: true, force: true });
+    for (const root of tempRoots) {
+      await rm(root, { recursive: true, force: true });
+    }
+    tempRoots.length = 0;
+  });
+
+  async function trackWorkDir(label: string): Promise<string> {
+    const wd = await makeWorkDir(label);
+    tempRoots.push(wd);
+    return wd;
+  }
+
+  function storeResolving(mapping: Record<string, string>): SessionStore {
+    return new SessionStore(homeDir, {
+      resolveWorkspaceId: async (workDir) => mapping[workDir],
+    });
+  }
+
+  it('creates the session in the registry-resolved bucket instead of minting a new one', async () => {
+    const workDir = await trackWorkDir('resolved');
+    const resolved = storeResolving({ [workDir]: registeredId });
+    const summary = await resolved.create({ id: 'sess_resolved', workDir });
+
+    expect(summary.sessionDir).toBe(join(homeDir, 'sessions', registeredId, 'sess_resolved'));
+    // Listing by workDir reads the same resolved bucket, so the session is
+    // visible through the registered workspace's id.
+    const listed = await resolved.list({ workDir });
+    expect(listed.map((s) => s.id)).toEqual(['sess_resolved']);
+  });
+
+  it('forks into the registry-resolved bucket of the source session', async () => {
+    const workDir = await trackWorkDir('resolved-fork');
+    const resolved = storeResolving({ [workDir]: registeredId });
+    await resolved.create({ id: 'sess_src', workDir });
+    // store.create only mkdirs the session dir; fork copies state.json.
+    await writeFile(
+      join(homeDir, 'sessions', registeredId, 'sess_src', 'state.json'),
+      JSON.stringify({ workDir }),
+      'utf-8',
+    );
+
+    const forked = await resolved.fork({ sourceId: 'sess_src', targetId: 'sess_fork' });
+
+    expect(forked.sessionDir).toBe(join(homeDir, 'sessions', registeredId, 'sess_fork'));
+  });
+
+  it('finds a session by (sessionId, workDir) inside the resolved bucket', async () => {
+    const workDir = await trackWorkDir('resolved-lookup');
+    const resolved = storeResolving({ [workDir]: registeredId });
+    await resolved.create({ id: 'sess_lookup', workDir });
+
+    const listed = await resolved.list({ workDir, sessionId: 'sess_lookup' });
+    expect(listed.map((s) => s.id)).toEqual(['sess_lookup']);
+  });
+
+  it('mints the canonical bucket when the resolver has no match', async () => {
+    const workDir = await trackWorkDir('unresolved');
+    const resolved = storeResolving({});
+    const summary = await resolved.create({ id: 'sess_minted', workDir });
+
+    expect(summary.sessionDir).toBe(
+      join(homeDir, 'sessions', encodeWorkDirKey(workDir), 'sess_minted'),
+    );
+  });
+
+  it('ignores a resolver id that is not a safe bucket name', async () => {
+    const workDir = await trackWorkDir('unsafe');
+    const resolved = new SessionStore(homeDir, {
+      resolveWorkspaceId: async () => '../../outside',
+    });
+    const summary = await resolved.create({ id: 'sess_unsafe', workDir });
+
+    expect(summary.sessionDir).toBe(
+      join(homeDir, 'sessions', encodeWorkDirKey(workDir), 'sess_unsafe'),
+    );
+  });
+
+  it('falls back to minting when the resolver throws', async () => {
+    const workDir = await trackWorkDir('throwing');
+    const resolved = new SessionStore(homeDir, {
+      resolveWorkspaceId: async () => {
+        throw new Error('registry unavailable');
+      },
+    });
+    const summary = await resolved.create({ id: 'sess_throw', workDir });
+
+    expect(summary.sessionDir).toBe(
+      join(homeDir, 'sessions', encodeWorkDirKey(workDir), 'sess_throw'),
+    );
+  });
+
+  it('reindex recovers a session that lives in the registry-resolved bucket', async () => {
+    const workDir = await trackWorkDir('reindex-resolved');
+    const resolved = storeResolving({ [workDir]: registeredId });
+    // Physically seeded in the registered bucket with no index entry — how
+    // sessions created through a wired resolver sit on disk.
+    const sessionId = 'sess_resolved_reindex';
+    const dir = join(homeDir, 'sessions', registeredId, sessionId);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, 'state.json'), JSON.stringify({ workDir }), 'utf-8');
+
+    const stats = await resolved.reindex();
+
+    expect(stats).toEqual({ scanned: 1, added: 1, repaired: 0 });
+    expect((await resolved.list({})).map((s) => s.id)).toEqual([sessionId]);
+  });
+});

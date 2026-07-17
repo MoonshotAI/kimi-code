@@ -1720,7 +1720,7 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(state.queuedBySession.sess_1).toEqual([{ text: 'queued', attachments: undefined }]);
   });
 
-// A background session's drained prompt must not inherit the thinking level
+  // A background session's drained prompt must not inherit the thinking level
   // of whichever session is active when the drain happens — the level is
   // resolved from the prompt's OWN model, never the active-view global.
   it('drains a queued prompt with the level of its own session model, not the active view', async () => {

@@ -3,7 +3,7 @@
   "publisher": "moonshot-ai",
   "displayName": "Kimi Code",
   "description": "Official Kimi Code plugin for VS Code",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -54,7 +54,7 @@
         "kimi.yoloMode": {
           "type": "boolean",
           "default": false,
-          "description": "Auto-approve all tool calls"
+          "description": "Auto-approve regular tool calls; the agent may still ask questions"
         },
         "kimi.autosave": {
           "type": "boolean",

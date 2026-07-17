@@ -256,7 +256,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       this.config.experimental,
     );
     this.imageLimits = new ImageLimits(process.env, this.config.image);
-setConfiguredMaxImageEdgePx(this.config.image?.maxEdgePx);
+    setConfiguredMaxImageEdgePx(this.config.image?.maxEdgePx);
     setConfiguredReadImageByteBudget(this.config.image?.readByteBudget);
     this.sessionStore = new SessionStore(this.homeDir, {
       resolveWorkspaceId: options.resolveWorkspaceId,
