@@ -3,14 +3,14 @@
 // Wiring: the composable is real; daemon requests and unrelated facade collaborators are stubbed.
 // Run: pnpm --filter @moonshot-ai/kimi-web exec vitest run test/workspace-state.test.ts
 
-import { computed, ref, type Ref } from 'vue';
+import { computed, nextTick, reactive, ref, type Ref } from 'vue';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppApprovalRequest, AppQuestionRequest, AppSession, AppTask } from '../src/api/types';
 import { DaemonApiError } from '../src/api/errors';
 import { createInitialState } from '../src/api/daemon/eventReducer';
 import { mergeWorkspaces } from '../src/lib/mergeWorkspaces';
-import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides } from '../src/lib/storage';
-import { useWorkspaceState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
+import { loadWorkspaceNameOverrides, saveWorkspaceNameOverrides, STORAGE_KEYS } from '../src/lib/storage';
+import { useWorkspaceState, forgetLocalTurnState, type UseWorkspaceStateDeps } from '../src/composables/client/useWorkspaceState';
 import type { ExtendedState } from '../src/composables/useKimiWebClient';
 import { clearTrace, traceKeyEvent } from '../src/debug/trace';
 
@@ -1539,6 +1539,8 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
   beforeEach(() => {
     apiMock.submitPrompt.mockReset();
     apiMock.submitPrompt.mockResolvedValue({ promptId: 'prompt_new' });
+    // Module-level flush failure budget must not leak between tests.
+    forgetLocalTurnState('sess_1');
   });
 
   it('clears a finished prompt from a terminal snapshot so the next send is immediate', async () => {
@@ -1593,6 +1595,108 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     expect(state.queuedBySession.sess_1).toEqual([
       { text: 'second queued', attachments: undefined },
     ]);
+  });
+
+  // Regression: re-opening a session after a failed drain must NOT fire the
+  // stuck queued prompts (with their stale attachments) out of nowhere.
+  it('does not drain the queue on a bare session-open snapshot with no locally witnessed prompt', () => {
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [{ text: 'stuck queued', attachments: [{ fileId: 'f_old', kind: 'image' }] }],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'stuck queued', attachments: [{ fileId: 'f_old', kind: 'image' }] }],
+    );
+  });
+
+  it('drains one queued prompt when the finished turn was locally witnessed', () => {
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'first queued', attachments: undefined },
+        { text: 'second queued', attachments: undefined },
+      ],
+    };
+    const ws = useWorkspaceState(state, promptDeps());
+
+    ws.finishPromptLocal('sess_1', { turnWasActive: true });
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'second queued', attachments: undefined },
+    ]);
+  });
+
+  it('flushes the stuck queue head before the new prompt when sending while idle', async () => {
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'stuck queued', attachments: undefined }] };
+    const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => 'idle') }));
+
+    await ws.sendPrompt('next');
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'stuck queued' }] }),
+    );
+    expect(state.queuedBySession.sess_1).toEqual([{ text: 'next', attachments: undefined }]);
+  });
+
+  it('re-queues a failed flush at the head and drops it after repeated failures', async () => {
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'first queued', attachments: undefined }] };
+    apiMock.submitPrompt.mockRejectedValue(new Error('turn.agent_busy'));
+    const ws = useWorkspaceState(state, promptDeps());
+    const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    // Failures 1-2 (e.g. racing a still-busy daemon after an abort): the
+    // entry goes back at the head and waits for the next flush driver.
+    for (let i = 0; i < 2; i += 1) {
+      state.inFlightBySession = { sess_1: true };
+      ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+      await settle();
+      expect(state.queuedBySession.sess_1).toEqual([{ text: 'first queued', attachments: undefined }]);
+    }
+
+    // Failure 3: a permanently rejected head is dropped rather than blocking
+    // every later prompt behind it forever.
+    state.inFlightBySession = { sess_1: true };
+    ws.handleSessionSnapshot('sess_1', { inFlightTurn: null, busy: false });
+    await settle();
+    expect(state.queuedBySession.sess_1).toEqual([]);
+    expect(apiMock.submitPrompt).toHaveBeenCalledTimes(3);
+  });
+
+  it('restores the merged queue entries when a steer submit fails', async () => {
+    const state = createState();
+    state.inFlightBySession = { sess_1: true };
+    state.queuedBySession = {
+      sess_1: [{ text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
+    };
+    apiMock.submitPrompt.mockRejectedValue(new Error('boom'));
+    const ws = useWorkspaceState(state, promptDeps());
+
+    await ws.steerPrompt('live text', [{ fileId: 'f_live', kind: 'image' }]);
+
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'queued', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
+    );
+  });
+
+  it('restores the queue when an idle steer falls back to a normal send that fails', async () => {
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'queued', attachments: undefined }] };
+    apiMock.submitPrompt.mockRejectedValue(new Error('boom'));
+    const ws = useWorkspaceState(state, promptDeps({ activity: computed(() => 'idle') }));
+
+    await ws.steerPrompt('live text');
+
+    expect(state.queuedBySession.sess_1).toEqual([{ text: 'queued', attachments: undefined }]);
   });
 
   it('clears local prompt state when busy disproves a stale snapshot turn', () => {
@@ -1683,6 +1787,123 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
         ],
       }),
     );
+  });
+});
+
+describe('useWorkspaceState — prompt queue persistence', () => {
+  function deps(overrides: Partial<UseWorkspaceStateDeps> = {}): UseWorkspaceStateDeps {
+    return {
+      ...createDeps(),
+      modelProvider: { models: ref([]) } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    installStorage(createMemoryStorage());
+    apiMock.submitPrompt.mockReset();
+    apiMock.submitPrompt.mockResolvedValue({ promptId: 'prompt_new' });
+    // Module-level flush failure budget must not leak between tests.
+    forgetLocalTurnState('sess_1');
+  });
+
+  it('restores a persisted queue on startup so a refresh loses nothing', () => {
+    localStorage.setItem(
+      STORAGE_KEYS.promptQueue,
+      JSON.stringify({
+        sess_1: [{ text: 'old queued', attachments: [{ fileId: 'f_old', kind: 'image' }] }],
+      }),
+    );
+    const state = createState();
+    useWorkspaceState(state, deps());
+
+    expect(state.queuedBySession.sess_1).toEqual([
+      { text: 'old queued', attachments: [{ fileId: 'f_old', kind: 'image' }] }],
+    );
+  });
+
+  it('keeps only well-formed persisted entries and ignores the rest', () => {
+    localStorage.setItem(
+      STORAGE_KEYS.promptQueue,
+      JSON.stringify({
+        sess_1: [{ text: 5 }, 'nope', { text: 'ok', attachments: [{ fileId: 'f', kind: 'file' }] }],
+        sess_2: 'not-an-array',
+        sess_3: [{ text: 'bad kind', attachments: [{ fileId: 'f', kind: 'exe' }] }],
+      }),
+    );
+    const state = createState();
+    useWorkspaceState(state, deps());
+
+    expect(state.queuedBySession).toEqual({
+      sess_1: [{ text: 'ok', attachments: [{ fileId: 'f', kind: 'file' }] }],
+    });
+  });
+
+  it('does not clobber an in-memory queue with the persisted one', () => {
+    localStorage.setItem(STORAGE_KEYS.promptQueue, JSON.stringify({ sess_1: [{ text: 'stored' }] }));
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'in memory', attachments: undefined }] };
+    useWorkspaceState(state, deps());
+
+    expect(state.queuedBySession.sess_1).toEqual([{ text: 'in memory', attachments: undefined }]);
+  });
+
+  it('persists enqueue, flush, and session-forget mutations', async () => {
+    // reactive() so the persistence watch actually tracks the state, the same
+    // way the facade wraps rawState in production.
+    const state = reactive(createState());
+    const ws = useWorkspaceState(state, deps());
+
+    // A send while the session is running lands in the queue AND in storage.
+    await ws.sendPrompt('queued while running', [{ fileId: 'f_q', kind: 'image' }]);
+    await nextTick();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.promptQueue)!)).toEqual({
+      sess_1: [{ text: 'queued while running', attachments: [{ fileId: 'f_q', kind: 'image' }] }],
+    });
+
+    // A witnessed turn end flushes the head — the persisted queue drains too.
+    ws.finishPromptLocal('sess_1', { turnWasActive: true });
+    await nextTick();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.promptQueue)!)).toEqual({});
+
+    // Deleting a session key (the facade's session-forget path) syncs via the
+    // same deep watch.
+    state.queuedBySession = {
+      sess_1: [{ text: 'a', attachments: undefined }],
+      sess_2: [{ text: 'b', attachments: undefined }],
+    };
+    await nextTick();
+    delete state.queuedBySession.sess_1;
+    await nextTick();
+    expect(JSON.parse(localStorage.getItem(STORAGE_KEYS.promptQueue)!)).toEqual({
+      sess_2: [{ text: 'b' }],
+    });
+  });
+
+  it('adopts the queue another tab persisted, so two tabs never flush the same entries twice', () => {
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'stale local', attachments: undefined }] };
+    const ws = useWorkspaceState(state, deps());
+
+    // Simulate another tab flushing part of the queue and persisting the rest.
+    localStorage.setItem(
+      STORAGE_KEYS.promptQueue,
+      JSON.stringify({ sess_1: [{ text: 'newer from tab B' }] }),
+    );
+    ws.syncQueuedPromptsFromStorage();
+
+    expect(state.queuedBySession).toEqual({ sess_1: [{ text: 'newer from tab B' }] });
+  });
+
+  it('clears the in-memory queue when another tab drained it', () => {
+    const state = createState();
+    state.queuedBySession = { sess_1: [{ text: 'stale local', attachments: undefined }] };
+    const ws = useWorkspaceState(state, deps());
+
+    localStorage.setItem(STORAGE_KEYS.promptQueue, JSON.stringify({}));
+    ws.syncQueuedPromptsFromStorage();
+
+    expect(state.queuedBySession).toEqual({});
   });
 });
 

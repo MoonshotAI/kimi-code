@@ -7,7 +7,7 @@
 // the view-model computeds stay in the facade; cross-dependencies are injected
 // here as params.
 
-import { reactive, type ComputedRef, type Ref } from 'vue';
+import { reactive, watch, type ComputedRef, type Ref } from 'vue';
 import { getKimiWebApi } from '../../api';
 import { i18n } from '../../i18n';
 import { useConfirmDialog } from '../useConfirmDialog';
@@ -28,7 +28,9 @@ import type {
 } from '../../api/types';
 import {
   loadWorkspaceNameOverrides,
+  safeGetJson,
   safeRemove,
+  safeSetJson,
   saveWorkspaceNameOverrides,
   STORAGE_KEYS,
 } from '../../lib/storage';
@@ -118,6 +120,67 @@ const pendingLocalTurnStarts = new Map<string, Set<number>>();
 const afterLocalTurnsSettled = new Map<string, () => void>();
 let nextLocalTurnToken = 0;
 
+/**
+ * Consecutive flushQueueHead failures per session. A rejected queued prompt
+ * goes back at the head and waits for the next turn end (or idle send) to
+ * retry; beyond MAX_QUEUE_FLUSH_FAILURES it is dropped so a permanently
+ * rejected entry (e.g. one whose uploaded files no longer exist server-side)
+ * cannot block every later prompt behind it. Module-level singleton — the
+ * queue itself is per-session on rawState, so a page reload resets both.
+ */
+const queueFlushFailures = new Map<string, number>();
+const MAX_QUEUE_FLUSH_FAILURES = 3;
+
+type QueuedPromptEntry = { text: string; attachments?: PromptAttachment[] };
+
+/**
+ * The local prompt queue is persisted per session (STORAGE_KEYS.promptQueue)
+ * so messages the user already sent — but that only made it as far as the
+ * local queue because a turn was still running — survive a page refresh
+ * instead of vanishing from memory. A restored queue is display-only until a
+ * real flush driver runs (finishPromptLocal's drain gate requires a locally
+ * witnessed turn, and sendPrompt flushes FIFO), so it can never ghost-send
+ * just because a session was re-opened.
+ */
+function loadQueuedPrompts(): Record<string, QueuedPromptEntry[]> {
+  const parsed = safeGetJson<unknown>(STORAGE_KEYS.promptQueue);
+  if (!parsed || typeof parsed !== 'object') return {};
+  const out: Record<string, QueuedPromptEntry[]> = {};
+  for (const [sid, entries] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!Array.isArray(entries)) continue;
+    const valid = entries.filter(isQueuedPromptLike);
+    if (valid.length > 0) out[sid] = valid;
+  }
+  return out;
+}
+
+function isQueuedPromptLike(value: unknown): value is QueuedPromptEntry {
+  if (!value || typeof value !== 'object') return false;
+  const entry = value as { text?: unknown; attachments?: unknown };
+  if (typeof entry.text !== 'string') return false;
+  if (entry.attachments === undefined) return true;
+  if (!Array.isArray(entry.attachments)) return false;
+  return entry.attachments.every(isPromptAttachmentLike);
+}
+
+function isPromptAttachmentLike(value: unknown): value is PromptAttachment {
+  if (!value || typeof value !== 'object') return false;
+  const att = value as { fileId?: unknown; kind?: unknown };
+  return (
+    typeof att.fileId === 'string' &&
+    (att.kind === 'image' || att.kind === 'video' || att.kind === 'file')
+  );
+}
+
+function saveQueuedPrompts(queue: Record<string, QueuedPromptEntry[]>): void {
+  // Drop empty arrays so a fully drained session leaves no key behind.
+  const compact: Record<string, QueuedPromptEntry[]> = {};
+  for (const [sid, entries] of Object.entries(queue)) {
+    if (entries.length > 0) compact[sid] = entries;
+  }
+  safeSetJson(STORAGE_KEYS.promptQueue, compact);
+}
+
 export interface LocalTurnStartState {
   generation: number;
   pending: boolean;
@@ -161,6 +224,7 @@ export function forgetLocalTurnState(sid: string): void {
   promptGenerationBySession.delete(sid);
   pendingLocalTurnStarts.delete(sid);
   afterLocalTurnsSettled.delete(sid);
+  queueFlushFailures.delete(sid);
 }
 
 /** Whether a snapshot request can still be applied without overwriting a
@@ -294,6 +358,36 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     fileDiffLoading,
   } = deps;
   let exportInFlight = false;
+
+  // Hydrate the local prompt queue from storage (see loadQueuedPrompts) so
+  // queued prompts survive a page refresh. Only fills an empty in-memory
+  // queue — a live one is never clobbered.
+  const storedQueue = loadQueuedPrompts();
+  if (Object.keys(rawState.queuedBySession).length === 0 && Object.keys(storedQueue).length > 0) {
+    rawState.queuedBySession = storedQueue;
+  }
+  // Every queue mutation is a whole-record replace or a key delete, so one
+  // deep watch keeps storage in sync — including the facade's session-forget
+  // delete, which bypasses this module entirely.
+  watch(
+    () => rawState.queuedBySession,
+    (queue) => {
+      saveQueuedPrompts(queue);
+    },
+    { deep: true },
+  );
+
+  /**
+   * Multi-tab convergence: adopt the queue another tab just persisted. Unlike
+   * startup hydration this ALWAYS replaces the in-memory queue — the other
+   * tab's write is the newer truth, and adopting it is what stops two tabs
+   * from flushing the same queued prompts twice. (Our own not-yet-persisted
+   * mutation is at most a microtask old and is re-written by the watch right
+   * after, becoming the next newer truth.)
+   */
+  function syncQueuedPromptsFromStorage(): void {
+    rawState.queuedBySession = loadQueuedPrompts();
+  }
 
   async function loadOlderMessages(sessionId: string): Promise<void> {
     if (rawState.messagesLoadingMoreBySession[sessionId]) return;
@@ -1562,6 +1656,19 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       return;
     }
 
+    // The queue should be empty by the time the session is idle, so a
+    // non-empty queue means earlier prompts never made it out (e.g. a drain
+    // that raced a still-busy daemon right after an abort). Preserve FIFO:
+    // enqueue this prompt behind them and flush the head now — the flush
+    // re-arms the in-flight flag, and each later turn end drains the next
+    // entry. Submitting directly here would jump the queue AND leave the
+    // stuck entries without a flush driver.
+    if ((rawState.queuedBySession[sid]?.length ?? 0) > 0) {
+      enqueue(text, attachments);
+      flushQueueHead(sid);
+      return;
+    }
+
     await submitPromptInternal(sid, text, attachments);
   }
 
@@ -1594,9 +1701,19 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     const merged = parts.join('\n\n');
 
+    // Put back every entry that was merged into this steer when its submit
+    // fails, so the queued prompts aren't silently lost. Entries enqueued
+    // while the submit was in flight stay behind them.
+    const restoreQueue = (): void => {
+      if (queue.length === 0) return;
+      const current = rawState.queuedBySession[sid] ?? [];
+      rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: [...queue, ...current] };
+    };
+
     // Idle and nothing in flight — there is no turn to steer into; normal send.
     if (activity.value === 'idle' && !rawState.inFlightBySession[sid]) {
-      await submitPromptInternal(sid, merged, mergedAttachments);
+      const ok = await submitPromptInternal(sid, merged, mergedAttachments);
+      if (!ok) restoreQueue();
       return;
     }
 
@@ -1672,8 +1789,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       }
     } catch (err) {
       // Submit failed: drop the optimistic echo so the transcript doesn't show
-      // a delivered-looking message the daemon never received.
+      // a delivered-looking message the daemon never received, and put the
+      // merged queue entries back for a later steer/drain.
       updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
+      restoreQueue();
       pushOperationFailure('steer', err, { sessionId: sid });
     } finally {
       settleLocalTurn(sid, localTurnToken);
@@ -1707,6 +1826,38 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   }
 
   /**
+   * Submit the head of the session's local prompt queue. On failure the
+   * entry goes back at the head with NO immediate retry — the daemon that
+   * just rejected it is the one we'd race against (e.g. right after an
+   * abort); the next turn end or the next idle sendPrompt drives the next
+   * attempt. After MAX_QUEUE_FLUSH_FAILURES consecutive failures the entry
+   * is dropped instead, so one permanently rejected prompt cannot wedge the
+   * queue. Every failure is already surfaced via pushOperationFailure.
+   */
+  function flushQueueHead(sid: string): void {
+    const [next, ...rest] = rawState.queuedBySession[sid] ?? [];
+    if (next === undefined) return;
+    rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: rest };
+    void submitPromptInternal(sid, next.text, next.attachments).then((ok) => {
+      if (ok) {
+        queueFlushFailures.delete(sid);
+        return;
+      }
+      const failures = (queueFlushFailures.get(sid) ?? 0) + 1;
+      if (failures >= MAX_QUEUE_FLUSH_FAILURES) {
+        queueFlushFailures.delete(sid);
+        return;
+      }
+      queueFlushFailures.set(sid, failures);
+      const current = rawState.queuedBySession[sid] ?? [];
+      rawState.queuedBySession = {
+        ...rawState.queuedBySession,
+        [sid]: [next, ...current],
+      };
+    });
+  }
+
+  /**
    * Shared prompt-finish cleanup, used by BOTH the main-turn-ended path
    * (facade `onMainTurnEnd`) and the authoritative-snapshot path
    * (handleSessionSnapshot below). Returns whether this call actually flipped
@@ -1718,8 +1869,15 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * duplicate idle event) therefore cannot drain more than one message per
    * real turn end. Callers layer their own side effects (notify, sound,
    * unread) on top; the snapshot path deliberately adds none.
+   *
+   * The drain is GATED on this client having actually witnessed a live
+   * prompt/turn: a finish with no local in-flight prompt, no locally
+   * tracked active turn, and no `turnWasActive` hint must NOT submit
+   * queued prompts. That is what fired stale queued messages (and their
+   * old file attachments) spontaneously when a session was merely
+   * re-opened after an earlier drain had failed.
    */
-  function finishPromptLocal(sid: string): boolean {
+  function finishPromptLocal(sid: string, opts?: { turnWasActive?: boolean }): boolean {
     const wasInFlight = rawState.inFlightBySession[sid] === true;
     rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
     // Drop any cached prompt_id so a later skill activation (which has no
@@ -1733,23 +1891,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       resetFastMoon();
     }
 
-    const queue = rawState.queuedBySession[sid] ?? [];
-    if (queue.length > 0) {
-      const [next, ...rest] = queue;
-      rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: rest };
-      // Flush the first queued message; on failure put it back at the head so
-      // a transient error doesn't silently drop the prompt.
-      if (next !== undefined) {
-        void submitPromptInternal(sid, next.text, next.attachments).then((ok) => {
-          if (!ok) {
-            const current = rawState.queuedBySession[sid] ?? [];
-            rawState.queuedBySession = {
-              ...rawState.queuedBySession,
-              [sid]: [next, ...current],
-            };
-          }
-        });
-      }
+    const mayDrain =
+      wasInFlight || opts?.turnWasActive === true || (rawState.turnActiveBySession[sid] ?? false);
+    if (mayDrain) {
+      flushQueueHead(sid);
     }
 
     return wasInFlight;
@@ -1763,7 +1908,10 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    * the next prompt queues behind a turn that already ended.
    *
    * Unlike the WS path this adds NO completion side effects (no notification,
-   * sound, or unread): opening a historical session must not cry wolf.
+   * sound, or unread): opening a historical session must not cry wolf. The
+   * queue drain inside finishPromptLocal is additionally gated on a locally
+   * witnessed prompt/turn, so merely re-opening a session can never
+   * spontaneously submit queued prompts (with their stale attachments).
    */
   function handleSessionSnapshot(
     sid: string,
@@ -2648,6 +2796,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     enqueue,
     unqueue,
     reorderQueue,
+    syncQueuedPromptsFromStorage,
     abortCurrentPrompt,
     respondApproval,
     respondQuestion,
