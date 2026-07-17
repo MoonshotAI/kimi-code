@@ -280,9 +280,7 @@ function toKosongProviderConfig(
         ...(betaApi !== undefined ? { betaApi } : {}),
         // Session affinity: Anthropic's analog of OpenAI `prompt_cache_key` is
         // `metadata.user_id` on the Messages API (cache-affinity / end-user id).
-        // Also pass promptCacheKey directly for custom proxies that support it.
         ...(promptCacheKey !== undefined ? { metadata: { user_id: promptCacheKey } } : {}),
-        ...(promptCacheKey !== undefined ? { promptCacheKey } : {}),
         // When a Kimi provider is routed through the Anthropic transport
         // (`protocol: 'anthropic'`), upstream is the managed Kimi endpoint,
         // so align its full outbound identity headers (User-Agent + X-Msh-*)
