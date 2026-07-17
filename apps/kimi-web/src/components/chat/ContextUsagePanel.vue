@@ -17,6 +17,7 @@ import type { AppBoosterWallet, AppManagedUsage } from '../../api/types';
 import type { ConversationStatus } from '../../types';
 import { formatTokens } from '../../lib/formatTokens';
 import { buildUsageRows, formatUsageMoney } from '../../lib/usageFormat';
+import { calculateUsagePanelPosition } from '../../lib/usagePanelPosition';
 
 const props = defineProps<{
   status: ConversationStatus;
@@ -64,8 +65,8 @@ const ctxValue = computed(() =>
 );
 
 // ---------------------------------------------------------------------------
-// Panel open/close — mirrors the Composer modes-menu pattern (position:fixed
-// anchored above the trigger, document listeners registered after open).
+// Panel open/close — fixed to the trigger on the roomier viewport side;
+// document listeners are registered after open.
 // ---------------------------------------------------------------------------
 
 const open = ref(false);
@@ -73,6 +74,7 @@ const triggerRef = ref<HTMLElement | null>(null);
 const panelRef = ref<HTMLElement | null>(null);
 const panelStyle = ref<Record<string, string>>({});
 let documentListenerTimer: ReturnType<typeof setTimeout> | undefined;
+let positionFrame: number | undefined;
 
 const REFRESH_INTERVAL_MS = 60_000;
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
@@ -91,6 +93,36 @@ function stopRefreshLoop(): void {
   refreshTimer = undefined;
 }
 
+function positionPanel(): void {
+  const r = triggerRef.value?.getBoundingClientRect();
+  if (!r) return;
+  const position = calculateUsagePanelPosition(r, {
+    width: window.innerWidth,
+    height: window.innerHeight,
+  });
+  const style: Record<string, string> = {
+    right: `${String(position.right)}px`,
+    maxHeight: `${String(position.maxHeight)}px`,
+  };
+  if (position.top !== undefined) style.top = `${String(position.top)}px`;
+  if (position.bottom !== undefined) style.bottom = `${String(position.bottom)}px`;
+  panelStyle.value = style;
+}
+
+function schedulePositionPanel(): void {
+  cancelScheduledPosition();
+  positionFrame = window.requestAnimationFrame(() => {
+    positionFrame = undefined;
+    positionPanel();
+  });
+}
+
+function cancelScheduledPosition(): void {
+  if (positionFrame === undefined) return;
+  window.cancelAnimationFrame(positionFrame);
+  positionFrame = undefined;
+}
+
 function togglePanel(): void {
   if (open.value) {
     closePanel();
@@ -98,14 +130,9 @@ function togglePanel(): void {
   }
   // Let the composer close its own menus so toolbar popups never overlap.
   emit('open');
-  const r = triggerRef.value?.getBoundingClientRect();
-  if (r) {
-    panelStyle.value = {
-      right: `${String(Math.round(window.innerWidth - r.right))}px`,
-      bottom: `${String(Math.round(window.innerHeight - r.top + 8))}px`,
-    };
-  }
+  positionPanel();
   open.value = true;
+  window.addEventListener('resize', schedulePositionPanel);
   startRefreshLoop();
   void nextTick(() => panelRef.value?.focus());
   documentListenerTimer = setTimeout(() => {
@@ -119,10 +146,12 @@ function togglePanel(): void {
 function closePanel(restoreFocus = false): void {
   open.value = false;
   cancelDocumentListenerRegistration();
+  cancelScheduledPosition();
   invalidateUsage();
   stopRefreshLoop();
   document.removeEventListener('mousedown', onDocClick);
   document.removeEventListener('keydown', onDocKeydown);
+  window.removeEventListener('resize', schedulePositionPanel);
   if (restoreFocus) void nextTick(() => triggerRef.value?.focus());
 }
 
@@ -149,10 +178,12 @@ function cancelDocumentListenerRegistration(): void {
 
 onUnmounted(() => {
   cancelDocumentListenerRegistration();
+  cancelScheduledPosition();
   invalidateUsage();
   stopRefreshLoop();
   document.removeEventListener('mousedown', onDocClick);
   document.removeEventListener('keydown', onDocKeydown);
+  window.removeEventListener('resize', schedulePositionPanel);
 });
 
 // ---------------------------------------------------------------------------
@@ -357,6 +388,8 @@ function money(cents: number, currency: string): string {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   font-family: var(--font-ui);
 }
 
