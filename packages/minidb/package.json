@@ -1,6 +1,6 @@
 {
   "name": "@moonshot-ai/minidb",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "A pure-Node.js embedded key-value database mixing Redis-style in-memory KV with SQLite-style durable persistence (WAL + snapshot).",
   "license": "MIT",
@@ -33,6 +33,10 @@
     ".": {
       "types": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./cluster": {
+      "types": "./src/cluster/index.ts",
+      "default": "./src/cluster/index.ts"
     }
   },
   "scripts": {
@@ -40,6 +44,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "bench": "node --import tsx bench/bench.ts",
+    "bench:cluster": "node --import tsx bench/cluster.ts",
     "clean": "rm -rf dist"
   }
 }

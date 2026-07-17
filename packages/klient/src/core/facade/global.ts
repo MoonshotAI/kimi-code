@@ -88,7 +88,7 @@ export type ConfigTargetLiteral = `${ConfigTarget}`;
 export interface GlobalSessionsFacade {
   list(query: SessionListQuery): Promise<Page<SessionSummary>>;
   get(id: string): Promise<SessionSummary | undefined>;
-  countActive(workspaceId: string): Promise<number>;
+  countActive(workspaceIds: readonly string[]): Promise<number>;
   /**
    * Create a session rooted at `workDir` (the workspace is registered
    * implicitly), optionally titled. Returns the persisted metadata. No agent
@@ -256,8 +256,8 @@ export function createGlobalFacade(scoped: ScopedCaller): GlobalFacade {
     sessions: {
       list: (query) => call('sessionIndex', 'list', [query]) as Promise<Page<SessionSummary>>,
       get: (id) => call('sessionIndex', 'get', [id]) as Promise<SessionSummary | undefined>,
-      countActive: (workspaceId) =>
-        call('sessionIndex', 'countActive', [workspaceId]) as Promise<number>,
+      countActive: (workspaceIds) =>
+        call('sessionIndex', 'countActive', [workspaceIds]) as Promise<number>,
       create: async ({ workDir, additionalDirs, title }) => {
         const handle = (await scoped({}, 'sessionLifecycleService', 'create', [
           { workDir, additionalDirs },

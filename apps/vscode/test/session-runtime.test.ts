@@ -508,6 +508,14 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     expect(sdk.cancelCount()).toBe(1);
   });
 
+  it("still reaches the SDK cancel when the host lost track of active work", async () => {
+    const { runtime, sdk } = createRuntime();
+
+    await runtime.cancel();
+
+    expect(sdk.cancelCount()).toBe(1);
+  });
+
   it("converts legacy media keys when steering an active response", async () => {
     const { runtime, sdk } = createRuntime();
     void runtime.prompt("hello");

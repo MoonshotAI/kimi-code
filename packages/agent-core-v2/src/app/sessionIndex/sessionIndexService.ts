@@ -7,6 +7,14 @@
  * session ids are enumerated via `IFileSystemStorageService.list`, and each session's
  * metadata document is read via `IAtomicDocumentStore` to build its summary.
  *
+ * One physical folder may be split across sibling buckets by legacy id
+ * spellings (Windows casing/slash variants minted different `workspaceId`s for
+ * the same directory; see `IWorkspaceRegistry.resolveAliasIds`). A list or
+ * `countActive` query takes the workspace-id *set*, enumerates each bucket,
+ * and merges before the single recency sort and `limit` step — the merged
+ * listing is observably identical to a single-bucket list (same sort key,
+ * same cursor shape); filtering options keep their meaning.
+ *
  * The session metadata document lives at `<sessionDir>/state.json`, a layout
  * shared by v1 and v2; the `version` field distinguishes them (`2` = v2,
  * epoch-ms timestamps; absent = v1, ISO-string timestamps). The reader also
@@ -116,11 +124,11 @@ export class FileSessionIndex implements ISessionIndex {
     );
   }
 
-  async countActive(workspaceId: string): Promise<number> {
-    if (!this.readModelEnabled()) return this.countActiveLegacy(workspaceId);
+  async countActive(workspaceIds: readonly string[]): Promise<number> {
+    if (!this.readModelEnabled()) return this.countActiveLegacy(workspaceIds);
     return this.withReadModelFallback(
-      () => this.countActiveFromReadModel(workspaceId),
-      () => this.countActiveLegacy(workspaceId),
+      () => this.countActiveFromReadModel(workspaceIds),
+      () => this.countActiveLegacy(workspaceIds),
     );
   }
 
@@ -149,8 +157,7 @@ export class FileSessionIndex implements ISessionIndex {
       return { items: query.limit !== undefined ? items.slice(0, query.limit) : items };
     }
 
-    const workspaceIds =
-      query.workspaceId !== undefined ? [query.workspaceId] : await this.listWorkspaceIds();
+    const workspaceIds = query.workspaceIds ?? (await this.listWorkspaceIds());
     const items: SessionSummary[] = [];
     for (const workspaceId of workspaceIds) {
       for (const sessionId of await this.listSessionIds(workspaceId)) {
@@ -175,11 +182,13 @@ export class FileSessionIndex implements ISessionIndex {
     return undefined;
   }
 
-  private async countActiveFromReadModel(workspaceId: string): Promise<number> {
+  private async countActiveFromReadModel(workspaceIds: readonly string[]): Promise<number> {
     let count = 0;
-    for (const sessionId of await this.listSessionIds(workspaceId)) {
-      const summary = await this.getCachedSummary(workspaceId, sessionId);
-      if (summary !== undefined && !summary.archived) count += 1;
+    for (const workspaceId of workspaceIds) {
+      for (const sessionId of await this.listSessionIds(workspaceId)) {
+        const summary = await this.getCachedSummary(workspaceId, sessionId);
+        if (summary !== undefined && !summary.archived) count += 1;
+      }
     }
     return count;
   }
@@ -227,8 +236,7 @@ export class FileSessionIndex implements ISessionIndex {
       return { items: query.limit !== undefined ? items.slice(0, query.limit) : items };
     }
 
-    const workspaceIds =
-      query.workspaceId !== undefined ? [query.workspaceId] : await this.listWorkspaceIds();
+    const workspaceIds = query.workspaceIds ?? (await this.listWorkspaceIds());
     const items: SessionSummary[] = [];
     for (const workspaceId of workspaceIds) {
       for (const sessionId of await this.listSessionIds(workspaceId)) {
@@ -252,11 +260,13 @@ export class FileSessionIndex implements ISessionIndex {
     return undefined;
   }
 
-  private async countActiveLegacy(workspaceId: string): Promise<number> {
+  private async countActiveLegacy(workspaceIds: readonly string[]): Promise<number> {
     let count = 0;
-    for (const sessionId of await this.listSessionIds(workspaceId)) {
-      const summary = await this.readSummary(workspaceId, sessionId);
-      if (summary !== undefined && !summary.archived) count += 1;
+    for (const workspaceId of workspaceIds) {
+      for (const sessionId of await this.listSessionIds(workspaceId)) {
+        const summary = await this.readSummary(workspaceId, sessionId);
+        if (summary !== undefined && !summary.archived) count += 1;
+      }
     }
     return count;
   }

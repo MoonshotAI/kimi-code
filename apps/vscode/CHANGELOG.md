@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.6.3
+
+### Fixed
+
+- Editor mentions now work for files outside the working directory, and paths
+  containing spaces are quoted correctly.
+- Cancelling a running turn now reliably reaches the engine, and the UI no
+  longer reports a task as stopped when there is nothing to cancel.
+- Attaching to or resuming an existing session no longer overwrites its model
+  and thinking effort with the configured defaults; model or effort changes
+  picked in the composer are applied when the prompt is sent.
+
+## 0.6.2
+
+### Fixed
+
+- A core error arriving in the middle of a turn no longer corrupts the active
+  turn; the turn now ends cleanly with an error instead of leaving the chat in
+  a broken state.
+- Kimi sign-in and connection failures now include the underlying transport
+  cause (for example DNS or connection refused) instead of a generic error.
+- Closed several FetchURL SSRF bypasses and the DNS-rebinding window.
+- Tool calls interrupted mid-stream are now recorded and closed, so they no
+  longer corrupt the session history.
+
 ## 0.6.1
 
 ### Fixed

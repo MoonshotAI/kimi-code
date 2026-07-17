@@ -70,6 +70,14 @@ export function isThinkingOn(level: ThinkingLevel): boolean {
   return level !== 'off';
 }
 
+/** True when the level is selectable for the model (one of its UI segments). */
+export function levelDeclaredBy(
+  model: ModelThinkingInfo | undefined,
+  level: string,
+): boolean {
+  return segmentsFor(model).includes(level);
+}
+
 /**
  * Normalize a UI draft before it crosses the component boundary. 'on' never
  * leaks out of the control — it becomes the model's default level.
@@ -114,19 +122,21 @@ export function thinkingLevelToConfig(level: ThinkingLevel): {
 
 /**
  * Thinking level to use when the user picks a model in the switcher.
- * Mirrors the TUI model picker: switching onto a different model pre-selects
- * that model's own default level; re-selecting the current model keeps the
- * live level untouched (including "no preference"). The carried-over level is
- * never coerced onto the target model — whatever is stored is submitted
- * verbatim.
+ * Mirrors the TUI model picker: re-selecting the current model keeps the live
+ * level untouched (including "no preference"). Switching onto a different model
+ * restores that model's own stored pick when the model still declares it
+ * (per-model persistence), and otherwise pre-selects the model's default level.
+ * The carried-over level is never coerced onto the target model.
  */
 export function thinkingLevelForModelSwitch(
   model: ModelThinkingInfo | undefined,
   currentLevel: ThinkingLevel | undefined,
   isSwitch: boolean,
+  storedLevel?: ThinkingLevel,
 ): ThinkingLevel | undefined {
   // Target model unknown (catalog not loaded yet): keep the current level
   // as-is rather than guessing at capabilities.
   if (!isSwitch || model === undefined) return currentLevel;
+  if (storedLevel !== undefined && levelDeclaredBy(model, storedLevel)) return storedLevel;
   return defaultThinkingLevelFor(model);
 }

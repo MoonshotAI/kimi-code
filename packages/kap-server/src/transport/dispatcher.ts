@@ -13,12 +13,20 @@ import {
   Error2,
   type IScopeHandle,
   type Scope,
+  type ServiceIdentifier,
 } from '@moonshot-ai/agent-core-v2';
 
 import type { ScopeKind } from './channel';
 import { resolveChannel } from './channelRegistry';
 import { assertSerializable } from './errors';
 import { MAIN_AGENT_ID, ensureMainAgent } from './mainAgent';
+
+/**
+ * Channel name → identifier resolution used to gate which Services are
+ * reachable. `/api/v2` passes the whitelist registry (default);
+ * `/api/v1/debug` passes the full scoped-registry lookup (dev only).
+ */
+export type ChannelLookup = (name: string) => ServiceIdentifier<unknown> | undefined;
 
 /**
  * Resolve the scope a request targets. Throws `Error2` when the referenced
@@ -74,6 +82,7 @@ export async function resolveService(
   scopeKind: ScopeKind,
   params: Record<string, string>,
   serviceName: string,
+  lookup: ChannelLookup = resolveChannel,
 ): Promise<object> {
   const scope = await resolveScope(core, scopeKind, params);
   if (scope === undefined) {
@@ -82,7 +91,7 @@ export async function resolveService(
       `session ${params['session_id'] ?? ''} not found`,
     );
   }
-  const id = resolveChannel(serviceName);
+  const id = lookup(serviceName);
   if (id === undefined) {
     throw new Error2(ErrorCodes.REQUEST_INVALID, `unknown service: ${serviceName}`);
   }
@@ -114,8 +123,9 @@ export async function dispatch(
   serviceName: string,
   method: string,
   arg: unknown,
+  lookup: ChannelLookup = resolveChannel,
 ): Promise<unknown> {
-  const service = await resolveService(core, scopeKind, params, serviceName);
+  const service = await resolveService(core, scopeKind, params, serviceName, lookup);
   const member = (service as Record<string, unknown>)[method];
   if (member === undefined) {
     throw new Error2(ErrorCodes.REQUEST_INVALID, `method not found: ${serviceName}.${method}`);

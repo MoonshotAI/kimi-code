@@ -26,7 +26,7 @@ defineDualSuite('workspace', {}, ({ klient }) => {
       const session = await k.global.sessions.create({ workDir: ws.root });
       expect(session.cwd).toBe(ws.root);
 
-      const listed = await k.global.sessions.list({ workspaceId: ws.id });
+      const listed = await k.global.sessions.list({ workspaceIds: [ws.id] });
       expect(listed.items.some((s) => s.id === session.id)).toBe(true);
 
       await k.global.workspaces.delete(ws.id);

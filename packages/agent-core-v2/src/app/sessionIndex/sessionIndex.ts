@@ -32,7 +32,14 @@ export interface SessionSummary {
 }
 
 export interface SessionListQuery {
-  readonly workspaceId?: string;
+  /**
+   * Restrict to sessions persisted under any of these workspace ids. A single
+   * workspace is `[id]`; callers resolving a legacy split bucket (one
+   * directory, several id spellings — see `IWorkspaceRegistry.resolveAliasIds`)
+   * pass the whole alias set and get one merged listing. Absent lists every
+   * bucket.
+   */
+  readonly workspaceIds?: readonly string[];
   readonly sessionId?: string;
   readonly includeArchived?: boolean;
   readonly cursor?: string;
@@ -43,9 +50,11 @@ export interface SessionListQuery {
 export interface ISessionIndex {
   readonly _serviceBrand: undefined;
 
+  /** List persisted sessions, optionally filtered by a set of workspace ids. */
   list(query: SessionListQuery): Promise<Page<SessionSummary>>;
   get(id: string): Promise<SessionSummary | undefined>;
-  countActive(workspaceId: string): Promise<number>;
+  /** Count non-archived sessions across the given set of workspace ids. */
+  countActive(workspaceIds: readonly string[]): Promise<number>;
 }
 
 export const ISessionIndex: ServiceIdentifier<ISessionIndex> =

@@ -575,6 +575,27 @@ describe('refreshAccessToken', () => {
     ).rejects.toBeInstanceOf(OAuthConnectionError);
   });
 
+  it('names the transport root cause in the connection error message', async () => {
+    const badConfig: OAuthFlowConfig = {
+      ...flowConfig(),
+      oauthHost: 'http://127.0.0.1:1', // reserved port, ECONNREFUSED
+    };
+
+    const failure = await refreshToken(badConfig, 'rt', {
+      maxRetries: 1,
+      backoffMs: () => 0,
+    }).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(OAuthConnectionError);
+    const error = failure as OAuthConnectionError;
+    expect(error.cause).toBeInstanceOf(Error);
+    // The undici root cause (e.g. `connect ECONNREFUSED 127.0.0.1:1`) must be
+    // visible in the surfaced message, not just the generic "fetch failed".
+    const rootCause = error.cause instanceof Error ? error.cause : undefined;
+    expect(rootCause?.message).toBeTruthy();
+    expect(error.message).toContain(rootCause?.message);
+  });
+
   it('sends grant_type=refresh_token + refresh_token', async () => {
     server.enqueue('/api/oauth/token', {
       status: 200,

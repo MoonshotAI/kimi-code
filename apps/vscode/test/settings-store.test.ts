@@ -14,6 +14,7 @@ const boundary = vi.hoisted(() => ({
   abortChat: vi.fn(),
   trackFiles: vi.fn(),
   toastError: vi.fn(),
+  toastWarning: vi.fn(),
 }));
 
 vi.mock("@/services", () => ({
@@ -25,7 +26,7 @@ vi.mock("@/services", () => ({
   },
 }));
 vi.mock("@/components/ui/sonner", () => ({
-  toast: { error: boundary.toastError },
+  toast: { error: boundary.toastError, warning: boundary.toastWarning },
 }));
 
 import {
@@ -58,6 +59,7 @@ beforeEach(() => {
   boundary.abortChat.mockResolvedValue({ aborted: true });
   boundary.trackFiles.mockReset();
   boundary.toastError.mockReset();
+  boundary.toastWarning.mockReset();
   useSettingsStore.getState().initModels(MODELS, "plain", false);
   useChatStore.setState({
     sessionId: null,
@@ -367,5 +369,38 @@ describe("Webview thinking effort parity with the TUI", () => {
 
     expect(useSettingsStore.getState().thinkingEffort).toBe(previous);
     expect(boundary.saveConfig).not.toHaveBeenCalled();
+  });
+});
+
+describe("Webview mid-turn warnings", () => {
+  it("shows a non-terminal error as a toast without unlocking the composer", async () => {
+    useChatStore.getState().sendMessage("first message");
+    useChatStore.getState().sendMessage("queued follow-up");
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().queue).toHaveLength(1);
+
+    useChatStore.getState().processEvent({
+      type: "error",
+      code: "internal",
+      message: "Internal error occurred.",
+      detail: "A response is already being generated for this session.",
+      phase: "runtime",
+      terminal: false,
+    });
+
+    // The turn is still running: nothing unlocks, nothing flushes, nothing is retried.
+    expect(boundary.toastWarning).toHaveBeenCalledWith("Internal error occurred.");
+    const state = useChatStore.getState();
+    expect(state.isStreaming).toBe(true);
+    expect(state.queue).toHaveLength(1);
+    expect(state.pendingInput).not.toBeNull();
+    expect(state.messages.at(-1)?.inlineError).toBeUndefined();
+
+    // The genuine terminal still completes the turn and flushes the queue.
+    useChatStore.getState().processEvent({ type: "stream_complete", result: { status: "finished" } });
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    await vi.waitFor(() => {
+      expect(boundary.streamChat).toHaveBeenCalledTimes(2);
+    });
   });
 });

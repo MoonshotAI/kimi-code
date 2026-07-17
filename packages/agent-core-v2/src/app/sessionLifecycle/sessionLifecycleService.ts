@@ -16,7 +16,10 @@
  * sessions are discovered through the `sessionIndex` read model, and workspace
  * roots are remembered through `workspaceRegistry`. On create / fork the
  * session is also appended to the shared `session_index.jsonl` so v1 clients
- * (TUI, export) can discover sessions created by the v2 engine. Fork flushes
+ * (TUI, export) can discover sessions created by the v2 engine; the entry is
+ * indexed under the registry-resolved workspace id — the same id seeding the
+ * session's storage scope — so an alias spelling of the workDir cannot split
+ * the session into a bucket v1 readers never look in. Fork flushes
  * live Agent wire journals, normalizes a missing protocol envelope, and
  * appends the fork boundary before restoring the target Agent.
  */
@@ -37,7 +40,6 @@ import {
 } from '#/_base/di/scope';
 import { unwrapErrorCause } from '#/_base/errors/errors';
 import { Emitter, type Event } from '#/_base/event';
-import { encodeWorkDirKey } from '#/_base/utils/workdir-slug';
 import { DEFAULT_PLAN_MODE_SECTION } from '#/agent/plan/configSection';
 import { IAgentPlanService } from '#/agent/plan/plan';
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
@@ -134,7 +136,14 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
   async create(opts: CreateSessionOptions): Promise<ISessionScopeHandle> {
     const sessionId = opts.sessionId ?? createSessionId();
     const handle = await this.materializeSession({ ...opts, sessionId });
-    await this.appendSessionIndexEntry(sessionId, opts.workDir);
+    // Index the session under the workspace id the registry actually resolved
+    // (the same one seeding the session's storage scope), not a recomputed
+    // `encodeWorkDirKey` — with root folding the two can diverge.
+    await this.appendSessionIndexEntry(
+      sessionId,
+      opts.workDir,
+      handle.accessor.get(ISessionContext).workspaceId,
+    );
     if (this.config.get<boolean>(DEFAULT_PLAN_MODE_SECTION) === true) {
       const main = await ensureMainAgent(handle);
       await main.accessor.get(IAgentPlanService).enter();
@@ -188,8 +197,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     return handle;
   }
 
-  private async appendSessionIndexEntry(sessionId: string, workDir: string): Promise<void> {
-    const workspaceId = encodeWorkDirKey(workDir);
+  /**
+   * Append one entry to the v1-compatible `session_index.jsonl`. `workspaceId`
+   * must be the SAME id the session was materialized with (registry-resolved,
+   * possibly folded from an alias spelling) — recomputing
+   * `encodeWorkDirKey(workDir)` here could mint a different bucket and orphan
+   * the session for v1 readers.
+   */
+  private async appendSessionIndexEntry(
+    sessionId: string,
+    workDir: string,
+    workspaceId: string,
+  ): Promise<void> {
     const sessionDir = this.bootstrap.sessionDir(workspaceId, sessionId);
     this.appendLogStore.append('', 'session_index.jsonl', {
       sessionId,
@@ -394,7 +413,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         });
       }
 
-      await this.appendSessionIndexEntry(targetId, workspace.root);
+      await this.appendSessionIndexEntry(targetId, workspace.root, targetCtx.workspaceId);
       this._onDidForkSession.fire({
         sourceSessionId: sourceId,
         sessionId: targetId,

@@ -79,10 +79,10 @@ const currentModel = computed<AppModel | undefined>(() =>
 );
 const thinkingAvailability = computed(() => modelThinkingAvailability(currentModel.value));
 const thinkingSegments = computed(() => segmentsFor(currentModel.value));
-// The stored level is shown and submitted verbatim (same as the composer and
-// the TUI) — no coercion against the active model. No stored preference shows
-// the model default (what the daemon will resolve); a level the model doesn't
-// declare simply highlights no segment.
+// The client resolves the level per model (the model's stored pick when still
+// declared, else the catalog default), so what arrives here is valid for the
+// active model. An undeclared level can only appear transiently, before the
+// catalog loads, and simply highlights no segment.
 const thinkingLevel = computed(() => effectiveThinkingLevel(currentModel.value, props.thinking));
 const activeThinkingSegment = computed<string>(() => {
   const segs = thinkingSegments.value;

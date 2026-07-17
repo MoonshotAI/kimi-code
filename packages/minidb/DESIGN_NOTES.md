@@ -111,7 +111,8 @@ See `src/wal.ts`.
 Borrowed from Redis RDB/`BGREWRITEAOF` and Bitcask's merge. Compaction is
 **non-blocking for writes**: the live WAL doubles as a Redis-style rewrite
 buffer (`aof_rewrite_buf`), so the (slow) snapshot is written while writers
-keep appending, and they pause only for a brief final rotation.
+keep appending, and they pause only for the final rotation — bounded, but the
+pause scales with the remaining tail when a write storm outruns the pre-copy.
 
 - When the WAL exceeds a size threshold, compact (rewrite state):
   1. **Fence.** Flush the WAL and record `baseOffset = wal.size`. Every write
@@ -124,28 +125,40 @@ keep appending, and they pause only for a brief final rotation.
      store while we iterate. The snapshot need not be point-in-time — the WAL
      tail below repairs any fuzziness on replay.
   3. **Pre-copy the tail.** Stream `WAL[baseOffset .. head]` into `db.wal.tmp`,
-     looping until the remaining delta is small. Also non-blocking: post-fence
+     while the copy is CONVERGING: each pass must shrink the remaining delta
+     meaningfully, bounded by a small pass cap. Also non-blocking: post-fence
      writes accumulate in the live WAL instead of a separate in-memory buffer.
-  4. **Rotate** (the only blocking phase, and brief): set `_rotateLock` so new
-     writers park, flush, copy the tiny remaining tail delta, close the old
-     WAL, `rename` the snapshot into place, `rename` the new WAL into place,
-     and reopen it. The two renames are ordered **snapshot-first** so a crash
-     between them pairs the new snapshot with the old full WAL — replaying the
-     whole old WAL on top of the new snapshot is idempotent for pre-fence
-     frames and correct for post-fence frames, so the state stays consistent.
-     Reversing the order would pair an old snapshot with a truncated new WAL
-     and lose pre-fence data.
+     Under sustained writes whose append rate approaches the copy rate the gap
+     stops shrinking, and looping until it was small enough would never
+     terminate — observed in stress testing as compactions stalling for as long
+     as a write storm lasted (WAL unbounded, disk amplification ~20x). Giving
+     up to the rotation phase is what keeps compaction live in that regime.
+  4. **Rotate** (the only blocking phase): set `_rotateLock` so new writers
+     park, then **seal** the old WAL — post-seal appends fail fast with a
+     retryable error and the op re-runs against the new WAL — flush, and copy
+     the remaining tail in a drain loop. With the WAL sealed the head no
+     longer moves, so the loop provably terminates; the pause scales with the
+     tail the pre-copy could not drain (the same bounded end-of-rewrite pause
+     Redis accepts for its AOF diff flush). Finish by `rename`ing the snapshot
+     into place, `rename`ing the new WAL into place, and reopening it. The two
+     renames are ordered **snapshot-first** so a crash between them pairs the
+     new snapshot with the old full WAL — replaying the whole old WAL on top
+     of the new snapshot is idempotent for pre-fence frames and correct for
+     post-fence frames, so the state stays consistent. Reversing the order
+     would pair an old snapshot with a truncated new WAL and lose pre-fence
+     data.
 - Reads are unaffected throughout. Writes pause only for the rotation critical
-  section (one flush, a small copy, two renames + two `fsyncDir`s); the bulk
-  snapshot + tail copy happen concurrently with writes. Recovery is always
-  `load snapshot + replay WAL`, last-writer-wins, which is exactly what makes
-  the non-point-in-time snapshot converge to the correct latest state.
-- A writer's gate check (`if (_rotateLock) await _rotateLock`) and its
-  `wal.append()` are in the same synchronous segment, and `_rotateLock` is set
-  synchronously before the rotation flush — so a writer either enqueued its
-  frame before the lock (and is drained by the flush) or parks on the lock
-  without appending. The event loop cannot interleave between the two, which
-  is why the critical section is quiescent after the flush and cannot deadlock.
+  section (one flush, the remaining tail copy, two renames + two `fsyncDir`s);
+  the bulk snapshot + tail copy happen concurrently with writes. Recovery is
+  always `load snapshot + replay WAL`, last-writer-wins, which is exactly what
+  makes the non-point-in-time snapshot converge to the correct latest state.
+- The rotation cannot slip a committed write: a writer's gate check
+  (`if (_rotateLock) await _rotateLock`) and its `wal.append()` are NOT in the
+  same synchronous segment (memory-budget checks yield microtasks in between),
+  so an in-flight op could previously append between the final flush and the
+  close and lose a resolved write into the abandoned old file. Sealing the old
+  WAL before the final flush closes that hole: such an op fails fast against
+  the sealed WAL and transparently retries against the new one.
 - The snapshot encoder runs on the main thread but **yields to the event loop
   every N entries** (chunked), so large snapshots stay responsive without a
   Worker. Offloading the encode to a `worker_thread` is the planned
