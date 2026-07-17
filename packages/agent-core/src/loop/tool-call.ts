@@ -58,7 +58,12 @@ const UNEXECUTED_TOOL_CALL_OUTPUT =
   '(the provider stream was interrupted). Do not assume the tool ran — ' +
   're-issue the call if it is still needed.';
 
-const validators = new WeakMap<ExecutableTool, ToolArgsValidator>();
+interface ToolValidatorCacheEntry {
+  readonly parameters: Record<string, unknown>;
+  readonly validator: ToolArgsValidator;
+}
+
+const validators = new WeakMap<ExecutableTool, ToolValidatorCacheEntry>();
 
 /**
  * Output for an aborted tool call. When the abort carries a user-cancellation
@@ -276,16 +281,17 @@ function preflightToolCall(
 }
 
 function validateExecutableToolArgs(tool: ExecutableTool, args: unknown): string | null {
-  let validator = validators.get(tool);
-  if (validator === undefined) {
+  const parameters = tool.parameters;
+  let cached = validators.get(tool);
+  if (cached === undefined || cached.parameters !== parameters) {
     try {
-      validator = compileToolArgsValidator(tool.parameters);
-      validators.set(tool, validator);
+      cached = { parameters, validator: compileToolArgsValidator(parameters) };
+      validators.set(tool, cached);
     } catch (error) {
       return error instanceof Error ? error.message : String(error);
     }
   }
-  return validateToolArgs(validator, args as JsonType);
+  return validateToolArgs(cached.validator, args as JsonType);
 }
 
 async function prepareToolCall(

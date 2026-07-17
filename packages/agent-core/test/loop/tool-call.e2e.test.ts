@@ -245,6 +245,69 @@ describe('runTurn — tool-call behaviour', () => {
     expect(expectTextOutput(results[0]?.result.output).toLowerCase()).toContain('invalid args');
   });
 
+  it('recompiles validation when a live tool switches parameter schemas', async () => {
+    const defaultParameters = {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    };
+    const modelParameters = {
+      type: 'object',
+      properties: { model: { type: 'string' } },
+      required: ['model'],
+      additionalProperties: false,
+    };
+    let modelEnabled = false;
+    const calls: unknown[] = [];
+    const tool: ExecutableTool = {
+      name: 'mutable-schema',
+      description: 'Mutable schema test tool.',
+      get parameters() {
+        return modelEnabled ? modelParameters : defaultParameters;
+      },
+      resolveExecution: (args) => ({
+        approvalRule: 'mutable-schema',
+        execute: async () => {
+          calls.push(args);
+          return { output: 'ok' };
+        },
+      }),
+    };
+
+    await runTurn({
+      tools: [tool],
+      responses: [
+        makeToolUseResponse([makeToolCall('mutable-schema', {}, 'tc-off-1')]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    modelEnabled = true;
+    await runTurn({
+      tools: [tool],
+      responses: [
+        makeToolUseResponse([
+          makeToolCall('mutable-schema', { model: 'child-model' }, 'tc-on'),
+        ]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    modelEnabled = false;
+    const { sink } = await runTurn({
+      tools: [tool],
+      responses: [
+        makeToolUseResponse([
+          makeToolCall('mutable-schema', { model: 'child-model' }, 'tc-off-2'),
+        ]),
+        makeEndTurnResponse('done'),
+      ],
+    });
+
+    expect(calls).toEqual([{}, { model: 'child-model' }]);
+    expect(sink.byType('tool.result')[0]?.result).toMatchObject({ isError: true });
+  });
+
   it('falls back to schema validation when LLM-side args parsing fails', async () => {
     const echo = new EchoTool();
     const { sink } = await runTurn({

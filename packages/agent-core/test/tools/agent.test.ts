@@ -1,3 +1,9 @@
+/**
+ * Agent collaboration tool contract: schema gating, spawn/resume routing, and user-visible results.
+ * Uses a mocked SessionSubagentHost boundary and the real background manager.
+ * Run with: pnpm -C packages/agent-core test -- test/tools/agent.test.ts
+ */
+
 import { describe, expect, it, vi } from 'vitest';
 
 import { ToolAccesses } from '../../src/loop';
@@ -136,12 +142,163 @@ describe('AgentTool', () => {
     expect(tool.description).toContain('Default to a foreground subagent');
   });
 
-  it('does not expose a model parameter in the JSON schema', () => {
+  it('hides the model parameter when model selection is disabled', () => {
     const host = mockSubagentHost({ spawn: vi.fn() });
     const tool = agentTool(host);
     const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
 
     expect(properties).not.toHaveProperty('model');
+  });
+
+  it('exposes the model parameter when model selection is enabled', () => {
+    const host = mockSubagentHost({ spawn: vi.fn() });
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+    });
+    const properties = (tool.parameters as { properties: Record<string, unknown> }).properties;
+
+    expect(properties).toHaveProperty('model');
+  });
+
+  it('updates the model schema and directory when the feature flag changes live', () => {
+    let enabled = false;
+    const host = mockSubagentHost({ spawn: vi.fn() });
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: () => enabled,
+      modelDirectory: () => ({
+        models: {
+          'child-model': {
+            provider: 'test',
+            model: 'wire-child',
+            maxContextSize: 128_000,
+          },
+        },
+      }),
+    });
+
+    expect(tool.parameters['properties']).not.toHaveProperty('model');
+    expect(tool.description).not.toContain('"child-model"');
+
+    enabled = true;
+    expect(tool.parameters['properties']).toHaveProperty('model');
+    expect(tool.description).toContain('"child-model"');
+
+    enabled = false;
+    expect(tool.parameters['properties']).not.toHaveProperty('model');
+    expect(tool.description).not.toContain('"child-model"');
+  });
+
+  it('bounds the model directory exposed in the tool description', () => {
+    const models = Object.fromEntries(
+      Array.from({ length: 70 }, (_, index) => [
+        `model-${String(index)}`,
+        {
+          provider: 'test',
+          model: `wire-${String(index)}`,
+          maxContextSize: 128_000,
+        },
+      ]),
+    );
+    const tool = agentTool(
+      mockSubagentHost({ spawn: vi.fn() }),
+      createBackgroundManager().manager,
+      undefined,
+      { modelSelectionEnabled: true, modelDirectory: () => ({ models }) },
+    );
+
+    expect(
+      tool.description.split('\n').filter((line) => line.startsWith('- "model-')),
+    ).toHaveLength(64);
+    expect(tool.description).toContain('6 additional aliases were omitted');
+  });
+
+  it('rejects a configured alias beyond the exposed model-directory limit', async () => {
+    const models = Object.fromEntries(
+      Array.from({ length: 65 }, (_, index) => [
+        `model-${String(index).padStart(3, '0')}`,
+        {
+          provider: 'test',
+          model: `wire-${String(index)}`,
+          maxContextSize: 128_000,
+        },
+      ]),
+    );
+    const host = mockSubagentHost({ spawn: vi.fn(), resume: vi.fn() });
+    const resolveModelAlias = vi.fn((alias?: string) => alias);
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+      modelDirectory: () => ({ models }),
+      resolveModelAlias,
+    });
+
+    const result = await executeTool(
+      tool,
+      context({
+        prompt: 'Investigate',
+        description: 'Find cause',
+        model: 'model-064',
+      }),
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      output:
+        'subagent error: Selected subagent model is unavailable. Refresh the model directory and choose an exact listed alias.',
+    });
+    expect(resolveModelAlias).not.toHaveBeenCalled();
+    expect(host.spawn).not.toHaveBeenCalled();
+  });
+
+  it('rejects an explicit model when model selection is disabled', async () => {
+    const host = mockSubagentHost({ spawn: vi.fn(), resume: vi.fn() });
+    const tool = agentTool(host);
+
+    const result = await executeTool(
+      tool,
+      context({
+        prompt: 'Investigate',
+        description: 'Find cause',
+        model: 'deepseek-v4-flash',
+      }),
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: expect.stringContaining('Subagent model selection is disabled'),
+    });
+    expect(host.spawn).not.toHaveBeenCalled();
+    expect(host.resume).not.toHaveBeenCalled();
+  });
+
+  it('validates the inherited model before looking up a resumed child profile', async () => {
+    const host = mockSubagentHost({
+      spawn: vi.fn(),
+      resume: vi.fn(),
+      getProfileName: vi.fn(),
+    });
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+      resolveModelAlias: () => {
+        throw new Error('Current model is no longer configured');
+      },
+    });
+
+    const result = await executeTool(
+      tool,
+      context({
+        prompt: 'Continue',
+        description: 'Continue work',
+        resume: 'agent-existing',
+      }),
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      output:
+        'subagent error: Selected subagent model is unavailable. Refresh the model directory and choose an exact listed alias.',
+    });
+    expect(host.getProfileName).not.toHaveBeenCalled();
+    expect(host.resume).not.toHaveBeenCalled();
   });
 
   it('renders the tool set for each subagent type', () => {
@@ -217,7 +374,7 @@ describe('AgentTool', () => {
     expect(tool.description).toContain('- coder: General coding.');
   });
 
-  it('spawns a foreground subagent and returns its summary', async () => {
+  it('preserves an explicit configured model alias exactly when spawning', async () => {
     const host = mockSubagentHost({
       spawn: vi.fn().mockResolvedValue({
         agentId: 'agent-child',
@@ -226,13 +383,17 @@ describe('AgentTool', () => {
         completion: Promise.resolve({ result: 'child result' }),
       }),
     });
-    const tool = agentTool(host);
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+    });
 
-    const result = await executeTool(tool,
+    const result = await executeTool(
+      tool,
       context({
         prompt: 'Investigate',
         description: 'Find cause',
         subagent_type: 'explore',
+        model: 'DeepSeek-v4/flash',
       }),
     );
 
@@ -242,6 +403,7 @@ describe('AgentTool', () => {
         parentToolCallId: 'call_agent',
         prompt: 'Investigate',
         description: 'Find cause',
+        modelAlias: 'DeepSeek-v4/flash',
         runInBackground: false,
         signal: expect.any(AbortSignal),
       }),
@@ -249,6 +411,91 @@ describe('AgentTool', () => {
     expect(result.output).toContain('agent_id: agent-child');
     expect(result.output).toContain('actual_subagent_type: explore');
     expect(result.output).toContain('child result');
+  });
+
+  it('shows and executes the inherited model approved before live config changes', async () => {
+    let enabled = true;
+    let currentModel = 'model-a';
+    const host = mockSubagentHost({
+      spawn: vi.fn().mockResolvedValue({
+        agentId: 'agent-child',
+        profileName: 'coder',
+        resumed: false,
+        completion: Promise.resolve({ result: 'child result' }),
+      }),
+    });
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: () => enabled,
+      resolveModelAlias: (requestedModelAlias) => requestedModelAlias ?? currentModel,
+    });
+
+    const execution = await tool.resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.display).toMatchObject({
+      kind: 'agent_call',
+      agent_name: 'coder · model model-a',
+    });
+
+    currentModel = 'model-b';
+    enabled = false;
+    await execution.execute({ turnId: '0', toolCallId: 'call_agent', signal });
+
+    expect(host.spawn).toHaveBeenCalledWith(
+      expect.objectContaining({ modelAlias: 'model-a' }),
+    );
+  });
+
+  it('hides an unsafe inherited alias in the approval display', async () => {
+    const unsafeAlias = 'unsafe\u202Ealias';
+    const tool = agentTool(
+      mockSubagentHost({ spawn: vi.fn() }),
+      createBackgroundManager().manager,
+      undefined,
+      {
+        modelSelectionEnabled: true,
+        resolveModelAlias: () => unsafeAlias,
+      },
+    );
+
+    const execution = await tool.resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+    if (execution.isError === true) throw new Error('expected runnable execution');
+
+    expect(execution.display).toMatchObject({
+      agent_name: 'coder · model inherited (alias hidden)',
+    });
+    expect(JSON.stringify(execution.display)).not.toContain(unsafeAlias);
+  });
+
+  it('rejects an explicit alias that cannot be shown safely to the model', async () => {
+    const host = mockSubagentHost({ spawn: vi.fn(), resume: vi.fn() });
+    const resolveModelAlias = vi.fn();
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+      resolveModelAlias,
+    });
+
+    const result = await executeTool(
+      tool,
+      context({
+        prompt: 'Investigate',
+        description: 'Find cause',
+        model: ' unsafe-model ',
+      }),
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: expect.stringContaining('safely displayable configured model alias'),
+    });
+    expect(resolveModelAlias).not.toHaveBeenCalled();
+    expect(host.spawn).not.toHaveBeenCalled();
+    expect(host.resume).not.toHaveBeenCalled();
   });
 
   it('falls back to coder for an empty subagent type', async () => {
@@ -278,7 +525,7 @@ describe('AgentTool', () => {
     );
   });
 
-  it('resumes a foreground subagent when resume is provided', async () => {
+  it('resumes with the explicit model when model selection is enabled', async () => {
     const host = mockSubagentHost({
       spawn: vi.fn(),
       resume: vi.fn().mockResolvedValue({
@@ -288,13 +535,17 @@ describe('AgentTool', () => {
         completion: Promise.resolve({ result: 'resumed result' }),
       }),
     });
-    const tool = agentTool(host);
+    const tool = agentTool(host, createBackgroundManager().manager, undefined, {
+      modelSelectionEnabled: true,
+    });
 
-    const result = await executeTool(tool,
+    const result = await executeTool(
+      tool,
       context({
         prompt: 'Continue',
         description: 'Continue work',
         resume: 'agent-existing',
+        model: 'deepseek-v4-flash',
       }),
     );
 
@@ -305,6 +556,7 @@ describe('AgentTool', () => {
         parentToolCallId: 'call_agent',
         prompt: 'Continue',
         description: 'Continue work',
+        modelAlias: 'deepseek-v4-flash',
         runInBackground: false,
         signal: expect.any(AbortSignal),
       }),
