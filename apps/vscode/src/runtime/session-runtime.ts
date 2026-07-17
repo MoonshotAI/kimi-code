@@ -98,11 +98,11 @@ export class SessionRuntime {
     this.legacyApproval = options.legacyApproval;
     this.reverseRpc = new ReverseRpcController((event) => this.emitStreamEvent(event));
 
-    this.session.setApprovalHandler((request) =>
-      this.legacyApproval.yolo || this.legacyApproval.afk
-        ? Promise.resolve({ decision: "approved" })
-        : this.reverseRpc.requestApproval(request),
-    );
+    // Forward every approval request to the user. The engine permission mode
+    // (mapped from the legacy flags) already auto-approves what yolo/auto
+    // allow internally; anything that reaches this handler is an exception
+    // (sensitive file, plan review, ask rule) the user must decide on.
+    this.session.setApprovalHandler((request) => this.reverseRpc.requestApproval(request));
     this.session.setQuestionHandler((request) => this.reverseRpc.requestQuestion(request));
     this.unsubscribe = this.session.onEvent((event) => this.onSdkEvent(event));
   }
