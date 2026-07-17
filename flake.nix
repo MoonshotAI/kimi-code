@@ -77,7 +77,6 @@
         ./packages/protocol
         ./packages/telemetry
         ./apps/kimi-code
-        ./apps/kimi-desktop
         ./apps/vscode
         ./apps/kimi-inspect
         ./apps/kimi-web
