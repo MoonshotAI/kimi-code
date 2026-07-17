@@ -15,6 +15,7 @@ import KimiDoodle from '../KimiDoodle.vue';
 import { Icon, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
+import { isMacosDesktop } from '../../lib/desktopFlag';
 
 const { t } = useI18n();
 
@@ -1278,6 +1279,17 @@ defineExpose({ loadComposerForEdit, focusComposer });
       @archive-session="(id) => emit('archiveSession', id)"
       @export-session="(id) => emit('exportSession', id)"
     />
+    <!-- Empty-composer state renders no ChatHeader (no session context yet), so
+         on macOS desktop the conversation column would lose its only window-drag
+         region. This zero-chrome strip carries it instead. Absolutely positioned
+         over the pane's top, so the centred empty-composer layout is untouched;
+         the floating sidebar toggle / new-chat buttons come later in DOM order,
+         so their no-drag holes subtract from this region as usual. -->
+    <div
+      v-else-if="!mobile"
+      class="empty-drag"
+      :class="{ 'macos-desktop': isMacosDesktop }"
+    />
 
     <!-- Conversation outline: right edge rail of vertical bars (one per user
          query); hover to expand a labeled panel. -->
@@ -1541,6 +1553,20 @@ defineExpose({ loadComposerForEdit, focusComposer });
   height: 100%;
   position: relative;
   container-type: inline-size;
+}
+
+/* Invisible window-drag band for the empty-composer state (no ChatHeader).
+   Only macOS desktop honours app-region; elsewhere this is a dead element
+   with no visual or hit-test impact beyond the band's rect. */
+.empty-drag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--panel-head-h, 48px);
+}
+.empty-drag.macos-desktop {
+  -webkit-app-region: drag;
 }
 
 .panes {

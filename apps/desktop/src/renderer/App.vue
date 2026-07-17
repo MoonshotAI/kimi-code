@@ -1298,10 +1298,13 @@ function openPr(url: string): void {
   -webkit-app-region: no-drag;
 }
 /* macOS desktop (hidden title bar): resident beside the floating traffic
-   lights (green light's right edge ≈ 68px; 72 keeps a gap that matches the
-   lights' own 8px rhythm); no entrance animation since it never appears. */
+   lights. Measured on-screen (titleBarStyle 'hidden', trafficLightPosition
+   x 16): the green light's center lands at ≈ 69px, its right edge at ≈ 75px —
+   84 keeps ≈ 9px of clear air to the button (the lights' own circle-to-circle
+   rhythm is 8px); the old 72px put the button 3px from the green dot and read
+   cramped. No entrance animation since it never appears. */
 .app.macos-desktop .sidebar-toggle-btn {
-  left: 72px;
+  left: 84px;
   animation: none;
 }
 /* macOS full-screen: the traffic lights hide (they only re-appear as a
@@ -1326,7 +1329,7 @@ function openPr(url: string): void {
   -webkit-app-region: no-drag;
 }
 .app.macos-desktop .new-chat-btn {
-  left: 98px;
+  left: 110px;
 }
 /* Follows the toggle's fullscreen shift (toggle at 16px + 26px). */
 .app.macos-desktop.fullscreen .new-chat-btn {
@@ -1420,7 +1423,7 @@ function openPr(url: string): void {
   padding-left: 78px;
 }
 .app.sidebar-collapsed.macos-desktop .chat-header {
-  padding-left: 134px;
+  padding-left: 146px;
 }
 /* Full-screen follow-up to the rule above: with the traffic lights hidden the
    buttons shift to the window edge (toggle at 16px, new-chat at 42px), so the

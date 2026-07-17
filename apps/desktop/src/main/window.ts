@@ -71,6 +71,15 @@ function saveBounds(win: BrowserWindow): void {
   }
 }
 
+// macOS traffic-light anchor, shared by the BrowserWindow option and the
+// re-asserts on focus / full-screen transitions below (one value, so the
+// re-assert can't drift from the creation-time position). The y offset is
+// the top of the traffic-light BUTTON FRAME (≈14px tall), not the 12px dot:
+// the dot centres inside its frame, so y 17 puts the dot's centre at ≈24px —
+// the midline of the web UI's 48px header row, same line as the
+// sidebar-toggle button and header icons.
+const TRAFFIC_LIGHT_POSITION = { x: 16, y: 17 } as const;
+
 export function createWindow(): void {
   const win = new BrowserWindow({
     ...loadBounds(),
@@ -83,12 +92,10 @@ export function createWindow(): void {
     // macOS: hide the native title bar and float the traffic lights over the
     // content; the web UI reserves a draggable strip at the top to clear them.
     // 'hidden' (not 'hiddenInset') so trafficLightPosition can pin the lights
-    // to the vertical center of the web UI's 48px header row (y 18 + 12px
-    // button height / 2 = 24 = the header's midline — same line as the
-    // sidebar-expand button and the conversation title).
-    // 'default' on other platforms (they keep their native title bar).
+    // (see TRAFFIC_LIGHT_POSITION). 'default' on other platforms (they keep
+    // their native title bar).
     titleBarStyle: process.platform === 'darwin' ? 'hidden' : 'default',
-    trafficLightPosition: { x: 16, y: 18 },
+    trafficLightPosition: TRAFFIC_LIGHT_POSITION,
     webPreferences: {
       preload: join(__dirname, 'preload.cjs'),
       contextIsolation: true,
@@ -135,7 +142,7 @@ export function createWindow(): void {
   if (process.platform === 'darwin') {
     const showTrafficLights = (): void => {
       if (win.isDestroyed()) return;
-      win.setWindowButtonPosition({ x: 16, y: 18 });
+      win.setWindowButtonPosition(TRAFFIC_LIGHT_POSITION);
       win.setWindowButtonVisibility(true);
     };
     win.on('enter-full-screen', showTrafficLights);
