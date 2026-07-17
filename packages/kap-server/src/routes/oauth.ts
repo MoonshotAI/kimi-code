@@ -5,18 +5,22 @@
  *   GET    /oauth/login   poll current flow state  → OAuthFlowSnapshot | null
  *   DELETE /oauth/login   cancel pending flow       → { cancelled, status }
  *   POST   /oauth/logout  logout                    → { logged_out, provider }
+ *   GET    /oauth/usage   managed account quotas   → ManagedUsageResponse
  *
  * Backed by the v2 `IOAuthService` (Core scope), which already returns the
  * protocol wire types, so the handlers only swap the v1 accessor
  * (`ix.invokeFunction`) for the v2 one (`core.accessor.get`).
  */
 
-import { IOAuthService, type Scope } from '@moonshot-ai/agent-core-v2';
+import { IOAuthService, type AuthManagedUsageResult, type Scope } from '@moonshot-ai/agent-core-v2';
 import {
+  managedUsageResponseSchema,
   oauthFlowSnapshotSchema,
   oauthFlowStartSchema,
   oauthLoginCancelResponseSchema,
   oauthLogoutResponseSchema,
+  type ManagedUsageResponse,
+  type ManagedUsageRow,
 } from '@moonshot-ai/agent-core-v2/app/auth/oauthProtocol';
 import { z } from 'zod';
 
@@ -151,4 +155,70 @@ export function registerOAuthRoutes(app: RouteHost, core: Scope): void {
     logoutRoute.options,
     logoutRoute.handler as Parameters<RouteHost['post']>[2],
   );
+
+  // GET /oauth/usage — managed account quotas (5h / weekly / booster wallet) --
+  const usageRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/oauth/usage',
+      success: { data: managedUsageResponseSchema },
+      description: 'Get managed-platform usage quotas for the managed OAuth provider',
+      tags: ['auth'],
+    },
+    async (req, reply) => {
+      const result = await core.accessor.get(IOAuthService).getManagedUsage();
+      reply.send(okEnvelope(toWireManagedUsage(result), req.id));
+    },
+  );
+  app.get(
+    usageRoute.path,
+    usageRoute.options,
+    usageRoute.handler as Parameters<RouteHost['get']>[2],
+  );
+}
+
+function toWireRow(row: {
+  label: string;
+  used: number;
+  limit: number;
+  resetHint?: string;
+  resetAt?: string;
+  windowSeconds?: number;
+}): ManagedUsageRow {
+  return {
+    label: row.label,
+    used: row.used,
+    limit: row.limit,
+    reset_hint: row.resetHint,
+    reset_at: row.resetAt,
+    window_seconds: row.windowSeconds,
+  };
+}
+
+function toWireManagedUsage(result: AuthManagedUsageResult): ManagedUsageResponse {
+  if (result.kind === 'error') {
+    // Only the managed platform's 401 means "log in again"; every other
+    // failure (404, timeout, unreadable token store) is a plain unavailable.
+    return {
+      kind: 'error',
+      code: result.status === 401 ? 'unauthenticated' : 'unavailable',
+      message: result.message,
+    };
+  }
+  return {
+    kind: 'ok',
+    summary: result.summary === null ? null : toWireRow(result.summary),
+    limits: result.limits.map(toWireRow),
+    extra_usage:
+      result.extraUsage === null
+        ? null
+        : {
+            balance_cents: result.extraUsage.balanceCents,
+            total_cents: result.extraUsage.totalCents,
+            monthly_charge_limit_enabled: result.extraUsage.monthlyChargeLimitEnabled,
+            monthly_charge_limit_cents: result.extraUsage.monthlyChargeLimitCents,
+            monthly_used_cents: result.extraUsage.monthlyUsedCents,
+            currency: result.extraUsage.currency,
+          },
+  };
 }

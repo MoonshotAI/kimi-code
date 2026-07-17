@@ -77,6 +77,7 @@ interface FakeToolkit {
   readonly logout: ReturnType<typeof vi.fn>;
   readonly getCachedAccessToken: ReturnType<typeof vi.fn>;
   readonly tokenProvider: ReturnType<typeof vi.fn>;
+  readonly getManagedUsage: ReturnType<typeof vi.fn>;
 }
 
 describe('OAuthService', () => {
@@ -144,6 +145,7 @@ describe('OAuthService', () => {
       logout: vi.fn().mockResolvedValue({ providerName: OAUTH_PROVIDER, ok: true }),
       getCachedAccessToken: vi.fn().mockResolvedValue(undefined),
       tokenProvider: vi.fn().mockReturnValue({ getAccessToken: async () => 'access-token' }),
+      getManagedUsage: vi.fn().mockResolvedValue({ kind: 'error', message: 'not configured' }),
     };
     ix = createServices(disposables, {
       base: [registerBootstrapServices, registerTelemetryServices],
@@ -368,6 +370,32 @@ describe('OAuthService', () => {
         }),
       }),
     );
+  });
+
+  it('getManagedUsage resolves the runtime credential slot and passes the toolkit result through', async () => {
+    const okResult = {
+      kind: 'ok' as const,
+      summary: { label: 'Weekly limit', used: 40, limit: 1000, resetHint: undefined },
+      limits: [{ label: '5h limit', used: 1, limit: 100, resetHint: undefined }],
+      extraUsage: null,
+    };
+    toolkit.getManagedUsage.mockResolvedValue(okResult);
+    const svc = createService();
+    await expect(svc.getManagedUsage()).resolves.toBe(okResult);
+    expect(toolkit.getManagedUsage).toHaveBeenCalledWith(OAUTH_PROVIDER, {
+      oauthRef: expect.objectContaining({ key: EXAMPLE_COM_SCOPED_REF.key }),
+      baseUrl: 'https://api.example.com',
+    });
+  });
+
+  it('getManagedUsage passes toolkit errors through unchanged', async () => {
+    toolkit.getManagedUsage.mockResolvedValue({ kind: 'error', status: 401, message: 'unauthorized' });
+    const svc = createService();
+    await expect(svc.getManagedUsage()).resolves.toEqual({
+      kind: 'error',
+      status: 401,
+      message: 'unauthorized',
+    });
   });
 
   it('startLogin rejects when the device authorization fails before onDeviceCode', async () => {

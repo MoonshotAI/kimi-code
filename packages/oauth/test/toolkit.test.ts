@@ -612,6 +612,20 @@ describe('KimiOAuthToolkit', () => {
     });
   });
 
+  it('classifies a missing managed token as unauthenticated usage', async () => {
+    const toolkit = new KimiOAuthToolkit({
+      homeDir: join('/tmp', 'kimi-oauth-toolkit-test'),
+      identity: TEST_IDENTITY,
+      storage: new MemoryTokenStorage(),
+      now: () => 100,
+    });
+
+    await expect(toolkit.getManagedUsage()).resolves.toMatchObject({
+      kind: 'error',
+      status: 401,
+    });
+  });
+
   it('returns null extraUsage when the payload has no boosterWallet', async () => {
     const storage = new MemoryTokenStorage();
     storage.tokens.set('kimi-code', token('access-1'));

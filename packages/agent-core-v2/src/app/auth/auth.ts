@@ -3,14 +3,16 @@
  *
  * Defines the public contracts of authentication: the `AuthStatus` model, the
  * `IOAuthService` used to drive device-code login / logout / flow inspection,
- * to resolve a per-provider `BearerTokenProvider`, and to refresh a managed
- * OAuth provider's server-side model configuration, the `IOAuthToolkit`
+ * to resolve a per-provider `BearerTokenProvider`, to refresh a managed
+ * OAuth provider's server-side model configuration, and to fetch managed
+ * account usage quotas, the `IOAuthToolkit`
  * device-code client that `IOAuthService` delegates the OAuth protocol to, and
  * the `IAuthSummaryService` used to summarize auth state and provide the
  * prompt auth-readiness gate. App-scoped — shared across the application.
  */
 
 import type {
+  AuthManagedUsageResult,
   BearerTokenProvider,
   KimiOAuthLoginOptions,
   KimiOAuthLoginResult,
@@ -19,6 +21,8 @@ import type {
 } from '@moonshot-ai/kimi-code-oauth';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { Error2 } from '#/_base/errors/errors';
+
+export type { AuthManagedUsageResult } from '@moonshot-ai/kimi-code-oauth';
 
 import type { OAuthRef } from '#/kosong/provider/provider';
 
@@ -47,6 +51,7 @@ export interface IOAuthService {
   refreshOAuthProviderModels(): Promise<RefreshOAuthProviderModelsResponse>;
   resolveTokenProvider(provider: string, oauthRef?: OAuthRef): BearerTokenProvider | undefined;
   getCachedAccessToken(provider: string, oauthRef?: OAuthRef): Promise<string | undefined>;
+  getManagedUsage(provider?: string): Promise<AuthManagedUsageResult>;
 }
 
 export const IOAuthService: ServiceIdentifier<IOAuthService> =
@@ -62,6 +67,10 @@ export interface IOAuthToolkit {
     oauthRef?: KimiOAuthTokenRef,
   ): Promise<string | undefined>;
   tokenProvider(providerName?: string, oauthRef?: KimiOAuthTokenRef): BearerTokenProvider;
+  getManagedUsage(
+    providerName?: string,
+    options?: { oauthRef?: KimiOAuthTokenRef; baseUrl?: string },
+  ): Promise<AuthManagedUsageResult>;
 }
 
 export const IOAuthToolkit: ServiceIdentifier<IOAuthToolkit> =

@@ -6,7 +6,6 @@ import { useI18n } from 'vue-i18n';
 import SlashMenu from './SlashMenu.vue';
 import MentionMenu from './MentionMenu.vue';
 import { buildSlashItems, parseSlash, SKILL_COMMAND_PREFIX } from '../../lib/slashCommands';
-import { formatTokens } from '../../lib/formatTokens';
 import type { FileItem } from './MentionMenu.vue';
 import type { ActivationBadges, ConversationStatus, PermissionMode, QueuedPromptView } from '../../types';
 import type { AppGoal, AppModel, AppSkill, ThinkingLevel } from '../../api/types';
@@ -29,9 +28,9 @@ import Spinner from '../ui/Spinner.vue';
 import Button from '../ui/Button.vue';
 import IconButton from '../ui/IconButton.vue';
 import Icon from '../ui/Icon.vue';
-import ContextRing from '../ui/ContextRing.vue';
 import Tooltip from '../ui/Tooltip.vue';
 import AttachmentChip from './AttachmentChip.vue';
+import ContextUsagePanel from './ContextUsagePanel.vue';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -560,12 +559,14 @@ const hasUpload = computed(() => !!props.uploadImage);
 const dropdownOpen = ref(false);
 const permDropdownOpen = ref(false);
 const toolbarRef = ref<HTMLElement | null>(null);
+const usagePanelRef = ref<{ close: () => void } | null>(null);
 
 function toggleDropdown(): void {
   dropdownOpen.value = !dropdownOpen.value;
   if (dropdownOpen.value) {
     permDropdownOpen.value = false;
     closeModes();
+    usagePanelRef.value?.close();
     document.addEventListener('click', onDocClick, true);
   } else {
     document.removeEventListener('click', onDocClick, true);
@@ -584,6 +585,7 @@ function togglePermDropdown(): void {
   if (permDropdownOpen.value) {
     dropdownOpen.value = false;
     closeModes();
+    usagePanelRef.value?.close();
     document.addEventListener('click', onDocClick, true);
   } else {
     document.removeEventListener('click', onDocClick, true);
@@ -618,13 +620,14 @@ const pct = computed(() => {
   return Math.min(100, Math.max(0, Math.ceil(((props.status?.ctxUsed ?? 0) / max) * 100)));
 });
 
-const ctxTooltip = computed(() => {
-  const used = formatTokens(props.status?.ctxUsed ?? 0);
-  const max = formatTokens(props.status?.ctxMax ?? 0);
-  return t('status.ctxTooltip', { used, max, pct: pct.value });
-});
-
 const showCompact = computed(() => pct.value >= 80);
+
+// Keep the toolbar menus mutually exclusive when the usage panel opens.
+function onUsagePanelOpen(): void {
+  closeDropdown();
+  closePermDropdown();
+  closeModes();
+}
 
 // Thinking toggle
 // Identity is the model id — display/model names can collide across providers.
@@ -702,6 +705,7 @@ function toggleModes(): void {
   // Keep the toolbar menus mutually exclusive so they never overlap.
   closeDropdown();
   closePermDropdown();
+  usagePanelRef.value?.close();
   const r = modesRef.value?.getBoundingClientRect();
   if (r) {
     modesMenuStyle.value = {
@@ -1085,21 +1089,15 @@ function selectModel(modelId: string): void {
           <!-- Compact chip when context is high -->
           <button v-if="showCompact" class="compact-chip" @click.stop="emit('compact')">/compact</button>
 
-          <!-- Context meter — circular ring only; the full usage (used/max/pct)
-               lives in the tooltip. The ring is aria-hidden, so the trigger
-               exposes those numbers via aria-label; focusable so keyboard and
-               switch-control users reach the same tooltip hover users see. -->
-          <Tooltip :text="ctxTooltip">
-            <span
-              v-if="status && !hideContext"
-              class="ctx-group"
-              role="img"
-              tabindex="0"
-              :aria-label="ctxTooltip"
-            >
-              <ContextRing :pct="pct" />
-            </span>
-          </Tooltip>
+          <!-- Context meter + usage limits — click the ring to open the panel.
+               The trigger tooltip keeps the full used/max/pct numbers on hover. -->
+          <ContextUsagePanel
+            v-if="status && !hideContext"
+            ref="usagePanelRef"
+            :status="status"
+            :provider="currentModel?.provider"
+            @open="onUsagePanelOpen"
+          />
 
           <!-- Model pill — click to open quick-switch dropdown -->
           <span
@@ -1590,21 +1588,6 @@ function selectModel(modelId: string): void {
 }
 .perm-pill.perm-auto {
   color: var(--color-danger);
-}
-
-/* Context group — circular ring. Focusable for keyboard / switch access to its
-   aria-label and tooltip (see template), so it needs a focus ring. */
-.ctx-group {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-shrink: 0;
-  padding: 2px 4px;
-  border-radius: var(--radius-xs);
-}
-.ctx-group:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: 2px;
 }
 
 /* Model pill */
