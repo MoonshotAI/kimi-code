@@ -13,6 +13,17 @@ function captureHeaders() {
   return { headers, reply };
 }
 
+/** Split a CSP header value into directive → source-list tokens. */
+function parseCsp(csp: string): Map<string, string[]> {
+  const directives = new Map<string, string[]>();
+  for (const part of csp.split(';')) {
+    const tokens = part.trim().split(/\s+/).filter((t) => t.length > 0);
+    if (tokens.length === 0) continue;
+    directives.set(tokens[0] as string, tokens.slice(1));
+  }
+  return directives;
+}
+
 describe('createSecurityHeadersHook', () => {
   it('stamps the defensive headers and returns the payload unchanged', async () => {
     const { headers, reply } = captureHeaders();
@@ -35,9 +46,20 @@ describe('createSecurityHeadersHook', () => {
     const hook = createSecurityHeadersHook({ tls: false });
     await hook({} as never, reply as never, 'payload');
     const csp = headers.get('content-security-policy');
-    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
-    expect(csp).not.toContain("script-src 'self' 'unsafe-inline'");
-    expect(csp).toContain("default-src 'self'");
+    expect(csp).toBeDefined();
+    const directives = parseCsp(csp ?? '');
+    const styleSrc = directives.get('style-src');
+    expect(styleSrc).toContain("'self'");
+    expect(styleSrc).toContain("'unsafe-inline'");
+    // Assert the EFFECTIVE script policy — script-src, falling back to
+    // default-src when absent — rather than matching an exact substring, so
+    // regressions like default-src gaining 'unsafe-inline' (which would
+    // allow inline <script> through the fallback) also fail here.
+    const effectiveScriptSrc = directives.get('script-src') ?? directives.get('default-src');
+    expect(effectiveScriptSrc).toBeDefined();
+    expect(effectiveScriptSrc).not.toContain("'unsafe-inline'");
+    expect(effectiveScriptSrc).not.toContain("'unsafe-eval'");
+    expect(effectiveScriptSrc).not.toContain('data:');
   });
 
   it('emits HSTS only when TLS is terminated at the server', async () => {
