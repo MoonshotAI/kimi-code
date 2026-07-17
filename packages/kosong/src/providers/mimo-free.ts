@@ -177,12 +177,13 @@ function injectRequiredSystemPrompt(body: string): string {
 
     const sysIdx = parsed.messages.findIndex((m) => m.role === 'system');
     if (sysIdx >= 0) {
-      const content = parsed.messages[sysIdx].content;
+      const msg = parsed.messages[sysIdx]!;
+      const content = msg.content;
       if (typeof content === 'string' && content.startsWith(MIMO_REQUIRED_SYSTEM_PREFIX)) {
         return body; // already has the prefix
       }
       // Prepend the required prefix to the existing system message.
-      parsed.messages[sysIdx].content =
+      msg.content =
         MIMO_REQUIRED_SYSTEM_PREFIX + '\n\n' + (content || '');
     } else {
       // No system message — insert one at the beginning.

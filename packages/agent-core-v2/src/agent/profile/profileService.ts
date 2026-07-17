@@ -314,6 +314,9 @@ export class AgentProfileService implements IAgentProfileService {
       model = model.withProviderOptions({
         metadata: { user_id: this.sessionContext.sessionId },
       });
+      kwargs.prompt_cache_key = this.sessionContext.sessionId;
+    } else {
+      kwargs.prompt_cache_key = this.sessionContext.sessionId;
     }
     const overrides = this.config.get<KimiModelOverrides>('modelOverrides');
     if (overrides !== undefined) {

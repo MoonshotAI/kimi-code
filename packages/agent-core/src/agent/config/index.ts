@@ -218,7 +218,7 @@ export class ConfigState {
           : [];
       return {
         provider: resolved.providerName,
-        model: resolved.provider.model,
+        model: resolved.provider.model ?? '',
         maxContextSize: Math.max(resolved.modelCapabilities.max_context_tokens, 1),
         capabilities,
         supportEfforts:

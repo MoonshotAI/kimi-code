@@ -1,0 +1,14 @@
+/home/administrator/kimi-code/packages/kosong/native/target/debug/deps/serde-822a6bcb31a1ba31.d: /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/administrator/kimi-code/packages/kosong/native/target/debug/build/serde-037cb4c169da85ec/out/private.rs
+
+/home/administrator/kimi-code/packages/kosong/native/target/debug/deps/libserde-822a6bcb31a1ba31.rlib: /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/administrator/kimi-code/packages/kosong/native/target/debug/build/serde-037cb4c169da85ec/out/private.rs
+
+/home/administrator/kimi-code/packages/kosong/native/target/debug/deps/libserde-822a6bcb31a1ba31.rmeta: /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs /home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs /home/administrator/kimi-code/packages/kosong/native/target/debug/build/serde-037cb4c169da85ec/out/private.rs
+
+/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/lib.rs:
+/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/integer128.rs:
+/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/mod.rs:
+/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/de.rs:
+/home/administrator/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.228/src/private/ser.rs:
+/home/administrator/kimi-code/packages/kosong/native/target/debug/build/serde-037cb4c169da85ec/out/private.rs:
+
+# env-dep:OUT_DIR=/home/administrator/kimi-code/packages/kosong/native/target/debug/build/serde-037cb4c169da85ec/out

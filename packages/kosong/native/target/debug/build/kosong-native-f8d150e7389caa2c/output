@@ -1,0 +1,7 @@
+cargo:rerun-if-env-changed=DEBUG_GENERATED_CODE
+cargo:rerun-if-env-changed=TYPE_DEF_TMP_PATH
+cargo:rerun-if-env-changed=CARGO_CFG_NAPI_RS_CLI_VERSION
+cargo::rerun-if-env-changed=NAPI_DEBUG_GENERATED_CODE
+cargo::rerun-if-env-changed=NAPI_TYPE_DEF_TMP_FOLDER
+cargo::rerun-if-env-changed=NAPI_FORCE_BUILD_KOSONG_NATIVE
+cargo:rustc-link-arg=-Wl,-z,nodelete

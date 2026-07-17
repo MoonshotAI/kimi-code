@@ -15,6 +15,7 @@ import type {
 import type { Tool } from '#/tool';
 import type { TokenUsage } from '#/usage';
 import OpenAI from 'openai';
+import { createSharedAgent } from '../http/undici-agent';
 
 import { KimiFiles } from './kimi-files';
 import {
@@ -429,7 +430,8 @@ export class KimiChatProvider implements ChatProvider {
             apiKey: this._apiKey,
             baseURL: this._baseUrl,
             defaultHeaders: this._defaultHeaders,
-          });
+            httpClient: createSharedAgent(),
+          } as ConstructorParameters<typeof OpenAI>[0]);
   }
 
   get modelName(): string {
@@ -626,7 +628,8 @@ export class KimiChatProvider implements ChatProvider {
           apiKey: requireProviderApiKey('KimiChatProvider', a, this._apiKey),
           baseURL: this._baseUrl,
           defaultHeaders,
-        });
+          httpClient: createSharedAgent(),
+        } as ConstructorParameters<typeof OpenAI>[0]);
       },
     );
   }

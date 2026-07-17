@@ -43,15 +43,15 @@ export function createSharedAgent(): Agent {
       // Connect timeout: long enough for slow residential links,
       // short enough that a dead host fails fast instead of hanging
       // the whole turn.
-      connectTimeout: 10_000,
+      connectTimeout: 5_000,
       // Headers timeout: bounded separately so a server that accepts
       // the connection but stalls on response headers does not pin a
       // socket for minutes.
-      headersTimeout: 30_000,
+      headersTimeout: 15_000,
       // Body timeout: same reasoning for response bodies. The SDK
       // will read streaming bodies incrementally, but undici
       // measures time between body chunks too.
-      bodyTimeout: 300_000,
+      bodyTimeout: 120_000,
     });
   }
   return cachedAgent;

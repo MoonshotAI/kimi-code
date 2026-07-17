@@ -60,7 +60,7 @@ export class SingleModelProvider implements ModelProvider {
   ) {}
 
   get defaultModel(): string {
-    return this.providerConfig.model;
+    return this.providerConfig.model ?? '';
   }
 
   resolveProviderConfig(model: string): ResolvedRuntimeProvider {
@@ -230,7 +230,7 @@ function resolveModelCapabilities(
   provider: KosongProviderConfig,
 ): ModelCapability {
   const declared = new Set((alias.capabilities ?? []).map((c) => c.trim().toLowerCase()));
-  const detected = getModelCapability(provider.type, provider.model);
+  const detected = getModelCapability(provider.type ?? '', provider.model ?? '');
 
   return {
     image_in: declared.has('image_in') || detected.image_in,
@@ -280,7 +280,9 @@ function toKosongProviderConfig(
         ...(betaApi !== undefined ? { betaApi } : {}),
         // Session affinity: Anthropic's analog of OpenAI `prompt_cache_key` is
         // `metadata.user_id` on the Messages API (cache-affinity / end-user id).
+        // Also pass promptCacheKey directly for custom proxies that support it.
         ...(promptCacheKey !== undefined ? { metadata: { user_id: promptCacheKey } } : {}),
+        ...(promptCacheKey !== undefined ? { promptCacheKey } : {}),
         // When a Kimi provider is routed through the Anthropic transport
         // (`protocol: 'anthropic'`), upstream is the managed Kimi endpoint,
         // so align its full outbound identity headers (User-Agent + X-Msh-*)

@@ -1,0 +1,30 @@
+[package]
+name = "kosong-native"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust LLM provider layer for Kimi Code — replaces the TypeScript kosong package"
+
+[lib]
+crate-type = ["cdylib"]
+name = "kosong_native"
+
+[dependencies]
+napi = { version = "2", features = ["async", "napi8", "serde-json"] }
+napi-derive = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+futures-util = "0.3"
+tokio = { version = "1", features = ["rt", "macros", "time", "io-util", "full"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v4"] }
+
+[build-dependencies]
+napi-build = "2"
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
+strip = "symbols"

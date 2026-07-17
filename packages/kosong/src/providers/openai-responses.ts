@@ -4,6 +4,7 @@ import {
   ChatProviderError,
   isContextOverflowErrorCode,
 } from '#/errors';
+import { createSharedAgent } from '../http/undici-agent';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { extractText, isToolDeclarationOnlyMessage } from '#/message';
 import type {
@@ -1186,13 +1187,11 @@ export class OpenAIResponsesChatProvider implements ChatProvider {
     const clientOpts: Record<string, unknown> = {
       apiKey,
       baseURL: this._baseUrl,
+      httpClient: this._httpClient ?? createSharedAgent(),
     };
     const defaultHeaders = mergeRequestHeaders(this._defaultHeaders, auth?.headers);
     if (defaultHeaders !== undefined) {
       clientOpts['defaultHeaders'] = defaultHeaders;
-    }
-    if (this._httpClient !== undefined) {
-      clientOpts['httpClient'] = this._httpClient;
     }
     clientOpts['maxRetries'] = 5;
     return new OpenAI(clientOpts as ConstructorParameters<typeof OpenAI>[0]);

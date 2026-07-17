@@ -10,6 +10,7 @@ import {
   XUNFEI_SYSTEM_BUSY_MESSAGE_PATTERN,
   PROVIDER_STREAM_INTERRUPTED_MESSAGE_PATTERN,
 } from '#/errors';
+import { createSharedFetch } from '../http/undici-agent';
 import type { ContentPart, Message, StreamedMessagePart, ToolCall } from '#/message';
 import { isToolDeclarationOnlyMessage } from '#/message';
 import type {
@@ -99,6 +100,7 @@ export interface AnthropicOptions {
   betaFeatures?: string[] | undefined;
   defaultHeaders?: Record<string, string>;
   metadata?: Record<string, string> | undefined;
+  promptCacheKey?: string | undefined;
   /** Use streaming API. Defaults to true. Set to false for non-streaming (test/fallback). */
   stream?: boolean | undefined;
   /**
@@ -136,6 +138,7 @@ interface AnthropicGenerationKwargs {
   output_config?: MessageCreateParams['output_config'] | undefined;
   betaFeatures?: string[] | undefined;
   contextManagement?: AnthropicContextManagement | undefined;
+  prompt_cache_key?: string | undefined;
 }
 
 /**
@@ -914,6 +917,7 @@ export class AnthropicChatProvider implements ChatProvider {
   private readonly _kimiThinking: boolean;
   private _betaApi: boolean;
   private _explicitMaxTokens: boolean;
+  private _promptCacheKey: string | undefined;
 
   constructor(options: AnthropicOptions) {
     this._model = options.model;
@@ -928,11 +932,13 @@ export class AnthropicChatProvider implements ChatProvider {
     this._baseUrl = options.baseUrl;
     this._defaultHeaders = options.defaultHeaders;
     this._clientFactory = options.clientFactory;
+    this._promptCacheKey = options.promptCacheKey;
     this._client = this._apiKey === undefined ? undefined : this._buildClient(this._apiKey);
     this._explicitMaxTokens = options.defaultMaxTokens !== undefined;
     this._generationKwargs = {
       max_tokens: options.defaultMaxTokens ?? resolveDefaultMaxTokens(options.model),
       betaFeatures: options.betaFeatures ?? [INTERLEAVED_THINKING_BETA],
+      ...(options.promptCacheKey !== undefined ? { prompt_cache_key: options.promptCacheKey } : {}),
     };
   }
 
@@ -1042,6 +1048,9 @@ export class AnthropicChatProvider implements ChatProvider {
     applyResponseFormat(kwargs, options?.responseFormat);
     if (this._generationKwargs.contextManagement !== undefined) {
       kwargs['context_management'] = this._generationKwargs.contextManagement;
+    }
+    if (this._generationKwargs.prompt_cache_key !== undefined) {
+      kwargs['prompt_cache_key'] = this._generationKwargs.prompt_cache_key;
     }
 
     // Build the beta feature list. On the standard Messages API these travel
@@ -1195,11 +1204,13 @@ export class AnthropicChatProvider implements ChatProvider {
       authToken: null,
       baseURL: this._baseUrl ?? null,
       defaultHeaders: this._buildDefaultHeaders(apiKey),
-      // Disable SDK internal retries. Retries are handled by the agent-core
-      // retry loop with Xunfei-aware backoff tiers (overload 5–30s,
-      // rate-limit 15–60s) instead of the SDK's uniform backoff, which
-      // creates thundering herd on busy upstreams.
-      maxRetries: 0,
+      fetch: createSharedFetch(),
+      // SDK-level retries handle transient connection errors efficiently;
+      // agent-core retries (chatWithRetry) cover provider overload and
+      // rate-limit backoff with Xunfei-aware tiers (5-30s / 15-60s).
+      // Set to 2 so quick network glitches are absorbed at SDK level
+      // without reaching the heavier agent-core retry loop.
+      maxRetries: 2,
     });
   }
 

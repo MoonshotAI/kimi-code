@@ -1,0 +1,23 @@
+{
+  "name": "@moonshot-ai/kosong-native",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native Rust LLM provider layer for Kimi Code",
+  "main": "index.js",
+  "types": "target/napi-generated.d.ts",
+  "scripts": {
+    "build": "napi build --platform --release --dts target/napi-generated.d.ts",
+    "build:debug": "napi build --platform --dts target/napi-generated.d.ts",
+    "artifacts": "napi artifacts",
+    "test": "cargo test"
+  },
+  "napi": {
+    "name": "kosong-native",
+    "triples": {
+      "defaults": true
+    }
+  },
+  "devDependencies": {
+    "@napi-rs/cli": "^2.18.4"
+  }
+}
