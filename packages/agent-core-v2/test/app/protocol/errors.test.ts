@@ -156,8 +156,6 @@ describe('translateProviderError', () => {
 
   describe('quota-exhausted 429', () => {
     it('maps to provider.api_error, not provider.rate_limit', () => {
-      // provider.rate_limit drives retry/requeue reactions, which cannot help
-      // until the account is recharged.
       const translated = translateProviderError(
         new APIProviderQuotaExhaustedError(
           'Your account is suspended due to insufficient balance, please recharge your account',

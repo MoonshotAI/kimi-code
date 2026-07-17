@@ -98,8 +98,6 @@ export function convertOpenAIError(error: unknown): ChatProviderError {
       reqId,
       parseRetryAfterMs(error.headers),
       parseTraceId(error.headers),
-      // Forward the SDK-parsed body `error.code`/`error.type` so a
-      // quota-exhausted 429 classifies structurally, not by wording.
       {
         errorCode: typeof error.code === 'string' ? error.code : null,
         errorType: typeof error.type === 'string' ? error.type : null,

@@ -82,9 +82,6 @@ export class APIProviderRateLimitError extends APIStatusError {
   }
 }
 
-// HTTP 429 caused by an exhausted account quota/balance — deterministic until
-// the account is recharged, so unlike a rate limit it is neither retried nor
-// requeued. Deliberately not a subclass of APIProviderRateLimitError.
 export class APIProviderQuotaExhaustedError extends APIStatusError {
   constructor(
     message: string,
@@ -173,8 +170,6 @@ export function isRetryableGenerateError(error: unknown): boolean {
     return true;
   }
   if (error instanceof APIStatusError) {
-    // Quota/balance exhaustion is a 429 but deterministic until the account
-    // is recharged — retrying can never succeed.
     if (error instanceof APIProviderQuotaExhaustedError) {
       return false;
     }
@@ -219,15 +214,8 @@ const PROVIDER_RATE_LIMIT_MESSAGE_PATTERNS = [
 
 const PROVIDER_OVERLOAD_MESSAGE_PATTERNS = [/overload/] as const;
 
-// Structured error `type`/`code` values that mean the account's quota or
-// balance is exhausted: Moonshot `exceeded_current_quota_error` (body
-// `error.type`), OpenAI `insufficient_quota` (both `type` and `code`).
 const QUOTA_EXHAUSTED_ERROR_CODES = new Set(['exceeded_current_quota_error', 'insufficient_quota']);
 
-// Message fallback for gateways that flatten the body to text, matched against
-// the lowercased message of a 429. Anchored to billing wording — deliberately
-// no bare /quota/ or /balance/, which would also match transient throttle
-// messages like "token quota per minute".
 const QUOTA_EXHAUSTED_MESSAGE_PATTERNS = [
   /exceeded your current (?:token )?quota/,
   /check your account balance/,
@@ -349,9 +337,6 @@ export function isRequestTooLargeStatusError(statusCode: number, message: string
   return REQUEST_TOO_LARGE_MESSAGE_PATTERNS.some((pattern) => pattern.test(lowerMessage));
 }
 
-// Whether a 429 means the account's quota/balance is exhausted rather than a
-// transient rate limit. Structured `type`/`code` is authoritative when
-// forwarded; message patterns only backstop text-flattening gateways.
 export function isQuotaExhaustedStatusError(
   statusCode: number,
   message: string,
@@ -404,8 +389,6 @@ export function isRecoverableRequestStructureError(error: unknown): boolean {
 }
 
 export function isProviderRateLimitError(error: unknown): boolean {
-  // Quota exhaustion is a 429 but not a rate limit: the rate-limit reactions
-  // (retry, requeue, suspend) cannot help until the account is recharged.
   if (error instanceof APIProviderQuotaExhaustedError) return false;
   if (error instanceof APIProviderRateLimitError) return true;
 

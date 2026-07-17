@@ -85,10 +85,7 @@ export function translateProviderError(error: unknown): Error2 {
         ? ProtocolErrors.codes.CONTEXT_OVERFLOW
         : error instanceof APIProviderOverloadedError || error.statusCode === 529
           ? ProtocolErrors.codes.PROVIDER_OVERLOADED
-          : // Quota exhaustion shares status 429 but must not carry the
-            // rate-limit code — that code drives retry/requeue reactions,
-            // which cannot help until the account is recharged.
-            error instanceof APIProviderQuotaExhaustedError
+          : error instanceof APIProviderQuotaExhaustedError
             ? ProtocolErrors.codes.PROVIDER_API_ERROR
             : error.statusCode === 429
               ? ProtocolErrors.codes.PROVIDER_RATE_LIMIT
