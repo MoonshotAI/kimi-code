@@ -296,10 +296,12 @@ export type PromptAttachment = {
 };
 
 /** A prompt waiting for the session to go idle. Keeps the uploaded
-    fileIds so attachments survive queueing (not just the text). */
+    fileIds so attachments survive queueing (not just the text). The id keys
+    the per-entry flush failure budget locally (assigned at enqueue). */
 interface QueuedPrompt {
   text: string;
   attachments?: PromptAttachment[];
+  id?: string;
 }
 
 export interface ExtendedState extends KimiClientState {
@@ -944,9 +946,15 @@ function processEvent(appEvent: AppEvent, meta: KimiEventMeta): void {
     meta.seq > prevSeq
   ) {
     const reason = appEvent.reason;
+    // wasMainTurnActive was captured BEFORE the reducer consumed this event
+    // (the reducer clears turnActiveBySession on turn end), so it is the only
+    // remaining signal that this client witnessed a live turn — pass it down
+    // so finishPromptLocal may drain queued prompts behind a turn the user
+    // actually watched (including one started by another client).
     onMainTurnEnd(
       appEvent.sessionId,
       reason === 'cancelled' || reason === 'failed' || reason === 'blocked' ? 'aborted' : 'idle',
+      wasMainTurnActive,
     );
   }
 
@@ -2638,7 +2646,7 @@ function clearWorkingFlags(sid: string): void {
   }
 }
 
-function onMainTurnEnd(sid: string, status: 'idle' | 'aborted'): void {
+function onMainTurnEnd(sid: string, status: 'idle' | 'aborted', turnWasActive: boolean): void {
   // Capture before finishPromptLocal drops it — it keys the completion
   // notification's dedup tag so each finished turn alerts once.
   const finishedPromptId = rawState.promptIdBySession[sid];
@@ -2646,7 +2654,7 @@ function onMainTurnEnd(sid: string, status: 'idle' | 'aborted'): void {
   // queued message. The notification/sound/unread side effects below stay
   // WS-event-only — the snapshot path (handleSessionSnapshot) must not cry
   // wolf when opening a historical session.
-  workspaceState.finishPromptLocal(sid);
+  workspaceState.finishPromptLocal(sid, { turnWasActive });
 
   // For the session on screen, refresh git status (edits the agent just made)
   // and runtime status (model/context usage may have changed this turn).
