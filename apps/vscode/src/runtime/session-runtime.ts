@@ -353,11 +353,12 @@ export class SessionRuntime {
 
   /**
    * Drop the last `count` user turns from the conversation, matching the
-   * CLI's /undo. Runs as one exclusive operation so a double-click or an
-   * incoming prompt cannot race the truncation. Every subscribed view is
-   * told to re-hydrate afterwards; the actual replay refresh happens at the
-   * LoadKimiSessionHistory source (with reload), where each view reconciles
-   * against persisted records.
+   * CLI's /undo. Runs as one exclusive operation (undo + a single history
+   * reload) so a double-click or an incoming prompt cannot race the
+   * truncation, and so every subscribed view replays the same freshly
+   * reloaded state instead of each issuing its own reload RPC. A failed
+   * reload propagates: the undo already landed in the engine, so the caller
+   * must see the failure instead of views silently replaying stale cache.
    */
   async undoHistory(count: number): Promise<void> {
     this.ensureOpen();
@@ -367,6 +368,7 @@ export class SessionRuntime {
     this.exclusiveActionActive = true;
     try {
       await this.session.undoHistory(count);
+      await this.session.reloadSession();
       for (const webviewId of this.webviewIds) {
         this.broadcast(Events.ConversationHistoryChanged, { sessionId: this.id }, webviewId);
       }

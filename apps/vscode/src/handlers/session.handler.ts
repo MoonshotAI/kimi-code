@@ -17,7 +17,6 @@ const SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
 
 interface LoadHistoryParams {
   kimiSessionId: string;
-  reload?: boolean;
 }
 
 interface DeleteSessionParams {
@@ -136,12 +135,6 @@ export const sessionHandlers: Record<string, Handler<any, any>> = {
 
     let history: ReturnType<typeof replaySessionToWebviewEvents>;
     try {
-      // When the caller knows the conversation was mutated (undo), refresh the
-      // SDK's cached resume state at the replay source — otherwise an attached
-      // runtime replays the pre-mutation transcript from its stale cache.
-      if (params.reload === true) {
-        await runtime.session.reloadSession();
-      }
       const resumeState = runtime.session.getResumeState();
       if (resumeState?.agents["main"] === undefined) {
         throw new Error("Session history is unavailable.");

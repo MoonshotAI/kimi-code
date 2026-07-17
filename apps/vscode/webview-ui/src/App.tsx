@@ -53,7 +53,7 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
         if (useChatStore.getState().sessionId !== changedSessionId) return;
         void (async () => {
           try {
-            const events = await bridge.loadSessionHistory(changedSessionId, true);
+            const events = await bridge.loadSessionHistory(changedSessionId);
             // The user may have switched conversations while the history was
             // loading — never yank the UI back to a session they have left.
             const store = useChatStore.getState();

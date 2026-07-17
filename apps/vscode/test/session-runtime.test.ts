@@ -46,6 +46,8 @@ interface FakeSessionBoundary {
   readonly cancelCount: () => number;
   readonly cancelCompactionCount: () => number;
   readonly undoCounts: readonly number[];
+  readonly reloadCount: () => number;
+  rejectNextReload(error: Error): void;
   readonly closeCount: () => number;
   emit(event: Event): void;
   rejectNextPrompt(error: Error): void;
@@ -71,6 +73,8 @@ function createFakeSession(): FakeSessionBoundary {
   let cancellations = 0;
   let compactionCancellations = 0;
   const undoCounts: number[] = [];
+  let reloads = 0;
+  let nextReloadError: Error | undefined;
   let closes = 0;
   let permission: PermissionMode = "manual";
 
@@ -120,6 +124,15 @@ function createFakeSession(): FakeSessionBoundary {
     async undoHistory(count: number) {
       undoCounts.push(count);
     },
+    async reloadSession() {
+      if (nextReloadError !== undefined) {
+        const error = nextReloadError;
+        nextReloadError = undefined;
+        throw error;
+      }
+      reloads += 1;
+      return summary;
+    },
     async getStatus() {
       return {
         thinkingEffort: "off",
@@ -158,6 +171,10 @@ function createFakeSession(): FakeSessionBoundary {
     cancelCount: () => cancellations,
     cancelCompactionCount: () => compactionCancellations,
     undoCounts,
+    reloadCount: () => reloads,
+    rejectNextReload(error: Error) {
+      nextReloadError = error;
+    },
     closeCount: () => closes,
     emit(event) {
       for (const listener of listeners) listener(event);
@@ -528,6 +545,25 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     await runtime.undoHistory(2);
 
     expect([...sdk.undoCounts]).toEqual([2]);
+    expect(sdk.reloadCount()).toBe(1);
+    expect(broadcasts).toContainEqual({
+      event: Events.ConversationHistoryChanged,
+      data: { sessionId: "session-1" },
+      webviewId: "view-1",
+    });
+  });
+
+  it("propagates a failed post-undo reload without broadcasting, then releases the guard", async () => {
+    const { runtime, sdk, broadcasts } = createRuntime();
+    sdk.rejectNextReload(new Error("provider broke"));
+
+    await expect(runtime.undoHistory(1)).rejects.toThrow("provider broke");
+    expect(broadcasts).not.toContainEqual(
+      expect.objectContaining({ event: Events.ConversationHistoryChanged }),
+    );
+
+    await runtime.undoHistory(1);
+    expect([...sdk.undoCounts]).toEqual([1, 1]);
     expect(broadcasts).toContainEqual({
       event: Events.ConversationHistoryChanged,
       data: { sessionId: "session-1" },
