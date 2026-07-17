@@ -1,7 +1,8 @@
 /**
  *   POST /v1/sessions/{sid}/prompts
  *     Body:  PromptSubmission { content, metadata?, agent_id?, profile?, model?, thinking?,
- *              permission_mode?, plan_mode?, swarm_mode?, goal_objective?, goal_control? }
+ *              permission_mode?, plan_mode?, swarm_mode?, goal_objective?, goal_control?,
+ *              disabled_tools? }
  *     Reply: PromptSubmitResult { prompt_id, user_message_id, status, content, created_at }
  *
  *   GET /v1/sessions/{sid}/prompts
@@ -42,6 +43,10 @@ export const promptSubmissionSchema = z.object({
   swarm_mode: z.boolean().optional(),
   goal_objective: z.string().optional(),
   goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
+  // Client-managed session tool denylist: full-replace on every submit; the
+  // bound profile's own deny always survives. Omit to keep the persisted
+  // value, send `[]` to clear the client portion.
+  disabled_tools: z.array(z.string()).optional(),
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;
 

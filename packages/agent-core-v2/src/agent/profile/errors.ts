@@ -11,6 +11,7 @@ export const ProfileErrors = {
     THINKING_ALIAS_CONFLICT: 'profile.thinking_alias_conflict',
     PROFILE_UNKNOWN: 'profile.unknown',
     PROFILE_ALREADY_BOUND: 'profile.already_bound',
+    PROFILE_NOT_BOUND: 'profile.not_bound',
   },
 } as const satisfies ErrorDomain;
 

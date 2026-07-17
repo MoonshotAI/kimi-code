@@ -375,3 +375,169 @@ describe('AgentProfileService tool denylist', () => {
     expect(resumed.isToolActive('Read')).toBe(true);
   });
 });
+
+describe('AgentProfileService global [tools] config', () => {
+  beforeAll(() => {
+    registerAgentProfile({
+      name: 'config-intersect',
+      tools: ['Read', 'Bash'],
+      disallowedTools: ['Bash'],
+      systemPrompt: () => 'config intersect test',
+    });
+  });
+
+  let ctx: TestAgentContext;
+  let homeDir: string;
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-tools-config-home-'));
+  });
+
+  afterEach(async () => {
+    await ctx?.dispose();
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  async function bindWithToolsConfig(
+    tools: Record<string, readonly string[]>,
+    profile: string = DEFAULT_AGENT_PROFILE_NAME,
+  ): Promise<IAgentProfileService> {
+    ctx = createTestAgent({ initialConfig: { tools } }, hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+    await svc.bind({ profile, model: MOCK_MODEL });
+    return svc;
+  }
+
+  it('treats a non-empty enabled list as a global allowlist', async () => {
+    const svc = await bindWithToolsConfig({ enabled: ['Read'] });
+    expect(svc.isToolActive('Read')).toBe(true);
+    expect(svc.isToolActive('Bash')).toBe(false);
+  });
+
+  it('treats an empty enabled list as unconstrained', async () => {
+    const svc = await bindWithToolsConfig({ enabled: [] });
+    expect(svc.isToolActive('Read')).toBe(true);
+    expect(svc.isToolActive('Bash')).toBe(true);
+  });
+
+  it('applies disabled as a global denylist', async () => {
+    const svc = await bindWithToolsConfig({ disabled: ['Bash'] });
+    expect(svc.isToolActive('Bash')).toBe(false);
+    expect(svc.isToolActive('Read')).toBe(true);
+  });
+
+  it('matches globally disabled mcp tools by glob', async () => {
+    const svc = await bindWithToolsConfig({ disabled: ['mcp__github__*'] });
+    expect(svc.isToolActive('mcp__github__create_pr', 'mcp')).toBe(false);
+    expect(svc.isToolActive('mcp__other__ping', 'mcp')).toBe(true);
+    expect(svc.isToolActive('Read')).toBe(true);
+  });
+
+  it('intersects the global config with the profile policy instead of overriding it', async () => {
+    const svc = await bindWithToolsConfig({ enabled: ['Read', 'Bash'] }, 'config-intersect');
+    // Allowed by both layers.
+    expect(svc.isToolActive('Read')).toBe(true);
+    // The global allowlist cannot re-enable a tool the profile itself denies.
+    expect(svc.isToolActive('Bash')).toBe(false);
+    // Absent from the profile allowlist even though the global one admits it.
+    expect(svc.isToolActive('Write')).toBe(false);
+  });
+});
+
+describe('AgentProfileService.setSessionDisabledTools', () => {
+  beforeAll(() => {
+    registerAgentProfile({
+      name: 'session-deny',
+      disallowedTools: ['Write'],
+      systemPrompt: () => 'session deny test',
+    });
+  });
+
+  let ctx: TestAgentContext;
+  let homeDir: string;
+
+  beforeEach(async () => {
+    homeDir = await mkdtemp(join(tmpdir(), 'kimi-session-deny-home-'));
+  });
+
+  afterEach(async () => {
+    await ctx?.dispose();
+    await rm(homeDir, { recursive: true, force: true });
+  });
+
+  async function bind(profile: string): Promise<IAgentProfileService> {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+    await svc.bind({ profile, model: MOCK_MODEL });
+    return svc;
+  }
+
+  it('rejects when no profile is bound yet', async () => {
+    ctx = createTestAgent(hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+
+    expect(() => svc.setSessionDisabledTools(['Bash'])).toThrow(/not bound/);
+    expect(svc.isToolActive('Bash')).toBe(true);
+  });
+
+  it('replaces the client-managed denylist on every call', async () => {
+    const svc = await bind(DEFAULT_AGENT_PROFILE_NAME);
+
+    svc.setSessionDisabledTools(['Bash']);
+    expect(svc.isToolActive('Bash')).toBe(false);
+    expect(svc.isToolActive('Read')).toBe(true);
+
+    svc.setSessionDisabledTools(['Edit']);
+    expect(svc.isToolActive('Bash')).toBe(true);
+    expect(svc.isToolActive('Edit')).toBe(false);
+  });
+
+  it('keeps the profile own denylist across replacement calls', async () => {
+    const svc = await bind('session-deny');
+
+    svc.setSessionDisabledTools(['Bash']);
+    expect(svc.isToolActive('Write')).toBe(false);
+    expect(svc.isToolActive('Bash')).toBe(false);
+
+    svc.setSessionDisabledTools([]);
+    expect(svc.isToolActive('Write')).toBe(false);
+    expect(svc.isToolActive('Bash')).toBe(true);
+  });
+
+  it('persists the session denylist across a resume', async () => {
+    const persistence = new InMemoryWireRecordPersistence();
+    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    const svc = ctx.get(IAgentProfileService);
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    svc.setSessionDisabledTools(['Bash']);
+    await ctx.get(IWireService).flush();
+    await ctx.dispose();
+
+    // Resume by replaying the same records, with a catalog that cannot resolve
+    // the bound profile: the session denylist must come from the persisted
+    // record, not from a catalog lookup.
+    const emptyCatalog = {
+      _serviceBrand: undefined,
+      ready: Promise.resolve(),
+      get: () => undefined,
+      getDefault: () => ({
+        name: DEFAULT_AGENT_PROFILE_NAME,
+        tools: undefined,
+        systemPrompt: () => '',
+      }),
+      list: () => [],
+      load: async () => {},
+      reload: async () => {},
+    } as unknown as ISessionAgentProfileCatalog;
+    ctx = createTestAgent(
+      { persistence },
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionAgentProfileCatalog, emptyCatalog),
+    );
+    await ctx.restorePersisted();
+    const resumed = ctx.get(IAgentProfileService);
+
+    expect(resumed.isToolActive('Bash')).toBe(false);
+    expect(resumed.isToolActive('Read')).toBe(true);
+  });
+});

@@ -66,6 +66,12 @@ const MAIN_AGENT_ID = 'main';
 export interface SessionPromptRpcInput {
   readonly sessionId: string;
   readonly input: PromptInput;
+  /**
+   * Client-managed session tool denylist (full-replace semantics), forwarded
+   * to engines with profile tool gating. Omit to keep the persisted value;
+   * `[]` clears the client portion.
+   */
+  readonly disabledTools?: readonly string[];
 }
 
 export interface SessionIdRpcInput {
@@ -317,6 +323,7 @@ export abstract class SDKRpcClientBase {
       sessionId: input.sessionId,
       agentId,
       input: input.input,
+      disabledTools: input.disabledTools,
     });
   }
 

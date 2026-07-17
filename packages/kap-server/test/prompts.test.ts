@@ -745,4 +745,83 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(profile?.data().profileName).toBe('agent');
     expect(profile?.data().thinkingLevel).toBe('high');
   });
+
+  it('applies disabled_tools on the first prompt and replaces them on later prompts', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    // model:'stub' lazily binds the default profile before the route applies
+    // disabled_tools (a session denylist requires a bound profile).
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      model: 'stub',
+      disabled_tools: ['Bash'],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const profile = session.accessor.get(IAgentLifecycleService).get('main')?.accessor
+      .get(IAgentProfileService);
+    expect(profile?.isToolActive('Bash')).toBe(false);
+    expect(profile?.isToolActive('Read')).toBe(true);
+
+    // Each submission fully replaces the client-managed portion.
+    const replaced = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'again' }],
+      disabled_tools: ['Write'],
+    });
+    expect(replaced.body.code).toBe(0);
+    expect(profile?.isToolActive('Bash')).toBe(true);
+    expect(profile?.isToolActive('Write')).toBe(false);
+
+    // An empty list clears the client-managed portion.
+    const cleared = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'once more' }],
+      disabled_tools: [],
+    });
+    expect(cleared.body.code).toBe(0);
+    expect(profile?.isToolActive('Write')).toBe(true);
+  });
+
+  it('rejects disabled_tools before the agent profile is bound', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    // No profile/model: the agent stays unbound, and a session denylist cannot
+    // be computed before bind (a later bind would silently overwrite it).
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      disabled_tools: ['Bash'],
+    });
+    expect(body.code).toBe(40001);
+  });
+
+  it('persists disabled_tools across a cold resume', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      model: 'stub',
+      disabled_tools: ['Bash'],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    // Drop the live handle; the next submit cold-resumes the session from disk.
+    await server!.core.accessor.get(ISessionLifecycleService).close(id);
+    expect(server!.core.accessor.get(ISessionLifecycleService).get(id)).toBeUndefined();
+
+    const again = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'again' }],
+    });
+    expect(again.body.code).toBe(0);
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const profile = session.accessor.get(IAgentLifecycleService).get('main')?.accessor
+      .get(IAgentProfileService);
+    expect(profile?.isToolActive('Bash')).toBe(false);
+    expect(profile?.isToolActive('Read')).toBe(true);
+  });
 });

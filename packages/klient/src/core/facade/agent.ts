@@ -23,7 +23,10 @@ export type PlanData = Awaited<ReturnType<IAgentRPCService['getPlan']>>;
 export type AgentTaskInfo = Awaited<ReturnType<IAgentRPCService['getTasks']>>[number];
 
 export interface AgentFacade {
-  prompt(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
+  prompt(input: {
+    input: readonly ContentPart[];
+    disabledTools?: readonly string[];
+  }): Promise<PromptLaunchResult>;
   steer(input: { input: readonly ContentPart[] }): Promise<PromptLaunchResult>;
   cancel(input?: { turnId?: number }): Promise<void>;
   runShellCommand(input: { command: string; commandId?: string }): Promise<ShellCommandResult>;

@@ -8,6 +8,7 @@
  *              thinking?: 'off'|'low'|'medium'|'high'|'xhigh'|'max',
  *              permission_mode?: 'manual'|'yolo'|'auto',
  *              plan_mode?: boolean,
+ *              disabled_tools?: string[],
  *            }
  *     Reply: PromptSubmitResult { prompt_id, user_message_id, status, content, created_at }
  *            status='running' when sent immediately, status='queued' when
@@ -56,6 +57,10 @@ export const promptSubmissionSchema = z.object({
   swarm_mode: z.boolean().optional(),
   goal_objective: z.string().optional(),
   goal_control: z.enum(['pause', 'resume', 'cancel']).optional(),
+  // Client-managed session tool denylist: full-replace on every submit; the
+  // bound profile's own deny always survives. Omit to keep the persisted
+  // value, send `[]` to clear the client portion.
+  disabled_tools: z.array(z.string()).optional(),
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;
 

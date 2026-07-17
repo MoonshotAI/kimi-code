@@ -112,6 +112,9 @@ export class AgentRPCService implements IAgentRPCService {
 
   async prompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
     await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
+    if (payload.disabledTools !== undefined) {
+      this.profile.setSessionDisabledTools(payload.disabledTools);
+    }
     const handle = await this.promptService.enqueue({ message: {
       role: 'user',
       content: [...payload.input],

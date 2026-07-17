@@ -184,6 +184,14 @@ export interface SessionSummary {
 
 export interface PromptPayload {
   readonly input: readonly ContentPart[];
+  /**
+   * Client-managed session denylist, applied via
+   * `IAgentProfileService.setSessionDisabledTools` before the prompt is
+   * enqueued: full-replace semantics, the profile's own `disallowedTools`
+   * always survive. Omit to keep the persisted value; `[]` clears the client
+   * portion. Ignored by engines without profile support.
+   */
+  readonly disabledTools?: readonly string[];
 }
 export interface RunShellCommandPayload {
   readonly command: string;
