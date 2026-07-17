@@ -77,8 +77,9 @@ export function renderSystemMdPrompt(
 ): string {
   const shellName = context.shellName ?? '';
   const shellPath = context.shellPath ?? '';
+  const skillActive = context.skillActive ?? options.skillActive;
   const vars: Readonly<Record<string, string>> = {
-    skills: options.skillActive ? (context.skills ?? '') : '',
+    skills: skillActive ? (context.skills ?? '') : '',
     agents_md: context.agentsMd ?? '',
     cwd: context.cwd ?? '',
     cwd_listing: context.cwdListing ?? '',

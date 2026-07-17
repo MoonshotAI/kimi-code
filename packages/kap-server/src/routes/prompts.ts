@@ -264,7 +264,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           // A session denylist before bind throws `profile.not_bound` — map it
           // onto 40001 like the profile-selection errors above.
           try {
-            resolved.profile.setSessionDisabledTools(resolvedBody.disabled_tools);
+            await resolved.profile.setSessionDisabledTools(resolvedBody.disabled_tools);
           } catch (error) {
             if (error instanceof ProfileError) {
               throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);

@@ -70,6 +70,7 @@ import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionMetadata, type SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IWireService } from '#/wire/wire';
 import {
@@ -180,6 +181,7 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     }
     this.sessions.set(opts.sessionId, handle);
     await handle.accessor.get(ISessionMetadata).ready;
+    await handle.accessor.get(ISessionToolPolicy).ready;
     void handle.accessor.get(ISessionSkillCatalog).ready;
     // Agent-file discovery is awaited (unlike the skill catalog above): it is
     // local-fs and cheap, and a resumed session's first turn must see

@@ -4,14 +4,19 @@ import { join } from 'pathe';
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { Event } from '#/_base/event';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAtomicDocumentStore, type IAtomicDocumentStore as AtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import { IWireService } from '#/wire/wire';
 
 import {
   InMemoryWireRecordPersistence,
+  appService,
   createTestAgent,
   hostEnvironmentServices,
   sessionService,
@@ -19,6 +24,27 @@ import {
 } from '../../harness';
 
 const MOCK_MODEL = 'mock-model';
+
+function createAtomicDocumentStore(): AtomicDocumentStore {
+  const documents = new Map<string, unknown>();
+  const documentKey = (scope: string, key: string): string => `${scope}/${key}`;
+  return {
+    _serviceBrand: undefined,
+    get: async <T>(scope: string, key: string) => documents.get(documentKey(scope, key)) as T | undefined,
+    set: async <T>(scope: string, key: string, value: T) => {
+      documents.set(documentKey(scope, key), structuredClone(value));
+    },
+    delete: async (scope: string, key: string) => {
+      documents.delete(documentKey(scope, key));
+    },
+    list: async (scope: string, prefix = '') =>
+      [...documents.keys()]
+        .filter((key) => key.startsWith(`${scope}/${prefix}`))
+        .map((key) => key.slice(scope.length + 1)),
+    watch: () => Event.None as Event<void>,
+    acquire: () => ({ dispose: () => {} }),
+  };
+}
 
 describe('AgentProfileService.bind', () => {
   let ctx: TestAgentContext;
@@ -476,18 +502,18 @@ describe('AgentProfileService.setSessionDisabledTools', () => {
     ctx = createTestAgent(hostEnvironmentServices(homeDir));
     const svc = ctx.get(IAgentProfileService);
 
-    expect(() => svc.setSessionDisabledTools(['Bash'])).toThrow(/not bound/);
+    await expect(svc.setSessionDisabledTools(['Bash'])).rejects.toThrow(/not bound/);
     expect(svc.isToolActive('Bash')).toBe(true);
   });
 
   it('replaces the client-managed denylist on every call', async () => {
     const svc = await bind(DEFAULT_AGENT_PROFILE_NAME);
 
-    svc.setSessionDisabledTools(['Bash']);
+    await svc.setSessionDisabledTools(['Bash']);
     expect(svc.isToolActive('Bash')).toBe(false);
     expect(svc.isToolActive('Read')).toBe(true);
 
-    svc.setSessionDisabledTools(['Edit']);
+    await svc.setSessionDisabledTools(['Edit']);
     expect(svc.isToolActive('Bash')).toBe(true);
     expect(svc.isToolActive('Edit')).toBe(false);
   });
@@ -495,21 +521,27 @@ describe('AgentProfileService.setSessionDisabledTools', () => {
   it('keeps the profile own denylist across replacement calls', async () => {
     const svc = await bind('session-deny');
 
-    svc.setSessionDisabledTools(['Bash']);
+    await svc.setSessionDisabledTools(['Bash']);
     expect(svc.isToolActive('Write')).toBe(false);
     expect(svc.isToolActive('Bash')).toBe(false);
 
-    svc.setSessionDisabledTools([]);
+    await svc.setSessionDisabledTools([]);
     expect(svc.isToolActive('Write')).toBe(false);
     expect(svc.isToolActive('Bash')).toBe(true);
   });
 
   it('persists the session denylist across a resume', async () => {
     const persistence = new InMemoryWireRecordPersistence();
-    ctx = createTestAgent({ persistence }, hostEnvironmentServices(homeDir));
+    const atomicDocuments = createAtomicDocumentStore();
+    const documentServices = appService(IAtomicDocumentStore, atomicDocuments);
+    ctx = createTestAgent(
+      { persistence },
+      documentServices,
+      hostEnvironmentServices(homeDir),
+    );
     const svc = ctx.get(IAgentProfileService);
-    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
-    svc.setSessionDisabledTools(['Bash']);
+    await svc.bind({ profile: 'session-deny', model: MOCK_MODEL });
+    await svc.setSessionDisabledTools(['Bash']);
     await ctx.get(IWireService).flush();
     await ctx.dispose();
 
@@ -531,13 +563,65 @@ describe('AgentProfileService.setSessionDisabledTools', () => {
     } as unknown as ISessionAgentProfileCatalog;
     ctx = createTestAgent(
       { persistence },
+      documentServices,
       hostEnvironmentServices(homeDir),
       sessionService(ISessionAgentProfileCatalog, emptyCatalog),
     );
     await ctx.restorePersisted();
+    await ctx.get(ISessionToolPolicy).ready;
     const resumed = ctx.get(IAgentProfileService);
 
     expect(resumed.isToolActive('Bash')).toBe(false);
+    expect(resumed.isToolActive('Write')).toBe(false);
     expect(resumed.isToolActive('Read')).toBe(true);
+
+    await resumed.setSessionDisabledTools(['Edit']);
+    expect(resumed.isToolActive('Bash')).toBe(true);
+    expect(resumed.isToolActive('Edit')).toBe(false);
+    expect(resumed.isToolActive('Write')).toBe(false);
+  });
+
+  it('removes the skill listing when the session disables Skill', async () => {
+    const skillMarker = 'session-policy-skill-marker';
+    ctx = createTestAgent(
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionSkillCatalog, {
+        _serviceBrand: undefined,
+        catalog: { getModelSkillListing: () => skillMarker } as never,
+        ready: Promise.resolve(),
+        onDidChange: Event.None as Event<string>,
+        load: async () => {},
+        reload: async () => {},
+      }),
+    );
+    const svc = ctx.get(IAgentProfileService);
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    expect(svc.getSystemPrompt()).toContain(skillMarker);
+
+    await svc.setSessionDisabledTools(['Skill']);
+
+    expect(svc.isToolActive('Skill')).toBe(false);
+    expect(svc.getSystemPrompt()).not.toContain(skillMarker);
+  });
+
+  it('omits the skill listing when global tools disable Skill', async () => {
+    const skillMarker = 'global-policy-skill-marker';
+    ctx = createTestAgent(
+      { initialConfig: { tools: { disabled: ['Skill'] } } },
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionSkillCatalog, {
+        _serviceBrand: undefined,
+        catalog: { getModelSkillListing: () => skillMarker } as never,
+        ready: Promise.resolve(),
+        onDidChange: Event.None as Event<string>,
+        load: async () => {},
+        reload: async () => {},
+      }),
+    );
+    const svc = ctx.get(IAgentProfileService);
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    expect(svc.isToolActive('Skill')).toBe(false);
+    expect(svc.getSystemPrompt()).not.toContain(skillMarker);
   });
 });

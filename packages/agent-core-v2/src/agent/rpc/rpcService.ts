@@ -16,7 +16,7 @@ import { IAgentPlanService } from '#/agent/plan/plan';
 import { IHostEnvironment } from '#/os/interface/hostEnvironment';
 import { expandCommandArguments } from '#/app/plugin/commands';
 import { IPluginService } from '#/app/plugin/plugin';
-import { IAgentProfileService } from '#/agent/profile/profile';
+import { IAgentProfileService, ProfileError } from '#/agent/profile/profile';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
 import { IAgentShellCommandService } from '#/agent/shellCommand/shellCommand';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -111,10 +111,17 @@ export class AgentRPCService implements IAgentRPCService {
   ) { }
 
   async prompt(payload: PromptPayload): Promise<PromptLaunchResult | undefined> {
-    await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
     if (payload.disabledTools !== undefined) {
-      this.profile.setSessionDisabledTools(payload.disabledTools);
+      try {
+        await this.profile.setSessionDisabledTools(payload.disabledTools);
+      } catch (error) {
+        if (error instanceof ProfileError) {
+          throw new Error2(ErrorCodes.REQUEST_INVALID, error.message);
+        }
+        throw error;
+      }
     }
+    await this.updatePromptMetadata(promptMetadataTextFromPayload(payload));
     const handle = await this.promptService.enqueue({ message: {
       role: 'user',
       content: [...payload.input],

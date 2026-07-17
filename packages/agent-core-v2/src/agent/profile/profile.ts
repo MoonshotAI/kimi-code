@@ -134,15 +134,12 @@ export interface IAgentProfileService {
   addActiveTool(name: string): void;
   removeActiveTool(name: string): void;
   /**
-   * Persist the client-managed session denylist. The given names fully
-   * REPLACE the client portion; the effective deny list becomes
-   * `activeProfile.disallowedTools ∪ names` (the profile's own deny always
-   * survives, so `[]` only clears client additions). Requires a bound
-   * profile: throws `profile.not_bound` when the active profile cannot be
-   * resolved, because a later bind would otherwise silently overwrite the
-   * value with the profile's own `disallowedTools`.
+   * Persist the client-managed Session denylist as a full replacement.
+   * Profile-owned restrictions remain independent and are intersected at
+   * evaluation time. Requires a bound profile and awaits prompt refreshes for
+   * every existing Agent in the Session.
    */
-  setSessionDisabledTools(names: readonly string[]): void;
+  setSessionDisabledTools(names: readonly string[]): Promise<void>;
 }
 
 export const IAgentProfileService = createDecorator<IAgentProfileService>('agentProfileService');

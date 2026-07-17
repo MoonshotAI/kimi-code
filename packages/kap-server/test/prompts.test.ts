@@ -784,6 +784,31 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(profile?.isToolActive('Write')).toBe(true);
   });
 
+  it('shares disabled_tools with agents created after the request', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'hello' }],
+      model: 'stub',
+      disabled_tools: ['Bash'],
+    });
+    expect(submitted.body.code).toBe(0);
+
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const child = await session.accessor.get(IAgentLifecycleService).create({
+      binding: {
+        profile: 'coder',
+        model: 'stub',
+      },
+    });
+
+    const childProfile = child.accessor.get(IAgentProfileService);
+    expect(childProfile.isToolActive('Bash')).toBe(false);
+    expect(childProfile.isToolActive('Read')).toBe(true);
+  });
+
   it('rejects disabled_tools before the agent profile is bound', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

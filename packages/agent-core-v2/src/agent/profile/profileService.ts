@@ -1,5 +1,5 @@
 /**
- * `profile` domain (L3) — `IAgentProfileService` implementation.
+ * `profile` domain (L4) — `IAgentProfileService` implementation.
  *
  * Owns the active agent's model alias, thinking level, system prompt, and
  * active-tool set; resolves the runnable god-object Model through the App-
@@ -16,10 +16,9 @@
  * live overlay is cached in a field and falls back to the Model when unset, so
  * no restore-ordering coupling with `userTool` arises. `isToolActive`
  * additionally intersects the global `[tools]` config section (`enabled` /
- * `disabled`), which applies to every profile. `setSessionDisabledTools`
- * rewrites the persisted `disallowedTools` slice to
- * `activeProfile.disallowedTools ∪ client` — the client-managed portion is
- * fully replaced on every call. The `agent.status.updated`
+ * `disabled`) and the Session-scoped client denylist. Profile and client
+ * policy are persisted independently. `setSessionDisabledTools` replaces the
+ * Session policy and awaits prompt refreshes for existing agents. The `agent.status.updated`
  * / `warning` events now ride `IEventBus` (`agent.status.updated` canonical in
  * `usageOps`). `chdir` and
  * `emitStatusUpdated` run live-only after the dispatch, so `wire.replay`
@@ -30,6 +29,7 @@
  */
 
 import { InstantiationType } from '#/_base/di/extensions';
+import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import { UNKNOWN_CAPABILITY, type ModelCapability } from '#/app/llmProtocol/capability';
 import { type GenerationKwargs } from '#/app/llmProtocol/kimiOptions';
@@ -54,6 +54,7 @@ import type { ToolSource } from '#/tool/toolContract';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import { ISessionToolPolicy } from '#/session/sessionToolPolicy/sessionToolPolicy';
 import type { ResolvedAgentProfile, SystemPromptContext } from '#/agent/profile/profile';
 
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -100,7 +101,7 @@ declare module '#/app/event/eventBus' {
   }
 }
 
-export class AgentProfileService implements IAgentProfileService {
+export class AgentProfileService extends Disposable implements IAgentProfileService {
   declare readonly _serviceBrand: undefined;
 
   private optionsValue: ProfileServiceOptions = {};
@@ -131,8 +132,15 @@ export class AgentProfileService implements IAgentProfileService {
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionAgentProfileCatalog private readonly catalog: ISessionAgentProfileCatalog,
     @ISessionSkillCatalog private readonly skillCatalog: ISessionSkillCatalog,
+    @ISessionToolPolicy private readonly sessionToolPolicy: ISessionToolPolicy,
   ) {
+    super();
     this.configure({});
+    this._register(
+      this.sessionToolPolicy.onDidChange((event) => {
+        event.waitUntil(this.refreshSystemPrompt());
+      }),
+    );
   }
 
   configure(options: ProfileServiceOptions): void {
@@ -200,7 +208,8 @@ export class AgentProfileService implements IAgentProfileService {
       this.assertThinkingEffortSupported(input.thinking, model, alias);
     }
 
-    const context = await this.buildSystemPromptContext(input.cwd);
+    await this.sessionToolPolicy.ready;
+    const context = await this.buildSystemPromptContext(profile, input.cwd);
     this.assertBindable(profile.name);
     const currentProfileName = this.profileName;
     const systemPrompt = profile.systemPrompt(context);
@@ -288,7 +297,7 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   async applyProfile(profile: ResolvedAgentProfile, options?: ApplyProfileOptions): Promise<void> {
-    const context = await this.buildSystemPromptContext(undefined, options);
+    const context = await this.buildSystemPromptContext(profile, undefined, options);
     this.useProfile(profile, context);
     this.cacheAgentsMdWarning(context);
     this.publishAgentsMdWarning();
@@ -298,7 +307,7 @@ export class AgentProfileService implements IAgentProfileService {
     const profile = this.resolveActiveProfile();
     if (profile === undefined) return;
 
-    const context = await this.buildSystemPromptContext(this.cwd);
+    const context = await this.buildSystemPromptContext(profile, this.cwd);
     this.activeProfile = profile;
     this.update({
       profileName: profile.name,
@@ -448,6 +457,11 @@ export class AgentProfileService implements IAgentProfileService {
         },
         name,
         source,
+      ) &&
+      evaluateToolActive(
+        { disallowedTools: this.sessionToolPolicy.disabledTools() },
+        name,
+        source,
       )
     );
   }
@@ -464,20 +478,14 @@ export class AgentProfileService implements IAgentProfileService {
     this.activeToolNamesOverlay = activeToolNames.filter((candidate) => candidate !== name);
   }
 
-  setSessionDisabledTools(names: readonly string[]): void {
-    // Recompute from the catalog profile's own deny list so each call fully
-    // replaces the client-managed portion instead of accumulating into the
-    // persisted union. Without a resolvable profile there is no profile-own
-    // slice to preserve — refuse rather than let a later bind silently
-    // overwrite the client's list with the profile's own `disallowedTools`.
-    const profile = this.resolveActiveProfile();
-    if (profile === undefined) {
+  async setSessionDisabledTools(names: readonly string[]): Promise<void> {
+    if (this.profileName === undefined) {
       throw new ProfileError(
         ProfileErrors.codes.PROFILE_NOT_BOUND,
         'Cannot set session disabled tools: agent profile is not bound',
       );
     }
-    this.update({ disallowedTools: [...new Set([...(profile.disallowedTools ?? []), ...names])] });
+    await this.sessionToolPolicy.setDisabledTools(names);
   }
 
   private resolveConfigPayload(
@@ -690,6 +698,7 @@ export class AgentProfileService implements IAgentProfileService {
   }
 
   private async buildSystemPromptContext(
+    profile: ResolvedAgentProfile,
     cwd?: string,
     options?: ApplyProfileOptions,
   ): Promise<SystemPromptContext> {
@@ -709,7 +718,32 @@ export class AgentProfileService implements IAgentProfileService {
       shellPath: this.env.shellPath,
       now: new Date().toISOString(),
       skills,
+      skillActive: this.isToolActiveForProfile(profile, 'Skill'),
     };
+  }
+
+  private isToolActiveForProfile(
+    profile: ResolvedAgentProfile,
+    name: string,
+    source: ToolSource = 'builtin',
+  ): boolean {
+    const globalTools = this.config.get<ToolsConfig>(TOOLS_SECTION);
+    return (
+      evaluateToolActive(profile, name, source) &&
+      evaluateToolActive(
+        {
+          tools: globalTools?.enabled?.length ? globalTools.enabled : undefined,
+          disallowedTools: globalTools?.disabled,
+        },
+        name,
+        source,
+      ) &&
+      evaluateToolActive(
+        { disallowedTools: this.sessionToolPolicy.disabledTools() },
+        name,
+        source,
+      )
+    );
   }
 
   private async resolveSkillListing(): Promise<string> {

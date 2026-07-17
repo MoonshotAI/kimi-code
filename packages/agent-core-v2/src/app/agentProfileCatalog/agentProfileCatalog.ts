@@ -51,6 +51,7 @@ export interface AgentProfileContext {
   readonly shellPath?: string;
   readonly now?: string;
   readonly skills?: string;
+  readonly skillActive?: boolean;
   readonly [key: string]: unknown;
 }
 

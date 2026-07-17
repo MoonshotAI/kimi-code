@@ -30,6 +30,7 @@ export function renderSystemPrompt(
 ): string {
   const shellName = context.shellName ?? '';
   const shellPath = context.shellPath ?? '';
+  const skillActive = context.skillActive ?? options.skillActive;
   return renderPrompt(SYSTEM_PROMPT_TEMPLATE, {
     ROLE_ADDITIONAL: roleAdditional,
     KIMI_OS: context.osKind ?? '',
@@ -39,6 +40,6 @@ export function renderSystemPrompt(
     KIMI_WORK_DIR_LS: context.cwdListing ?? '',
     KIMI_AGENTS_MD: context.agentsMd ?? '',
     KIMI_ADDITIONAL_DIRS_INFO: context.additionalDirsInfo ?? '',
-    KIMI_SKILLS: options.skillActive ? (context.skills ?? '') : '',
+    KIMI_SKILLS: skillActive ? (context.skills ?? '') : '',
   });
 }
