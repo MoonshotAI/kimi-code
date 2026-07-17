@@ -29,7 +29,10 @@ import {
   type RegisterAgentTaskOptions,
 } from '#/agent/task/task';
 import { IAgentProfileService } from '#/agent/profile/profile';
-import { resolveActiveToolNames } from '#/agent/toolPolicy/evaluate';
+import {
+  isToolActive as evaluateToolActive,
+  resolveActiveToolNames,
+} from '#/agent/toolPolicy/evaluate';
 import { IAgentToolPolicyService } from '#/agent/toolPolicy/toolPolicy';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
@@ -43,6 +46,7 @@ import {
   type ToolExecution,
 } from '#/tool/toolContract';
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
+import { IAgentToolRegistryService, type ToolReference } from '#/agent/toolRegistry/toolRegistry';
 import { type AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
@@ -152,6 +156,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     @IAgentTaskService private readonly tasks: IAgentTaskService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
     @IAgentToolPolicyService private readonly toolPolicy: IAgentToolPolicyService,
+    @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @ISessionWorkspaceContext private readonly workspace: ISessionWorkspaceContext,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
@@ -171,7 +176,12 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
       ? AGENT_BACKGROUND_DESCRIPTION
       : AGENT_BACKGROUND_DISABLED_DESCRIPTION;
     const baseDescription = `${AGENT_DESCRIPTION_BASE}\n\n${backgroundDescription}`;
-    const typeLines = buildProfileDescriptions(this.catalog.list());
+    const typeLines = buildProfileDescriptions(
+      this.catalog.list(),
+      this.toolRegistry.listReferences(),
+      (profile, name, source) =>
+        this.toolPolicy.isToolActiveForProfile(profile, name, source),
+    );
     return typeLines
       ? `${baseDescription}\n\nAvailable agent types (pass via subagent_type):\n${typeLines}`
       : baseDescription;
@@ -450,6 +460,12 @@ registerTool(AgentTool);
 
 function buildProfileDescriptions(
   profiles: readonly AgentProfile[],
+  tools: readonly ToolReference[],
+  isToolActive: (
+    profile: { readonly tools?: readonly string[]; readonly disallowedTools?: readonly string[] },
+    name: string,
+    source: ToolReference['source'],
+  ) => boolean,
 ): string {
   return profiles
     .map((profile) => {
@@ -458,6 +474,20 @@ function buildProfileDescriptions(
       );
       const header = details.length === 0 ? `- ${profile.name}` : `- ${profile.name}: ${details.join(' ')}`;
       const activeTools = resolveActiveToolNames(profile);
+      const externallyRestricted = tools.some(
+        (tool) =>
+          evaluateToolActive(profile, tool.name, tool.source) &&
+          !isToolActive(profile, tool.name, tool.source),
+      );
+      if (externallyRestricted) {
+        const effectiveTools = tools
+          .filter((tool) => isToolActive(profile, tool.name, tool.source))
+          .map((tool) => tool.name);
+        if (effectiveTools.length === 0) {
+          return `${header}\n  Tools: none`;
+        }
+        return `${header}\n  Tools: ${effectiveTools.join(', ')}`;
+      }
       if (activeTools === undefined) {
         if ((profile.disallowedTools?.length ?? 0) > 0) {
           return `${header}\n  Tools: all except ${profile.disallowedTools!.join(', ')}`;

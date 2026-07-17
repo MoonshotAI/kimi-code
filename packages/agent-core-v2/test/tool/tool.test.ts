@@ -468,6 +468,23 @@ describe('Agent tool description', () => {
     expect(description).toContain('Tools: Agent, AgentSwarm, Bash');
   });
 
+  it('renders global tool restrictions in subagent type descriptions', () => {
+    ctx = createTestAgent(
+      configServices(() => ({
+        providers: {},
+        tools: { disabled: ['Bash'] },
+      })),
+    );
+
+    const description = agentDescription();
+    const coderTools = description
+      .split('\n')
+      .find((line) => line.startsWith('  Tools:') && line.includes('ReadMediaFile'));
+
+    expect(coderTools).toBeDefined();
+    expect(coderTools).not.toContain('Bash');
+  });
+
   it('renders effective tools after applying disallowedTools', () => {
     const restricted: AgentProfile = {
       name: 'restricted',

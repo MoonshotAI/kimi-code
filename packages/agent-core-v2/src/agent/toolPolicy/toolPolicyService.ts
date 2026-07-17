@@ -43,13 +43,25 @@ export class AgentToolPolicyService extends Disposable implements IAgentToolPoli
 
   isToolActive(name: string, source: ToolSource = 'builtin'): boolean {
     const profile = this.profile.data();
+    return this.isToolActiveForProfile(
+      {
+        tools: profile.activeToolNames,
+        disallowedTools: profile.disallowedTools,
+      },
+      name,
+      source,
+    );
+  }
+
+  isToolActiveForProfile(
+    profile: { readonly tools?: readonly string[]; readonly disallowedTools?: readonly string[] },
+    name: string,
+    source: ToolSource = 'builtin',
+  ): boolean {
     const globalTools = this.config.get<ToolsConfig>(TOOLS_SECTION);
     return (
       evaluateToolActive(
-        {
-          tools: profile.activeToolNames,
-          disallowedTools: profile.disallowedTools,
-        },
+        profile,
         name,
         source,
       ) &&
