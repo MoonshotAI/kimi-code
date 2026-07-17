@@ -22,9 +22,9 @@ const SLASH_COMMANDS: SlashCommandInfo[] = [
   { name: "clear", aliases: ["reset"], description: "Clear the context" },
   { name: "yolo", aliases: [], description: "Toggle YOLO mode (auto-approve tool actions; may still ask questions)" },
   {
-    name: "afk",
-    aliases: [],
-    description: "Toggle afk mode (auto-dismiss questions and auto-approve tool calls)",
+    name: "auto",
+    aliases: ["afk"],
+    description: "Toggle Auto mode (fully autonomous; the agent will not ask questions)",
   },
   { name: "plan", aliases: [], description: "Toggle plan mode. Usage: /plan [on|off|view|clear]" },
   {
