@@ -138,6 +138,11 @@ export class AgentProfileService extends Disposable implements IAgentProfileServ
         event.waitUntil(this.refreshSystemPrompt());
       }),
     );
+    this._register(
+      this.config.onDidSectionChange(({ domain }) => {
+        if (domain === TOOLS_SECTION) void this.refreshSystemPrompt();
+      }),
+    );
   }
 
   configure(options: ProfileServiceOptions): void {

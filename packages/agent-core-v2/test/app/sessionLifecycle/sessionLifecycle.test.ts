@@ -580,6 +580,20 @@ describe('SessionLifecycleService', () => {
     expect(resumed?.accessor.get(ISessionContext).workspaceId).toBe(encodeWorkDirKey(workDir));
   });
 
+  it('does not cache a session whose tool policy fails to initialize', async () => {
+    const svc = build([
+      stubPair(ISessionIndex, sessionIndexWithSummary('s1', '/tmp/proj')),
+      stubPair(ISessionToolPolicy, {
+        ...sessionToolPolicyStub(),
+        ready: Promise.reject(new Error('invalid tool policy')),
+      }),
+    ]);
+
+    await expect(svc.resume('s1')).rejects.toThrow('invalid tool policy');
+    expect(svc.get('s1')).toBeUndefined();
+    await expect(svc.resume('s1')).rejects.toThrow('invalid tool policy');
+  });
+
   it('resumes with the persisted cwd and indexed workspace id when the registry root is stale', async () => {
     const workDir = '/tmp/proj';
     const staleRoot = '/tmp/stale';
@@ -1096,6 +1110,38 @@ describe('SessionLifecycleService', () => {
       await expect(stat(join(dstDir, 'state.json'))).rejects.toThrow();
       await expect(stat(join(dstDir, 'agents', 'main', 'wire.jsonl'))).rejects.toThrow();
       await expect(stat(join(dstDir, 'logs'))).rejects.toThrow();
+    });
+
+    it('loads the copied session tool policy before returning the fork', async () => {
+      const root = await makeTmpRoot();
+      const bootstrap = tmpBootstrapStub(root);
+      const srcDir = join(root, 'sessions', 'wd_stub', 'src');
+      const dstPolicy = join(root, 'sessions', 'wd_stub', 'dst', 'tool-policy', 'state.json');
+      let readyCount = 0;
+      let disabledTools: readonly string[] = [];
+      const policy = {
+        ...sessionToolPolicyStub(),
+        get ready(): Promise<void> {
+          readyCount += 1;
+          if (readyCount === 1) return Promise.resolve();
+          return readFile(dstPolicy, 'utf8').then((raw) => {
+            disabledTools = (JSON.parse(raw) as { disabledTools: readonly string[] }).disabledTools;
+          });
+        },
+        disabledTools: () => disabledTools,
+      } satisfies ISessionToolPolicy;
+      const svc = build([
+        stubPair(IBootstrapService, bootstrap),
+        workspaceGetStub(),
+        stubPair(ISessionToolPolicy, policy),
+      ]);
+      await svc.create({ sessionId: 'src', workDir: '/tmp/proj' });
+      await mkdir(join(srcDir, 'tool-policy'), { recursive: true });
+      await writeFile(join(srcDir, 'tool-policy', 'state.json'), '{"disabledTools":["Skill"]}');
+
+      const target = await svc.fork({ sourceSessionId: 'src', newSessionId: 'dst' });
+
+      expect(target.accessor.get(ISessionToolPolicy).disabledTools()).toEqual(['Skill']);
     });
 
     it('rolls back the target session when fork fails after materializing', async () => {

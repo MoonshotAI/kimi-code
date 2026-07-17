@@ -2,9 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
 
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Event } from '#/_base/event';
+import { ConfigTarget, IConfigService } from '#/app/config/config';
+import { TOOLS_SECTION } from '#/agent/profile/configSection';
 import { DEFAULT_AGENT_PROFILE_NAME, IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { registerAgentProfile } from '#/app/agentProfileCatalog/contribution';
 import type { ToolCall } from '#/app/llmProtocol/message';
@@ -598,6 +600,32 @@ describe('AgentProfileService.setSessionDisabledTools', () => {
     expect(resumed.isToolActive('Write')).toBe(false);
   });
 
+  it('retries persistence after a failed session denylist replacement', async () => {
+    const atomicDocuments = createAtomicDocumentStore();
+    const persist = atomicDocuments.set.bind(atomicDocuments);
+    let attempts = 0;
+    atomicDocuments.set = async (...args) => {
+      if (args[0].endsWith('/tool-policy')) {
+        attempts += 1;
+        if (attempts === 1) throw new Error('disk full');
+      }
+      await persist(...args);
+    };
+    ctx = createTestAgent(
+      appService(IAtomicDocumentStore, atomicDocuments),
+      hostEnvironmentServices(homeDir),
+    );
+    const svc = profileWithToolPolicy(ctx);
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+
+    await expect(svc.setSessionDisabledTools(['Bash'])).rejects.toThrow('disk full');
+    expect(svc.isToolActive('Bash')).toBe(true);
+    await svc.setSessionDisabledTools(['Bash']);
+
+    expect(attempts).toBe(2);
+    expect(svc.isToolActive('Bash')).toBe(false);
+  });
+
   it('removes the skill listing when the session disables Skill', async () => {
     const skillMarker = 'session-policy-skill-marker';
     ctx = createTestAgent(
@@ -640,6 +668,31 @@ describe('AgentProfileService.setSessionDisabledTools', () => {
 
     expect(svc.isToolActive('Skill')).toBe(false);
     expect(svc.getSystemPrompt()).not.toContain(skillMarker);
+  });
+
+  it('refreshes the skill listing when global tool policy changes at runtime', async () => {
+    const skillMarker = 'live-global-policy-skill-marker';
+    ctx = createTestAgent(
+      hostEnvironmentServices(homeDir),
+      sessionService(ISessionSkillCatalog, {
+        _serviceBrand: undefined,
+        catalog: { getModelSkillListing: () => skillMarker } as never,
+        ready: Promise.resolve(),
+        onDidChange: Event.None as Event<string>,
+        load: async () => {},
+        reload: async () => {},
+      }),
+    );
+    const svc = profileWithToolPolicy(ctx);
+    await svc.bind({ profile: DEFAULT_AGENT_PROFILE_NAME, model: MOCK_MODEL });
+    expect(svc.getSystemPrompt()).toContain(skillMarker);
+
+    await ctx
+      .get(IConfigService)
+      .replace(TOOLS_SECTION, { disabled: ['Skill'] }, ConfigTarget.Memory);
+
+    expect(svc.isToolActive('Skill')).toBe(false);
+    await vi.waitFor(() => expect(svc.getSystemPrompt()).not.toContain(skillMarker));
   });
 });
 

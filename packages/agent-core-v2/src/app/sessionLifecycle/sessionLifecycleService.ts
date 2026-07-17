@@ -179,28 +179,27 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
     if (additionalDirs.length > 0) {
       handle.accessor.get(ISessionWorkspaceContext).setAdditionalDirs(additionalDirs);
     }
-    this.sessions.set(opts.sessionId, handle);
-    await handle.accessor.get(ISessionMetadata).ready;
-    await handle.accessor.get(ISessionToolPolicy).ready;
-    void handle.accessor.get(ISessionSkillCatalog).ready;
-    // Agent-file discovery is awaited (unlike the skill catalog above): it is
-    // local-fs and cheap, and a resumed session's first turn must see
-    // file-defined agent types in the `Agent` tool description. `ready` only
-    // rejects for a fatal explicit-source error — exactly the case that
-    // should fail fast here. On that failure the half-materialized handle is
-    // removed and disposed instead of poisoning the session cache.
     try {
+      await handle.accessor.get(ISessionMetadata).ready;
+      await handle.accessor.get(ISessionToolPolicy).ready;
+      void handle.accessor.get(ISessionSkillCatalog).ready;
+      // Agent-file discovery is awaited (unlike the skill catalog above): it is
+      // local-fs and cheap, and a resumed session's first turn must see
+      // file-defined agent types in the `Agent` tool description. `ready` only
+      // rejects for a fatal explicit-source error — exactly the case that
+      // should fail fast here. On that failure the half-materialized handle is
+      // removed and disposed instead of poisoning the session cache.
       await handle.accessor.get(ISessionAgentProfileCatalog).ready;
+      await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
+      // Force-instantiate the session-level eager services whose subscriptions
+      // must exist before the first agent / turn (external hooks, cron).
+      handle.accessor.get(ISessionExternalHooksService);
+      handle.accessor.get(ISessionCronService);
     } catch (error) {
-      this.sessions.delete(opts.sessionId);
       handle.dispose();
       throw error;
     }
-    await handle.accessor.get(ISessionMcpService).ensureMcpReady(opts.mcpServers);
-    // Force-instantiate the session-level eager services whose subscriptions
-    // must exist before the first agent / turn (external hooks, cron).
-    handle.accessor.get(ISessionExternalHooksService);
-    handle.accessor.get(ISessionCronService);
+    this.sessions.set(opts.sessionId, handle);
     return handle;
   }
 
@@ -363,18 +362,18 @@ export class SessionLifecycleService extends Disposable implements ISessionLifec
         );
       }
 
+      targetSessionDir = this.bootstrap.sessionDir(workspaceId, targetId);
+      await this.copySessionFiles(
+        this.bootstrap.sessionDir(workspaceId, sourceId),
+        targetSessionDir,
+      );
+
       target = await this.materializeSession({
         sessionId: targetId,
         workDir: workspace.root,
       });
       const targetCtx = target.accessor.get(ISessionContext);
-      targetSessionDir = targetCtx.sessionDir;
       const targetMeta = target.accessor.get(ISessionMetadata);
-
-      await this.copySessionFiles(
-        this.bootstrap.sessionDir(workspaceId, sourceId),
-        targetCtx.sessionDir,
-      );
 
       const sourceAgents = sourceMeta?.agents ?? {};
       const agentIds = Object.keys(sourceAgents);

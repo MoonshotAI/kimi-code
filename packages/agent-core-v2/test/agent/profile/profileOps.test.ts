@@ -46,6 +46,7 @@ function createTelemetryStub(): ITelemetryService {
 function createConfigStub(): IConfigService {
   return {
     _serviceBrand: undefined,
+    onDidSectionChange: () => ({ dispose: () => {} }),
     get: ((key: string) => configValues[key]) as unknown as IConfigService['get'],
   } as unknown as IConfigService;
 }

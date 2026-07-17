@@ -18,6 +18,7 @@ import {
   userAgentRoots,
 } from '#/app/agentFileCatalog/agentRoots';
 import { HostFileSystem } from '#/os/backends/node-local/hostFsService';
+import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 
 const hostFs = new HostFileSystem();
 
@@ -132,6 +133,25 @@ describe('agentRoots', () => {
       expect(paths).toContain(await realpath(join(homeDir, 'team')));
       expect(paths).toContain(await realpath(absDir));
       expect(paths).toContain(await realpath(join(root, 'relative')));
+    });
+
+    it('propagates filesystem-unavailable failures while probing a root', async () => {
+      const unavailableFs = new Proxy(hostFs, {
+        get(target, property, receiver) {
+          if (property === 'realpath') {
+            return () =>
+              Promise.reject(
+                new HostFsError(OsFsErrors.codes.OS_FS_UNAVAILABLE, 'filesystem unavailable'),
+              );
+          }
+          const value = Reflect.get(target, property, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+
+      await expect(
+        configuredAgentRoots(unavailableFs, ['agents'], root, root, 'extra'),
+      ).rejects.toMatchObject({ code: OsFsErrors.codes.OS_FS_UNAVAILABLE });
     });
   });
 });

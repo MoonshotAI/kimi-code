@@ -72,8 +72,9 @@ export class SessionToolPolicyService extends Disposable implements ISessionTool
     ) {
       return;
     }
-    this.state = { disabledTools };
-    await this.store.set(this.scope, STATE_KEY, this.state);
+    const nextState = { disabledTools };
+    await this.store.set(this.scope, STATE_KEY, nextState);
+    this.state = nextState;
     await this.changeEmitter.fireAsync({}, new AbortController().signal);
   }
 }

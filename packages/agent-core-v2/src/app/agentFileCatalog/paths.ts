@@ -10,6 +10,7 @@
 import { isAbsolute, join, resolve } from 'pathe';
 
 import type { IHostFileSystem } from '#/os/interface/hostFileSystem';
+import { HostFsError, OsFsErrors } from '#/os/interface/hostFsErrors';
 
 /**
  * Expand a leading `~` to `osHomeDir` and resolve relative paths against
@@ -27,8 +28,9 @@ export async function isDirectoryPath(fs: IHostFileSystem, p: string): Promise<b
   try {
     const resolved = await fs.realpath(p);
     return (await fs.stat(resolved)).isDirectory;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isMissingPathError(error)) return false;
+    throw error;
   }
 }
 
@@ -36,8 +38,9 @@ export async function isFilePath(fs: IHostFileSystem, p: string): Promise<boolea
   try {
     const resolved = await fs.realpath(p);
     return (await fs.stat(resolved)).isFile;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isMissingPathError(error)) return false;
+    throw error;
   }
 }
 
@@ -45,7 +48,16 @@ export async function pathExists(fs: IHostFileSystem, p: string): Promise<boolea
   try {
     await fs.stat(p);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    if (isMissingPathError(error)) return false;
+    throw error;
   }
+}
+
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof HostFsError &&
+    (error.code === OsFsErrors.codes.OS_FS_NOT_FOUND ||
+      error.code === OsFsErrors.codes.OS_FS_NOT_DIRECTORY)
+  );
 }

@@ -6,7 +6,7 @@ import { createControlledPromise } from '@antfu/utils';
 import { expect, vi } from 'vitest';
 
 import { toDisposable } from '#/_base/di/lifecycle';
-import { Event } from '#/_base/event';
+import { Emitter, Event } from '#/_base/event';
 import type { PromisifyMethods } from '#/_base/utils/types';
 import { escapeXmlAttr } from '#/_base/utils/xml-escape';
 import type { AgentTaskInfo } from '#/agent/task/task';
@@ -2066,12 +2066,29 @@ function applyTestAgentOptionsToConfig(config: KimiConfig, options: TestAgentOpt
 
 function configService(readConfig: () => KimiConfig): IConfigService {
   const effectiveConfig = () => configWithEnvOverrides(readConfig());
+  const memory = new Map<string, unknown>();
+  const sectionEmitter = new Emitter<{
+    readonly domain: string;
+    readonly source: 'set';
+    readonly value: unknown;
+    readonly previousValue: unknown;
+  }>();
+  const valueFor = (domain: string): unknown =>
+    memory.has(domain)
+      ? memory.get(domain)
+      : (effectiveConfig() as Record<string, unknown>)[domain];
+  const replace = (domain: string, value: unknown): Promise<void> => {
+    const previousValue = valueFor(domain);
+    memory.set(domain, value);
+    sectionEmitter.fire({ domain, source: 'set', value, previousValue });
+    return Promise.resolve();
+  };
   return {
     _serviceBrand: undefined,
     ready: Promise.resolve(),
     onDidChangeConfiguration: () => ({ dispose: () => { } }),
-    onDidSectionChange: () => ({ dispose: () => { } }),
-    get: <T>(domain: string) => (effectiveConfig() as Record<string, unknown>)[domain] as T,
+    onDidSectionChange: sectionEmitter.event,
+    get: <T>(domain: string) => valueFor(domain) as T,
     inspect: (domain: string) => {
       const value = (effectiveConfig() as Record<string, unknown>)[domain];
       return {
@@ -2082,8 +2099,15 @@ function configService(readConfig: () => KimiConfig): IConfigService {
       };
     },
     getAll: () => effectiveConfig() as never,
-    set: () => Promise.resolve(),
-    replace: () => Promise.resolve(),
+    set: (domain: string, patch: unknown) => {
+      const current = valueFor(domain);
+      const value =
+        typeof current === 'object' && current !== null && typeof patch === 'object' && patch !== null
+          ? { ...current, ...patch }
+          : patch;
+      return replace(domain, value);
+    },
+    replace,
     reload: () => Promise.resolve(),
     diagnostics: () => [],
   } as unknown as IConfigService;
