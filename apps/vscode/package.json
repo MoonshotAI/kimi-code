@@ -54,7 +54,7 @@
         "kimi.yoloMode": {
           "type": "boolean",
           "default": false,
-          "description": "Auto-approve all tool calls"
+          "description": "Auto-approve regular tool calls; the agent may still ask questions"
         },
         "kimi.autosave": {
           "type": "boolean",
