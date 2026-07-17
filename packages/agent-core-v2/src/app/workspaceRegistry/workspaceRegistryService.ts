@@ -120,25 +120,34 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
       const entry = catalog.workspaces.find((ws) => ws.id === id);
       // Unknown ids stay singletons so callers keep their not-found semantics.
       if (entry === undefined) return [id];
-      const rootKey = workspaceRootKey(entry.root);
-      const ids: string[] = [];
-      const seen = new Set<string>();
-      const add = (alias: string): void => {
-        if (seen.has(alias)) return;
-        seen.add(alias);
-        ids.push(alias);
-      };
-      for (const ws of catalog.workspaces) {
-        if (workspaceRootKey(ws.root) === rootKey) add(ws.id);
-      }
-      // Legacy split buckets may exist under spellings never registered: fold
-      // in every session-index `workDir` that identifies the same directory.
-      // Best-effort — a missing/corrupt index simply contributes nothing.
-      for (const line of await this.readSessionIndexEntries()) {
-        if (workspaceRootKey(line.workDir) === rootKey) add(encodeWorkDirKey(line.workDir));
-      }
-      return ids;
+      return this.collectAliasIds(catalog, entry.root);
     });
+  }
+
+  /** Every id identifying `root`'s directory: all registered spellings plus
+   *  `workDir` spellings recorded only in `session_index.jsonl` (legacy split
+   *  buckets that were never registered). Callers must already hold the op
+   *  mutex — this is the unfolded core of `resolveAliasIds`, shared with
+   *  `delete`. */
+  private async collectAliasIds(catalog: WorkspaceCatalog, root: string): Promise<string[]> {
+    const rootKey = workspaceRootKey(root);
+    const ids: string[] = [];
+    const seen = new Set<string>();
+    const add = (alias: string): void => {
+      if (seen.has(alias)) return;
+      seen.add(alias);
+      ids.push(alias);
+    };
+    for (const ws of catalog.workspaces) {
+      if (workspaceRootKey(ws.root) === rootKey) add(ws.id);
+    }
+    // Legacy split buckets may exist under spellings never registered: fold
+    // in every session-index `workDir` that identifies the same directory.
+    // Best-effort — a missing/corrupt index simply contributes nothing.
+    for (const line of await this.readSessionIndexEntries()) {
+      if (workspaceRootKey(line.workDir) === rootKey) add(encodeWorkDirKey(line.workDir));
+    }
+    return ids;
   }
 
   createOrTouch(root: string, name?: string): Promise<Workspace> {
@@ -225,10 +234,30 @@ export class WorkspaceRegistryService implements IWorkspaceRegistry {
       await this.ensureMerged();
       const catalog = await this.loadCatalog();
       // Soft delete: tombstone the id so the session-index merge cannot
-      // resurrect it, even if sessions still reference the workDir.
+      // resurrect it, even if sessions still reference the workDir. Folded
+      // aliases must die with it — a sibling spelling left registered (or
+      // resurrectable from the session index) would resurface as this
+      // directory's representative on the next list().
+      let root = catalog.workspaces.find((ws) => ws.id === id)?.root;
+      if (root === undefined) {
+        // Derived/unknown id: recover its spelling from the session index so
+        // the whole alias set can still be tombstoned.
+        root = (await this.readSessionIndexEntries()).find(
+          (line) => encodeWorkDirKey(line.workDir) === id,
+        )?.workDir;
+      }
+      if (root === undefined) {
+        await this.store.save({
+          workspaces: catalog.workspaces.filter((ws) => ws.id !== id),
+          deletedIds: [...new Set([...catalog.deletedIds, id])],
+        });
+        return;
+      }
+      const rootKey = workspaceRootKey(root);
+      const aliasIds = await this.collectAliasIds(catalog, root);
       await this.store.save({
-        workspaces: catalog.workspaces.filter((ws) => ws.id !== id),
-        deletedIds: [...new Set([...catalog.deletedIds, id])],
+        workspaces: catalog.workspaces.filter((ws) => workspaceRootKey(ws.root) !== rootKey),
+        deletedIds: [...new Set([...catalog.deletedIds, ...aliasIds])],
       });
     });
   }

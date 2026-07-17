@@ -580,6 +580,63 @@ describe('WorkspaceRegistryService (file-backed)', () => {
     // POSIX roots never fold, so the alias set is just the id itself.
     expect(await registry.resolveAliasIds(id)).toEqual([id]);
   });
+
+  it('delete tombstones every folded alias so a legacy split cannot resurface', async () => {
+    // Split legacy state: two registered spellings of one Windows root, plus a
+    // third spelling remembered only by the session index.
+    const typedRoot = 'C:\\Users\\Foo\\Proj';
+    const typedId = encodeWorkDirKey(typedRoot);
+    const aliasRoot = 'c:\\Users\\Foo\\Proj';
+    const aliasId = encodeWorkDirKey(aliasRoot);
+    const indexOnlyRoot = 'C:/users/foo/proj';
+    const indexOnlyId = encodeWorkDirKey(indexOnlyRoot);
+    await writeWorkspacesJson({
+      [typedId]: {
+        root: typedRoot,
+        name: 'proj',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+      [aliasId]: {
+        root: aliasRoot,
+        name: 'proj',
+        created_at: '2026-01-01T00:00:00.000Z',
+        last_opened_at: '2026-01-01T00:00:00.000Z',
+      },
+    });
+    await seedSessionIndex([
+      { sessionId: 's1', sessionDir: 'sessions/a/s1', workDir: typedRoot },
+      { sessionId: 's2', sessionDir: 'sessions/b/s2', workDir: indexOnlyRoot },
+      { sessionId: 's3', sessionDir: 'sessions/c/s3', workDir: join(homeDir, 'unrelated') },
+    ]);
+
+    const registry = build();
+    await registry.delete(typedId);
+
+    // The directory itself is gone (unrelated entries survive); nothing
+    // identity-matching the deleted root remains, and every id that could
+    // carry it is tombstoned so the merge cannot resurrect it.
+    const stillListed = (await registry.list()).filter(
+      (w) => workspaceRootKey(w.root) === workspaceRootKey(typedRoot),
+    );
+    expect(stillListed).toEqual([]);
+    const unrelatedId = encodeWorkDirKey(join(homeDir, 'unrelated'));
+    const saved = await readWorkspacesJson();
+    expect(Object.keys(saved.workspaces)).toEqual([unrelatedId]);
+    expect([...(saved.deleted_workspace_ids as string[])].toSorted()).toEqual(
+      [typedId, aliasId, indexOnlyId].toSorted(),
+    );
+
+    // A fresh process (merge re-runs against the session index) does not
+    // bring the directory back either.
+    const reopened = restart();
+    const relisted = (await reopened.list()).filter(
+      (w) => workspaceRootKey(w.root) === workspaceRootKey(typedRoot),
+    );
+    expect(relisted).toEqual([]);
+    const afterMerge = await readWorkspacesJson();
+    expect(Object.keys(afterMerge.workspaces)).toEqual([unrelatedId]);
+  });
 });
 
 describe('workspaceRootKey', () => {

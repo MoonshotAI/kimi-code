@@ -447,6 +447,48 @@ describe('WorkspaceRegistryService', () => {
     await expect(ctx.registry.resolveAliasWorkDirs(lowerId)).resolves.toEqual(['/home/dev/project']);
   });
 
+  it('delete removes and tombstones every folded alias of a Windows root', async () => {
+    // Split legacy state: two registered spellings of one Windows root, plus a
+    // third spelling remembered only by the session index.
+    const typedRoot = 'C:\\Users\\Del\\Proj';
+    const typedId = encodeWorkDirKey(normalizeWorkDir(typedRoot));
+    const aliasRoot = 'c:\\users\\del\\proj';
+    const aliasId = encodeWorkDirKey(normalizeWorkDir(aliasRoot));
+    const indexOnlyRoot = 'C:/users/del/proj';
+    await writeFile(
+      join(ctx.homeDir, 'workspaces.json'),
+      JSON.stringify({
+        version: 1,
+        workspaces: {
+          [typedId]: { root: typedRoot, name: 'proj', created_at: 'x', last_opened_at: 'x' },
+          [aliasId]: { root: aliasRoot, name: 'proj', created_at: 'x', last_opened_at: 'x' },
+        },
+        deleted_workspace_ids: [],
+      }),
+      'utf-8',
+    );
+    await appendSessionIndexEntry(ctx.homeDir, {
+      sessionId: 's1',
+      sessionDir: join(ctx.homeDir, 'sessions', encodeWorkDirKey(indexOnlyRoot), 's1'),
+      workDir: indexOnlyRoot,
+    });
+
+    await ctx.registry.delete(typedId);
+
+    await expect(ctx.registry.list()).resolves.toEqual([]);
+    const file = JSON.parse(await readFile(join(ctx.homeDir, 'workspaces.json'), 'utf-8')) as {
+      workspaces: Record<string, unknown>;
+      deleted_workspace_ids: string[];
+    };
+    expect(Object.keys(file.workspaces)).toEqual([]);
+    const expectedTombstones = new Set([typedId, aliasId]);
+    expectedTombstones.add(encodeWorkDirKey(indexOnlyRoot));
+    expectedTombstones.add(encodeWorkDirKey(normalizeWorkDir(indexOnlyRoot)));
+    expect(new Set(file.deleted_workspace_ids)).toEqual(expectedTombstones);
+    // Nothing left to resolve the directory through — no resurrection path.
+    await expect(ctx.registry.resolveRoot(typedId)).rejects.toThrow();
+  });
+
   it('session_count sums active sessions across alias buckets for one Windows root', async () => {
     // One registered root; sessions are split between the registered id's own
     // bucket (resolved-era placement) and a second bucket minted from a case

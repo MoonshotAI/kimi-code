@@ -244,7 +244,6 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
       const existing = file.workspaces[workspaceId];
       let root: string;
       if (existing !== undefined) {
-        delete file.workspaces[workspaceId];
         root = existing.root;
       } else {
         // Derived workspace: not in the file but a valid list result.
@@ -253,9 +252,34 @@ export class WorkspaceRegistryService extends Disposable implements IWorkspaceRe
         if (derived === undefined) throw new WorkspaceNotFoundError(workspaceId);
         root = derived;
       }
-      if (!file.deleted_workspace_ids.includes(workspaceId)) {
-        file.deleted_workspace_ids.push(workspaceId);
+      // Folded aliases must die together: a sibling spelling left registered
+      // (or resurrectable from the session index) would resurface as this
+      // directory's representative on the next list(). Remove every registered
+      // spelling and tombstone every id that could carry sessions for the
+      // directory — registered alias ids plus each spelling's own minted
+      // bucket (the derived-workspace loop reads tombstones by exact id).
+      const rootKey = workspaceRootKey(root);
+      const tombstones = new Set<string>([workspaceId]);
+      const spellings = new Set<string>([root]);
+      for (const [id, entry] of Object.entries(file.workspaces)) {
+        if (workspaceRootKey(entry.root) !== rootKey) continue;
+        delete file.workspaces[id];
+        tombstones.add(id);
+        spellings.add(entry.root);
       }
+      const index = await readSessionIndex(this.homeDir, this.sessionsDir);
+      for (const entry of index.values()) {
+        if (workspaceRootKey(entry.workDir) === rootKey) spellings.add(entry.workDir);
+      }
+      for (const spelling of spellings) {
+        // Both mint forms: the derived-workspace loop keys itself on the raw
+        // workDir, registered ids and buckets on the normalized one.
+        tombstones.add(encodeWorkDirKey(spelling));
+        tombstones.add(encodeWorkDirKey(normalizeWorkDir(spelling)));
+      }
+      file.deleted_workspace_ids = [
+        ...new Set([...file.deleted_workspace_ids, ...tombstones]),
+      ];
       await this.writeRegistry(file);
       return root;
     });
