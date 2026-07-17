@@ -609,6 +609,30 @@ describe("Kimi runtime (owns shared SDK sessions for Webviews)", () => {
     expect(opened.isBusy).toBe(false);
   });
 
+  it("rejects a prompt during an exclusive operation with a terminal error", async () => {
+    const { runtime, broadcasts } = createRecordingRuntime();
+    const opened = await runtime.openSession(openOptions());
+
+    let releaseExclusive!: () => void;
+    const exclusive = opened.runExclusiveAfterCancelling(
+      () => new Promise<void>((resolve) => {
+        releaseExclusive = resolve;
+      }),
+    );
+    // No active work means no later stream_complete: the rejection must be
+    // terminal so the caller's composer can unlock.
+    expect(opened.isBusy).toBe(true);
+
+    await expect(opened.prompt("during fork")).resolves.toEqual({ status: "failed" });
+    const rejection = broadcasts.find(({ data }) => (data as { type?: string }).type === "error");
+    expect(rejection?.data).toMatchObject({ type: "error", phase: "runtime" });
+    expect((rejection?.data as Record<string, unknown>)["terminal"]).toBeUndefined();
+
+    releaseExclusive();
+    await exclusive;
+    expect(opened.isBusy).toBe(false);
+  });
+
   it("marks a mid-turn core error as non-terminal until the turn ends", async () => {
     const { runtime, sdk, broadcasts } = createRecordingRuntime();
     const opened = await runtime.openSession(openOptions());

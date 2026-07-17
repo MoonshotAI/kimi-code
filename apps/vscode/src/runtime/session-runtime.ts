@@ -181,9 +181,17 @@ export class SessionRuntime {
   ): Promise<PromptResult> {
     this.ensureOpen();
     if (this.isBusy) {
-      // A re-entrant turn request must never disturb the active turn: surface
-      // the rejection as a mid-turn warning and fail only this call.
-      this.emitError(new Error(ALREADY_GENERATING_MESSAGE), "runtime", { terminal: false });
+      // A re-entrant turn request must never disturb the active turn — it fails
+      // only itself. When a turn or host action is running, its later terminal
+      // stream event unlocks every subscribed view, so a non-terminal warning
+      // is enough. An exclusive operation (e.g. fork materialization) emits no
+      // such terminal event, so reject terminally: the caller's composer must
+      // unlock rather than hang until the handshake timeout.
+      this.emitError(
+        new Error(ALREADY_GENERATING_MESSAGE),
+        "runtime",
+        { terminal: this.hasActiveWork ? false : undefined },
+      );
       return { status: "failed" };
     }
 
