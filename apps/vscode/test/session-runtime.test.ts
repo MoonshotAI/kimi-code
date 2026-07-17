@@ -133,6 +133,37 @@ function createFakeSession(): FakeSessionBoundary {
       reloads += 1;
       return summary;
     },
+    getResumeState() {
+      return {
+        sessionMetadata: { agents: {} },
+        agents: {
+          main: {
+            type: "main",
+            config: {
+              cwd: "/workspace",
+              modelAlias: "test-model",
+              modelCapabilities: {
+                image_in: false,
+                video_in: false,
+                audio_in: false,
+                thinking: false,
+                tool_use: true,
+                max_context_tokens: 128_000,
+              },
+              thinkingEffort: "off",
+              systemPrompt: "",
+            },
+            context: { history: [], tokenCount: 0 },
+            replay: [],
+            permission: { mode: "manual", rules: [] },
+            plan: null,
+            usage: {},
+            tools: [],
+            background: [],
+          },
+        },
+      };
+    },
     async getStatus() {
       return {
         thinkingEffort: "off",
@@ -539,36 +570,35 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     expect(sdk.cancelCount()).toBe(1);
   });
 
-  it("forwards undoHistory to the SDK while the session is idle and notifies views", async () => {
+  it("forwards undoHistory to the SDK while the session is idle and pushes the fresh transcript", async () => {
     const { runtime, sdk, broadcasts } = createRuntime();
 
     await runtime.undoHistory(2);
 
     expect([...sdk.undoCounts]).toEqual([2]);
     expect(sdk.reloadCount()).toBe(1);
-    expect(broadcasts).toContainEqual({
-      event: Events.ConversationHistoryChanged,
-      data: { sessionId: "session-1" },
-      webviewId: "view-1",
-    });
+    const notice = broadcasts.find((record) => record.event === Events.ConversationHistoryChanged);
+    expect(notice).toMatchObject({ webviewId: "view-1" });
+    expect((notice?.data as { sessionId: string; events: unknown[] }).sessionId).toBe("session-1");
+    expect(Array.isArray((notice?.data as { events: unknown[] }).events)).toBe(true);
   });
 
-  it("propagates a failed post-undo reload without broadcasting, then releases the guard", async () => {
+  it("marks the undo as applied when only the post-undo refresh fails, then releases the guard", async () => {
     const { runtime, sdk, broadcasts } = createRuntime();
     sdk.rejectNextReload(new Error("provider broke"));
 
-    await expect(runtime.undoHistory(1)).rejects.toThrow("provider broke");
+    await expect(runtime.undoHistory(1)).rejects.toThrow(
+      "Undo applied, but refreshing the conversation failed: provider broke",
+    );
     expect(broadcasts).not.toContainEqual(
       expect.objectContaining({ event: Events.ConversationHistoryChanged }),
     );
 
     await runtime.undoHistory(1);
     expect([...sdk.undoCounts]).toEqual([1, 1]);
-    expect(broadcasts).toContainEqual({
-      event: Events.ConversationHistoryChanged,
-      data: { sessionId: "session-1" },
-      webviewId: "view-1",
-    });
+    expect(broadcasts).toContainEqual(
+      expect.objectContaining({ event: Events.ConversationHistoryChanged, webviewId: "view-1" }),
+    );
   });
 
   it("rejects undoHistory while a response is still generating", async () => {

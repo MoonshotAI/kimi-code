@@ -1102,11 +1102,11 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     );
 
     expect(result).toEqual({ ok: true });
-    expect(rig.broadcasts).toContainEqual({
-      event: Events.ConversationHistoryChanged,
-      data: { sessionId: runtime.id },
-      webviewId: "view-1",
-    });
+    const notice = rig.broadcasts.find((record) => record.event === Events.ConversationHistoryChanged);
+    expect(notice).toMatchObject({ webviewId: "view-1" });
+    const events = (notice?.data as { events: Array<{ type: string }> }).events;
+    expect(Array.isArray(events)).toBe(true);
+    expect(events.some((event) => event.type === "TurnBegin")).toBe(false);
     await expect(runtime.session.getContext()).resolves.toMatchObject({ history: [] });
   });
 
@@ -1124,11 +1124,9 @@ describe("VS Code Kimi harness integration (shares one in-process SDK home)", ()
     );
 
     expect(result).toEqual({ ok: true });
-    expect(rig.broadcasts).toContainEqual({
-      event: Events.ConversationHistoryChanged,
-      data: { sessionId: created.id },
-      webviewId: "view-1",
-    });
+    const notice = rig.broadcasts.find((record) => record.event === Events.ConversationHistoryChanged);
+    expect(notice).toMatchObject({ webviewId: "view-1" });
+    expect((notice?.data as { sessionId: string }).sessionId).toBe(created.id);
     await expect(runtime.session.getContext()).resolves.toMatchObject({ history: [] });
   });
 

@@ -22,6 +22,7 @@ import {
   legacyApprovalMetadata,
   type LegacyApprovalFlags,
 } from "./legacy-approval";
+import { replaySessionToWebviewEvents } from "./replay-adapter";
 import { ReverseRpcController } from "./reverse-rpc";
 
 export type RuntimeBroadcast = (event: string, data: unknown, webviewId?: string) => void;
@@ -353,12 +354,13 @@ export class SessionRuntime {
 
   /**
    * Drop the last `count` user turns from the conversation, matching the
-   * CLI's /undo. Runs as one exclusive operation (undo + a single history
-   * reload) so a double-click or an incoming prompt cannot race the
-   * truncation, and so every subscribed view replays the same freshly
-   * reloaded state instead of each issuing its own reload RPC. A failed
-   * reload propagates: the undo already landed in the engine, so the caller
-   * must see the failure instead of views silently replaying stale cache.
+   * CLI's /undo. Runs as one exclusive operation: undo, a single history
+   * reload, and one replay computation. The fresh transcript is then pushed
+   * to every subscribed view in the broadcast payload itself — views apply
+   * it locally and never call back into the engine, so nothing can race
+   * reloads or re-attach a view to the wrong session. A failed reload is
+   * reported distinctly: the undo already landed, so it must not look like
+   * a plain "undo failed".
    */
   async undoHistory(count: number): Promise<void> {
     this.ensureOpen();
@@ -368,9 +370,22 @@ export class SessionRuntime {
     this.exclusiveActionActive = true;
     try {
       await this.session.undoHistory(count);
-      await this.session.reloadSession();
+      try {
+        await this.session.reloadSession();
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Undo applied, but refreshing the conversation failed: ${detail}. Use Reset Kimi to reconcile.`,
+          { cause: error },
+        );
+      }
+      const resumeState = this.session.getResumeState();
+      if (resumeState?.agents["main"] === undefined) {
+        throw new Error("Session history is unavailable.");
+      }
+      const events = replaySessionToWebviewEvents(resumeState, this.id);
       for (const webviewId of this.webviewIds) {
-        this.broadcast(Events.ConversationHistoryChanged, { sessionId: this.id }, webviewId);
+        this.broadcast(Events.ConversationHistoryChanged, { sessionId: this.id, events }, webviewId);
       }
     } finally {
       this.exclusiveActionActive = false;
