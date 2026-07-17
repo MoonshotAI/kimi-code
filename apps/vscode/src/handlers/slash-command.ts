@@ -120,7 +120,7 @@ async function toggleLegacyPermission(
 
   if (kind === "yolo") {
     emit(flags.yolo
-      ? "You only live once! All actions will be auto-approved."
+      ? "You only live once! Tool actions will be auto-approved; the agent may still ask questions."
       : flags.afk
         ? "Yolo disabled, but afk is still on — tool calls remain auto-approved."
         : "You only die once! Actions will require approval.");
