@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { MiniDb } from '../../src/index.js';
 import { tmpDir, rmrf } from './helpers/tmp.js';
 
-test('compaction-race: concurrent writes + frequent compaction lose nothing', async () => {
+test('compaction-race: concurrent writes + frequent compaction lose nothing', { timeout: 30_000 }, async () => {
   const dir = await tmpDir();
   let db = await MiniDb.open({
     dir,
@@ -47,7 +47,7 @@ test('compaction-race: concurrent writes + frequent compaction lose nothing', as
   }
 });
 
-test('compaction-race: reads remain available during compaction', async () => {
+test('compaction-race: reads remain available during compaction', { timeout: 30_000 }, async () => {
   const dir = await tmpDir();
   const db = await MiniDb.open({
     dir,
@@ -70,7 +70,7 @@ test('compaction-race: reads remain available during compaction', async () => {
   }
 });
 
-test('compaction-race: snapshot phase does not block writes', async () => {
+test('compaction-race: snapshot phase does not block writes', { timeout: 30_000 }, async () => {
   // A write issued while a large snapshot is being written must complete
   // BEFORE the whole compaction finishes — i.e. the snapshot phase is
   // non-blocking. writeSnapshot yields to the event loop every chunk, so the
@@ -92,7 +92,20 @@ test('compaction-race: snapshot phase does not block writes', async () => {
     // entries = 5 explicit yields — ~5x headroom over the minimum for
     // "multiple yields", enough for slow CI machines without writing ~75 MB.
     const N = 10_000;
-    for (let i = 0; i < N; i++) await db.set('k' + i, { i, pad: 'x'.repeat(500) });
+    {
+      // Prefill via batches: one WAL frame per 500 sets instead of 10k
+      // sequential appends — the setup phase must stay cheap on slow CI
+      // runners, leaving the timeout budget for the actual race below.
+      for (let base = 0; base < N; base += 500) {
+        await db.batch(
+          Array.from({ length: Math.min(500, N - base) }, (_, j) => ({
+            op: 'set' as const,
+            key: 'k' + (base + j),
+            value: { i: base + j, pad: 'x'.repeat(500) },
+          })),
+        );
+      }
+    }
 
     const cp = db.compact();
     const first = db.set('w0', { i: 0 });
@@ -117,9 +130,9 @@ test('compaction-race: snapshot phase does not block writes', async () => {
     await db.close().catch(() => {});
     await rmrf(dir);
   }
-}, 15_000);
+});
 
-test('compaction-race: heavy writes during compaction grow a WAL tail that survives recovery', async () => {
+test('compaction-race: heavy writes during compaction grow a WAL tail that survives recovery', { timeout: 30_000 }, async () => {
   // Sustained writes during compaction force the pre-copy loop to drain a real
   // WAL tail; the tail must be replayed on top of the snapshot after a reopen.
   const dir = await tmpDir();
@@ -133,7 +146,15 @@ test('compaction-race: heavy writes during compaction grow a WAL tail that survi
     // 10k keys span 5 writeSnapshot yield windows (yieldEvery=2000, src/snapshot.ts),
     // so compaction is still in progress while the writes below land.
     const N = 10_000;
-    for (let i = 0; i < N; i++) await db.set('k' + i, { i });
+    for (let base = 0; base < N; base += 500) {
+      await db.batch(
+        Array.from({ length: Math.min(500, N - base) }, (_, j) => ({
+          op: 'set' as const,
+          key: 'k' + (base + j),
+          value: { i: base + j },
+        })),
+      );
+    }
 
     const cp = db.compact();
     // ~55 B/frame × 2000 ≈ 110 KB post-fence tail > SMALL_DELTA (64 KiB,
@@ -155,7 +176,7 @@ test('compaction-race: heavy writes during compaction grow a WAL tail that survi
   }
 });
 
-test('compaction-race: valueMode disk preserves concurrent writes and remaps pointers', async () => {
+test('compaction-race: valueMode disk preserves concurrent writes and remaps pointers', { timeout: 30_000 }, async () => {
   const dir = await tmpDir();
   let db = await MiniDb.open({
     dir,

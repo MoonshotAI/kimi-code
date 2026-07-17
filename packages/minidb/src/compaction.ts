@@ -47,6 +47,7 @@ import fs from 'node:fs/promises';
 import type { FileHandle } from 'node:fs/promises';
 import path from 'node:path';
 import { WAL } from './wal.js';
+import { renameReplace } from './rename-replace.js';
 import { writeSnapshot } from './snapshot.js';
 import type { Store, ValueLoc } from './store.js';
 import type { FsyncPolicy } from './wal.js';
@@ -67,8 +68,9 @@ export interface CompactionTarget {
   lastCompactError: unknown;
   stats: { compactions: number; walBytesWritten: number; walFsyncs: number; snapshotBytesWritten: number; compactErrors?: number };
   /** Reader for disk-backed values; reopened after snapshot/WAL rotation so
-   *  remapped value pointers read from the new files. */
-  valueReader?: { reopenBoth(): void };
+   *  remapped value pointers read from the new files. On Windows it is also
+   *  closed before the rotation renames (see rotateReplace). */
+  valueReader?: { reopenBoth(): void; close?(): void };
   /** Optional hook invoked after the snapshot + WAL rotation succeeds, so the
    *  owner can rewrite derived on-disk state (e.g. text postings) against the
    *  new live set. */
@@ -83,6 +85,10 @@ const COPY_CHUNK = 1 << 20; // 1 MiB read/write coalescing
 // A post-fence WAL delta at or below this size is cheap enough to copy inside
 // the rotation critical section, so the pre-copy loop stops draining.
 const SMALL_DELTA = 64 * 1024; // 64 KiB
+
+// Windows cannot rename over an open destination; rotation uses the shared
+// retrying replace helper (see rename-replace.ts).
+const rotateReplace = (src: string, dst: string): Promise<void> => renameReplace(src, dst);
 // Pre-copy convergence bounds: each pass costs roughly `gap / copyRate` and
 // appends `gap * (appendRate / copyRate)` new bytes during the copy. Give up
 // when a pass fails to shrink the gap meaningfully (appendRate ≳ copyRate),
@@ -269,10 +275,17 @@ async function runCompaction(db: CompactionTarget): Promise<void> {
 
     await db.wal.close();
 
+    // Windows cannot rename over an open destination, so our own ValueReader
+    // must let go of the old snapshot/WAL before the renames below. POSIX
+    // keeps the handles across the rotation (old fd reads the unlinked old
+    // inode) — no close needed there; after the remap segment below,
+    // reopenBoth() re-attaches both handles on every platform.
+    if (process.platform === 'win32') db.valueReader?.close?.();
+
     // Snapshot first, then WAL — see the crash-safety note in the file header.
-    await fs.rename(tmp, snap);
+    await rotateReplace(tmp, snap);
     await fsyncDir(db.dir);
-    await fs.rename(walTmp, db.walPath);
+    await rotateReplace(walTmp, db.walPath);
     rotated = true;
     await fsyncDir(db.dir);
 

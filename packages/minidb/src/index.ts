@@ -348,8 +348,15 @@ export class MiniDb<V = unknown> {
       // re-sync its size bookkeeping so later appends (and their disk-mode
       // value pointers) are computed against the real, truncated file size.
       if (db.recoveryInfo.truncatedWal) await db.wal.refreshSize();
-      db.valueReader = new ValueReader(db.dir);
-      db.valueReader.open();
+      // Disk-backed values need the positioned reader; in valueMode 'memory'
+      // no record ever carries a disk loc, so opening the files would only
+      // hold handles for no benefit. (On Windows those idle handles would
+      // additionally block compaction's rename-over-path rotation — rename
+      // over an open destination is EPERM there.)
+      if (db.valueMode === 'disk') {
+        db.valueReader = new ValueReader(db.dir);
+        db.valueReader.open();
+      }
       db.seedAccessFromStore();
 
       await db.loadIndexDefinitions();

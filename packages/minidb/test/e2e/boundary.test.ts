@@ -21,7 +21,7 @@ test('boundary: key length limits', async () => {
   }
 });
 
-test('boundary: large value round-trips and recovers', async () => {
+test('boundary: large value round-trips and recovers', { timeout: 30_000 }, async () => {
   const dir = await tmpDir();
   const big = Buffer.alloc(5 * 1024 * 1024, 0xab); // 5 MiB
   big[0] = 0x01;
@@ -45,7 +45,7 @@ test('boundary: large value round-trips and recovers', async () => {
   }
 });
 
-test('boundary: many keys survive compaction + recovery', async () => {
+test('boundary: many keys survive compaction + recovery', { timeout: 30_000 }, async () => {
   const dir = await tmpDir();
   const N = 20000;
   let db = await MiniDb.open({

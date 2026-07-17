@@ -7,6 +7,7 @@
 
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
+import { renameReplace } from './rename-replace.js';
 
 export class LockError extends Error {
   readonly code = 'ELOCKED';
@@ -32,9 +33,11 @@ let exitHooked = false;
 // Co-bidders all replace the stale corpse within the same microsecond-scale
 // wave (they woke on the same event); this settle pause must outlast that wave
 // so the last bidder to land is unambiguous before the winner claims the lock.
-// Sized generously: heavily loaded machines can deschedule a bidder for many
-// milliseconds inside its own atomic-op sequence.
-const TAKEOVER_SETTLE_MS = 20;
+// Sized for heavily loaded CI machines, which can deschedule a bidder for tens
+// of milliseconds inside its own atomic-op sequence. (Still a bounded-delay
+// heuristic: a bidder stalled longer than the settle can still double-win —
+// inherent to file-based takeover, mitigations live in the design notes.)
+const TAKEOVER_SETTLE_MS = 50;
 function hookExit(): void {
   if (exitHooked) return;
   exitHooked = true;
@@ -73,13 +76,48 @@ export class LockFile {
     // the corpse with our bid; after a settle window that outlasts any same-wave
     // co-bidder, the last bidder finds its own pid still in place and wins —
     // everyone else sees a live foreign lock and backs off.
+    //
+    // Windows cannot rename over a destination while ANY process holds it
+    // open (co-racers reading/stat'ing the corpse make the rename EPERM), so
+    // the rename is retried with jitter. Crucially, each retry re-inspects
+    // the corpse first: a blind retry loop could land our bid seconds late,
+    // OVERWRITING an already-verified winner's lock line and double-holding
+    // (exactly the failure this loop is careful not to reintroduce).
     const bid = `${this.path}.bid-${process.pid}`;
     try {
       await fs.writeFile(bid, JSON.stringify({ pid: process.pid, ts: Date.now() }));
-      await fs.rename(bid, this.path);
+      for (let attempt = 0; ; attempt++) {
+        // The corpse must still be there and dead. A competitor who landed
+        // wins by being alive in the file now — back off instead of
+        // overwriting their lock.
+        if (process.platform === 'win32') {
+          const cur = await this.inspect();
+          if (cur === null || cur.alive || cur.mine) {
+            await fs.unlink(bid).catch(() => {});
+            return false;
+          }
+        }
+        try {
+          await fs.rename(bid, this.path);
+          break;
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          const epermRetryable =
+            code === 'EPERM' && process.platform === 'win32' && attempt < 50;
+          if (!epermRetryable) {
+            await fs.unlink(bid).catch(() => {});
+            // EEXIST races another creator; a persistent EPERM (Windows
+            // retries exhausted) means some holder kept the path pinned —
+            // either way the corpse could not be displaced this round, so
+            // decline like a live lock and let callers retry higher up.
+            if (code === 'EEXIST' || code === 'EPERM') return false;
+            throw e;
+          }
+          await new Promise((r) => setTimeout(r, 20 + Math.floor(Math.random() * 30)));
+        }
+      }
     } catch (e) {
       await fs.unlink(bid).catch(() => {});
-      if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
       throw e;
     }
     await new Promise((resolve) => setTimeout(resolve, TAKEOVER_SETTLE_MS));
@@ -151,7 +189,9 @@ export class LockFile {
     if (!this.held) return;
     const tmp = `${this.path}.tmp-${process.pid}`;
     await fs.writeFile(tmp, JSON.stringify({ pid: process.pid, ts: Date.now() }));
-    await fs.rename(tmp, this.path);
+    // Windows: replacing our own lock can still clash with a co-process's
+    // readFile/stat of it (EPERM) — the helper rides out such transients.
+    await renameReplace(tmp, this.path, { retries: 20 });
   }
 
   private markHeld(): void {

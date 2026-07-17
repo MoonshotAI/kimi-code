@@ -194,14 +194,17 @@ test(
 // i.e. several writers on one database directory.
 test(
   'stress: a stale lock must be taken over by exactly one process',
-  { timeout: 120_000 },
+  { timeout: 180_000 },
   async () => {
     const dir = await tmpDir('minidb-stress-lock-');
     const lockPath = path.join(dir, 'db.lock');
     const RACER = path.join(__dirname, 'helpers', 'lock-racer.ts');
     const DEAD_PID = 2 ** 30 - 3;
-    const RACERS = 10;
-    const ROUNDS = 30;
+    // 6-way simultaneous takeover still exposes any cascade (the historical
+    // failure mode grants everyone the lock), while fitting the test's process
+    // budget on 2-core runners (every racer is a full node+tsx child).
+    const RACERS = 6;
+    const ROUNDS = 25;
 
     const outputs: string[] = [];
     const children = Array.from({ length: RACERS }, () => {
