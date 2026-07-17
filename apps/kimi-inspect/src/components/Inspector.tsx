@@ -13,12 +13,16 @@
 import { useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { createDecorator } from '@moonshot-ai/agent-core-v2/_base/di/instantiation';
 import { ISessionApprovalService } from '@moonshot-ai/agent-core-v2/session/approval/approval';
 import { ISessionMetadata } from '@moonshot-ai/agent-core-v2/session/sessionMetadata/sessionMetadata';
 import { ISessionQuestionService } from '@moonshot-ai/agent-core-v2/session/question/question';
 import { ISessionInteractionService } from '@moonshot-ai/agent-core-v2/session/interaction/interaction';
 
+import {
+  fetchChannelDescriptors,
+  serviceByName,
+  type ChannelDescriptor,
+} from '../channel';
 import { useConnection } from '../connection';
 import { eventType, payloadField, useLiveEvent, useRecentEvents, type LiveEvent } from '../live';
 import {
@@ -34,40 +38,16 @@ import { ActionButton, Badge, ErrorLine, JsonView, relTime } from '../ui';
 type Tab = 'app' | 'session' | 'agent' | 'events';
 type Scope = 'app' | 'session' | 'agent';
 
-/** Mirror of `ChannelDescriptor` in kap-server (`GET /api/v2/channels`). */
-interface ChannelDescriptor {
-  readonly name: string;
-  readonly scope: Scope;
-  readonly domain: string;
-  readonly methods: readonly {
-    name: string;
-    kind: 'method' | 'property';
-    arity: number;
-    params: string;
-  }[];
-}
-
 const PANEL_OVERRIDES: ReadonlyMap<string, ServicePanelDef> = new Map(
   [...CORE_PANELS, ...SESSION_PANELS, ...AGENT_PANELS].map((def) => [def.id, def]),
 );
 
-/** Fetch the dynamic channel list once per connection (raw fetch — klient is typed-only). */
+/** Load the full protocol list once per connection (every channel, 1:1). */
 function useChannels() {
-  const { baseUrl, config } = useConnection();
+  const { klient } = useConnection();
   return useQuery({
-    queryKey: ['channels', baseUrl],
-    queryFn: async (): Promise<readonly ChannelDescriptor[]> => {
-      const headers: Record<string, string> = {};
-      if (config.token.trim() !== '') headers['authorization'] = `Bearer ${config.token.trim()}`;
-      const res = await fetch(`${baseUrl}/api/v2/channels`, { headers });
-      const envelope = (await res.json()) as {
-        code: number;
-        msg: string;
-        data: readonly ChannelDescriptor[];
-      };
-      if (envelope.code !== 0) throw new Error(envelope.msg);
-      return envelope.data;
-    },
+    queryKey: ['channels', klient.baseUrl, klient.rpcBasePath],
+    queryFn: () => fetchChannelDescriptors(klient),
     staleTime: Number.POSITIVE_INFINITY,
   });
 }
@@ -120,19 +100,16 @@ export function Inspector({
     }
   };
 
-  // Resolve a Service proxy by channel name + scope. The decorator registry
-  // keys identifiers by name, so this resolves to the same token the contract
-  // module created — the name is the wire channel, which is all the proxy uses.
-  // Returns null when the scope needs a session that isn't selected/ready.
+  // Resolve a Service proxy by channel name + scope, 1:1 with the channel
+  // descriptor from `/api/v2/channels`. Returns null when the scope needs a
+  // session that isn't selected/ready.
   const serviceProxy = useMemo(() => {
     return (name: string, scope: Scope): AnyService | null => {
-      const id = createDecorator<AnyService>(name);
-      if (scope === 'app') return klient.core(id) as AnyService;
-      if (sessionId === null || !ready) return null;
-      const base = klient.session(sessionId);
-      return (scope === 'session'
-        ? base.service(id)
-        : base.agent(effectiveAgent).service(id)) as AnyService;
+      return serviceByName<AnyService>(klient, name, {
+        scope,
+        sessionId: sessionId !== null && ready ? sessionId : undefined,
+        agentId: effectiveAgent,
+      }) ?? null;
     };
   }, [klient, sessionId, effectiveAgent, ready]);
 

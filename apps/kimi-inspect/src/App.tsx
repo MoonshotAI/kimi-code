@@ -13,6 +13,7 @@ import { ISessionLifecycleService } from '@moonshot-ai/agent-core-v2/app/session
 
 import { ChatView } from './components/ChatView';
 import { Inspector } from './components/Inspector';
+import { ServerSwitcher } from './components/ServerSwitcher';
 import { Sidebar } from './components/Sidebar';
 import { useConnection } from './connection';
 import { LiveBusProvider, type Emit, type LiveEvent } from './live';
@@ -78,12 +79,20 @@ export function App() {
     };
   }, [klient, sessionId]);
 
+  // Switching servers invalidates every session/agent selection: sessions
+  // belong to the server they were listed from. The client and its WS
+  // subscriptions rebuild from the new config on their own.
+  useEffect(() => {
+    setSessionId(null);
+    setAgentId('main');
+  }, [baseUrl]);
+
   return (
     <LiveBusProvider busRef={emitRef}>
       <div className="flex h-screen flex-col">
         <header className="flex items-center gap-3 border-b border-neutral-800 px-4 py-1.5">
           <span className="text-[12px] font-bold tracking-widest text-neutral-200">KIMI INSPECT</span>
-          <span className="font-mono text-[10px] text-neutral-500">{baseUrl}</span>
+          <ServerSwitcher />
           <Badge tone={wsState === 'open' ? 'green' : wsState === 'connecting' ? 'amber' : 'red'}>
             ws: {wsState}
           </Badge>

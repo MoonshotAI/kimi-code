@@ -1,9 +1,18 @@
 /**
- * Connection context — owns the generic wire client (HTTP calls) and its
- * WebSocket (event streams) built from the user-supplied server URL + token.
- * The config persists in localStorage and can be seeded from `?url=` /
- * `?token=` query params so a kap-server startup banner link can deep-link
- * into the app.
+ * Connection context — owns the inspect client (HTTP calls) and its WebSocket
+ * (event streams) built from the selected server URL + token.
+ *
+ * Three ways to connect:
+ *   1. deep link `?url=` / `?token=` or a previously saved manual config
+ *      (persisted in localStorage);
+ *   2. zero-config discovery: on startup the dev middleware
+ *      (`/__inspect/servers`) lists every local kap-server with the home
+ *      token — the app connects straight to the remembered / proxy / first
+ *      instance, persisting nothing but the picked URL (so a reload re-picks
+ *      it while it is still alive, and never resurrects a stale port);
+ *   3. the manual form or a discovered-server card on the connect screen.
+ * `disconnect` suppresses the discovery bootstrap for the rest of the
+ * session so it lands on the connect screen instead of reconnecting.
  */
 
 import {
@@ -16,9 +25,18 @@ import {
   type ReactNode,
 } from 'react';
 
-import type { WsSocketState } from '@moonshot-ai/klient/transports/ws/wsSocket';
-
-import { createGenericKlient, type GenericKlient } from './genericKlient';
+import {
+  createInspectClient,
+  probeRpcBasePath,
+  type InspectClient,
+  type RpcBasePath,
+  type WsSocketState,
+} from './channel';
+import {
+  fetchServerDiscovery,
+  pickDefaultServer,
+  useServerDiscovery,
+} from './servers';
 
 export interface ConnectionConfig {
   /** Server base URL; empty string means same-origin (the Vite dev proxy). */
@@ -26,7 +44,16 @@ export interface ConnectionConfig {
   readonly token: string;
 }
 
+export interface ConnectOptions {
+  /** Persist the whole config (manual form / deep link). Default `true`;
+   * discovered connects pass `false` so a reload re-discovers fresh state. */
+  readonly persist?: boolean;
+  /** Remember just this URL as the preferred discovery pick (`kimi-inspect.server-url`). */
+  readonly rememberServerUrl?: string;
+}
+
 const STORAGE_KEY = 'kimi-inspect.connection';
+const REMEMBERED_SERVER_KEY = 'kimi-inspect.server-url';
 
 function readInitialConfig(): ConnectionConfig {
   const params = new URLSearchParams(window.location.search);
@@ -47,7 +74,7 @@ function readInitialConfig(): ConnectionConfig {
   return { url: '', token: '' };
 }
 
-/** Resolve the configured (possibly relative) URL to an absolute base for the SDK. */
+/** Resolve the configured (possibly relative) URL to an absolute base for the client. */
 export function resolveBaseUrl(url: string): string {
   const trimmed = url.trim().replace(/\/$/, '');
   if (trimmed === '') return window.location.origin;
@@ -57,9 +84,9 @@ export function resolveBaseUrl(url: string): string {
 interface ConnectionValue {
   readonly config: ConnectionConfig;
   readonly baseUrl: string;
-  readonly klient: GenericKlient;
+  readonly klient: InspectClient;
   readonly wsState: WsSocketState;
-  readonly connect: (config: ConnectionConfig) => void;
+  readonly connect: (config: ConnectionConfig, opts?: ConnectOptions) => void;
   readonly disconnect: () => void;
 }
 
@@ -69,21 +96,72 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState<ConnectionConfig | null>(() => {
     const initial = readInitialConfig();
     // Auto-connect only when the user explicitly connected before (stored) or
-    // deep-linked (query). First visit shows the connect screen.
+    // deep-linked (query). First visit goes through the discovery bootstrap.
     const params = new URLSearchParams(window.location.search);
     if (params.has('url') || params.has('token')) return initial;
     return localStorage.getItem(STORAGE_KEY) !== null ? initial : null;
   });
   const [wsState, setWsState] = useState<WsSocketState>('connecting');
+  const [discovering, setDiscovering] = useState(config === null);
+  const [suppressDiscovery, setSuppressDiscovery] = useState(false);
+
+  // Discovery bootstrap: with nothing explicit configured, scan the local
+  // kap-server instance registry (via the dev middleware) and auto-connect.
+  useEffect(() => {
+    if (config !== null || suppressDiscovery) return;
+    let cancelled = false;
+    setDiscovering(true);
+    void fetchServerDiscovery().then((discovery) => {
+      if (cancelled) return;
+      setDiscovering(false);
+      if (discovery === null) return;
+      const pick = pickDefaultServer(discovery, localStorage.getItem(REMEMBERED_SERVER_KEY));
+      if (pick === undefined) return;
+      setConfig({ url: pick.url, token: discovery.token ?? '' });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [config, suppressDiscovery]);
+
+  // RPC surface probe: dev servers (`--debug-endpoints`) mount the
+  // whitelist-free `/api/v1/debug` dispatcher; older/production servers fall
+  // back to the `/api/v2` whitelist set. The client is built only after the
+  // probe for this exact config has resolved.
+  const [probe, setProbe] = useState<{ readonly key: string; readonly rpcBase: RpcBasePath } | null>(
+    null,
+  );
+  const configKey =
+    config === null ? null : `${resolveBaseUrl(config.url)}|${config.token.trim()}`;
+
+  useEffect(() => {
+    if (config === null || configKey === null) {
+      setProbe(null);
+      return;
+    }
+    let cancelled = false;
+    const token = config.token.trim();
+    void probeRpcBasePath({
+      baseUrl: resolveBaseUrl(config.url),
+      token: token === '' ? undefined : token,
+    }).then((rpcBase) => {
+      if (!cancelled) setProbe({ key: configKey, rpcBase });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [config, configKey]);
 
   const klient = useMemo(() => {
-    if (config === null) return null;
+    if (config === null || configKey === null) return null;
+    if (probe === null || probe.key !== configKey) return null;
     const token = config.token.trim();
-    return createGenericKlient({
+    return createInspectClient({
       url: resolveBaseUrl(config.url),
       token: token === '' ? undefined : token,
+      rpcBasePath: probe.rpcBase,
     });
-  }, [config]);
+  }, [config, configKey, probe]);
 
   useEffect(() => {
     if (klient === null) return;
@@ -96,13 +174,23 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     };
   }, [klient]);
 
-  const connect = useCallback((next: ConnectionConfig) => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+  const connect = useCallback((next: ConnectionConfig, opts: ConnectOptions = {}) => {
+    if (opts.persist ?? true) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } else {
+      localStorage.removeItem(STORAGE_KEY);
+    }
+    if (opts.rememberServerUrl !== undefined) {
+      localStorage.setItem(REMEMBERED_SERVER_KEY, opts.rememberServerUrl);
+    }
+    setSuppressDiscovery(false);
     setConfig(next);
   }, []);
 
   const disconnect = useCallback(() => {
     localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(REMEMBERED_SERVER_KEY);
+    setSuppressDiscovery(true);
     setConfig(null);
   }, []);
 
@@ -113,10 +201,20 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
 
   return (
     <ConnectionContext.Provider value={value}>
-      {value === null ? (
-        <ConnectScreen onConnect={connect} initial={readInitialConfig()} />
-      ) : (
+      {value !== null ? (
         children
+      ) : config !== null ? (
+        <div className="flex h-screen items-center justify-center">
+          <div className="text-sm text-neutral-500">
+            Connecting to {resolveBaseUrl(config.url)}…
+          </div>
+        </div>
+      ) : discovering && !suppressDiscovery ? (
+        <div className="flex h-screen items-center justify-center">
+          <div className="text-sm text-neutral-500">Discovering local kap-servers…</div>
+        </div>
+      ) : (
+        <ConnectScreen onConnect={connect} initial={readInitialConfig()} />
       )}
     </ConnectionContext.Provider>
   );
@@ -134,11 +232,13 @@ function ConnectScreen({
   onConnect,
   initial,
 }: {
-  onConnect: (config: ConnectionConfig) => void;
+  onConnect: (config: ConnectionConfig, opts?: ConnectOptions) => void;
   initial: ConnectionConfig;
 }) {
   const [url, setUrl] = useState(initial.url);
   const [token, setToken] = useState(initial.token);
+  const discovery = useServerDiscovery();
+  const servers = discovery.data?.servers ?? [];
   return (
     <div className="flex h-screen items-center justify-center">
       <form
@@ -154,6 +254,34 @@ function ConnectScreen({
           URL empty to use the same-origin dev proxy
           {` (${__KIMI_INSPECT_PROXY_TARGET__})`}.
         </p>
+        {servers.length > 0 ? (
+          <div className="mb-5">
+            <div className="mb-1 text-xs text-neutral-400">
+              Discovered on this machine{discovery.data?.home ? ` (${discovery.data.home})` : ''}
+            </div>
+            <div className="space-y-1.5">
+              {servers.map((s) => (
+                <button
+                  key={s.id}
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-left text-[12px] text-neutral-200 hover:border-sky-600"
+                  onClick={() =>
+                    onConnect(
+                      { url: s.url, token: discovery.data?.token ?? '' },
+                      { persist: false, rememberServerUrl: s.url },
+                    )
+                  }
+                >
+                  <span className="font-mono">{s.url.replace(/^https?:\/\//, '')}</span>
+                  {s.pid !== undefined ? (
+                    <span className="text-[10px] text-neutral-500">pid {s.pid}</span>
+                  ) : null}
+                  <span className="ml-auto text-[10px] uppercase text-neutral-600">{s.source}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <label className="mb-1 block text-xs text-neutral-400">Server URL</label>
         <input
           className="mb-4 w-full rounded border border-neutral-700 bg-neutral-950 px-3 py-2 text-sm text-neutral-100 outline-none focus:border-sky-600"
