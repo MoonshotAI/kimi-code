@@ -85,6 +85,9 @@ export const zh: DeepPartial<typeof import('./en').default> = {
     commandsEntryInvalid: '"commands" 条目必须是目录或 .md 文件（{{entry}}）',
     mcpServerCommandPath: '"mcpServers.{{name}}.command" 必须是 PATH 命令或以 "./" 开头',
   },
+  session: {
+    newSession: '新会话',
+  },
   background: {
     taskStarted: '后台 {{kind}} 已启动',
     taskTimedOut: '{{description}} 已超时。',
@@ -138,6 +141,7 @@ export const zh: DeepPartial<typeof import('./en').default> = {
   },
   tools: {
     grepTimedOut: 'Grep 在 {{seconds}}s 后超时。请尝试更具体的路径或模式。',
+    grepPartial: 'Grep 在 {{seconds}}s 后超时；返回部分结果',
     grepAborted: 'Grep 已中止',
     agentResumeTimedOut: 'Agent 恢复在 {{timeout}} 后超时。',
   },

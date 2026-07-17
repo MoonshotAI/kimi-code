@@ -154,8 +154,6 @@ function providerApiKeyEnvFallback(
       return nonEmpty(env?.['GOOGLE_API_KEY']);
     case 'vertexai':
       return nonEmpty(env?.['VERTEXAI_API_KEY']) ?? nonEmpty(env?.['GOOGLE_API_KEY']);
-    case 'mimo-free':
-      return undefined; // free model — no API key required
     default: {
       const exhaustive: never = protocol;
       return exhaustive;

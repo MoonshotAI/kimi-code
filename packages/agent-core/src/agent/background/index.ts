@@ -21,7 +21,7 @@ import { resettableTimeoutOutcome, timeoutOutcome, type ResettableTimeoutPromise
 import { escapeXml, escapeXmlAttr } from '../../utils/xml-escape';
 import type { BackgroundTaskOrigin } from '../context';
 import { renderNotificationXml } from '../context/notification-xml';
-import { t } from '../i18n';
+import { t } from '../i18n/index';
 import { type BackgroundTaskPersistence } from './persist';
 import {
   TERMINAL_STATUSES,

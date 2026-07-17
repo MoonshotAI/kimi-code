@@ -18,7 +18,7 @@
  */
 
 import type { Kaos } from '@moonshot-ai/kaos';
-import { t } from '../../i18n';
+import { t } from '../../i18n/index';
 import { normalize, resolve } from 'pathe';
 import { z } from 'zod';
 
@@ -336,7 +336,7 @@ export class GrepTool implements BuiltinTool<GrepInput> {
     }
     if (timedOut) {
       messages.push(
-        `Grep timed out after ${String(DEFAULT_TIMEOUT_MS / 1000)}s; partial results returned`,
+        t('tools.grepPartial', { seconds: String(DEFAULT_TIMEOUT_MS / 1000) }),
       );
     }
 

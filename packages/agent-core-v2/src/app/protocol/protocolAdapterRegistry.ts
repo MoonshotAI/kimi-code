@@ -19,7 +19,6 @@ const SUPPORTED: readonly Protocol[] = [
   'openai_responses',
   'google-genai',
   'vertexai',
-  'mimo-free',
 ];
 
 export class ProtocolAdapterRegistry

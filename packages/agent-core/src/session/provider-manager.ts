@@ -368,17 +368,6 @@ function toKosongProviderConfig(
         }),
       };
     }
-    case 'mimo-free':
-      return {
-        type: 'mimo-free',
-        model,
-        ...(maxOutputSize !== undefined ? { maxTokens: maxOutputSize } : {}),
-        ...defaultHeadersField({
-          ...envCustomHeaders,
-          ...kimiUserAgentHeader(kimiRequestHeaders),
-          ...provider.customHeaders,
-        }),
-      };
     default: {
       const exhaustive: never = effectiveType;
       throw new KimiError(
@@ -429,8 +418,6 @@ function providerApiKey(provider: ProviderConfig): string | undefined {
         envValue(provider.env, 'VERTEXAI_API_KEY') ??
         envValue(provider.env, 'GOOGLE_API_KEY')
       );
-    case 'mimo-free':
-      return undefined; // free model — no API key needed
     default: {
       const exhaustive: never = provider.type;
       throw new KimiError(

@@ -1,7 +1,7 @@
 import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { t } from '../i18n';
+import { t } from '../i18n/index';
 import {
   HookDefSchema,
   McpServerConfigSchema,

@@ -11,7 +11,7 @@ import { GoogleGenAIChatProvider, type GoogleGenAIOptions } from './google-genai
 import { KimiChatProvider, type KimiOptions } from './kimi';
 import { OpenAILegacyChatProvider, type OpenAILegacyOptions } from './openai-legacy';
 import { OpenAIResponsesChatProvider, type OpenAIResponsesOptions } from './openai-responses';
-import { MimoFreeChatProvider, type MimoFreeOptions } from './mimo-free';
+
 
 export type ProviderConfig =
   | ({ type: 'anthropic' } & AnthropicOptions)
@@ -19,8 +19,7 @@ export type ProviderConfig =
   | ({ type: 'kimi' } & KimiOptions)
   | ({ type: 'google-genai' } & GoogleGenAIOptions)
   | ({ type: 'openai_responses' } & OpenAIResponsesOptions)
-  | ({ type: 'vertexai' } & GoogleGenAIOptions)
-  | ({ type: 'mimo-free' } & MimoFreeOptions);
+  | ({ type: 'vertexai' } & GoogleGenAIOptions);
 
 export type ProviderType = ProviderConfig['type'];
 
@@ -38,8 +37,6 @@ export function createProvider(config: ProviderConfig): ChatProvider {
       return new OpenAIResponsesChatProvider(config);
     case 'vertexai':
       return new GoogleGenAIChatProvider(config);
-    case 'mimo-free':
-      return new MimoFreeChatProvider(config);
     default: {
       const exhaustive: never = config;
       throw new Error(`Unknown provider type: ${String(exhaustive)}`);
@@ -52,8 +49,6 @@ export function getModelCapability(wire: ProviderType, modelName: string): Model
     case 'anthropic':
       return getAnthropicModelCapability(modelName);
     case 'openai':
-      return getOpenAILegacyModelCapability(modelName);
-    case 'mimo-free':
       return getOpenAILegacyModelCapability(modelName);
     case 'openai_responses':
       return getOpenAIResponsesModelCapability(modelName);

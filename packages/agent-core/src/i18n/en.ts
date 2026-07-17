@@ -83,6 +83,9 @@ export const en = {
     commandsEntryInvalid: '"commands" entry must be a directory or .md file ({{entry}})',
     mcpServerCommandPath: '"mcpServers.{{name}}.command" must be a PATH command or start with "./"',
   },
+  session: {
+    newSession: 'New Session',
+  },
   background: {
     taskStarted: 'Background {{kind}} started',
     taskTimedOut: '{{description}} timed out.',
@@ -136,6 +139,7 @@ export const en = {
   },
   tools: {
     grepTimedOut: 'Grep timed out after {{seconds}}s. Try a more specific path or pattern.',
+    grepPartial: 'Grep timed out after {{seconds}}s; partial results returned',
     grepAborted: 'Grep aborted',
     agentResumeTimedOut: 'Agent resume timed out after {{timeout}}.',
   },

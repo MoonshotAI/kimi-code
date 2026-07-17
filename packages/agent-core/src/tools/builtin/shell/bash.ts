@@ -23,7 +23,7 @@
  */
 
 import type { Kaos, KaosProcess } from '@moonshot-ai/kaos';
-import { t } from '../../i18n';
+import { t } from '../../i18n/index';
 import { z } from 'zod';
 
 import { ProcessBackgroundTask, type BackgroundManager } from '../../../agent/background';

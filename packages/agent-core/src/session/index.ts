@@ -1,3 +1,4 @@
+import { t } from '../i18n/index';
 import { homedir } from 'node:os';
 import { join } from 'pathe';
 import type { Kaos } from '@moonshot-ai/kaos';
@@ -189,7 +190,7 @@ export class Session {
   metadata: SessionMeta = {
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
-    title: 'New Session',
+    title: t('session.newSession'),
     isCustomTitle: false,
     agents: {},
     custom: {},

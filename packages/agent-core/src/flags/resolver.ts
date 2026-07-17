@@ -1,5 +1,5 @@
 import { parseBooleanEnv } from '#/config/resolve';
-import { t } from './i18n';
+import { t } from './i18n/index';
 
 import { FLAG_DEFINITIONS, type FlagId } from './registry';
 import type {

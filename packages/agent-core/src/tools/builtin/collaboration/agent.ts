@@ -15,7 +15,7 @@
  * runtime.
  */
 
-import { t } from '../../i18n';
+import { t } from '../../i18n/index';
 import { z } from 'zod';
 
 import type { BuiltinTool } from '../../../agent/tool';

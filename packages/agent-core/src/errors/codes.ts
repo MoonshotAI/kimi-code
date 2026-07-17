@@ -1,4 +1,4 @@
-import { t } from './i18n';
+import { t } from './i18n/index';
 
 /**
  * Error codes for Kimi Core's public error protocol.
