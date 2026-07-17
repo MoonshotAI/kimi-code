@@ -30,16 +30,75 @@ use std::collections::HashMap;
 /// @param n_lines - Number of lines to read. Capped at 1000.
 /// @returns ReadResult with content (line-numbered), lineCount, and optional error.
 #[napi]
-pub fn native_read(
+pub async fn native_read(
     path: String,
     line_offset: Option<i64>,
     n_lines: Option<u32>,
 ) -> ReadResult {
-    read::read_file(&ReadConfig {
-        path,
-        line_offset,
-        n_lines,
+    tokio::task::spawn_blocking(move || {
+        read::read_file(&ReadConfig {
+            path,
+            line_offset,
+            n_lines,
+        })
     })
+    .await
+    .unwrap_or_else(|e| ReadResult {
+        content: String::new(),
+        line_count: 0,
+        error: Some(format!("read panicked: {e}")),
+    })
+}
+
+// ============================================================================
+// Batch Read — parallel multi-file read via tokio
+// ============================================================================
+
+/// Read multiple files in parallel using tokio's blocking thread pool.
+///
+/// Each file is read independently; results are returned in the same order as
+/// the input paths. This is more efficient than N sequential `native_read`
+/// calls because file I/O operations run concurrently.
+///
+/// @param paths - Array of file paths to read.
+/// @param line_offsets - Optional per-file line offsets (defaults to 1 for each).
+/// @param n_lines - Optional per-file line counts (defaults to MAX_LINES).
+/// @returns Array of ReadResult, one per input path, in input order.
+#[napi]
+pub async fn native_batch_read(
+    paths: Vec<String>,
+    line_offsets: Option<Vec<Option<i64>>>,
+    n_lines_array: Option<Vec<Option<u32>>>,
+) -> Vec<ReadResult> {
+    let offsets = line_offsets.unwrap_or_else(|| vec![None; paths.len()]);
+    let lines = n_lines_array.unwrap_or_else(|| vec![None; paths.len()]);
+
+    let tasks: Vec<_> = paths
+        .into_iter()
+        .zip(offsets.into_iter())
+        .zip(lines.into_iter())
+        .map(|((path, line_offset), n_lines)| {
+            tokio::task::spawn_blocking(move || {
+                read::read_file(&ReadConfig {
+                    path,
+                    line_offset,
+                    n_lines,
+                })
+            })
+        })
+        .collect();
+
+    let mut results = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        results.push(
+            task.await.unwrap_or_else(|e| ReadResult {
+                content: String::new(),
+                line_count: 0,
+                error: Some(format!("read panicked: {e}")),
+            }),
+        );
+    }
+    results
 }
 
 // ============================================================================
@@ -53,7 +112,7 @@ pub fn native_read(
 /// @param mode - "overwrite" or "append". Defaults to "overwrite".
 /// @returns WriteResult with bytesWritten and optional error.
 #[napi]
-pub fn native_write(
+pub async fn native_write(
     path: String,
     content: String,
     mode: Option<String>,
@@ -62,7 +121,14 @@ pub fn native_write(
         Some("append") => WriteMode::Append,
         _ => WriteMode::Overwrite,
     };
-    write::write_file(&path, &content, write_mode)
+    tokio::task::spawn_blocking(move || {
+        write::write_file(&path, &content, write_mode)
+    })
+    .await
+    .unwrap_or_else(|e| WriteResult {
+        bytes_written: 0,
+        error: Some(format!("write panicked: {e}")),
+    })
 }
 
 // ============================================================================

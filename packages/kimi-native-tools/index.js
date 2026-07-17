@@ -83,13 +83,34 @@ const BASH_MAX_TIMEOUT = binding.BASH_MAX_TIMEOUT;
  * @param {object} [options] - Read options.
  * @param {number} [options.lineOffset] - Line to start from (1-indexed). Negative = tail.
  * @param {number} [options.nLines] - Number of lines to read. Capped at 1000.
- * @returns {{ content: string, lineCount: number, error?: string }}
+ * @returns {Promise<{ content: string, lineCount: number, error?: string }>}
  */
-function nativeRead(path, options = {}) {
+async function nativeRead(path, options = {}) {
   return binding.nativeRead(
     path,
     options.lineOffset ?? null,
     options.nLines ?? null,
+  );
+}
+
+// ============================================================================
+// Batch Read — parallel multi-file read
+// ============================================================================
+
+/**
+ * Read multiple files in parallel.
+ *
+ * @param {string[]} paths - Array of file paths to read.
+ * @param {object} [options] - Read options.
+ * @param {Array<number|null>} [options.lineOffsets] - Per-file line offsets.
+ * @param {Array<number|null>} [options.nLinesArray] - Per-file line counts.
+ * @returns {Promise<Array<{ content: string, lineCount: number, error?: string }>>}
+ */
+async function nativeBatchRead(paths, options = {}) {
+  return binding.nativeBatchRead(
+    paths,
+    options.lineOffsets ?? null,
+    options.nLinesArray ?? null,
   );
 }
 
@@ -104,9 +125,9 @@ function nativeRead(path, options = {}) {
  * @param {string} content - Content to write.
  * @param {object} [options] - Write options.
  * @param {'overwrite'|'append'} [options.mode] - Write mode. Default 'overwrite'.
- * @returns {{ bytesWritten: number, error?: string }}
+ * @returns {Promise<{ bytesWritten: number, error?: string }>}
  */
-function nativeWrite(path, content, options = {}) {
+async function nativeWrite(path, content, options = {}) {
   return binding.nativeWrite(
     path,
     content,
@@ -674,6 +695,7 @@ function nativeGoalRenderObjectiveUpdated(objective, tokensUsed, tokenBudget) {
 module.exports = {
   // Tools
   nativeRead,
+  nativeBatchRead,
   nativeWrite,
   nativeEdit,
   nativeGrep,
