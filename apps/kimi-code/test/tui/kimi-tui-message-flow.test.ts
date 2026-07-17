@@ -20,6 +20,7 @@ import {
   agentSwarmGridHeightForTerminalRows,
 } from '#/tui/components/messages/agent-swarm-progress';
 import { BtwPanelComponent } from '#/tui/components/panes/btw-panel';
+import { ThinkingComponent } from '#/tui/components/messages/thinking';
 import { WelcomeComponent } from '#/tui/components/chrome/welcome';
 import { ModelSelectorComponent } from '#/tui/components/dialogs/model-selector';
 import { TabbedModelSelectorComponent } from '#/tui/components/dialogs/tabbed-model-selector';
@@ -4955,6 +4956,65 @@ command = "vim"
     );
 
     expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
+  });
+
+  it('does not create a thinking component for whitespace-only thinking deltas', async () => {
+    const { driver } = await makeDriver();
+    driver.state.appState.streamingPhase = 'waiting';
+
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: ' ',
+      } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+
+    // Nothing to render: no component, and the phase is not hijacked into thinking.
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
+    expect(driver.state.appState.streamingPhase).toBe('waiting');
+
+    // Real thinking text after the whitespace still starts thinking normally.
+    driver.sessionEventHandler.handleEvent(
+      {
+        type: 'thinking.delta',
+        agentId: 'main',
+        sessionId: 'ses-1',
+        delta: 'actual reasoning',
+      } as Event,
+      vi.fn(),
+    );
+    driver.streamingUI.flushNow();
+
+    expect(driver.state.appState.streamingPhase).toBe('thinking');
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(true);
+    expect(stripSgr(renderTranscript(driver))).toContain('actual reasoning');
+  });
+
+  it('does not create a thinking component for whitespace-only thinking on session replay', async () => {
+    const { driver } = await makeDriver();
+
+    // Session replay flushes stored thinking verbatim through onThinkingUpdate
+    // (see SessionReplayRenderer.flushAssistant), so a persisted whitespace-only
+    // think part must not become a bare bullet line.
+    driver.streamingUI.onThinkingUpdate(' ');
+    driver.streamingUI.onThinkingEnd();
+
+    expect(driver.streamingUI.hasActiveThinkingComponent()).toBe(false);
+    expect(
+      driver.state.transcriptContainer.children.filter(
+        (child) => child instanceof ThinkingComponent,
+      ),
+    ).toHaveLength(0);
+
+    // Real stored thinking still replays normally.
+    driver.streamingUI.onThinkingUpdate('visible reasoning');
+    driver.streamingUI.onThinkingEnd();
+
+    expect(stripSgr(renderTranscript(driver))).toContain('visible reasoning');
   });
 
   it('keeps the waiting moon spinner while reasoning streams only empty (encrypted) thinking deltas', async () => {
