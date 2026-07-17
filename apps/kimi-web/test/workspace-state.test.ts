@@ -2089,6 +2089,106 @@ describe('useWorkspaceState — prompt queue persistence', () => {
 
     expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['b', 'a']);
   });
+
+  it('does not flush a queue entry owned by another tab on a witnessed turn end', () => {
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'foreign', attachments: undefined, id: 'id-foreign', enqueuedAt: 1, ownerTabId: 'tab_other' },
+      ],
+    };
+    const ws = useWorkspaceState(state, deps());
+
+    // Both tabs witness the same turn end; only the owner tab may submit —
+    // the server would otherwise accept both as distinct prompts.
+    ws.finishPromptLocal('sess_1', { turnWasActive: true });
+
+    expect(apiMock.submitPrompt).not.toHaveBeenCalled();
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['foreign']);
+  });
+
+  it('adopts foreign-owned entries on an idle send so a stranded queue can flush', async () => {
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'foreign head', attachments: undefined, id: 'id-f', enqueuedAt: 1, ownerTabId: 'tab_other' },
+      ],
+    };
+    const ws = useWorkspaceState(state, deps({ activity: computed(() => 'idle') }));
+
+    await ws.sendPrompt('mine');
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledOnce();
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_1',
+      expect.objectContaining({ content: [{ type: 'text', text: 'foreign head' }] }),
+    );
+    // Ownership transferred to this tab — nothing stays owned by the dead tab.
+    expect(state.queuedBySession.sess_1?.every((e) => e.ownerTabId !== 'tab_other')).toBe(true);
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['mine']);
+  });
+
+  it('prefers the newer enqueuedAt per id so a reorder converges instead of ping-ponging', async () => {
+    const state = reactive(createState());
+    state.queuedBySession = {
+      sess_1: [
+        { text: 'a', attachments: undefined, id: 'id-a', enqueuedAt: 1 },
+        { text: 'b', attachments: undefined, id: 'id-b', enqueuedAt: 2 },
+      ],
+    };
+    const ws = useWorkspaceState(state, deps());
+
+    // Another tab reordered (b first — reorder re-stamps display order as
+    // ascending timestamps, so b carries the SMALLER newer stamp) and
+    // persisted that; this tab must adopt the newer order even though its
+    // own copy disagrees.
+    localStorage.setItem(
+      STORAGE_KEYS.promptQueue,
+      JSON.stringify({
+        sess_1: {
+          entries: [
+            { text: 'b', attachments: undefined, id: 'id-b', enqueuedAt: 1001 },
+            { text: 'a', attachments: undefined, id: 'id-a', enqueuedAt: 1002 },
+          ],
+        },
+      }),
+    );
+    ws.syncQueuedPromptsFromStorage();
+
+    expect(state.queuedBySession.sess_1?.map((e) => e.text)).toEqual(['b', 'a']);
+    // ...and convergence is stable: a second adopt writes nothing new.
+    await nextTick();
+    const once = localStorage.getItem(STORAGE_KEYS.promptQueue);
+    ws.syncQueuedPromptsFromStorage();
+    await nextTick();
+    expect(localStorage.getItem(STORAGE_KEYS.promptQueue)).toBe(once);
+  });
+
+  it('does not resurrect the queue when a submit fails after the session was forgotten', async () => {
+    let rejectSubmit!: (err: Error) => void;
+    apiMock.submitPrompt.mockImplementation(
+      () =>
+        new Promise<{ promptId: string }>((_resolve, reject) => {
+          rejectSubmit = reject;
+        }),
+    );
+    const state = createState();
+    state.queuedBySession = {
+      sess_1: [{ text: 'doomed', attachments: undefined, id: 'id-doomed', enqueuedAt: 1 }],
+    };
+    const ws = useWorkspaceState(state, deps());
+
+    ws.finishPromptLocal('sess_1', { turnWasActive: true });
+    expect(state.queuedBySession.sess_1 ?? []).toEqual([]);
+
+    // Session archived (facade forget path) while the submit is pending.
+    state.sessions = [];
+    ws.discardQueuedPrompts('sess_1');
+    rejectSubmit(new Error('network down'));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+    expect(state.queuedBySession.sess_1).toBeUndefined();
+  });
 });
 
 // Regression: a search-triggered full session-list reload must not clobber the

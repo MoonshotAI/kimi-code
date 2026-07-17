@@ -146,6 +146,16 @@ const MAX_QUEUE_FLUSH_FAILURES = 3;
  */
 const queueInFlightSubmits = new Map<string, Set<string>>();
 
+/**
+ * Per-page-load tab identity. Queue entries record their owner tab; only the
+ * owner tab flushes an entry (turn-end events reach EVERY tab, and the
+ * server happily accepts concurrent submissions as distinct prompts — so
+ * flush ownership is what stops two tabs from double-submitting a shared
+ * entry). Stored in memory, not persisted: after a refresh the old owner is
+ * gone and entries become adoptable by the next tab the user sends from.
+ */
+const TAB_ID = `tab_${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
+
 /** How long a removal stays remembered in the shared snapshot (per id). */
 const QUEUE_GONE_TTL_MS = 30 * 60 * 1000;
 
@@ -154,6 +164,7 @@ type QueuedPromptEntry = {
   attachments?: PromptAttachment[];
   id?: string;
   enqueuedAt?: number;
+  ownerTabId?: string;
 };
 
 /**
@@ -211,23 +222,32 @@ function mergeQueuedSnapshots(
   for (const sid of sids) {
     const gone = goneBySid[sid] ?? {};
     const submitting = queueInFlightSubmits.get(sid);
-    const seenIds = new Set<string>();
+    const byId = new Map<string, QueuedPromptEntry>();
     const seenContent = new Set<string>();
-    const merged: QueuedPromptEntry[] = [];
+    const idless: QueuedPromptEntry[] = [];
     for (const entry of [...(a[sid] ?? []), ...(b[sid] ?? [])]) {
       if (entry.id !== undefined) {
-        if (seenIds.has(entry.id) || gone[entry.id] !== undefined || submitting?.has(entry.id)) {
-          continue;
+        if (gone[entry.id] !== undefined || submitting?.has(entry.id)) continue;
+        // Prefer the copy with the NEWER enqueuedAt. A manual reorder
+        // re-stamps timestamps, so max-timestamp-per-id is the deterministic
+        // winner every tab converges to — keeping the local copy
+        // unconditionally would ping-pong the order between tabs forever.
+        const prev = byId.get(entry.id);
+        if (
+          prev === undefined ||
+          (entry.enqueuedAt ?? Number.NEGATIVE_INFINITY) >
+            (prev.enqueuedAt ?? Number.NEGATIVE_INFINITY)
+        ) {
+          byId.set(entry.id, entry);
         }
-        seenIds.add(entry.id);
       } else {
         const contentKey = `${entry.text}\n${JSON.stringify(entry.attachments ?? null)}`;
         if (seenContent.has(contentKey)) continue;
         seenContent.add(contentKey);
+        idless.push(entry);
       }
-      merged.push(entry);
     }
-    const sorted = sortQueuedEntries(merged);
+    const sorted = sortQueuedEntries([...byId.values(), ...idless]);
     if (sorted.length > 0) out[sid] = sorted;
   }
   return out;
@@ -269,10 +289,17 @@ function loadQueueSnapshots(): Record<string, SessionQueueSnapshot> {
 
 function isQueuedPromptLike(value: unknown): value is QueuedPromptEntry {
   if (!value || typeof value !== 'object') return false;
-  const entry = value as { text?: unknown; attachments?: unknown; id?: unknown; enqueuedAt?: unknown };
+  const entry = value as {
+    text?: unknown;
+    attachments?: unknown;
+    id?: unknown;
+    enqueuedAt?: unknown;
+    ownerTabId?: unknown;
+  };
   if (typeof entry.text !== 'string') return false;
   if (entry.id !== undefined && typeof entry.id !== 'string') return false;
   if (entry.enqueuedAt !== undefined && typeof entry.enqueuedAt !== 'number') return false;
+  if (entry.ownerTabId !== undefined && typeof entry.ownerTabId !== 'string') return false;
   if (entry.attachments === undefined) return true;
   if (!Array.isArray(entry.attachments)) return false;
   return entry.attachments.every(isPromptAttachmentLike);
@@ -569,7 +596,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
    */
   function discardQueuedPrompts(sid: string): void {
     const current = rawState.queuedBySession[sid] ?? [];
-    tombstoneQueuedIds(sid, current.map((entry) => entry.id));
+    // Tombstone in-flight submits of this session too: their .then callback
+    // runs later and (on failure) must not resurrect the entry — the shared
+    // removal set also tells every other tab to drop it.
+    const inFlight = queueInFlightSubmits.get(sid);
+    queueInFlightSubmits.delete(sid);
+    tombstoneQueuedIds(sid, [...current.map((entry) => entry.id), ...(inFlight ?? [])]);
     if (rawState.queuedBySession[sid] !== undefined) {
       const next = { ...rawState.queuedBySession };
       delete next[sid];
@@ -1853,6 +1885,19 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     // stuck entries without a flush driver.
     if ((rawState.queuedBySession[sid]?.length ?? 0) > 0) {
       enqueue(text, attachments);
+      // Take over entries enqueued by other (possibly long-closed) tabs so
+      // this user-initiated send can actually flush them — only the owner
+      // tab flushes, so a foreign head would otherwise strand the queue.
+      // Adoption happens ONLY here, never on passive sync, which would let
+      // two open tabs steal entries back and forth.
+      rawState.queuedBySession = {
+        ...rawState.queuedBySession,
+        [sid]: (rawState.queuedBySession[sid] ?? []).map((entry) =>
+          entry.ownerTabId !== undefined && entry.ownerTabId !== TAB_ID
+            ? { ...entry, ownerTabId: TAB_ID }
+            : entry,
+        ),
+      };
       flushQueueHead(sid);
       return;
     }
@@ -2014,12 +2059,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     if (!sid) return;
     const current = rawState.queuedBySession[sid] ?? [];
     // The id is the entry's stable identity for cross-tab merge/dedupe; the
-    // timestamp orders merged snapshots (and can be re-stamped by reorder).
+    // timestamp orders merged snapshots (and can be re-stamped by reorder);
+    // the owner tab is the only one allowed to flush it.
     const entry: QueuedPromptEntry = {
       text,
       attachments,
       id: nextQueueEntryId(),
       enqueuedAt: Date.now(),
+      ownerTabId: TAB_ID,
     };
     rawState.queuedBySession = {
       ...rawState.queuedBySession,
@@ -2046,6 +2093,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
   function flushQueueHead(sid: string): void {
     const [next, ...rest] = rawState.queuedBySession[sid] ?? [];
     if (next === undefined) return;
+    // Only the tab that enqueued an entry flushes it. Turn-end events reach
+    // every tab, and the server accepts concurrent submissions as distinct
+    // prompts — without this ownership check, two tabs holding the same
+    // adopted entry would both submit it. Ownerless entries (legacy
+    // persisted data, or tests) flush anywhere.
+    if (next.ownerTabId !== undefined && next.ownerTabId !== TAB_ID) return;
     rawState.queuedBySession = { ...rawState.queuedBySession, [sid]: rest };
     if (next.id !== undefined) {
       const submitting = queueInFlightSubmits.get(sid) ?? new Set<string>();
@@ -2059,6 +2112,14 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         if (submitting?.size === 0) queueInFlightSubmits.delete(sid);
       }
       if (ok) {
+        queueFlushFailures.delete(sid);
+        tombstoneQueuedIds(sid, [next.id]);
+        return;
+      }
+      // The session was forgotten (e.g. archived) while the submit was
+      // pending — its queue was already discarded, so don't resurrect the
+      // entry; just make sure no other tab picks it up either.
+      if (!rawState.sessions.some((s) => s.id === sid)) {
         queueFlushFailures.delete(sid);
         tombstoneQueuedIds(sid, [next.id]);
         return;

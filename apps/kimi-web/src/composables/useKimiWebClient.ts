@@ -298,13 +298,15 @@ export type PromptAttachment = {
 /** A prompt waiting for the session to go idle. Keeps the uploaded
     fileIds so attachments survive queueing (not just the text). The id is
     the entry's stable identity for cross-tab merge/dedupe; enqueuedAt orders
-    merged snapshots and is re-stamped on manual reorder. Both are assigned
-    at enqueue time and persisted. */
+    merged snapshots and is re-stamped on manual reorder; ownerTabId marks
+    the only tab allowed to flush it (turn-end events reach every tab).
+    All three are assigned at enqueue time and persisted. */
 interface QueuedPrompt {
   text: string;
   attachments?: PromptAttachment[];
   id?: string;
   enqueuedAt?: number;
+  ownerTabId?: string;
 }
 
 export interface ExtendedState extends KimiClientState {
