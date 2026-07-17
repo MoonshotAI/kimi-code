@@ -173,13 +173,23 @@ function loadThinkingMap(): Record<string, ThinkingLevel> {
   return out;
 }
 
+// The RUNTIME source of truth for per-model picks is this in-memory map,
+// hydrated from localStorage once at startup. Explicit picks update it first
+// (see saveThinkingToStorage), so a pick takes effect even when persistence is
+// unavailable (storage policy/quota — safeSetJson swallows those failures),
+// and so a pick made later in ANOTHER tab can never change what this tab
+// displays or submits mid-session. localStorage is hydration + best-effort
+// persistence only: written with a read-modify-write merge (same pattern as
+// saveUnread) so concurrent tabs' entries survive, and re-read from scratch on
+// the next startup.
+const thinkingPicks: Record<string, ThinkingLevel> = loadThinkingMap();
+
 function loadThinkingForModel(modelId: string): ThinkingLevel | undefined {
-  return loadThinkingMap()[modelId];
+  return thinkingPicks[modelId];
 }
 
 function saveThinkingToStorage(modelId: string, level: ThinkingLevel): void {
-  // Read-modify-write the whole map (same pattern as saveUnread) so a pick made
-  // in another tab for a different model isn't clobbered by this tab's write.
+  thinkingPicks[modelId] = level;
   const map = loadThinkingMap();
   map[modelId] = level;
   safeSetJson(THINKING_STORAGE_KEY, map);
