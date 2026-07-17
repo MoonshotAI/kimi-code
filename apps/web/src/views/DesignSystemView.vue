@@ -335,7 +335,7 @@ onUnmounted(() => {
               </template>
             </div>
 
-            <p>Do not use emoji as functional icons (the sole exception is the moon phases 🌑…🌘, used only in the "waiting for the Agent to respond" chat state). The Kimi brand mark (the 32×22 eye logo) is a brand asset and is not part of this icon system.</p>
+            <p>Do not use emoji as functional icons (the sole exception is the moon phases 🌑…🌘, used only in the "waiting for the Agent to respond" chat state). The Kimi brand mark (the robot mascot logo) is a brand asset and is not part of this icon system.</p>
             <p>A few <b>special graphics</b> are not in the registry; each has a dedicated component maintained in one place, and must not be copied by hand: <code>&lt;ContextRing :pct /&gt;</code> (the Composer context progress ring, data-driven), <code>&lt;AuthStateIcon kind /&gt;</code> (the success / expired / error colored illustrations in the login flow), <code>&lt;Spinner /&gt;</code> (loading state). Status dots (such as in the Provider list) always use CSS dots (<code>border-radius:50%</code>), not SVG. The <code>scripts/check-style.mjs</code> <code>icon-from-registry</code> rule exempts the above and the brand mark; all other hand-written <code>&lt;svg&gt;</code> is flagged.</p>
 
             <h3 class="sub">Spacing</h3>

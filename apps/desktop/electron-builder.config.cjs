@@ -59,9 +59,11 @@ module.exports = {
   // fallback both read from `<resourcesPath>/desktop-dist`.
   // `build/lproj` carries localized InfoPlist.strings (TCC prompt copy — see
   // mac.extendInfo); lproj dirs must sit directly under Contents/Resources.
+  // `build/tray*` are the system-tray icons (see src/main/tray.ts).
   extraResources: [
     { from: 'desktop-dist', to: 'desktop-dist' },
     { from: 'build/lproj/', to: '.' },
+    { from: 'build/tray*', to: 'build' },
   ],
 
   mac: {

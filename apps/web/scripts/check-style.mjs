@@ -38,7 +38,8 @@ const DOMAIN_HEX_EXEMPT = new Set([
 // Files that legitimately render their own <svg>: bespoke data-viz / colored
 // illustrations, the spinner, and brand marks (the Kimi wordmark on the loading
 // screen). Everything else should use lib/icons.ts via <Icon>/iconSvg(). The
-// 32x22 Kimi eye logo is also exempted inline (matched by viewBox). The icon
+// 32x22 Kimi eye logo (auth page) and the 32x30.848 robot mascot (sidebar
+// header) are also exempted inline (matched by viewBox). The icon
 // primitive (components/ui/Icon.vue) itself renders no hand-written <svg>, so it
 // is not exempted here.
 const ICON_EXEMPT = new Set([
@@ -199,9 +200,9 @@ function checkFile(abs) {
   }
 
   // icon-from-registry (warning only): hand-written <svg> in templates should
-  // come from lib/icons.ts via <Icon>/iconSvg(). Exempt the brand mark (32x22
-  // logo) and the primitive components listed in ICON_EXEMPT. Skips <svg> that
-  // falls inside <style>/<script> blocks.
+  // come from lib/icons.ts via <Icon>/iconSvg(). Exempt the brand marks (auth
+  // eye logo, sidebar robot mascot) and the primitive components listed in
+  // ICON_EXEMPT. Skips <svg> that falls inside <style>/<script> blocks.
   if (!isCss && !ICON_EXEMPT.has(file)) {
     const blockRanges = [...content.matchAll(/<(?:style|script)\b[^>]*>[\s\S]*?<\/(?:style|script)>/gi)]
       .map((m) => [m.index, m.index + m[0].length]);
@@ -210,7 +211,7 @@ function checkFile(abs) {
     let m;
     while ((m = svgRe.exec(content)) !== null) {
       if (inBlock(m.index)) continue;
-      if (/viewBox="0 0 32 22"/.test(m[0])) continue; // Kimi brand mark
+      if (/viewBox="0 0 32 (22|30\.848)"/.test(m[0])) continue; // Kimi brand marks (auth eye logo, sidebar robot mascot)
       add('icon-from-registry(warn)', file, lineOf(content, m.index), m[0].slice(0, 80));
     }
   }

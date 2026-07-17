@@ -28,11 +28,11 @@ import { Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui
 
 const { t } = useI18n();
 
-// Dev-only affordance: when the page is served by the Vite dev server, the
-// logo turns yellow and a backend pill next to the brand shows the engine
-// generation reported by /meta (v1 = older server binary, v2 = kap-server)
-// plus the endpoint the dev proxy forwards to — click it to switch presets
-// without restarting Vite. In production this is all inert.
+// Dev-only affordance: when the page is served by the Vite dev server, a
+// backend pill next to the brand shows the engine generation reported by
+// /meta (v1 = older server binary, v2 = kap-server) plus the endpoint the dev
+// proxy forwards to — click it to switch presets without restarting Vite. In
+// production this is all inert.
 const isDev = import.meta.env.DEV;
 const devBackend = ref<DevBackendState | null>(isDev ? initialDevBackendState() : null);
 if (isDev) {
@@ -677,17 +677,28 @@ onBeforeUnmount(() => {
       <div class="ch">
         <div class="ch-brand">
           <template v-if="!isMacosDesktop">
-            <svg ref="logoRef" class="ch-logo" :class="{ 'is-dev': isDev }" viewBox="0 0 32 22" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
+            <!-- Brand mark: the robot mascot (transparent background, no tile).
+                 The .ch-eyes/.ch-eye classes hook the shared idle look/blink
+                 keyframes in style.css; the viewBox stays ~32 wide so those
+                 px-based transforms keep their old proportions. -->
+            <svg ref="logoRef" class="ch-logo" viewBox="0 0 32 30.848" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kimi Code" @click="onLogoClick" @pointerdown="onLogoPointerDown" @pointerup="onLogoPointerUp" @pointercancel="onLogoPointerUp">
               <defs>
-                <mask id="kimiEyes" maskUnits="userSpaceOnUse">
-                  <rect x="0" y="0" width="32" height="22" fill="#fff" />
-                  <g class="ch-eyes" fill="#000">
-                    <rect class="ch-eye" x="11.8" y="7" width="2.8" height="8" rx="1.4" />
-                    <rect class="ch-eye" x="17.4" y="7" width="2.8" height="8" rx="1.4" />
-                  </g>
-                </mask>
+                <radialGradient id="chLogoFace" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(16.0497 13.5341) scale(15.5988)">
+                  <stop stop-color="#117DFB" />
+                  <stop offset="0.759254" stop-color="#449BFF" />
+                  <stop offset="1" stop-color="#77B6FF" />
+                </radialGradient>
               </defs>
-              <rect x="1" y="1" width="30" height="20" rx="6" fill="var(--logo)" mask="url(#kimiEyes)" />
+              <path d="M16.0497 0C24.5603 0 31.4593 6.8991 31.4593 15.4097C31.4593 23.9203 24.5603 30.8193 16.0497 30.8193C7.5391 30.8193 0.64 23.9203 0.64 15.4097C0.64 6.8991 7.5391 0 16.0497 0Z" fill="#2389FF" />
+              <path d="M16.0497 0C24.5603 0 31.4593 6.8991 31.4593 15.4097C31.4593 23.9203 24.5603 30.8193 16.0497 30.8193C7.5391 30.8193 0.64 23.9203 0.64 15.4097C0.64 6.8991 7.5391 0 16.0497 0Z" fill="url(#chLogoFace)" />
+              <g class="ch-eyes" fill="#fff">
+                <path class="ch-eye" d="M14.2194 9.3719C14.0717 8.2965 14.8168 7.306 15.8836 7.1595C16.9505 7.0129 17.935 7.7659 18.0827 8.8413L18.5325 12.116C18.6802 13.1914 17.9351 14.1819 16.8682 14.3284C15.8015 14.475 14.8169 13.722 14.6692 12.6466L14.2194 9.3719Z" />
+                <path class="ch-eye" d="M22.326 8.3391C22.1857 7.3175 22.8503 6.3824 23.8104 6.2505C24.7706 6.1187 25.6626 6.8399 25.803 7.8616L26.2303 10.9725C26.3706 11.9941 25.706 12.9293 24.7459 13.0611C23.7856 13.193 22.8936 12.4717 22.7533 11.4501L22.326 8.3391Z" />
+              </g>
+              <rect y="19.328" width="32" height="11.52" rx="1.28" fill="#002E58" />
+              <path d="M2.816 22.8975L6.056 24.7681C6.3227 24.9221 6.3227 25.307 6.056 25.461L2.816 27.3316" stroke="#fff" stroke-width="1.0971" stroke-linecap="round" />
+              <path d="M8.448 27.392H11.648" stroke="#007CFF" stroke-width="1.28" stroke-linecap="round" />
+              <path d="M30.4 0C31.2837 0 32 0.7163 32 1.6C32 2.4837 31.2837 3.2 30.4 3.2L28.9883 3.2C28.8842 3.2 28.8 3.1157 28.8 3.0118L28.8 1.6C28.8 0.7163 29.5163 0 30.4 0Z" fill="#1783FF" />
             </svg>
             <span class="ch-name">Kimi Code</span>
             <Pill
@@ -1015,7 +1026,9 @@ onBeforeUnmount(() => {
 }
 .ch-logo {
   height: 22px;
-  width: 32px;
+  /* The mascot is near-square (32×30.848 viewBox); let the width follow the
+     fixed height instead of pinning the old wide-mark 32px. */
+  width: auto;
   flex: none;
   display: block;
   cursor: pointer;
@@ -1025,12 +1038,6 @@ onBeforeUnmount(() => {
 }
 .ch-logo:hover {
   transform: scale(1.08);
-}
-/* Dev-only: tint the mark yellow so a `pnpm dev:web` tab is obvious at a
-   glance. `--logo` is read by the mark's `fill`; overriding it on the svg
-   recolors just this instance. */
-.ch-logo.is-dev {
-  --logo: var(--color-logo-dev);
 }
 .ch-brand {
   display: flex;
