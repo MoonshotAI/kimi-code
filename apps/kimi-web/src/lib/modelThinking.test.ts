@@ -258,6 +258,7 @@ describe('useModelProviderState thinking on model selection', () => {
   const saveThinkingToStorageMock = vi.fn();
   const persistSessionProfileMock = vi.fn();
   let storedThinkingLevels: Record<string, ThinkingLevel>;
+  let legacyThinkingPick: ThinkingLevel | undefined;
 
   beforeEach(() => {
     apiMock.updateSession.mockReset();
@@ -272,6 +273,7 @@ describe('useModelProviderState thinking on model selection', () => {
     persistSessionProfileMock.mockReset();
     persistSessionProfileMock.mockResolvedValue(undefined);
     storedThinkingLevels = {};
+    legacyThinkingPick = undefined;
   });
 
   function createState(options: {
@@ -293,7 +295,7 @@ describe('useModelProviderState thinking on model selection', () => {
       refreshSessionStatus: vi.fn().mockResolvedValue(undefined),
       persistSessionProfile: persistSessionProfileMock,
       activity: computed(() => 'idle'),
-      loadThinkingForModel: (modelId) => storedThinkingLevels[modelId],
+      loadThinkingForModel: (modelId) => storedThinkingLevels[modelId] ?? legacyThinkingPick,
       saveThinkingToStorage: saveThinkingToStorageMock,
       updateSession: (id, update) => {
         state.sessions = state.sessions.map((session) =>
@@ -401,6 +403,42 @@ describe('useModelProviderState thinking on model selection', () => {
     const persistOrder = persistSessionProfileMock.mock.invocationCallOrder[0]!;
     const activateOrder = apiMock.activateSkill.mock.invocationCallOrder[0]!;
     expect(persistOrder).toBeLessThan(activateOrder);
+  });
+
+  it('treats a legacy pre-map pick as a fallback only for models that declare it', async () => {
+    // Upgrade migration: the facade serves the old global pick for models
+    // without their own entry; validation keeps it off models that can't run it.
+    legacyThinkingPick = 'low';
+
+    const effortState = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.id },
+      defaultModel: effortAppModel.id,
+    });
+    const effortProvider = createModelProvider(effortState);
+    await effortProvider.loadModels();
+    expect(effortState.thinking).toBe('low');
+
+    const maxOnlyState = createState({
+      activeSession: { id: 'session-1', model: maxOnlyAppModel.id },
+      defaultModel: maxOnlyAppModel.id,
+    });
+    const maxOnlyProvider = createModelProvider(maxOnlyState);
+    await maxOnlyProvider.loadModels();
+    expect(maxOnlyState.thinking).toBe('max');
+  });
+
+  it('lets a per-model entry win over the legacy pre-map pick', async () => {
+    legacyThinkingPick = 'low';
+    storedThinkingLevels = { [effortAppModel.id]: 'high' };
+    const state = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.id },
+      defaultModel: effortAppModel.id,
+    });
+    const provider = createModelProvider(state);
+
+    await provider.loadModels();
+
+    expect(state.thinking).toBe('high');
   });
 
   it('pins the catalog default in memory when no thinking preference exists', async () => {

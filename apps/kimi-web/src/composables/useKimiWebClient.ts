@@ -126,8 +126,10 @@ const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
 // picked for one model (e.g. 'low' on an effort model) from leaking onto a
 // model that never declared it (e.g. a max-only always-on model) — the old
 // global format did exactly that, leaving the composer showing nothing selected
-// with no way to switch. A legacy plain-string value fails JSON.parse here and
-// is dropped; the next explicit pick rewrites the key in the map format.
+// with no way to switch. The legacy pre-map format (a single global level,
+// stored raw) is not discarded: it becomes a fallback for any model that
+// declares it (see hydrateThinkingPicks), so an existing user's preference
+// survives the upgrade while a max-only model still can't be trapped by it.
 const PERSISTED_THINKING_LEVEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 
 // Appearance types + logic live in ./client/useAppearance; re-exported here so
@@ -173,6 +175,14 @@ function loadThinkingMap(): Record<string, ThinkingLevel> {
   return out;
 }
 
+// Legacy pre-map format: a single global level stored raw via safeSetString
+// (not JSON). It fails JSON.parse in loadThinkingMap above — detect it from the
+// raw string instead of dropping the user's preference on upgrade.
+function loadLegacyThinkingValue(): ThinkingLevel | undefined {
+  const raw = safeGetString(THINKING_STORAGE_KEY);
+  return raw && PERSISTED_THINKING_LEVEL_RE.test(raw) ? (raw as ThinkingLevel) : undefined;
+}
+
 // The RUNTIME source of truth for per-model picks is this in-memory map,
 // hydrated from localStorage once at startup. Explicit picks update it first
 // (see saveThinkingToStorage), so a pick takes effect even when persistence is
@@ -183,9 +193,15 @@ function loadThinkingMap(): Record<string, ThinkingLevel> {
 // saveUnread) so concurrent tabs' entries survive, and re-read from scratch on
 // the next startup.
 const thinkingPicks: Record<string, ThinkingLevel> = loadThinkingMap();
+const legacyThinkingPick: ThinkingLevel | undefined =
+  Object.keys(thinkingPicks).length === 0 ? loadLegacyThinkingValue() : undefined;
 
 function loadThinkingForModel(modelId: string): ThinkingLevel | undefined {
-  return thinkingPicks[modelId];
+  // Per-model entries win. A legacy pre-map global pick stays as a fallback for
+  // models without their own entry — useModelProviderState validates it against
+  // each model's catalog entry, so it only ever applies to models that declare
+  // it (a max-only model still falls through to its default).
+  return thinkingPicks[modelId] ?? legacyThinkingPick;
 }
 
 function saveThinkingToStorage(modelId: string, level: ThinkingLevel): void {
