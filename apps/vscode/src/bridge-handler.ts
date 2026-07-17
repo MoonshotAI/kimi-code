@@ -210,14 +210,21 @@ export class BridgeHandler {
     selection: vscode.Selection,
   ): Promise<string | null> {
     const workDirUri = this.getWorkDirUri(webviewId);
-    if (workDirUri === null || !(await isWorkspacePathContained(workDirUri, documentUri))) return null;
-    const relativePath = relativeWorkspacePath(workDirUri, documentUri);
-    if (relativePath === undefined) return null;
+    // Mirror the CLI/TUI: no UI-level directory gate on mentions. Inside the
+    // working directory the mention is relative; outside it (for example a
+    // file under the session's additionalDirs) it falls back to the absolute
+    // path, and the session's tool layer decides readability. Virtual
+    // documents (untitled:, git:, ...) have no meaningful path to mention.
+    if (workDirUri === null || documentUri.scheme !== workDirUri.scheme) return null;
+    const filePath = relativeWorkspacePath(workDirUri, documentUri) ?? documentUri.fsPath;
+    // Quote paths containing spaces, as the CLI/TUI mention completers do, so
+    // whitespace cannot split the path; any line range goes after the quote.
+    const mentionTarget = filePath.includes(" ") ? `"${filePath}"` : filePath;
 
-    if (selection.isEmpty) return `@${relativePath}`;
+    if (selection.isEmpty) return `@${mentionTarget}`;
     return selection.start.line === selection.end.line
-      ? `@${relativePath}:${selection.start.line + 1}`
-      : `@${relativePath}:${selection.start.line + 1}-${selection.end.line + 1}`;
+      ? `@${mentionTarget}:${selection.start.line + 1}`
+      : `@${mentionTarget}:${selection.start.line + 1}-${selection.end.line + 1}`;
   }
 
   captureFileBaseline(
