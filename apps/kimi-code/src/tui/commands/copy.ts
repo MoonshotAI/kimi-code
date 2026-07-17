@@ -36,8 +36,12 @@ export async function handleCopyCommand(host: SlashCommandHost): Promise<void> {
       return;
     }
 
-    await copyTextToClipboard(text);
-    host.showStatus(`Copied to clipboard (${String(text.length)} characters).`);
+    const method = await copyTextToClipboard(text);
+    host.showStatus(
+      method === 'native'
+        ? `Copied to clipboard (${String(text.length)} characters).`
+        : `Copied via terminal escape sequence (unverified, ${String(text.length)} characters).`,
+    );
   } catch (error) {
     host.showError(`Failed to copy to clipboard: ${formatErrorMessage(error)}`);
   }

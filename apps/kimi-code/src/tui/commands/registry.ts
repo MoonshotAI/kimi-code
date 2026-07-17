@@ -389,7 +389,6 @@ export const BUILTIN_SLASH_COMMANDS = [
     aliases: [],
     description: 'Copy the last assistant message to the clipboard',
     priority: 40,
-    availability: 'always',
   },
   {
     name: 'web',

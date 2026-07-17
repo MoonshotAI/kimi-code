@@ -43,10 +43,10 @@ function makeHost(history: ContextMessage[]) {
 }
 
 describe('copy slash command', () => {
-  it('is registered as an always-available built-in', () => {
+  it('is registered as an idle-only built-in', () => {
     const command = findBuiltInSlashCommand('copy');
     expect(command).toBeDefined();
-    expect(resolveSlashCommandAvailability(command!, '')).toBe('always');
+    expect(resolveSlashCommandAvailability(command!, '')).toBe('idle-only');
   });
 });
 
@@ -103,7 +103,7 @@ describe('findLastAssistantText', () => {
 describe('handleCopyCommand', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mocks.copyTextToClipboard.mockResolvedValue(undefined);
+    mocks.copyTextToClipboard.mockResolvedValue('native');
   });
 
   it('copies the last assistant text and reports the character count', async () => {
@@ -114,6 +114,18 @@ describe('handleCopyCommand', () => {
     expect(mocks.copyTextToClipboard).toHaveBeenCalledWith('final summary');
     expect(host.showStatus).toHaveBeenCalledWith(
       `Copied to clipboard (${String('final summary'.length)} characters).`,
+    );
+    expect(host.showError).not.toHaveBeenCalled();
+  });
+
+  it('marks the copy as unverified when only the terminal escape delivered it', async () => {
+    mocks.copyTextToClipboard.mockResolvedValue('osc52');
+    const host = makeHost([userText('hi'), assistantText('final summary')]);
+
+    await handleCopyCommand(host);
+
+    expect(host.showStatus).toHaveBeenCalledWith(
+      `Copied via terminal escape sequence (unverified, ${String('final summary'.length)} characters).`,
     );
     expect(host.showError).not.toHaveBeenCalled();
   });

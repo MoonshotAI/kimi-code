@@ -41,7 +41,11 @@ async function copyWithPlatformCommand(text: string): Promise<void> {
   throw new Error('No clipboard command is available.');
 }
 
-export async function copyTextToClipboard(text: string): Promise<void> {
+/** How the text was delivered: a verified local clipboard tool, or an
+ *  unverified OSC 52 escape emitted to the terminal as a last resort. */
+export type ClipboardCopyMethod = 'native' | 'osc52';
+
+export async function copyTextToClipboard(text: string): Promise<ClipboardCopyMethod> {
   // OSC 52 travels over stdout to the local terminal emulator, so it reaches
   // the clipboard even over SSH or in containers with no native clipboard
   // tool. Emit it up front; every failure path below can fall back on it.
@@ -51,7 +55,7 @@ export async function copyTextToClipboard(text: string): Promise<void> {
   if (clipboardModule?.setText !== undefined) {
     try {
       await clipboardModule.setText(text);
-      return;
+      return 'native';
     } catch {
       // Fall back to platform clipboard commands below.
     }
@@ -59,11 +63,12 @@ export async function copyTextToClipboard(text: string): Promise<void> {
 
   try {
     await copyWithPlatformCommand(text);
+    return 'native';
   } catch (error) {
     // The native clipboard is unreachable (headless server, SSH session,
     // missing wl-copy/xclip …) but the terminal may still have delivered the
     // text via OSC 52; without a terminal there is nothing left to try.
-    if (osc52Emitted) return;
+    if (osc52Emitted) return 'osc52';
     throw error;
   }
 }

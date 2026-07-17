@@ -55,7 +55,7 @@ describe('copyTextToClipboard', () => {
   it('copies text with the native clipboard when available', async () => {
     clipboardMock.setText.mockResolvedValue(undefined);
 
-    await expect(copyTextToClipboard('cd "/tmp/proj-b"')).resolves.toBeUndefined();
+    await expect(copyTextToClipboard('cd "/tmp/proj-b"')).resolves.toBe('native');
     expect(clipboardMock.setText).toHaveBeenCalledWith('cd "/tmp/proj-b"');
   });
 
@@ -65,7 +65,7 @@ describe('copyTextToClipboard', () => {
       expect(text).toBe('cd "/tmp/proj-b"');
     });
 
-    await expect(copyTextToClipboard('cd "/tmp/proj-b"')).resolves.toBeUndefined();
+    await expect(copyTextToClipboard('cd "/tmp/proj-b"')).resolves.toBe('native');
   });
 
   it('throws an Error when all platform clipboard commands fail', async () => {
@@ -99,7 +99,7 @@ describe('OSC 52 fallback in copyTextToClipboard', () => {
     spawnSyncMock.mockReturnValue({ status: 1, stderr: 'missing' } as ReturnType<typeof spawnSync>);
     const writeSpy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
-    await expect(copyTextToClipboard('hello world')).resolves.toBeUndefined();
+    await expect(copyTextToClipboard('hello world')).resolves.toBe('osc52');
 
     const written = writeSpy.mock.calls.map(([chunk]) => String(chunk)).join('');
     expect(written).toContain(`]52;c;${base64('hello world')}`);
