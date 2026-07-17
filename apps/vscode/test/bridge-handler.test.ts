@@ -440,9 +440,45 @@ describe("Webview RPC boundary (validates requests before host dispatch)", () =>
     );
     expect(next).toEqual({ id: "rpc-2", result: { ok: true } });
   });
+
+  it("reloads the resumed session before replaying when reload is requested", async () => {
+    const order: string[] = [];
+    const session = createResumedSession("session-1", root, order);
+    host.harness.resumeSession.mockResolvedValueOnce(session as never);
+
+    const result = await bridge.handle(
+      {
+        id: "rpc-1",
+        method: Methods.LoadKimiSessionHistory,
+        params: { kimiSessionId: "session-1", reload: true },
+      },
+      "view-1",
+    );
+
+    expect(result).toMatchObject({ id: "rpc-1" });
+    expect(order.indexOf("reloadSession")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("reloadSession")).toBeLessThan(order.indexOf("getResumeState"));
+  });
+
+  it("does not reload the session for a plain history load", async () => {
+    const order: string[] = [];
+    const session = createResumedSession("session-1", root, order);
+    host.harness.resumeSession.mockResolvedValueOnce(session as never);
+
+    await bridge.handle(
+      {
+        id: "rpc-1",
+        method: Methods.LoadKimiSessionHistory,
+        params: { kimiSessionId: "session-1" },
+      },
+      "view-1",
+    );
+
+    expect(order).not.toContain("reloadSession");
+  });
 });
 
-function createResumedSession(id: string, workDir: string) {
+function createResumedSession(id: string, workDir: string, callOrder?: string[]) {
   const close = vi.fn(async () => undefined);
   const summary = {
     id,
@@ -457,35 +493,42 @@ function createResumedSession(id: string, workDir: string) {
     workDir,
     summary,
     close,
-    getResumeState: () => ({
-      sessionMetadata: { agents: {} },
-      agents: {
-        main: {
-          type: "main",
-          config: {
-            cwd: workDir,
-            modelAlias: "test-model",
-            modelCapabilities: {
-              image_in: false,
-              video_in: false,
-              audio_in: false,
-              thinking: false,
-              tool_use: true,
-              max_context_tokens: 128_000,
+    getResumeState: () => {
+      callOrder?.push("getResumeState");
+      return {
+        sessionMetadata: { agents: {} },
+        agents: {
+          main: {
+            type: "main",
+            config: {
+              cwd: workDir,
+              modelAlias: "test-model",
+              modelCapabilities: {
+                image_in: false,
+                video_in: false,
+                audio_in: false,
+                thinking: false,
+                tool_use: true,
+                max_context_tokens: 128_000,
+              },
+              thinkingEffort: "off",
+              systemPrompt: "",
             },
-            thinkingEffort: "off",
-            systemPrompt: "",
+            context: { history: [], tokenCount: 0 },
+            replay: [],
+            permission: { mode: "manual", rules: [] },
+            plan: null,
+            usage: {},
+            tools: [],
+            background: [],
           },
-          context: { history: [], tokenCount: 0 },
-          replay: [],
-          permission: { mode: "manual", rules: [] },
-          plan: null,
-          usage: {},
-          tools: [],
-          background: [],
         },
-      },
-    }),
+      };
+    },
+    reloadSession: async () => {
+      callOrder?.push("reloadSession");
+      return summary;
+    },
     getStatus: async () => ({ permission: "manual" }),
     setPermission: async () => undefined,
     updateMetadata: async () => undefined,

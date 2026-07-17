@@ -46,7 +46,6 @@ interface FakeSessionBoundary {
   readonly cancelCount: () => number;
   readonly cancelCompactionCount: () => number;
   readonly undoCounts: readonly number[];
-  readonly reloadCount: () => number;
   readonly closeCount: () => number;
   emit(event: Event): void;
   rejectNextPrompt(error: Error): void;
@@ -72,7 +71,6 @@ function createFakeSession(): FakeSessionBoundary {
   let cancellations = 0;
   let compactionCancellations = 0;
   const undoCounts: number[] = [];
-  let reloads = 0;
   let closes = 0;
   let permission: PermissionMode = "manual";
 
@@ -122,10 +120,6 @@ function createFakeSession(): FakeSessionBoundary {
     async undoHistory(count: number) {
       undoCounts.push(count);
     },
-    async reloadSession() {
-      reloads += 1;
-      return summary;
-    },
     async getStatus() {
       return {
         thinkingEffort: "off",
@@ -164,7 +158,6 @@ function createFakeSession(): FakeSessionBoundary {
     cancelCount: () => cancellations,
     cancelCompactionCount: () => compactionCancellations,
     undoCounts,
-    reloadCount: () => reloads,
     closeCount: () => closes,
     emit(event) {
       for (const listener of listeners) listener(event);
@@ -535,7 +528,6 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     await runtime.undoHistory(2);
 
     expect([...sdk.undoCounts]).toEqual([2]);
-    expect(sdk.reloadCount()).toBe(1);
     expect(broadcasts).toContainEqual({
       event: Events.ConversationHistoryChanged,
       data: { sessionId: "session-1" },
@@ -575,20 +567,6 @@ describe("session runtime (adapts one SDK session for subscribed Webviews)", () 
     releaseUndo();
     await first;
     expect(calls).toBe(1);
-  });
-
-  it("still notifies views when the post-undo reload fails", async () => {
-    const { runtime, sdk, broadcasts } = createRuntime();
-    const fakeSession = sdk.session as unknown as { reloadSession: () => Promise<unknown> };
-    fakeSession.reloadSession = () => Promise.reject(new Error("provider broke"));
-
-    await runtime.undoHistory(1);
-
-    expect(broadcasts).toContainEqual({
-      event: Events.ConversationHistoryChanged,
-      data: { sessionId: "session-1" },
-      webviewId: "view-1",
-    });
   });
 
   it("converts legacy media keys when steering an active response", async () => {

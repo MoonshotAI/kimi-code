@@ -50,11 +50,14 @@ function MainContent({ onAuthAction }: { onAuthAction: () => void }) {
       // (e.g. undo); every subscribed view rehydrates so no webview keeps
       // showing a transcript the engine already truncated.
       bridge.on(Events.ConversationHistoryChanged, ({ sessionId: changedSessionId }: { sessionId: string }) => {
-        const store = useChatStore.getState();
-        if (store.sessionId !== changedSessionId) return;
+        if (useChatStore.getState().sessionId !== changedSessionId) return;
         void (async () => {
           try {
-            const events = await bridge.loadSessionHistory(changedSessionId);
+            const events = await bridge.loadSessionHistory(changedSessionId, true);
+            // The user may have switched conversations while the history was
+            // loading — never yank the UI back to a session they have left.
+            const store = useChatStore.getState();
+            if (store.sessionId !== changedSessionId) return;
             await store.loadSession(changedSessionId, events);
           } catch (error) {
             toast.error(`Failed to reload the conversation: ${error instanceof Error ? error.message : String(error)}`);

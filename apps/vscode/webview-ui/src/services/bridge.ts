@@ -231,8 +231,8 @@ class Bridge {
     return this.call<{ ok: boolean; workDir: string | null }>(Methods.BrowseWorkDir);
   }
 
-  loadSessionHistory(sessionId: string) {
-    return this.call<UIStreamEvent[]>(Methods.LoadKimiSessionHistory, { kimiSessionId: sessionId });
+  loadSessionHistory(sessionId: string, reload = false) {
+    return this.call<UIStreamEvent[]>(Methods.LoadKimiSessionHistory, { kimiSessionId: sessionId, reload });
   }
 
   deleteSession(sessionId: string) {

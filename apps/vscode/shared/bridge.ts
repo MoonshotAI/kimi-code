@@ -200,7 +200,9 @@ function validateParams(method: RpcMethod, params: unknown): boolean {
     case Methods.SetWorkDir:
       return isPlainObject(params) && (params["workDir"] === null || typeof params["workDir"] === "string");
     case Methods.LoadKimiSessionHistory:
-      return hasNonEmptyString(params, "kimiSessionId");
+      return isPlainObject(params)
+        && isNonEmptyString(params["kimiSessionId"])
+        && isOptionalType(params["reload"], "boolean");
     case Methods.DeleteKimiSession:
       return hasNonEmptyString(params, "sessionId");
     case Methods.ForkKimiSession:
