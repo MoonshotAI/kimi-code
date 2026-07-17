@@ -271,7 +271,7 @@ describe('useModelProviderState thinking on model selection', () => {
     apiMock.activateSkill.mockResolvedValue({});
     saveThinkingToStorageMock.mockReset();
     persistSessionProfileMock.mockReset();
-    persistSessionProfileMock.mockResolvedValue(undefined);
+    persistSessionProfileMock.mockResolvedValue(true);
     storedThinkingLevels = {};
     legacyThinkingPick = undefined;
   });
@@ -403,6 +403,23 @@ describe('useModelProviderState thinking on model selection', () => {
     const persistOrder = persistSessionProfileMock.mock.invocationCallOrder[0]!;
     const activateOrder = apiMock.activateSkill.mock.invocationCallOrder[0]!;
     expect(persistOrder).toBeLessThan(activateOrder);
+  });
+
+  it('does not activate the skill when the thinking profile update fails', async () => {
+    // persistSessionProfile resolves false after surfacing the failure itself:
+    // activating would run the skill at the stale profile effort, so it must
+    // not happen — and activateSkill must not report a second, synthetic error.
+    persistSessionProfileMock.mockResolvedValue(false);
+    const state = createState({
+      activeSession: { id: 'session-1', model: effortAppModel.id },
+      defaultModel: booleanAppModel.id,
+    });
+    const provider = createModelProvider(state);
+
+    await provider.activateSkill('gen-changesets');
+
+    expect(apiMock.activateSkill).not.toHaveBeenCalled();
+    expect(state.inFlightBySession['session-1']).toBe(false);
   });
 
   it('treats a legacy pre-map pick as a fallback only for models that declare it', async () => {

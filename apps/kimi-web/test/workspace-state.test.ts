@@ -135,7 +135,7 @@ function createDeps(): UseWorkspaceStateDeps {
     hasLoadedMessages: vi.fn(),
     refreshSessionStatus: vi.fn(),
     refreshSessionGoal: vi.fn(),
-    persistSessionProfile: vi.fn(),
+    persistSessionProfile: vi.fn().mockResolvedValue(true),
     mergedWorkspaces: computed(() => []),
     workspacesView: computed(() => []),
     status: computed(() => ({})),
@@ -779,8 +779,8 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     // the draft. We persist them to the new session's profile and must WAIT for
     // it; otherwise :activate can race ahead of applyAgentState and the first
     // skill turn runs at daemon defaults while the UI shows otherwise.
-    let resolveProfile!: () => void;
-    const profileGate = new Promise<void>((r) => {
+    let resolveProfile!: (persisted: boolean) => void;
+    const profileGate = new Promise<boolean>((r) => {
       resolveProfile = r;
     });
     const activateSkill = vi.fn().mockResolvedValue(undefined);
@@ -806,18 +806,18 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
     );
     expect(activateSkill).not.toHaveBeenCalled();
 
-    resolveProfile();
+    resolveProfile(true);
     await pending;
 
     expect(activateSkill).toHaveBeenCalledWith('pre-changelog', undefined, 'sess_new');
   });
 
-  it('persists the stored thinking level verbatim, even when the new session model does not declare it', async () => {
-    // Thinking levels are never coerced onto the session model (same as the
-    // first-prompt path and the TUI): a carried-over effort like 'max' is
-    // persisted and sent as-is.
+  it('falls back to persisting the active level when the new session model cannot be resolved', async () => {
+    // thinkingLevelForModelId returns undefined (model not resolvable here) —
+    // the persist then keeps the active-session level verbatim, same as the
+    // fallback on the normal prompt paths.
     const activateSkill2 = vi.fn().mockResolvedValue(undefined);
-    const persistSessionProfile2 = vi.fn().mockResolvedValue(undefined);
+    const persistSessionProfile2 = vi.fn().mockResolvedValue(true);
     const state2 = createState();
     state2.thinking = 'max';
     const deps2: UseWorkspaceStateDeps = {
@@ -830,8 +830,9 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
       }),
       draftModes: { planMode: true, swarmMode: false, goalMode: false },
     };
-    // 'kimi-code' declares efforts ['low','medium','high'] — 'max' isn't in the
-    // list, and must still be persisted verbatim.
+    // 'kimi-code' declares efforts ['low','medium','high']. The resolver mock
+    // still returns undefined below, so the persisted level stays the active
+    // one ('max') via the catalog-miss fallback.
     (deps2.modelProvider as unknown as { models: unknown }).models = ref([
       {
         id: 'kimi-code',

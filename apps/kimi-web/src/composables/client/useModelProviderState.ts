@@ -29,6 +29,11 @@ import type { ExtendedState } from '../useKimiWebClient';
 
 const STARRED_MODELS_STORAGE_KEY = STORAGE_KEYS.starredModels;
 
+/** Sentinel thrown to abort a skill activation when the prerequisite profile
+ *  persist failed — persistSessionProfile already surfaced that failure, so
+ *  the catch skips activating without reporting a second, synthetic error. */
+const PROFILE_PERSIST_FAILED = Symbol('profilePersistFailed');
+
 function loadStarredModelsFromStorage(): string[] {
   try {
     const raw = safeGetString(STARRED_MODELS_STORAGE_KEY);
@@ -68,7 +73,10 @@ export interface UseModelProviderStateDeps {
     opts?: { title?: string; message?: string; sessionId?: string },
   ) => void;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
-  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<void>;
+  /** Persist profile fields to the daemon. Resolves false (after surfacing the
+   *  failure itself) when the daemon rejected the patch — awaited callers that
+   *  order strictly after the profile must NOT proceed on false. */
+  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<boolean>;
   activity: ComputedRef<ActivityState>;
   /** Read the persisted thinking pick for a model (undefined = never picked
    *  for that model). Storage is keyed by model id. */
@@ -383,19 +391,23 @@ export function useModelProviderState(
       // the SESSION PROFILE effort. Persist the level resolved for this
       // session's own model first (awaited, mirroring the new-session skill
       // path), so a profile that predates the per-model restore can't run the
-      // skill at a stale effort while the UI shows the restored level.
+      // skill at a stale effort while the UI shows the restored level. When
+      // the persist fails (it surfaces the error itself), activating would
+      // launch the skill at exactly that stale effort — abort instead.
       const skillModel = rawState.sessions.find((s) => s.id === sid)?.model;
-      await persistSessionProfile(
+      const persisted = await persistSessionProfile(
         { thinking: thinkingLevelForModelId(skillModel) ?? rawState.thinking },
         sid,
       );
+      if (!persisted) throw PROFILE_PERSIST_FAILED;
       await getKimiWebApi().activateSkill(sid, skillName, args);
     } catch (err) {
       if (guarded) {
         rawState.inFlightBySession = { ...rawState.inFlightBySession, [sid]: false };
         updateSessionMessages(sid, (msgs) => msgs.filter((m) => m.id !== tempId));
       }
-      pushOperationFailure('activateSkill', err, { sessionId: sid });
+      // The persist failure was already surfaced by persistSessionProfile.
+      if (err !== PROFILE_PERSIST_FAILED) pushOperationFailure('activateSkill', err, { sessionId: sid });
     } finally {
       // The daemon answered the activation (accepted or rejected) — the
       // pending window in which a snapshot can't reflect this turn is over.

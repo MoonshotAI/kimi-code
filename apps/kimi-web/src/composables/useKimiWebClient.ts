@@ -775,12 +775,13 @@ async function refreshSessionGoal(sessionId: string): Promise<void> {
  *  session and immediately persisting its draft modes, so a concurrent session
  *  switch can't write the patch to the wrong session.
  *
- *  Returns the update promise. Failures are surfaced via pushOperationFailure
- *  (the UI already updated optimistically, so the user must be told when the
- *  daemon did not apply the change); the promise itself never rejects. Most
- *  callers fire-and-forget via `void persistSessionProfile(...)`; call sites
- *  that must order strictly after the profile (e.g. a skill activation that
- *  can't carry its own modes) await it. */
+ *  Resolves false when the daemon did not apply the patch (also surfaced via
+ *  pushOperationFailure — the UI already updated optimistically, so the user
+ *  must be told); true on success. Most callers fire-and-forget via
+ *  `void persistSessionProfile(...)`; call sites that must order strictly
+ *  after the profile (e.g. a skill activation that can't carry its own modes)
+ *  await it and must NOT proceed on false — awaiting alone enforces nothing,
+ *  since the promise never rejects. */
 function persistSessionProfile(patch: {
   model?: string;
   permissionMode?: string;
@@ -789,16 +790,18 @@ function persistSessionProfile(patch: {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
-}, sessionId?: string): Promise<void> {
+}, sessionId?: string): Promise<boolean> {
   const sid = sessionId ?? rawState.activeSessionId;
-  if (!sid) return Promise.resolve();
+  if (!sid) return Promise.resolve(false);
   // Promise.resolve wrap: tolerate a sync/undefined return (e.g. test mocks).
   return Promise.resolve(getKimiWebApi().updateSession(sid, patch))
     .then(() => refreshSessionStatus(sid))
+    .then(() => true)
     .catch((err) => {
       // Local state already reflects the change; tell the user (and the log)
       // that the daemon did not persist it.
       pushOperationFailure('persistSessionProfile', err, { sessionId: sid });
+      return false;
     });
 }
 

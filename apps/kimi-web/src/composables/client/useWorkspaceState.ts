@@ -238,7 +238,10 @@ export interface UseWorkspaceStateDeps {
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
   refreshSessionGoal: (sessionId: string) => Promise<void>;
-  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<void>;
+  /** Persist profile fields to the daemon. Resolves false (after surfacing the
+   *  failure itself) when the daemon rejected the patch — awaited callers that
+   *  order strictly after the profile must NOT proceed on false. */
+  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<boolean>;
   mergedWorkspaces: ComputedRef<AppWorkspace[]>;
   /** Sidebar-facing workspaces in the user's (dragged) display order. */
   workspacesView: ComputedRef<WorkspaceView[]>;
@@ -1201,7 +1204,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       // Thinking is resolved for the new session's own model (its stored pick
       // when declared, else the catalog default) — never the raw active value,
       // which can drift while createDraftSession awaits (see submitPromptInternal).
-      await persistSessionProfile(
+      const persisted = await persistSessionProfile(
         {
           model,
           planMode,
@@ -1211,6 +1214,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
         },
         sid,
       );
+      // The persist surfaces its own failure; activating at a stale profile
+      // effort is worse than not activating (the finally still re-arms below).
+      if (!persisted) return;
       await modelProvider.activateSkill(skillName, args, sid);
     } catch (err) {
       pushOperationFailure('startSessionAndActivateSkill', err);
