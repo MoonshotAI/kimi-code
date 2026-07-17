@@ -21,8 +21,10 @@ import {
   loadUnread,
   loadWorkspaceOrder,
   loadWorkspaceSort,
+  safeGetJson,
   safeGetString,
   safeRemove,
+  safeSetJson,
   safeSetString,
   saveUnread,
   saveWorkspaceOrder,
@@ -113,13 +115,20 @@ const SWARM_MODE_STORAGE_KEY = STORAGE_KEYS.swarmMode;
 const GOAL_MODE_STORAGE_KEY = STORAGE_KEYS.goalMode;
 const SESSION_NOT_FOUND_CODE = 40401;
 const ONBOARDED_STORAGE_KEY = STORAGE_KEYS.onboarded;
-// A persisted thinking level may be any non-empty effort string: the reserved
-// 'off'/'on', or a model-declared level (e.g. 'low'/'high'/'max'). Since the
-// set of legal levels comes from each model's support_efforts, we can't
-// whitelist values — only guard against corrupted localStorage with a charset
-// + length check. An absent/invalid value means the user never picked a level;
-// loadModels() then pins the active model's catalog default as the concrete
-// in-memory value (see useModelProviderState).
+// Thinking levels are persisted PER MODEL: `kimi-web.thinking` holds a JSON map
+// of model id → level. A persisted level may be any non-empty effort string:
+// the reserved 'off'/'on', or a model-declared level (e.g. 'low'/'high'/'max').
+// Since the set of legal levels comes from each model's support_efforts, we
+// can't whitelist values — only guard against corrupted localStorage with a
+// charset + length check, and let the resolution in useModelProviderState drop
+// entries the model no longer declares. Per-model storage is what keeps a level
+// picked for one model (e.g. 'low' on an effort model) from leaking onto a
+// model that never declared it (e.g. a max-only always-on model) — the old
+// global format did exactly that, leaving the composer showing nothing selected
+// with no way to switch. The legacy pre-map format (a single global level,
+// stored raw) is not discarded: it becomes a fallback for any model that
+// declares it (see hydrateThinkingPicks), so an existing user's preference
+// survives the upgrade while a max-only model still can't be trapped by it.
 const PERSISTED_THINKING_LEVEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 
 // Appearance types + logic live in ./client/useAppearance; re-exported here so
@@ -153,22 +162,67 @@ function savePermissionToStorage(mode: PermissionMode): void {
   }
 }
 
-function loadThinkingFromStorage(): ThinkingLevel | undefined {
-  try {
-    const v = safeGetString(THINKING_STORAGE_KEY);
-    if (v && PERSISTED_THINKING_LEVEL_RE.test(v)) return v as ThinkingLevel;
-  } catch {
-    // ignore
+function loadThinkingMap(): Record<string, ThinkingLevel> {
+  const parsed = safeGetJson<unknown>(THINKING_STORAGE_KEY);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out: Record<string, ThinkingLevel> = {};
+  for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof value === 'string' && PERSISTED_THINKING_LEVEL_RE.test(value)) {
+      out[id] = value as ThinkingLevel;
+    }
   }
-  return undefined;
+  return out;
 }
 
-function saveThinkingToStorage(v: ThinkingLevel): void {
-  try {
-    safeSetString(THINKING_STORAGE_KEY, v);
-  } catch {
-    // ignore
-  }
+// Legacy pre-map format: a single global level stored raw via safeSetString
+// (not JSON). It fails JSON.parse in loadThinkingMap above — detect it from the
+// raw string instead of dropping the user's preference on upgrade.
+function loadLegacyThinkingValue(): ThinkingLevel | undefined {
+  const raw = safeGetString(THINKING_STORAGE_KEY);
+  return raw && PERSISTED_THINKING_LEVEL_RE.test(raw) ? (raw as ThinkingLevel) : undefined;
+}
+
+// Map key for the migrated legacy value — never a real model id. Kept INSIDE
+// the map (not a sidecar variable) so the first per-model write, which rewrites
+// the raw legacy string into map format, carries the fallback forward instead
+// of deleting it for every model without its own entry.
+const LEGACY_THINKING_PICK_KEY = '*';
+
+// The RUNTIME source of truth for per-model picks is this in-memory map,
+// hydrated from localStorage once at startup. Explicit picks update it first
+// (see saveThinkingToStorage), so a pick takes effect even when persistence is
+// unavailable (storage policy/quota — safeSetJson swallows those failures),
+// and so a pick made later in ANOTHER tab can never change what this tab
+// displays or submits mid-session. localStorage is hydration + best-effort
+// persistence only: written with a read-modify-write merge (same pattern as
+// saveUnread) so concurrent tabs' entries survive, and re-read from scratch on
+// the next startup.
+const thinkingPicks: Record<string, ThinkingLevel> = loadThinkingMap();
+if (Object.keys(thinkingPicks).length === 0) {
+  const legacy = loadLegacyThinkingValue();
+  if (legacy !== undefined) thinkingPicks[LEGACY_THINKING_PICK_KEY] = legacy;
+}
+
+function loadThinkingForModel(modelId: string): ThinkingLevel | undefined {
+  // Per-model entries win; the '*' entry is the migrated legacy pre-map global
+  // pick — useModelProviderState validates it against each model's catalog
+  // entry, so it only ever applies to models that declare it (a max-only model
+  // still falls through to its default).
+  return thinkingPicks[modelId] ?? thinkingPicks[LEGACY_THINKING_PICK_KEY];
+}
+
+function saveThinkingToStorage(modelId: string, level: ThinkingLevel): void {
+  thinkingPicks[modelId] = level;
+  // Delta write (same pattern as saveUnread): overlay only the CHANGED entry —
+  // overlaying this tab's whole in-memory snapshot would revert another tab's
+  // newer pick for any model this tab still holds a stale copy of. The one
+  // extra entry carried along is the migrated legacy '*' fallback, so the
+  // first write rewrites it into map format rather than dropping it.
+  const map = loadThinkingMap();
+  const legacy = thinkingPicks[LEGACY_THINKING_PICK_KEY];
+  if (legacy !== undefined) map[LEGACY_THINKING_PICK_KEY] = legacy;
+  map[modelId] = level;
+  safeSetJson(THINKING_STORAGE_KEY, map);
 }
 
 // Plan / swarm / goal modes are per-session. Each is persisted as a compact
@@ -322,10 +376,10 @@ export interface ExtendedState extends KimiClientState {
   workspaceName: string;
   connection: ConnectionState;
   permission: PermissionMode;
-  /** The thinking level shown and submitted. Undefined only transiently —
-   *  before the model catalog loads or when the active model is unknown;
-   *  loadModels() pins the active model's catalog default as a concrete
-   *  in-memory value so display and submission always agree. */
+  /** The thinking level shown and submitted. Resolved per model by
+   *  useModelProviderState (the model's stored pick when still declared, else
+   *  its catalog default) once the catalog/session is known — undefined only
+   *  transiently before that, so display and submission always agree. */
   thinking: ThinkingLevel | undefined;
   /** Plan-mode toggle per session. Bound to a session (not global) so toggling
    *  it in one session does not affect another. */
@@ -404,7 +458,10 @@ const rawState: ExtendedState = reactive({
   workspaceName: 'kimi-web',
   connection: 'disconnected' as ConnectionState,
   permission: loadPermissionFromStorage(),
-  thinking: loadThinkingFromStorage(),
+  // Resolved per model once the catalog/session is known (loadModels and the
+  // active-model watcher in useModelProviderState) — storage is keyed by model
+  // id, which isn't known this early.
+  thinking: undefined,
   planModeBySession: loadModeMapFromStorage(PLAN_MODE_STORAGE_KEY),
   swarmModeBySession: loadModeMapFromStorage(SWARM_MODE_STORAGE_KEY),
   goalModeBySession: loadModeMapFromStorage(GOAL_MODE_STORAGE_KEY),
@@ -717,12 +774,13 @@ async function refreshSessionGoal(sessionId: string): Promise<void> {
  *  session and immediately persisting its draft modes, so a concurrent session
  *  switch can't write the patch to the wrong session.
  *
- *  Returns the update promise. Failures are surfaced via pushOperationFailure
- *  (the UI already updated optimistically, so the user must be told when the
- *  daemon did not apply the change); the promise itself never rejects. Most
- *  callers fire-and-forget via `void persistSessionProfile(...)`; call sites
- *  that must order strictly after the profile (e.g. a skill activation that
- *  can't carry its own modes) await it. */
+ *  Resolves false when the daemon did not apply the patch (also surfaced via
+ *  pushOperationFailure — the UI already updated optimistically, so the user
+ *  must be told); true on success. Most callers fire-and-forget via
+ *  `void persistSessionProfile(...)`; call sites that must order strictly
+ *  after the profile (e.g. a skill activation that can't carry its own modes)
+ *  await it and must NOT proceed on false — awaiting alone enforces nothing,
+ *  since the promise never rejects. */
 function persistSessionProfile(patch: {
   model?: string;
   permissionMode?: string;
@@ -731,16 +789,18 @@ function persistSessionProfile(patch: {
   goalObjective?: string;
   goalControl?: 'pause' | 'resume' | 'cancel';
   thinking?: string;
-}, sessionId?: string): Promise<void> {
+}, sessionId?: string): Promise<boolean> {
   const sid = sessionId ?? rawState.activeSessionId;
-  if (!sid) return Promise.resolve();
+  if (!sid) return Promise.resolve(false);
   // Promise.resolve wrap: tolerate a sync/undefined return (e.g. test mocks).
   return Promise.resolve(getKimiWebApi().updateSession(sid, patch))
     .then(() => refreshSessionStatus(sid))
+    .then(() => true)
     .catch((err) => {
       // Local state already reflects the change; tell the user (and the log)
       // that the daemon did not persist it.
       pushOperationFailure('persistSessionProfile', err, { sessionId: sid });
+      return false;
     });
 }
 
@@ -1941,6 +2001,8 @@ const sideChat = useSideChat(rawState, {
   nextOptimisticMsgId,
   connectEventsIfNeeded,
   getEventConn: () => eventConn,
+  // modelProvider is defined further below; deferred like eventConn above.
+  thinkingLevelForModelId: (modelId) => modelProvider.thinkingLevelForModelId(modelId),
 });
 
 const activeAppTasks = computed<AppTask[]>(() => {
@@ -2159,6 +2221,7 @@ const modelProvider = useModelProviderState(rawState, {
   refreshSessionStatus,
   persistSessionProfile,
   activity,
+  loadThinkingForModel,
   saveThinkingToStorage,
   updateSession,
   updateSessionMessages,

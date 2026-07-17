@@ -237,7 +237,10 @@ export interface UseWorkspaceStateDeps {
   hasLoadedMessages: (sessionId: string) => boolean;
   refreshSessionStatus: (sessionId: string) => Promise<void>;
   refreshSessionGoal: (sessionId: string) => Promise<void>;
-  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<void>;
+  /** Persist profile fields to the daemon. Resolves false (after surfacing the
+   *  failure itself) when the daemon rejected the patch — awaited callers that
+   *  order strictly after the profile must NOT proceed on false. */
+  persistSessionProfile: (patch: PersistSessionProfilePatch, sessionId?: string) => Promise<boolean>;
   mergedWorkspaces: ComputedRef<AppWorkspace[]>;
   /** Sidebar-facing workspaces in the user's (dragged) display order. */
   workspacesView: ComputedRef<WorkspaceView[]>;
@@ -1178,31 +1181,37 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       if (!sid) return;
       // Unlike a plain prompt, skill activation only carries `args`, so the
       // daemon never sees the prompt-time controls the user may have changed on
-      // the draft (plan/swarm, plus permission via /auto|/yolo and thinking via
-      // /thinking). Persist them onto this new session's profile and await it
-      // before activating, otherwise the first skill turn can start before
-      // applyAgentState and run at daemon defaults while the UI shows otherwise.
-      // Goal mode is a one-shot flag consumed per send, not a profile field, so
-      // there is nothing to persist for it.
+      // the draft (plan/swarm, plus permission via /auto|/yolo). Persist them
+      // onto this new session's profile and await it before activating,
+      // otherwise the first skill turn can start before applyAgentState and
+      // run at daemon defaults while the UI shows otherwise. Thinking is NOT
+      // persisted here — activateSkill resolves and persists it for this
+      // session's model (gated) immediately before activating. Goal mode is a
+      // one-shot flag consumed per send, not a profile field, so there is
+      // nothing to persist for it.
       const planMode = rawState.planModeBySession[sid] ?? false;
       const swarmMode = rawState.swarmModeBySession[sid] ?? false;
-      // Thinking is persisted verbatim — whatever the user picked is what the
-      // first skill turn runs at (same as a normal prompt, and the TUI).
       const promptSession = rawState.sessions.find((s) => s.id === sid);
       const model =
         (promptSession?.model && promptSession.model.length > 0
           ? promptSession.model
           : rawState.defaultModel) ?? undefined;
-      await persistSessionProfile(
+      // No thinking in this patch: activateSkill itself resolves and persists
+      // the level for this session's model (single writer, gated) right before
+      // activating — a second write here would be a redundant profile update
+      // whose transient failure could false-veto a ready activation.
+      const persisted = await persistSessionProfile(
         {
           model,
           planMode,
           swarmMode,
           permissionMode: rawState.permission,
-          thinking: rawState.thinking,
         },
         sid,
       );
+      // The persist surfaces its own failure; activating at a stale profile
+      // effort is worse than not activating (the finally still re-arms below).
+      if (!persisted) return;
       await modelProvider.activateSkill(skillName, args, sid);
     } catch (err) {
       pushOperationFailure('startSessionAndActivateSkill', err);
@@ -1506,9 +1515,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        // Verbatim: the stored level is submitted as-is (same as the TUI) —
-        // no coercion against the prompt's target model.
-        thinking: rawState.thinking,
+        // Resolved against THIS prompt's model (its stored pick when declared,
+        // else its catalog default) — never the active-session rawState.thinking,
+        // which tracks whatever session the user is looking at now: a queue
+        // drain for a background session would otherwise submit the level of
+        // the session the user switched to since enqueueing.
+        thinking: modelProvider.thinkingLevelForModelId(model) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode,
         swarmMode,
@@ -1682,8 +1694,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        // Verbatim, same as a normal send (see submitPromptInternal).
-        thinking: rawState.thinking,
+        // Resolved against this prompt's own model, same as a normal send (see
+        // submitPromptInternal).
+        thinking: modelProvider.thinkingLevelForModelId(model) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,
