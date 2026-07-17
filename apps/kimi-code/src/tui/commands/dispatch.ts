@@ -22,6 +22,7 @@ import type {
 import { formatErrorMessage } from '../utils/event-payload';
 import { handleLoginCommand, handleLogoutCommand } from './auth';
 import { handleBtwCommand } from './btw';
+import { handleCopyCommand } from './copy';
 import {
   handleAutoCommand,
   handleCompactCommand,
@@ -64,6 +65,7 @@ import { handleWebCommand } from './web';
 
 export { handleLoginCommand, handleLogoutCommand } from './auth';
 export { handleBtwCommand } from './btw';
+export { handleCopyCommand } from './copy';
 export { handleAddDirCommand } from './add-dir';
 export {
   handleAutoCommand,
@@ -361,6 +363,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'export-debug-zip':
       await handleExportDebugZipCommand(host);
+      return;
+    case 'copy':
+      await handleCopyCommand(host);
       return;
     case 'login':
       await handleLoginCommand(host);

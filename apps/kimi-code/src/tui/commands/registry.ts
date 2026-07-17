@@ -406,6 +406,12 @@ export function getBuiltinSlashCommands(): readonly KimiSlashCommand[] {
       priority: 40,
     },
     {
+      name: 'copy',
+      aliases: [],
+      description: 'Copy the last assistant message to the clipboard',
+      priority: 40,
+    },
+    {
       name: 'web',
       aliases: [],
       description: t('tui.slashCommands.web'),

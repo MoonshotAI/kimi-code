@@ -597,6 +597,7 @@ export class StreamingUIController {
       turnId: this._currentTurnId,
       renderMode: 'markdown' as const,
       content: '',
+      modelText: true,
     };
     const component = new AssistantMessageComponent();
     this._streamingBlock = { component, entry };
