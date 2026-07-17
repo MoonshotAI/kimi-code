@@ -27,6 +27,7 @@ import type {
   TurnStartedEvent,
   TurnStepCompletedEvent,
   TurnStepInterruptedEvent,
+  TurnStepRetryingEvent,
   TurnStepStartedEvent,
   WarningEvent,
 } from '@moonshot-ai/kimi-code-sdk';
@@ -51,6 +52,7 @@ import {
   serializeToolResultOutput,
   stringValue,
 } from '../utils/event-payload';
+import { buildRetryStatus } from '../utils/retry-status';
 import {
   readGoalQueue,
   removeGoalQueueItem,
@@ -245,7 +247,7 @@ export class SessionEventHandler {
       case 'turn.step.started': this.handleStepBegin(event); break;
       case 'turn.step.interrupted': this.handleStepInterrupted(event); break;
       case 'turn.step.completed': this.handleStepCompleted(event); break;
-      case 'turn.step.retrying': break;
+      case 'turn.step.retrying': this.handleStepRetrying(event); break;
       case 'tool.progress': this.handleToolProgress(event); break;
       case 'shell.output': this.host.handleShellOutput(event); break;
       case 'shell.started': this.host.handleShellStarted(event); break;
@@ -367,7 +369,24 @@ export class SessionEventHandler {
     });
   }
 
+  private handleStepRetrying(event: TurnStepRetryingEvent): void {
+    // The failed attempt's partial live output is invalid — the next attempt
+    // re-streams from scratch. Mirror print mode's discardAssistant()
+    // (cli/run-prompt.ts:578) instead of committing it to the transcript. The
+    // TUI renders assistant text live, so discarding also means pulling the
+    // already-rendered partial block, not just clearing the buffers.
+    this.host.streamingUI.discardPending();
+    this.host.streamingUI.discardStreamingBlock();
+    this.host.streamingUI.resetLiveText();
+    this.host.streamingUI.resetToolUi();
+    this.host.patchLivePane({ mode: 'waiting', pendingApproval: null, pendingQuestion: null });
+    this.host.setAppState({ streamingPhase: 'retrying', retryStatus: buildRetryStatus(event) });
+  }
+
   private handleStepCompleted(event: TurnStepCompletedEvent): void {
+    if (this.host.state.appState.streamingPhase === 'retrying') {
+      this.host.setAppState({ streamingPhase: 'waiting' });
+    }
     this.host.streamingUI.flushNow();
     this.maybeShowDebugTiming(event);
 
@@ -453,7 +472,14 @@ export class SessionEventHandler {
     // moon spinner while no ThinkingComponent is ever created (it needs visible
     // text), leaving a blank, spinner-less gap until the first real text/tool
     // token arrives. Keep the moon up until actual thinking text shows up.
-    if (event.delta.trim().length === 0 && !streamingUI.hasThinkingDraft()) return;
+    if (event.delta.trim().length === 0 && !streamingUI.hasThinkingDraft()) {
+      // Encrypted-only thinking never enters `thinking` mode, so clear a lingering
+      // retry phase here — otherwise the retry label would outlive the retry.
+      if (state.appState.streamingPhase === 'retrying') {
+        this.host.setAppState({ streamingPhase: 'waiting' });
+      }
+      return;
+    }
     streamingUI.appendThinkingDelta(event.delta);
     this.host.patchLivePane({ mode: 'idle' });
     if (state.appState.streamingPhase !== 'thinking') {
@@ -531,6 +557,11 @@ export class SessionEventHandler {
       pendingApproval: null,
       pendingQuestion: null,
     });
+    // A tool call can begin without an intervening delta phase; clear a lingering
+    // retry phase so the retry label does not persist under the tool spinner.
+    if (this.host.state.appState.streamingPhase === 'retrying') {
+      this.host.setAppState({ streamingPhase: 'waiting' });
+    }
   }
 
   private handleToolCallDelta(event: ToolCallDeltaEvent): void {

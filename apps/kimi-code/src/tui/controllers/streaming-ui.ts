@@ -529,6 +529,20 @@ export class StreamingUIController {
     this.disposeActiveThinkingComponent();
   }
 
+  // Drop the in-progress live assistant block instead of finalizing it. Unlike
+  // resetLiveText (which only clears buffers and the ref), this removes the
+  // already-rendered component and its transcript entry, so a failed step's
+  // partial output does not linger above the retried attempt's fresh stream.
+  discardStreamingBlock(): void {
+    const block = this._streamingBlock;
+    if (block === null) return;
+    const { state } = this.host;
+    state.transcriptContainer.removeChild(block.component);
+    state.transcriptEntries = state.transcriptEntries.filter((entry) => entry !== block.entry);
+    this._streamingBlock = null;
+    state.ui.requestRender();
+  }
+
   resetToolUi(): void {
     this.pendingToolCallFlushIds.clear();
     this.clearFlushTimerIfIdle();

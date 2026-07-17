@@ -131,6 +131,7 @@ import {
 import { hasDispose, isExpandable } from './utils/component-capabilities';
 import { isDeadTerminalError } from './utils/dead-terminal';
 import { formatErrorMessage } from './utils/event-payload';
+import { formatRetryLabel } from './utils/retry-status';
 import { pickForegroundTasks } from './utils/foreground-task';
 import { ImageAttachmentStore, type ImageAttachment } from './utils/image-attachment-store';
 import { extractMediaAttachments, rewriteMediaPlaceholders } from './utils/image-placeholder';
@@ -228,6 +229,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     availableProviders: {},
     sessionTitle: null,
     goal: null,
+    retryStatus: null,
     mcpServersSummary: null,
     banner: undefined,
   };
@@ -1446,6 +1448,17 @@ export class KimiTUI {
   }
 
   setAppState(patch: Partial<AppState>): void {
+    // A phase transition away from `retrying` (without an explicit retryStatus in
+    // the same patch) clears the stale backoff status centrally, so every exit
+    // path — delta, tool call, step/turn end — need not remember to null it.
+    if (
+      patch.streamingPhase !== undefined &&
+      patch.streamingPhase !== 'retrying' &&
+      patch.retryStatus === undefined &&
+      (this.state.appState.retryStatus ?? null) !== null
+    ) {
+      patch = { ...patch, retryStatus: null };
+    }
     if (!hasPatchChanges(this.state.appState, patch)) return;
     const additionalDirsChanged =
       'additionalDirs' in patch &&
@@ -2304,8 +2317,16 @@ export class KimiTUI {
 
     if (
       activityModeKey === this.lastActivityMode &&
-      (effectiveMode === 'waiting' || effectiveMode === 'thinking' || effectiveMode === 'tool')
+      (effectiveMode === 'waiting' ||
+        effectiveMode === 'thinking' ||
+        effectiveMode === 'tool' ||
+        effectiveMode === 'retrying')
     ) {
+      // Re-sync so a fresh retry event (attempt N -> N+1) refreshes the label
+      // immediately instead of waiting for the next spinner tick.
+      if (effectiveMode === 'retrying') {
+        this.applyRetrySpinnerState();
+      }
       if (placeSpinnerInAgentSwarm) {
         this.syncAgentSwarmActivitySpinner(this.state.activitySpinner?.instance);
       }
@@ -2366,6 +2387,15 @@ export class KimiTUI {
         );
         break;
       }
+      case 'retrying': {
+        const spinner = this.ensureActivitySpinner('moon');
+        this.applyRetrySpinnerState();
+        this.syncAgentSwarmActivitySpinner(undefined);
+        this.state.activityContainer.addChild(
+          new ActivityPaneComponent({ mode: 'retrying', spinner }),
+        );
+        break;
+      }
       case 'idle':
       case 'session': {
         this.stopActivitySpinner();
@@ -2391,6 +2421,8 @@ export class KimiTUI {
     // A running `!` shell command shows the moon spinner (same as `waiting`)
     // until it finishes, signalling that input is busy / queued.
     if (streamingPhase === 'shell') return 'waiting';
+
+    if (streamingPhase === 'retrying') return 'retrying';
 
     if (this.state.livePane.mode === 'idle') {
       if (streamingPhase === 'thinking' || streamingPhase === 'composing') {
@@ -2615,7 +2647,8 @@ export class KimiTUI {
       effectiveMode === 'waiting' ||
       effectiveMode === 'thinking' ||
       effectiveMode === 'composing' ||
-      effectiveMode === 'tool'
+      effectiveMode === 'tool' ||
+      effectiveMode === 'retrying'
     );
   }
 
@@ -2666,6 +2699,19 @@ export class KimiTUI {
       this.state.activitySpinner.instance.stop();
       this.state.activitySpinner = null;
     }
+  }
+
+  // The label is a live function (not a static string) so the moon spinner's
+  // 120ms tick re-renders the backoff countdown without a dedicated timer.
+  private applyRetrySpinnerState(): void {
+    const spinner = this.state.activitySpinner?.instance;
+    if (spinner === undefined) return;
+    spinner.setTip('');
+    spinner.setLabelFn(() => {
+      const status = this.state.appState.retryStatus;
+      if (status === null || status === undefined) return '';
+      return currentTheme.fg('warning', formatRetryLabel(status));
+    });
   }
 
   // =========================================================================
