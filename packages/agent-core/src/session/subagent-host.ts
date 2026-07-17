@@ -126,6 +126,10 @@ export interface SpawnSubagentOptions extends RunSubagentOptions {
   readonly swarmItem?: string;
 }
 
+export interface RunQueuedSubagentOptions {
+  readonly onValidated?: () => void;
+}
+
 type SubagentCompletion = {
   readonly result: string;
   readonly usage?: TokenUsage;
@@ -242,9 +246,24 @@ export class SessionSubagentHost {
     return { parent, child, profileName };
   }
 
-  async runQueued<T>(tasks: readonly QueuedSubagentTask<T>[]): Promise<Array<SubagentResult<T>>> {
+  async runQueued<T>(
+    tasks: readonly QueuedSubagentTask<T>[],
+    options: RunQueuedSubagentOptions = {},
+  ): Promise<Array<SubagentResult<T>>> {
+    if (tasks.length === 0) return [];
+    const parent = await this.session.ensureAgentResumed(this.ownerAgentId);
+    const resolvedAliases = new Map<string | undefined, string | undefined>();
+    const preparedTasks: QueuedSubagentTask<T>[] = tasks.map((task) => {
+      let modelAlias = resolvedAliases.get(task.modelAlias);
+      if (!resolvedAliases.has(task.modelAlias)) {
+        modelAlias = this.resolveChildModel(parent, task.modelAlias);
+        resolvedAliases.set(task.modelAlias, modelAlias);
+      }
+      return { ...task, modelAlias };
+    });
+    if (this.hasRunnableQueuedTask(parent, preparedTasks)) options.onValidated?.();
     const maxConcurrency = resolveSwarmMaxConcurrency();
-    return new SubagentBatch(this, tasks, { maxConcurrency }).run();
+    return new SubagentBatch(this, preparedTasks, { maxConcurrency }).run();
   }
 
   suspended(event: SubagentSuspendedEvent): void {
@@ -323,6 +342,26 @@ export class SessionSubagentHost {
       throw new Error(`Subagent profile "${profileName}" was not found`);
     }
     return profile;
+  }
+
+  private hasRunnableQueuedTask(parent: Agent, tasks: readonly QueuedSubagentTask[]): boolean {
+    return tasks.some((task) => {
+      if (task.signal?.aborted === true) return false;
+      if (task.kind === 'spawn') {
+        try {
+          this.resolveProfile(parent, task.profileName);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      const metadata = this.session.metadata.agents[task.resumeAgentId];
+      if (metadata?.type !== 'sub' || metadata.parentAgentId !== this.ownerAgentId) return false;
+      const child = this.session.getReadyAgent(task.resumeAgentId);
+      return !(
+        this.activeChildren.has(task.resumeAgentId) || child?.turn.hasActiveTurn === true
+      );
+    });
   }
 
   private runWithActiveChild(

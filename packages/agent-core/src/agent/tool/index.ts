@@ -776,6 +776,12 @@ export class ToolManager {
             this.agent.subagentHost,
             this.agent.swarmMode,
             resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+            () => ({
+              models: this.agent.modelProvider?.listModelAliases?.(),
+              currentModel: this.agent.config.modelAlias,
+            }),
+            subagentModelSelectionEnabled,
+            resolveSubagentModelAlias,
           ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),

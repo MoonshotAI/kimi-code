@@ -36,6 +36,7 @@ import type { Logger, LogPayload } from '../../src/logging';
 import type {
   QueuedSubagentRunResult,
   QueuedSubagentTask,
+  RunQueuedSubagentOptions,
   SessionSubagentHost,
 } from '../../src/session/subagent-host';
 import { recordingTelemetry, type TelemetryRecord } from '../fixtures/telemetry';
@@ -964,7 +965,9 @@ describe('Agent turn flow', () => {
   it('enters silent swarm mode when the agent calls AgentSwarm', async () => {
     const runQueued = vi.fn(async <T>(
       tasks: readonly QueuedSubagentTask<T>[],
+      options: RunQueuedSubagentOptions = {},
     ): Promise<Array<QueuedSubagentRunResult<T>>> => {
+      options.onValidated?.();
       return tasks.map((task, index) => ({
         task,
         agentId: `agent-${String(index + 1)}`,

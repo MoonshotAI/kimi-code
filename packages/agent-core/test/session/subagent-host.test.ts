@@ -1106,9 +1106,11 @@ describe('SessionSubagentHost', () => {
     const metadataAgents: Session['metadata']['agents'] = {};
     const session = fakeSession(parent.agent, child.agent, metadataAgents);
     const host = new SessionSubagentHost(session, 'main');
+    const onValidated = vi.fn();
+    const createAgent = vi.mocked(session.createAgent);
 
     await expect(
-      host.runQueued([{ ...queuedTask(1), swarmItem: 'src/a.ts', signal }]),
+      host.runQueued([{ ...queuedTask(1), swarmItem: 'src/a.ts', signal }], { onValidated }),
     ).resolves.toMatchObject([
       {
         agentId: 'agent-0',
@@ -1117,12 +1119,16 @@ describe('SessionSubagentHost', () => {
       },
     ]);
 
-    expect(session.createAgent).toHaveBeenCalledWith(
+    expect(createAgent).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({
         parentAgentId: 'main',
         swarmItem: 'src/a.ts',
       }),
+    );
+    expect(onValidated).toHaveBeenCalledOnce();
+    expect(onValidated.mock.invocationCallOrder[0]).toBeLessThan(
+      createAgent.mock.invocationCallOrder[0]!,
     );
     expect(metadataAgents['agent-0']).toMatchObject({
       type: 'sub',
@@ -1150,6 +1156,65 @@ describe('SessionSubagentHost', () => {
         }),
       }),
     );
+  });
+
+  it('does not validate swarm mode when every queued task has an unknown profile', async () => {
+    const parent = testAgent();
+    parent.configure();
+    const session = fakeSession(parent.agent, testAgent({ type: 'sub' }).agent);
+    const host = new SessionSubagentHost(session, 'main');
+    const onValidated = vi.fn();
+
+    await expect(
+      host.runQueued([{ ...queuedTask(1), profileName: 'missing', signal }], { onValidated }),
+    ).resolves.toMatchObject([
+      {
+        status: 'failed',
+        state: 'not_started',
+        error: 'Subagent profile "missing" was not found',
+      },
+    ]);
+
+    expect(onValidated).not.toHaveBeenCalled();
+    expect(session.createAgent).not.toHaveBeenCalled();
+  });
+
+  it('redacts an unavailable queued model before validating or launching the batch', async () => {
+    const parent = testAgent();
+    parent.configure();
+    const session = fakeSession(parent.agent, testAgent({ type: 'sub' }).agent);
+    const host = new SessionSubagentHost(session, 'main');
+    const onValidated = vi.fn();
+
+    const error = await host
+      .runQueued(
+        [{ ...queuedTask(1), modelAlias: 'SECRET_API_KEY', signal }],
+        { onValidated },
+      )
+      .catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(SUBAGENT_MODEL_UNAVAILABLE_MESSAGE);
+    expect((error as Error).message).not.toContain('SECRET_API_KEY');
+    expect(onValidated).not.toHaveBeenCalled();
+    expect(session.createAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not validate swarm mode or launch a pre-aborted queued task', async () => {
+    const parent = testAgent();
+    parent.configure();
+    const session = fakeSession(parent.agent, testAgent({ type: 'sub' }).agent);
+    const host = new SessionSubagentHost(session, 'main');
+    const onValidated = vi.fn();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      host.runQueued([{ ...queuedTask(1), signal: controller.signal }], { onValidated }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(onValidated).not.toHaveBeenCalled();
+    expect(session.createAgent).not.toHaveBeenCalled();
   });
 
   it('retries a rate-limited child turn without appending the original prompt again', async () => {
