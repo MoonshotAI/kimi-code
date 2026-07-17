@@ -214,11 +214,15 @@ function loadThinkingForModel(modelId: string): ThinkingLevel | undefined {
 
 function saveThinkingToStorage(modelId: string, level: ThinkingLevel): void {
   thinkingPicks[modelId] = level;
-  // Read-modify-write: merge this tab's in-memory entries (including any '*'
-  // legacy fallback) over the stored map, so concurrent tabs' entries survive
-  // and the legacy value is rewritten in map format rather than dropped.
+  // Delta write (same pattern as saveUnread): overlay only the CHANGED entry —
+  // overlaying this tab's whole in-memory snapshot would revert another tab's
+  // newer pick for any model this tab still holds a stale copy of. The one
+  // extra entry carried along is the migrated legacy '*' fallback, so the
+  // first write rewrites it into map format rather than dropping it.
   const map = loadThinkingMap();
-  for (const [id, pick] of Object.entries(thinkingPicks)) map[id] = pick;
+  const legacy = thinkingPicks[LEGACY_THINKING_PICK_KEY];
+  if (legacy !== undefined) map[LEGACY_THINKING_PICK_KEY] = legacy;
+  map[modelId] = level;
   safeSetJson(THINKING_STORAGE_KEY, map);
 }
 
