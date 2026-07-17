@@ -158,7 +158,7 @@ jobs:
   publish-plugin-marketplace:
     name: Publish plugin marketplace
     needs: release
-    if: needs.release.outputs.packages_published == 'true'
+    if: needs.release.outputs.kimi_native_release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
