@@ -54,7 +54,7 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 - **升级 submodule**：在 `kimi-code/` 内 checkout 目标 commit，然后在根目录提交 submodule 指针；新克隆或拉取后跑 `pnpm run sync` 对齐。
 - **常用检查**：`pnpm test`、`pnpm lint`、`pnpm typecheck`、`pnpm build`。
 - **本地打包并签名 macOS 包**：`pnpm package:macos`（CI 不可用时的替代，arm64；凭证与流程见 `apps/desktop/README.md` 的"打包"一节）。
-- **桌面端发版**：功能 PR 里跑 `pnpm changeset`（选 `kimi-code-app`）并提交生成的 changeset；合入 main 后 CI 自动开 `ci: release desktop` 版本 PR，版本 PR 合入即自动打四平台签名包并发 GitHub Release。完整流程见 `.changeset/README.md`。
+- **桌面端发版**：功能 PR 必须按 `.agents/skills/changeset/SKILL.md` 生成并提交 changeset（只选 `kimi-code-app`，早期阶段一律 patch）；合入 main 后 CI 自动开 `ci: release desktop` 版本 PR，版本 PR 合入即自动打四平台签名包并发 GitHub Release。完整流程见 `.changeset/README.md`。
 
 ## 目录
 

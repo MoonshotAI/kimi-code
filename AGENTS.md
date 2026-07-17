@@ -17,6 +17,8 @@
 - **开发顺序**：两端共有的 UI 改动优先在 `apps/desktop` 开发，开发完成后再同步到 `apps/web`（desktop 专属原生功能除外，见上条）。
 - **不在本仓直接改 `kimi-code/` submodule 的内容**；kimi-code 侧改动在你的工作克隆里做（见"双仓工作流"），本仓只 bump submodule 指针。
 - **提交规范**：Conventional Commits；禁止任何 `Co-Authored-By` 署名；commit message、PR、代码、文档不得出现 agent / AI 工具的名称或身份信息。PR 描述用英文。
+- **changeset 必走 skill**：每次任务完成、提交 PR 前，必须运行 `changeset` skill（`.agents/skills/changeset/SKILL.md`）并按其规则在 `.changeset/` 生成 changeset；纯测试 / 重构 / 文档等无用户可见变化的改动除外。**早期阶段一律 `patch`**；认为需要 `minor` / `major` 时必须先向用户说明并获得明确同意，否则仍写 `patch`。
+- **不擅自启动 agent-browser 调试**：未经用户明确要求，不得自行运行 `pnpm dev:desktop:debug`、连接 `agent-browser` 或操作桌面端 UI；确有需要先向用户说明并获同意。
 - **stage 用显式路径，不用 `git add -A` / `git add .`**：本仓有构建产物目录（如 desktop 的 `desktop-dist`、已清理的 `web-dist`），gitignore 变动会让它们突然"显形"，`git add -A` 会误扫进 commit（2026-07 实际出过一次）。
 - Node `>=24.15.0`，pnpm `10.33.0`（`.npmrc` 设 `engine-strict=true`，Node 不符装不上依赖）。
 
