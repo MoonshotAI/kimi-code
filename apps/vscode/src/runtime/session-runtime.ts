@@ -327,7 +327,11 @@ export class SessionRuntime {
   }
 
   async cancel(): Promise<void> {
-    if (this.closed || !this.hasActiveWork) return;
+    // Always reach the engine, even when the host believes nothing is active.
+    // The host-side bookkeeping can drift from engine truth after an abnormal
+    // error path; session.cancel() is a harmless no-op when the engine is
+    // idle, but it is the only way to recover a turn the host lost track of.
+    if (this.closed) return;
     this.reverseRpc.cancelAll("Turn cancelled");
     const cancellingHostAction = this.hostActionActive;
     const hostActionId = this.activeHostActionId;
