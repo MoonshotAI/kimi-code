@@ -8,6 +8,7 @@ import type { HookDef } from '../session/hooks';
 import { loadPluginCommand } from './commands';
 import { downloadZip, extractZip } from './archive';
 import { resolveGithubSource } from './github-resolver';
+import { resolveGitlabSource } from './gitlab-resolver';
 import { parseManifest, type ParsedManifestResult } from './manifest';
 import { readInstalled, writeInstalled, type InstalledRecord } from './store';
 import { resolveInstallSource } from './source';
@@ -93,6 +94,11 @@ export class PluginManager {
           repo: resolved.repo,
           ref: githubResolution.ref,
         };
+      } else if (resolved.kind === 'gitlab') {
+        const gitlabResolution = await resolveGitlabSource(resolved);
+        zipUrl = gitlabResolution.tarballUrl;
+        originalSource = source.trim();
+        sourceType = 'zip-url';
       } else {
         zipUrl = resolved.path;
         originalSource = resolved.path;

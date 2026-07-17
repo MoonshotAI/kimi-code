@@ -712,6 +712,36 @@ describe('PluginManager', () => {
     expect(reloaded.get('gh-demo')?.github?.ref).toEqual({ kind: 'tag', value: 'v1.0.0' });
   });
 
+  it('install() from a GitLab release URL downloads and records the original source', async () => {
+    const home = await makeKimiHome();
+    const zipBuffer = await createZipBuffer([
+      {
+        name: 'sample-v1.2.3/kimi.plugin.json',
+        data: JSON.stringify({ name: 'gitlab-demo', version: '1.2.3' }),
+      },
+    ]);
+    const source = 'https://gitlab.example.com/team/sample/-/releases/v1.2.3';
+    const original = globalThis.fetch;
+    const fetchMock = vi.fn(async () => new Response(zipBuffer, { status: 200 }));
+    globalThis.fetch = fetchMock as typeof fetch;
+
+    try {
+      const manager = new PluginManager({ kimiHomeDir: home });
+      await manager.load();
+      const record = await manager.install(source);
+
+      expect(record.id).toBe('gitlab-demo');
+      expect(record.source).toBe('zip-url');
+      expect(record.originalSource).toBe(source);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://gitlab.example.com/api/v4/projects/team%2Fsample/repository/archive.zip?sha=v1.2.3&ref_type=tags',
+        expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      );
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
   it('install() from /tree/<tag-shaped-ref> downloads via short form, not refs/heads/ (P1 regression)', async () => {
     // A repo whose only ref `v5.1.0` is a tag (no branch by that name). The
     // previous resolver wrote `zip/refs/heads/v5.1.0` and 404'd. Verify the

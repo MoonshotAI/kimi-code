@@ -482,7 +482,7 @@ describe('plugins selector dialogs', () => {
   it('installs from a URL typed on the Custom tab', () => {
     const { panel, onSelect } = makePanel({ initialTab: 'custom' });
     const out = strip(renderRaw(panel));
-    expect(out).toContain('Install from a GitHub URL');
+    expect(out).toContain('Install from a GitHub or GitLab URL');
     expect(out).toContain('╭');
 
     for (const ch of 'https://github.com/owner/repo') {

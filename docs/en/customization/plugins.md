@@ -23,7 +23,7 @@ You can also use slash commands directly:
 | --- | --- |
 | `/plugins` | Open the interactive plugin manager |
 | `/plugins list` | List installed plugins |
-| `/plugins install <path-or-url>` | Install from a local directory, zip URL, or GitHub repository URL |
+| `/plugins install <path-or-url>` | Install from a local directory, zip URL, or GitHub/GitLab repository URL |
 | `/plugins marketplace [source]` | Browse the official marketplace, or pass a custom marketplace JSON path or URL |
 | `/plugins info <id>` | View plugin details and diagnostics |
 | `/plugins enable <id>` | Enable a plugin |
@@ -46,6 +46,17 @@ Use `/plugins install <url>` to install directly from a GitHub repository. Four 
 
 Network requests only go through `github.com` redirects and `codeload.github.com` downloads; `api.github.com` is not called.
 
+### Installing from GitLab
+
+Use `/plugins install <url>` to install from GitLab.com or a self-managed GitLab instance. Four URL forms are supported:
+
+- `https://gitlab.example.com/<namespace>/<project>`: Install the latest release; falls back to the default branch if no release exists
+- `https://gitlab.example.com/<namespace>/<project>/-/tree/<ref>`: Install a specific branch, tag, or short commit SHA
+- `https://gitlab.example.com/<namespace>/<project>/-/releases/<tag>`: Pin to a specific tag
+- `https://gitlab.example.com/<namespace>/<project>/-/commit/<sha>`: Pin to a specific commit
+
+GitLab.com and self-managed hostnames containing `gitlab` are detected automatically. For a self-managed instance with a different hostname, use its HTTPS clone URL ending in `.git`, such as `https://code.example.com/<namespace>/<project>.git`. GitLab downloads use the selected instance's `/api/v4` release and repository archive endpoints.
+
 ### Notes
 
 - Plugin changes apply after `/reload` or in new sessions. After installing, enabling/disabling, or removing a plugin, run `/reload` or `/new`; the current session will not update.
@@ -55,7 +66,7 @@ Network requests only go through `github.com` redirects and `codeload.github.com
 
 ### Custom marketplace JSON
 
-Pass a custom marketplace JSON path or URL to `/plugins marketplace <source>`, or set [`KIMI_CODE_PLUGIN_MARKETPLACE_URL`](../configuration/env-vars.md) to override the default catalog. Each entry in the `plugins` array needs an `id` and a `source` (local path, zip URL, or GitHub URL):
+Pass a custom marketplace JSON path or URL to `/plugins marketplace <source>`, or set [`KIMI_CODE_PLUGIN_MARKETPLACE_URL`](../configuration/env-vars.md) to override the default catalog. Each entry in the `plugins` array needs an `id` and a `source` (local path, zip URL, or GitHub/GitLab URL):
 
 ```json
 {
@@ -316,4 +327,3 @@ Plugins have a limited loading scope. The following operations do not occur duri
 - All paths must remain within the plugin root directory after symbolic link resolution
 - MCP servers of enabled plugins start after `/reload` or in new sessions and can be disabled at any time from `/plugins`
 - Broken manifests or unsafe paths appear in `/plugins info <id>` diagnostics and do not affect other sessions
-

@@ -35,6 +35,25 @@ describe('resolveInstallSource', () => {
     });
   });
 
+  it('resolves GitLab.com and self-managed GitLab URLs', () => {
+    expect(resolveInstallSource('https://gitlab.com/team/plugins/sample')).toEqual({
+      kind: 'gitlab',
+      baseUrl: 'https://gitlab.com',
+      projectPath: 'team/plugins/sample',
+    });
+    expect(resolveInstallSource('https://gitlab.example.com/team/sample/-/tree/main')).toEqual({
+      kind: 'gitlab',
+      baseUrl: 'https://gitlab.example.com',
+      projectPath: 'team/sample',
+      ref: { kind: 'branch', value: 'main' },
+    });
+    expect(resolveInstallSource('https://code.example.com/team/sample.git')).toEqual({
+      kind: 'gitlab',
+      baseUrl: 'https://code.example.com',
+      projectPath: 'team/sample',
+    });
+  });
+
   it('rejects relative paths', () => {
     expect(() => resolveInstallSource('./plugin')).toThrow('absolute path');
   });
