@@ -79,7 +79,6 @@
         ./packages/server
         ./packages/telemetry
         ./apps/kimi-code
-        ./apps/kimi-desktop
         ./apps/vscode
         ./apps/kimi-web
         ./apps/vis
@@ -106,7 +105,6 @@
         "@moonshot-ai/server"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/kimi-code"
-        "@moonshot-ai/kimi-desktop"
         "kimi-code"
         "@moonshot-ai/kimi-web"
         "@moonshot-ai/vis"
@@ -162,7 +160,7 @@
               inherit (finalAttrs) pname version src pnpmWorkspaces;
               inherit pnpm;
               fetcherVersion = 3;
-              hash = "sha256-/mJN7mNZgce57+dCQv0MBDESAxQpeBGQCky/2AR1qCk=";
+              hash = "sha256-+pzJfoWJwVXIUU8oc56LVpfNjSY6MABID5g11Cm92xw=";
             };
 
             nativeBuildInputs = [
