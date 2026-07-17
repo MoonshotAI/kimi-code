@@ -31,8 +31,9 @@ const STARRED_MODELS_STORAGE_KEY = STORAGE_KEYS.starredModels;
 
 /** Sentinel thrown to abort a skill activation when the prerequisite profile
  *  persist failed — persistSessionProfile already surfaced that failure, so
- *  the catch skips activating without reporting a second, synthetic error. */
-const PROFILE_PERSIST_FAILED = Symbol('profilePersistFailed');
+ *  the catch skips activating without reporting a second, synthetic error.
+ *  (An actual Error instance: oxlint only-throw-error.) */
+const PROFILE_PERSIST_FAILED = new Error('profile persist failed');
 
 function loadStarredModelsFromStorage(): string[] {
   try {
