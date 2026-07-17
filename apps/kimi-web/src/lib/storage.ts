@@ -15,6 +15,7 @@ export const STORAGE_KEYS = {
   swarmMode: 'kimi-web.swarm-mode',
   goalMode: 'kimi-web.goal-mode',
   uiFontSize: 'kimi-web.ui-font-size',
+  uiFontFamily: 'kimi-web.ui-font-family',
   starredModels: 'kimi-web.starred-models',
   unread: 'kimi-web.unread',
   onboarded: 'kimi-web.onboarded',

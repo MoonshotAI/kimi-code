@@ -6,4 +6,8 @@ export default {
   accentLabel: '主题色',
   accentBlue: '蓝色',
   accentBlack: '黑色',
+  fontLabel: '字体',
+  fontDefault: '默认',
+  fontSystem: '系统',
+  fontSerif: '衬线',
 } as const;

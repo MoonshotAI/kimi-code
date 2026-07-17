@@ -6,4 +6,8 @@ export default {
   accentLabel: 'Accent',
   accentBlue: 'Blue',
   accentBlack: 'Black',
+  fontLabel: 'Font',
+  fontDefault: 'Default',
+  fontSystem: 'System',
+  fontSerif: 'Serif',
 } as const;

@@ -10,7 +10,7 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ConversationStatus, PermissionMode } from '../../types';
 import type { AppModel, AppSession, ThinkingLevel } from '../../api/types';
-import type { ColorScheme } from '../../composables/useKimiWebClient';
+import type { ColorScheme, UiFontFamily } from '../../composables/useKimiWebClient';
 import { useKimiWebClient } from '../../composables/useKimiWebClient';
 import {
   commitLevel,
@@ -37,6 +37,7 @@ const props = withDefaults(
     swarmMode?: boolean;
     colorScheme?: ColorScheme;
     uiFontSize?: number;
+    uiFontFamily?: UiFontFamily;
     authReady?: boolean;
     conversationToc?: boolean;
     /** Server version from GET /api/v1/meta, shown as a read-only row. */
@@ -47,6 +48,7 @@ const props = withDefaults(
   {
     colorScheme: 'system',
     uiFontSize: 14,
+    uiFontFamily: 'default',
     authReady: false,
     serverVersion: '',
     models: () => [],
@@ -62,6 +64,7 @@ const emit = defineEmits<{
   setPermission: [mode: PermissionMode];
   setColorScheme: [colorScheme: ColorScheme];
   setUiFontSize: [size: number];
+  setUiFontFamily: [font: UiFontFamily];
   setConversationToc: [on: boolean];
   login: [];
   logout: [];
@@ -69,6 +72,10 @@ const emit = defineEmits<{
 
 function onColorScheme(v: string): void {
   emit('setColorScheme', v as ColorScheme);
+}
+
+function onUiFontFamily(v: string): void {
+  emit('setUiFontFamily', v as UiFontFamily);
 }
 
 const PERM_MODES: PermissionMode[] = ['manual', 'auto', 'yolo'];
@@ -362,6 +369,21 @@ watch(
         />
         <span class="num-unit">px</span>
       </label>
+    </div>
+
+    <div class="srow read-only pref">
+      <span class="srow-main">
+        <span class="srow-label">{{ t('theme.fontLabel') }}</span>
+      </span>
+      <SegmentedControl
+        :model-value="uiFontFamily"
+        :options="[
+          { value: 'default', label: t('theme.fontDefault') },
+          { value: 'system', label: t('theme.fontSystem') },
+          { value: 'serif', label: t('theme.fontSerif') },
+        ]"
+        @update:model-value="onUiFontFamily"
+      />
     </div>
 
     <button type="button" class="srow" @click="emit('setConversationToc', !conversationToc)">

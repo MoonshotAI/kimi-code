@@ -125,7 +125,7 @@ const PERSISTED_THINKING_LEVEL_RE = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/;
 // Appearance types + logic live in ./client/useAppearance; re-exported here so
 // existing `import type { ColorScheme, Accent } from './useKimiWebClient'`
 // callers keep working.
-export type { Accent, ColorScheme } from './client/useAppearance';
+export type { Accent, ColorScheme, UiFontFamily } from './client/useAppearance';
 
 // The code-font setting was removed with its UI (b8a9e83). Clear the old
 // persisted key so users who once picked a font aren't frozen on it forever.
@@ -2805,6 +2805,8 @@ export function useKimiWebClient() {
 
     uiFontSize: appearance.uiFontSize,
     setUiFontSize: appearance.setUiFontSize,
+    uiFontFamily: appearance.uiFontFamily,
+    setUiFontFamily: appearance.setUiFontFamily,
 
     // Conversation outline (TOC)
     conversationToc,

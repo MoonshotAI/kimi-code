@@ -251,6 +251,9 @@ onUnmounted(() => {
             <div class="code"><div class="code-bar"><span class="d"></span><span class="d"></span><span class="d"></span><span class="fn">--font-mono</span></div><pre>--font-mono: "JetBrains Mono Variable", "JetBrains Mono",
       ui-monospace, "SF Mono", Menlo, Consolas, monospace;</pre></div>
 
+            <h4 class="mini">Font family preference</h4>
+            <p>Settings → Appearance → Font remaps <code>--font-ui</code> through <code>&lt;html data-ui-font-family&gt;</code>: <b>default</b> keeps the Inter stack, <b>system</b> switches to <code>--font-ui-system</code> (the platform's native UI face), <b>serif</b> to <code>--font-ui-serif</code> (a reading-oriented serif with serif CJK fallbacks). <code>--font-display</code> and <code>--sans</code> follow automatically since they reference <code>var(--font-ui)</code>; <code>--font-mono</code> is unaffected. The alternate stacks use locally installed fonts only — no extra webfont downloads.</p>
+
             <h4 class="mini">Loading strategy</h4>
             <table class="dt">
               <thead><tr><th>Font</th><th>Source</th><th>Bundled</th><th>Usage</th></tr></thead>
@@ -288,6 +291,7 @@ onUnmounted(() => {
               <thead><tr><th>Token</th><th>Value</th><th>Usage</th></tr></thead>
               <tbody>
                 <tr><td class="tk">--font-ui</td><td class="val">"Inter Variable", "Inter", "Helvetica Neue", Arial…</td><td>UI &amp; body (Inter first)</td></tr>
+                <tr><td class="tk">--font-ui-system / --font-ui-serif</td><td class="val">system-ui… / Charter, Georgia…</td><td>alternate UI faces applied by the font family preference</td></tr>
                 <tr><td class="tk">--font-mono</td><td class="val">JetBrains Mono…</td><td>code, tool names, line numbers, diffs</td></tr>
                 <tr><td class="tk">--base-ui-font-size</td><td class="val">14px user preference</td><td>root setting that drives UI, reading body, and sidebar font sizes</td></tr>
                 <tr><td class="tk">--content-font-size</td><td class="val">calc(base + 1px)</td><td>chat Markdown, message bubbles, composer</td></tr>

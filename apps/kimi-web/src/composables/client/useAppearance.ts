@@ -1,8 +1,8 @@
 // apps/kimi-web/src/composables/client/useAppearance.ts
-// Appearance preferences (color scheme / accent / UI font size) and the
-// streaming "fast moon" spinner state. Pure local UI state: only touches
-// storage + the DOM, never rawState or the API. The values are module-level
-// singletons so the whole app shares one instance.
+// Appearance preferences (color scheme / accent / UI font size / UI font
+// family) and the streaming "fast moon" spinner state. Pure local UI state:
+// only touches storage + the DOM, never rawState or the API. The values are
+// module-level singletons so the whole app shares one instance.
 
 import { ref, watch } from 'vue';
 import { safeGetString, safeSetString, STORAGE_KEYS } from '../../lib/storage';
@@ -13,8 +13,16 @@ export type ColorScheme = 'light' | 'dark' | 'system';
 /** Accent: 'blue' (Kimi blue, default) or 'mono' (black/white). */
 export type Accent = 'blue' | 'mono';
 
+/**
+ * UI font family: 'default' (Inter-first stack), 'system' (platform UI
+ * stack), or 'serif' (reading-oriented serif stack). Mirrored onto
+ * <html data-ui-font-family>; CSS remaps --font-ui for the non-default values.
+ */
+export type UiFontFamily = 'default' | 'system' | 'serif';
+
 const ACCENT_VALUES: readonly string[] = ['blue', 'mono'];
 const COLOR_SCHEME_VALUES: readonly string[] = ['light', 'dark', 'system'];
+const UI_FONT_FAMILY_VALUES: readonly string[] = ['default', 'system', 'serif'];
 const UI_FONT_SIZE_DEFAULT = 14;
 const UI_FONT_SIZE_MIN = 12;
 const UI_FONT_SIZE_MAX = 20;
@@ -66,13 +74,26 @@ function applyUiFontSize(value: number): void {
   document.documentElement.style.setProperty('--base-ui-font-size', `${clampUiFontSize(value)}px`);
 }
 
+function loadUiFontFamily(): UiFontFamily {
+  const v = safeGetString(STORAGE_KEYS.uiFontFamily);
+  if (v && UI_FONT_FAMILY_VALUES.includes(v)) return v as UiFontFamily;
+  return 'default';
+}
+
+function applyUiFontFamily(f: UiFontFamily): void {
+  if (typeof document === 'undefined' || !document.documentElement) return;
+  document.documentElement.dataset.uiFontFamily = f;
+}
+
 const colorScheme = ref<ColorScheme>(loadColorScheme());
 const accent = ref<Accent>(loadAccent());
 const uiFontSize = ref<number>(loadUiFontSize());
+const uiFontFamily = ref<UiFontFamily>(loadUiFontFamily());
 
 watch(colorScheme, applyColorScheme, { immediate: true });
 watch(accent, applyAccent, { immediate: true });
 watch(uiFontSize, applyUiFontSize, { immediate: true });
+watch(uiFontFamily, applyUiFontFamily, { immediate: true });
 
 function setColorScheme(c: ColorScheme): void {
   if (!COLOR_SCHEME_VALUES.includes(c)) return;
@@ -90,6 +111,12 @@ function setUiFontSize(value: number): void {
   const next = clampUiFontSize(value);
   uiFontSize.value = next;
   safeSetString(STORAGE_KEYS.uiFontSize, String(next));
+}
+
+function setUiFontFamily(f: UiFontFamily): void {
+  if (!UI_FONT_FAMILY_VALUES.includes(f)) return;
+  uiFontFamily.value = f;
+  safeSetString(STORAGE_KEYS.uiFontFamily, f);
 }
 
 // CSS handles the moon frames; this only flips the spinner between normal and
@@ -150,10 +177,12 @@ export function useAppearance() {
     colorScheme,
     accent,
     uiFontSize,
+    uiFontFamily,
     fastMoon,
     setColorScheme,
     setAccent,
     setUiFontSize,
+    setUiFontFamily,
     resetFastMoon,
     recordMoonDelta,
   };

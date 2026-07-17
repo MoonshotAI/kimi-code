@@ -11,7 +11,7 @@ import { useDialogFocus } from '../../composables/useDialogFocus';
 import LanguageSwitcher from './LanguageSwitcher.vue';
 import { serverEndpointLabel } from '../../api/config';
 import { downloadTraceLog, isTraceEnabled } from '../../debug/trace';
-import type { Accent, ColorScheme } from '../../composables/useKimiWebClient';
+import type { Accent, ColorScheme, UiFontFamily } from '../../composables/useKimiWebClient';
 import type { AppConfig, AppModel } from '../../api/types';
 import Dialog from '../ui/Dialog.vue';
 import Switch from '../ui/Switch.vue';
@@ -26,6 +26,7 @@ const props = defineProps<{
   colorScheme: ColorScheme;
   accent: Accent;
   uiFontSize: number;
+  uiFontFamily: UiFontFamily;
   authReady: boolean;
   accountModel?: string | null;
   /** Browser-notification-on-completion preference. */
@@ -56,6 +57,7 @@ const emit = defineEmits<{
   setColorScheme: [colorScheme: ColorScheme];
   setAccent: [accent: Accent];
   setUiFontSize: [size: number];
+  setUiFontFamily: [font: UiFontFamily];
   setNotify: [on: boolean];
   setNotifyQuestion: [on: boolean];
   setNotifyApproval: [on: boolean];
@@ -381,6 +383,18 @@ function archiveTime(iso: string): string {
                 />
                 <span class="num-unit">px</span>
               </label>
+            </div>
+            <div class="row">
+              <span class="rlabel">{{ t('theme.fontLabel') }}</span>
+              <SegmentedControl
+                :model-value="uiFontFamily"
+                :options="[
+                  { value: 'default', label: t('theme.fontDefault') },
+                  { value: 'system', label: t('theme.fontSystem') },
+                  { value: 'serif', label: t('theme.fontSerif') },
+                ]"
+                @update:model-value="emit('setUiFontFamily', $event as UiFontFamily)"
+              />
             </div>
             <div class="row">
               <span class="rlabel">{{ t('sidebar.language') }}</span>
