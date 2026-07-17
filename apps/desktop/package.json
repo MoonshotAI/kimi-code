@@ -36,6 +36,7 @@
     "@moonshot-ai/web-ui": "workspace:*",
     "@chenglou/pretext": "0.0.8",
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@rive-app/canvas": "2.38.5",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "katex": "^0.17.0",

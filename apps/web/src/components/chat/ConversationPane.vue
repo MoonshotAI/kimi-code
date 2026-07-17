@@ -11,6 +11,7 @@ import ChatHeader from './ChatHeader.vue';
 import Composer from './Composer.vue';
 import ChatDock from './ChatDock.vue';
 import ConversationToc, { type ConversationTocItem } from './ConversationToc.vue';
+import KimiDoodle from '../KimiDoodle.vue';
 import { Icon, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 import { getVisibleWorkspaces } from '../../lib/workspacePicker';
 import { safeRemove, STORAGE_KEYS } from '../../lib/storage';
@@ -1309,9 +1310,14 @@ defineExpose({ loadComposerForEdit, focusComposer });
             <!-- Empty session: Composer rendered in the centre of the pane -->
             <div class="empty-spacer" />
             <div class="empty-hint">
-              <span class="empty-hint-title" :class="{ 'is-starting': starting }">
-                <Spinner v-if="starting" size="sm" />
-                <span>{{ starting ? t('conversation.starting') : t('composer.emptyConversationTitle') }}</span>
+              <KimiDoodle v-if="!starting" class="empty-doodle">
+                <template #fallback>
+                  <span class="empty-hint-title">{{ t('composer.emptyConversationTitle') }}</span>
+                </template>
+              </KimiDoodle>
+              <span v-else class="empty-hint-title is-starting">
+                <Spinner size="sm" />
+                <span>{{ t('conversation.starting') }}</span>
               </span>
               <span v-if="!starting" class="empty-hint-text">{{ t('composer.emptyConversation') }}</span>
               <!-- Workspace picker: choose where this new conversation starts.
@@ -1624,6 +1630,11 @@ defineExpose({ loadComposerForEdit, focusComposer });
   gap: 9px;
   color: var(--dim);
   font-weight: 400;
+}
+/* The Rive doodle takes the title's slot in the empty-session hero; the text
+   fallback inside it keeps the layout identical until the runtime is ready. */
+.empty-doodle {
+  width: min(340px, 62vw);
 }
 .empty-hint-text {
   display: inline-block;

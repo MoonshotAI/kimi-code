@@ -98,6 +98,9 @@ importers:
       '@moonshot-ai/web-ui':
         specifier: workspace:*
         version: link:../../packages/web-ui
+      '@rive-app/canvas':
+        specifier: 2.38.5
+        version: 2.38.5
       '@vitejs/plugin-vue':
         specifier: ^5.2.4
         version: 5.2.4(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0))(vue@3.5.39(typescript@6.0.2))
@@ -173,6 +176,9 @@ importers:
       '@moonshot-ai/web-ui':
         specifier: workspace:*
         version: link:../../packages/web-ui
+      '@rive-app/canvas':
+        specifier: 2.38.5
+        version: 2.38.5
       '@xterm/addon-fit':
         specifier: ^0.11.0
         version: 0.11.0
@@ -1896,6 +1902,9 @@ packages:
 
   '@quansync/fs@1.0.0':
     resolution: {integrity: sha512-4TJ3DFtlf1L5LDMaM6CanJ/0lckGNtJcMjQ1NAV6zDmA0tEHKZtxNKin8EgPaVX1YzljbxckyT2tJrpQKAtngQ==}
+
+  '@rive-app/canvas@2.38.5':
+    resolution: {integrity: sha512-S3W6w5D9m2JWD3IKmDYfOKppyVf197QSL4OyuIBiYOvwY552Gzu5ct+6vEevLCAXKhqiY2YuZIEMTXeUGOC5xg==}
 
   '@rolldown/binding-android-arm64@1.1.5':
     resolution: {integrity: sha512-lZg8fqIv2v7FF237bwMgzGZEJvGL79/s5knJ/i6FmsGF4XXlzccZ4jb+TrFIxtSSxFtIpdsgrPZeMk1I9AFcyQ==}
@@ -7023,6 +7032,8 @@ snapshots:
   '@quansync/fs@1.0.0':
     dependencies:
       quansync: 1.0.0
+
+  '@rive-app/canvas@2.38.5': {}
 
   '@rolldown/binding-android-arm64@1.1.5':
     optional: true
