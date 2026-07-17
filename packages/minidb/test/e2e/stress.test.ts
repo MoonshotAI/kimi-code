@@ -376,7 +376,7 @@ test(
       new Promise((resolve, reject) => {
         const sock = net.createConnection(port, '127.0.0.1');
         let buf = '';
-        sock.on('data', (d) => (buf += d));
+        sock.on('data', (d) => (buf += String(d)));
         sock.on('error', reject);
         sock.write(SET);
         setTimeout(() => sock.write(PING.repeat(20)), 1);

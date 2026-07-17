@@ -7,6 +7,7 @@
 
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
+import path from 'node:path';
 import { renameReplace } from './rename-replace.js';
 
 export class LockError extends Error {
@@ -30,14 +31,21 @@ function pidAlive(pid: unknown): boolean {
 // Track held locks so we can release them on process exit as a safety net.
 const HELD = new Set<LockFile>();
 let exitHooked = false;
-// Co-bidders all replace the stale corpse within the same microsecond-scale
-// wave (they woke on the same event); this settle pause must outlast that wave
-// so the last bidder to land is unambiguous before the winner claims the lock.
-// Sized for heavily loaded CI machines, which can deschedule a bidder for tens
-// of milliseconds inside its own atomic-op sequence. (Still a bounded-delay
-// heuristic: a bidder stalled longer than the settle can still double-win —
-// inherent to file-based takeover, mitigations live in the design notes.)
-const TAKEOVER_SETTLE_MS = 50;
+// Co-bidders all replace the stale corpse within the same wave (they woke on
+// the same event); the settle pause before the winner claims the lock must
+// outlast that wave so the last bidder to land is unambiguous. A fixed value
+// (even a generous one) loses on shared CI runners that deschedule a bidder
+// for hundreds of milliseconds inside its own atomic-op sequence, so the
+// settle is ADAPTIVE: it scales with how long our own takeover attempt took
+// (4x the wall clock of inspect+writeBid+rename — a stalled machine stalls
+// every bidder), floored at 60ms and capped at 2s so a healthy takeover stays
+// fast. Residual (bounded-delay, inherent to file-based takeover): a bidder
+// whose writeBid is delayed past the winner's final verify can still
+// double-win — the bid-file sweep at verification shrinks this window to
+// "competitor had not even started writing their bid yet", which requires a
+// full-attempt+settle-sized skew and is effectively a process-level pause.
+const TAKEOVER_SETTLE_BASE_MS = 60;
+const TAKEOVER_SETTLE_MAX_MS = 2_000;
 function hookExit(): void {
   if (exitHooked) return;
   exitHooked = true;
@@ -61,70 +69,123 @@ export class LockFile {
    *  re-races: callers that want to wait retry acquire() at a higher level
    *  (see the cluster lock pool). */
   async acquire(): Promise<boolean> {
-    if (await this.tryCreate()) return true;
-
-    // The lock exists. Only a DEAD owner's lock may be taken over; everything
-    // else (a live owner, or a takeover bid made by another racer in the
-    // meantime) is respected.
-    const seen = await this.inspect();
-    if (seen === null || seen.alive) return false;
-
-    // Takeover via atomic bid-replace, NOT unlink-then-create. Unlinking a
-    // stale lock and then racing to re-create it left a window in which a
-    // loser could delete the winner's just-linked file, after which several
-    // processes all believed they held the lock. Rename atomically replaces
-    // the corpse with our bid; after a settle window that outlasts any same-wave
-    // co-bidder, the last bidder finds its own pid still in place and wins —
-    // everyone else sees a live foreign lock and backs off.
-    //
-    // Windows cannot rename over a destination while ANY process holds it
-    // open (co-racers reading/stat'ing the corpse make the rename EPERM), so
-    // the rename is retried with jitter. Crucially, each retry re-inspects
-    // the corpse first: a blind retry loop could land our bid seconds late,
-    // OVERWRITING an already-verified winner's lock line and double-holding
-    // (exactly the failure this loop is careful not to reintroduce).
-    const bid = `${this.path}.bid-${process.pid}`;
+    // Register a "watch" BEFORE touching the lock: every contender is visible
+    // to every other for its whole attempt, regardless of where the scheduler
+    // stalls it. (Settle-window heuristics alone could not survive a bidder
+    // descheduled before its bid write on a shard-parallel CI runner — see the
+    // takeover loop below; a stalled contender is only in the way, not
+    // invisible.)
+    const watch = `${this.path}.watch-${process.pid}`;
+    await fs.writeFile(watch, JSON.stringify({ pid: process.pid, ts: Date.now() }));
     try {
-      await fs.writeFile(bid, JSON.stringify({ pid: process.pid, ts: Date.now() }));
-      for (let attempt = 0; ; attempt++) {
-        // The corpse must still be there and dead. A competitor who landed
-        // wins by being alive in the file now — back off instead of
-        // overwriting their lock.
-        if (process.platform === 'win32') {
-          const cur = await this.inspect();
-          if (cur === null || cur.alive || cur.mine) {
+      await this.reapDeadWatches();
+
+      if (await this.tryCreate()) return true;
+
+      // The lock exists. Only a DEAD owner's lock may be taken over; everything
+      // else (a live owner, or a takeover bid made by another racer in the
+      // meantime) is respected.
+      const seen = await this.inspect();
+      if (seen === null || seen.alive) return false;
+
+      // Takeover via atomic bid-replace, NOT unlink-then-create. Unlinking a
+      // stale lock and then racing to re-create it left a window in which a
+      // loser could delete the winner's just-linked file, after which several
+      // processes all believed they held the lock. Rename atomically replaces
+      // the corpse with our bid.
+      //
+      // Windows cannot rename over a destination while ANY process holds it
+      // open (co-racers reading/stat'ing the corpse make the rename EPERM), so
+      // the rename is retried with jitter. Crucially, each retry re-inspects
+      // the corpse first: a blind retry loop could land our bid seconds late,
+      // OVERWRITING an already-verified winner's lock line and double-holding
+      // (exactly the failure this loop is careful not to reintroduce).
+      const bid = `${this.path}.bid-${process.pid}`;
+      const attemptStart = Date.now();
+      try {
+        await fs.writeFile(bid, JSON.stringify({ pid: process.pid, ts: Date.now() }));
+        for (let attempt = 0; ; attempt++) {
+          // The corpse must still be there and dead. A competitor who landed
+          // wins by being alive in the file now — back off instead of
+          // overwriting their lock. (Unconditional, not just win32: the same
+          // overwrite hazard exists on POSIX when a co-bidder is descheduled
+          // between its first inspect and its rename.)
+          const gate = await this.inspect();
+          if (gate === null || gate.alive || gate.mine) {
             await fs.unlink(bid).catch(() => {});
             return false;
           }
-        }
-        try {
-          await fs.rename(bid, this.path);
-          break;
-        } catch (e) {
-          const code = (e as NodeJS.ErrnoException).code;
-          const epermRetryable =
-            code === 'EPERM' && process.platform === 'win32' && attempt < 50;
-          if (!epermRetryable) {
-            await fs.unlink(bid).catch(() => {});
-            // EEXIST races another creator; a persistent EPERM (Windows
-            // retries exhausted) means some holder kept the path pinned —
-            // either way the corpse could not be displaced this round, so
-            // decline like a live lock and let callers retry higher up.
-            if (code === 'EEXIST' || code === 'EPERM') return false;
-            throw e;
+          try {
+            await fs.rename(bid, this.path);
+            break;
+          } catch (e) {
+            const code = (e as NodeJS.ErrnoException).code;
+            const epermRetryable =
+              code === 'EPERM' && process.platform === 'win32' && attempt < 50;
+            if (!epermRetryable) {
+              await fs.unlink(bid).catch(() => {});
+              // EEXIST races another creator; a persistent EPERM (Windows
+              // retries exhausted) means some holder kept the path pinned —
+              // either way the corpse could not be displaced this round, so
+              // decline like a live lock and let callers retry higher up.
+              if (code === 'EEXIST' || code === 'EPERM') return false;
+              throw e;
+            }
+            await new Promise((r) => setTimeout(r, 20 + Math.floor(Math.random() * 30)));
           }
-          await new Promise((r) => setTimeout(r, 20 + Math.floor(Math.random() * 30)));
         }
+      } catch (e) {
+        await fs.unlink(bid).catch(() => {});
+        throw e;
       }
-    } catch (e) {
-      await fs.unlink(bid).catch(() => {});
-      throw e;
+
+      // Adaptive settle: scale with how long our own attempt took (a stalled
+      // machine stalls every bidder), floored and capped (see the constants).
+      const elapsedMs = Date.now() - attemptStart;
+      let settleMs = Math.min(TAKEOVER_SETTLE_MAX_MS, Math.max(TAKEOVER_SETTLE_BASE_MS, elapsedMs * 4));
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, settleMs));
+        const cur = await this.inspect();
+        if (cur === null || !cur.mine) return false;
+        // Any live foreign watch means a contender is still in flight (its
+        // registration precedes its whole attempt): wait for its loop to
+        // finish instead of claiming on stale evidence. This is the check
+        // that makes exactly-one a construction, not a timing bet.
+        if (!(await this.hasLiveForeignWatch())) break;
+        settleMs = Math.min(TAKEOVER_SETTLE_MAX_MS, settleMs * 2);
+      }
+      this.markHeld();
+      return true;
+    } finally {
+      await fs.unlink(watch).catch(() => {});
     }
-    await new Promise((resolve) => setTimeout(resolve, TAKEOVER_SETTLE_MS));
-    const cur = await this.inspect();
-    if (cur === null || !cur.mine) return false;
-    this.markHeld();
-    return true;
+  }
+
+  /** Delete watch registrations whose owner pid is no longer alive. */
+  private async reapDeadWatches(): Promise<void> {
+    const dir = path.dirname(this.path);
+    const prefix = `${path.basename(this.path)}.watch-`;
+    for (const f of await fs.readdir(dir).catch(() => [] as string[])) {
+      if (!f.startsWith(prefix)) continue;
+      const pid = Number(f.slice(prefix.length));
+      if (Number.isInteger(pid) && pid !== process.pid && !pidAlive(pid)) {
+        await fs.unlink(path.join(dir, f)).catch(() => {});
+      }
+    }
+  }
+
+  /** True when any OTHER process's liveness watch exists (reaping dead ones on sight). */
+  private async hasLiveForeignWatch(): Promise<boolean> {
+    const dir = path.dirname(this.path);
+    const prefix = `${path.basename(this.path)}.watch-`;
+    for (const f of await fs.readdir(dir).catch(() => [] as string[])) {
+      if (!f.startsWith(prefix)) continue;
+      const pid = Number(f.slice(prefix.length));
+      if (!Number.isInteger(pid) || pid === process.pid) continue;
+      if (pidAlive(pid)) return true;
+      await fs.unlink(path.join(dir, f)).catch(() => {});
+    }
+    return false;
   }
 
   /** Atomic create-if-absent publish: tmp write + hard link (EEXIST-safe). */
