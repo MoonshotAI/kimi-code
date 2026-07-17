@@ -1513,9 +1513,12 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        // Verbatim: the stored level is submitted as-is (same as the TUI) —
-        // no coercion against the prompt's target model.
-        thinking: rawState.thinking,
+        // Resolved against THIS prompt's model (its stored pick when declared,
+        // else its catalog default) — never the active-session rawState.thinking,
+        // which tracks whatever session the user is looking at now: a queue
+        // drain for a background session would otherwise submit the level of
+        // the session the user switched to since enqueueing.
+        thinking: modelProvider.thinkingLevelForModelId(model) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode,
         swarmMode,
@@ -1689,8 +1692,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
       const result = await api.submitPrompt(sid, {
         content,
         model,
-        // Verbatim, same as a normal send (see submitPromptInternal).
-        thinking: rawState.thinking,
+        // Resolved against this prompt's own model, same as a normal send (see
+        // submitPromptInternal).
+        thinking: modelProvider.thinkingLevelForModelId(model) ?? rawState.thinking,
         permissionMode: rawState.permission,
         planMode: rawState.planModeBySession[sid] ?? false,
         swarmMode: rawState.swarmModeBySession[sid] ?? false,

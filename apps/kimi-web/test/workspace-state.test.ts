@@ -117,7 +117,7 @@ function createDeps(): UseWorkspaceStateDeps {
   return {
     taskPoller: {},
     sideChat: {},
-    modelProvider: {},
+    modelProvider: { thinkingLevelForModelId: () => undefined },
     pushOperationFailure: vi.fn(),
     activity: computed(() => 'running'),
     sessionsKnownEmpty: new Set(),
@@ -743,6 +743,7 @@ describe('useWorkspaceState — startSessionAndActivateSkill', () => {
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
         activateSkill,
+        thinkingLevelForModelId: () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
     };
@@ -897,6 +898,7 @@ describe('useWorkspaceState — createGoal from an empty composer', () => {
         draftModel: ref(null),
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
+        thinkingLevelForModelId: () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       // Something the goal can land in + what's visible in the sidebar.
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
@@ -1059,6 +1061,7 @@ describe('useWorkspaceState — startSessionAndOpenSideChat', () => {
         draftModel: ref(null),
         skillsBySession: ref({}),
         loadSkillsForSession: vi.fn(),
+        thinkingLevelForModelId: () => undefined,
       } as unknown as UseWorkspaceStateDeps['modelProvider'],
       mergedWorkspaces: computed(() => [workspace('wd_1', '/abs/path', 'A')]),
     };
@@ -1531,7 +1534,10 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
   function promptDeps(overrides: Partial<UseWorkspaceStateDeps> = {}): UseWorkspaceStateDeps {
     return {
       ...createDeps(),
-      modelProvider: { models: ref([]) } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      modelProvider: {
+        models: ref([]),
+        thinkingLevelForModelId: () => undefined,
+      } as unknown as UseWorkspaceStateDeps['modelProvider'],
       ...overrides,
     };
   }
@@ -1723,6 +1729,62 @@ describe('useWorkspaceState — snapshot prompt recovery', () => {
     await ws.steerPrompt('live text');
 
     expect(state.queuedBySession.sess_1).toEqual([{ text: 'queued', attachments: undefined }]);
+  });
+
+  // A background session's drained prompt must not inherit the thinking level
+  // of whichever session is active when the drain happens — the level is
+  // resolved from the prompt's OWN model, never the active-view global.
+  it('drains a queued prompt with the level of its own session model, not the active view', async () => {
+    const state = createState();
+    state.sessions = [{ ...createSession(), id: 'sess_a', model: 'provider/model-a' }];
+    state.activeSessionId = 'sess_b'; // the user has switched to another session
+    state.thinking = 'max'; // the global now tracks that session's max-only model
+    state.inFlightBySession = { sess_a: true };
+    state.queuedBySession = { sess_a: [{ text: 'follow up', attachments: undefined }] };
+    const thinkingLevelForModelId = vi.fn((id: string | undefined) =>
+      id === 'provider/model-a' ? 'low' : undefined,
+    );
+    const ws = useWorkspaceState(
+      state,
+      promptDeps({
+        modelProvider: {
+          models: ref([]),
+          thinkingLevelForModelId,
+        } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      }),
+    );
+
+    ws.handleSessionSnapshot('sess_a', { inFlightTurn: null, busy: true });
+
+    expect(thinkingLevelForModelId).toHaveBeenCalledWith('provider/model-a');
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_a',
+      expect.objectContaining({ model: 'provider/model-a', thinking: 'low' }),
+    );
+  });
+
+  it('falls back to the active level for a drained prompt whose model left the catalog', async () => {
+    const state = createState();
+    state.sessions = [{ ...createSession(), id: 'sess_a', model: 'provider/gone-model' }];
+    state.thinking = 'max';
+    state.inFlightBySession = { sess_a: true };
+    state.queuedBySession = { sess_a: [{ text: 'follow up', attachments: undefined }] };
+    const ws = useWorkspaceState(
+      state,
+      promptDeps({
+        modelProvider: {
+          models: ref([]),
+          thinkingLevelForModelId: () => undefined,
+        } as unknown as UseWorkspaceStateDeps['modelProvider'],
+      }),
+    );
+
+    ws.handleSessionSnapshot('sess_a', { inFlightTurn: null, busy: true });
+
+    expect(apiMock.submitPrompt).toHaveBeenCalledWith(
+      'sess_a',
+      expect.objectContaining({ model: 'provider/gone-model', thinking: 'max' }),
+    );
   });
 
   it('clears local prompt state when busy disproves a stale snapshot turn', () => {

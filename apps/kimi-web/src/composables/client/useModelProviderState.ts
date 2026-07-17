@@ -150,6 +150,17 @@ export function useModelProviderState(
     return defaultThinkingLevelFor(model);
   }
 
+  /** thinkingLevelForModel by model id, for paths that submit a prompt for a
+   *  session other than the active one (queued drain, steer): the level must
+   *  come from the prompt's OWN model, not from rawState.thinking, which always
+   *  tracks the active session's model. Undefined when the id is not in the
+   *  catalog (caller falls back to the active value, same as before). */
+  function thinkingLevelForModelId(modelId: string | undefined): ThinkingLevel | undefined {
+    if (modelId === undefined) return undefined;
+    const model = modelById(modelId);
+    return model === undefined ? undefined : thinkingLevelForModel(model);
+  }
+
   function applyThinkingLevel(level: ThinkingLevel | undefined): ThinkingLevel | undefined {
     // Whatever the user picked is what gets submitted to the daemon (same as
     // the TUI). Persisted under the CURRENT model id — per-model storage keeps
@@ -492,6 +503,7 @@ export function useModelProviderState(
     loadModels,
     loadProviders,
     setModel,
+    thinkingLevelForModelId,
     toggleStarModel,
     activateSkill,
     addProvider,
