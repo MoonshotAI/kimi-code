@@ -113,3 +113,41 @@ describe('finishResume — empty assistant tail repair (#1404)', () => {
     expect(history.at(-1)?.isError).toBe(true);
   });
 });
+
+describe('finishResume — mid-history residue after later turns (Codex review scenario)', () => {
+  it('drops an empty assistant that ended up MID-history once later turns were appended', () => {
+    const ctx = seedAgent();
+    // 崩溃: 空 assistant 落盘（第一次 resume 时它在尾部, 被修复; 但 wire 记录仍在）
+    ctx.agent.context.appendLoopEvent({ type: 'step.begin', uuid: 'dead', turnId: 't2', step: 2 });
+    // 之后用户继续对话, 新记录追加 —— 再次 resume 时它在历史中段
+    ctx.agent.context.appendUserMessage([{ type: 'text', text: 'user two' }]);
+    ctx.agent.context.appendLoopEvent({ type: 'step.begin', uuid: 's2', turnId: 't3', step: 3 });
+    ctx.agent.context.appendLoopEvent({
+      type: 'content.part',
+      uuid: 'p2',
+      turnId: 't3',
+      step: 3,
+      stepUuid: 's2',
+      part: { type: 'text', text: 'assistant two' },
+    });
+    ctx.agent.context.appendLoopEvent({ type: 'step.end', uuid: 's2', turnId: 't3', step: 3 });
+
+    const midIdx = ctx.agent.context.history.findIndex(
+      (m) => m.role === 'assistant' && m.content.length === 0 && m.toolCalls.length === 0,
+    );
+    expect(midIdx).toBeGreaterThan(-1);
+    expect(midIdx).toBeLessThan(ctx.agent.context.history.length - 1);
+
+    ctx.agent.context.finishResume();
+
+    expect(
+      ctx.agent.context.history.some(
+        (m) => m.role === 'assistant' && m.content.length === 0 && m.toolCalls.length === 0,
+      ),
+    ).toBe(false);
+    const texts = ctx.agent.context.history.map((m) =>
+      m.content.map((p) => (p.type === 'text' ? p.text : '')).join(''),
+    );
+    expect(texts).toEqual(['user one', 'assistant one', 'user two', 'assistant two']);
+  });
+});

@@ -602,28 +602,35 @@ export class ContextMemory {
     }
     // A `step.begin` that never produced content or tool calls (e.g. the
     // process was killed before the first `content.part`) leaves an empty
-    // assistant message at the tail of the replayed history. Providers reject
-    // empty assistant messages (400), bricking every subsequent resume.
-    // Repair here, at replay time, so the record write path stays untouched;
-    // the torn records are re-dropped idempotently on every resume. #1404
-    let droppedEmptyTail = 0;
-    while (this._history.length > 0) {
-      const last = this._history[this._history.length - 1]!;
-      if (last.role !== 'assistant' || last.content.length > 0 || last.toolCalls.length > 0) {
-        break;
+    // assistant message in the replayed history — at the tail on the resume
+    // right after the crash, and MID-history once later turns appended new
+    // records (the torn record stays in wire.jsonl forever). Providers reject
+    // empty assistant messages (400), so any such residue strands the
+    // session. An assistant message with neither content nor tool calls can
+    // only be a dead step's residue, so drop it wherever it appears. Repair
+    // at replay time so the record write path stays untouched; torn records
+    // are re-dropped idempotently on every resume. #1404
+    let droppedEmpty = 0;
+    let coveredDropped = 0;
+    const coveredBefore = this.tokenCountCoveredMessageCount;
+    this._history = this._history.filter((message, index) => {
+      const isEmptyAssistant =
+        message.role === 'assistant' &&
+        message.content.length === 0 &&
+        message.toolCalls.length === 0;
+      if (isEmptyAssistant) {
+        droppedEmpty += 1;
+        if (index < coveredBefore) coveredDropped += 1;
       }
-      this._history.pop();
-      droppedEmptyTail += 1;
-    }
-    if (droppedEmptyTail > 0) {
-      // tokenCountCoveredMessageCount counts a prefix of `_history`; clamp it
-      // to the shortened history so the covered/pending split stays exact.
-      this.tokenCountCoveredMessageCount = Math.min(
-        this.tokenCountCoveredMessageCount,
-        this._history.length,
-      );
-      this.agent.log.warn('dropped empty assistant messages left by an interrupted turn', {
-        droppedEmptyTail,
+      return !isEmptyAssistant;
+    });
+    if (droppedEmpty > 0) {
+      // tokenCountCoveredMessageCount counts a prefix of `_history`; subtract
+      // the dropped messages that were inside that prefix so the
+      // covered/pending split stays exact.
+      this.tokenCountCoveredMessageCount -= coveredDropped;
+      this.agent.log.warn('dropped empty assistant messages left by interrupted turns', {
+        droppedEmpty,
       });
     }
   }
