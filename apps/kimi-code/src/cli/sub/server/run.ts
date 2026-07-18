@@ -42,6 +42,7 @@ import {
   splitTokenFragment,
 } from './access-urls';
 import { ensureDaemon, findReusableDaemon, type EnsureDaemonResult } from './daemon';
+import { maybeLoadRustEngine } from '../../cli/rust-engine';
 import { type NetworkAddress } from './networks';
 import {
   DEFAULT_FOREGROUND_LOG_LEVEL,
@@ -555,6 +556,8 @@ async function runServerInProcess(
       coreProcessOptions: {
         identity: createKimiCodeHostIdentity(version),
         telemetry,
+        // Wire the Rust agent engine if config has `agent.engine = "rust"`.
+        ...(await resolveRunTurnOverride(version)),
       },
       wsGatewayOptions: {
         telemetry,
@@ -736,3 +739,16 @@ const DEFAULT_RUN_COMMAND_DEPS: RunCommandDeps = {
   stdout: process.stdout,
   stderr: process.stderr,
 };
+
+/**
+ * Resolve the Rust agent engine override for the daemon path.
+ * Reads the config, checks `agent.engine`, and loads the Rust adapter if configured.
+ */
+async function resolveRunTurnOverride(version: string): Promise<{ runTurnOverride?: unknown }> {
+  const telemetryBootstrap = await import('../../telemetry').then((m) => m.createCliTelemetryBootstrap());
+  const override = await maybeLoadRustEngine(telemetryBootstrap.homeDir);
+  if (override !== undefined) {
+    return { runTurnOverride: override };
+  }
+  return {};
+}
