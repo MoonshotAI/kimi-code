@@ -1422,6 +1422,24 @@ describe('SessionEventBroadcaster', () => {
       expect((ops.payload as OpsPayload).agent_id).toBe('agent-0');
     });
 
+    it('streams for a client subscribed before any agent exists', async () => {
+      const lc = new FakeLifecycle();
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      // The roster is empty at subscribe time: no baseline is owed, but the
+      // target must still count as seeded for what comes later.
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, undefined, { '*': 'delta' });
+
+      const main = lc.addAgent('main');
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+
+      const types = transcriptEnvelopes(view.envelopes).map((e) => e.type);
+      expect(types).toContain('transcript.reset');
+      expect(types).toContain('transcript.ops');
+    });
+
     it('keeps delivering ops across a no-reset resubscribe', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');

@@ -277,7 +277,10 @@ export class SessionEventBroadcaster {
           prev?.transcriptGrades,
           prev?.agentFilter,
         );
-        if (gated && state.targets.has(target)) state.transcriptSeeded.add(target);
+        // A no-reset subscription owes no baseline — the target is seeded
+        // either way (a fresh session with an empty roster must still
+        // receive roster resets and ops once agents appear).
+        if (state.targets.has(target)) state.transcriptSeeded.add(target);
       }
     }
     return true;
