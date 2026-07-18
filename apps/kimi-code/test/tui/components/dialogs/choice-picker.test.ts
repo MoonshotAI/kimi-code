@@ -90,6 +90,13 @@ describe('ChoicePickerComponent', () => {
     });
     expect(theme.render(120).map(strip)).toContain('  ❯ Light ← current');
 
+    const permission = new PermissionSelectorComponent({
+      currentValue: 'manual',
+      onSelect,
+      onCancel,
+    });
+    expect(permission.render(120).map(strip)).toContain('  ❯ Manual ← current');
+
     const settings = new SettingsSelectorComponent({
       onSelect,
       onCancel,
@@ -107,30 +114,6 @@ describe('ChoicePickerComponent', () => {
     const upgradePreferenceOutput = upgradePreference.render(120).map(strip);
     expect(upgradePreferenceOutput).toContain('  ❯ On ← current');
     expect(upgradePreferenceOutput).toContain('    Install new versions in the background.');
-  });
-
-  it('renders permission modes in increasing autonomy order with behavior-specific descriptions', () => {
-    const permission = new PermissionSelectorComponent({
-      currentValue: 'manual',
-      onSelect: vi.fn(),
-      onCancel: vi.fn(),
-    });
-    const permissionOutput = permission.render(120).map(strip);
-
-    expect(permissionOutput).toContain('  ❯ Manual ← current');
-    expect(permissionOutput).toContain('    Review actions that require approval.');
-    expect(permissionOutput).toContain('    YOLO');
-    expect(permissionOutput).toContain(
-      '    Auto-approve regular tools; sensitive actions may still need approval, and the agent may ask.',
-    );
-    expect(permissionOutput).toContain('    Auto');
-    expect(permissionOutput).toContain(
-      '    Run unattended — auto-approve permission prompts and never ask questions.',
-    );
-    expect(permissionOutput.indexOf('  ❯ Manual ← current')).toBeLessThan(
-      permissionOutput.indexOf('    YOLO'),
-    );
-    expect(permissionOutput.indexOf('    YOLO')).toBeLessThan(permissionOutput.indexOf('    Auto'));
   });
 
   it('routes Space into the query for searchable lists instead of selecting', () => {

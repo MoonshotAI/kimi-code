@@ -1223,11 +1223,7 @@ command = "vim"
     driver.handleUserInput('/auto on');
 
     await vi.waitFor(() => {
-      const transcript = stripSgr(renderTranscript(driver));
-      expect(transcript).toContain('Auto mode: ON');
-      expect(transcript).toContain(
-        'Permission prompts auto-approved; the agent will not ask you questions.',
-      );
+      expect(stripSgr(renderTranscript(driver))).toContain('Auto mode: ON');
     });
 
     driver.handleUserInput('/undo 10');

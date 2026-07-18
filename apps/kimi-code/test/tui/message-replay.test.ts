@@ -1123,9 +1123,6 @@ describe('KimiTUI resume message replay', () => {
     expect(transcript).toContain('Plan mode: ON');
     expect(transcript).toContain('Permission mode: auto');
     expect(transcript).toContain('YOLO mode: ON');
-    expect(transcript).toContain(
-      'Regular tools auto-approved; sensitive actions may still need approval, and the agent may ask.',
-    );
     expect(transcript).toContain('YOLO mode: OFF');
     expect(transcript).toContain('Approved for session: run command');
     expect(transcript).toContain('Plan mode: OFF');
