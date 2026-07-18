@@ -1371,7 +1371,8 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     }
     // A history entry can point at a session that has since been deleted (or one
     // outside the loaded page): try to fetch it; on failure fall back to the most
-    // recent session and FIX the URL so the bad entry doesn't stick around.
+    // recent sidebar-visible session (skipping hidden ones, e.g. ACP-created)
+    // and FIX the URL so the bad entry doesn't stick around.
     void (async () => {
       if (await fetchSessionIntoList(id)) {
         await selectSession(id, { urlMode: 'none' });

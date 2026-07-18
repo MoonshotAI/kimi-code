@@ -1387,7 +1387,9 @@ async function handleSessionNotFound(sessionId: string): Promise<void> {
 
   if (rawState.activeSessionId !== sessionId) return;
 
-  const next = rawState.sessions[0];
+  // Skip sessions hidden from the sidebar (e.g. ACP-created), matching the
+  // other pick-next paths in useWorkspaceState.
+  const next = rawState.sessions.find((s) => !(hideAcpSessions.value && isAcpSession(s)));
   if (next) {
     await workspaceState.selectSession(next.id, { urlMode: 'replace' });
   } else {
