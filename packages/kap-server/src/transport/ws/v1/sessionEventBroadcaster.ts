@@ -158,8 +158,8 @@ interface SessionState {
   /** agentId → sink subscription. */
   readonly agentDisposables: Map<string, IDisposable>;
   readonly lifecycleDisposables: IDisposable[];
-  /** Interactions already announced (or pre-existing at activation): id → kind. */
-  readonly knownInteractions: Map<string, InteractionKind>;
+  /** Interactions already announced (or pre-existing at activation): id → kind + owning agent (for the resolved event). */
+  readonly knownInteractions: Map<string, { readonly kind: InteractionKind; readonly agentId: string }>;
   /** Attached on first transcript-grade subscription for this session. */
   transcriptStream?: TranscriptStream;
 }
@@ -858,7 +858,7 @@ export class SessionEventBroadcaster {
     // Seed silently: interactions already pending at activation are surfaced
     // by the snapshot route (`pending_questions` / `pending_approvals`).
     for (const i of interactions.listPending()) {
-      state.knownInteractions.set(i.id, i.kind);
+      state.knownInteractions.set(i.id, { kind: i.kind, agentId: i.origin.agentId ?? 'main' });
     }
     state.lifecycleDisposables.push(
       interactions.onDidChangePending(() => {
@@ -867,7 +867,10 @@ export class SessionEventBroadcaster {
         this.enqueueWorkChanged(state);
         for (const i of pending) {
           if (state.knownInteractions.has(i.id)) continue;
-          state.knownInteractions.set(i.id, i.kind);
+          state.knownInteractions.set(i.id, {
+            kind: i.kind,
+            agentId: i.origin.agentId ?? 'main',
+          });
           const event = interactionRequestedEvent(i, sessionId);
           if (event !== undefined) {
             this.enqueueDurable(state, event);
@@ -875,10 +878,10 @@ export class SessionEventBroadcaster {
         }
       }),
       interactions.onDidResolve(({ id, response }) => {
-        const kind = state.knownInteractions.get(id);
-        if (kind === undefined) return;
+        const known = state.knownInteractions.get(id);
+        if (known === undefined) return;
         state.knownInteractions.delete(id);
-        const event = interactionResolvedEvent(kind, id, response, sessionId);
+        const event = interactionResolvedEvent(known.kind, id, response, sessionId, known.agentId);
         if (event !== undefined) {
           this.enqueueDurable(state, event);
         }
@@ -1177,6 +1180,7 @@ function interactionResolvedEvent(
   id: string,
   response: unknown,
   sessionId: string,
+  agentId: string,
 ): Event | undefined {
   const resolvedAt = new Date().toISOString();
   switch (kind) {
@@ -1185,7 +1189,7 @@ function interactionResolvedEvent(
       if (response === null) {
         return {
           type: 'event.question.dismissed',
-          agentId: 'main',
+          agentId,
           sessionId,
           question_id: id,
           dismissed_at: resolvedAt,
@@ -1195,7 +1199,7 @@ function interactionResolvedEvent(
       const answers = (response as { answers?: unknown }).answers ?? response;
       return {
         type: 'event.question.answered',
-        agentId: 'main',
+        agentId,
         sessionId,
         question_id: id,
         answers,
@@ -1206,7 +1210,7 @@ function interactionResolvedEvent(
       const r = response as Partial<ApprovalResponse>;
       return {
         type: 'event.approval.resolved',
-        agentId: 'main',
+        agentId,
         sessionId,
         approval_id: id,
         decision: r.decision,

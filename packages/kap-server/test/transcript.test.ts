@@ -466,6 +466,31 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     expect(body.data.agents).toContainEqual(expect.objectContaining({ agentId: 'sub-1' }));
   });
 
+  it('keeps the metadata-seeded subagent descriptor after an on-demand backfill', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const sub = await session!.accessor
+      .get(IAgentLifecycleService)
+      .create({ agentId: 'sub-1', labels: { parentAgentId: 'main' } });
+    sub.accessor
+      .get(IAgentContextMemoryService)
+      .append(
+        { role: 'user', content: [{ type: 'text', text: 'scan the repo' }], toolCalls: [] } as ContextMessage,
+      );
+    await sub.accessor.get(IWireService).flush();
+
+    // The roster seeds from session metadata when the transcript binds; the
+    // subsequent on-demand backfill for the subagent must not downgrade the
+    // descriptor back to `{ agentId, type }`.
+    await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    const { body } = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=sub-1`);
+    expect(body.code).toBe(0);
+    expect(body.data.agents).toContainEqual(
+      expect.objectContaining({ agentId: 'sub-1', type: 'sub', parentAgentId: 'main' }),
+    );
+  });
+
   it('returns 40401 for an unknown session', async () => {
     const { body } = await getJson<null>('/api/v1/sessions/nope/transcript?agent_id=main');
     expect(body.code).toBe(40401);

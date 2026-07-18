@@ -221,8 +221,17 @@ export class TranscriptService {
     }
     // Land the roster entry last, so roster-driven resets already see the
     // backfilled content — this also guarantees a reset target for agents
-    // whose engine instance has not been created yet.
-    store.describeAgent({ agentId, type: agentId === MAIN_AGENT_ID ? 'main' : 'sub' });
+    // whose engine instance has not been created yet. Preserve a richer
+    // descriptor already seeded from session metadata (parentAgentId /
+    // label); only fill in what is missing.
+    const existing = store.agents().find((d) => d.agentId === agentId);
+    store.describeAgent({
+      agentId,
+      type: existing?.type ?? (agentId === MAIN_AGENT_ID ? 'main' : 'sub'),
+      parentAgentId: existing?.parentAgentId,
+      label: existing?.label,
+      createdAt: existing?.createdAt,
+    });
   }
 
   /**

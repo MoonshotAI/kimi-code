@@ -920,6 +920,37 @@ describe('SessionEventBroadcaster', () => {
     expect((envelopes[1]!.payload as { dismissed_at?: string }).dismissed_at).toBeTypeOf('string');
   });
 
+  it('carries the requesting agent onto resolved interaction events', async () => {
+    const lc = new FakeLifecycle();
+    lc.addAgent('main');
+    lc.addAgent('sub-1');
+    sessions.set('s1', lc);
+    const { target, envelopes } = collectingTarget();
+    await bc.subscribe('s1', target);
+
+    lc.interactions.enqueue({
+      id: 'q-sub',
+      kind: 'question',
+      payload: {
+        toolCallId: 'call_q',
+        questions: [{ question: 'Pick', options: [{ label: 'A' }] }],
+      },
+      origin: { agentId: 'sub-1' },
+    });
+    await bc.getCursor('s1');
+    expect(
+      envelopes.find((e) => e.type === 'event.question.requested')?.payload,
+    ).toMatchObject({ agentId: 'sub-1', question_id: 'q-sub' });
+
+    lc.interactions.respond('q-sub', { answers: { q_0: 'opt_0_0' } });
+    await bc.getCursor('s1');
+    // The resolved event must keep the same agent — an agent-filtered
+    // subscriber otherwise sees the question open but never close.
+    expect(
+      envelopes.find((e) => e.type === 'event.question.answered')?.payload,
+    ).toMatchObject({ agentId: 'sub-1', question_id: 'q-sub' });
+  });
+
   it('broadcasts approval requested / resolved as durable v1 events', async () => {
     const lc = new FakeLifecycle();
     lc.addAgent('main');
