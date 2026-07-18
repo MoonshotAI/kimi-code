@@ -5,6 +5,9 @@
  * Mapping rules (settled design):
  *   - `turn.upsert` / `step.upsert` carry headers only; render content rides
  *     on `frame.upsert` (whole frame state) and `append` (deltas).
+ *   - The turn prompt arrives on `turn.started` itself
+ *     (`TurnStartedEvent.prompt`) — the context append carrying the same text
+ *     is not a bus event and lands after the turn header.
  *   - Flush: at step/turn completion boundaries every open text/thinking frame
  *     of that step is re-emitted as a full-text `frame.upsert` — this is how
  *     'block'-grade subscribers (who never see `append`) reconverge.
@@ -172,7 +175,11 @@ export class AgentTranscriptProjector {
 
   // ---------------------------------------------------------------- turn / step
 
-  private onTurnStarted(event: { turnId: number; origin: unknown }): TranscriptOperation[] {
+  private onTurnStarted(event: {
+    turnId: number;
+    origin: unknown;
+    prompt?: string;
+  }): TranscriptOperation[] {
     const n = event.turnId;
     const turnId = `t${n}`;
     this.currentTurn = {
@@ -181,6 +188,7 @@ export class AgentTranscriptProjector {
       ordinal: n,
       state: 'running',
       origin: mapTurnOrigin(event.origin),
+      prompt: event.prompt,
       startedAt: nowIso(),
     };
     this.currentStep = undefined;
@@ -211,6 +219,7 @@ export class AgentTranscriptProjector {
       ordinal: event.turnId,
       state,
       origin: prev?.origin ?? { kind: 'other' },
+      prompt: prev?.prompt,
       startedAt: prev?.startedAt,
       endedAt: nowIso(),
     };

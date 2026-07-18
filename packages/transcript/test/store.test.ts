@@ -9,6 +9,14 @@ import type {
   TranscriptOperation,
 } from '#/ops/operation';
 import type { ThinkingFrame, ToolCallFrame, InteractionFrame } from '#/model/frame';
+import type { TranscriptItem } from '#/model/item';
+
+/** Display id for order assertions across the item union. */
+function itemLabel(item: TranscriptItem): string {
+  if (item.kind === 'turn') return item.turnId;
+  if (item.kind === 'marker') return item.markerId;
+  return item.refId;
+}
 
 const turn1: TurnUpsertOp = {
   op: 'turn.upsert',
@@ -242,6 +250,75 @@ describe('AgentTranscript', () => {
     tx.apply(toolFrame('done', 'content'));
     const beforeFrame = before[0]?.kind === 'turn' ? before[0].steps[0]?.frames[0] : undefined;
     expect(beforeFrame?.kind === 'tool' && beforeFrame.state).toBe('running');
+  });
+
+  it('places anchored standalone items before their following turn, not at the end', () => {
+    const tx = new AgentTranscript('main');
+    // A live turn lands first — the engine kept running while the backfill
+    // was still reading history from disk.
+    tx.apply([
+      {
+        op: 'turn.upsert',
+        turn: { kind: 'turn', turnId: 't2', ordinal: 2, state: 'running', origin: { kind: 'user' } },
+      },
+    ]);
+    // Backfill replays history: t0, a marker between t0/t1, t1, and a
+    // taskref that trailed t1 (anchored past it, before the live t2).
+    tx.apply([
+      {
+        op: 'turn.upsert',
+        turn: { kind: 'turn', turnId: 't0', ordinal: 0, state: 'completed', origin: { kind: 'user' } },
+      },
+      {
+        op: 'marker.upsert',
+        item: { kind: 'marker', markerId: 'm1', marker: 'skill' },
+        beforeTurn: 1,
+      },
+      {
+        op: 'turn.upsert',
+        turn: { kind: 'turn', turnId: 't1', ordinal: 1, state: 'completed', origin: { kind: 'user' } },
+      },
+      {
+        op: 'taskref.upsert',
+        item: { kind: 'taskref', refId: 'r1', taskId: 'bash-1' },
+        beforeTurn: 2,
+      },
+    ]);
+    expect(tx.getItems().map(itemLabel)).toEqual(['t0', 'm1', 't1', 'r1', 't2']);
+  });
+
+  it('anchors a standalone item before the very first turn; re-applies stay in place', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([
+      {
+        op: 'turn.upsert',
+        turn: { kind: 'turn', turnId: 't0', ordinal: 0, state: 'completed', origin: { kind: 'user' } },
+      },
+      {
+        op: 'marker.upsert',
+        item: { kind: 'marker', markerId: 'm0', marker: 'compaction' },
+        beforeTurn: 0,
+      },
+    ]);
+    expect(tx.getItems()[0]?.kind).toBe('marker');
+    // Re-applying an existing id replaces in place — no move, no duplicate.
+    tx.apply([
+      {
+        op: 'marker.upsert',
+        item: { kind: 'marker', markerId: 'm0', marker: 'compaction', payload: { v: 1 } },
+        beforeTurn: 0,
+      },
+    ]);
+    const items = tx.getItems();
+    expect(items).toHaveLength(2);
+    expect(items[0]?.kind).toBe('marker');
+  });
+
+  it('appends standalone items without an anchor at the end (live order)', () => {
+    const tx = new AgentTranscript('main');
+    tx.apply([turn1, { op: 'marker.upsert', item: { kind: 'marker', markerId: 'm9', marker: 'notice' } }]);
+    const items = tx.getItems();
+    expect(items.at(-1)?.kind).toBe('marker');
   });
 });
 

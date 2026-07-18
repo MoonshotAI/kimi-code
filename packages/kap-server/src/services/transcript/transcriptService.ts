@@ -43,7 +43,9 @@ import {
   groupMessagesIntoSnapshot,
   type AgentTranscriptSnapshot,
   type TranscriptChangeEvent,
+  type TranscriptMarker,
   type TranscriptOperation,
+  type TranscriptTaskRef,
 } from '@moonshot-ai/transcript';
 
 import { readWireRecords } from '../snapshot/snapshotReader';
@@ -284,11 +286,34 @@ export class TranscriptService {
  * standalone items, tasks, meta). Deliberately never a `reset`: upserts merge
  * by id and keep ordinal order, so the backfill cannot clobber live ops that
  * landed while the records were being read.
+ *
+ * Standalone items (markers / taskrefs) carry a `beforeTurn` placement anchor:
+ * the reducer's standalone path is append-only, so without an anchor a
+ * historical marker replayed after live turns arrived would land past them.
+ * The anchor is the ordinal of the snapshot turn directly following the item
+ * (trailing items anchor past the last snapshot turn, which is where the
+ * engine's next live turn lands); a turn-anchored insert places the item
+ * before the first turn with `ordinal >= beforeTurn`.
  */
-function snapshotToOps(snapshot: AgentTranscriptSnapshot): TranscriptOperation[] {
+export function snapshotToOps(snapshot: AgentTranscriptSnapshot): TranscriptOperation[] {
   const ops: TranscriptOperation[] = [];
+  /** Standalone items seen since the last turn, awaiting their anchor. */
+  const pending: (TranscriptMarker | TranscriptTaskRef)[] = [];
+  let lastTurnOrdinal: number | undefined;
+  const flushPending = (beforeTurn?: number): void => {
+    for (const item of pending) {
+      ops.push(
+        item.kind === 'marker'
+          ? { op: 'marker.upsert', item, beforeTurn }
+          : { op: 'taskref.upsert', item, beforeTurn },
+      );
+    }
+    pending.length = 0;
+  };
   for (const item of snapshot.items) {
     if (item.kind === 'turn') {
+      flushPending(item.ordinal);
+      lastTurnOrdinal = item.ordinal;
       const { steps, ...header } = item;
       ops.push({ op: 'turn.upsert', turn: header });
       for (const step of steps) {
@@ -298,12 +323,14 @@ function snapshotToOps(snapshot: AgentTranscriptSnapshot): TranscriptOperation[]
           ops.push({ op: 'frame.upsert', turnId: item.turnId, stepId: step.stepId, frame });
         }
       }
-    } else if (item.kind === 'marker') {
-      ops.push({ op: 'marker.upsert', item });
     } else {
-      ops.push({ op: 'taskref.upsert', item });
+      pending.push(item);
     }
   }
+  // Trailing standalone items followed the last snapshot turn in history but
+  // precede the engine's next live turn (`lastTurnOrdinal + 1`, matched
+  // robustly by the reducer's `>=` placement when ordinals drift).
+  flushPending(lastTurnOrdinal === undefined ? undefined : lastTurnOrdinal + 1);
   for (const task of snapshot.tasks) {
     ops.push({ op: 'task.upsert', task });
   }

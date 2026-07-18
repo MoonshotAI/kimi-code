@@ -216,8 +216,16 @@ export const transcriptOperationSchema = z.discriminatedUnion('op', [
     offset: z.number().int().nonnegative(),
     text: z.string(),
   }),
-  z.object({ op: z.literal('marker.upsert'), item: transcriptMarkerSchema }),
-  z.object({ op: z.literal('taskref.upsert'), item: transcriptTaskRefSchema }),
+  z.object({
+    op: z.literal('marker.upsert'),
+    item: transcriptMarkerSchema,
+    beforeTurn: z.number().int().optional(),
+  }),
+  z.object({
+    op: z.literal('taskref.upsert'),
+    item: transcriptTaskRefSchema,
+    beforeTurn: z.number().int().optional(),
+  }),
   z.object({ op: z.literal('task.upsert'), task: transcriptTaskSchema }),
   z.object({ op: z.literal('meta.merge'), meta: transcriptMetaSchema }),
   z.object({ op: z.literal('items.remove'), ids: z.array(z.string()) }),

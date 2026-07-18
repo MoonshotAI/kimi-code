@@ -7,6 +7,7 @@
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
 import type { FinishReason } from '#/app/llmProtocol/finishReason';
+import type { ContentPart, TextPart } from '#/app/llmProtocol/message';
 import type { TokenUsage } from '#/app/llmProtocol/usage';
 
 /** Why a turn ended. `blocked` folds into `failed` at the wire edge. */
@@ -16,6 +17,21 @@ export interface TurnStartedEvent {
   readonly type: 'turn.started';
   readonly turnId: number;
   readonly origin: PromptOrigin;
+  /**
+   * Text extracted from the turn's input parts (absent when the turn opened
+   * with no text part). Consumers that render the user's prompt must take it
+   * from here — the context append carrying the same text lands later.
+   */
+  readonly prompt?: string;
+}
+
+/** Join the text parts of a turn input; `undefined` when there is no text. */
+export function turnPromptText(input: readonly ContentPart[]): string | undefined {
+  const text = input
+    .filter((part): part is TextPart => part.type === 'text')
+    .map((part) => part.text)
+    .join('');
+  return text.length > 0 ? text : undefined;
 }
 
 export interface TurnEndedEvent {

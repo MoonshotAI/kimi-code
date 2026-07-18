@@ -81,11 +81,12 @@ import {
   type TurnSeed,
 } from './stepRequest';
 import { StepRequestQueue, type StepRequestBatch } from './stepRequestQueue';
+// The value import also loads the `DomainEventMap` augmentation for the
+// `turn.*` / delta events this service publishes (the augmentation lives with
+// the event definitions; without an import it would not enter every
+// consumer's program).
+import { turnPromptText } from './turnEvents';
 import { cancelTurn, promptTurn, TurnModel } from './turnOps';
-// Loads the `DomainEventMap` augmentation for the `turn.*` / delta events this
-// service publishes (the augmentation lives with the event definitions;
-// without an import it would not enter every consumer's program).
-import './turnEvents';
 
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
@@ -360,7 +361,12 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.wire.dispatch(promptTurn({ input: job.seed.input, origin }));
     job.turn.state = 'running';
     this.activeTurnJob = job;
-    this.eventBus.publish({ type: 'turn.started', turnId: job.turn.id, origin });
+    this.eventBus.publish({
+      type: 'turn.started',
+      turnId: job.turn.id,
+      origin,
+      prompt: turnPromptText(job.seed.input),
+    });
     void this.runTurn(job.turn, job.ready).then(job.result.resolve, job.result.reject);
   }
 

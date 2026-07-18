@@ -61,9 +61,9 @@ export function applyOperation(state: AgentState, op: TranscriptOperation): Appl
     case 'append':
       return applyAppend(state, op);
     case 'marker.upsert':
-      return applyItemUpsert(state, op.item, op.item.markerId);
+      return applyItemUpsert(state, op.item, op.item.markerId, op.beforeTurn);
     case 'taskref.upsert':
-      return applyItemUpsert(state, op.item, op.item.refId);
+      return applyItemUpsert(state, op.item, op.item.refId, op.beforeTurn);
     case 'task.upsert':
       return applyTaskUpsert(state, op.task);
     case 'meta.merge':
@@ -361,7 +361,12 @@ export function appendAtOffset(
 
 // ---------------------------------------------------------------- standalone items
 
-function applyItemUpsert(state: AgentState, item: TranscriptItem, id: string): ApplyResult {
+function applyItemUpsert(
+  state: AgentState,
+  item: TranscriptItem,
+  id: string,
+  beforeTurn?: number,
+): ApplyResult {
   const exists = state.items.some((entry) => itemIdOf(entry) === id);
   if (exists) {
     let changed = false;
@@ -372,6 +377,23 @@ function applyItemUpsert(state: AgentState, item: TranscriptItem, id: string): A
       return item;
     });
     if (!changed) return { state, changed: false };
+    return { state: { ...state, items }, changed: true };
+  }
+  // Anchored insert (backfill): land before the first turn at or past the
+  // anchor so historical standalone items keep their position relative to
+  // turns that arrived live ahead of them. Re-applies of an existing id stay
+  // in place (above); only the first insert places.
+  if (beforeTurn !== undefined) {
+    const items = [...state.items];
+    let at = items.length;
+    for (let i = 0; i < items.length; i += 1) {
+      const entry = items[i];
+      if (entry?.kind === 'turn' && entry.ordinal >= beforeTurn) {
+        at = i;
+        break;
+      }
+    }
+    items.splice(at, 0, item);
     return { state: { ...state, items }, changed: true };
   }
   return { state: { ...state, items: [...state.items, item] }, changed: true };

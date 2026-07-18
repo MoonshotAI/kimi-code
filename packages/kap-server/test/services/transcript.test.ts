@@ -9,6 +9,7 @@
 import type { DomainEvent } from '@moonshot-ai/agent-core-v2';
 import {
   AgentTranscript,
+  type AgentTranscriptSnapshot,
   type AppendOp,
   type FrameUpsertOp,
   type TranscriptOperation,
@@ -18,6 +19,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { AgentTranscriptProjector } from '../../src/services/transcript/coreEventMap';
+import { snapshotToOps } from '../../src/services/transcript/transcriptService';
 
 function ev(payload: Record<string, unknown>): DomainEvent {
   return payload as unknown as DomainEvent;
@@ -93,6 +95,74 @@ describe('AgentTranscriptProjector', () => {
       output: 'file.txt',
       display: { kind: 'command', command: 'ls' },
     });
+  });
+
+  it('projects the live prompt from turn.started and keeps it through turn.ended', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => {
+      tx.apply(projector.map(event));
+    };
+
+    feed(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'fix the bug' }));
+    feed(ev({ type: 'assistant.delta', turnId: 0, delta: 'on it' }));
+    feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+    const turn = turnOps('t0', tx.getItems());
+    expect(turn.prompt).toBe('fix the bug');
+    expect(turn.state).toBe('completed');
+  });
+
+  it('snapshotToOps anchors standalone items so backfill keeps history order against live turns', () => {
+    const snapshot: AgentTranscriptSnapshot = {
+      items: [
+        {
+          kind: 'turn',
+          turnId: 't0',
+          ordinal: 0,
+          state: 'completed',
+          origin: { kind: 'user' },
+          prompt: 'one',
+          steps: [],
+        },
+        { kind: 'marker', markerId: 'm1', marker: 'skill' },
+        {
+          kind: 'turn',
+          turnId: 't1',
+          ordinal: 1,
+          state: 'completed',
+          origin: { kind: 'user' },
+          prompt: 'two',
+          steps: [],
+        },
+        { kind: 'taskref', refId: 'r1', taskId: 'bash-1' },
+      ],
+      tasks: [],
+      meta: {},
+    };
+    const ops = snapshotToOps(snapshot);
+    // m1 sits before t1 in history; the trailing r1 anchors past the last
+    // snapshot turn (where the engine's next live turn lands).
+    expect(ops.find((op) => op.op === 'marker.upsert')).toMatchObject({ beforeTurn: 1 });
+    expect(ops.find((op) => op.op === 'taskref.upsert')).toMatchObject({ beforeTurn: 2 });
+
+    // A live turn arrived before the backfill landed; anchored items must
+    // slot into their historical positions, not append past it.
+    const tx = new AgentTranscript('main');
+    tx.apply([
+      {
+        op: 'turn.upsert',
+        turn: { kind: 'turn', turnId: 't2', ordinal: 2, state: 'running', origin: { kind: 'user' } },
+      },
+    ]);
+    tx.apply(ops);
+    expect(
+      tx.getItems().map((item) => {
+        if (item.kind === 'turn') return item.turnId;
+        if (item.kind === 'marker') return item.markerId;
+        return item.refId;
+      }),
+    ).toEqual(['t0', 'm1', 't1', 'r1', 't2']);
   });
 
   it('flushes open frames on turn.ended even without step completion', () => {

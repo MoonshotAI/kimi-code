@@ -68,11 +68,19 @@ export interface AppendOp {
 export interface MarkerUpsertOp {
   readonly op: 'marker.upsert';
   readonly item: TranscriptMarker;
+  /**
+   * Placement anchor for out-of-order (backfill) inserts: insert before the
+   * first turn with `ordinal >= beforeTurn` (appending when no such turn
+   * exists). Absent = append at the end — the live real-time order.
+   */
+  readonly beforeTurn?: number;
 }
 
 export interface TaskRefUpsertOp {
   readonly op: 'taskref.upsert';
   readonly item: TranscriptTaskRef;
+  /** Same placement anchor as `MarkerUpsertOp.beforeTurn`. */
+  readonly beforeTurn?: number;
 }
 
 export interface TaskUpsertOp {
