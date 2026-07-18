@@ -2,6 +2,10 @@
  * `loop` domain — the `turn.*` / delta event payloads published through
  * `IEventBus` as a turn runs. These are the loop's share of the agent event
  * stream; consumers (transports, replay, telemetry) subscribe by `type`.
+ * `turn.started` additionally carries the text extracted from the turn's
+ * input parts (absent when the turn opened with no text part): consumers
+ * that render the user's prompt must take it from there, because the context
+ * append carrying the same text is not a bus event and lands later.
  */
 
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
@@ -17,15 +21,9 @@ export interface TurnStartedEvent {
   readonly type: 'turn.started';
   readonly turnId: number;
   readonly origin: PromptOrigin;
-  /**
-   * Text extracted from the turn's input parts (absent when the turn opened
-   * with no text part). Consumers that render the user's prompt must take it
-   * from here — the context append carrying the same text lands later.
-   */
   readonly prompt?: string;
 }
 
-/** Join the text parts of a turn input; `undefined` when there is no text. */
 export function turnPromptText(input: readonly ContentPart[]): string | undefined {
   const text = input
     .filter((part): part is TextPart => part.type === 'text')
