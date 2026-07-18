@@ -800,6 +800,8 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     });
 
     const toolCallUuids = new Map<string, string>();
+    const toolCallEvents: Array<{ toolCallId: string; name: string; args?: unknown }> = [];
+    const toolResultEvents: Array<{ toolCallId: string; output: string | ReadonlyArray<import('#/app/llmProtocol/message').ContentPart>; isError?: boolean; note?: string }> = [];
     let stopTurn = false;
     for await (const toolResult of this.toolExecutor.execute(response.message.toolCalls, {
       signal,
@@ -808,26 +810,42 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
       onToolCall: ({ toolCallId, name, args }) => {
         const callUuid = randomUUID();
         toolCallUuids.set(toolCallId, callUuid);
-        this.context.appendLoopEvent({
-          type: 'tool.call',
-          uuid: callUuid,
-          turnId: String(turnId),
-          step: currentStep,
-          stepUuid,
-          toolCallId,
-          name,
-          args,
-        });
+        toolCallEvents.push({ toolCallId, name, args });
       },
     })) {
       const { result } = toolResult;
-      this.context.appendLoopEvent({
-        type: 'tool.result',
-        parentUuid: toolCallUuids.get(toolResult.toolCallId) ?? randomUUID(),
+      toolResultEvents.push({
         toolCallId: toolResult.toolCallId,
-        result: { output: result.output, isError: result.isError, note: result.note },
+        output: result.output,
+        isError: result.isError,
+        note: result.note,
       });
       if (result.stopTurn === true) stopTurn = true;
+    }
+
+    // Batch dispatch all tool call events
+    for (const event of toolCallEvents) {
+      const callUuid = toolCallUuids.get(event.toolCallId) ?? randomUUID();
+      this.context.appendLoopEvent({
+        type: 'tool.call',
+        uuid: callUuid,
+        turnId: String(turnId),
+        step: currentStep,
+        stepUuid,
+        toolCallId: event.toolCallId,
+        name: event.name,
+        args: event.args,
+      });
+    }
+
+    // Batch dispatch all tool result events
+    for (const event of toolResultEvents) {
+      this.context.appendLoopEvent({
+        type: 'tool.result',
+        parentUuid: toolCallUuids.get(event.toolCallId) ?? randomUUID(),
+        toolCallId: event.toolCallId,
+        result: { output: event.output, isError: event.isError, note: event.note },
+      });
     }
     finishReason = stopTurn ? 'completed' : 'tool_calls';
     return finishReason;

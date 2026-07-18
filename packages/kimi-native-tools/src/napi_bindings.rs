@@ -186,8 +186,9 @@ pub async fn native_edit(
     new_string: String,
     replace_all: Option<bool>,
 ) -> EditResult {
+    let path_clone = path.clone();
     let result = tokio::task::spawn_blocking(move || {
-        edit::edit_file(&path, &old_string, &new_string, replace_all.unwrap_or(false))
+        edit::edit_file(&path_clone, &old_string, &new_string, replace_all.unwrap_or(false))
     })
     .await
     .unwrap_or_else(|e| EditResult {

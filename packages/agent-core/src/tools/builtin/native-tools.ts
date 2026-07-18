@@ -165,6 +165,28 @@ export class NativeReadTool implements BuiltinTool {
 }
 
 // ============================================================================
+// Batch Read — parallel multi-file read via nativeBatchRead
+// ============================================================================
+
+export interface NativeReadBatchEntry {
+  content: string;
+  lineCount: number;
+  error?: string;
+}
+
+/**
+ * Read multiple files in parallel using the native module.
+ * Returns undefined when the native module is unavailable or the call fails,
+ * so callers can fall back to sequential reads.
+ */
+export async function tryNativeReadBatch(
+  paths: string[],
+  options?: { lineOffsets?: Array<number | null>; nLinesArray?: Array<number | null> },
+): Promise<NativeReadBatchEntry[] | undefined> {
+  return callNative<NativeReadBatchEntry[]>('nativeBatchRead', paths, options);
+}
+
+// ============================================================================
 // WriteTool adapter
 // ============================================================================
 
