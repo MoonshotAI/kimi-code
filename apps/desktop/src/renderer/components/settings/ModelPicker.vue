@@ -1,12 +1,12 @@
 <!-- apps/kimi-web/src/components/settings/ModelPicker.vue -->
 <!-- Modal overlay for switching the active session's model. -->
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppModel } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
 import { formatTokens } from '../../lib/formatTokens';
-import { Badge, Button, Dialog, Icon, IconButton, Input, Spinner } from '@moonshot-ai/web-ui';
+import { Dialog, Icon, IconButton, Input, Kbd, Spinner } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -37,23 +37,27 @@ function isStarred(modelId: string): boolean {
 const query = ref('');
 const searchRef = ref<HTMLInputElement | null>(null);
 const dialogRef = ref<HTMLElement | null>(null);
+const listRef = ref<HTMLElement | null>(null);
 const activeTab = ref('all');
 
-const CAPABILITY_META: Record<string, { icon: string; labelKey: string }> = {
-  image_in: { icon: 'image', labelKey: 'model.capabilityImageInput' },
-  video_in: { icon: 'play', labelKey: 'model.capabilityVideoInput' },
-  tool_use: { icon: 'tool', labelKey: 'model.capabilityToolUse' },
-  thinking: { icon: 'sparkles', labelKey: 'model.capabilityThinking' },
-  always_thinking: { icon: 'sparkles', labelKey: 'model.capabilityAlwaysThinking' },
+const CAPABILITY_LABEL_KEYS: Record<string, string> = {
+  image_in: 'model.capabilityImageInput',
+  video_in: 'model.capabilityVideoInput',
+  tool_use: 'model.capabilityToolUse',
+  thinking: 'model.capabilityThinking',
+  always_thinking: 'model.capabilityAlwaysThinking',
 };
 
-function capabilityIcon(capability: string): string {
-  return CAPABILITY_META[capability]?.icon ?? 'bolt';
+function capabilityLabel(capability: string): string {
+  const key = CAPABILITY_LABEL_KEYS[capability];
+  return key ? t(key) : capability.replaceAll('_', ' ');
 }
 
-function capabilityLabel(capability: string): string {
-  const key = CAPABILITY_META[capability]?.labelKey;
-  return key ? t(key) : capability.replaceAll('_', ' ');
+// Quiet one-line meta: provider · context · capability labels.
+function metaText(m: AppModel): string {
+  const parts = [m.provider, t('model.contextSuffix', { size: formatTokens(m.maxContextSize) })];
+  for (const cap of m.capabilities ?? []) parts.push(capabilityLabel(cap));
+  return parts.join(' · ');
 }
 
 // Focus the search box on open; restore focus to the opener on close.
@@ -101,6 +105,15 @@ watch(flat, (items) => {
   selectedIdx.value = Math.min(selectedIdx.value, Math.max(items.length - 1, 0));
 });
 
+// Keep the keyboard-selected row in view (block:'nearest' is a no-op when the
+// row is already visible, so mouse-driven selection never nudges the scroll).
+watch(selectedIdx, async () => {
+  await nextTick();
+  listRef.value
+    ?.querySelector('.model-row.is-selected')
+    ?.scrollIntoView({ block: 'nearest' });
+});
+
 // -------------------------------------------------------------------------
 // Keyboard navigation
 // -------------------------------------------------------------------------
@@ -135,6 +148,11 @@ function choose(modelId: string): void {
   emit('select', modelId);
 }
 
+function clearQuery(): void {
+  query.value = '';
+  searchRef.value?.focus();
+}
+
 function flatIdx(m: AppModel): number {
   return flat.value.indexOf(m);
 }
@@ -145,7 +163,7 @@ function selectTab(tabId: string): void {
 </script>
 
 <template>
-  <Dialog :open="true" :close-on-esc="false" :title="t('model.title')" size="xl" height="fixed" @close="emit('close')">
+  <Dialog :open="true" :close-on-esc="false" :title="t('model.title')" size="lg" height="fixed" :padded="false" @close="emit('close')">
     <div ref="dialogRef" class="mp">
       <!-- Search -->
       <div class="search-wrap">
@@ -157,18 +175,31 @@ function selectTab(tabId: string): void {
           spellcheck="false"
           autofocus
         />
+        <button
+          type="button"
+          class="search-clear"
+          :class="{ 'is-on': query.length > 0 }"
+          tabindex="-1"
+          :aria-label="t('model.clearSearch')"
+          @click="clearQuery"
+        >
+          <Icon name="close" size="sm" />
+        </button>
       </div>
 
-      <div v-if="providerTabs.length > 1" class="tab-strip">
-        <Button
+      <!-- Provider filter chips -->
+      <div v-if="providerTabs.length > 1" class="chip-strip" :aria-label="t('model.providerTabs')">
+        <button
           v-for="tab in providerTabs"
           :key="tab.id"
-          :variant="tab.id === activeTab ? 'secondary' : 'ghost'"
-          size="sm"
+          type="button"
+          class="chip"
+          :class="{ 'is-active': tab.id === activeTab }"
+          :aria-pressed="tab.id === activeTab"
           @click="selectTab(tab.id)"
         >
           {{ tab.label }}
-        </Button>
+        </button>
       </div>
 
       <!-- Loading state -->
@@ -184,7 +215,7 @@ function selectTab(tabId: string): void {
       </div>
 
       <!-- Model list -->
-      <div v-else class="model-list">
+      <div v-else ref="listRef" class="model-list" role="listbox" :aria-label="t('model.title')">
         <div
           v-for="m in flat"
           :key="m.id"
@@ -200,77 +231,140 @@ function selectTab(tabId: string): void {
         >
           <span class="model-main">
             <span class="model-name">{{ m.displayName ?? m.model }}</span>
-            <span class="model-id">{{ m.id }}</span>
-            <span v-if="m.capabilities && m.capabilities.length > 0" class="caps">
-              <Badge v-for="cap in m.capabilities" :key="cap" variant="info" size="sm">
-                <Icon :name="capabilityIcon(cap)" size="sm" />
-                <span>{{ capabilityLabel(cap) }}</span>
-              </Badge>
-            </span>
+            <span class="model-meta">{{ metaText(m) }}</span>
           </span>
-          <span class="model-provider">{{ m.provider }}</span>
-          <span class="model-ctx">{{ t('model.contextSuffix', { size: formatTokens(m.maxContextSize) }) }}</span>
-          <IconButton
-            size="sm"
-            :label="isStarred(m.id) ? t('model.unstarTitle') : t('model.starTitle')"
-            @click.stop="emit('toggle-star', m.id)"
-          >
-            <Icon v-if="isStarred(m.id)" name="star" size="md" />
-            <Icon v-else name="star-outline" size="md" />
-          </IconButton>
+          <span class="model-side">
+            <Icon v-if="m.id === current" class="model-check" name="check" size="sm" />
+            <IconButton
+              class="model-star"
+              :class="{ 'is-starred': isStarred(m.id) }"
+              size="sm"
+              :label="isStarred(m.id) ? t('model.unstarTitle') : t('model.starTitle')"
+              @click.stop="emit('toggle-star', m.id)"
+            >
+              <Icon v-if="isStarred(m.id)" name="star" size="md" />
+              <Icon v-else name="star-outline" size="md" />
+            </IconButton>
+          </span>
         </div>
-        <div v-if="flat.length === 0 && !loading && !unavailable" class="empty">
+        <div v-if="flat.length === 0" class="empty">
           {{ props.models.length === 0 ? t('model.emptyNoModels') : t('model.emptyNoMatch') }}
         </div>
       </div>
 
       <!-- Footer hint -->
-      <div class="footer-hint">{{ t('model.footerHint') }}</div>
+      <div class="footer-hint" aria-hidden="true">
+        <Kbd :keys="['↑', '↓']" />
+        <span>{{ t('model.hintNavigate') }}</span>
+        <span class="hint-dot">·</span>
+        <Kbd :keys="['Enter']" />
+        <span>{{ t('model.hintSelect') }}</span>
+        <span class="hint-dot">·</span>
+        <Kbd :keys="['Esc']" />
+        <span>{{ t('model.hintClose') }}</span>
+      </div>
     </div>
   </Dialog>
 </template>
 
 <style scoped>
-.mp { display: flex; flex-direction: column; gap: var(--space-2); height: 100%; min-height: 0; }
+/* Flush anatomy (Dialog :padded="false"), mirroring SearchSessionsDialog:
+   content zones inset individually; footer is a full-bleed bar. */
+.mp { display: flex; flex-direction: column; gap: var(--space-2); height: 100%; min-height: 0; padding-top: 4px; }
 
-/* Search */
-.search-wrap { padding-bottom: var(--space-1); }
+/* Search + chips align with the Dialog head padding (title sits at 22px). */
+.search-wrap { position: relative; margin: 0 22px; padding-bottom: var(--space-1); }
+/* Room for the clear affordance so long queries never run beneath it. */
+.search-wrap :deep(.ui-input) { padding-right: 30px; }
 
-.tab-strip {
+/* Clear query: quiet circled × at the input's trailing edge. Resting state
+   shows a subtle filled circle (surface over stroke); hidden until the query
+   is non-empty — visibility flips keep it out of hit-testing while hidden. */
+.search-clear {
+  position: absolute;
+  top: 0;
+  bottom: var(--space-1);
+  right: var(--space-2);
+  margin-block: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--color-hover);
+  color: var(--color-text-faint);
+  cursor: pointer;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out), visibility var(--duration-fast),
+    background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.search-clear.is-on { visibility: visible; opacity: 1; }
+.search-clear:hover { background: var(--color-selected); color: var(--color-text-muted); }
+.search-clear:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+
+/* Provider filter chips */
+.chip-strip {
   display: flex;
   gap: var(--space-1);
+  margin: 0 22px;
   overflow-x: auto;
   scrollbar-width: none;
 }
-.tab-strip::-webkit-scrollbar { display: none; }
+.chip-strip::-webkit-scrollbar { display: none; }
 
-/* Model list */
+.chip {
+  flex: none;
+  height: 28px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--color-text-muted);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.chip:hover { background: var(--color-hover); color: var(--color-text); }
+.chip.is-active {
+  background: var(--color-selected);
+  color: var(--color-text);
+  font-weight: var(--weight-medium);
+}
+.chip:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+
+/* Model list — rows bleed near the dialog edge like SearchSessionsDialog's. */
 .model-list {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-1) 0;
+  padding: var(--space-1) var(--space-2);
 }
 
 .model-row {
   display: flex;
-  align-items: flex-start;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-2);
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   cursor: pointer;
   color: var(--color-text);
   min-width: 0;
-  transition: background var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+  transition: background var(--duration-fast) var(--ease-out);
 }
 .model-row:hover, .model-row.is-selected {
-  background: var(--color-surface-sunken);
+  background: var(--color-hover);
 }
+/* Current = neutral "where I am" fill (surface over stroke; no accent tint). */
 .model-row.is-current {
-  background: var(--color-accent-soft);
-  box-shadow: inset 0 0 0 1px var(--color-accent-bd);
+  background: var(--color-selected);
 }
 
 .model-main {
@@ -281,59 +375,61 @@ function selectTab(tabId: string): void {
   gap: 2px;
 }
 .model-name {
-  display: flex;
-  align-items: center;
-  min-height: 28px;
   font-family: var(--font-ui);
-  font-size: var(--text-sm);
-  font-weight: var(--weight-medium);
+  font-size: var(--text-base);
+  line-height: 20px;
   color: var(--color-text);
-  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.model-id {
-  font-family: var(--font-mono);
+.model-row.is-current .model-name { font-weight: var(--weight-medium); }
+.model-meta {
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
-  color: var(--color-text-muted);
+  line-height: 18px;
+  color: var(--color-text-faint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.model-provider {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  flex: none;
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  white-space: nowrap;
-}
-.model-ctx {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  flex: none;
-  font-family: var(--font-ui);
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-  font-variant-numeric: tabular-nums;
-}
-.caps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
-}
-.caps :deep(.kw-icon) { width: 12px; height: 12px; }
 
-.state-row {
+.model-side {
   display: flex;
   align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}
+.model-check { color: var(--color-text); }
+
+/* Star: quiet until the row is hovered / keyboard-selected / starred, so the
+   list stays calm; always visible on touch devices (no hover to reveal it). */
+.model-star {
+  color: var(--color-text-faint);
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out), visibility var(--duration-fast);
+}
+.model-row:hover .model-star,
+.model-row.is-selected .model-star,
+.model-star.is-starred,
+.model-star:focus-visible {
+  visibility: visible;
+  opacity: 1;
+}
+.model-star.is-starred { color: var(--star); }
+@media (hover: none) {
+  .model-star { visibility: visible; opacity: 1; }
+}
+
+/* Loading / unavailable / empty states */
+.state-row {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   gap: var(--space-2);
-  padding: var(--space-5) 0;
   color: var(--color-text-muted);
   font-family: var(--font-ui);
   font-size: var(--text-base);
@@ -341,27 +437,31 @@ function selectTab(tabId: string): void {
 .state-row.unavail { color: var(--color-warning); }
 
 .empty {
-  padding: var(--space-5) 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   color: var(--color-text-muted);
   font-family: var(--font-ui);
   font-size: var(--text-base);
 }
 
-/* Footer */
+/* Footer: full-bleed shortcut bar — same box, padding, and border as
+   SearchSessionsDialog's .sd-foot (left-aligned). */
 .footer-hint {
   flex: none;
-  padding-top: var(--space-2);
-  background: var(--color-surface-raised);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-line);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--color-text-faint);
-  border-top: 1px solid var(--color-line);
 }
+.hint-dot { margin: 0 var(--space-1); }
 
-@media (max-width: 640px) {
-  .model-provider,
-  .caps {
-    display: none;
-  }
+@media (prefers-reduced-motion: reduce) {
+  .chip, .model-row, .model-star, .search-clear { transition: none; }
 }
 </style>

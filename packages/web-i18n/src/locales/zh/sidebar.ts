@@ -44,6 +44,7 @@ export default {
   searchHintSelect: '选择',
   searchHintOpen: '打开',
   searchHintClose: '关闭',
+  searchClear: '清除搜索',
   searchNoResults: '没有匹配的会话',
   searchEmpty: '暂无会话',
 };

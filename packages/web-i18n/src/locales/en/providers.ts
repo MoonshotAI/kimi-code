@@ -29,5 +29,5 @@ export default {
   optional: 'Optional',
   apiKeyRequired: 'API Key cannot be empty',
   add: 'Add',
-  escClose: 'Esc to close',
+  hintClose: 'Close',
 } as const;

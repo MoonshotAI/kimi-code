@@ -80,6 +80,7 @@ onUnmounted(() => {
           <a href="#rules"><span class="num">06</span>Style Rules</a>
           <a href="#shell"><span class="num">07</span>App Shell &amp; Sidebar</a>
           <a href="#a11y"><span class="num">08</span>Accessibility</a>
+          <a href="#dialogs"><span class="num">09</span>Dialogs</a>
         </nav>
 
         <div class="nav-group">Companion output</div>
@@ -746,8 +747,8 @@ onUnmounted(() => {
             <p><b>Archived sessions</b>: Start with the localized page title. Do not add a repeated English kicker above it.</p>
             <p><b>Settings interaction</b>: Notification labels and descriptions are not selectable; their switches remain fully interactive.</p>
             <p><b>Conversation chrome</b>: Header labels are not selectable; the rename input remains selectable and editable. Branch names start with a 14px branch icon. The overflow trigger is a compact 24px control with a 14px icon. Below a 720px header container, hide the workspace prefix and give the conversation title the available width.</p>
-            <p><b>Session search</b>: The dialog search field uses 16px UI text. Its result list fills the body’s available height and owns vertical scrolling.</p>
-            <p><b>Model picker</b>: The provider filter remains horizontally scrollable without showing a persistent scrollbar. Model rows start at the standard 8px inset; the current-row surface replaces an empty leading check slot. Capability badges pair a registry icon with a localized label. Provider names and context counts use the UI font; the name, provider, context and star share a 28px top-line alignment. Provider names use their natural width instead of an arbitrary truncation cap. Only the model list scrolls; the navigation hint remains pinned at the bottom.</p>
+            <p><b>Session search</b>: follows the §09 flush picker anatomy — a boxed Input under the head, and a result list that fills the body's available height and owns vertical scrolling.</p>
+            <p><b>Model picker</b>: follows the §09 flush picker anatomy; the provider filter remains horizontally scrollable without showing a persistent scrollbar. Only the model list scrolls; the shortcut bar remains pinned at the bottom.</p>
 
             <!-- ===== Toast ===== -->
             <h3 class="sub">Toast</h3>
@@ -1551,6 +1552,81 @@ onUnmounted(() => {
 
             <div class="callout good"><span class="ico">✓</span><div>
               <b>Explicitly not mandatory for now:</b> a WCAG conformance-level claim, a complete ARIA pattern table, a per-screen-reader QA matrix, and real-time announcement orchestration for streaming output — these are not written into the primitive contract, to avoid becoming slogans no one maintains.
+            </div></div>
+          </section>
+
+          <!-- ===== 09 Dialogs ===== -->
+          <section id="dialogs">
+            <div class="sec-head">
+              <span class="sec-num">09</span>
+              <h2 class="sec-title">Dialogs</h2>
+            </div>
+            <p class="sec-desc">
+              Every overlay in the app — pickers, browsers, managers, confirmations — is built on the single §03 Dialog primitive.
+              This chapter fixes the two layout anatomies allowed inside that frame, plus the row and footer contracts that make all dialogs read as one family.
+              Do not hand-roll a third anatomy.
+            </p>
+
+            <h3 class="sub">The frame (recap)</h3>
+            <p>
+              All dialogs share the §03 primitive: <code>--radius-xl</code> radius, <code>--shadow-xl</code> shadow, a restrained 28% neutral backdrop,
+              a head (title + IconButton close), a body, and a right-aligned foot. Widths <code>md</code> 440 / <code>lg</code> 640 / <code>xl</code> 760 and
+              <code>auto</code> / <code>fixed</code> height are chosen per §03. One interruptive overlay at a time; <code>Esc</code> closes; focus is trapped and restored.
+              A blocking flow that must be resolved rather than dismissed (server token) uses <code>hideClose</code> with <code>closeOnOverlay</code>/<code>closeOnEsc</code> off —
+              never a hand-written overlay.
+            </p>
+
+            <h3 class="sub">Anatomy A — padded (forms &amp; confirmations)</h3>
+            <p>
+              The default: the body carries its own padding and the caller drops content straight in.
+              Confirmations put their Buttons in the <code>#foot</code> slot (right-aligned, cancel → confirm).
+              Used by: confirm, login, status panel, server token.
+            </p>
+
+            <h3 class="sub">Anatomy B — flush (pickers &amp; browsers)</h3>
+            <p>
+              <code>:padded="false"</code> with <code>height="fixed"</code>; the consumer owns the zone layout inside a full-height column.
+              The zones below are the whole vocabulary — a picker dialog composes them and adds nothing else.
+              Used by: model picker, session search, folder browser, provider manager.
+            </p>
+            <table class="dt">
+              <thead><tr><th>Zone</th><th>Contract</th></tr></thead>
+              <tbody>
+                <tr><td class="tk">Search</td><td>The boxed §03 Input, inset 22px so its edge aligns with the head title. Autofocus on open. No leading icon, no borderless variant.</td></tr>
+                <tr><td class="tk">Filter chips</td><td>Optional. 28px pill: transparent + muted text by default, <code>--color-hover</code> on hover, <code>--color-selected</code> + medium <code>--color-text</code> when active. Horizontally scrollable with the scrollbar hidden. Never a row of Buttons.</td></tr>
+                <tr><td class="tk">List</td><td><code>flex:1</code>, owns the vertical scrolling, padded 4px 8px so rows bleed near the dialog edge. <code>role="listbox"</code>; rows carry <code>role="option"</code> + <code>aria-selected</code>.</td></tr>
+                <tr><td class="tk">Row</td><td>8px 12px padding, <code>--radius-md</code>. Two quiet lines: name 14/20 (medium when current) and a meta line 12/18 in <code>--color-text-faint</code> — provider · context · capability labels, dot-separated. No badge rows, no raw-id line (search still matches them). Trailing slot: check icon (current row only), then the star IconButton.</td></tr>
+                <tr><td class="tk">Row states</td><td>Hover / keyboard-selected → <code>--color-hover</code>; current → <code>--color-selected</code> — a neutral "where I am" fill, never an accent tint, never an inset stroke. The star stays hidden until row hover, keyboard selection, or starred; it is always visible on touch devices and colored <code>--star</code> when starred.</td></tr>
+                <tr><td class="tk">State rows</td><td>Loading / unavailable / empty: centered on both axes, muted 14px; warning color only for the unavailable case.</td></tr>
+                <tr><td class="tk">Shortcut bar</td><td>The footer: full-bleed, padding 8px 16px, <code>border-top --color-line</code>, left-aligned. Keyboard hints are Kbd keycaps + 12px <code>--color-text-faint</code> labels, groups separated by "·", the whole bar <code>aria-hidden</code>. An instructional sentence (folder browser) reuses the same bar without keycaps.</td></tr>
+              </tbody>
+            </table>
+
+            <h4 class="mini">Keyboard &amp; behavior contract</h4>
+            <ul class="clean">
+              <li><code>↑</code>/<code>↓</code> move a keyboard selection (rendered identical to hover) and always <code>scrollIntoView({ block: 'nearest' })</code>; <code>Enter</code> selects and closes; <code>Esc</code> closes.</li>
+              <li>Pointer hover drives the same selection index, so keyboard and mouse never disagree about which row is active.</li>
+              <li>Rows transition <code>background</code> only (<code>--duration-fast</code> ease-out); the open/close animation lives in the primitive, not in the consumer.</li>
+              <li>Selection is a fill, not a border (surface over stroke). Accent blue is reserved for actions — primary buttons and focus rings — never for "which row am I on".</li>
+            </ul>
+
+            <h4 class="mini">Dialog map</h4>
+            <table class="dt">
+              <thead><tr><th>Dialog</th><th>Anatomy</th><th>Composition</th></tr></thead>
+              <tbody>
+                <tr><td class="tk">Model picker</td><td>flush · lg · fixed</td><td>search + provider chips + model rows + shortcut bar</td></tr>
+                <tr><td class="tk">Session search</td><td>flush · lg · fixed</td><td>search + result rows + shortcut bar</td></tr>
+                <tr><td class="tk">Folder browser</td><td>flush · lg · fixed</td><td>breadcrumb bar + filter bar + folder rows + actions + hint bar</td></tr>
+                <tr><td class="tk">Provider manager</td><td>flush · xl · fixed</td><td>management rows with inset dividers (rows are not selectable) + add section + shortcut bar</td></tr>
+                <tr><td class="tk">Confirm / Login / Status</td><td>padded · md · auto</td><td>title + message or form + right-aligned foot</td></tr>
+                <tr><td class="tk">Server token</td><td>padded · md · auto</td><td><code>hideClose</code>, no Esc/overlay close — resolved only by a valid token</td></tr>
+                <tr><td class="tk">Settings / Onboarding</td><td>flush · xl · fixed</td><td>page-like exceptions: side-nav region / brand head, per §03</td></tr>
+              </tbody>
+            </table>
+
+            <div class="callout good"><span class="ico">✓</span><div>
+              <b>Design intent:</b> a picker dialog should feel like a quiet command palette — one boxed search, calm rows, a neutral "you are here" fill,
+              and a predictable shortcut bar. Anything noisier — badge clouds, accent-selected rows, per-dialog footer inventions — is a regression to weed out.
             </div></div>
           </section>
 

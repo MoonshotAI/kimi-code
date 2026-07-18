@@ -205,7 +205,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <Dialog v-model:open="open" :title="t('workspace.addTitle')" size="lg" height="fixed" @close="emit('close')">
+  <Dialog v-model:open="open" :title="t('workspace.addTitle')" size="lg" height="fixed" :padded="false" @close="emit('close')">
     <div class="aw">
       <!-- Folder browser -->
       <template v-if="!browseFailed">
@@ -340,20 +340,17 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* Pull the browser layout to the panel edges so the section separators span
-   the full dialog width, matching the original full-bleed rows. */
-.aw {
-  margin-left: calc(-1 * var(--space-5));
-  margin-right: calc(-1 * var(--space-5));
-  margin-bottom: calc(-1 * var(--space-4));
-}
+/* Flush anatomy (Dialog :padded="false"): zone bars span the full dialog
+   width; their own 22px horizontal padding keeps text aligned with the
+   Dialog title. */
+.aw { padding-top: 4px; }
 
 /* Breadcrumb bar */
 .crumbbar {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-5);
+  padding: var(--space-2) 22px;
   border-bottom: 1px solid var(--color-line);
 }
 .crumbs {
@@ -375,7 +372,7 @@ onUnmounted(() => {
   padding: 1px var(--space-1);
   border-radius: var(--radius-xs);
 }
-.crumb:hover { color: var(--color-accent); background: var(--color-surface-sunken); }
+.crumb:hover { color: var(--color-text); background: var(--color-hover); }
 .crumb.last { color: var(--color-text); font-weight: var(--weight-medium); }
 
 /* Subfolder filter — composite inline search (icon + input + spinner). */
@@ -383,7 +380,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-5);
+  padding: var(--space-2) 22px;
   border-bottom: 1px solid var(--color-line);
 }
 .filter-icon { flex: none; width: var(--p-ic-sm); height: var(--p-ic-sm); color: var(--color-text-muted); }
@@ -425,12 +422,12 @@ onUnmounted(() => {
   font-size: var(--text-base);
   color: var(--color-text);
   text-align: left;
-  padding: var(--space-1) var(--space-4);
+  padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
+  transition: background var(--duration-fast) var(--ease-out);
 }
-.folder-row:hover { background: var(--color-surface-sunken); }
+.folder-row:hover { background: var(--color-hover); }
 .dir-icon { flex: none; width: var(--p-ic-sm); height: var(--p-ic-sm); color: var(--color-text-muted); }
-.folder-row:hover .dir-icon { color: var(--color-accent); }
 .folder-name {
   flex: 1;
   min-width: 0;
@@ -443,7 +440,7 @@ onUnmounted(() => {
 
 /* Paste-path escape hatch */
 .paste-section {
-  padding: var(--space-3) var(--space-5);
+  padding: var(--space-3) 22px;
   border-top: 1px solid var(--color-line);
 }
 .paste-section.paste-only { border-top: none; }
@@ -456,26 +453,28 @@ onUnmounted(() => {
 
 /* Actions */
 .add-error {
-  margin: 0 14px 8px;
-  padding: 6px 10px;
-  font-family: var(--mono);
-  font-size: var(--ui-font-size-xs);
-  color: #b3261e;
-  background: rgba(179, 38, 30, 0.08);
-  border: 1px solid rgba(179, 38, 30, 0.25);
-  border-radius: 3px;
+  margin: 0 22px var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  font-family: var(--font-ui);
+  font-size: var(--text-xs);
+  color: var(--color-danger);
+  background: var(--color-danger-soft);
+  border: 1px solid var(--color-danger-bd);
+  border-radius: var(--radius-sm);
 }
 .actions {
   display: flex;
   justify-content: flex-end;
-  gap: var(--space-3);
-  padding: var(--space-4) var(--space-5);
+  gap: var(--space-2);
+  padding: var(--space-3) 22px;
 }
 
+/* Full-bleed hint bar — same container as the other dialogs' footers. */
 .footer-hint {
-  padding: var(--space-2) var(--space-5);
+  padding: var(--space-2) var(--space-4);
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
-  color: var(--color-text-muted);
+  color: var(--color-text-faint);
   border-top: 1px solid var(--color-line);
 }
 

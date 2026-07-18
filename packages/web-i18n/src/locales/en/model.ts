@@ -5,6 +5,7 @@ export default {
   allTab: 'All',
   providerTabs: 'Model providers',
   searchPlaceholder: 'Search models or providers…',
+  clearSearch: 'Clear search',
   loading: 'Loading models…',
   unavailable: 'The daemon does not support model listing yet',
   contextSuffix: '{size} ctx',
@@ -17,5 +18,7 @@ export default {
   emptyNoMatch: 'No matching models',
   starTitle: 'Add to favorites',
   unstarTitle: 'Remove from favorites',
-  footerHint: '↑↓ Navigate · Enter Select · Esc Close',
+  hintNavigate: 'Navigate',
+  hintSelect: 'Select',
+  hintClose: 'Close',
 } as const;

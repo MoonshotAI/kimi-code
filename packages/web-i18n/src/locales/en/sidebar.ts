@@ -44,6 +44,7 @@ export default {
   searchHintSelect: 'navigate',
   searchHintOpen: 'open',
   searchHintClose: 'close',
+  searchClear: 'Clear search',
   searchNoResults: 'No matching sessions',
   searchEmpty: 'No sessions yet',
 } as const;

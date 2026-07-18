@@ -24,6 +24,10 @@ const props = withDefaults(defineProps<{
   /** When false, the body has no padding so the consumer controls layout
    *  (e.g. a full-bleed side-nav). */
   padded?: boolean;
+  /** Hide the header close button for blocking dialogs that demand an
+   *  explicit action (e.g. server auth). Pair with closeOnOverlay/closeOnEsc
+   *  set to false so the dialog can only be resolved, not dismissed. */
+  hideClose?: boolean;
   /** Element (or selector / resolver) to receive focus when the dialog opens.
    *  Falls back to the first focusable element, then the dialog panel. */
   initialFocus?: HTMLElement | string | (() => HTMLElement | null | undefined);
@@ -152,7 +156,7 @@ onBeforeUnmount(() => {
               <div v-if="description" class="ui-dialog__desc">{{ description }}</div>
             </div>
           </slot>
-          <IconButton class="ui-dialog__close" size="sm" label="Close" @click="close">
+          <IconButton v-if="!hideClose" class="ui-dialog__close" size="sm" label="Close" @click="close">
             <Icon name="close" size="md" />
           </IconButton>
         </div>

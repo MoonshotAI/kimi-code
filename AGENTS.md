@@ -15,6 +15,8 @@
 - **不改包名**：`kimi-code-web`、`kimi-code-app`（两端原名 `@moonshot-ai/kimi-web` / `@moonshot-ai/kimi-desktop`，2026-07 更名）。
 - **两端逐步分叉是既定方向**：desktop 的原生功能（经 `window.kimiDesktop` 桥接，如原生目录选择器）只在 `apps/desktop` 实现；web 刻意保留原有 daemon 接口实现，不回填。原生路径必须带无桥降级（探测不到桥时回退旧实现）。已分叉的功能点记录在 `apps/desktop/docs/native-todos.md`；改两端共有的文件前先查它，手动同步副本时保留 desktop 侧的分叉块。
 - **开发顺序**：两端共有的 UI 改动优先在 `apps/desktop` 开发，开发完成后再同步到 `apps/web`（desktop 专属原生功能除外，见上条）。
+- **UI 改动必须遵循设计系统**：改组件 / 样式 / 布局 / 主题前，先读 canonical 设计规范 `apps/desktop/src/renderer/views/DesignSystemView.vue`（与 `apps/web` 同步；应用内长按侧栏 logo 打开）。新增 / 修改的 UI 必须与之匹配；涉及结构、约束或新组件模式时，同步更新该文档。
+- **样式只用 token，且必须视觉验证**：颜色 / 字体 / 圆角 / 间距 / 阴影 / z-index / 动效一律取 `style.css` 的 CSS 变量（`--color-*` / `--radius-*` / `--space-*` / `--text-*` / `--font-*` / `--z-*` / `--shadow-*` / `--ease-*` / `--duration-*` / `--weight-*` / `--leading-*` 及少量 `--p-*`），禁止手写 ad-hoc 值。UI 改动必须在亮色 + 暗色下验证 hover/focus 等状态，构建 / typecheck / lint 通过不算完成；`pnpm --filter kimi-code-web run check:style` 守 §06 反模式，改动文件不得新增 findings。
 - **不在本仓直接改 `kimi-code/` submodule 的内容**；kimi-code 侧改动在你的工作克隆里做（见"双仓工作流"），本仓只 bump submodule 指针。
 - **提交规范**：Conventional Commits；禁止任何 `Co-Authored-By` 署名；commit message、PR、代码、文档不得出现 agent / AI 工具的名称或身份信息。PR 描述用英文。
 - **changeset 必走 skill**：每次任务完成、提交 PR 前，必须运行 `changeset` skill（`.agents/skills/changeset/SKILL.md`）并按其规则在 `.changeset/` 生成 changeset；纯测试 / 重构 / 文档等无用户可见变化的改动除外。**早期阶段一律 `patch`**；认为需要 `minor` / `major` 时必须先向用户说明并获得明确同意，否则仍写 `patch`。**changeset 只写 `kimi-code-app`**：kimi-code submodule 的包不在 ignore 防护内（release CI 不 checkout submodule，ignore 无法引用不存在的包），`pnpm changeset` 列表里严禁选择，选错 release CI 直接挂。

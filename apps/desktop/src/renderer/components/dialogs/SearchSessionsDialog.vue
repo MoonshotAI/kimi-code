@@ -7,7 +7,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '../../types';
 import { highlightHtml, snippet } from '../../lib/searchHighlight';
-import { Dialog, EmptyState, Icon, Kbd } from '@moonshot-ai/web-ui';
+import { Dialog, EmptyState, Icon, Input, Kbd } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -27,7 +27,7 @@ const emit = defineEmits<{
 const open = ref(true);
 
 const query = ref('');
-const inputRef = ref<HTMLInputElement | null>(null);
+const inputRef = ref<InstanceType<typeof Input> | null>(null);
 const listRef = ref<HTMLElement | null>(null);
 
 interface Hit {
@@ -95,13 +95,18 @@ function openHit(id: string): void {
   emit('close');
 }
 
+function clearQuery(): void {
+  query.value = '';
+  inputRef.value?.focus();
+}
+
 function openSelected(): void {
   const hit = results.value[selectedIndex.value];
   if (hit) openHit(hit.session.id);
 }
 
 function focusInput(): HTMLElement | null {
-  return inputRef.value;
+  return inputRef.value?.el ?? null;
 }
 
 function onKeydown(e: KeyboardEvent): void {
@@ -128,31 +133,35 @@ onMounted(() => {
 <template>
   <Dialog
     v-model:open="open"
+    :title="t('sidebar.searchPlaceholder')"
     size="lg"
     height="fixed"
     :padded="false"
-    :aria-label="t('sidebar.searchPlaceholder')"
     :initial-focus="focusInput"
     @close="emit('close')"
   >
-    <template #head>
-      <div class="sd-head">
-        <Icon class="sd-search-icon" name="search" size="lg" />
-        <input
+    <div class="sd-body">
+      <div class="sd-search">
+        <Input
           ref="inputRef"
           v-model="query"
-          class="sd-input"
-          type="text"
           :placeholder="t('sidebar.searchPlaceholder')"
-          :aria-label="t('sidebar.searchPlaceholder')"
           autocomplete="off"
           spellcheck="false"
           @keydown="onKeydown"
         />
+        <button
+          type="button"
+          class="search-clear"
+          :class="{ 'is-on': query.length > 0 }"
+          tabindex="-1"
+          :aria-label="t('sidebar.searchClear')"
+          @click="clearQuery"
+        >
+          <Icon name="close" size="sm" />
+        </button>
       </div>
-    </template>
 
-    <div class="sd-body">
       <div ref="listRef" class="sd-list" role="listbox">
         <template v-if="results.length > 0">
           <button
@@ -195,7 +204,9 @@ onMounted(() => {
 
       <div class="sd-foot" aria-hidden="true">
         <span class="sd-hint"><Kbd :keys="['↑', '↓']" />{{ t('sidebar.searchHintSelect') }}</span>
-        <span class="sd-hint"><Kbd :keys="['↵']" />{{ t('sidebar.searchHintOpen') }}</span>
+        <span class="sd-dot">·</span>
+        <span class="sd-hint"><Kbd :keys="['Enter']" />{{ t('sidebar.searchHintOpen') }}</span>
+        <span class="sd-dot">·</span>
         <span class="sd-hint"><Kbd :keys="['Esc']" />{{ t('sidebar.searchHintClose') }}</span>
       </div>
     </div>
@@ -208,30 +219,45 @@ onMounted(() => {
    match them. Styling must live on the slot content (`.sd-*`), which does
    carry this component's scope id. */
 
-.sd-head {
-  flex: 1;
-  min-width: 0;
+/* Search row aligns with the Dialog head padding (title sits at 22px) —
+   same anatomy as ModelPicker's search zone. */
+.sd-search {
+  position: relative;
+  margin: 0 22px;
+  padding-bottom: var(--space-1);
+}
+/* Room for the clear affordance so long queries never run beneath it. */
+.sd-search :deep(.ui-input) { padding-right: 30px; }
+
+/* Clear query: quiet circled × at the input's trailing edge — same look and
+   behavior as ModelPicker's .search-clear (keep the two in sync). */
+.search-clear {
+  position: absolute;
+  top: 0;
+  bottom: var(--space-1);
+  right: var(--space-2);
+  margin-block: auto;
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-}
-.sd-search-icon {
-  flex: none;
-  color: var(--color-text-faint);
-}
-.sd-input {
-  flex: 1;
-  min-width: 0;
-  font-family: var(--font-ui);
-  font-size: var(--text-lg);
-  color: var(--color-text);
-  background: none;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
   border: none;
-  outline: none;
-  padding: var(--space-1) 0;
-}
-.sd-input::placeholder {
+  border-radius: var(--radius-full);
+  background: var(--color-hover);
   color: var(--color-text-faint);
+  cursor: pointer;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity var(--duration-fast) var(--ease-out), visibility var(--duration-fast),
+    background var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.search-clear.is-on { visibility: visible; opacity: 1; }
+.search-clear:hover { background: var(--color-selected); color: var(--color-text-muted); }
+.search-clear:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+@media (prefers-reduced-motion: reduce) {
+  .search-clear { transition: none; }
 }
 
 .sd-body {
@@ -239,11 +265,8 @@ onMounted(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  /* Top separator under the query row, mirroring the shortcut bar's
-     border-top so input / results / hints read as three distinct zones.
-     Lives on .sd-body (full-width inside the flush dialog body) because the
-     head container itself is unreachable from scoped styles (see above). */
-  border-top: 1px solid var(--color-line);
+  gap: var(--space-2);
+  padding-top: 4px;
 }
 .sd-list {
   flex: 1;
@@ -348,9 +371,10 @@ onMounted(() => {
   flex: none;
   display: flex;
   align-items: center;
-  gap: var(--space-4);
+  gap: var(--space-1);
   padding: var(--space-2) var(--space-4);
   border-top: 1px solid var(--color-line);
+  font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--color-text-faint);
 }
@@ -359,4 +383,5 @@ onMounted(() => {
   align-items: center;
   gap: var(--space-1);
 }
+.sd-dot { margin: 0 var(--space-1); }
 </style>

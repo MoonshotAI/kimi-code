@@ -29,5 +29,5 @@ export default {
   optional: '可选',
   apiKeyRequired: 'API Key 不能为空',
   add: '添加',
-  escClose: 'Esc 关闭',
+  hintClose: '关闭',
 } as const;

@@ -5,6 +5,7 @@ export default {
   allTab: '全部',
   providerTabs: '模型提供商',
   searchPlaceholder: '搜索模型或提供商…',
+  clearSearch: '清除搜索',
   loading: '加载模型中…',
   unavailable: 'daemon 暂不支持模型列表',
   contextSuffix: '{size} ctx',
@@ -17,5 +18,7 @@ export default {
   emptyNoMatch: '无匹配模型',
   starTitle: '添加到收藏',
   unstarTitle: '取消收藏',
-  footerHint: '↑↓ 导航 · Enter 选择 · Esc 关闭',
+  hintNavigate: '导航',
+  hintSelect: '选择',
+  hintClose: '关闭',
 } as const;

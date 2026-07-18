@@ -5,7 +5,7 @@ import { onMounted, onUnmounted, reactive, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { AppProvider } from '../../api/types';
 import { useDialogFocus } from '../../composables/useDialogFocus';
-import { Badge, Button, Dialog, Field, Icon, Input, Select, Spinner, Tooltip } from '@moonshot-ai/web-ui';
+import { Badge, Button, Dialog, Field, Icon, Input, Kbd, Select, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 
 const { t } = useI18n();
 
@@ -111,7 +111,7 @@ function statusLabel(status: AppProvider['status']): string {
 </script>
 
 <template>
-  <Dialog :open="true" :close-on-esc="false" :title="t('providers.title')" size="xl" height="fixed" @close="emit('close')">
+  <Dialog :open="true" :close-on-esc="false" :title="t('providers.title')" size="xl" height="fixed" :padded="false" @close="emit('close')">
     <div ref="dialogRef" class="pm">
       <!-- Provider list -->
       <div class="prov-list">
@@ -222,24 +222,35 @@ function statusLabel(status: AppProvider['status']): string {
         </template>
       </div>
 
-      <!-- Footer -->
-      <div class="footer-hint">{{ t('providers.escClose') }}</div>
+      <!-- Footer: full-bleed shortcut bar, same as ModelPicker's. -->
+      <div class="footer-hint" aria-hidden="true">
+        <Kbd :keys="['Esc']" />
+        <span>{{ t('providers.hintClose') }}</span>
+      </div>
     </div>
   </Dialog>
 </template>
 
 <style scoped>
-.pm { display: flex; flex-direction: column; gap: var(--space-4); }
+/* Flush anatomy (Dialog :padded="false"): content zones inset at 22px
+   (title-aligned); the footer is a full-bleed bar. */
+.pm { display: flex; flex-direction: column; gap: var(--space-3); height: 100%; min-height: 0; padding-top: 4px; }
 
 /* Provider list */
 .prov-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 0 22px;
 }
 .state-row {
+  flex: 1;
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: var(--space-2);
   padding: var(--space-4) 0;
   color: var(--color-text-muted);
@@ -248,6 +259,10 @@ function statusLabel(status: AppProvider['status']): string {
 }
 .state-row.unavail { color: var(--color-warning); }
 .empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: var(--space-4) 0;
   color: var(--color-text-muted);
   font-family: var(--font-ui);
@@ -313,8 +328,9 @@ function statusLabel(status: AppProvider['status']): string {
 }
 /* Add section */
 .add-section {
+  margin: 0 22px;
   border-top: 1px solid var(--color-line);
-  padding-top: var(--space-4);
+  padding-top: var(--space-3);
 }
 .add-btns {
   display: flex;
@@ -335,13 +351,17 @@ function statusLabel(status: AppProvider['status']): string {
   gap: var(--space-2);
 }
 
-/* Footer */
+/* Footer: full-bleed shortcut bar — same container as ModelPicker's. */
 .footer-hint {
-  padding-top: var(--space-2);
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  border-top: 1px solid var(--color-line);
   font-family: var(--font-ui);
   font-size: var(--text-xs);
   color: var(--color-text-faint);
-  border-top: 1px solid var(--color-line);
 }
 
 @media (max-width: 640px) {
