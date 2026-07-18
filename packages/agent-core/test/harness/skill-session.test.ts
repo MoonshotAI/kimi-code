@@ -94,9 +94,16 @@ describe('HarnessAPI session skills', () => {
     const created = await rpc.createSession({ id: 'ses_builtin_skill_list', workDir });
 
     const skills = await rpc.listSkills({ sessionId: created.id });
+    const selfDocs = skills.find((skill) => skill.name === 'kimi-code-docs');
     const mcpConfig = skills.find((skill) => skill.name === 'mcp-config');
     const importer = skills.find((skill) => skill.name === 'import-from-cc-codex');
 
+    expect(selfDocs).toMatchObject({
+      name: 'kimi-code-docs',
+      description: expect.stringContaining('Kimi Code CLI itself'),
+      source: 'system',
+    });
+    expect(selfDocs?.path).toBe('system://kimi-code-docs');
     expect(mcpConfig).toMatchObject({
       name: 'mcp-config',
       description: 'Configure MCP servers and handle MCP OAuth login.',
@@ -110,6 +117,7 @@ describe('HarnessAPI session skills', () => {
       disableModelInvocation: true,
     });
     expect(importer?.path).toBe('builtin://import-from-cc-codex');
+    expect(JSON.stringify(skills)).not.toContain('Use this skill for Kimi Code product self-knowledge');
     expect(JSON.stringify(skills)).not.toContain('Your tool list contains one synthetic tool');
     expect(JSON.stringify(skills)).not.toContain('Do not migrate Claude custom commands');
   });
@@ -585,6 +593,18 @@ describe('HarnessAPI session skills', () => {
     const promptInput = (prompt as { input?: ReadonlyArray<{ text?: string }> } | undefined)?.input;
     expect(promptInput?.[0]?.text).toContain('Interactive MCP server configuration');
     expect(promptInput?.[0]?.text).toContain('AskUserQuestion');
+  });
+
+  it('loads the bundled system docs skill into the model skill listing', async () => {
+    const { core, rpc } = await createTestRpc();
+    const created = await rpc.createSession({ id: 'ses_skill_system_docs', workDir });
+
+    const session = core.sessions.get(created.id);
+    expect(session).toBeDefined();
+    const invocable = session!.skills.listInvocableSkills();
+    expect(invocable.some((skill) => skill.name === 'kimi-code-docs')).toBe(true);
+    expect(session!.skills.getModelSkillListing()).toContain('kimi-code-docs');
+    expect(session!.skills.getModelSkillListing()).toContain('### System');
   });
 
   it('lets a user-supplied skill override the builtin of the same name', async () => {

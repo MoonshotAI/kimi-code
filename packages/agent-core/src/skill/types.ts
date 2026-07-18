@@ -1,4 +1,4 @@
-export type SkillSource = 'project' | 'user' | 'extra' | 'builtin';
+export type SkillSource = 'project' | 'user' | 'extra' | 'system' | 'builtin';
 
 export interface SkillMetadata {
   readonly name?: string | undefined;

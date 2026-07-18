@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { SessionSkillRegistry } from '../../src/skill';
+import { registerSystemSkills, SessionSkillRegistry } from '../../src/skill';
 import type { SkillDefinition, SkillSource } from '../../src/skill';
 
 describe('skill registry prompt rendering', () => {
   it('groups skills by scope under canonical section headings', () => {
     const registry = makeRegistry([
       makeSkill('builtin-a', 'builtin'),
+      makeSkill('system-a', 'system'),
       makeSkill('user-a', 'user'),
       makeSkill('proj-a', 'project'),
       makeSkill('extra-a', 'extra'),
@@ -17,19 +18,23 @@ describe('skill registry prompt rendering', () => {
     expect(rendered).toContain('### Project');
     expect(rendered).toContain('### User');
     expect(rendered).toContain('### Extra');
+    expect(rendered).toContain('### System');
     expect(rendered).toContain('### Built-in');
 
     const projectIdx = rendered.indexOf('### Project');
     const userIdx = rendered.indexOf('### User');
     const extraIdx = rendered.indexOf('### Extra');
+    const systemIdx = rendered.indexOf('### System');
     const builtinIdx = rendered.indexOf('### Built-in');
     expect(projectIdx).toBeLessThan(userIdx);
     expect(userIdx).toBeLessThan(extraIdx);
-    expect(extraIdx).toBeLessThan(builtinIdx);
+    expect(extraIdx).toBeLessThan(systemIdx);
+    expect(systemIdx).toBeLessThan(builtinIdx);
 
     expect(sectionFor(rendered, '### Project')).toContain('proj-a');
     expect(sectionFor(rendered, '### User')).toContain('user-a');
     expect(sectionFor(rendered, '### Extra')).toContain('extra-a');
+    expect(sectionFor(rendered, '### System')).toContain('system-a');
     expect(sectionFor(rendered, '### Built-in')).toContain('builtin-a');
     expect(sectionFor(rendered, '### Project')).not.toContain('user-a');
     expect(sectionFor(rendered, '### User')).not.toContain('proj-a');
@@ -43,6 +48,7 @@ describe('skill registry prompt rendering', () => {
     expect(rendered).toContain('### User');
     expect(rendered).not.toContain('### Project');
     expect(rendered).not.toContain('### Extra');
+    expect(rendered).not.toContain('### System');
     expect(rendered).not.toContain('### Built-in');
   });
 
@@ -128,6 +134,46 @@ describe('getModelSkillListing description truncation', () => {
     expect(rendered).not.toMatch(
       /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/,
     );
+  });
+});
+
+describe('system skill registration', () => {
+  it('registers Kimi Code docs as an in-memory system skill', () => {
+    const registry = new SessionSkillRegistry();
+
+    registerSystemSkills(registry);
+
+    const skill = registry.getSkill('kimi-code-docs');
+    expect(skill).toMatchObject({
+      name: 'kimi-code-docs',
+      source: 'system',
+      path: 'system://kimi-code-docs',
+      dir: 'system://kimi-code-docs',
+    });
+    expect(skill?.description).toContain('Kimi Code CLI itself');
+  });
+
+  it('lets external skills shadow a bundled system skill', () => {
+    const registry = makeRegistry([
+      makeSkill('kimi-code-docs', 'extra', 'team docs override', '/tmp/extra/kimi-code-docs/SKILL.md'),
+    ]);
+
+    registerSystemSkills(registry);
+
+    const skill = registry.getSkill('kimi-code-docs');
+    expect(skill?.source).toBe('extra');
+    expect(skill?.description).toBe('team docs override');
+  });
+
+  it('lets a bundled system skill shadow a same-named builtin skill', () => {
+    const registry = new SessionSkillRegistry();
+
+    registerSystemSkills(registry);
+    registry.registerBuiltinSkill(makeSkill('kimi-code-docs', 'builtin', 'builtin fallback'));
+
+    const skill = registry.getSkill('kimi-code-docs');
+    expect(skill?.source).toBe('system');
+    expect(skill?.description).toContain('Kimi Code CLI itself');
   });
 });
 

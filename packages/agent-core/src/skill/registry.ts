@@ -151,6 +151,7 @@ const SOURCE_GROUPS: ReadonlyArray<{ readonly source: SkillSource; readonly labe
   { source: 'project', label: 'Project' },
   { source: 'user', label: 'User' },
   { source: 'extra', label: 'Extra' },
+  { source: 'system', label: 'System' },
   { source: 'builtin', label: 'Built-in' },
 ];
 

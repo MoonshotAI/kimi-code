@@ -26,7 +26,7 @@ function compareSkillSlashCommands(a: SkillSummary, b: SkillSummary): number {
 }
 
 function getSkillSlashCommandGroup(source: SkillSummary['source']): number {
-  return source === 'builtin' ? 0 : 1;
+  return source === 'builtin' || source === 'system' ? 0 : 1;
 }
 
 export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillSlashCommands {
@@ -34,7 +34,7 @@ export function buildSkillSlashCommands(skills: readonly SkillSummary[]): SkillS
   const sortedSkills = [...skills].toSorted(compareSkillSlashCommands);
   const commands = sortedSkills.filter(isUserActivatableSkill).map((skill) => {
     const commandName =
-      skill.source === 'builtin' || skill.isSubSkill === true
+      skill.source === 'builtin' || skill.source === 'system' || skill.isSubSkill === true
         ? skill.name
         : `skill:${skill.name}`;
     commandMap.set(commandName, skill.name);
