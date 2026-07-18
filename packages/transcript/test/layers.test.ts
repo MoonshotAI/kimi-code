@@ -224,6 +224,41 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });
 
+  it('starts a promptless turn for turn-opening system triggers (goal continuation)', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'continue the goal' }],
+        toolCalls: [],
+        origin: { kind: 'system_trigger', name: 'goal_continuation' } as { kind: string },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'continued' }], toolCalls: [] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'mode reminder' }],
+        toolCalls: [],
+        origin: { kind: 'injection', variant: 'permission_mode' } as { kind: string },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'still same turn' }], toolCalls: [] },
+    ]);
+
+    // The continuation opened a real engine turn: the grouping must advance
+    // (0-based ordinals stay aligned with the engine) instead of folding the
+    // continuation output into the visible user turn. A mid-turn injection
+    // still folds away without splitting the turn.
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'turn']);
+    const [first, second] = snapshot.items;
+    if (first?.kind !== 'turn' || second?.kind !== 'turn') throw new Error('expected turns');
+    expect(first.ordinal).toBe(0);
+    expect(first.steps.map((step) => step.frames.map((frame) => frame.kind))).toEqual([['text']]);
+    expect(second.ordinal).toBe(1);
+    expect(second.origin.kind).toBe('other');
+    expect(second.prompt).toBe('continue the goal');
+    expect(second.steps).toHaveLength(2);
+  });
+
   it('hides injected user messages and maps cron origins', () => {
     const snapshot = groupMessagesIntoSnapshot([
       {

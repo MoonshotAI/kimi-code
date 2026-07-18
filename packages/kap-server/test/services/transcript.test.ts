@@ -113,6 +113,49 @@ describe('AgentTranscriptProjector', () => {
     expect(turn.state).toBe('completed');
   });
 
+  it('adopts a backfilled stream frame on mid-turn attach instead of clobbering it', () => {
+    const tx = new AgentTranscript('main');
+    // The backfill seeded the in-flight step's partial text before the
+    // projector observed any delta.
+    tx.apply([
+      {
+        op: 'turn.upsert',
+        turn: { kind: 'turn', turnId: 't0', ordinal: 0, state: 'running', origin: { kind: 'user' } },
+      },
+      {
+        op: 'step.upsert',
+        turnId: 't0',
+        step: { kind: 'step', stepId: 't0.1', turnId: 't0', ordinal: 1, state: 'running' },
+      },
+      {
+        op: 'frame.upsert',
+        turnId: 't0',
+        stepId: 't0.1',
+        frame: { kind: 'text', frameId: 't0.1.f1', role: 'assistant', text: 'Hello ' },
+      },
+    ]);
+    const projector = new AgentTranscriptProjector(
+      'main',
+      (turnId, stepId) => tx.getTurn(turnId)?.steps.find((s) => s.stepId === stepId)?.frames,
+    );
+
+    // The live stream resumes: no empty upsert, the append continues at the
+    // seeded offset.
+    const ops = projector.map(ev({ type: 'assistant.delta', turnId: 0, delta: 'world' }));
+    tx.apply(ops);
+    expect(ops.some((op) => op.op === 'frame.upsert')).toBe(false);
+    const append = ops.find((op): op is AppendOp => op.op === 'append');
+    expect(append && [append.offset, append.text]).toEqual([6, 'world']);
+    const turn = turnOps('t0', tx.getItems());
+    const text = turn.steps[0]?.frames.find((frame) => frame.kind === 'text');
+    expect(text).toMatchObject({ text: 'Hello world' });
+
+    // Later frames in the same step must not collide with the adopted id.
+    const next = projector.map(ev({ type: 'thinking.delta', turnId: 0, delta: 'hmm' }));
+    const created = next.find((op): op is FrameUpsertOp => op.op === 'frame.upsert');
+    expect(created?.frame.frameId).toBe('t0.1.f2');
+  });
+
   it('snapshotToOps anchors standalone items so backfill keeps history order against live turns', () => {
     const snapshot: AgentTranscriptSnapshot = {
       items: [

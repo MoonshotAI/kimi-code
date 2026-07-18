@@ -40,6 +40,7 @@ import type {
   InteractionFrame,
   StepHeader,
   ToolCallFrame,
+  TranscriptFrame,
   TranscriptMarker,
   TranscriptOperation,
   TranscriptTask,
@@ -61,6 +62,15 @@ export interface ProjectorInteraction {
   readonly payload: unknown;
   readonly origin: { readonly agentId?: string; readonly turnId?: number };
 }
+
+/**
+ * Read access to one step's current frames (the producer store). Used for
+ * mid-stream attach adoption — see `adoptStreamFrame`.
+ */
+export type ProjectorFrameLookup = (
+  turnId: string,
+  stepId: string,
+) => readonly TranscriptFrame[] | undefined;
 
 interface OpenTextFrame {
   readonly frameId: string;
@@ -97,7 +107,10 @@ export class AgentTranscriptProjector {
   private readonly interactions = new Map<string, InteractionRecord>();
   private markerSeq = 0;
 
-  constructor(readonly agentId: string) {}
+  constructor(
+    readonly agentId: string,
+    private readonly frameLookup?: ProjectorFrameLookup,
+  ) {}
 
   map(event: DomainEvent): TranscriptOperation[] {
     switch (event.type) {
@@ -280,6 +293,9 @@ export class AgentTranscriptProjector {
     const turnId = `t${turnNumber}`;
     const step = this.ensureStep(turnId, ops);
     let open = kind === 'assistant' ? this.openText : this.openThinking;
+    // Mid-stream attach: the backfill may have seeded this step's stream
+    // frame already — adopt it instead of opening an empty one.
+    open ??= this.adoptStreamFrame(turnId, step.stepId, kind);
     if (open === undefined) {
       const frameId = `${step.stepId}.f${++this.frameOrdinal}`;
       open = { frameId, offset: 0, text: '' };
@@ -308,6 +324,46 @@ export class AgentTranscriptProjector {
     if (kind === 'assistant') this.openText = open;
     else this.openThinking = open;
     return ops;
+  }
+
+  /**
+   * Mid-stream attach adoption. When the projector starts streaming a step it
+   * has never seen, the history backfill may already have seeded that step's
+   * stream frame with the text persisted so far (the in-flight turn's deltas
+   * are persisted upstream). Opening a fresh frame here would emit an empty
+   * `frame.upsert` that clobbers the seeded text, followed by offset-0
+   * appends that cannot land past it — corrupting the live transcript until
+   * the next cold rebuild. Instead adopt the seeded frame: continue its id
+   * and offset (the persisted text is a prefix of the same stream), and
+   * advance `frameOrdinal` past the step's existing `.fN` frames so later
+   * frames cannot collide. Known limitation: deltas observed between bind
+   * and the backfill landing still open a fresh frame (the backfill's later
+   * upsert then replaces it wholesale).
+   */
+  private adoptStreamFrame(
+    turnId: string,
+    stepId: string,
+    kind: 'assistant' | 'thinking',
+  ): OpenTextFrame | undefined {
+    const frames = this.frameLookup?.(turnId, stepId);
+    if (frames === undefined || frames.length === 0) return undefined;
+    for (const frame of frames) {
+      const match = /\.f(\d+)$/.exec(frame.frameId);
+      if (match !== null) {
+        this.frameOrdinal = Math.max(this.frameOrdinal, Number(match[1]));
+      }
+    }
+    for (let i = frames.length - 1; i >= 0; i -= 1) {
+      const frame = frames[i];
+      if (frame === undefined) continue;
+      if (kind === 'assistant' && frame.kind === 'text' && frame.role === 'assistant') {
+        return { frameId: frame.frameId, offset: frame.text.length, text: frame.text };
+      }
+      if (kind === 'thinking' && frame.kind === 'thinking') {
+        return { frameId: frame.frameId, offset: frame.text.length, text: frame.text };
+      }
+    }
+    return undefined;
   }
 
   /** Re-emit every open text/thinking frame with its full text (the 'block'-grade convergence point). */

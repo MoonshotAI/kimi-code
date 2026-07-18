@@ -83,7 +83,14 @@ export function bindSessionTranscript(
   const projectorFor = (agentId: string): AgentTranscriptProjector => {
     let projector = projectors.get(agentId);
     if (projector === undefined) {
-      projector = new AgentTranscriptProjector(agentId);
+      // The frame lookup lets the projector adopt stream frames the history
+      // backfill seeded into the store (mid-stream attach) instead of
+      // clobbering them with empty upserts + offset-0 appends.
+      projector = new AgentTranscriptProjector(
+        agentId,
+        (turnId, stepId) =>
+          store.getAgent(agentId)?.getTurn(turnId)?.steps.find((s) => s.stepId === stepId)?.frames,
+      );
       projectors.set(agentId, projector);
     }
     return projector;

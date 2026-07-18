@@ -61,6 +61,15 @@ interface StepDraft {
 
 /** Origins whose content is context, not display — folded away, not shown. */
 const HIDDEN_USER_ORIGINS = new Set(['injection', 'system_trigger', 'retry']);
+/**
+ * Hidden origins that nonetheless OPEN a real engine turn
+ * (`MessageStepRequest` with `admission: 'newTurn'`, e.g. goal continuation).
+ * Other hidden origins are mid-turn context (reminders, injections, retries)
+ * and stay folded away; skipping a turn-opening one would fold the
+ * continuation's assistant output into the prior visible turn and break the
+ * 0-based ordinal alignment with the engine's live turn numbering.
+ */
+const TURN_OPENING_SYSTEM_TRIGGERS = new Set(['goal_continuation']);
 /** Origins rendered as timeline markers rather than turns. */
 const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
   skill_activation: 'skill',
@@ -108,7 +117,14 @@ export function groupMessagesIntoSnapshot(
     const originKind = message.origin?.kind;
 
     if (message.role === 'user') {
-      if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) continue;
+      if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
+        if (opensOwnTurn(message)) {
+          // A real turn boundary: advance the grouping (and the ordinal),
+          // mirroring the live path's prompt-from-input projection.
+          startTurn(mapOrigin(message), textOf(message));
+        }
+        continue;
+      }
       const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
       if (markerKey !== undefined) {
         pushMarker(markerKey, { text: textOf(message), origin: message.origin });
@@ -173,6 +189,16 @@ export function groupMessagesIntoSnapshot(
 }
 
 // ---------------------------------------------------------------- helpers
+
+/** Whether a hidden-origin user message opened its own engine turn. */
+function opensOwnTurn(message: HistoryMessage): boolean {
+  const origin = message.origin as { kind?: unknown; name?: unknown } | undefined;
+  return (
+    origin?.kind === 'system_trigger' &&
+    typeof origin.name === 'string' &&
+    TURN_OPENING_SYSTEM_TRIGGERS.has(origin.name)
+  );
+}
 
 function mapOrigin(message: HistoryMessage): TurnOrigin {
   const origin = message.origin;
