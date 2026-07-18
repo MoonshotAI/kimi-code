@@ -672,6 +672,7 @@ export interface AppConfig {
   services?: unknown;
   mergeAllAvailableSkills?: boolean;
   extraSkillDirs?: string[];
+  disabledSkills?: string[];
   loopControl?: unknown;
   background?: unknown;
   experimental?: Record<string, boolean>;

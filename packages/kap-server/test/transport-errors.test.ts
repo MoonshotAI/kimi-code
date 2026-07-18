@@ -1,14 +1,21 @@
 /**
- * Scenario: `/api/v1/debug` transport error translation.
- * Responsibilities: verify stable domain-to-wire mappings and the internal-error fallback.
- * Wiring: real error mapper with in-process coded errors; no external boundaries.
+ * Scenario: `/api/v1/debug` transport error translation and v1 event error-code validation.
+ * Responsibilities: verify stable domain-to-wire mappings, fallback, and skill-code parity.
+ * Wiring: real error mapper and event schema with in-process coded errors.
  * Run: `pnpm --filter @moonshot-ai/kap-server exec vitest run test/transport-errors.test.ts`.
  */
 import { Error2, ErrorCodes } from '@moonshot-ai/agent-core-v2';
-import { ErrorCode } from '../src/protocol/error-codes';
 import { describe, expect, it } from 'vitest';
 
+import { ErrorCode } from '../src/protocol/error-codes';
+import { kimiErrorCodeSchema } from '../src/protocol/events-zod';
 import { mapError } from '../src/transport/errors';
+
+describe('v1 event error-code contract', () => {
+  it('accepts the skill.disabled protocol code', () => {
+    expect(kimiErrorCodeSchema.parse('skill.disabled')).toBe('skill.disabled');
+  });
+});
 
 describe('/api/v1/debug transport mapError', () => {
   it.each([

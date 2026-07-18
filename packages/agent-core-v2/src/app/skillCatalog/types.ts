@@ -65,10 +65,27 @@ export interface SkillCatalog {
   getSkillRoots(): readonly string[];
   getSkippedByPolicy(): readonly SkippedSkill[];
   getModelSkillListing(): string;
+  isSkillDisabled(name: string): boolean;
 }
 
 export function normalizeSkillName(name: string): string {
   return name.toLowerCase();
+}
+
+export function createDisabledSkillNameSet(
+  names: readonly string[] | undefined,
+): ReadonlySet<string> {
+  const set = new Set<string>();
+  if (names === undefined) return set;
+  for (const name of names) {
+    const normalized = normalizeSkillName(name.trim());
+    if (normalized.length > 0) set.add(normalized);
+  }
+  return set;
+}
+
+export function isDisabledSkillName(name: string, disabled: ReadonlySet<string>): boolean {
+  return disabled.has(normalizeSkillName(name));
 }
 
 export function isInlineSkillType(type: string | undefined): boolean {

@@ -343,6 +343,7 @@ export const kimiErrorCodeSchema = z.enum([
   'skill.not_found',
   'skill.type_unsupported',
   'skill.name_empty',
+  'skill.disabled',
   'records.write_failed',
   'compaction.failed',
   'compaction.unable',
@@ -594,7 +595,7 @@ export const sessionStatusChangedEventSchema = z.object({
 
 export const configChangedEventSchema = z.object({
   type: z.literal('event.config.changed'),
-  changedFields: z.array(z.string()),
+  changed_fields: z.array(z.string()),
   config: configResponseSchema,
 });
 
@@ -921,6 +922,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   workspaceDeletedEventSchema,
   sessionWorkChangedEventSchema,
   sessionStatusChangedEventSchema,
+  configChangedEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
   pluginCommandActivatedEventSchema,

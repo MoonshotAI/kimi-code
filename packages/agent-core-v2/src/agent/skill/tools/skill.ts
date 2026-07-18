@@ -135,6 +135,11 @@ export async function executeModelSkill(
   if (skill === undefined) {
     return errorResult(`Skill "${args.skill}" not found in the current skill listing.`);
   }
+  if (catalog.catalog.isSkillDisabled(args.skill)) {
+    return errorResult(
+      `Skill "${skill.name}" is disabled in configuration (disabled_skills).`,
+    );
+  }
   if (skill.metadata.disableModelInvocation === true) {
     return errorResult(
       `Skill "${args.skill}" can only be triggered by the user (model invocation is disabled).`,

@@ -120,6 +120,11 @@ export class SkillTool implements BuiltinTool<SkillToolInput> {
     if (skill === undefined) {
       return errorResult(`Skill "${args.skill}" not found in the current skill listing.`);
     }
+    if (skills.registry.isSkillDisabled(args.skill)) {
+      return errorResult(
+        `Skill "${skill.name}" is disabled in configuration (disabled_skills).`,
+      );
+    }
     if (skill.metadata.disableModelInvocation === true) {
       // Keep the exact wording "can only be triggered by the user" so
       // contract audits and integration tests stay deterministic.

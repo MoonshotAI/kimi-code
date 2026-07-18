@@ -3,6 +3,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  Error2,
+  ErrorCodes,
   IAgentActivityView,
   IAgentGoalService,
   IAgentLifecycleService,
@@ -465,6 +467,25 @@ describe('server-v2 /api/v1/debug RPC', () => {
       { objective: 'second' },
     );
     expect(duplicate.body.code).toBe(40913);
+  });
+
+  it('maps skill.disabled through the public debug RPC contract', async () => {
+    const pluginService = server!.core.accessor.get(IPluginService) as unknown as {
+      throwSkillDisabled?: () => never;
+    };
+    pluginService.throwSkillDisabled = () => {
+      throw new Error2(ErrorCodes.SKILL_DISABLED, 'disabled by config');
+    };
+
+    try {
+      const { body } = await call<null>(
+        'POST',
+        rpc('core', IPluginService, 'throwSkillDisabled'),
+      );
+      expect(body.code).toBe(40912);
+    } finally {
+      delete pluginService.throwSkillDisabled;
+    }
   });
 
   it('rejects reflected goal helper access for subagents', async () => {

@@ -23,6 +23,7 @@ import { IProviderService } from '#/kosong/provider/provider';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import { IConfigService } from '#/app/config/config';
 import {
+  DISABLED_SKILLS_SECTION,
   EXTRA_SKILL_DIRS_SECTION,
   MERGE_ALL_AVAILABLE_SKILLS_SECTION,
 } from '#/app/skillCatalog/configSection';
@@ -42,10 +43,12 @@ import { stubProviderService } from '../../app/provider/stubs';
 const bootstrapStub = stubBootstrap('/home');
 
 function configStub(): IConfigService & {
+  setDisabledSkills(names: readonly string[]): void;
   setExtraSkillDirs(dirs: readonly string[]): void;
   setMergeAllAvailableSkills(value: boolean): void;
   fireSectionChange(domain: string): void;
 } {
+  let disabledSkills: readonly string[] = [];
   let extraSkillDirs: readonly string[] = [];
   let mergeAllAvailableSkills = true;
   const sectionChangeListeners: Array<(event: unknown) => void> = [];
@@ -58,6 +61,7 @@ function configStub(): IConfigService & {
       return { dispose: () => {} };
     },
     get: (domain: string) => {
+      if (domain === DISABLED_SKILLS_SECTION) return [...disabledSkills];
       if (domain === EXTRA_SKILL_DIRS_SECTION) return [...extraSkillDirs];
       if (domain === MERGE_ALL_AVAILABLE_SKILLS_SECTION) return mergeAllAvailableSkills;
       return undefined;
@@ -68,6 +72,9 @@ function configStub(): IConfigService & {
     replace: async () => {},
     reload: async () => {},
     diagnostics: () => [],
+    setDisabledSkills: (names: readonly string[]) => {
+      disabledSkills = [...names];
+    },
     setExtraSkillDirs: (dirs: readonly string[]) => {
       extraSkillDirs = [...dirs];
     },
@@ -80,6 +87,7 @@ function configStub(): IConfigService & {
       }
     },
   } as unknown as IConfigService & {
+    setDisabledSkills(names: readonly string[]): void;
     setExtraSkillDirs(dirs: readonly string[]): void;
     setMergeAllAvailableSkills(value: boolean): void;
     fireSectionChange(domain: string): void;
@@ -380,6 +388,32 @@ describe('SessionSkillCatalogService', () => {
 
     expect(store.calls).toBe(afterLoad + 2);
     host.dispose();
+  });
+
+  it('remerges and fires onDidChange when disabledSkills changes', async () => {
+    const store = new InMemorySkillDiscovery();
+    store.setUserSkills([stubSkill('enabled'), stubSkill('disabled')]);
+    const { stub: ws } = workspaceStub('/work');
+    const { host, session, config } = makeHost(store, ws);
+
+    try {
+      const catalog = session.accessor.get(ISessionSkillCatalog);
+      await catalog.load();
+      expect(catalog.catalog.listSkills().map((skill) => skill.name)).toContain('disabled');
+
+      const changes: string[] = [];
+      const subscription = catalog.onDidChange((sourceId) => changes.push(sourceId));
+      config.setDisabledSkills(['disabled']);
+      config.fireSectionChange(DISABLED_SKILLS_SECTION);
+
+      expect(changes).toEqual([DISABLED_SKILLS_SECTION]);
+      const names = catalog.catalog.listSkills().map((skill) => skill.name);
+      expect(names).toContain('enabled');
+      expect(names).not.toContain('disabled');
+      subscription.dispose();
+    } finally {
+      host.dispose();
+    }
   });
 
   it('reload replaces project skills when the workDir changes', async () => {

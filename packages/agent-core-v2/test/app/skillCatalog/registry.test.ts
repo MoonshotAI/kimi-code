@@ -104,6 +104,24 @@ describe('InMemorySkillCatalog skill listing', () => {
   });
 });
 
+describe('InMemorySkillCatalog disabled_skills filter', () => {
+  it('hides disabled skill names from public lists while keeping getSkill', () => {
+    const registry = new InMemorySkillCatalog({
+      disabledSkills: ['Grok-Delegation', ' pi-delegation '],
+    });
+    registry.register(makeSkill('grok-delegation', 'user', 'Grok helper'));
+    registry.register(makeSkill('pi-delegation', 'user', 'Pi helper'));
+    registry.register(makeSkill('keep-me', 'user', 'Still available'));
+
+    expect(registry.isSkillDisabled('grok-delegation')).toBe(true);
+    expect(registry.listSkills().map((skill) => skill.name)).toEqual(['keep-me']);
+    expect(registry.listInvocableSkills().map((skill) => skill.name)).toEqual(['keep-me']);
+    expect(registry.getModelSkillListing()).toContain('keep-me');
+    expect(registry.getModelSkillListing()).not.toContain('grok-delegation');
+    expect(registry.getSkill('grok-delegation')?.name).toBe('grok-delegation');
+  });
+});
+
 describe('InMemorySkillCatalog model skill listing', () => {
   it('lists only model-invocable inline skills', () => {
     const registry = makeRegistry([

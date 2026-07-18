@@ -995,7 +995,9 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       mergeAllAvailableSkills: skills.mergeAllAvailableSkills,
       builtinDir: skills.builtinDir,
     });
-    const registry = new SessionSkillRegistry({});
+    const registry = new SessionSkillRegistry({
+      disabledSkills: skills.disabledSkills,
+    });
     await registry.loadRoots(roots);
     registerBuiltinSkills(registry);
     return registry.listSkills().map(summarizeSkill);
@@ -1199,6 +1201,7 @@ export class KimiCore implements PromisableMethods<CoreAPI> {
       extraDirs: config.extraSkillDirs,
       pluginSkillRoots: this.plugins.pluginSkillRoots(),
       mergeAllAvailableSkills: config.mergeAllAvailableSkills,
+      disabledSkills: config.disabledSkills,
     };
   }
 

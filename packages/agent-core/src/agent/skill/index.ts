@@ -23,6 +23,12 @@ export class SkillManager {
     if (skill === undefined) {
       throw new KimiError(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
     }
+    if (this.registry.isSkillDisabled(input.name)) {
+      throw new KimiError(
+        ErrorCodes.SKILL_DISABLED,
+        `Skill "${skill.name}" is disabled in configuration (disabled_skills).`,
+      );
+    }
     if (!isUserActivatableSkillType(skill.metadata.type)) {
       throw new KimiError(ErrorCodes.SKILL_TYPE_UNSUPPORTED, `Skill "${skill.name}" cannot be activated by the user`);
     }

@@ -30,7 +30,7 @@ export class ConfigService extends Disposable implements IConfigService {
       type: 'event.config.changed',
       agentId: 'main',
       sessionId: '__global__',
-      changedFields: Object.keys(patch),
+      changed_fields: Object.keys(patch),
       config: response,
     });
 
@@ -64,6 +64,7 @@ function toConfigResponse(config: KimiConfig): ConfigResponse {
     services: config.services,
     merge_all_available_skills: config.mergeAllAvailableSkills,
     extra_skill_dirs: config.extraSkillDirs,
+    disabled_skills: config.disabledSkills,
     loop_control: config.loopControl,
     background: config.background,
     experimental: config.experimental,

@@ -50,6 +50,12 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
     if (skill === undefined) {
       throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
     }
+    if (this.skillCatalog.catalog.isSkillDisabled(input.name)) {
+      throw new Error2(
+        ErrorCodes.SKILL_DISABLED,
+        `Skill "${skill.name}" is disabled in configuration (disabled_skills).`,
+      );
+    }
     if (!isUserActivatableSkillType(skill.metadata.type)) {
       throw new Error2(
         ErrorCodes.SKILL_TYPE_UNSUPPORTED,

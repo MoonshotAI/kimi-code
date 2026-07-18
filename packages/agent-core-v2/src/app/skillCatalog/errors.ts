@@ -9,6 +9,7 @@ export const SkillErrors = {
     SKILL_NOT_FOUND: 'skill.not_found',
     SKILL_TYPE_UNSUPPORTED: 'skill.type_unsupported',
     SKILL_NAME_EMPTY: 'skill.name_empty',
+    SKILL_DISABLED: 'skill.disabled',
   },
 } as const satisfies ErrorDomain;
 
