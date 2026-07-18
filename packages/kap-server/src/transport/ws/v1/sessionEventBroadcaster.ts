@@ -61,7 +61,9 @@ import {
   filterOpsForGrade,
   gradeFor,
   needsResetOnTransition,
+  redactSnapshotForGrade,
   type AgentTranscript,
+  type TranscriptGrade,
   type TranscriptGradeSpec,
   type TranscriptOpsEvent,
   type TranscriptResetEvent,
@@ -289,7 +291,7 @@ export class SessionEventBroadcaster {
       if (grade === 'off') continue;
       if (!needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade)) continue;
       const transcript = store.getAgent(descriptor.agentId);
-      if (transcript !== undefined) this.sendTranscriptReset(state, target, transcript);
+      if (transcript !== undefined) this.sendTranscriptReset(state, target, transcript, grade);
     }
   }
 
@@ -335,9 +337,10 @@ export class SessionEventBroadcaster {
           const transcript = store.getAgent(descriptor.agentId);
           if (transcript === undefined) continue;
           for (const [target, sub] of state.targets) {
-            if (gradeFor(sub.transcriptGrades, descriptor.agentId) === 'off') continue;
+            const grade = gradeFor(sub.transcriptGrades, descriptor.agentId);
+            if (grade === 'off') continue;
             try {
-              this.sendTranscriptReset(state, target, transcript);
+              this.sendTranscriptReset(state, target, transcript, grade);
             } catch {
               // best-effort fan-out; a broken target is dropped, not fatal
             }
@@ -347,13 +350,17 @@ export class SessionEventBroadcaster {
     );
   }
 
-  /** Volatile `transcript.reset` envelope carrying a tail-windowed snapshot. */
+  /** Volatile `transcript.reset` envelope carrying a tail-windowed snapshot, redacted to the target's grade. */
   private sendTranscriptReset(
     state: SessionState,
     target: BroadcastTarget,
     transcript: AgentTranscript,
+    grade: TranscriptGrade,
   ): void {
-    const snapshot = transcript.snapshot({ tailTurns: TRANSCRIPT_RESET_TAIL_TURNS });
+    const snapshot = redactSnapshotForGrade(
+      grade,
+      transcript.snapshot({ tailTurns: TRANSCRIPT_RESET_TAIL_TURNS }),
+    );
     target.send(
       this.buildTranscriptEnvelope(state, 'transcript.reset', {
         agent_id: transcript.agentId,

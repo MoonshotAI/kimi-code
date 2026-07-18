@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { filterOpsForGrade, isAppendOnly } from '#/granularity/filterOps';
+import { filterOpsForGrade, isAppendOnly, redactSnapshotForGrade } from '#/granularity/filterOps';
 import { gradeFor, needsResetOnTransition } from '#/granularity/grade';
 import { paginateTurns } from '#/pagination/paginate';
 import { ViewRegistry } from '#/view/registry';
@@ -11,7 +11,7 @@ import {
   transcriptGradeSpecSchema,
 } from '#/wire/schema';
 import type { TranscriptItem } from '#/model/item';
-import type { TranscriptOperation } from '#/ops/operation';
+import type { AgentTranscriptSnapshot, TranscriptOperation } from '#/ops/operation';
 
 const idLabel = (i: TranscriptItem): string =>
   i.kind === 'turn' ? i.turnId : i.kind === 'marker' ? i.markerId : i.refId;
@@ -86,6 +86,41 @@ describe('granularity', () => {
   it('append-only batches are volatile-safe', () => {
     expect(isAppendOnly([appendOp])).toBe(true);
     expect(isAppendOnly([appendOp, frameOp])).toBe(false);
+  });
+
+  it('redactSnapshotForGrade strips step detail below block, keeps it at block+', () => {
+    const snapshot: AgentTranscriptSnapshot = {
+      items: [
+        {
+          kind: 'turn',
+          turnId: 't1',
+          ordinal: 1,
+          state: 'completed',
+          origin: { kind: 'user' },
+          prompt: 'hi',
+          steps: [
+            {
+              kind: 'step',
+              stepId: 't1.1',
+              turnId: 't1',
+              ordinal: 1,
+              state: 'completed',
+              frames: [{ kind: 'text', frameId: 't1.1.f1', role: 'assistant', text: 'body' }],
+            },
+          ],
+        },
+        { kind: 'marker', markerId: 'm1', marker: 'skill' },
+      ],
+      tasks: [],
+      meta: {},
+    };
+    const turnGrade = redactSnapshotForGrade('turn', snapshot);
+    const turn = turnGrade.items[0];
+    expect(turn?.kind === 'turn' && turn.steps).toEqual([]);
+    expect(turn?.kind === 'turn' && turn.prompt).toBe('hi');
+    expect(turnGrade.items[1]?.kind).toBe('marker');
+    expect(redactSnapshotForGrade('block', snapshot)).toBe(snapshot);
+    expect(redactSnapshotForGrade('delta', snapshot)).toBe(snapshot);
   });
 });
 

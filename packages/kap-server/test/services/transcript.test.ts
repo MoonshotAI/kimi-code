@@ -210,6 +210,85 @@ describe('AgentTranscriptProjector', () => {
     expect(tool).toMatchObject({ toolCallId: 'call_1', state: 'done', output: 'file.txt' });
   });
 
+  it('adopts a seeded parent tool frame when subagent.spawned links the child', () => {
+    const tx = new AgentTranscript('main');
+    // The Agent tool call started before the projector attached; the backfill
+    // seeded its frame from the persisted assistant toolCalls.
+    tx.apply([
+      {
+        op: 'turn.upsert',
+        turn: { kind: 'turn', turnId: 't0', ordinal: 0, state: 'running', origin: { kind: 'user' } },
+      },
+      {
+        op: 'step.upsert',
+        turnId: 't0',
+        step: { kind: 'step', stepId: 't0.1', turnId: 't0', ordinal: 1, state: 'running' },
+      },
+      {
+        op: 'frame.upsert',
+        turnId: 't0',
+        stepId: 't0.1',
+        frame: {
+          kind: 'tool',
+          frameId: 't0.1.call_agent',
+          toolCallId: 'call_agent',
+          name: 'Agent',
+          state: 'running',
+          input: { prompt: 'scan' },
+        },
+      },
+    ]);
+    const projector = new AgentTranscriptProjector('main', {
+      toolFrame: (toolCallId) => {
+        for (const item of tx.getItems()) {
+          if (item.kind !== 'turn') continue;
+          for (const step of item.steps) {
+            for (const frame of step.frames) {
+              if (frame.kind === 'tool' && frame.toolCallId === toolCallId) {
+                return { turnId: item.turnId, stepId: step.stepId, frame };
+              }
+            }
+          }
+        }
+        return undefined;
+      },
+    });
+
+    const ops = projector.map(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        parentToolCallId: 'call_agent',
+        runInBackground: false,
+      }),
+    );
+    tx.apply(ops);
+    const turn = turnOps('t0', tx.getItems());
+    const tool = turn.steps[0]?.frames.find((frame) => frame.kind === 'tool');
+    expect(tool?.kind === 'tool' && tool.agentRefs).toEqual([{ agentId: 'agent-1', role: 'child' }]);
+  });
+
+  it('gives live markers their own namespace so they never collide with backfilled markers', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    // A historical marker from the cold rebuild already occupies `m1`.
+    tx.apply([{ op: 'marker.upsert', item: { kind: 'marker', markerId: 'm1', marker: 'skill' } }]);
+
+    const ops = projector.map(ev({ type: 'compaction.started', trigger: 'auto' }));
+    tx.apply(ops);
+
+    // Without the namespace the live marker would also be `m1`, and the
+    // store's upsert would have replaced the historical one.
+    const markers = tx
+      .getItems()
+      .filter((item): item is Extract<typeof item, { kind: 'marker' }> => item.kind === 'marker');
+    expect(markers.map((m) => [m.markerId, m.marker])).toEqual([
+      ['m1', 'skill'],
+      ['live-m1', 'compaction'],
+    ]);
+  });
+
   it('snapshotToOps anchors standalone items so backfill keeps history order against live turns', () => {
     const snapshot: AgentTranscriptSnapshot = {
       items: [

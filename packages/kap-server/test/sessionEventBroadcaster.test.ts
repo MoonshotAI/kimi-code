@@ -1391,6 +1391,35 @@ describe('SessionEventBroadcaster', () => {
       expect((ops.payload as OpsPayload).agent_id).toBe('agent-0');
     });
 
+    it('redacts reset snapshots to the subscribed grade (turn = headers only)', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      // Build store content first (a full turn tree with step/frame detail).
+      const full = collectingTarget();
+      await bc.subscribe('s1', full.target, undefined, { main: 'delta' });
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      main.bus.emit(agentEvent('turn.step.started', { turnId: 1, step: 1 }));
+      main.bus.emit(agentEvent('assistant.delta', { turnId: 1, delta: 'secret body' }));
+      main.bus.emit(agentEvent('turn.step.completed', { turnId: 1, step: 1 }));
+      main.bus.emit(agentEvent('turn.ended', { turnId: 1, reason: 'completed' }));
+
+      // A 'turn'-grade subscriber must not receive the step/frame detail in
+      // its reset — the snapshot is redacted to headers + global state.
+      const coarse = collectingTarget();
+      await bc.subscribe('s1', coarse.target, undefined, { main: 'turn' });
+      const resets = transcriptEnvelopes(coarse.envelopes).filter((e) => e.type === 'transcript.reset');
+      expect(resets).toHaveLength(1);
+      const snapshot = (
+        resets[0]!.payload as { snapshot: { items: { kind: string; steps?: unknown[] }[] } }
+      ).snapshot;
+      const turn = snapshot.items.find((item) => item.kind === 'turn');
+      expect(turn?.steps).toEqual([]);
+      expect(JSON.stringify(snapshot)).not.toContain('secret body');
+    });
+
     it('honours per-agent grade overrides over the wildcard', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');

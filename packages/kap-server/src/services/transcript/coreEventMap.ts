@@ -593,8 +593,11 @@ export class AgentTranscriptProjector {
     const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
     // Link the spawning tool call to the new agent (Agent / AgentSwarm tool
     // frames). The spawned payload carries no task id of its own — the
-    // subagent task above is keyed by the agent id instead.
-    const hit = this.toolFrames.get(event.parentToolCallId);
+    // subagent task above is keyed by the agent id instead. The lookup falls
+    // back to store adoption for a call that started (and was backfilled)
+    // before this projector attached.
+    const hit =
+      this.toolFrames.get(event.parentToolCallId) ?? this.adoptToolFrame(event.parentToolCallId);
     if (hit !== undefined) {
       const ref: AgentRef = {
         agentId: event.subagentId,
@@ -693,7 +696,11 @@ export class AgentTranscriptProjector {
     this.markerSeq += 1;
     const item: TranscriptMarker = {
       kind: 'marker',
-      markerId: `m${this.markerSeq}`,
+      // Live markers use their own namespace: the cold rebuild numbers its
+      // markers `m1…` from zero too, and a colliding id would make the
+      // store's upsert REPLACE the historical marker with the live one (or
+      // vice versa) instead of appending.
+      markerId: `live-m${this.markerSeq}`,
       marker,
       payload,
       at: nowIso(),
