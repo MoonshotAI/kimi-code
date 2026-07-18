@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 
+mod check_bundle;
 mod inject;
 
 #[derive(Parser)]
@@ -21,6 +22,11 @@ enum Commands {
         #[arg(short = 'o', long)]
         output: Option<String>,
     },
+    /// Check a bundled JS file for unresolved external requires/imports
+    CheckBundle {
+        /// Path to the bundled JS file to check
+        path: String,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -30,6 +36,9 @@ fn main() -> anyhow::Result<()> {
             let output = output.unwrap_or_else(|| input.clone());
             inject::run(&input, &blob, &output)?;
             println!("Injected SEA blob into {}", output);
+        }
+        Commands::CheckBundle { path } => {
+            check_bundle::check_bundle(&path)?;
         }
     }
     Ok(())
