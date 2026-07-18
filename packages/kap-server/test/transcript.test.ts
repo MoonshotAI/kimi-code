@@ -606,6 +606,28 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await pending;
   });
 
+  it('does not fabricate a roster entry for an unknown agent on a cold session', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    await seedMainAgentMessages(id, [
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [] },
+      { role: 'assistant', content: [{ type: 'text', text: 'hello' }], toolCalls: [] },
+    ]);
+
+    // Reboot on the same home — the session drops out of memory (cold path).
+    await server!.close();
+    server = undefined;
+    await boot();
+
+    const none = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=nope`);
+    expect(none.body.code).toBe(0);
+    expect(none.body.data.items).toEqual([]);
+    // No ghost entry for the probe — and the roster still comes from the
+    // persisted session metadata.
+    expect(none.body.data.agents.map((a) => a.agentId)).not.toContain('nope');
+    expect(none.body.data.agents).toContainEqual({ agentId: 'main', type: 'main' });
+  });
+
   it('returns 40401 for an unknown session', async () => {
     const { body } = await getJson<null>('/api/v1/sessions/nope/transcript?agent_id=main');
     expect(body.code).toBe(40401);

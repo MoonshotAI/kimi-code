@@ -40,6 +40,7 @@
  */
 
 import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 import {
   IAgentLifecycleService,
@@ -50,11 +51,13 @@ import {
   reduceContextTranscript,
   type IDisposable,
   type Scope,
+  type SessionMeta,
 } from '@moonshot-ai/agent-core-v2';
 import {
   TranscriptStore,
   groupMessagesIntoSnapshot,
   isPlainAgentId,
+  type AgentDescriptor,
   type AgentTranscript,
   type AgentTranscriptSnapshot,
   type TranscriptChangeEvent,
@@ -76,6 +79,7 @@ const SESSIONS_ROOT = 'sessions';
 const AGENTS_DIR = 'agents';
 const MAIN_AGENT_ID = 'main';
 const WIRE_FILE = 'wire.jsonl';
+const STATE_FILE = 'state.json';
 
 export interface TranscriptServiceDeps {
   readonly homeDir: string;
@@ -408,6 +412,31 @@ export class TranscriptService {
     // Fan the heal out like any mapped-op batch so attached subscribers
     // converge; all ops are state-style upserts.
     this.dispatchOps(sessionId, { agentId, ops });
+  }
+
+  /**
+   * Roster for a cold session, read from the persisted session metadata
+   * (`<sessionDir>/state.json`) and mapped like the live seeding
+   * (`descriptorFromMeta`). Returns `undefined` when the session is unknown
+   * to the index; an unreadable or missing metadata file yields an empty
+   * roster (best-effort — transcripts work without descriptors).
+   */
+  async readColdRoster(sessionId: string): Promise<AgentDescriptor[] | undefined> {
+    const summary = await this.deps.core.accessor.get(ISessionIndex).get(sessionId);
+    if (summary === undefined) return undefined;
+    let meta: SessionMeta;
+    try {
+      const raw = await readFile(
+        join(this.deps.homeDir, SESSIONS_ROOT, summary.workspaceId, sessionId, STATE_FILE),
+        'utf-8',
+      );
+      meta = JSON.parse(raw) as SessionMeta;
+    } catch {
+      return [];
+    }
+    return Object.entries(meta.agents ?? {}).map(([agentId, agentMeta]) =>
+      descriptorFromMeta(agentId, agentMeta),
+    );
   }
 
   /**

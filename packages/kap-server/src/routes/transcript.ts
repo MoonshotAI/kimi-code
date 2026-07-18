@@ -144,6 +144,19 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
         return;
       }
       const page = paginateTurns(snapshot.items, pageQuery);
+      // The roster comes from the persisted session metadata — never from
+      // the requested id itself: include it only when it actually has
+      // content (or is main), so an empty probe conjures no ghost entry.
+      const roster = (await transcriptService.readColdRoster(session_id)) ?? [];
+      if (
+        !roster.some((d) => d.agentId === query.agent_id) &&
+        (snapshot.items.length > 0 || snapshot.tasks.length > 0 || query.agent_id === MAIN_AGENT_ID)
+      ) {
+        roster.push({
+          agentId: query.agent_id,
+          type: query.agent_id === MAIN_AGENT_ID ? ('main' as const) : ('sub' as const),
+        });
+      }
       reply.send(
         okEnvelope(
           {
@@ -152,12 +165,7 @@ export function registerTranscriptRoutes(app: TranscriptRouteHost, deps: Transcr
             has_more: page.hasMore,
             tasks: snapshot.tasks,
             meta: snapshot.meta,
-            agents: [
-              {
-                agentId: query.agent_id,
-                type: query.agent_id === MAIN_AGENT_ID ? ('main' as const) : ('sub' as const),
-              },
-            ],
+            agents: roster,
             pending_interactions: [],
           },
           req.id,
