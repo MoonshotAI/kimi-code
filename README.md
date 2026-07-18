@@ -55,7 +55,7 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 - **常用检查**：`pnpm test`、`pnpm lint`、`pnpm typecheck`、`pnpm build`。
 - **UI 设计系统**：改 UI 前必读 `apps/desktop/src/renderer/views/DesignSystemView.vue`（应用内长按侧栏 logo 打开），样式只用 `style.css` 的设计 token，并在亮色 + 暗色下做视觉验证。细则见 `AGENTS.md` 的"硬约束"。
 - **本地打包并签名 macOS 包**：`pnpm package:macos`（CI 不可用时的替代，arm64；凭证与流程见 `apps/desktop/README.md` 的"打包"一节）。
-- **桌面端发版**：功能 PR 必须按 `.agents/skills/changeset/SKILL.md` 生成并提交 changeset（只选 `kimi-code-app`，早期阶段一律 patch）；合入 main 后 CI 自动开 `ci: release desktop` 版本 PR，版本 PR 合入即自动打四平台签名包并发 GitHub Release。完整流程见 `.changeset/README.md`。Release 就绪后再到 kimi-cli-cdn-sync 仓执行 `./publish-desktop.sh <version>` 同步 CDN（自动更新指针随指针文件切换生效）。
+- **桌面端发版**：功能 PR 必须按 `.agents/skills/changeset/SKILL.md` 生成并提交 changeset（只选 `kimi-code-app`，早期阶段一律 patch）；合入 main 后 CI 自动开 `ci: release desktop` 版本 PR，版本 PR 合入即自动打四平台签名包并发 GitHub Release。完整流程见 `.changeset/README.md`。Release 就绪后再到 kimi-cli-cdn-sync 仓执行 `./publish-desktop.sh <version>` 同步 CDN（切换自动更新指针 + 刷新 `desktop/download/` 固定下载入口，后者供官网链接）。
 
 ## 目录
 
