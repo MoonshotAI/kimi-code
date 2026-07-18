@@ -199,6 +199,11 @@ export function bindSessionTranscript(
   disposables.push(
     agents.onDidCreate((handle) => {
       subscribeAgent(handle);
+      // An agent created AFTER binding is fully covered by its live
+      // projector (every event happens from now on) — its pendings may
+      // announce immediately, no backfill to wait for. (Pre-existing agents
+      // seed after their own backfill via ensureAgentHistory.)
+      seededAgents.add(handle.id);
       refreshDescriptors();
     }),
     agents.onDidDispose((agentId) => {

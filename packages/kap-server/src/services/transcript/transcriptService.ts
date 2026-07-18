@@ -234,7 +234,13 @@ export class TranscriptService {
     if (this.live.get(sessionId)?.store !== store) return;
     const transcript = store.ensureAgent(agentId);
     if (snapshot !== undefined) {
-      const ops = snapshotToOps(snapshot);
+      // Turns merge live-first (`healTurnOps`): ops the projector landed
+      // while the records were being read (a tool frame's display/approvalId,
+      // a longer text frame) must not be replaced by the staler persisted
+      // version.
+      const ops = snapshotToOps(snapshot, (turn) =>
+        healTurnOps(turn, transcript.getTurn(turn.turnId)),
+      );
       const overlay = this.liveTurnOverlay(sessionId, agentId, transcript, snapshot);
       if (overlay !== undefined) ops.push(overlay);
       const result = transcript.apply(ops);
@@ -507,8 +513,14 @@ export class TranscriptService {
  * (trailing items anchor past the last snapshot turn, which is where the
  * engine's next live turn lands); a turn-anchored insert places the item
  * before the first turn with `ordinal >= beforeTurn`.
+ *
+ * `turnOps` customizes the per-turn flattening (the backfill passes a
+ * live-first merge; the default flattens wholesale for cold reads).
  */
-export function snapshotToOps(snapshot: AgentTranscriptSnapshot): TranscriptOperation[] {
+export function snapshotToOps(
+  snapshot: AgentTranscriptSnapshot,
+  turnOps: (turn: TranscriptTurn) => TranscriptOperation[] = snapshotTurnOps,
+): TranscriptOperation[] {
   const ops: TranscriptOperation[] = [];
   /** Standalone items seen since the last turn, awaiting their anchor. */
   const pending: (TranscriptMarker | TranscriptTaskRef)[] = [];
@@ -527,15 +539,7 @@ export function snapshotToOps(snapshot: AgentTranscriptSnapshot): TranscriptOper
     if (item.kind === 'turn') {
       flushPending(item.ordinal);
       lastTurnOrdinal = item.ordinal;
-      const { steps, ...header } = item;
-      ops.push({ op: 'turn.upsert', turn: header });
-      for (const step of steps) {
-        const { frames, ...stepHeader } = step;
-        ops.push({ op: 'step.upsert', turnId: item.turnId, step: stepHeader });
-        for (const frame of frames) {
-          ops.push({ op: 'frame.upsert', turnId: item.turnId, stepId: step.stepId, frame });
-        }
-      }
+      ops.push(...turnOps(item));
     } else {
       pending.push(item);
     }
@@ -548,6 +552,21 @@ export function snapshotToOps(snapshot: AgentTranscriptSnapshot): TranscriptOper
     ops.push({ op: 'task.upsert', task });
   }
   ops.push({ op: 'meta.merge', meta: snapshot.meta });
+  return ops;
+}
+
+/** One snapshot turn flattened wholesale (the cold / unseen-turn path). */
+export function snapshotTurnOps(turn: TranscriptTurn): TranscriptOperation[] {
+  const ops: TranscriptOperation[] = [];
+  const { steps, ...header } = turn;
+  ops.push({ op: 'turn.upsert', turn: header });
+  for (const step of steps) {
+    const { frames, ...stepHeader } = step;
+    ops.push({ op: 'step.upsert', turnId: turn.turnId, step: stepHeader });
+    for (const frame of frames) {
+      ops.push({ op: 'frame.upsert', turnId: turn.turnId, stepId: step.stepId, frame });
+    }
+  }
   return ops;
 }
 

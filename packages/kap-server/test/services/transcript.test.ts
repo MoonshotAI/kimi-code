@@ -1189,6 +1189,62 @@ describe('bindSessionTranscript', () => {
     binding.dispose();
   });
 
+  it('announces pendings from live-created agents immediately (their projector is complete)', () => {
+    const agents = new FakeAgents();
+    const interactions = new SessionInteractionService();
+    const store = new TranscriptStore('s1');
+    const byAgent = new Map<string, TranscriptOperation[]>();
+    const binding = bindSessionTranscript(store, fakeSession(interactions, agents), undefined, (event) => {
+      byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
+    });
+
+    // Created AFTER binding: fully live-covered by its projector, so its
+    // pendings announce without waiting for any backfill.
+    agents.add('sub-1');
+    interactions.enqueue({ id: 'q1', kind: 'question', payload: {}, origin: { agentId: 'sub-1', turnId: 0 } });
+    expect([...byAgent.keys()]).toEqual(['sub-1']);
+    binding.dispose();
+  });
+
+  async function seedWireHomeWithTool(): Promise<string> {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-backfill-live-'));
+    const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+    await mkdir(wireDir, { recursive: true });
+    const records = [
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'user',
+          content: [{ type: 'text', text: 'hi' }],
+          toolCalls: [],
+          origin: { kind: 'user' },
+        },
+        time: new Date().toISOString(),
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'assistant',
+          content: [{ type: 'text', text: 'Hello ' }],
+          toolCalls: [{ type: 'function', id: 'call_1', name: 'Bash', arguments: '{"command":"ls"}' }],
+        },
+        time: new Date().toISOString(),
+      },
+      {
+        type: 'context.append_message',
+        message: {
+          role: 'tool',
+          content: [{ type: 'text', text: 'a.txt' }],
+          toolCallId: 'call_1',
+          toolCalls: [],
+        },
+        time: new Date().toISOString(),
+      },
+    ];
+    await writeFile(join(wireDir, 'wire.jsonl'), `${records.map((r) => JSON.stringify(r)).join('\n')}\n`);
+    return home;
+  }
+
   it('overlays the in-flight turn as running after a backfill', async () => {
     const home = await seedWireHome();
     try {
@@ -1205,6 +1261,51 @@ describe('bindSessionTranscript', () => {
       expect(store?.getAgent('main')?.getTurn('t0')).toMatchObject({
         state: 'running',
         prompt: 'hi',
+      });
+      service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('merges the backfill live-first: live frame fields and longer text survive', async () => {
+    const home = await seedWireHomeWithTool();
+    try {
+      const agents = new FakeAgents();
+      agents.add('main', { loopStatus: { state: 'running', activeTurnId: 0 } });
+      const service = new TranscriptService({
+        homeDir: home,
+        core: fakeCoreWithAgents(new SessionInteractionService(), agents),
+      });
+      const store = service.forSessionLive('s1');
+      // Live events land while the backfill is still reading from disk.
+      const bus = agents.get('main')!.bus;
+      bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'hi' }));
+      bus.emit(ev({ type: 'turn.step.started', turnId: 0, step: 1 }));
+      bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'Hello world' }));
+      bus.emit(
+        ev({
+          type: 'tool.call.started',
+          turnId: 0,
+          toolCallId: 'call_1',
+          name: 'Bash',
+          args: { command: 'ls' },
+          display: { kind: 'command', command: 'ls' },
+        }),
+      );
+      await service.whenReady('s1');
+
+      const turn = store?.getAgent('main')?.getTurn('t0');
+      expect(turn?.state).toBe('running');
+      // The longer live text must not be replaced by the staler persisted one.
+      const text = turn?.steps[0]?.frames.find((f) => f.kind === 'text');
+      expect(text).toMatchObject({ text: 'Hello world' });
+      // The live-only display survives; the persisted outcome heals on top.
+      const tool = turn?.steps[0]?.frames.find((f) => f.kind === 'tool');
+      expect(tool).toMatchObject({
+        state: 'done',
+        output: 'a.txt',
+        display: { kind: 'command', command: 'ls' },
       });
       service.dropSession('s1');
     } finally {
