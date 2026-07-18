@@ -1,10 +1,7 @@
 /// kimi-agent — Rust agent engine with stdio JSON-RPC bridge.
 ///
 /// Usage:
-///   kimi-agent [--version]
-///
-/// Normal operation reads JSON-RPC 2.0 requests from stdin and writes
-/// responses/notifications to stdout.
+///   kimi-agent [--health] [--test]
 
 use clap::Parser;
 
@@ -14,7 +11,7 @@ mod rpc;
 mod turn_loop;
 
 use rpc::server::RpcServer;
-use rpc::types::{self, HealthStatus, RunTurnResult};
+use rpc::types::{self, HealthStatus, RunTurnResult, TokenUsage};
 use turn_loop::types::*;
 
 #[derive(Parser)]
@@ -23,6 +20,10 @@ struct Cli {
     /// Run a health check and exit
     #[arg(long)]
     health: bool,
+
+    /// Run a self-test and exit
+    #[arg(long)]
+    test: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -37,10 +38,14 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    if cli.test {
+        return run_self_test();
+    }
+
     // Build the RPC server and register handlers
     let server = RpcServer::new();
 
-    // Register run_turn handler — wires to the real Rust run_turn() loop
+    // Register run_turn handler
     server.register(types::methods::RUN_TURN, |params| {
         let input: types::RunTurnParams = serde_json::from_value(params)
             .map_err(|e| types::JsonRpcError::internal_error(format!("Invalid params: {e}")))?;
@@ -48,10 +53,8 @@ fn main() -> anyhow::Result<()> {
         let turn_id = input.turn_id.clone();
         let max_steps = input.max_steps.unwrap_or(10);
 
-        // Create the LLM proxy
         let llm = llm::proxy::HostLlmProxy::new(input.system_prompt, input.model_name);
 
-        // Convert messages
         let messages: Vec<LLMMessage> = input
             .messages
             .into_iter()
@@ -61,7 +64,6 @@ fn main() -> anyhow::Result<()> {
             })
             .collect();
 
-        // Convert tool definitions for the LLM proxy
         let tool_defs: Vec<ToolInfo> = input
             .tools
             .into_iter()
@@ -72,10 +74,8 @@ fn main() -> anyhow::Result<()> {
             })
             .collect();
 
-        // Tools are empty — tool execution is proxied to JS via host/execute_tool
         let tools: Vec<&dyn ExecutableTool> = vec![];
 
-        // Run the turn
         let run_input = RunTurnInput {
             turn_id: turn_id.clone(),
             llm: &llm,
@@ -101,7 +101,7 @@ fn main() -> anyhow::Result<()> {
                 let output = RunTurnResult {
                     stop_reason: format!("Error: {e}"),
                     steps: 0,
-                    usage: types::TokenUsage::default(),
+                    usage: TokenUsage::default(),
                 };
                 serde_json::to_value(&output).map_err(|_| {
                     types::JsonRpcError::internal_error(format!("Turn failed: {e}"))
@@ -125,9 +125,84 @@ fn main() -> anyhow::Result<()> {
         std::process::exit(0);
     });
 
-    // Run the server
     eprintln!("kimi-agent ready, listening on stdin/stdout");
     server.run()?;
 
     Ok(())
+}
+
+/// Self-test: runs the turn loop with a mock LLM.
+fn run_self_test() -> anyhow::Result<()> {
+    eprintln!("Running self-test...");
+
+    // Create a mock LLM that returns a simple response
+    let mock_llm = MockLlm {
+        system_prompt: "You are a helpful assistant.".into(),
+        model_name: "test-model".into(),
+    };
+
+    let messages = vec![LLMMessage {
+        role: "user".into(),
+        content: "Hello!".into(),
+    }];
+
+    let input = RunTurnInput {
+        turn_id: "test-turn-1".into(),
+        llm: &mock_llm,
+        messages,
+        tools: &[],
+        tool_defs: vec![],
+        hooks: None,
+        max_steps: 5,
+    };
+
+    match turn_loop::run_turn::run_turn(input) {
+        Ok(result) => {
+            eprintln!("  Turn completed: {:?}", result.stop_reason);
+            eprintln!("  Steps: {}", result.steps);
+            eprintln!("  Usage: {} in / {} out / {} total",
+                result.usage.input_tokens,
+                result.usage.output_tokens,
+                result.usage.total_tokens);
+            eprintln!("Self-test PASSED");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("  Turn failed: {e}");
+            eprintln!("Self-test FAILED");
+            Err(anyhow::anyhow!("{e}"))
+        }
+    }
+}
+
+/// A mock LLM that returns a fixed response without tool calls.
+struct MockLlm {
+    system_prompt: String,
+    model_name: String,
+}
+
+impl LLM for MockLlm {
+    fn system_prompt(&self) -> &str {
+        &self.system_prompt
+    }
+
+    fn model_name(&self) -> &str {
+        &self.model_name
+    }
+
+    fn is_retryable_error(&self, _error: &str) -> bool {
+        false
+    }
+
+    fn chat(&self, _params: LLMChatParams) -> Result<LLMChatResponse, Box<dyn std::error::Error>> {
+        Ok(LLMChatResponse {
+            tool_calls: vec![],
+            finish_reason: Some("stop".into()),
+            usage: TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                total_tokens: 15,
+            },
+        })
+    }
 }
