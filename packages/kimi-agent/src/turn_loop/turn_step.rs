@@ -11,20 +11,11 @@ pub fn execute_loop_step(
     llm: &dyn LLM,
     messages: &[LLMMessage],
     _tools: &[&dyn ExecutableTool],
+    tool_defs: &[ToolInfo],
 ) -> Result<StepResult, Box<dyn std::error::Error>> {
-    // Build tool info for the LLM
-    let tools: Vec<ToolInfo> = _tools
-        .iter()
-        .map(|t| ToolInfo {
-            name: t.name().to_string(),
-            description: t.description().to_string(),
-            input_schema: serde_json::Value::Object(Default::default()),
-        })
-        .collect();
-
     let params = LLMChatParams {
         messages: messages.to_vec(),
-        tools,
+        tools: tool_defs.to_vec(),
     };
 
     match llm.chat(params) {

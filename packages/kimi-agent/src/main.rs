@@ -61,7 +61,18 @@ fn main() -> anyhow::Result<()> {
             })
             .collect();
 
-        // Tools are empty for now — the JS side handles tool execution
+        // Convert tool definitions for the LLM proxy
+        let tool_defs: Vec<ToolInfo> = input
+            .tools
+            .into_iter()
+            .map(|t| ToolInfo {
+                name: t.name,
+                description: t.description,
+                input_schema: t.input_schema,
+            })
+            .collect();
+
+        // Tools are empty — tool execution is proxied to JS via host/execute_tool
         let tools: Vec<&dyn ExecutableTool> = vec![];
 
         // Run the turn
@@ -70,6 +81,7 @@ fn main() -> anyhow::Result<()> {
             llm: &llm,
             messages,
             tools: &tools,
+            tool_defs,
             hooks: None,
             max_steps,
         };

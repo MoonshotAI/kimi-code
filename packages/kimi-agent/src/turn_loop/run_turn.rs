@@ -57,6 +57,7 @@ pub fn run_turn(input: RunTurnInput<'_>) -> Result<TurnResult, Box<dyn std::erro
             input.llm,
             &messages,
             input.tools,
+            &input.tool_defs,
         )?;
 
         // Accumulate usage

@@ -186,6 +186,9 @@ pub struct RunTurnInput<'a> {
     pub llm: &'a dyn LLM,
     pub messages: Vec<LLMMessage>,
     pub tools: &'a [&'a dyn ExecutableTool],
+    /// Tool definitions passed from the JS side. These are sent to the
+    /// LLM proxy so the JS host can include them in the actual LLM call.
+    pub tool_defs: Vec<ToolInfo>,
     pub hooks: Option<&'a LoopHooks>,
     pub max_steps: u32,
 }
