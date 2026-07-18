@@ -7,6 +7,7 @@ import { connect } from './connect';
 import { installDownloadHandler } from './downloads';
 import { installExternalLinkGuard } from './external-links';
 import { IPC, type RendererEventChannel } from './ipc-channels';
+import { log, redactUrlForLog } from './log';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -177,8 +178,12 @@ export function createWindow(): void {
       .executeJavaScript('window.devicePixelRatio')
       .then((dpr) => {
         if (win.isDestroyed()) return;
-        process.stdout.write(
-          `[kimi-desktop diag] zoom factor=${factor} level=${level} devicePixelRatio=${dpr} url=${win.webContents.getURL()}\n`,
+        // Redact before logging: the loaded URL carries the server token in
+        // `#token=` and the connect origin (possibly with basic-auth
+        // userinfo) in `?kimi_origin=` — neither may persist to the log file.
+        const url = redactUrlForLog(win.webContents.getURL());
+        log.info(
+          `[kimi-desktop diag] zoom factor=${factor} level=${level} devicePixelRatio=${dpr} url=${url}`,
         );
       })
       .catch(() => {});

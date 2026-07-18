@@ -1,68 +1,13 @@
-import { join } from 'node:path';
+// Electron main entry. The file logger + crash guards must be installed
+// BEFORE loading the rest of the main process: a static `import './app'`
+// would execute that module and its whole dependency tree (kap-server,
+// agent-core, native modules) before any statement here runs, leaving
+// load-time crashes with neither a log line nor the crash guard.
+import { initMainLogging } from './log';
 
-import { app, BrowserWindow, nativeImage } from 'electron';
-import type { Tray } from 'electron';
+initMainLogging();
 
-import { registerRendererScheme, registerRendererProtocol } from './protocol';
-import { rendererDistRoot, closeServerHandle } from './connect';
-import { createWindow } from './window';
-import { createTray } from './tray';
-import { buildMenu } from './menu';
-import { registerGlobalShortcuts, unregisterGlobalShortcuts } from './shortcuts';
-import { registerIpcHandlers } from './ipc';
-
-// --- app lifecycle ------------------------------------------------------------
-
-// A Tray with no live JS reference gets garbage-collected and its OS icon
-// silently disappears — keep it module-scoped for the app's lifetime.
-let tray: Tray | null = null;
-
-function showMainWindow(): void {
-  const win = BrowserWindow.getAllWindows()[0];
-  if (win) {
-    if (win.isMinimized()) win.restore();
-    win.show();
-    win.focus();
-  } else {
-    createWindow();
-  }
-}
-
-function main(): void {
-  registerRendererScheme();
-  registerIpcHandlers();
-
-  app.on('before-quit', () => {
-    tray?.destroy();
-    tray = null;
-    unregisterGlobalShortcuts();
-    closeServerHandle();
-  });
-
-  app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-      app.quit();
-    }
-  });
-
-  void app.whenReady().then(() => {
-    // Dev-only: an unpackaged run shows Electron's default Dock icon. Point it
-    // at the packaging icon so `pnpm dev:desktop` matches the shipped app;
-    // packaged builds get the icon from electron-builder instead.
-    if (!app.isPackaged && process.platform === 'darwin') {
-      app.dock?.setIcon(nativeImage.createFromPath(join(app.getAppPath(), 'build', 'icon.png')));
-    }
-    registerRendererProtocol(rendererDistRoot);
-    registerGlobalShortcuts();
-    buildMenu();
-    createWindow();
-    tray = createTray({ showMainWindow, quit: () => app.quit() });
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-      }
-    });
-  });
-}
-
-main();
+// Loaded dynamically so the import graph above stays minimal; a load-time
+// failure in ./app rejects this promise and lands in the crash guard's
+// unhandledRejection handler (logged + surfaced).
+void import('./app').then(({ main }) => main());

@@ -2,6 +2,7 @@ import { globalShortcut } from 'electron';
 
 import { sendToRenderer } from './window';
 import { IPC } from './ipc-channels';
+import { log } from './log';
 
 // Best-effort global shortcut registration (Task 4.4 channel smoke test). A
 // registration that collides with an existing OS/app binding returns false and
@@ -12,7 +13,7 @@ export function registerGlobalShortcuts(): void {
   for (const accel of GLOBAL_SHORTCUTS) {
     const ok = globalShortcut.register(accel, () => sendToRenderer(IPC.shortcut, accel));
     if (!ok) {
-      process.stderr.write(`[kimi-desktop] global shortcut ${accel} not registered (already taken)\n`);
+      log.warn(`[kimi-desktop] global shortcut ${accel} not registered (already taken)`);
     }
   }
 }

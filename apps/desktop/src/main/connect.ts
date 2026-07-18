@@ -10,6 +10,7 @@ import { startDesktopServer, type DesktopServerHandle } from './server';
 import { rendererUrl, rendererDevBase } from './protocol';
 import { resolveConnectTarget } from './connect-target';
 import { dataUrl, errorHtml } from './screens';
+import { log, redactUrlForLog } from './log';
 import { DESKTOP_PRODUCT_NAME } from '../shared/identity';
 
 let serverHandle: DesktopServerHandle | null = null;
@@ -71,7 +72,10 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
     const target = resolveConnectTarget(process.env['KIMI_SERVER_URL'], readServerToken);
     if (target.external) {
       ({ origin, token } = target);
-      process.stdout.write(`[kimi-desktop] connected to external server ${origin}\n`);
+      // Redact: KIMI_SERVER_URL may carry basic-auth userinfo, which must not
+      // persist to the log file (the origin itself keeps it — the connection
+      // needs it).
+      log.info(`[kimi-desktop] connected to external server ${redactUrlForLog(origin)}`);
     } else {
       // Reuse the live embedded server instead of restarting it. The server
       // runs in this very process, so a held handle means it is healthy;
@@ -93,9 +97,9 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
           identity: { userAgentProduct: DESKTOP_PRODUCT_NAME, version: app.getVersion() },
           extraCorsOrigins: devBase === undefined ? [] : [new URL(devBase).origin],
         });
-        process.stdout.write(`[kimi-desktop] connected to ${serverHandle.origin}\n`);
+        log.info(`[kimi-desktop] connected to ${serverHandle.origin}`);
       } else {
-        process.stdout.write(`[kimi-desktop] reusing embedded server ${serverHandle.origin}\n`);
+        log.info(`[kimi-desktop] reusing embedded server ${serverHandle.origin}`);
       }
       ({ origin, token } = serverHandle);
     }
@@ -104,7 +108,7 @@ async function connectOnce(win: BrowserWindow): Promise<void> {
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    process.stderr.write(`[kimi-desktop] connect failed: ${message}\n`);
+    log.error(`[kimi-desktop] connect failed: ${message}`);
     if (!win.isDestroyed()) {
       await win.loadURL(dataUrl(errorHtml(message, serverLogPath())));
     }

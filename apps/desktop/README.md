@@ -24,8 +24,12 @@ Electron 桌面客户端（产品名 **Kimi Code**，workspace 包 `kimi-code-ap
 
 关键文件：
 
-- `src/main/index.ts` — 主进程入口，只做编排：注册 scheme / IPC、生命周期事件、`whenReady`
-  后起窗口。
+- `src/main/index.ts` — 主进程入口，只做引导：先装 `log.ts` 的日志与崩溃守卫，再动态
+  `import('./app')`（静态 import 会让整个依赖树先于守卫加载，加载期崩溃无日志）。
+- `src/main/app.ts` — 主进程编排：注册 scheme / IPC、生命周期事件、`whenReady` 后起窗口。
+- `src/main/log.ts` — 主进程文件日志（`~/.kimi-code/logs/kimi-code-desktop.log`，按大小轮转保留
+  一个 `.1` 存档）+ `uncaughtException` / `unhandledRejection` 守卫（已知无害的 undici
+  流关闭竞态只记日志不弹窗）；`redactUrlForLog()` 负责日志落盘前的 URL 脱敏。
 - `src/main/connect.ts` — `connect()` 串联启动 server 与加载 renderer；`rendererDistRoot()`、
   token 读取、server 日志路径也在这里。
 - `src/main/window.ts` — 窗口创建、window-state 持久化、`sendToRenderer()`。
