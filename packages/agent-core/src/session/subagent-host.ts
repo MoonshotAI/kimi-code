@@ -38,7 +38,7 @@ const SUBAGENT_TIMEOUT_ENV = 'KIMI_SUBAGENT_TIMEOUT_MS';
 /**
  * Resolve the effective subagent per-task timeout. Precedence:
  * `KIMI_SUBAGENT_TIMEOUT_MS` (positive integer ms) → `configMs` →
- * `DEFAULT_SUBAGENT_TIMEOUT_MS` (30 min). Set a large value to effectively
+ * `DEFAULT_SUBAGENT_TIMEOUT_MS` (2 hours). Set a large value to effectively
  * disable the cap. The value feeds the background-task manager's per-task
  * timeout, so it governs foreground and background subagents (and AgentSwarm).
  */
