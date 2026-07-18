@@ -67,6 +67,7 @@ export type HookResolvedCallback = (
 export interface HookEngineOptions {
   readonly cwd?: string;
   readonly sessionId?: string;
+  readonly sessionDir?: string;
   readonly onTriggered?: HookTriggeredCallback;
   readonly onResolved?: HookResolvedCallback;
 }

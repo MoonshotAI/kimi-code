@@ -74,6 +74,7 @@ export class HookEngine {
       hookEventName: event,
       sessionId: this.options.sessionId ?? '',
       cwd: this.options.cwd ?? '',
+      sessionDir: this.options.sessionDir ?? '',
       ...args.inputData,
     });
     const matched = this.matchingHooks(event, matcherValue);
