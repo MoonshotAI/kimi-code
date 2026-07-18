@@ -5,7 +5,7 @@ import { useI18n } from 'vue-i18n';
 import type { UIQuestion } from '../../types';
 import type { QuestionAnswer, QuestionResponse } from '../../api/types';
 import { Markdown } from '@moonshot-ai/web-markdown';
-import { Badge, Button, Card, Icon, IconButton } from '@moonshot-ai/web-ui';
+import { Badge, Button, Card, Icon, IconButton, openDialogCount } from '@moonshot-ai/web-ui';
 
 const props = defineProps<{
   question: UIQuestion;
@@ -238,7 +238,14 @@ function handleKeydown(e: KeyboardEvent): void {
   // Escape dismisses; number keys pick options. Both are suppressed while
   // typing in a field so the keystrokes go to the input instead.
   if (inField) return;
-  if (e.key === 'Escape') { e.preventDefault(); dismiss(); return; }
+  if (e.key === 'Escape') {
+    // A modal dialog owns Escape (it closes that dialog); an earlier handler
+    // may already have consumed the key. Don't dismiss the card under either.
+    if (openDialogCount.value > 0 || e.defaultPrevented) return;
+    e.preventDefault();
+    dismiss();
+    return;
+  }
   // While minimized the options aren't visible, so don't let number keys pick
   // an unseen answer.
   if (minimized.value) return;

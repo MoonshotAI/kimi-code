@@ -836,6 +836,7 @@ function openPr(url: string): void {
       :pending-question-actions="client.pendingQuestionActions"
       :pending-approval-actions="client.pendingApprovalActions"
       :running="running"
+      :overlay-open="anyOverlayOpen"
       :turn-active="client.turnActive.value"
       :queued="client.queued.value"
       :search-files="client.searchFiles"

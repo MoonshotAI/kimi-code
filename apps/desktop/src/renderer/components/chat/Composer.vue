@@ -289,7 +289,7 @@ function focus(): void {
 function loadAttachmentsForEdit(atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]): void {
   loadAttachments(atts);
 }
-defineExpose({ loadForEdit, loadAttachmentsForEdit, focus });
+// defineExpose lives below the toolbar dropdown refs (see anyPopupOpen).
 
 // Build the wire-bound attachment payload: images/videos only need the fileId,
 // while file parts also carry name/mediaType/size for the daemon's file shape.
@@ -555,6 +555,16 @@ const hasUpload = computed(() => !!props.uploadImage);
 const dropdownOpen = ref(false);
 const permDropdownOpen = ref(false);
 const toolbarRef = ref<HTMLElement | null>(null);
+
+// Any transient popup above the composer (model / permission dropdown, slash
+// or mention menu). ConversationPane reads this to keep its Esc-to-interrupt
+// quiet while a popup owns Escape — e.g. a dropdown opened from the toolbar,
+// where focus is outside the textarea and its Esc never reaches handleKeydown.
+const anyPopupOpen = computed(
+  () => dropdownOpen.value || permDropdownOpen.value || slashOpen.value || mentionOpen.value,
+);
+
+defineExpose({ loadForEdit, loadAttachmentsForEdit, focus, anyPopupOpen });
 
 function toggleDropdown(): void {
   dropdownOpen.value = !dropdownOpen.value;

@@ -55,6 +55,9 @@ const props = defineProps<{
   /** The main conversation has an unfinished prompt (submitted or a main turn
    *  in flight) — the working moon. */
   working?: boolean;
+  /** A modal/overlay layer is open above the conversation — it owns Escape, so
+   *  the pane's Esc-to-interrupt stays quiet while it is open. */
+  overlayOpen?: boolean;
   /** True while the empty-composer first prompt is being created + submitted.
    *  Drives the empty-session "starting conversation…" loading state. */
   starting?: boolean;
@@ -432,6 +435,9 @@ type ComposerHandle = {
   loadForEdit: (value: string) => boolean | void;
   loadAttachmentsForEdit: (atts: { fileId?: string; kind: 'image' | 'video' | 'file'; url: string; name?: string }[]) => void;
   focus: () => void;
+  /** True while any composer popup (model/permission dropdown, slash/mention
+   *  menu) is open — such a popup owns Escape. */
+  anyPopupOpen?: boolean;
 };
 type RefArg = Element | (ComponentPublicInstance & Partial<ComposerHandle>) | null;
 
@@ -468,6 +474,10 @@ function bindChatDock(el: RefArg): void {
           ? el.loadAttachmentsForEdit.bind(el)
           : () => {},
       focus: el.focus.bind(el),
+      // Read lazily — copying the value at bind time would freeze it.
+      get anyPopupOpen(): boolean {
+        return 'anyPopupOpen' in el && el.anyPopupOpen === true;
+      },
     };
   } else {
     dockedComposerRef.value = null;
@@ -1176,8 +1186,24 @@ function handleInterrupt(): void {
   emit('interrupt');
 }
 
+// True while a composer popup (model/permission dropdown, slash/mention menu)
+// owns Escape. The docked and empty composers are mutually exclusive.
+function composerPopupOpen(): boolean {
+  return (dockedComposerRef.value?.anyPopupOpen ?? emptyComposerRef.value?.anyPopupOpen) === true;
+}
+
 function onKeyDown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && (props.running || props.working)) {
+  // Escape is owned by whatever sits above the conversation: a modal layer
+  // (overlayOpen — it closes that layer), a composer popup (composerPopupOpen),
+  // or any earlier handler that consumed the key (defaultPrevented). The same
+  // keypress must not also interrupt a running prompt behind any of these.
+  if (
+    event.key === 'Escape' &&
+    !props.overlayOpen &&
+    !composerPopupOpen() &&
+    !event.defaultPrevented &&
+    (props.running || props.working)
+  ) {
     event.preventDefault();
     handleInterrupt();
   }
