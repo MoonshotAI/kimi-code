@@ -16,8 +16,13 @@ import {
 } from '@moonshot-ai/transcript';
 
 import type { WsLike } from '../channel/wsSocket';
-import { fetchTranscriptPage } from './api';
-import { TranscriptChatStore } from './store';
+import { fetchTranscriptPage, type TranscriptPage } from './api';
+import {
+  countTurns,
+  oldestTurnId,
+  recoverLoadedWindow,
+  TranscriptChatStore,
+} from './store';
 import { TranscriptWs } from './ws';
 
 // ---------------------------------------------------------------- fixtures
@@ -417,5 +422,71 @@ describe('TranscriptChatStore', () => {
     };
     store.applyOps([frameAppend('t1', 't1.1', 't1.1.f1', 0, 'x')]);
     expect(gaps).toBe(1);
+  });
+});
+
+describe('recoverLoadedWindow', () => {
+  const range = (from: number, to: number): TranscriptTurn[] =>
+    Array.from({ length: to - from + 1 }, (_, i) => turnItem(from + i));
+  const pageOf = (items: TranscriptTurn[], hasMoreOlder: boolean): TranscriptPage => ({
+    ...emptyPage,
+    items,
+    hasMoreOlder,
+  });
+
+  it('pages backwards until the previous oldest turn is re-covered', async () => {
+    const store = new TranscriptChatStore();
+    // The refresh landed the newest page (t36..t65) while the previously
+    // loaded window reached t1 — a count-based stop would drop t1..t5.
+    store.applyPage(pageOf(range(36, 65), true), { replace: true });
+
+    const fetched: string[] = [];
+    await recoverLoadedWindow(
+      store,
+      't1',
+      async (beforeTurn) => {
+        fetched.push(beforeTurn);
+        return beforeTurn === 't36' ? pageOf(range(6, 35), true) : pageOf(range(1, 5), false);
+      },
+      () => false,
+    );
+
+    expect(fetched).toEqual(['t36', 't6']);
+    expect(countTurns(store.getState().items)).toBe(65);
+    expect(oldestTurnId(store.getState().items)).toBe('t1');
+  });
+
+  it('stops immediately when the window is already covered', async () => {
+    const store = new TranscriptChatStore();
+    store.applyPage(pageOf(range(1, 30), true), { replace: true });
+    let calls = 0;
+    await recoverLoadedWindow(
+      store,
+      't1',
+      async () => {
+        calls += 1;
+        return pageOf([], false);
+      },
+      () => false,
+    );
+    expect(calls).toBe(0);
+  });
+
+  it('stops when there is no older history left, even if the anchor is gone', async () => {
+    const store = new TranscriptChatStore();
+    store.applyPage(pageOf(range(10, 20), true), { replace: true });
+    const fetched: string[] = [];
+    await recoverLoadedWindow(
+      store,
+      't1',
+      async (beforeTurn) => {
+        fetched.push(beforeTurn);
+        return pageOf([], false);
+      },
+      () => false,
+    );
+    // The anchor no longer exists server-side: one no-progress probe, then stop.
+    expect(fetched).toEqual(['t10']);
+    expect(countTurns(store.getState().items)).toBe(11);
   });
 });

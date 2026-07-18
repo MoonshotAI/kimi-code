@@ -268,6 +268,42 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });
 
+  it('starts a new turn for user-slash skill activations, keeps other triggers as markers only', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [{ type: 'text', text: 'answer' }], toolCalls: [] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'skill body' }],
+        toolCalls: [],
+        origin: { kind: 'skill_activation', trigger: 'user-slash', skillName: 'gen-docs' } as {
+          kind: string;
+        },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'docs done' }], toolCalls: [] },
+      {
+        role: 'user',
+        content: [{ type: 'text', text: 'nested skill body' }],
+        toolCalls: [],
+        origin: { kind: 'skill_activation', trigger: 'model-tool', skillName: 'x' } as {
+          kind: string;
+        },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'still same turn' }], toolCalls: [] },
+    ]);
+
+    // A user-slash activation is a real prompt (engine `isRealUserPrompt`):
+    // marker AND its own turn — the response must not fold into the previous
+    // turn. A model-tool activation is mid-turn context: marker only.
+    expect(snapshot.items.map((item) => item.kind)).toEqual(['turn', 'marker', 'turn', 'marker']);
+    const slashTurn = snapshot.items[2];
+    if (slashTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(slashTurn.ordinal).toBe(1);
+    expect(slashTurn.origin.kind).toBe('other');
+    expect(slashTurn.prompt).toBe('skill body');
+    expect(slashTurn.steps).toHaveLength(2);
+  });
+
   it('starts a promptless turn for turn-opening system triggers (goal continuation)', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },

@@ -128,6 +128,13 @@ export function groupMessagesIntoSnapshot(
       const markerKey = originKind !== undefined ? MARKER_USER_ORIGINS[originKind] : undefined;
       if (markerKey !== undefined) {
         pushMarker(markerKey, { text: textOf(message), origin: message.origin });
+        // A user-slash skill/plugin command is a real user prompt (mirrors
+        // the engine's `isRealUserPrompt`): it opened its own turn, so
+        // advance the grouping instead of folding the response into the
+        // previous turn. Other triggers are mid-turn context — marker only.
+        if (isUserSlashPrompt(message)) {
+          startTurn(mapOrigin(message), textOf(message));
+        }
         continue;
       }
       startTurn(mapOrigin(message), textOf(message));
@@ -197,6 +204,19 @@ function opensOwnTurn(message: HistoryMessage): boolean {
     origin?.kind === 'system_trigger' &&
     typeof origin.name === 'string' &&
     TURN_OPENING_SYSTEM_TRIGGERS.has(origin.name)
+  );
+}
+
+/**
+ * Whether a skill/plugin-activation message was a user-slash prompt — a real
+ * turn opener per the engine's `isRealUserPrompt` (other triggers are
+ * mid-turn context).
+ */
+function isUserSlashPrompt(message: HistoryMessage): boolean {
+  const origin = message.origin as { kind?: unknown; trigger?: unknown } | undefined;
+  return (
+    (origin?.kind === 'skill_activation' || origin?.kind === 'plugin_command') &&
+    origin.trigger === 'user-slash'
   );
 }
 

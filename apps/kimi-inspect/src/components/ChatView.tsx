@@ -50,22 +50,15 @@ import {
 
 import { useConnection } from '../connection';
 import { fetchTranscriptPage, TRANSCRIPT_PAGE_SIZE } from '../transcript/api';
-import { TranscriptChatStore } from '../transcript/store';
+import {
+  oldestTurnId,
+  recoverLoadedWindow,
+  TranscriptChatStore,
+} from '../transcript/store';
 import { TranscriptWs } from '../transcript/ws';
 import { ActionButton, Badge, ErrorLine, JsonView, relTime } from '../ui';
 
 const noopSubscribe = () => () => {};
-
-function countTurns(items: readonly TranscriptItem[]): number {
-  let count = 0;
-  for (const item of items) if (item.kind === 'turn') count += 1;
-  return count;
-}
-
-function oldestTurnId(items: readonly TranscriptItem[]): string | undefined {
-  for (const item of items) if (item.kind === 'turn') return item.turnId;
-  return undefined;
-}
 
 interface TranscriptChannel {
   /** Null until the effect has created the store (pre-ready / no session). */
@@ -109,8 +102,11 @@ function useTranscriptChannel(
       refreshing = true;
       fetching = true;
       buffer = [];
-      const prevTurnCount = countTurns(store.getState().items);
-      if (prevTurnCount > 0) captureAnchor();
+      // The window's oldest turn is the re-cover anchor: after a refresh the
+      // server window may have shifted, and only re-loading up to THIS turn
+      // preserves the previously loaded history.
+      const prevOldest = oldestTurnId(store.getState().items);
+      if (prevOldest !== undefined) captureAnchor();
       try {
         const newest = await fetchTranscriptPage({
           baseUrl,
@@ -121,24 +117,22 @@ function useTranscriptChannel(
         });
         if (disposed) return;
         store.applyPage(newest, { replace: true });
-        // Re-cover the previously loaded window for refreshes (a no-op loop
-        // on the initial load, where prevTurnCount === page size at most).
-        while (countTurns(store.getState().items) < prevTurnCount && store.getState().hasMoreOlder) {
-          const oldest = oldestTurnId(store.getState().items);
-          if (oldest === undefined) break;
-          const before = countTurns(store.getState().items);
-          const page = await fetchTranscriptPage({
-            baseUrl,
-            token: authToken,
-            sessionId,
-            agentId,
-            beforeTurn: oldest,
-            pageSize: TRANSCRIPT_PAGE_SIZE,
-          });
-          if (disposed) return;
-          store.applyPage(page);
-          if (countTurns(store.getState().items) === before) break;
-        }
+        // Re-cover the previously loaded window for refreshes (a no-op on the
+        // initial load, where there is no previous oldest turn).
+        await recoverLoadedWindow(
+          store,
+          prevOldest,
+          (beforeTurn) =>
+            fetchTranscriptPage({
+              baseUrl,
+              token: authToken,
+              sessionId,
+              agentId,
+              beforeTurn,
+              pageSize: TRANSCRIPT_PAGE_SIZE,
+            }),
+          () => disposed,
+        );
         if (!disposed) {
           setLoaded(true);
           setLoadError(null);

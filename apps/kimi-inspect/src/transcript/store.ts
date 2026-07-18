@@ -23,10 +23,52 @@ import {
   EMPTY_AGENT_STATE,
   itemId,
   type AgentState,
+  type TranscriptItem,
   type TranscriptOperation,
 } from '@moonshot-ai/transcript';
 
 import type { TranscriptPage } from './api';
+
+export function countTurns(items: readonly TranscriptItem[]): number {
+  let count = 0;
+  for (const item of items) if (item.kind === 'turn') count += 1;
+  return count;
+}
+
+export function oldestTurnId(items: readonly TranscriptItem[]): string | undefined {
+  for (const item of items) if (item.kind === 'turn') return item.turnId;
+  return undefined;
+}
+
+export function hasTurnId(items: readonly TranscriptItem[], turnId: string): boolean {
+  return items.some((item) => item.kind === 'turn' && item.turnId === turnId);
+}
+
+/**
+ * Re-cover a previously loaded window after a full refresh: page backwards
+ * until `prevOldestTurnId` (the window's oldest turn before the refresh) is
+ * loaded again. A count-based stop silently drops the window's head when new
+ * turns arrived meanwhile (the server window shifted, so the same count no
+ * longer reaches as far back). Stops at the oldest available page
+ * (`hasMoreOlder` false), on a no-progress page, or when `isDisposed`.
+ */
+export async function recoverLoadedWindow(
+  store: TranscriptChatStore,
+  prevOldestTurnId: string | undefined,
+  fetchPage: (beforeTurn: string) => Promise<TranscriptPage>,
+  isDisposed: () => boolean,
+): Promise<void> {
+  if (prevOldestTurnId === undefined) return;
+  while (!hasTurnId(store.getState().items, prevOldestTurnId) && store.getState().hasMoreOlder) {
+    const oldest = oldestTurnId(store.getState().items);
+    if (oldest === undefined) break;
+    const before = countTurns(store.getState().items);
+    const page = await fetchPage(oldest);
+    if (isDisposed()) return;
+    store.applyPage(page);
+    if (countTurns(store.getState().items) === before) break;
+  }
+}
 
 export class TranscriptChatStore {
   private state: AgentState = EMPTY_AGENT_STATE;
