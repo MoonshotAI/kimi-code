@@ -56,8 +56,15 @@ async function serveWebAsset(
 
   return reply
     .type(mimeType(filePath))
+    .header('Cache-Control', cacheControl(requestUrl.pathname))
     .header('Content-Length', String(fileInfo.size))
     .send(createReadStream(filePath));
+}
+
+function cacheControl(pathname: string): string {
+  return pathname.startsWith('/assets/')
+    ? 'public, max-age=31536000, immutable'
+    : 'no-cache';
 }
 
 async function resolveStaticFile(
