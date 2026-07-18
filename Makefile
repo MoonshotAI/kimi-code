@@ -61,6 +61,18 @@ release: version publish
 dev:
 	pnpm run dev:cli
 
+## Rust binaries
+
+rust-build:
+	cargo build --release -p kimi-build -p kimi-agent
+
+rust-check:
+	cargo check -p kimi-build -p kimi-agent
+
+rust-test:
+	cargo test -p kimi-build -p kimi-agent
+	cargo run -p kimi-agent -- --test
+
 ## vis
 
 vis:

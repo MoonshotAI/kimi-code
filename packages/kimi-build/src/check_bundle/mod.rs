@@ -62,6 +62,7 @@ fn optional_runtime_requires() -> HashSet<&'static str> {
         "@moonshot-ai/server",
         "@moonshot-ai/kimi-native-tools",
         "@moonshot-ai/kimi-i18n",
+        "@moonshot-ai/kimi-agent",
     ] {
         s.insert(*name);
     }
