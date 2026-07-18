@@ -20,7 +20,7 @@
  */
 
 import { MAIN_AGENT_ID, type Scope } from '@moonshot-ai/agent-core-v2';
-import { paginateTurns, transcriptResponseSchema } from '@moonshot-ai/transcript';
+import { isPlainAgentId, paginateTurns, transcriptResponseSchema } from '@moonshot-ai/transcript';
 import { z } from 'zod';
 
 import { errEnvelope, okEnvelope } from '../envelope';
@@ -61,6 +61,14 @@ const transcriptQueryCoercion = z
         code: 'custom',
         message: 'before_turn and after_turn are mutually exclusive',
         path: ['before_turn'],
+        params: { code: ErrorCode.VALIDATION_FAILED },
+      });
+    }
+    if (!isPlainAgentId(value.agent_id)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'agent_id must be a plain agent id (no path separators)',
+        path: ['agent_id'],
         params: { code: ErrorCode.VALIDATION_FAILED },
       });
     }

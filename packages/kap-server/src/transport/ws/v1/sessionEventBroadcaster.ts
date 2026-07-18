@@ -286,7 +286,12 @@ export class SessionEventBroadcaster {
         .map((agentId) => service.ensureAgentHistory(state.sessionId, agentId)),
     );
     this.ensureTranscriptStream(state, store);
+    // The legacy agent allowlist composes with transcript grades: a
+    // connection filtered to a subset never receives other agents'
+    // transcript frames, whatever the grades admit.
+    const agentFilter = state.targets.get(target)?.agentFilter;
     for (const descriptor of store.agents()) {
+      if (agentFilter !== undefined && !agentFilter.has(descriptor.agentId)) continue;
       const grade = gradeFor(spec, descriptor.agentId);
       if (grade === 'off') continue;
       if (!needsResetOnTransition(gradeFor(prev, descriptor.agentId), grade)) continue;
@@ -312,6 +317,8 @@ export class SessionEventBroadcaster {
 
     const opsDisposable = service.onSessionOps(state.sessionId, ({ agentId, ops }) => {
       for (const [target, sub] of state.targets) {
+        // The legacy agent allowlist gates transcript frames too.
+        if (sub.agentFilter !== undefined && !sub.agentFilter.has(agentId)) continue;
         const grade = gradeFor(sub.transcriptGrades, agentId);
         const filtered = filterOpsForGrade(grade, ops);
         if (filtered.length === 0) continue;
@@ -337,6 +344,7 @@ export class SessionEventBroadcaster {
           const transcript = store.getAgent(descriptor.agentId);
           if (transcript === undefined) continue;
           for (const [target, sub] of state.targets) {
+            if (sub.agentFilter !== undefined && !sub.agentFilter.has(descriptor.agentId)) continue;
             const grade = gradeFor(sub.transcriptGrades, descriptor.agentId);
             if (grade === 'off') continue;
             try {

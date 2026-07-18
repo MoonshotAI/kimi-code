@@ -14,6 +14,22 @@ export const frameIdSchema = z.string().min(1);
 export const taskIdSchema = z.string().min(1);
 export const agentIdSchema = z.string().min(1);
 
+/**
+ * Whether an agent id is a single plain name (no separators, no `.` / `..`
+ * segments). Ids are joined into filesystem paths server-side
+ * (`<sessionDir>/agents/<agentId>/`), so anything path-hostile must be
+ * rejected before it can traverse outside the agents directory.
+ */
+export function isPlainAgentId(agentId: string): boolean {
+  return (
+    agentId.length > 0 &&
+    agentId !== '.' &&
+    agentId !== '..' &&
+    !agentId.includes('/') &&
+    !agentId.includes('\\')
+  );
+}
+
 // ---------------------------------------------------------------- model
 
 export const turnOriginSchema = z.discriminatedUnion('kind', [
@@ -279,6 +295,13 @@ export const transcriptQuerySchema = z
         code: 'custom',
         message: 'before_turn and after_turn are mutually exclusive',
         path: ['before_turn'],
+      });
+    }
+    if (!isPlainAgentId(value.agent_id)) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'agent_id must be a plain agent id (no path separators)',
+        path: ['agent_id'],
       });
     }
   });

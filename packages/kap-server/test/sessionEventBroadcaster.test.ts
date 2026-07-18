@@ -1422,6 +1422,34 @@ describe('SessionEventBroadcaster', () => {
       expect((ops.payload as OpsPayload).agent_id).toBe('agent-0');
     });
 
+    it('applies the legacy agent filter to transcript ops and resets', async () => {
+      const lc = new FakeLifecycle();
+      const main = lc.addAgent('main');
+      sessions.set('s1', lc);
+      bc = makeBroadcasterWithTranscript();
+
+      // Filtered to main, with a wildcard delta grade: the allowlist must
+      // still gate every transcript frame.
+      const view = collectingTarget();
+      await bc.subscribe('s1', view.target, new Set(['main']), { '*': 'delta' });
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(1); // main reset
+
+      main.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      expect(transcriptEnvelopes(view.envelopes)).toHaveLength(2);
+
+      // The subagent matches the wildcard grade but not the allowlist: no
+      // roster reset, no ops.
+      const sub = lc.addAgent('sub-1');
+      sub.bus.emit(agentEvent('turn.started', { turnId: 1, origin: { kind: 'user' } }));
+      const frames = transcriptEnvelopes(view.envelopes);
+      expect(frames).toHaveLength(2);
+      expect(
+        frames.every(
+          (e) => (e.payload as { agent_id?: string }).agent_id === 'main' || e.type !== 'transcript.ops',
+        ),
+      ).toBe(true);
+    });
+
     it('redacts reset snapshots to the subscribed grade (turn = headers only)', async () => {
       const lc = new FakeLifecycle();
       const main = lc.addAgent('main');

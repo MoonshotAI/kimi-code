@@ -6,7 +6,12 @@
  * flush upserts) and the converged store state.
  */
 
-import type { DomainEvent } from '@moonshot-ai/agent-core-v2';
+import {
+  ISessionIndex,
+  ISessionLifecycleService,
+  type DomainEvent,
+  type Scope,
+} from '@moonshot-ai/agent-core-v2';
 import {
   AgentTranscript,
   type AgentTranscriptSnapshot,
@@ -19,7 +24,7 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { AgentTranscriptProjector } from '../../src/services/transcript/coreEventMap';
-import { snapshotToOps } from '../../src/services/transcript/transcriptService';
+import { TranscriptService, snapshotToOps } from '../../src/services/transcript/transcriptService';
 
 function ev(payload: Record<string, unknown>): DomainEvent {
   return payload as unknown as DomainEvent;
@@ -689,6 +694,30 @@ describe('AgentTranscriptProjector', () => {
     expect(turnOps('t3', tx.getItems()).steps[0]!.frames[0]).toMatchObject({
       state: 'dismissed',
     });
+  });
+
+  it('readColdSnapshot answers empty for path-hostile agent ids without touching disk', async () => {
+    const service = new TranscriptService({
+      homeDir: '/nonexistent-home',
+      core: {
+        accessor: {
+          get: (token: unknown) => {
+            if (token === ISessionLifecycleService) {
+              return {
+                onDidCloseSession: () => ({ dispose: () => undefined }),
+                onDidArchiveSession: () => ({ dispose: () => undefined }),
+              };
+            }
+            if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+            return undefined;
+          },
+        },
+      } as unknown as Scope,
+    });
+    for (const hostile of ['../../main', '..', 'a/b', 'a\\b']) {
+      const snapshot = await service.readColdSnapshot('s1', hostile);
+      expect(snapshot?.items).toEqual([]);
+    }
   });
 
   it('folds blocked turn endings into failed (engine wire contract)', () => {

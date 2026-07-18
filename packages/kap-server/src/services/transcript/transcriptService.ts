@@ -52,6 +52,7 @@ import {
 import {
   TranscriptStore,
   groupMessagesIntoSnapshot,
+  isPlainAgentId,
   type AgentTranscriptSnapshot,
   type TranscriptChangeEvent,
   type TranscriptMarker,
@@ -371,6 +372,11 @@ export class TranscriptService {
   ): Promise<AgentTranscriptSnapshot | undefined> {
     const summary = await this.deps.core.accessor.get(ISessionIndex).get(sessionId);
     if (summary === undefined) return undefined;
+    // Path-hostile ids never map to a real agent directory — answer empty
+    // instead of letting the id traverse outside `<sessionDir>/agents/`.
+    if (!isPlainAgentId(agentId)) {
+      return groupMessagesIntoSnapshot([]);
+    }
     const wirePath = join(
       this.deps.homeDir,
       SESSIONS_ROOT,

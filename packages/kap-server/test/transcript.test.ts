@@ -702,6 +702,14 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     await pending;
   });
 
+  it('rejects path-hostile agent ids with 40001', async () => {
+    const id = await createSession();
+    const { body } = await getJson<null>(
+      `/api/v1/sessions/${id}/transcript?agent_id=${encodeURIComponent('../main')}`,
+    );
+    expect(body.code).toBe(40001);
+  });
+
   it('rejects before_turn + after_turn together with 40001', async () => {
     const id = await createSession();
     const { body } = await getJson<null>(

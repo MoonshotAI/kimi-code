@@ -7,6 +7,7 @@ import { ViewRegistry } from '#/view/registry';
 import { groupMessagesIntoSnapshot } from '#/history/groupTurns';
 import {
   transcriptOperationSchema,
+  transcriptQuerySchema,
   transcriptResponseSchema,
   transcriptGradeSpecSchema,
 } from '#/wire/schema';
@@ -217,6 +218,14 @@ describe('wire schemas', () => {
       pending_interactions: [],
     });
     expect(ok.success).toBe(true);
+  });
+
+  it('rejects path-hostile agent ids in the transcript query', () => {
+    const base = { agent_id: 'main', before_turn: undefined, after_turn: undefined, page_size: undefined };
+    expect(transcriptQuerySchema.safeParse({ ...base, agent_id: 'sub-1' }).success).toBe(true);
+    for (const hostile of ['../main', '..\\main', '..', 'a/b', 'a\\b', '.']) {
+      expect(transcriptQuerySchema.safeParse({ ...base, agent_id: hostile }).success).toBe(false);
+    }
   });
 });
 
