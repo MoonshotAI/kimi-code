@@ -25,7 +25,7 @@ import {
 } from '#/errors';
 import { isAbortError, isMaxStepsExceededError } from '../../loop/errors';
 import { t } from '../../i18n';
-import { tryNativeGoalRenderBudgetLimit, tryNativeGoalRenderContinuation } from '../../tools/builtin/native-tools';
+import { tryNativeGoalEngineDecideContinuation } from '../../tools/builtin/native-tools';
 import {
   createLoopEventDispatcher,
   runTurn,
@@ -91,55 +91,44 @@ const GOAL_PROVIDER_FILTERED_PAUSE_REASON = 'Paused after provider safety policy
  * autonomous stand-in for the user typing "continue". The model decides when to
  * stop by calling `UpdateGoal`; otherwise the driver runs another turn.
  */
-const GOAL_CONTINUATION_PROMPT_FALLBACK = [
-  'Continue working toward the active goal.',
-  'Keep the self-audit brief. Do not explore unrelated interpretations once the goal can be',
-  'decided. If the objective is simple, already answered, impossible, unsafe, or contradictory,',
-  'do not run another goal turn. Explain briefly if useful, then call UpdateGoal with `complete`',
-  'or `blocked` in the same turn. Otherwise, weigh the objective and any completion criteria',
-  'against the work done so far, choose one bounded, useful slice of work, and use the existing',
-  'conversation context and your tools. Do not try to finish a broad goal in one turn unless the',
-  'whole goal is genuinely small. Most goal turns should not call UpdateGoal: after completing a',
-  'useful slice, if material work remains, end the turn normally without calling UpdateGoal so',
-  'the runtime can continue the goal in the next turn. Call UpdateGoal with `complete` only when',
-  'all required work is done, any stated validation has passed, and there is no useful next',
-  'action. Completion audit: before calling `complete`, verify the current state against the',
-  'actual objective and every explicit requirement. Treat weak or indirect evidence as not',
-  'complete. Do not mark complete after only producing a plan, summary, first pass, or partial',
-  'result. Do not mark complete merely because a budget is nearly exhausted or you want to stop.',
-  'Blocked audit: do not call UpdateGoal with `blocked` the first time you hit a blocker. Use',
-  '`blocked` only for a genuine impasse: an external condition, required user input, missing',
-  'credentials or permissions, or a persistent technical failure. For those non-terminal',
-  'blockers, the same blocking condition must repeat for at least 3 consecutive goal turns before',
-  'you call `blocked`, counting the original/user-triggered turn and automatic continuations.',
-  'If a previously blocked goal is resumed, treat the resumed run as a fresh blocked audit.',
-  'Exception: if the objective itself is impossible, unsafe, or contradictory, call UpdateGoal',
-  'with `blocked` in the same turn; do not run more goal turns just to satisfy the audit. Do not',
-  'use `blocked` because the work is large, hard, slow, uncertain, incomplete, still needs',
-  'validation, would benefit from clarification, or needs more goal turns. Once the 3-turn',
-  'threshold is met and you cannot make meaningful progress without user input or an',
-  'external-state change, call UpdateGoal with `blocked`; do not keep reporting the blocker while',
-  'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
-].join(' ');
+
 
 /**
- * Render the goal continuation prompt — tries native Rust rendering first.
- * The native template includes richer details (token budget, remaining tokens, XML-escaped
- * objective, completion audit, blocked audit). Falls back to the static prompt when native
- * is unavailable.
+ * Render the goal continuation prompt. Engine owns the decision of what to inject
+ * (continue / wrap-up on budget). Returns null if the goal driver should stop.
  */
-function buildGoalContinuationPrompt(goal: {
-  objective: string;
-  tokensUsed: number;
-  tokenBudget?: number | null;
-}): string {
-  const nativePrompt = tryNativeGoalRenderContinuation(
-    goal.objective,
-    goal.tokensUsed,
-    goal.tokenBudget ?? null,
+function renderGoalContinuationPrompt(
+  goal: import('../goal').GoalSnapshot | null,
+): { action: 'continue' | 'stop_budget'; prompt: string } | null {
+  if (goal === null) return null;
+  // Engine owns the continuation decision. Convert snapshot → engine JSON shape.
+  const engineGoal = {
+    goalId: goal.goalId,
+    objective: goal.objective,
+    completionCriterion: goal.completionCriterion ?? null,
+    status: goal.status,
+    tokenBudget: goal.budget.tokenBudget,
+    turnBudget: goal.budget.turnBudget,
+    wallClockBudgetMs: goal.budget.wallClockBudgetMs,
+    tokensUsed: goal.tokensUsed,
+    turnsUsed: goal.turnsUsed,
+    wallClockMs: goal.wallClockMs,
+    blockedStreak: goal.blockedStreak ?? 0,
+    wallClockResumedAt: null,
+    terminalReason: goal.terminalReason ?? null,
+    createdAt: goal.createdAt,
+    updatedAt: goal.updatedAt,
+  };
+  const result = tryNativeGoalEngineDecideContinuation(
+    JSON.stringify({ goal: engineGoal, nowMs: Date.now() }),
   );
-  if (nativePrompt !== undefined) return nativePrompt;
-  return GOAL_CONTINUATION_PROMPT_FALLBACK;
+  if (result?.action === 'continue') {
+    return { action: 'continue', prompt: result.steeringPrompt };
+  }
+  if (result?.action === 'stop_budget') {
+    return { action: 'stop_budget', prompt: result.steeringPrompt };
+  }
+  return null; // stop_inactive or engine unavailable
 }
 
 export class TurnFlow {
@@ -432,13 +421,16 @@ export class TurnFlow {
           await this.agent.goal.markBudgetLimited({ reason: 'A configured budget was reached' });
           return end;
         }
+        // Engine owns the continuation prompt selection.
+        const goal = this.agent.goal.getGoal().goal;
+        const decision = renderGoalContinuationPrompt(goal);
+        const prompt = decision?.prompt
+          ?? goal?.objective
+          ? `Continue working toward the active goal: ${goal.objective}`
+          : 'Continue working toward the active goal.';
         return await this.driveGoal(
           this.allocateTurnId(),
-          [{ type: 'text', text: buildGoalContinuationPrompt({
-            objective: this.agent.goal.getGoal().goal?.objective ?? '',
-            tokensUsed: this.agent.goal.getGoal().goal?.tokensUsed ?? 0,
-            tokenBudget: this.agent.goal.getGoal().goal?.budget?.tokenBudget,
-          }) }],
+          [{ type: 'text', text: prompt }],
           GOAL_CONTINUATION_ORIGIN,
           signal,
         );
@@ -471,17 +463,20 @@ export class TurnFlow {
     let turnInput = input;
     let turnOrigin = origin;
     while (true) {
+      // Engine owns the pre-turn continuation decision (budget/status check).
       const goalBeforeTurn = this.agent.goal.getGoal().goal;
-      if (goalBeforeTurn?.status === 'active' && goalBeforeTurn.budget.overBudget) {
-        await this.agent.goal.markBudgetLimited({ reason: 'A configured budget was reached' });
+      const preDecision = renderGoalContinuationPrompt(goalBeforeTurn);
+      if (preDecision === null || preDecision.action === 'stop_budget') {
+        // Goal is inactive or over budget — block if needed.
+        if (goalBeforeTurn?.status === 'active') {
+          await this.agent.goal.markBudgetLimited({ reason: 'A configured budget was reached' });
+        }
         const ended = await this.endGoalTurnWithoutModel(turnId, turnInput, turnOrigin);
         return { event: ended };
       }
 
       // Count the turn about to run (no-op if the goal isn't active), so the
       // completion stats include the turn in which the model reports `complete`.
-      // Wall-clock is tracked live by the store (anchored while `active`), so the
-      // timer is correct even when the model completes mid-turn.
       await this.agent.goal.incrementTurn();
       const end = await this.runOneTurn(turnId, turnInput, turnOrigin, signal, false);
 
@@ -506,19 +501,18 @@ export class TurnFlow {
       if (goal === null || goal.status !== 'active') {
         return end;
       }
-      // Hard budgets (turn / token / wall-clock, set via the SDK) are a
-      // deterministic ceiling: block when reached. `blocked` is resumable.
-      if (goal.budget.overBudget) {
-        await this.agent.goal.markBudgetLimited({ reason: 'A configured budget was reached' });
+
+      // Engine owns the post-turn continuation decision + prompt selection.
+      const postDecision = renderGoalContinuationPrompt(goal);
+      if (postDecision === null || postDecision.action === 'stop_budget') {
+        if (goal.status === 'active') {
+          await this.agent.goal.markBudgetLimited({ reason: 'A configured budget was reached' });
+        }
         return end;
       }
 
       turnId = this.allocateTurnId();
-      turnInput = [{ type: 'text', text: buildGoalContinuationPrompt({
-        objective: this.agent.goal.getGoal().goal?.objective ?? '',
-        tokensUsed: this.agent.goal.getGoal().goal?.tokensUsed ?? 0,
-        tokenBudget: this.agent.goal.getGoal().goal?.budget?.tokenBudget,
-      }) }];
+      turnInput = [{ type: 'text', text: postDecision.prompt }];
       turnOrigin = GOAL_CONTINUATION_ORIGIN;
     }
   }

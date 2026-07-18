@@ -3,6 +3,7 @@ import { isAbsolute, join, parse } from 'pathe';
 import { tryNativeGlobMatch } from './native-glob-match';
 
 import { canonicalizePath, type PathClass } from '../policies/path-access';
+import { tryNativePathCanonicalizeForGlob } from '../builtin/native-tools';
 
 export interface PermissionPathMatchOptions {
   readonly cwd?: string;
@@ -86,6 +87,14 @@ function canonicalizePathPattern(
   const expanded = expandUserPath(value, semantics.pathClass, pathOptions?.homeDir);
   const cwd = pathOptions?.cwd ?? defaultCwdForPath(expanded);
   if (cwd === undefined) return undefined;
+  // Use glob-aware canonicalization so glob metacharacters (`*`, `?`, `[`, `{`)
+  // in the pattern are preserved instead of being treated as path segments.
+  const nativeResult = tryNativePathCanonicalizeForGlob(expanded, cwd, semantics.pathClass);
+  if (nativeResult !== undefined) {
+    if (nativeResult.startsWith('ERROR:')) return undefined;
+    return nativeResult;
+  }
+  // TS fallback.
   try {
     return canonicalizePath(expanded, cwd, semantics.pathClass);
   } catch {

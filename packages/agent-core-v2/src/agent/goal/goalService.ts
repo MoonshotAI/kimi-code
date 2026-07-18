@@ -82,21 +82,15 @@ import type {
   GoalToolResult,
 } from './types';
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 const MAX_GOAL_OBJECTIVE_LENGTH = 4000;
 
 const MAX_GOAL_COMPLETION_CRITERION_LENGTH = MAX_GOAL_OBJECTIVE_LENGTH;
 
-const GOAL_CANCELLED_REMINDER = [
-  'The user cancelled the current goal.',
-  'Ignore earlier active-goal reminders for that goal.',
-  'Handle the next user request normally unless the user starts or resumes a goal.',
-].join(' ');
+const GOAL_CANCELLED_REMINDER = t('v2Goal.cancelledReminder');
 
-const GOAL_FORK_CLEARED_REMINDER = [
-  'This fork does not have a current goal.',
-  'Ignore earlier active-goal reminders from the source session.',
-  'Handle requests normally unless the user starts a new goal.',
-].join(' ');
+const GOAL_FORK_CLEARED_REMINDER = t('v2Goal.forkClearedReminder');
 
 const GOAL_FORK_CLEARED_REMINDER_NAME = 'goal_fork_cleared';
 
@@ -104,61 +98,25 @@ const GOAL_CONTINUATION_ORIGIN: PromptOrigin = {
   kind: 'system_trigger',
   name: 'goal_continuation',
 };
-const GOAL_RATE_LIMIT_PAUSE_REASON = 'Paused after provider rate limit';
-const GOAL_PROVIDER_CONNECTION_PAUSE_PREFIX = 'Paused after provider connection error';
-const GOAL_PROVIDER_AUTH_PAUSE_PREFIX = 'Paused after provider authentication error';
-const GOAL_PROVIDER_API_PAUSE_PREFIX = 'Paused after provider API error';
-const GOAL_MODEL_CONFIG_PAUSE_PREFIX = 'Paused after model configuration error';
-const GOAL_RUNTIME_PAUSE_PREFIX = 'Paused after runtime error';
-const GOAL_CONTINUATION_FAILURE_PAUSE_PREFIX = 'Paused after goal continuation failure';
-const GOAL_PROVIDER_FILTERED_PAUSE_REASON = 'Paused after provider safety policy block';
-const GOAL_BUDGET_BLOCK_PREFIX = 'Budget limited after goal budget reached';
-const LLM_NOT_SET_MESSAGE = 'LLM not set, send "/login" to login';
+const GOAL_RATE_LIMIT_PAUSE_REASON = t('v2Goal.pausedRateLimit');
+const GOAL_PROVIDER_CONNECTION_PAUSE_PREFIX = t('v2Goal.pausedConnectionError');
+const GOAL_PROVIDER_AUTH_PAUSE_PREFIX = t('v2Goal.pausedAuthError');
+const GOAL_PROVIDER_API_PAUSE_PREFIX = t('v2Goal.pausedApiError');
+const GOAL_MODEL_CONFIG_PAUSE_PREFIX = t('v2Goal.pausedModelConfig');
+const GOAL_RUNTIME_PAUSE_PREFIX = t('v2Goal.pausedRuntime');
+const GOAL_CONTINUATION_FAILURE_PAUSE_PREFIX = t('v2Goal.pausedContinuationFailure');
+const GOAL_PROVIDER_FILTERED_PAUSE_REASON = t('v2Goal.pausedProviderFiltered');
+const GOAL_BUDGET_BLOCK_PREFIX = t('v2Goal.budgetLimited');
+const LLM_NOT_SET_MESSAGE = t('v2Goal.llmNotSet');
 
 const GOAL_BUDGET_STOP_REMINDER_NAME = 'goal_budget_stop';
 
-const GOAL_BUDGET_STOP_REMINDER = [
-  "The goal's hard budget was reached and the goal is now budget-limited; the user can set a new budget and resume it with /goal resume.",
-  'Stop immediately.',
-  'Do not call any more tools: they will be rejected.',
-  'Write a brief final status message summarizing the progress so far.',
-].join(' ');
+const GOAL_BUDGET_STOP_REMINDER = t('v2Goal.budgetStopReminder');
 
-const GOAL_BUDGET_TOOLS_REJECTED_MESSAGE =
-  'Goal budget exhausted; tool calls are rejected. Write your final message.';
-const GOAL_STALE_TOOL_RESULT =
-  'Goal changed since this turn started; ignored stale goal tool call.';
+const GOAL_BUDGET_TOOLS_REJECTED_MESSAGE = t('v2Goal.budgetToolsRejected');
+const GOAL_STALE_TOOL_RESULT = t('v2Goal.staleToolResult');
 
-const GOAL_CONTINUATION_PROMPT_FALLBACK = [
-  'Continue working toward the active goal.',
-  'Keep the self-audit brief. Do not explore unrelated interpretations once the goal can be',
-  'decided. If the objective is simple, already answered, impossible, unsafe, or contradictory,',
-  'do not run another goal turn. Explain briefly if useful, then call UpdateGoal with `complete`',
-  'or `blocked` in the same turn. Otherwise, weigh the objective and any completion criteria',
-  'against the work done so far, choose one bounded, useful slice of work, and use the existing',
-  'conversation context and your tools. Do not try to finish a broad goal in one turn unless the',
-  'whole goal is genuinely small. Most goal turns should not call UpdateGoal: after completing a',
-  'useful slice, if material work remains, end the turn normally without calling UpdateGoal so',
-  'the runtime can continue the goal in the next turn. Call UpdateGoal with `complete` only when',
-  'all required work is done, any stated validation has passed, and there is no useful next',
-  'action. Completion audit: before calling `complete`, verify the current state against the',
-  'actual objective and every explicit requirement. Treat weak or indirect evidence as not',
-  'complete. Do not mark complete after only producing a plan, summary, first pass, or partial',
-  'result. Do not mark complete merely because a budget is nearly exhausted or you want to stop.',
-  'Blocked audit: do not call UpdateGoal with `blocked` the first time you hit a blocker. Use',
-  '`blocked` only for a genuine impasse: an external condition, required user input, missing',
-  'credentials or permissions, or a persistent technical failure. For those non-terminal',
-  'blockers, the same blocking condition must repeat for at least 3 consecutive goal turns before',
-  'you call `blocked`, counting the original/user-triggered turn and automatic continuations.',
-  'If a previously blocked goal is resumed, treat the resumed run as a fresh blocked audit.',
-  'Exception: if the objective itself is impossible, unsafe, or contradictory, call UpdateGoal',
-  'with `blocked` in the same turn; do not run more goal turns just to satisfy the audit. Do not',
-  'use `blocked` because the work is large, hard, slow, uncertain, incomplete, still needs',
-  'validation, would benefit from clarification, or needs more goal turns. Once the 3-turn',
-  'threshold is met and you cannot make meaningful progress without user input or an',
-  'external-state change, call UpdateGoal with `blocked`; do not keep reporting the blocker while',
-  'leaving the goal active. Do not ask the user for input unless a real blocker prevents progress.',
-].join(' ');
+const GOAL_CONTINUATION_PROMPT_FALLBACK = t('v2Goal.continuationPromptFallback');
 
 function buildGoalContinuationPrompt(goal: {
   objective: string;
@@ -330,7 +288,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (this.isSupportedAgent) return;
     throw new Error2(
       ErrorCodes.GOAL_UNSUPPORTED_AGENT,
-      'Goals are only supported by the main agent',
+      t('v2Goal.onlyMainAgent'),
       { details: { agentId: this.agentContext.agentId } },
     );
   }
@@ -382,12 +340,12 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private validateObjective(value: string): string {
     const objective = value.trim();
     if (objective.length === 0) {
-      throw new Error2(ErrorCodes.GOAL_OBJECTIVE_EMPTY, 'Goal objective cannot be empty');
+      throw new Error2(ErrorCodes.GOAL_OBJECTIVE_EMPTY, t('v2Goal.objectiveCannotBeEmpty'));
     }
     if (objective.length > MAX_GOAL_OBJECTIVE_LENGTH) {
       throw new Error2(
         ErrorCodes.GOAL_OBJECTIVE_TOO_LONG,
-        `Goal objective cannot exceed ${MAX_GOAL_OBJECTIVE_LENGTH} characters`,
+        t('v2Goal.objectiveTooLong', { max: String(MAX_GOAL_OBJECTIVE_LENGTH) }),
       );
     }
     return objective;
@@ -398,7 +356,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (!replace) {
       throw new Error2(
         ErrorCodes.GOAL_ALREADY_EXISTS,
-        'A goal already exists; use replace to start a new one',
+        t('v2Goal.goalAlreadyExistsReplace'),
       );
     }
     this.clearInternal('system');
@@ -411,7 +369,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (state.status !== 'active') {
       throw new Error2(
         ErrorCodes.GOAL_STATUS_INVALID,
-        `Cannot pause a goal in status "${state.status}"`,
+        t('v2Goal.cannotPause', { status: state.status }),
       );
     }
     return this.applyLifecycle(state, 'paused', input.reason, actor);
@@ -448,7 +406,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     if (state.status !== 'paused' && state.status !== 'blocked') {
       throw new Error2(
         ErrorCodes.GOAL_NOT_RESUMABLE,
-        `Cannot resume a goal in status "${state.status}"`,
+        t('v2Goal.cannotResume', { status: state.status }),
       );
     }
     const continuePaused =
@@ -844,11 +802,11 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   ): Promise<boolean> {
     if (!this.isActiveGoal(goalId)) return false;
     if (result.reason === 'blocked') {
-      await this.markBlocked({ reason: 'Blocked by UserPromptSubmit hook' });
+      await this.markBlocked({ reason: t('v2Goal.blockedByHook') });
       return true;
     }
     if (result.reason === 'cancelled') {
-      await this.pauseOnInterrupt({ reason: 'Paused after interruption' });
+      await this.pauseOnInterrupt({ reason: t('v2Goal.pausedAfterInterruption') });
       return true;
     }
     if (result.reason === 'failed') {
@@ -967,7 +925,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
     }
     if (state.status !== 'active') return;
 
-    const reason = 'Paused after agent resume';
+    const reason = t('v2Goal.pausedAfterResume');
     this.wire.dispatch(
       updateGoal({
         status: 'paused',
@@ -1052,7 +1010,7 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
   private requireState(): GoalState {
     const state = this.goalState;
     if (state === null) {
-      throw new Error2(ErrorCodes.GOAL_NOT_FOUND, 'No current goal');
+      throw new Error2(ErrorCodes.GOAL_NOT_FOUND, t('v2Goal.noCurrentGoal'));
     }
     return state;
   }
@@ -1223,15 +1181,21 @@ function isGoalMutationTool(toolName: string): boolean {
 function goalBudgetBlockReason(budget: GoalBudgetReport): string | undefined {
   const reached: string[] = [];
   if (budget.turnBudgetReached) {
-    reached.push(`turn budget ${budget.turnBudget ?? ''}`.trim());
+    reached.push('turn');
   }
   if (budget.tokenBudgetReached) {
-    reached.push(`token budget ${budget.tokenBudget ?? ''}`.trim());
+    reached.push('token');
   }
   if (budget.wallClockBudgetReached) {
-    reached.push(`wall-clock budget ${budget.wallClockBudgetMs ?? ''}ms`.trim());
+    reached.push('wall-clock');
   }
-  return reached.length === 0 ? undefined : `${GOAL_BUDGET_BLOCK_PREFIX}: ${reached.join(', ')}`;
+  if (reached.length === 0) return undefined;
+  return t('v2Goal.budgetBlockReason', {
+    budgets: reached.join(', '),
+    turnBudget: budget.turnBudget ?? '',
+    tokenBudget: budget.tokenBudget ?? '',
+    wallClockBudget: budget.wallClockBudgetMs ?? '',
+  });
 }
 
 function budgetTelemetryProperties(limits: GoalBudgetLimits): GoalBudgetProperties {

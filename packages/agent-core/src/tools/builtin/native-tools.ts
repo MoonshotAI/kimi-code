@@ -826,3 +826,158 @@ export function tryNativeGoalRenderObjectiveUpdated(
 ): string | undefined {
   return callNativeSync<string>('nativeGoalRenderObjectiveUpdated', objective, tokensUsed, tokenBudget);
 }
+
+// ============================================================================
+// GoalEngine — decision core (stateless, JSON-in/JSON-out)
+// ============================================================================
+
+/** Validate and normalize goal creation input. */
+export function tryNativeGoalEngineValidateCreateInput(
+  json: string,
+): { ok: true; objective: string; completionCriterion?: string } | { ok: false; error: string } | undefined {
+  return callNativeSync('nativeGoalEngineValidateCreateInput', json);
+}
+
+/** Validate a budget input into a limits patch. */
+export function tryNativeGoalEngineValidateBudgetInput(
+  json: string,
+): { ok: true; budgetLimits: Record<string, unknown> } | { ok: false; error: string } | undefined {
+  return callNativeSync('nativeGoalEngineValidateBudgetInput', json);
+}
+
+/** Compute the full budget report. */
+export function tryNativeGoalEngineComputeBudgetReport(
+  json: string,
+): Record<string, unknown> | undefined {
+  return callNativeSync('nativeGoalEngineComputeBudgetReport', json);
+}
+
+/** Apply token + turn deltas to a goal. */
+export function tryNativeGoalEngineApplyUsage(
+  json: string,
+): { goal: Record<string, unknown>; overBudget: boolean } | undefined {
+  return callNativeSync('nativeGoalEngineApplyUsage', json);
+}
+
+/** Decide whether the goal driver should continue. */
+export function tryNativeGoalEngineDecideContinuation(
+  json: string,
+): { action: 'continue'; steeringPrompt: string } | { action: 'stop_budget'; reason: string; steeringPrompt: string } | { action: 'stop_inactive' } | undefined {
+  return callNativeSync('nativeGoalEngineDecideContinuation', json);
+}
+
+/** Apply the 3-turn blocked audit. */
+export function tryNativeGoalEngineDecideBlockedAudit(
+  json: string,
+): { action: 'record_attempt'; streak: number; attemptsNeeded: number; message: string } | { action: 'mark_blocked'; streak: number } | undefined {
+  return callNativeSync('nativeGoalEngineDecideBlockedAudit', json);
+}
+
+/** Attempt a status transition. */
+export function tryNativeGoalEngineDecideStatusTransition(
+  json: string,
+): { ok: true; goal: Record<string, unknown> } | { ok: false; error: string } | undefined {
+  return callNativeSync('nativeGoalEngineDecideStatusTransition', json);
+}
+
+/** Render the full active-goal reminder. */
+export function tryNativeGoalEngineRenderGoalReminder(json: string): string | undefined {
+  return callNativeSync<string>('nativeGoalEngineRenderGoalReminder', json);
+}
+
+/** Render a light blocked note. */
+export function tryNativeGoalEngineRenderBlockedNote(json: string): string | undefined {
+  return callNativeSync<string>('nativeGoalEngineRenderBlockedNote', json);
+}
+
+/** Render a light paused note. */
+export function tryNativeGoalEngineRenderPausedNote(json: string): string | undefined {
+  return callNativeSync<string>('nativeGoalEngineRenderPausedNote', json);
+}
+
+// ============================================================================
+// Compaction — split safety + user message selection
+// ============================================================================
+
+/** Check whether a compaction split is safe after messages[index]. */
+export function tryNativeCanSplitAfter(
+  messages: Array<{ role: string; toolCallsCount: number; tokens: number }>,
+  index: number,
+): boolean | undefined {
+  return callNativeSync<boolean>('nativeCanSplitAfter', messages, index);
+}
+
+/** Select user messages compaction keeps verbatim (head/tail split). */
+export function tryNativeSelectCompactionUserMessages(
+  messages: Array<{ role: string; text: string; tokens: number }>,
+  maxTokens: number,
+  headTokens: number,
+): {
+  headIndices: number[];
+  tailIndices: number[];
+  headTruncateChars: number | null;
+  tailTruncateChars: number | null;
+  elided: boolean;
+  omittedTokens: number;
+} | undefined {
+  return callNativeSync('nativeSelectCompactionUserMessages', messages, maxTokens, headTokens);
+}
+
+// ============================================================================
+// Path access — canonicalization and containment
+// ============================================================================
+
+/** Normalize a user path (Win32/Cygwin drive conversion). */
+export function tryNativePathNormalizeUserPath(path: string, pathClass: string): string | undefined {
+  return callNativeSync<string>('nativePathNormalizeUserPath', path, pathClass);
+}
+
+/** Expand `~` → home directory. */
+export function tryNativePathExpandUserPath(
+  path: string,
+  homeDir: string | undefined,
+  pathClass: string,
+): string | undefined {
+  return callNativeSync<string>('nativePathExpandUserPath', path, homeDir, pathClass);
+}
+
+/** Lexical canonicalization (relative → absolute → normalize). Returns "ERROR: ..." on failure. */
+export function tryNativePathCanonicalize(path: string, cwd: string, pathClass: string): string | undefined {
+  return callNativeSync<string>('nativePathCanonicalize', path, cwd, pathClass);
+}
+
+/** Component-boundary prefix check. */
+export function tryNativePathIsWithinDirectory(
+  candidate: string,
+  base: string,
+  pathClass: string,
+): boolean | undefined {
+  return callNativeSync<boolean>('nativePathIsWithinDirectory', candidate, base, pathClass);
+}
+
+/** Multi-root workspace containment. */
+export function tryNativePathIsWithinWorkspace(
+  candidate: string,
+  roots: string[],
+  pathClass: string,
+): boolean | undefined {
+  return callNativeSync<boolean>('nativePathIsWithinWorkspace', candidate, roots, pathClass);
+}
+
+/** Glob-aware canonicalization (preserves `*?[{` suffix). Returns "ERROR: ..." on failure. */
+export function tryNativePathCanonicalizeForGlob(
+  path: string,
+  cwd: string,
+  pathClass: string,
+): string | undefined {
+  return callNativeSync<string>('nativePathCanonicalizeForGlob', path, cwd, pathClass);
+}
+
+// ============================================================================
+// Permission — DSL pattern parsing
+// ============================================================================
+
+/** Parse a permission rule DSL pattern. Returns JSON string or "ERROR: ...". */
+export function tryNativeParsePermissionPattern(pattern: string): string | undefined {
+  return callNativeSync<string>('nativeParsePermissionPattern', pattern);
+}

@@ -1,4 +1,5 @@
 import { tryNativeGlobMatch } from '../../tools/support/native-glob-match';
+import { tryNativeParsePermissionPattern } from '../../tools/builtin/native-tools';
 
 import type { RunnableToolExecution } from '../../loop/types';
 import type { PermissionRule } from './types';
@@ -43,8 +44,22 @@ export interface PermissionRuleMatchInput {
 /**
  * Parse a DSL pattern. Throws on malformed input (missing closing paren,
  * empty tool name). The parser is the single source of truth for DSL syntax.
+ *
+ * Delegates to the Rust implementation when available; falls back to the TS
+ * parser when the native module is unavailable.
  */
 export function parsePattern(pattern: string): ParsedPattern {
+  // Rust owns DSL parsing.
+  const native = tryNativeParsePermissionPattern(pattern);
+  if (native !== undefined) {
+    if (native.startsWith('ERROR:')) {
+      throw new Error(native.slice(6));
+    }
+    const parsed = JSON.parse(native) as { toolName: string; argPattern?: string | null };
+    return { toolName: parsed.toolName, argPattern: parsed.argPattern ?? undefined };
+  }
+
+  // --- TS fallback ---
   const trimmed = pattern.trim();
   if (trimmed.length === 0) {
     throw new Error('permission pattern: empty string');
@@ -64,8 +79,6 @@ export function parsePattern(pattern: string): ParsedPattern {
   if (toolName.length === 0) {
     throw new Error(`permission pattern: empty tool name in "${pattern}"`);
   }
-  // `Tool()` parses to no arg pattern so it stays tool-name-only — tools without
-  // a `matchesRule` matcher (user/MCP/custom) would otherwise stop matching it.
   if (argPattern.length === 0) {
     return { toolName };
   }

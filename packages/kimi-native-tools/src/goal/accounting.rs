@@ -173,6 +173,23 @@ impl Default for AccountingInner {
     }
 }
 
+// ---------------------------------------------------------------------------
+// apply_and_report — free function for the engine
+// ---------------------------------------------------------------------------
+
+/// Applies token + turn deltas and returns whether the goal is over budget.
+/// This is the engine-side helper for `engine::apply_usage`.
+pub fn apply_and_report(
+    goal: &mut crate::goal::state::GoalState,
+    token_delta: i64,
+    turn_delta: i64,
+    now_ms: i64,
+) -> bool {
+    goal.tokens_used += token_delta.max(0);
+    goal.turns_used += turn_delta.max(0);
+    goal.is_over_budget(now_ms)
+}
+
 impl GoalAccountingState {
     pub fn new() -> Self {
         Self {

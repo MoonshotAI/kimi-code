@@ -84,6 +84,7 @@
     "@moonshot-ai/i18n-shared": "workspace:^",
     "@moonshot-ai/kaos": "workspace:^",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
+    "@moonshot-ai/kimi-i18n": "workspace:^",
     "@moonshot-ai/kimi-native-tools": "workspace:^",
     "@moonshot-ai/kosong": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^",

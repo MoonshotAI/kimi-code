@@ -9,10 +9,13 @@
 import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'pathe';
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import { Disposable } from '#/_base/di/lifecycle';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
-import { unwrapErrorCause } from '#/_base/errors/errors';
+import { CoreErrors } from '#/_base/errors/codes';
+import { Error2, unwrapErrorCause } from '#/_base/errors/errors';
 import { generateHeroSlug } from '#/_base/utils/hero-slug';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { IAgentContextInjectorService } from '#/agent/contextInjector/contextInjector';
@@ -80,7 +83,7 @@ export class AgentPlanService extends Disposable implements IAgentPlanService {
 
   async enter(id = this.createPlanId(), createFile = false): Promise<void> {
     if (this.isActive) {
-      throw new Error('Already in plan mode');
+      throw new Error2(CoreErrors.codes.INTERNAL, t('v2Errors.planModeAlreadyActive'));
     }
 
     const planFilePath = this.planFilePathFor(id);

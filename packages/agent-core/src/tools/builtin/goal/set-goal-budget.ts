@@ -11,10 +11,9 @@ import type { BuiltinTool } from '../../../agent/tool';
 import type { GoalBudgetLimits } from '../../../agent/goal';
 import type { ToolExecution } from '../../../loop/types';
 import { toInputJsonSchema } from '../../support/input-schema';
+import { tryNativeGoalEngineValidateBudgetInput } from '../native-tools';
 import DESCRIPTION from './set-goal-budget.md?raw';
 
-const MIN_REASONABLE_TIME_BUDGET_MS = 1_000;
-const MAX_REASONABLE_TIME_BUDGET_MS = 24 * 60 * 60 * 1000;
 const BUDGET_UNITS = ['turns', 'tokens', 'milliseconds', 'seconds', 'minutes', 'hours'] as const;
 
 export const SetGoalBudgetToolInputSchema = z
@@ -38,20 +37,35 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
   resolveExecution(args: SetGoalBudgetToolInput): ToolExecution {
     const goal = this.agent.goal;
 
-    const normalizedArgs = normalizeBudgetInput(args);
-    const budget = budgetLimitsFromInput(normalizedArgs);
-    // Recording a budget the goal has already spent (e.g. the user says "one
-    // turn" after a turn was already used) leaves the goal immediately over
-    // budget. The goal driver only enforces budgets at turn boundaries, so
-    // without a stop here the rest of this tool batch and the next model step
-    // would run past the ceiling before the goal is blocked. Predict that case
-    // and stop the batch; the driver then blocks the goal at the boundary.
+    // Engine owns budget validation (unit conversion, rounding, time bounds).
+    const validationResult = tryNativeGoalEngineValidateBudgetInput(
+      JSON.stringify({ value: args.value, unit: args.unit }),
+    );
+    let budget: GoalBudgetLimits | null = null;
+    let displayValue = args.value;
+    let displayUnit = args.unit;
+    if (validationResult !== undefined) {
+      // Native available — use its result (or null if it rejected).
+      budget = validationResult.ok ? enginePatchToBudgetLimits(validationResult.budgetLimits) : null;
+      // Native returns normalized integer values; reflect them in display.
+      if (validationResult.ok) {
+        const patch = validationResult.budgetLimits;
+        if (typeof patch['tokenBudget'] === 'number') {
+          displayValue = patch['tokenBudget'] as number;
+        } else if (typeof patch['turnBudget'] === 'number') {
+          displayValue = patch['turnBudget'] as number;
+        }
+      }
+    } else {
+      // Native unavailable — fall back to TS validation.
+      const normalizedArgs = normalizeBudgetInput(args);
+      budget = budgetLimitsFromInput(normalizedArgs);
+      displayValue = normalizedArgs.value;
+      displayUnit = normalizedArgs.unit;
+    }
     const overBudgetAfterSet = budget !== null && this.wouldExceedBudget(budget);
     return {
-      description: `Setting goal budget: ${formatBudget(
-        normalizedArgs.value,
-        normalizedArgs.unit,
-      )}`,
+      description: `Setting goal budget: ${formatBudget(displayValue, displayUnit)}`,
       stopBatchAfterThis: overBudgetAfterSet,
       approvalRule: this.name,
       execute: async () => {
@@ -61,7 +75,7 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
         if (budget === null) {
           return {
             output:
-              `Goal budget not set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)} is not a ` +
+              `Goal budget not set: ${formatBudget(displayValue, displayUnit)} is not a ` +
               'reasonable goal budget.',
           };
         }
@@ -69,13 +83,13 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
         if (snapshot.budget.overBudget) {
           return {
             output:
-              `Goal budget set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)}. ` +
+              `Goal budget set: ${formatBudget(displayValue, displayUnit)}. ` +
               'The goal has already reached this budget and will stop now.',
             stopTurn: true,
           };
         }
         return {
-          output: `Goal budget set: ${formatBudget(normalizedArgs.value, normalizedArgs.unit)}.`,
+          output: `Goal budget set: ${formatBudget(displayValue, displayUnit)}.`,
         };
       },
     };
@@ -103,15 +117,16 @@ export class SetGoalBudgetTool implements BuiltinTool<SetGoalBudgetToolInput> {
   }
 }
 
+/** Converts an engine budget-limits patch into the TS GoalBudgetLimits shape. */
+const MIN_REASONABLE_TIME_BUDGET_MS: number = 1_000;
+const MAX_REASONABLE_TIME_BUDGET_MS: number = 24 * 60 * 60 * 1000;
+
 function normalizeBudgetInput(input: SetGoalBudgetToolInput): SetGoalBudgetToolInput {
   switch (input.unit) {
     case 'turns':
     case 'tokens':
       return { ...input, value: Math.max(1, Math.round(input.value)) };
-    case 'milliseconds':
-    case 'seconds':
-    case 'minutes':
-    case 'hours':
+    default:
       return input;
   }
 }
@@ -152,6 +167,20 @@ function toMilliseconds(
     case 'hours':
       return value * 60 * 60 * 1000;
   }
+}
+
+function enginePatchToBudgetLimits(patch: Record<string, unknown>): GoalBudgetLimits {
+  const result: GoalBudgetLimits = {};
+  if (typeof patch['tokenBudget'] === 'number') {
+    result.tokenBudget = patch['tokenBudget'];
+  }
+  if (typeof patch['turnBudget'] === 'number') {
+    result.turnBudget = patch['turnBudget'];
+  }
+  if (typeof patch['wallClockBudgetMs'] === 'number') {
+    result.wallClockBudgetMs = patch['wallClockBudgetMs'];
+  }
+  return result;
 }
 
 function formatBudget(value: number, unit: SetGoalBudgetToolInput['unit']): string {

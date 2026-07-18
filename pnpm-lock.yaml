@@ -577,6 +577,9 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      '@moonshot-ai/kimi-i18n':
+        specifier: workspace:^
+        version: link:../i18n
       '@moonshot-ai/kimi-native-tools':
         specifier: workspace:^
         version: link:../kimi-native-tools
@@ -701,6 +704,9 @@ importers:
       '@moonshot-ai/kimi-code-oauth':
         specifier: workspace:^
         version: link:../oauth
+      '@moonshot-ai/kimi-i18n':
+        specifier: workspace:^
+        version: link:../i18n
       '@moonshot-ai/kimi-native-tools':
         specifier: workspace:^
         version: link:../kimi-native-tools
@@ -826,7 +832,7 @@ importers:
         specifier: ^6.3.3
         version: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
 
-  packages/i18n-shared: {}
+  packages/i18n: {}
 
   packages/kaos:
     dependencies:
@@ -852,12 +858,9 @@ importers:
       '@moonshot-ai/agent-core-v2':
         specifier: workspace:^
         version: link:../agent-core-v2
-      '@moonshot-ai/i18n-shared':
+      '@moonshot-ai/kimi-i18n':
         specifier: workspace:^
-        version: link:../i18n-shared
-      '@moonshot-ai/kimi-native-tools':
-        specifier: workspace:^
-        version: link:../kimi-native-tools
+        version: link:../i18n
       bcryptjs:
         specifier: ^2.4.3
         version: 2.4.3

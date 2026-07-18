@@ -38,6 +38,7 @@ import {
 } from '#/app/model/thinking';
 import { tryNativeGlobMatch } from '../../tool/native-glob-match';
 
+import { t } from "@moonshot-ai/kimi-i18n";
 import { ErrorCodes, Error2 } from "#/errors";
 import { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import { IConfigService } from '#/app/config/config';
@@ -293,7 +294,7 @@ export class AgentProfileService implements IAgentProfileService {
   getProvider(): Model {
     const model = this.resolveModel();
     if (model === undefined) {
-      throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
+      throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, t('errors.modelNotConfigured'));
     }
     return model;
   }
@@ -499,7 +500,7 @@ export class AgentProfileService implements IAgentProfileService {
   private get model(): string {
     const modelAlias = this.modelAlias;
     if (modelAlias === undefined) {
-      throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, 'Model not set');
+      throw new Error2(ErrorCodes.MODEL_NOT_CONFIGURED, t('errors.modelNotConfigured'));
     }
     return modelAlias;
   }

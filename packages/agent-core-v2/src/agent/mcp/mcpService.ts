@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 
+import { t } from '@moonshot-ai/kimi-i18n';
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 import type { Tool as KosongTool } from '#/app/llmProtocol/tool';
@@ -344,17 +345,23 @@ export class AgentMcpService extends Disposable implements IAgentMcpService {
     const summary = collisions
       .map((collision) =>
         collision.collidesWith.kind === 'same_server'
-          ? `"${collision.toolName}" -> ${collision.qualified} (collides with "${collision.collidesWith.toolName}" from the same server)`
-          : `"${collision.toolName}" -> ${collision.qualified} (collides with server "${collision.collidesWith.serverName}")`,
+          ? t('v2Mcp.toolNameCollision', {
+              toolName: collision.toolName,
+              qualified: collision.qualified,
+              collidesWith: collision.collidesWith.toolName,
+            })
+          : t('v2Mcp.toolNameCollision', {
+              toolName: collision.toolName,
+              qualified: collision.qualified,
+              collidesWith: collision.collidesWith.serverName,
+            }),
       )
       .join('; ');
     this.eventBus.publish({
       type: 'error',
       ...makeErrorPayload(
         ErrorCodes.MCP_TOOL_NAME_COLLISION,
-        `MCP server "${serverName}" registered ${collisions.length} tool name` +
-          `${collisions.length === 1 ? '' : 's'} ` +
-          `that collide with existing qualified names; the losing tools were dropped: ${summary}`,
+        `${t('v2Mcp.serverCollisionSummary', { serverName, count: String(collisions.length) })}; ${t('v2Mcp.losingToolsDropped', { summary })}`,
         { details: { serverName, collisions: collisions as readonly unknown[] } },
       ),
     });

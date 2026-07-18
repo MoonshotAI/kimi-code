@@ -8,6 +8,7 @@
  * owns no scoped state.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
 import { z } from 'zod';
 
 import {
@@ -207,19 +208,17 @@ async function createAgentSwarmSpecs(
   const resumeCount = resumeEntries.length;
   const totalCount = resumeCount + itemCount;
   if (!hasMinimumAgentSwarmInputs(itemCount, resumeCount)) {
-    throw new Error('AgentSwarm requires at least 2 items unless resume_agent_ids is provided.');
+    throw new Error(t('v2Errors.swarmMinInputs'));
   }
   if (totalCount > MAX_AGENT_SWARM_SUBAGENTS) {
-    throw new Error(`AgentSwarm supports at most ${String(MAX_AGENT_SWARM_SUBAGENTS)} subagents.`);
+    throw new Error(t('v2Errors.swarmMaxSubagents', { count: MAX_AGENT_SWARM_SUBAGENTS }));
   }
   const promptTemplate = normalizeOptionalString(args.prompt_template);
   if (items.length > 0 && promptTemplate === undefined) {
-    throw new Error('prompt_template is required when items are provided.');
+    throw new Error(t('v2Errors.swarmPromptRequired'));
   }
   if (promptTemplate !== undefined && !promptTemplate.includes(PROMPT_TEMPLATE_PLACEHOLDER)) {
-    throw new Error(
-      `prompt_template must include the ${PROMPT_TEMPLATE_PLACEHOLDER} placeholder.`,
-    );
+    throw new Error(t('v2Errors.swarmPromptPlaceholder', { placeholder: PROMPT_TEMPLATE_PLACEHOLDER }));
   }
 
   const seenPrompts = new Map<string, number>();
@@ -239,9 +238,7 @@ async function createAgentSwarmSpecs(
       const prompt = itemPromptTemplate.split(PROMPT_TEMPLATE_PLACEHOLDER).join(item);
       const previousIndex = seenPrompts.get(prompt);
       if (previousIndex !== undefined) {
-        throw new Error(
-          `Duplicate subagent prompts from items ${String(previousIndex)} and ${String(index + 1)}. AgentSwarm requires distinct subagents.`,
-        );
+        throw new Error(t('v2Errors.swarmDuplicatePrompts', { indexA: previousIndex, indexB: index + 1 }));
       }
       seenPrompts.set(prompt, index + 1);
       specs.push({

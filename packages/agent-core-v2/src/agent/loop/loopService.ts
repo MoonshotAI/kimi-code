@@ -87,6 +87,8 @@ import { cancelTurn, promptTurn, TurnModel } from './turnOps';
 // without an import it would not enter every consumer's program).
 import './turnEvents';
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 export type LoopInterruptReason = 'aborted' | 'max_steps' | 'error';
 
 export class AgentLoopService extends Disposable implements IAgentLoopService {
@@ -156,7 +158,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
         break;
       case 'activeTurnOnly':
         if (active === undefined) {
-          const error = new BugIndicatingError(`Step request "${request.kind}" requires an active turn`);
+          const error = new BugIndicatingError(t('v2Errors.internal'));
           this.rejectAssignment(request, error);
           throw error;
         }
@@ -172,7 +174,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
   private createAndQueueTurn(request: StepRequest): void {
     const seed = request.turnSeed;
     if (seed === undefined) {
-      const error = new BugIndicatingError(`Step request "${request.kind}" cannot start a turn without turnSeed`);
+      const error = new BugIndicatingError(t('v2Errors.internal'));
       this.rejectAssignment(request, error);
       throw error;
     }
@@ -595,7 +597,7 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     runtime.current = undefined;
     runtime.lastStopReason = result.stopReason;
     if (result.stopReason === 'filtered') {
-      throw new Error2(ErrorCodes.PROVIDER_FILTERED, 'Provider safety policy blocked the response.', {
+      throw new Error2(ErrorCodes.PROVIDER_FILTERED, t('v2Loop.providerSafetyBlocked'), {
         name: 'ProviderFilteredError',
         details: { finishReason: 'filtered' },
       });

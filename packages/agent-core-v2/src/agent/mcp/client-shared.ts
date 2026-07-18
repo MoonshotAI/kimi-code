@@ -1,4 +1,6 @@
 import { getCoreVersion } from '#/_base/version';
+import { ErrorCodes, Error2 } from '#/errors';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 import type { MCPToolDefinition, MCPToolResult } from './types';
 
@@ -24,7 +26,7 @@ export function buildRequestOptions(
   toolCallTimeoutMs: number | undefined,
   signal: AbortSignal | undefined,
 ): McpRequestOptions | undefined {
-  if (signal?.aborted) { throw signal.reason ?? new Error('Tool call aborted'); }
+  if (signal?.aborted) { throw signal.reason ?? new Error2(ErrorCodes.INTERNAL, t('v2Errors.internal')); }
   if (toolCallTimeoutMs === undefined && signal === undefined) return undefined;
   return { timeout: toolCallTimeoutMs, signal };
 }
@@ -48,7 +50,7 @@ export function toMcpToolResult(result: unknown): MCPToolResult {
   if (serializedLength > MCP_MAX_SERIALIZED_RESULT_BYTES) {
     const mb = (serializedLength / (1024 * 1024)).toFixed(1);
     const limitMb = (MCP_MAX_SERIALIZED_RESULT_BYTES / (1024 * 1024)).toFixed(0);
-    throw new Error(`MCP tool result too large: ~${mb} MB exceeds ${limitMb} MB limit`);
+    throw new Error2(ErrorCodes.INTERNAL, t('v2Errors.mcpResultTooLarge', { mb, limitMb }));
   }
   if (typeof result === 'object' && result !== null && 'content' in result) {
     const typed = result as { content: unknown; isError?: unknown };

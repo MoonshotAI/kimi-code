@@ -3,7 +3,7 @@
 /// This module defines the `#[napi]` functions that TypeScript calls.
 /// Each function wraps the corresponding Rust implementation.
 use crate::bash::{self, BashConfig, BashResult, DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S};
-use crate::compaction::{self, CompactionConfigMeta, CompactionMessageMeta};
+use crate::compaction::{self, CompactionConfigMeta, CompactionMessageMeta, HandoffMessageMeta, CompactionUserSelection};
 use crate::edit::{self, EditResult};
 use crate::escape;
 use crate::glob::{self, GlobConfig, GlobResult, MAX_MATCHES};
@@ -11,6 +11,7 @@ use crate::grep::{self, GrepConfig, GrepResult, GrepStructuredConfig, GrepStruct
 use crate::image_compress;
 use crate::list_directory::{self, ListDirectoryConfig, ListDirectoryResult};
 use crate::output_truncate;
+use crate::permission;
 use crate::read::{self, ReadConfig, ReadResult, MAX_BYTES, MAX_LINE_LENGTH, MAX_LINES};
 use crate::tool_access::{self, ToolAccessMeta};
 use crate::tool_naming;
@@ -585,6 +586,25 @@ pub fn native_reduce_compact_on_overflow(
     config: CompactionConfigMeta,
 ) -> u32 {
     compaction::reduce_compact_on_overflow(&messages, &config)
+}
+
+/// Check whether a compaction split is safe after `messages[index]`.
+#[napi]
+pub fn native_can_split_after(messages: Vec<CompactionMessageMeta>, index: u32) -> bool {
+    compaction::can_split_after(&messages, index as usize)
+}
+
+/// Select user messages compaction keeps verbatim, with head/tail split.
+///
+/// Input: lightweight projection of user messages (role + text + tokens).
+/// Output: indices into the input + truncation info for TS to rebuild.
+#[napi]
+pub fn native_select_compaction_user_messages(
+    messages: Vec<compaction::HandoffMessageMeta>,
+    max_tokens: u32,
+    head_tokens: u32,
+) -> compaction::CompactionUserSelection {
+    compaction::select_compaction_user_messages(&messages, max_tokens, head_tokens)
 }
 
 /// Estimate token count from text using a character-based heuristic.
@@ -1309,6 +1329,229 @@ pub fn native_goal_render_objective_updated(
 }
 
 // ---------------------------------------------------------------------------
+// GoalEngine — decision core (stateless, JSON-in/JSON-out)
+// ---------------------------------------------------------------------------
+
+/// Validate and normalize a goal creation input.
+/// Input: `{ objective: string, completionCriterion?: string }`
+/// Output: `{ ok: true, objective: string, completionCriterion?: string }`
+///      or `{ ok: false, error: string }`
+#[napi]
+pub fn native_goal_engine_validate_create_input(json: String) -> String {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
+        let objective = get_str(&v, "objective")?.to_string();
+        let criterion = v.get("completionCriterion").and_then(|x| x.as_str());
+        let (obj, crit) = crate::goal::engine::validate_create_input(&objective, criterion)?;
+        Ok(json!({ "ok": true, "objective": obj, "completionCriterion": crit }))
+    })();
+    match result {
+        Ok(r) => r.to_string(),
+        Err(e) => json!({ "ok": false, "error": e }).to_string(),
+    }
+}
+
+/// Validate a budget input into a limits patch.
+/// Input: `{ value: number, unit: 'turns'|'tokens'|'milliseconds'|'seconds'|'minutes'|'hours' }`
+/// Output: `{ ok: true, budgetLimits: { tokenBudget?, turnBudget?, wallClockBudgetMs? } }`
+///      or `{ ok: false, error: string }`
+#[napi]
+pub fn native_goal_engine_validate_budget_input(json: String) -> String {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
+        let value = v.get("value").and_then(|x| x.as_f64()).ok_or("missing value")?;
+        let unit = get_str(&v, "unit")?;
+        let patch = crate::goal::engine::validate_budget_input_json(value, unit)?;
+        Ok(json!({
+            "ok": true,
+            "budgetLimits": {
+                "tokenBudget": patch.token_budget.flatten(),
+                "turnBudget": patch.turn_budget.flatten(),
+                "wallClockBudgetMs": patch.wall_clock_budget_ms.flatten(),
+            }
+        }))
+    })();
+    match result {
+        Ok(r) => r.to_string(),
+        Err(e) => json!({ "ok": false, "error": e }).to_string(),
+    }
+}
+
+/// Compute the full budget report.
+/// Input: `{ goal: GoalStateJSON, nowMs: number }`
+/// Output: `{ tokenBudget, turnBudget, wallClockBudgetMs, remainingTokens, remainingTurns, remainingWallClockMs, tokenBudgetReached, turnBudgetReached, wallClockBudgetReached, overBudget }`
+#[napi]
+pub fn native_goal_engine_compute_budget_report(json: String) -> String {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
+        let goal = parse_goal(v.get("goal").ok_or("missing goal")?)?;
+        let now_ms = v.get("nowMs").and_then(|x| x.as_i64()).unwrap_or(0);
+        let report = crate::goal::engine::compute_budget_report(&goal, now_ms);
+        Ok(json!({
+            "tokenBudget": report.token_budget,
+            "turnBudget": report.turn_budget,
+            "wallClockBudgetMs": report.wall_clock_budget_ms,
+            "remainingTokens": report.remaining_tokens,
+            "remainingTurns": report.remaining_turns,
+            "remainingWallClockMs": report.remaining_wall_clock_ms,
+            "tokenBudgetReached": report.token_budget_reached,
+            "turnBudgetReached": report.turn_budget_reached,
+            "wallClockBudgetReached": report.wall_clock_budget_reached,
+            "overBudget": report.over_budget,
+        }))
+    })();
+    match result {
+        Ok(r) => r.to_string(),
+        Err(e) => json!({ "ok": false, "error": e }).to_string(),
+    }
+}
+
+/// Apply token + turn deltas to a goal.
+/// Input: `{ goal: GoalStateJSON, tokenDelta: number, turnDelta: number, nowMs: number }`
+/// Output: `{ goal: GoalStateJSON, overBudget: boolean }`
+#[napi]
+pub fn native_goal_engine_apply_usage(json: String) -> String {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
+        let mut goal = parse_goal(v.get("goal").ok_or("missing goal")?)?;
+        let token_delta = v.get("tokenDelta").and_then(|x| x.as_i64()).unwrap_or(0);
+        let turn_delta = v.get("turnDelta").and_then(|x| x.as_i64()).unwrap_or(0);
+        let now_ms = v.get("nowMs").and_then(|x| x.as_i64()).unwrap_or(0);
+        let over = crate::goal::engine::apply_usage(&mut goal, token_delta, turn_delta, now_ms);
+        Ok(json!({ "goal": serialize_goal(&goal), "overBudget": over }))
+    })();
+    match result {
+        Ok(r) => r.to_string(),
+        Err(e) => json!({ "ok": false, "error": e }).to_string(),
+    }
+}
+
+/// Decide whether the goal driver should continue.
+/// Input: `{ goal: GoalStateJSON, nowMs: number }`
+/// Output: `{ action: 'continue', steeringPrompt: string }`
+///      or `{ action: 'stop_budget', reason: string, steeringPrompt: string }`
+///      or `{ action: 'stop_inactive' }`
+#[napi]
+pub fn native_goal_engine_decide_continuation(json: String) -> String {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
+        let goal = parse_goal(v.get("goal").ok_or("missing goal")?)?;
+        let now_ms = v.get("nowMs").and_then(|x| x.as_i64()).unwrap_or(0);
+        let decision = crate::goal::engine::decide_continuation(&goal, now_ms);
+        match decision {
+            crate::goal::engine::ContinuationAction::Continue { steering_prompt } => {
+                Ok(json!({ "action": "continue", "steeringPrompt": steering_prompt }))
+            }
+            crate::goal::engine::ContinuationAction::StopBudget { reason, steering_prompt } => {
+                Ok(json!({ "action": "stop_budget", "reason": reason, "steeringPrompt": steering_prompt }))
+            }
+            crate::goal::engine::ContinuationAction::StopInactive => {
+                Ok(json!({ "action": "stop_inactive" }))
+            }
+        }
+    })();
+    match result {
+        Ok(r) => r.to_string(),
+        Err(e) => json!({ "ok": false, "error": e }).to_string(),
+    }
+}
+
+/// Apply the 3-turn blocked audit.
+/// Input: `{ goal: GoalStateJSON }`
+/// Output: `{ action: 'record_attempt', streak: number, attemptsNeeded: number, message: string }`
+///      or `{ action: 'mark_blocked', streak: number }`
+#[napi]
+pub fn native_goal_engine_decide_blocked_audit(json: String) -> String {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
+        let goal = parse_goal(v.get("goal").ok_or("missing goal")?)?;
+        let decision = crate::goal::engine::decide_blocked_audit(&goal);
+        match decision {
+            state::BlockedAuditDecision::RecordAttempt { streak, attempts_needed, message } => {
+                Ok(json!({ "action": "record_attempt", "streak": streak, "attemptsNeeded": attempts_needed, "message": message }))
+            }
+            state::BlockedAuditDecision::MarkBlocked { streak } => {
+                Ok(json!({ "action": "mark_blocked", "streak": streak }))
+            }
+        }
+    })();
+    match result {
+        Ok(r) => r.to_string(),
+        Err(e) => json!({ "ok": false, "error": e }).to_string(),
+    }
+}
+
+/// Attempt a status transition.
+/// Input: `{ goal: GoalStateJSON, targetStatus: string, expectedGoalId?: string }`
+/// Output: `{ ok: true, goal: GoalStateJSON }` or `{ ok: false, error: string }`
+#[napi]
+pub fn native_goal_engine_decide_status_transition(json: String) -> String {
+    let result = (|| -> Result<serde_json::Value, String> {
+        let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
+        let goal = parse_goal(v.get("goal").ok_or("missing goal")?)?;
+        let target_str = v.get("targetStatus").and_then(|x| x.as_str()).ok_or("missing targetStatus")?;
+        let target = state::GoalStatus::from_str(target_str)
+            .ok_or_else(|| format!("invalid status: {target_str}"))?;
+        let expected = v.get("expectedGoalId").and_then(|x| x.as_str());
+        let new_goal = crate::goal::engine::decide_status_transition(goal, target, expected)?;
+        Ok(json!({ "ok": true, "goal": serialize_goal(&new_goal) }))
+    })();
+    match result {
+        Ok(r) => r.to_string(),
+        Err(e) => json!({ "ok": false, "error": e }).to_string(),
+    }
+}
+
+/// Render the full active-goal reminder (injected at turn boundary).
+/// Input: `{ goal: GoalStateJSON, nowMs: number }`
+/// Output: rendered prompt string
+#[napi]
+pub fn native_goal_engine_render_goal_reminder(json: String) -> String {
+    let result = (|| -> Result<String, String> {
+        let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
+        let goal = parse_goal(v.get("goal").ok_or("missing goal")?)?;
+        let now_ms = v.get("nowMs").and_then(|x| x.as_i64()).unwrap_or(0);
+        Ok(steering::render_goal_reminder(&goal, now_ms))
+    })();
+    match result {
+        Ok(r) => r,
+        Err(e) => format!("ERROR: {e}"),
+    }
+}
+
+/// Render a light blocked note.
+/// Input: `{ goal: GoalStateJSON }`
+/// Output: rendered prompt string
+#[napi]
+pub fn native_goal_engine_render_blocked_note(json: String) -> String {
+    let result = (|| -> Result<String, String> {
+        let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
+        let goal = parse_goal(v.get("goal").ok_or("missing goal")?)?;
+        Ok(steering::render_blocked_note(&goal))
+    })();
+    match result {
+        Ok(r) => r,
+        Err(e) => format!("ERROR: {e}"),
+    }
+}
+
+/// Render a light paused note.
+/// Input: `{ goal: GoalStateJSON }`
+/// Output: rendered prompt string
+#[napi]
+pub fn native_goal_engine_render_paused_note(json: String) -> String {
+    let result = (|| -> Result<String, String> {
+        let v: serde_json::Value = serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
+        let goal = parse_goal(v.get("goal").ok_or("missing goal")?)?;
+        Ok(steering::render_paused_note(&goal))
+    })();
+    match result {
+        Ok(r) => r,
+        Err(e) => format!("ERROR: {e}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Internal JSON helpers
 // ---------------------------------------------------------------------------
 
@@ -1319,11 +1562,17 @@ fn parse_goal(v: &serde_json::Value) -> Result<state::GoalState, String> {
     Ok(state::GoalState {
         goal_id: get_str(v, "goalId")?.to_string(),
         objective: get_str(v, "objective")?.to_string(),
+        completion_criterion: v
+            .get("completionCriterion")
+            .and_then(|x| x.as_str().map(|s| s.to_string())),
         status: state::GoalStatus::from_str(status_str)
             .ok_or_else(|| format!("invalid status: {status_str}"))?,
         token_budget: v.get("tokenBudget").and_then(|x| x.as_i64()),
+        turn_budget: v.get("turnBudget").and_then(|x| x.as_i64()),
+        wall_clock_budget_ms: v.get("wallClockBudgetMs").and_then(|x| x.as_i64()),
         tokens_used: get_i64(v, "tokensUsed")?,
-        time_used_seconds: get_i64(v, "timeUsedSeconds")?,
+        turns_used: v.get("turnsUsed").and_then(|x| x.as_i64()).unwrap_or(0),
+        wall_clock_ms: v.get("wallClockMs").and_then(|x| x.as_i64()).unwrap_or(0),
         blocked_streak: v
             .get("blockedStreak")
             .and_then(|x| x.as_u64())
@@ -1340,6 +1589,11 @@ fn parse_goal(v: &serde_json::Value) -> Result<state::GoalState, String> {
 fn parse_update(v: &serde_json::Value) -> Result<state::GoalUpdate, String> {
     Ok(state::GoalUpdate {
         objective: v.get("objective").and_then(|x| x.as_str().map(|s| s.to_string())),
+        completion_criterion: match v.get("completionCriterion") {
+            Some(val) if val.is_null() => Some(None),
+            Some(val) => Some(val.as_str().map(|s| s.to_string())),
+            None => None,
+        },
         status: v
             .get("status")
             .and_then(|x| x.as_str())
@@ -1349,8 +1603,19 @@ fn parse_update(v: &serde_json::Value) -> Result<state::GoalUpdate, String> {
             Some(val) => Some(val.as_i64()),
             None => None,
         },
+        turn_budget: match v.get("turnBudget") {
+            Some(val) if val.is_null() => Some(None),
+            Some(val) => Some(val.as_i64()),
+            None => None,
+        },
+        wall_clock_budget_ms: match v.get("wallClockBudgetMs") {
+            Some(val) if val.is_null() => Some(None),
+            Some(val) => Some(val.as_i64()),
+            None => None,
+        },
         tokens_used: v.get("tokensUsed").and_then(|x| x.as_i64()),
-        time_used_seconds: v.get("timeUsedSeconds").and_then(|x| x.as_i64()),
+        turns_used: v.get("turnsUsed").and_then(|x| x.as_i64()),
+        wall_clock_ms: v.get("wallClockMs").and_then(|x| x.as_i64()),
         blocked_streak: v.get("blockedStreak").and_then(|x| x.as_u64().map(|x| x as u32)),
         wall_clock_resumed_at: match v.get("wallClockResumedAt") {
             Some(val) if val.is_null() => Some(None),
@@ -1372,12 +1637,19 @@ fn serialize_goal(g: &state::GoalState) -> serde_json::Value {
     json!({
         "goalId": g.goal_id,
         "objective": g.objective,
+        "completionCriterion": g.completion_criterion,
         "status": g.status.as_str(),
         "tokenBudget": g.token_budget,
+        "turnBudget": g.turn_budget,
+        "wallClockBudgetMs": g.wall_clock_budget_ms,
         "tokensUsed": g.tokens_used,
-        "timeUsedSeconds": g.time_used_seconds,
+        "turnsUsed": g.turns_used,
+        "wallClockMs": g.wall_clock_ms,
         "blockedStreak": g.blocked_streak,
+        "wallClockResumedAt": g.wall_clock_resumed_at,
         "terminalReason": g.terminal_reason,
+        "createdAt": g.created_at,
+        "updatedAt": g.updated_at,
     })
 }
 
@@ -1394,157 +1666,69 @@ fn get_i64(v: &serde_json::Value, key: &str) -> Result<i64, String> {
 }
 
 // ============================================================================
-// i18n Translation engine — compiled Rust core for the project's i18n system
+// Path access — canonicalization and containment
 // ============================================================================
 
-use crate::translation;
+use crate::path_access;
 
-/// Result of a single translation in a batch call.
-#[napi(object)]
-pub struct NativeBatchTranslateResult {
-    /// The translation key that was resolved.
-    pub key: String,
-    /// The resolved and interpolated message.
-    pub message: String,
-}
-
-/// Resolve a dot-separated translation key against locale JSON, with
-/// `{{param}}` interpolation.
-///
-/// The engine is stateless: all locale data is passed in at call time. This
-/// keeps locale data maintainable in TypeScript/JSON while the core logic is
-/// compiled Rust — fixed, fast, and never lost.
-///
-/// Resolution order:
-/// 1. Try `locale_json` (current language).
-/// 2. Try `fallback_json` (defaults to English).
-/// 3. Return the `key` itself as last resort.
-///
-/// @param locale_json - Current-locale messages as a JSON string.
-/// @param fallback_json - Fallback-locale messages as a JSON string.
-/// @param key - Dot-separated translation key (e.g. "common.ok").
-/// @param params - Optional param map for `{{name}}` interpolation.
-/// @returns The resolved and interpolated message string.
+/// Normalize a user path (Win32/Cygwin drive conversion).
 #[napi]
-pub fn native_translate(
-    locale_json: String,
-    fallback_json: String,
-    key: String,
-    params: Option<HashMap<String, String>>,
-) -> String {
-    translation::translate(&locale_json, &fallback_json, &key, params.as_ref())
+pub fn native_path_normalize_user_path(path: String, path_class: String) -> String {
+    let class = path_access::PathClass::from_str(&path_class).unwrap_or(path_access::PathClass::Posix);
+    path_access::normalize_user_path(&path, class)
 }
 
-/// Batch translation — resolves multiple keys against the same locale data
-/// in a single call, parsing the JSON only once.
-///
-/// More efficient than calling `native_translate` N times when you have many
-/// keys to resolve against the same locale data.
-///
-/// @param locale_json - Current-locale messages as a JSON string.
-/// @param fallback_json - Fallback-locale messages as a JSON string.
-/// @param keys - Array of dot-separated translation keys.
-/// @param params - Optional param map for `{{name}}` interpolation (same for all keys).
-/// @returns Array of { key, message } results, in input order.
+/// Expand `~` → home directory.
 #[napi]
-pub fn native_translate_batch(
-    locale_json: String,
-    fallback_json: String,
-    keys: Vec<String>,
-    params: Option<HashMap<String, String>>,
-) -> Vec<NativeBatchTranslateResult> {
-    let results = translation::translate_batch(&locale_json, &fallback_json, &keys, params.as_ref());
-    results
-        .into_iter()
-        .map(|r| NativeBatchTranslateResult {
-            key: r.key,
-            message: r.message,
-        })
-        .collect()
+pub fn native_path_expand_user_path(path: String, home_dir: Option<String>, path_class: String) -> String {
+    let class = path_access::PathClass::from_str(&path_class).unwrap_or(path_access::PathClass::Posix);
+    path_access::expand_user_path(&path, home_dir.as_deref(), class)
 }
 
-// ── Cached translation — global singleton ────────────────────────────────────
-//
-// `native_translate` re-parses both JSON strings on every call.  For hot paths
-// (TUI rendering, server responses) this is wasteful.  `native_translate_cached`
-// uses a process-wide `CachedTranslator` that caches the parsed `serde_json::Value`
-// keyed by the JSON string itself.  After the first call with a given locale
-// pair, subsequent calls skip JSON parsing entirely.
-
-static CACHED_TRANSLATOR: OnceLock<translation::CachedTranslator> = OnceLock::new();
-
-fn cached_translator() -> &'static translation::CachedTranslator {
-    CACHED_TRANSLATOR.get_or_init(|| translation::CachedTranslator::new())
-}
-
-/// Resolve a translation key using a process-wide cached translator.
-///
-/// Identical semantics to `native_translate`, but the parsed JSON `Value` trees
-/// are cached across calls keyed by the JSON string.  After the first call with
-/// a particular `locale_json` / `fallback_json` pair, subsequent calls with the
-/// same strings skip JSON parsing entirely — only the key lookup and
-/// interpolation run.
-///
-/// Use this in long-running processes (TUI sessions, servers, daemons) where the
-/// same locale data is reused.  Call `native_translate_clear_cache` when locale
-/// data is reloaded.
-///
-/// @param locale_json - Current-locale messages as a JSON string.
-/// @param fallback_json - Fallback-locale messages as a JSON string.
-/// @param key - Dot-separated translation key (e.g. "common.ok").
-/// @param params - Optional param map for `{{name}}` interpolation.
-/// @returns The resolved and interpolated message string.
+/// Lexical canonicalization: relative → absolute → normalize.
+/// Returns "ERROR: <code>: <message>" on failure (mirrors TS PathSecurityError).
 #[napi]
-pub fn native_translate_cached(
-    locale_json: String,
-    fallback_json: String,
-    key: String,
-    params: Option<HashMap<String, String>>,
-) -> String {
-    cached_translator().translate(&locale_json, &fallback_json, &key, params.as_ref())
-}
-
-/// Clear the parsed-JSON cache of the global cached translator.
-///
-/// Call this when locale data has been reloaded (e.g. after `setLocale` or a
-/// hot-reload of locale files) so that stale parsed JSON is evicted.
-#[napi]
-pub fn native_translate_clear_cache() {
-    if let Some(t) = CACHED_TRANSLATOR.get() {
-        t.clear_cache();
+pub fn native_path_canonicalize(path: String, cwd: String, path_class: String) -> String {
+    let class = path_access::PathClass::from_str(&path_class).unwrap_or(path_access::PathClass::Posix);
+    match path_access::canonicalize_path(&path, &cwd, class) {
+        Ok(p) => p,
+        Err(e) => format!("ERROR: {e}"),
     }
 }
 
-/// Batch translation using the process-wide cached translator.
-///
-/// Identical semantics to `native_translate_batch`, but uses the same
-/// `CachedTranslator` singleton as `native_translate_cached`. After the first
-/// call with a particular `locale_json` / `fallback_json` pair, subsequent
-/// batch calls skip JSON parsing entirely.
-///
-/// @param locale_json - Current-locale messages as a JSON string.
-/// @param fallback_json - Fallback-locale messages as a JSON string.
-/// @param keys - Array of dot-separated translation keys.
-/// @param params - Optional param map for `{{name}}` interpolation (same for all keys).
-/// @returns Array of { key, message } results, in input order.
+/// Component-boundary prefix check.
 #[napi]
-pub fn native_translate_batch_cached(
-    locale_json: String,
-    fallback_json: String,
-    keys: Vec<String>,
-    params: Option<HashMap<String, String>>,
-) -> Vec<NativeBatchTranslateResult> {
-    let results = cached_translator().translate_batch(
-        &locale_json,
-        &fallback_json,
-        &keys,
-        params.as_ref(),
-    );
-    results
-        .into_iter()
-        .map(|r| NativeBatchTranslateResult {
-            key: r.key,
-            message: r.message,
-        })
-        .collect()
+pub fn native_path_is_within_directory(candidate: String, base: String, path_class: String) -> bool {
+    let class = path_access::PathClass::from_str(&path_class).unwrap_or(path_access::PathClass::Posix);
+    path_access::is_within_directory(&candidate, &base, class)
+}
+
+/// Multi-root workspace containment.
+#[napi]
+pub fn native_path_is_within_workspace(candidate: String, roots: Vec<String>, path_class: String) -> bool {
+    let class = path_access::PathClass::from_str(&path_class).unwrap_or(path_access::PathClass::Posix);
+    path_access::is_within_workspace(&candidate, &roots, class)
+}
+
+// ============================================================================
+// Permission — DSL pattern parsing
+// ============================================================================
+
+/// Parse a permission rule DSL pattern.
+/// Returns JSON `{"toolName":"...","argPattern":...}` or `"ERROR: ..."` on failure.
+#[napi]
+pub fn native_parse_permission_pattern(pattern: String) -> String {
+    permission::native_parse_permission_pattern(pattern)
+}
+
+/// Glob-aware canonicalization: normalizes the path prefix before the first
+/// glob-containing component, leaving the glob suffix untouched. Returns
+/// "ERROR: ..." on failure.
+#[napi]
+pub fn native_path_canonicalize_for_glob(path: String, cwd: String, path_class: String) -> String {
+    let class = path_access::PathClass::from_str(&path_class).unwrap_or(path_access::PathClass::Posix);
+    match path_access::canonicalize_path_for_glob(&path, &cwd, class) {
+        Ok(p) => p,
+        Err(e) => format!("ERROR: {e}"),
+    }
 }

@@ -71,6 +71,7 @@ const GLOB_MAX_MATCHES = binding.GLOB_MAX_MATCHES;
 const GREP_DEFAULT_HEAD_LIMIT = binding.GREP_DEFAULT_HEAD_LIMIT;
 const BASH_DEFAULT_TIMEOUT = binding.BASH_DEFAULT_TIMEOUT;
 const BASH_MAX_TIMEOUT = binding.BASH_MAX_TIMEOUT;
+const nativeIsSensitiveFileBytes = binding.nativeIsSensitiveFileBytes;
 
 // ============================================================================
 // Read tool
@@ -284,6 +285,21 @@ function nativeSniffImageDimensions(data) {
 }
 
 /**
+ * Detect file type from path and header bytes.
+ *
+ * Uses file extension first, then falls back to magic-byte sniffing.
+ *
+ * @param {string} path - File path (used for extension-based detection).
+ * @param {Buffer|Uint8Array} header - First bytes of the file content (up to 512 bytes).
+ * @returns {{ kind: string, mimeType: string }}
+ */
+function nativeDetectFileType(path, header) {
+  const r = binding.nativeDetectFileType(path, new Uint8Array(header));
+  // napi-rs: struct fields arrive as snake_case; normalize to camelCase.
+  return r ? { kind: r.kind, mimeType: r.mime_type ?? r.mimeType } : { kind: 'unknown', mimeType: '' };
+}
+
+/**
  * Check if a path points to a credentials-bearing file.
  *
  * Converts the JS string to a Latin1 byte buffer via `Buffer.from(path,
@@ -400,21 +416,29 @@ function nativeReduceCompactOnOverflow(messages, config) {
   return binding.nativeReduceCompactOnOverflow(messages, config);
 }
 
+// ============================================================================
+// Compaction — split safety + user message selection
+// ============================================================================
+
 /**
- * Resolve the effective `maxOutputSize` for a compaction call.
- *
- * Mirrors `defaultCompactionCap` in `compaction/full.ts`:
- * 1. If `maxOutputSize` is set and positive, the caller wins.
- * 2. Otherwise, when `maxContextTokens > 0`, use the lesser of
- *    `maxContextTokens` and `DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS` (128k).
- * 3. When the context window is unknown, return `null`.
- *
- * @param {number} maxContextTokens - The model's known max context tokens (0 = unknown).
- * @param {number | null} maxOutputSize - Caller-provided override, or `null` for default.
- * @returns {number | null} The effective cap, or `null` if unset.
+ * Check whether a compaction split is safe after messages[index].
+ * @param {Array<{role: string, toolCallsCount: number, tokens: number}>} messages
+ * @param {number} index
+ * @returns {boolean}
  */
-function nativeResolveCompactionMaxCompletionTokens(maxContextTokens, maxOutputSize) {
-  return binding.nativeResolveCompactionMaxCompletionTokens(maxContextTokens, maxOutputSize);
+function nativeCanSplitAfter(messages, index) {
+  return binding.nativeCanSplitAfter(messages, index);
+}
+
+/**
+ * Select user messages compaction keeps verbatim, with head/tail split.
+ * @param {Array<{role: string, text: string, tokens: number}>} messages
+ * @param {number} maxTokens
+ * @param {number} headTokens
+ * @returns {{headIndices: number[], tailIndices: number[], headTruncateChars: number|null, tailTruncateChars: number|null, elided: boolean, omittedTokens: number}}
+ */
+function nativeSelectCompactionUserMessages(messages, maxTokens, headTokens) {
+  return binding.nativeSelectCompactionUserMessages(messages, maxTokens, headTokens);
 }
 
 // ============================================================================
@@ -662,6 +686,71 @@ function nativeMcpStdioIsAlive(handle) {
 }
 
 // ============================================================================
+// XML / HTML escaping
+// ============================================================================
+
+/**
+ * Escape all XML-significant characters: & < > "
+ * @param {string} text - Input text to escape.
+ * @returns {string} Escaped text.
+ */
+function nativeEscapeXml(text) {
+  return binding.nativeEscapeXml(text);
+}
+
+/**
+ * Escape XML attribute boundary characters only: & "
+ * @param {string} text - Input text to escape.
+ * @returns {string} Escaped text.
+ */
+function nativeEscapeXmlAttr(text) {
+  return binding.nativeEscapeXmlAttr(text);
+}
+
+/**
+ * Escape tag delimiters only: < > (Markdown-safe, preserves & and ")
+ * @param {string} text - Input text to escape.
+ * @returns {string} Escaped text.
+ */
+function nativeEscapeXmlTags(text) {
+  return binding.nativeEscapeXmlTags(text);
+}
+
+// ============================================================================
+// MCP tool name sanitization
+// ============================================================================
+
+/**
+ * Sanitize a string for use as part of an MCP tool name.
+ * Replaces non-safe characters with `_` and collapses runs of `_`.
+ * @param {string} part - String to sanitize.
+ * @returns {string} Sanitized string.
+ */
+function nativeSanitizeMcpNamePart(part) {
+  return binding.nativeSanitizeMcpNamePart(part);
+}
+
+/**
+ * Check if a tool name starts with the MCP prefix (`mcp__`).
+ * @param {string} name - Tool name to check.
+ * @returns {boolean}
+ */
+function nativeIsMcpToolName(name) {
+  return binding.nativeIsMcpToolName(name);
+}
+
+/**
+ * Produce the qualified MCP tool name: `mcp__<server>__<tool>`.
+ * Truncates with a deterministic 8-char FNV-1a hash suffix if > 64 chars.
+ * @param {string} serverName - Server name.
+ * @param {string} toolName - Tool name.
+ * @returns {string} Qualified tool name.
+ */
+function nativeQualifyMcpToolName(serverName, toolName) {
+  return binding.nativeQualifyMcpToolName(serverName, toolName);
+}
+
+// ============================================================================
 // Goal — state machine, accounting, steering
 // ============================================================================
 
@@ -701,59 +790,147 @@ function nativeGoalRenderObjectiveUpdated(objective, tokensUsed, tokenBudget) {
 }
 
 // ============================================================================
-// i18n Translation engine — compiled Rust core for the project's i18n system
+// Path access
+// ============================================================================
+
+/** Normalize a user path (Win32/Cygwin drive conversion). */
+function nativePathNormalizeUserPath(path, pathClass) {
+  return binding.nativePathNormalizeUserPath(path, pathClass);
+}
+
+/** Expand `~` → home directory. */
+function nativePathExpandUserPath(path, homeDir, pathClass) {
+  return binding.nativePathExpandUserPath(path, homeDir, pathClass);
+}
+
+/** Lexical canonicalization (relative → absolute → normalize). Returns "ERROR: ..." on failure. */
+function nativePathCanonicalize(path, cwd, pathClass) {
+  return binding.nativePathCanonicalize(path, cwd, pathClass);
+}
+
+/** Component-boundary prefix check (true if candidate is base or its descendant). */
+function nativePathIsWithinDirectory(candidate, base, pathClass) {
+  return binding.nativePathIsWithinDirectory(candidate, base, pathClass);
+}
+
+/** Multi-root workspace containment check. */
+function nativePathIsWithinWorkspace(candidate, roots, pathClass) {
+  return binding.nativePathIsWithinWorkspace(candidate, roots, pathClass);
+}
+
+/**
+ * Glob-aware canonicalization: normalizes prefix before glob, leaves glob suffix.
+ * @returns {string} Canonicalized path or 'ERROR: ...'
+ */
+function nativePathCanonicalizeForGlob(path, cwd, pathClass) {
+  return binding.nativePathCanonicalizeForGlob(path, cwd, pathClass);
+}
+
+// ============================================================================
+// Permission — DSL pattern parsing
 // ============================================================================
 
 /**
- * Resolve a dot-separated translation key against locale JSON, with
- * `{{param}}` interpolation.
+ * Parse a permission rule DSL pattern.
+ * @param {string} pattern - e.g. "Read(/etc/**)"
+ * @returns {string} JSON '{"toolName":"...","argPattern":...}' or 'ERROR: ...'
  */
-function nativeTranslate(localeJson, fallbackJson, key, params) {
-  if (typeof binding.nativeTranslate !== 'function') {
-    throw new Error('nativeTranslate is not available in the loaded binding');
-  }
-  return binding.nativeTranslate(localeJson, fallbackJson, key, params ?? null);
+function nativeParsePermissionPattern(pattern) {
+  return binding.nativeParsePermissionPattern(pattern);
+}
+
+// ============================================================================
+// GoalEngine — decision core (stateless, JSON-in/JSON-out)
+// ============================================================================
+
+/**
+ * Validate and normalize a goal creation input.
+ * @param {string} json - {"objective": string, "completionCriterion?": string}
+ * @returns {string} JSON '{ok:true,objective,completionCriterion?}' or '{ok:false,error}'
+ */
+function nativeGoalEngineValidateCreateInput(json) {
+  return binding.nativeGoalEngineValidateCreateInput(json);
 }
 
 /**
- * Batch translation — resolves multiple keys against the same locale data
- * in a single call, parsing the JSON only once.
+ * Validate a budget input into a limits patch.
+ * @param {string} json - {"value": number, "unit": string}
+ * @returns {string} JSON '{ok:true,budgetLimits:{...}}' or '{ok:false,error}'
  */
-function nativeTranslateBatch(localeJson, fallbackJson, keys, params) {
-  if (typeof binding.nativeTranslateBatch !== 'function') {
-    throw new Error('nativeTranslateBatch is not available in the loaded binding');
-  }
-  return binding.nativeTranslateBatch(localeJson, fallbackJson, keys, params ?? null);
+function nativeGoalEngineValidateBudgetInput(json) {
+  return binding.nativeGoalEngineValidateBudgetInput(json);
 }
 
 /**
- * Cached translation — uses a process-wide cached translator.
+ * Compute the full budget report.
+ * @param {string} json - {"goal": GoalStateJSON, "nowMs": number}
+ * @returns {string} JSON budget report
  */
-function nativeTranslateCached(localeJson, fallbackJson, key, params) {
-  if (typeof binding.nativeTranslateCached !== 'function') {
-    return nativeTranslate(localeJson, fallbackJson, key, params);
-  }
-  return binding.nativeTranslateCached(localeJson, fallbackJson, key, params ?? null);
+function nativeGoalEngineComputeBudgetReport(json) {
+  return binding.nativeGoalEngineComputeBudgetReport(json);
 }
 
 /**
- * Clear the parsed-JSON cache of the global cached translator.
+ * Apply token + turn deltas to a goal.
+ * @param {string} json - {"goal": GoalStateJSON, "tokenDelta": number, "turnDelta": number, "nowMs": number}
+ * @returns {string} JSON '{goal: GoalStateJSON, overBudget: boolean}'
  */
-function nativeTranslateClearCache() {
-  if (typeof binding.nativeTranslateClearCache === 'function') {
-    binding.nativeTranslateClearCache();
-  }
+function nativeGoalEngineApplyUsage(json) {
+  return binding.nativeGoalEngineApplyUsage(json);
 }
 
 /**
- * Cached batch translation — resolves multiple keys using the process-wide
- * cached translator.
+ * Decide whether the goal driver should continue.
+ * @param {string} json - {"goal": GoalStateJSON, "nowMs": number}
+ * @returns {string} JSON '{action:"continue",steeringPrompt}' | '{action:"stop_budget",reason,steeringPrompt}' | '{action:"stop_inactive"}'
  */
-function nativeTranslateBatchCached(localeJson, fallbackJson, keys, params) {
-  if (typeof binding.nativeTranslateBatchCached !== 'function') {
-    return nativeTranslateBatch(localeJson, fallbackJson, keys, params);
-  }
-  return binding.nativeTranslateBatchCached(localeJson, fallbackJson, keys, params ?? null);
+function nativeGoalEngineDecideContinuation(json) {
+  return binding.nativeGoalEngineDecideContinuation(json);
+}
+
+/**
+ * Apply the 3-turn blocked audit.
+ * @param {string} json - {"goal": GoalStateJSON}
+ * @returns {string} JSON '{action:"record_attempt",streak,attemptsNeeded,message}' | '{action:"mark_blocked",streak}'
+ */
+function nativeGoalEngineDecideBlockedAudit(json) {
+  return binding.nativeGoalEngineDecideBlockedAudit(json);
+}
+
+/**
+ * Attempt a status transition.
+ * @param {string} json - {"goal": GoalStateJSON, "targetStatus": string, "expectedGoalId?": string}
+ * @returns {string} JSON '{ok:true,goal:GoalStateJSON}' or '{ok:false,error}'
+ */
+function nativeGoalEngineDecideStatusTransition(json) {
+  return binding.nativeGoalEngineDecideStatusTransition(json);
+}
+
+/**
+ * Render the full active-goal reminder.
+ * @param {string} json - {"goal": GoalStateJSON, "nowMs": number}
+ * @returns {string} rendered prompt
+ */
+function nativeGoalEngineRenderGoalReminder(json) {
+  return binding.nativeGoalEngineRenderGoalReminder(json);
+}
+
+/**
+ * Render a light blocked note.
+ * @param {string} json - {"goal": GoalStateJSON}
+ * @returns {string} rendered prompt
+ */
+function nativeGoalEngineRenderBlockedNote(json) {
+  return binding.nativeGoalEngineRenderBlockedNote(json);
+}
+
+/**
+ * Render a light paused note.
+ * @param {string} json - {"goal": GoalStateJSON}
+ * @returns {string} rendered prompt
+ */
+function nativeGoalEngineRenderPausedNote(json) {
+  return binding.nativeGoalEngineRenderPausedNote(json);
 }
 
 // ============================================================================
@@ -772,7 +949,9 @@ module.exports = {
   nativeGlobMatchesAny,
   nativeListDirectory,
   nativeSniffImageDimensions,
+  nativeDetectFileType,
   nativeIsSensitiveFile,
+  nativeIsSensitiveFileBytes,
   nativeEstimateTokens,
   nativeEstimateTokensBatch,
   nativeTruncateTextToTokens,
@@ -782,7 +961,8 @@ module.exports = {
   // Compaction
   nativeComputeCompactCount,
   nativeReduceCompactOnOverflow,
-  nativeResolveCompactionMaxCompletionTokens,
+  nativeCanSplitAfter,
+  nativeSelectCompactionUserMessages,
 
   // Tool access conflict
   nativeToolAccessesConflict,
@@ -807,6 +987,16 @@ module.exports = {
   nativeMcpStdioStderrSnapshot,
   nativeMcpStdioIsAlive,
 
+  // XML / HTML escaping
+  nativeEscapeXml,
+  nativeEscapeXmlAttr,
+  nativeEscapeXmlTags,
+
+  // MCP tool name sanitization
+  nativeSanitizeMcpNamePart,
+  nativeIsMcpToolName,
+  nativeQualifyMcpToolName,
+
   // Constants
   READ_MAX_LINES,
   READ_MAX_LINE_LENGTH,
@@ -825,10 +1015,26 @@ module.exports = {
   nativeGoalRenderBudgetLimit,
   nativeGoalRenderObjectiveUpdated,
 
-  // i18n Translation
-  nativeTranslate,
-  nativeTranslateBatch,
-  nativeTranslateCached,
-  nativeTranslateClearCache,
-  nativeTranslateBatchCached,
+  // GoalEngine
+  nativeGoalEngineValidateCreateInput,
+  nativeGoalEngineValidateBudgetInput,
+  nativeGoalEngineComputeBudgetReport,
+  nativeGoalEngineApplyUsage,
+  nativeGoalEngineDecideContinuation,
+  nativeGoalEngineDecideBlockedAudit,
+  nativeGoalEngineDecideStatusTransition,
+  nativeGoalEngineRenderGoalReminder,
+  nativeGoalEngineRenderBlockedNote,
+  nativeGoalEngineRenderPausedNote,
+
+  // Path access
+  nativePathNormalizeUserPath,
+  nativePathExpandUserPath,
+  nativePathCanonicalize,
+  nativePathIsWithinDirectory,
+  nativePathIsWithinWorkspace,
+  nativePathCanonicalizeForGlob,
+
+  // Permission
+  nativeParsePermissionPattern,
 };

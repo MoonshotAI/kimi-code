@@ -21,6 +21,7 @@ import type { ContextMessage, SkillActivationOrigin } from '#/agent/contextMemor
 import { renderUserSlashSkillPrompt } from './prompt';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { Disposable } from '#/_base/di/lifecycle';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { ErrorCodes, Error2 } from '#/errors';
 import { isUserActivatableSkillType, type SkillDefinition } from '#/app/skillCatalog/types';
 import { IAgentPromptService } from '#/agent/prompt/prompt';
@@ -48,12 +49,12 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
     await this.skillCatalog.ready;
     const skill = this.skillCatalog.catalog.getSkill(input.name);
     if (skill === undefined) {
-      throw new Error2(ErrorCodes.SKILL_NOT_FOUND, `Skill "${input.name}" was not found`);
+      throw new Error2(ErrorCodes.SKILL_NOT_FOUND, t('errors.skillNotFound'));
     }
     if (!isUserActivatableSkillType(skill.metadata.type)) {
       throw new Error2(
         ErrorCodes.SKILL_TYPE_UNSUPPORTED,
-        `Skill "${skill.name}" cannot be activated by the user`,
+        t('errors.skillTypeUnsupported'),
       );
     }
 
@@ -88,7 +89,7 @@ export class AgentSkillService extends Disposable implements IAgentSkillService 
     if (turn === undefined) {
       throw new Error2(
         ErrorCodes.TURN_AGENT_BUSY,
-        'Cannot activate skill while another turn is active',
+        t('errors.turnAgentBusy'),
       );
     }
     return turn;

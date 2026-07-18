@@ -10,6 +10,7 @@ import { InMemorySkillCatalog } from '#/app/skillCatalog/registry';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { AgentSkillService } from '#/agent/skill/skillService';
+import { ErrorCodes, Error2 } from '#/errors';
 import {
   MAX_SKILL_QUERY_DEPTH,
   NestedSkillTooDeepError,
@@ -109,7 +110,9 @@ describe('AgentSkillService', () => {
 
   it('activate throws for an unknown skill', async () => {
     const svc = ix.get(IAgentSkillService);
-    await expect(svc.activate({ name: 'missing' })).rejects.toThrow(/not found/i);
+    await expect(svc.activate({ name: 'missing' })).rejects.toSatisfy(
+      (error) => error instanceof Error2 && error.code === ErrorCodes.SKILL_NOT_FOUND,
+    );
   });
 
   it('activate waits for the catalog to be ready before resolving', async () => {

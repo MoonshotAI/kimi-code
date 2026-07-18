@@ -9,6 +9,7 @@
  * (skill activation while a turn is active); the wire string is unchanged.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 
 export const LoopErrors = {
@@ -19,11 +20,10 @@ export const LoopErrors = {
   retryable: ['turn.agent_busy'],
   info: {
     'loop.max_steps_exceeded': {
-      title: 'Loop max steps exceeded',
+      title: t('v2Errors.loopMaxStepsExceeded'),
       retryable: false,
       public: true,
-      action:
-        'Raise loop_control.max_steps_per_turn in config.toml, or run "/update-config" then "/reload".',
+      action: t('v2Errors.loopMaxStepsAction'),
     },
   },
 } as const satisfies ErrorDomain;

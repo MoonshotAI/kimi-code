@@ -30,6 +30,7 @@ import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiatio
 import type { Event } from '#/_base/event';
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 export const StorageErrors = {
   codes: {
@@ -42,32 +43,32 @@ export const StorageErrors = {
   retryable: ['storage.io_failed', 'storage.locked'],
   info: {
     'storage.not_found': {
-      title: 'Stored value not found',
+      title: t('v2Errors.storageNotFound'),
       retryable: false,
       public: true,
     },
     'storage.decode_failed': {
-      title: 'Stored value could not be decoded',
+      title: t('v2Errors.storageDecodeFailed'),
       retryable: false,
       public: true,
-      action: 'Inspect the stored document; it is not valid for its declared format.',
+      action: t('v2Errors.storageDecodeFailedAction'),
     },
     'storage.corrupted': {
-      title: 'Stored data is corrupted',
+      title: t('v2Errors.storageCorrupted'),
       retryable: false,
       public: true,
-      action: 'Inspect the backing store; the corrupted entry must be repaired or dropped.',
+      action: t('v2Errors.storageCorruptedAction'),
     },
     'storage.io_failed': {
-      title: 'Storage I/O failed',
+      title: t('v2Errors.storageIoFailed'),
       retryable: true,
       public: true,
     },
     'storage.locked': {
-      title: 'Storage is locked',
+      title: t('v2Errors.storageLocked'),
       retryable: true,
       public: true,
-      action: 'Another process holds the store; close it or retry later.',
+      action: t('v2Errors.storageLockedAction'),
     },
   },
 } as const satisfies ErrorDomain;
@@ -97,7 +98,7 @@ export function toStorageIoError(error: unknown, ctx: { path: string; op: string
   if (error instanceof StorageError) return error;
   return new StorageError(
     StorageErrors.codes.STORAGE_IO_FAILED,
-    `storage ${ctx.op} failed`,
+    t('v2Storage.ioFailed'),
     {
       details: { path: ctx.path, op: ctx.op, errno: readErrno(error) },
       cause: error,

@@ -6,5 +6,6 @@
 //! flat napi-compatible structs.
 
 pub mod accounting;
+pub mod engine;
 pub mod state;
 pub mod steering;

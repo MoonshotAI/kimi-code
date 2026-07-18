@@ -5,6 +5,7 @@
 
 import { CoreErrors } from './codes';
 import type { ErrorCode } from '#/errors';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 export class ExpectedError extends Error {
   readonly isExpected = true;
@@ -29,7 +30,7 @@ export class ErrorNoTelemetry extends Error {
 
 export class BugIndicatingError extends Error {
   constructor(message?: string) {
-    super(message ?? 'An unexpected bug occurred.');
+    super(message ?? t('v2Errors.internal'));
     this.name = 'BugIndicatingError';
   }
 }
@@ -68,7 +69,7 @@ export class NotImplementedError extends Error2 {
   constructor(feature?: string) {
     super(
       CoreErrors.codes.NOT_IMPLEMENTED,
-      feature ? `Not implemented: ${feature}` : 'Not implemented',
+      feature ? `Not implemented: ${feature}` : t('v2Errors.notImplemented'),
     );
     this.name = 'NotImplementedError';
   }

@@ -32,6 +32,7 @@ import { loadAgentsMd } from '#/agent/profile/context';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IWireService } from '#/wire/wire';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { ErrorCodes, Error2 } from '#/errors';
 import { IAgentLifecycleService, MAIN_AGENT_ID } from '#/session/agentLifecycle/agentLifecycle';
 import { emitAgentRunSpawned, mirrorAgentRun } from '#/session/subagent/mirrorAgentRun';
@@ -65,7 +66,7 @@ export class SessionInitService implements ISessionInitService {
   async generateAgentsMd(): Promise<void> {
     const main = this.lifecycle.get(MAIN_AGENT_ID);
     if (main === undefined) {
-      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, 'Main agent was not found');
+      throw new Error2(ErrorCodes.AGENT_NOT_FOUND, t('v2Errors.mainAgentNotFound'));
     }
 
     const controller = new AbortController();
@@ -73,7 +74,7 @@ export class SessionInitService implements ISessionInitService {
     try {
       const own = main.accessor.get(IAgentProfileService).data();
       if (own.modelAlias === undefined) {
-        throw new Error2(ErrorCodes.SESSION_INIT_FAILED, 'Main agent has no model bound');
+        throw new Error2(ErrorCodes.SESSION_INIT_FAILED, t('v2Errors.mainAgentNoModel'));
       }
       const permissionMode = main.accessor.get(IAgentPermissionModeService).mode;
 
@@ -129,7 +130,7 @@ export class SessionInitService implements ISessionInitService {
       }
       throw new Error2(
         ErrorCodes.SESSION_INIT_FAILED,
-        error instanceof Error ? error.message : 'Init failed',
+        error instanceof Error ? error.message : t('v2Errors.initFailed'),
         { cause: error },
       );
     } finally {
