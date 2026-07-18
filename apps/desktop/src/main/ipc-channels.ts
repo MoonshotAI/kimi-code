@@ -14,6 +14,10 @@ export const IPC = {
   menuAction: 'kimi:menu-action',
   shortcut: 'kimi:shortcut',
   fullscreenChanged: 'kimi:fullscreen-changed',
+  updateStatus: 'kimi:update-status',
+  updateGetStatus: 'kimi:update-get-status',
+  updateDownload: 'kimi:update-download',
+  updateInstall: 'kimi:update-install',
 } as const;
 
 export type ColorScheme = 'light' | 'dark' | 'system';
@@ -22,4 +26,5 @@ export type ColorScheme = 'light' | 'dark' | 'system';
 export type RendererEventChannel =
   | typeof IPC.menuAction
   | typeof IPC.shortcut
-  | typeof IPC.fullscreenChanged;
+  | typeof IPC.fullscreenChanged
+  | typeof IPC.updateStatus;

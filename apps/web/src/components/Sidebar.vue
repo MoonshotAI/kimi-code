@@ -22,6 +22,7 @@ import {
 import { moveInOrder, type DropPosition, type WorkspaceSortMode } from '../lib/workspaceOrder';
 import type { Session, WorkspaceGroup as WorkspaceGroupType, WorkspaceView } from '../types';
 import SearchSessionsDialog from './dialogs/SearchSessionsDialog.vue';
+import UpdateIndicator from './UpdateIndicator.vue';
 import WorkspaceGroup from './WorkspaceGroup.vue';
 import { isMacosDesktop } from '../lib/desktopFlag';
 import { Icon, IconButton, Kbd, Menu, MenuItem, Pill } from '@moonshot-ai/web-ui';
@@ -714,15 +715,21 @@ onBeforeUnmount(() => {
             </Pill>
           </template>
         </div>
-        <IconButton
-          v-if="!isMacosDesktop"
-          class="ch-collapse"
-          size="sm"
-          :label="t('sidebar.collapseSidebar')"
-          @click.stop="emit('collapse')"
-        >
-          <Icon name="panel-collapse" />
-        </IconButton>
+        <div class="ch-tail">
+          <IconButton
+            v-if="!isMacosDesktop"
+            class="ch-collapse"
+            size="sm"
+            :label="t('sidebar.collapseSidebar')"
+            @click.stop="emit('collapse')"
+          >
+            <Icon name="panel-collapse" />
+          </IconButton>
+          <!-- Auto-update pill (desktop only): rightmost in the header; renders
+               nothing unless the main process reports an update state, so the
+               web build stays untouched. -->
+          <UpdateIndicator />
+        </div>
       </div>
 
       <!-- Sidebar actions share one container so New chat and Search are true
@@ -1048,6 +1055,17 @@ onBeforeUnmount(() => {
   flex: 1;
   user-select: none;
   touch-action: none;
+}
+/* Right-end header controls: collapse toggle + update pill. margin-left:auto
+   covers macOS desktop, where the brand is hidden and the strip would
+   otherwise left-align them next to the traffic lights. */
+.ch-tail {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  min-width: 0;
+  margin-left: auto;
 }
 .ch-name {
   font-size: var(--ui-font-size);

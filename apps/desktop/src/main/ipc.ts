@@ -4,6 +4,7 @@ import type { OpenDialogOptions, SaveDialogOptions } from 'electron';
 import { getMainWindow } from './window';
 import { readServerToken } from './connect';
 import { listAvailableOpenInApps, openInApp } from './open-in';
+import { getUpdateStatus, requestUpdateDownload, requestUpdateInstall } from './updater';
 import { IPC, type ColorScheme } from './ipc-channels';
 
 function isColorScheme(value: unknown): value is ColorScheme {
@@ -49,4 +50,10 @@ export function registerIpcHandlers(): void {
     const win = getMainWindow();
     return win !== null && !win.isDestroyed() && win.isFullScreen();
   });
+  // Auto-update: the sidebar banner reads the current status once (reload
+  // recovery — transitions stream over IPC.updateStatus) and fires the two
+  // user actions. No-ops in dev (see updater.ts).
+  ipcMain.handle(IPC.updateGetStatus, () => getUpdateStatus());
+  ipcMain.handle(IPC.updateDownload, () => requestUpdateDownload());
+  ipcMain.handle(IPC.updateInstall, () => requestUpdateInstall());
 }

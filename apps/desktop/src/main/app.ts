@@ -10,6 +10,7 @@ import { createTray } from './tray';
 import { buildMenu } from './menu';
 import { registerGlobalShortcuts, unregisterGlobalShortcuts } from './shortcuts';
 import { registerIpcHandlers } from './ipc';
+import { initAutoUpdater } from './updater';
 
 // --- app lifecycle ------------------------------------------------------------
 
@@ -57,6 +58,9 @@ export function main(): void {
     buildMenu();
     createWindow();
     tray = createTray({ showMainWindow, quit: () => app.quit() });
+    // After the window exists: update statuses push to the renderer. No-op in
+    // dev (unpackaged); the packaged app checks on a delay + 4h cadence.
+    initAutoUpdater();
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
         createWindow();

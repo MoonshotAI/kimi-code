@@ -41,6 +41,8 @@ export const STORAGE_KEYS = {
   openInLastTarget: 'kimi-web.open-in.last-target',
   sidebarCollapsed: 'kimi-web.sidebar-collapsed',
   sidebarWidth: 'kimi-web.sidebar-width',
+  // Desktop auto-update: version the user chose to skip (renderer-local).
+  updateSkippedVersion: 'kimi-web.update-skipped-version',
   // deprecated cleanups (kept so the removals still fire for old users)
   codeFont: 'kimi-web.code-font',
   contentAlign: 'kimi-web.content-align',

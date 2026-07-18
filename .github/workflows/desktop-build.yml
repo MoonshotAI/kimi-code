@@ -144,6 +144,20 @@ jobs:
           APPLE_API_ISSUER: ${{ secrets.APPLE_NOTARIZATION_ISSUER_ID }}
         run: pnpm --filter kimi-code-app run dist
 
+      - name: Rename mac updater metadata per arch (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 两个 mac leg 各自产出 latest-mac.yml，release.yml 合并下载 artifact
+          # 时同名文件 last-writer-wins，会丢掉一个 arch 的更新 feed。这里按
+          # arch 改名避让；release.yml 发布前再把两份合并回单个 latest-mac.yml
+          #（electron-updater 在 files 列表里按 arch 自选 zip）。
+          cd apps/desktop/dist-app
+          arch="${{ matrix.target }}"
+          arch="${arch##*-}"
+          mv latest-mac.yml "latest-mac-${arch}.yml"
+
       - name: Cleanup macOS keychain
         if: always() && runner.os == 'macOS' && env.SIGN_MACOS == 'true'
         uses: ./.github/actions/macos-keychain-cleanup
@@ -159,4 +173,8 @@ jobs:
             apps/desktop/dist-app/*.exe
             apps/desktop/dist-app/*.AppImage
             apps/desktop/dist-app/*.deb
+            # electron-updater 元数据（latest*.yml + 差分用的 blockmap），
+            # 自动更新与 CDN 发布（publish-desktop.sh）都依赖它们。
+            apps/desktop/dist-app/*.yml
+            apps/desktop/dist-app/*.blockmap
           if-no-files-found: ignore

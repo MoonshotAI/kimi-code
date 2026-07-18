@@ -18,13 +18,17 @@ vi.mock('electron', () => ({
 }));
 
 const WHITELIST = [
+  'downloadUpdate',
   'getServerToken',
+  'getUpdateStatus',
+  'installUpdate',
   'isFullscreen',
   'listOpenInApps',
   'onFullscreenChanged',
   'onMenu',
   'onMenuAction',
   'onShortcut',
+  'onUpdateStatus',
   'openExternal',
   'openInApp',
   'setTheme',
@@ -91,6 +95,11 @@ describe('kimiDesktop preload bridge', () => {
     offFullscreen();
     expect(removeListener).toHaveBeenCalledWith('kimi:fullscreen-changed', expect.any(Function));
 
+    const offUpdate = exposed.onUpdateStatus(() => {});
+    expect(on).toHaveBeenCalledWith('kimi:update-status', expect.any(Function));
+    offUpdate();
+    expect(removeListener).toHaveBeenCalledWith('kimi:update-status', expect.any(Function));
+
     await exposed.openExternal('https://example.com');
     expect(invoke).toHaveBeenCalledWith('kimi:open-external', 'https://example.com');
 
@@ -113,6 +122,15 @@ describe('kimiDesktop preload bridge', () => {
 
     await exposed.isFullscreen();
     expect(invoke).toHaveBeenCalledWith('kimi:is-fullscreen');
+
+    await exposed.getUpdateStatus();
+    expect(invoke).toHaveBeenCalledWith('kimi:update-get-status');
+
+    await exposed.downloadUpdate();
+    expect(invoke).toHaveBeenCalledWith('kimi:update-download');
+
+    await exposed.installUpdate();
+    expect(invoke).toHaveBeenCalledWith('kimi:update-install');
   });
 
   it('forwards menu-action and shortcut payloads to the renderer callback', async () => {
@@ -137,5 +155,15 @@ describe('kimiDesktop preload bridge', () => {
     // accidental truthy strings leaking into the renderer state).
     listeners.get('kimi:fullscreen-changed')?.({}, 'yes');
     expect(fullscreenCb).toHaveBeenLastCalledWith(false);
+
+    // Update statuses pass through after structural validation; malformed
+    // payloads (wrong state, non-object) are dropped.
+    const updateCb = vi.fn();
+    exposed.onUpdateStatus(updateCb);
+    listeners.get('kimi:update-status')?.({}, { state: 'downloading', version: '1.2.3', percent: 42, releaseDate: '2026-07-18' });
+    expect(updateCb).toHaveBeenCalledWith({ state: 'downloading', version: '1.2.3', percent: 42, releaseDate: '2026-07-18' });
+    listeners.get('kimi:update-status')?.({}, { state: 'bogus' });
+    listeners.get('kimi:update-status')?.({}, 'available');
+    expect(updateCb).toHaveBeenCalledTimes(1);
   });
 });

@@ -1,6 +1,6 @@
 # Desktop 原生化 TODO
 
-桌面端目前大量功能仍用 web 方式实现。preload 已暴露 12 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
+桌面端目前大量功能仍用 web 方式实现。preload 已暴露 16 个桥接方法（`src/main/preload.ts`），部分通道已打好未接线。本文档记录可原生化的功能清单，逐项跟踪。
 
 改之前注意两点：
 
@@ -65,6 +65,14 @@
   - **web 无对应物**：浏览器没有托盘面，`apps/web` 不涉及（非共享文件分叉）。
   - 测试：`tests/main/tray.test.ts`（`trayIconPath` 纯函数 3 用例：win32 取 .ico、mac/linux 取 png、packaged 走 resourcesPath）。
 
+- [x] **自动更新（electron-updater + CDN generic feed）**（已完成，desktop 专属）
+  - 实现：新增 `src/main/updater.ts`——electron-updater generic provider 轮询 `https://code.kimi.com/kimi-code/desktop/` 的 latest*.yml（feed 在 `electron-builder.config.cjs` 的 `publish` 配置里）；`autoDownload=false`（用户点击才下载）、`autoInstallOnAppQuit=true`（自然退出时静默装）；启动 10s 首查、之后每 4h；状态机 idle→available→downloading→downloaded/error 经 `kimi:update-status` 推送 renderer，status 含 version/percent/releaseDate。只打扰用户该知道的：后台检查失败仅 `console.warn` 保持 idle，仅用户发起的下载失败进 error 态（可重试）；feed 回滚（`update-not-available`）时清掉未开始下载的 available / 失败待重试的 error 态，进行中的下载/安装不动。dev（未打包）整体 no-op。IPC：renderer 初值走 `kimi:update-get-status`，动作走 `kimi:update-download` / `kimi:update-install`（`quitAndInstall(true, true)`）。
+  - 桥：preload 新增 `getUpdateStatus` / `onUpdateStatus` / `downloadUpdate` / `installUpdate`（payload 经 `asUpdateStatus` 结构校验，畸形丢弃）；renderer `composables/useUpdateStatus.ts` 单例（照 useFullscreen 模式），无桥恒 idle；`visible` 计算属性实现"本次跳过"（localStorage `kimi-web.update-skipped-version` 持久化，仅作用于 available 态，出现更高版本自动解除）。
+  - UI：`components/UpdateIndicator.vue` 挂在 Sidebar `.ch` 的 `.ch-tail` 组里（收起按钮之右，全 header 最右端；mac 上是红绿灯拖拽条右端，`no-drag` 保点击）——黄色 pill（`--color-warning`）文案随状态变（更新 / `42%` / 下载完成 / 下载失败，下载中用纯百分比 + tabular-nums + 固定 4ch 防抖动）；窄栏 < 250px 经 `@container sidebar-col` 退化为纯图标圆点（与 brand 文字隐藏同断点）。点击开 §03 Dialog（§09 Anatomy A，padded · md · auto，已登记进 DesignSystemView 的 dialog map）：标题含版本、meta 行（发布日期 · 当前版本，`__KIMI_CLIENT_VERSION__`）、foot 右对齐三态按钮（本次跳过→下载并更新 / 下次启动→立即重启 / 重试）。**web 无桥恒不渲染**——组件、composable 与 Sidebar 改动已同步 apps/web，两端 `Sidebar.vue` 仍完全一致，无分叉。
+  - 打包：artifactName 改 `KimiCode-${version}-${os}-${arch}.${ext}`（自动更新要求文件名含版本号；原 MMDD 内测命名废弃）；mac target 加 `zip`（macOS 自动更新只认 zip，dmg 仅分发）；配 `publish` 后 dist-app 产出 latest-mac.yml / latest.yml / latest-linux.yml + blockmap，已加进 desktop-build.yml 的 artifact glob，随通配进 GitHub Release；两个 mac leg 的 latest-mac.yml 按 arch 改名避让（artifact 合并下载同名会覆盖），release.yml 发布前跑 `scripts/merge-mac-update-yml.mjs` 合并回单文件（零依赖文本级合并，files 含双 arch，electron-updater 按 arch 自选 zip）。
+  - CDN：布局对齐 CLI——版本目录 `desktop/<version>/`（immutable）+ 根目录 latest*.yml 指针（no-cache，`path`/`url` 改写 `<version>/` 前缀）；发布走 kimi-cli-cdn-sync 仓 `publish-desktop.sh`（本地手动，TOS 凭证限内网）；回滚 = 旧版本号重跑该脚本。
+  - 测试：`tests/main/updater.test.ts`（7 用例：dev no-op、autoDownload 配置与定时检查、状态流、下载失败 error + 重试、后台失败静默、回滚清态、动作状态守卫）；`tests/renderer/useUpdateStatus.test.ts`（10 用例：含 skip/visibility/快照竞态）；`tests/main/preload.test.ts` 白名单 + 通道断言同步。
+
 ## 已原生化的（不用动）
 
 - 深色模式同步：renderer → `kimi:theme` → `nativeTheme.themeSource`
@@ -74,5 +82,5 @@
 
 ## 参考
 
-- IPC channel 定义：`src/main/ipc-channels.ts`（11 个 channel）
+- IPC channel 定义：`src/main/ipc-channels.ts`（15 个 channel）
 - preload 白名单测试：`tests/main/preload.test.ts`（新增桥接方法要同步更新）

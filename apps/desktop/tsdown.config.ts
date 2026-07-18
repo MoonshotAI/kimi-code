@@ -29,6 +29,10 @@ export default defineConfig({
     neverBundle: [
       'electron',
       'node-pty',
+      // electron-updater lazy-requires `electron` and resolves the app update
+      // feed at runtime; bundling breaks both. It ships as a production dep
+      // (packed into the asar like node-pty) and stays an external require.
+      'electron-updater',
     ],
     // This is an app bundle (private package, not published): inlining the
     // transitive deps of the workspace packages is intended, so acknowledge the

@@ -17,5 +17,7 @@
     "noPropertyAccessFromIndexSignature": false,
     "noEmit": true
   },
-  "include": ["src/renderer", "src/renderer/env.d.ts"]
+  // tests/renderer holds the renderer unit tests (DOM composables); they need
+  // the same DOM libs and therefore live in this program, not the Node one.
+  "include": ["src/renderer", "src/renderer/env.d.ts", "tests/renderer"]
 }

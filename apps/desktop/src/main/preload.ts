@@ -10,6 +10,43 @@ export type DialogOptions = Record<string, unknown>;
 export type OpenInApp = { id: string; label: string };
 export type OpenInResult = { ok: boolean; error?: string };
 
+// Mirror of the main-process UpdateStatus (updater.ts). Duplicated
+// structurally — the preload has its own literal surface by design (see the
+// header comment of ipc-channels.ts).
+export type UpdateStatus = {
+  state: 'idle' | 'available' | 'downloading' | 'downloaded' | 'error';
+  version?: string;
+  percent?: number;
+  message?: string;
+  releaseDate?: string;
+};
+
+const UPDATE_STATES = new Set(['idle', 'available', 'downloading', 'downloaded', 'error']);
+
+function asUpdateStatus(value: unknown): UpdateStatus | null {
+  if (typeof value !== 'object' || value === null) {
+    return null;
+  }
+  const candidate = value as { state?: unknown; version?: unknown; percent?: unknown; message?: unknown; releaseDate?: unknown };
+  if (typeof candidate.state !== 'string' || !UPDATE_STATES.has(candidate.state)) {
+    return null;
+  }
+  const status: UpdateStatus = { state: candidate.state as UpdateStatus['state'] };
+  if (typeof candidate.version === 'string') {
+    status.version = candidate.version;
+  }
+  if (typeof candidate.percent === 'number') {
+    status.percent = candidate.percent;
+  }
+  if (typeof candidate.message === 'string') {
+    status.message = candidate.message;
+  }
+  if (typeof candidate.releaseDate === 'string') {
+    status.releaseDate = candidate.releaseDate;
+  }
+  return status;
+}
+
 export type KimiDesktopApi = {
   setTheme: (scheme: 'light' | 'dark' | 'system') => void;
   onMenu: (cb: (action: string) => void) => () => void;
@@ -26,6 +63,15 @@ export type KimiDesktopApi = {
   isFullscreen: () => Promise<boolean>;
   /** Main → renderer push on every window fullscreen enter/leave. */
   onFullscreenChanged: (cb: (fullscreen: boolean) => void) => () => void;
+  /** Current auto-update status (initial value; transitions come through
+   *  `onUpdateStatus`). */
+  getUpdateStatus: () => Promise<UpdateStatus>;
+  /** Main → renderer push on every auto-update state transition. */
+  onUpdateStatus: (cb: (status: UpdateStatus) => void) => () => void;
+  /** Start downloading the available update (user-initiated). */
+  downloadUpdate: () => Promise<void>;
+  /** Quit and install the downloaded update. */
+  installUpdate: () => Promise<void>;
 };
 
 export const api: KimiDesktopApi = {
@@ -61,6 +107,22 @@ export const api: KimiDesktopApi = {
     ipcRenderer.on('kimi:fullscreen-changed', listener);
     return () => ipcRenderer.removeListener('kimi:fullscreen-changed', listener);
   },
+  getUpdateStatus: async () => {
+    const status = asUpdateStatus(await ipcRenderer.invoke('kimi:update-get-status'));
+    return status ?? { state: 'idle' };
+  },
+  onUpdateStatus: (cb) => {
+    const listener = (_event: unknown, payload: unknown) => {
+      const status = asUpdateStatus(payload);
+      if (status !== null) {
+        cb(status);
+      }
+    };
+    ipcRenderer.on('kimi:update-status', listener);
+    return () => ipcRenderer.removeListener('kimi:update-status', listener);
+  },
+  downloadUpdate: () => ipcRenderer.invoke('kimi:update-download'),
+  installUpdate: () => ipcRenderer.invoke('kimi:update-install'),
 };
 
 contextBridge.exposeInMainWorld('kimiDesktop', api);

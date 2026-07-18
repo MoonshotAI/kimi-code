@@ -4,7 +4,9 @@
   // The renderer (`src/renderer`) is a DOM/Vue app built by Vite
   // (`vite.renderer.config.ts`), not by the Node main-process typecheck, which
   // has no DOM lib. Keep it out of `tsc --noEmit` so pulling in web-core's DOM
-  // APIs (e.g. `useIsDark`) does not break the main-process typecheck.
+  // APIs (e.g. `useIsDark`) does not break the main-process typecheck. The
+  // same applies to renderer unit tests in `tests/renderer` (they exercise DOM
+  // composables); they are typechecked by tsconfig.renderer.json instead.
   "exclude": [
     "node_modules",
     "dist",
@@ -13,6 +15,7 @@
     "desktop-dist",
     "**/*.disabled/**",
     "**/*.disabled",
-    "src/renderer/**"
+    "src/renderer/**",
+    "tests/renderer/**"
   ]
 }

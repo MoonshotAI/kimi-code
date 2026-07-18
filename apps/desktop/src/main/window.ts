@@ -21,7 +21,7 @@ export function getMainWindow(): BrowserWindow | null {
 // preload-whitelisted `kimi:menu-action` / `kimi:shortcut` channels. Task 4.5
 // connects the renderer side; here we only open the channels.
 
-export function sendToRenderer(channel: RendererEventChannel, payload: string | boolean): void {
+export function sendToRenderer(channel: RendererEventChannel, payload: unknown): void {
   if (mainWindow !== null && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send(channel, payload);
   }

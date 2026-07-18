@@ -18,17 +18,12 @@
 
 const notarize = process.env.KIMI_DESKTOP_NOTARIZE === 'true';
 
-// Internal-testing artifact name:
-//   KimiCode-<arch>-<MMDD>.<ext>
-// The date is MMDD in UTC+8, computed at build time; it is the only
-// build discriminator in the file name (no version number).
-function mmddUTC8() {
-  const utc8 = new Date(Date.now() + 8 * 60 * 60 * 1000);
-  const mm = String(utc8.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(utc8.getUTCDate()).padStart(2, '0');
-  return mm + dd;
-}
-const artifactName = 'KimiCode-${arch}-' + mmddUTC8() + '.${ext}';
+// Release artifact name:
+//   KimiCode-<version>-<os>-<arch>.<ext>
+// The version number must be in the file name: electron-updater resolves the
+// download URL from the file names recorded in latest*.yml, and the CDN keeps
+// every version's artifacts side by side under desktop/<version>/.
+const artifactName = 'KimiCode-${version}-${os}-${arch}.${ext}';
 
 module.exports = {
   appId: 'com.kimi.code.desktop',
@@ -53,6 +48,13 @@ module.exports = {
 
   files: ['out/**', 'package.json'],
 
+  // electron-updater feed: the desktop clients poll latest*.yml at this URL
+  // (the CDN root for desktop artifacts; installers live under <version>/
+  // subdirs — see kimi-cli-cdn-sync/publish-desktop.sh). Setting `publish`
+  // also makes electron-builder emit latest-mac.yml / latest.yml /
+  // latest-linux.yml + *.blockmap into dist-app on every build.
+  publish: [{ provider: 'generic', url: 'https://code.kimi.com/kimi-code/desktop/' }],
+
   // The desktop renderer is built independently via `vite.renderer.config.ts`
   // into `desktop-dist` (decoupled from the CLI/SEA `web-dist`). Ship it as an
   // extra resource so the `app://renderer` protocol and the server's static
@@ -74,7 +76,9 @@ module.exports = {
     gatekeeperAssess: false,
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',
-    target: ['dmg'],
+    // dmg for first-install distribution, zip for electron-updater (macOS
+    // auto-update only works from the zip archive).
+    target: ['dmg', 'zip'],
     artifactName,
     notarize,
     // TCC usage descriptions (English baseline): shown in the macOS permission
