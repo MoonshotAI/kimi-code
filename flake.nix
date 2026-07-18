@@ -173,7 +173,7 @@
               (pkgs.pnpmConfigHook.override { inherit pnpm; })
               pkgs.makeWrapper
             ]
-            # The SEA inject step (postject) invalidates the macOS code
+            # The SEA inject step (kimi-build) invalidates the macOS code
             # signature on the copied Node executable; build.mjs then re-applies
             # an ad-hoc signature via `codesign`. The Nix darwin sandbox does
             # not expose /usr/bin/codesign, so we supply nixpkgs' ad-hoc-only
@@ -182,7 +182,7 @@
               pkgs.darwin.sigtool
             ];
 
-            # The SEA binary is produced by `postject`-injecting a blob into a
+            # The SEA binary is produced by `kimi-build`-injecting a blob into a
             # plain Node executable. Stripping rewrites section tables and can
             # invalidate the injected blob's offsets, so leave the binary
             # untouched after the build.

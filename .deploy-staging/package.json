@@ -103,7 +103,6 @@
     "commander": "^13.1.0",
     "jimp": "^1.6.1",
     "pathe": "^2.0.3",
-    "postject": "1.0.0-alpha.6",
     "semver": "^7.7.4",
     "smol-toml": "^1.6.1",
     "tsx": "^4.21.0",
