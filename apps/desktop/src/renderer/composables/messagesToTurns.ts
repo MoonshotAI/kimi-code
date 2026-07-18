@@ -598,8 +598,33 @@ export function messagesToTurns(
           // Ordered block too: thinking renders WHERE it happened in the turn,
           // merging consecutive segments (same rule as text blocks above).
           const last = g.blocks.at(-1);
-          if (last && last.kind === 'thinking') last.thinking += '\n' + c.thinking;
-          else g.blocks.push({ kind: 'thinking', thinking: c.thinking });
+          if (last && last.kind === 'thinking') {
+            last.thinking += '\n' + c.thinking;
+            // Merge timing across the boundary: keep the earliest start and the
+            // latest closed end; if either side is still open, the merged block
+            // is open too.
+            const start = [last.startedAt, c.startedAt].filter((v): v is string => v !== undefined).sort()[0];
+            const eitherOpen =
+              (last.startedAt !== undefined && last.durationMs === undefined) ||
+              (c.startedAt !== undefined && c.durationMs === undefined);
+            const closedEnds = [last, c].flatMap((p) =>
+              p.startedAt !== undefined && p.durationMs !== undefined
+                ? [Date.parse(p.startedAt) + p.durationMs]
+                : [],
+            );
+            last.startedAt = start;
+            last.durationMs =
+              !eitherOpen && start !== undefined && closedEnds.length > 0
+                ? Math.max(...closedEnds) - Date.parse(start)
+                : undefined;
+          } else {
+            g.blocks.push({
+              kind: 'thinking',
+              thinking: c.thinking,
+              startedAt: c.startedAt,
+              durationMs: c.durationMs,
+            });
+          }
         }
       } else if (c.type === 'toolUse') {
         // Single `Agent` subagent spawns and all other tools render as a normal

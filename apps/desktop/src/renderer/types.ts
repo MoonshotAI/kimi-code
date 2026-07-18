@@ -211,7 +211,14 @@ export interface CronTurnData {
  * dedicated block. */
 export type TurnBlock =
   | { kind: 'text'; text: string }
-  | { kind: 'thinking'; thinking: string }
+  | {
+      kind: 'thinking';
+      thinking: string;
+      /** Renderer-measured timing (live sessions only): when this block opened
+          (ISO) and how long it streamed (ms). Absent for history. */
+      startedAt?: string;
+      durationMs?: number;
+    }
   | { kind: 'tool'; tool: ToolCall };
 
 /** One attachment on a user turn: an uploaded file, image or video. Images
@@ -307,7 +314,7 @@ export interface ConversationStatus {
 
 /** Kind of the global right-side detail layer. Only one detail is visible at a
  *  time; opening a new one closes the previous. */
-export type DetailTarget = 'file' | 'diff' | 'thinking' | 'compaction' | 'agent' | 'btw';
+export type DetailTarget = 'file' | 'diff' | 'compaction' | 'agent' | 'btw';
 
 export interface ActivationBadges {
   plan: boolean;

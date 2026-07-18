@@ -158,7 +158,16 @@ export type AppMessageContent =
   | { type: 'image'; source: ImageSource }
   | { type: 'video'; source: ImageSource }
   | { type: 'file'; fileId: string; name: string; mediaType: string; size: number }
-  | { type: 'thinking'; thinking: string; signature?: string }
+  | {
+      type: 'thinking';
+      thinking: string;
+      signature?: string;
+      /** Renderer-measured timing (client-side only, never persisted): when this
+          thinking part opened (ISO) and how long it streamed (ms). Absent on
+          history-loaded or snapshot-restored parts. */
+      startedAt?: string;
+      durationMs?: number;
+    }
   | { type: 'unknown'; raw: unknown };
 
 export type ImageSource =

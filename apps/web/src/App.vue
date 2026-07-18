@@ -268,7 +268,7 @@ const {
 } = useSidebarLayout({ previewOpen });
 
 // ---------------------------------------------------------------------------
-// Unified right-side detail layer (thinking / compaction / agent / diff / side
+// Unified right-side detail layer (compaction / agent / diff / side
 // chat) plus the preview-panel width. Only one detail is open at a time.
 // ---------------------------------------------------------------------------
 const {
@@ -278,10 +278,6 @@ const {
   previewMax,
   previewWidth,
   previewPanelWidth,
-  thinkingPanelText,
-  thinkingVisible,
-  openThinkingPanel,
-  closeThinkingPanel,
   compactionPanelText,
   compactionPanelVisible,
   openCompactionPanel,
@@ -850,7 +846,6 @@ function openPr(url: string): void {
       @select-model="handleComposerSelectModel($event)"
       @open-file="openFilePreview($event)"
       @open-media="openMediaPreview($event)"
-      @open-thinking="openThinkingPanel($event)"
       @open-compaction="openCompactionPanel($event)"
       @open-agent="openAgentPanel($event)"
       @edit-message="handleEditMessage"
@@ -916,12 +911,7 @@ function openPr(url: string): void {
       :aria-hidden="!sidePanelVisible"
     >
       <ThinkingPanel
-        v-if="detailTarget === 'thinking' && thinkingVisible"
-        :text="thinkingPanelText ?? ''"
-        @close="closeThinkingPanel"
-      />
-      <ThinkingPanel
-        v-else-if="detailTarget === 'compaction' && compactionPanelVisible"
+        v-if="detailTarget === 'compaction' && compactionPanelVisible"
         :text="compactionPanelText ?? ''"
         :subtitle="t('conversation.summaryTitle')"
         @close="closeCompactionPanel"

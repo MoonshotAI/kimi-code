@@ -1,7 +1,8 @@
 <!-- apps/kimi-web/src/components/chat/ThinkingPanel.vue -->
-<!-- Full thinking text in the right-side panel (App's shared preview slot —
-     opening this replaces a file preview and vice versa). Content is reactive:
-     while the block is still streaming the text keeps growing, and the body
+<!-- Long-form muted text in the right-side panel (App's shared preview slot —
+     opening this replaces a file preview and vice versa). Thinking blocks no
+     longer open here (they expand inline in the message stream); this panel is
+     now the compaction-summary viewer. Content is reactive, and the body
      follows the bottom as long as the user hasn't scrolled up. -->
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue';

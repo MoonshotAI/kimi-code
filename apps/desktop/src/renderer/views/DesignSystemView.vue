@@ -1047,7 +1047,7 @@ onUnmounted(() => {
             <p>Message timestamps use 12px UI text at weight 500, matching the compact metadata scale without switching to a monospace face.</p>
             <p>The user-message metadata row sits one 8px spacing step below the bubble, so its actions and timestamp read as supporting information rather than part of the bubble edge.</p>
             <p>The floating jump-to-latest control uses 12px UI text at weight 525, led by the full down-arrow icon rather than a disclosure caret.</p>
-            <p>Collapsed and expanded thinking previews animate their text-colour change on hover with the standard duration and easing tokens.</p>
+            <p>Thinking is an inline, borderless disclosure row in the message stream — never a side panel. The k15 bulb (the <code>thinking</code> registry icon) leads the row in every state; while streaming the "Thinking…" label breathes (opacity only, never a gradient shimmer) and whole elapsed seconds tick beside it, afterwards the label settles to "Thinking process" with the final span as <code>· Ns</code> (renderer-measured, live sessions only — history shows no seconds). Collapsed by default, it expands in place with the standard grid-rows animation and a 90° chevron rotation, and it folds itself back once the stream moves past it, even if the user expanded mid-stream. The header only animates its text colour on hover (standard duration and easing tokens), no card shell.</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">Conversation · 760px reading column</span></div>
               <div class="stage p col" style="align-items:center;background:#fff">
@@ -1478,7 +1478,7 @@ onUnmounted(() => {
             </table>
 
             <h3 class="sub">Right panel</h3>
-            <p>The right panels (file preview / Diff / thinking / sub-agent / side chat) share one track and one head primitive.</p>
+            <p>The right panels (file preview / Diff / compaction summary / sub-agent / side chat) share one track and one head primitive.</p>
             <ul class="clean">
               <li>The panel head uses the <code>PanelHeader</code> primitive (48px = <code>--panel-head-h</code>), the same height as the conversation column head, so the hairline runs as one line.</li>
               <li>Panel head: bold mono title + optional muted subtitle + middle slot (Badge / control / path) + close IconButton on the right.</li>

@@ -61,37 +61,6 @@ export function useDetailPanel({
   );
 
   // ---------------------------------------------------------------------------
-  // Thinking panel
-  // ---------------------------------------------------------------------------
-  const thinkingTarget = ref<{ turnId: string; blockIndex: number } | null>(null);
-
-  const thinkingPanelText = computed<string | null>(() => {
-    const target = thinkingTarget.value;
-    if (!target) return null;
-    const turn = client.turns.value.find((tn) => tn.id === target.turnId);
-    const blk = turn?.blocks?.[target.blockIndex];
-    return blk?.kind === 'thinking' ? blk.thinking : null;
-  });
-
-  const thinkingVisible = computed(() => thinkingPanelText.value !== null);
-
-  function openThinkingPanel(target: { turnId: string; blockIndex: number }): void {
-    const current = thinkingTarget.value;
-    if (current && current.turnId === target.turnId && current.blockIndex === target.blockIndex) {
-      thinkingTarget.value = null;
-      if (detailTarget.value === 'thinking') detailTarget.value = null;
-      return;
-    }
-    detailTarget.value = 'thinking';
-    thinkingTarget.value = target;
-  }
-
-  function closeThinkingPanel(): void {
-    thinkingTarget.value = null;
-    if (detailTarget.value === 'thinking') detailTarget.value = null;
-  }
-
-  // ---------------------------------------------------------------------------
   // Compaction summary panel
   // ---------------------------------------------------------------------------
   const compactionTarget = ref<{ turnId: string } | null>(null);
@@ -231,7 +200,6 @@ export function useDetailPanel({
   const sidePanelVisible = computed(
     () =>
       detailTarget.value !== null &&
-      (detailTarget.value !== 'thinking' || thinkingVisible.value) &&
       (detailTarget.value !== 'compaction' || compactionPanelVisible.value) &&
       (detailTarget.value !== 'agent' || agentPanelVisible.value) &&
       (detailTarget.value !== 'btw' || btwVisible.value),
@@ -244,16 +212,15 @@ export function useDetailPanel({
   // ---------------------------------------------------------------------------
   // Per-session panel snapshot (in-memory only). Switching sessions still closes
   // the right-side detail layer, but for the transient panels whose content is
-  // re-derived from the session's turns (thinking / compaction / agent) or
-  // already stored per session (btw), we remember which one was open and
-  // restore it when the user switches back.
+  // re-derived from the session's turns (compaction / agent) or already stored
+  // per session (btw), we remember which one was open and restore it when the
+  // user switches back.
   //
   // File preview ('file') and git diff ('diff') are intentionally excluded:
   // their content is tied to the active session's cwd / git state and is
   // re-fetched on demand, so restoring them across sessions would be ambiguous.
   // ---------------------------------------------------------------------------
   type PanelSnapshot =
-    | { kind: 'thinking'; turnId: string; blockIndex: number }
     | { kind: 'compaction'; turnId: string }
     | { kind: 'agent'; subagentId: string }
     | { kind: 'btw' };
@@ -262,8 +229,6 @@ export function useDetailPanel({
 
   function captureSnapshot(): PanelSnapshot | null {
     switch (detailTarget.value) {
-      case 'thinking':
-        return thinkingTarget.value ? { kind: 'thinking', ...thinkingTarget.value } : null;
       case 'compaction':
         return compactionTarget.value ? { kind: 'compaction', ...compactionTarget.value } : null;
       case 'agent':
@@ -278,10 +243,6 @@ export function useDetailPanel({
   function restoreSnapshot(snap: PanelSnapshot | undefined): void {
     if (!snap) return;
     switch (snap.kind) {
-      case 'thinking':
-        thinkingTarget.value = { turnId: snap.turnId, blockIndex: snap.blockIndex };
-        detailTarget.value = 'thinking';
-        break;
       case 'compaction':
         compactionTarget.value = { turnId: snap.turnId };
         detailTarget.value = 'compaction';
@@ -300,7 +261,6 @@ export function useDetailPanel({
 
   // Escape closes whichever transient right-side detail panel is open.
   function closeOpenSidePanel(): boolean {
-    if (detailTarget.value === 'thinking' && thinkingVisible.value) { closeThinkingPanel(); return true; }
     if (detailTarget.value === 'compaction' && compactionPanelVisible.value) { closeCompactionPanel(); return true; }
     if (detailTarget.value === 'agent' && agentPanelVisible.value) { closeAgentPanel(); return true; }
     if (detailTarget.value === 'file') { closeFilePreview(); return true; }
@@ -319,7 +279,6 @@ export function useDetailPanel({
     }
     // Close everything for the incoming session (unchanged behavior).
     closeFilePreview();
-    closeThinkingPanel();
     closeCompactionPanel();
     closeAgentPanel();
     closeDiffDetail();
@@ -337,10 +296,6 @@ export function useDetailPanel({
     previewMax,
     previewWidth,
     previewPanelWidth,
-    thinkingPanelText,
-    thinkingVisible,
-    openThinkingPanel,
-    closeThinkingPanel,
     compactionPanelText,
     compactionPanelVisible,
     openCompactionPanel,

@@ -124,7 +124,6 @@ const emit = defineEmits<{
   selectModel: [modelId: string];
   openFile: [target: FilePreviewRequest];
   openMedia: [media: ToolMedia];
-  openThinking: [target: { turnId: string; blockIndex: number }];
   openCompaction: [target: { turnId: string }];
   openAgent: [toolCallId: string];
   /** Chat header / files pane: focus the diff detail layer and refresh git status. */
@@ -1470,7 +1469,6 @@ defineExpose({ loadComposerForEdit, focusComposer });
               @open-file="emit('openFile', $event)"
               @open-media="emit('openMedia', $event)"
               @copy-conversation-copied="handleCopyConversationCopied"
-              @open-thinking="emit('openThinking', $event)"
               @open-compaction="emit('openCompaction', $event)"
               @open-agent="emit('openAgent', $event)"
               @edit-message="handleEditMessage"

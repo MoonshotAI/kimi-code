@@ -32,6 +32,7 @@ import KimiFolderOpen from '~icons/kimi/folder-open';
 import KimiMore from '~icons/kimi/more';
 import KimiSearch from '~icons/kimi/search';
 import KimiSetting from '~icons/kimi/setting';
+import KimiThinking from '~icons/kimi/thinking';
 
 // Components (Tabler) ---------------------------------------------------------
 import TablerSidebarLeftCollapse from '~icons/tabler/layout-sidebar-left-collapse';
@@ -107,6 +108,7 @@ import RawKimiFolderOpen from '~icons/kimi/folder-open?raw';
 import RawKimiMore from '~icons/kimi/more?raw';
 import RawKimiSearch from '~icons/kimi/search?raw';
 import RawKimiSetting from '~icons/kimi/setting?raw';
+import RawKimiThinking from '~icons/kimi/thinking?raw';
 
 // Raw SVG strings (Tabler) ----------------------------------------------------
 import RawTablerSidebarLeftCollapse from '~icons/tabler/layout-sidebar-left-collapse?raw';
@@ -248,7 +250,8 @@ export type IconName =
   | 'stop'
   | 'star'
   | 'star-outline'
-  | 'dots-horizontal';
+  | 'dots-horizontal'
+  | 'thinking';
 
 export type IconSize = 'sm' | 'md' | 'lg';
 
@@ -338,6 +341,7 @@ export const ICONS: Record<IconName, IconEntry> = {
   star: entry(RiStarFill, RawStarFill),
   'star-outline': entry(RiStarLine, RawStarLine),
   'dots-horizontal': entry(KimiMore, RawKimiMore),
+  thinking: entry(KimiThinking, RawKimiThinking),
 };
 
 export function getIcon(name: IconName): IconEntry {
@@ -451,6 +455,7 @@ export const ICON_GROUPS: ReadonlyArray<readonly [string, readonly IconName[]]> 
       'star',
       'star-outline',
       'dots-horizontal',
+      'thinking',
     ],
   ],
 ];

@@ -947,3 +947,179 @@ describe('reduceAppEvent unknown agent error', () => {
     expect(next.warnings[0]).toBe(`${i18n.global.t('warnings.noteLabel')}: heads up`);
   });
 });
+
+
+describe('reduceAppEvent thinking timing', () => {
+  function assistantState(): ReturnType<typeof createInitialState> {
+    const msg: AppMessage = {
+      id: 'msg_a1',
+      sessionId: 's1',
+      role: 'assistant',
+      content: [],
+      createdAt: '2026-06-01T12:00:00.000Z',
+    };
+    return {
+      ...createInitialState(),
+      sessions: [makeSession('s1', '2026-06-01T12:00:00.000Z')],
+      messagesBySession: { s1: [msg] },
+    };
+  }
+
+  function thinkingPart(state: ReturnType<typeof createInitialState>, index: number) {
+    const part = state.messagesBySession['s1']?.[0]?.content[index];
+    if (part?.type !== 'thinking') throw new Error(`expected thinking part at ${index}`);
+    return part;
+  }
+
+  it('stamps startedAt when a thinking part opens and keeps it while merging', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const opened = reduceAppEvent(
+        assistantState(),
+        { type: 'assistantDelta', sessionId: 's1', messageId: 'msg_a1', contentIndex: 0, delta: { thinking: 'hmm' } },
+        { sessionId: 's1', seq: 1 },
+      );
+      expect(thinkingPart(opened, 0)).toMatchObject({
+        thinking: 'hmm',
+        startedAt: '2026-06-01T12:00:00.000Z',
+      });
+      expect(thinkingPart(opened, 0).durationMs).toBeUndefined();
+
+      vi.setSystemTime(new Date('2026-06-01T12:00:03.000Z'));
+      const merged = reduceAppEvent(
+        opened,
+        { type: 'assistantDelta', sessionId: 's1', messageId: 'msg_a1', contentIndex: 0, delta: { thinking: ' more' } },
+        { sessionId: 's1', seq: 2 },
+      );
+      expect(thinkingPart(merged, 0)).toMatchObject({
+        thinking: 'hmm more',
+        startedAt: '2026-06-01T12:00:00.000Z',
+      });
+      expect(thinkingPart(merged, 0).durationMs).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('closes the open thinking part when a text part opens after it', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const opened = reduceAppEvent(
+        assistantState(),
+        { type: 'assistantDelta', sessionId: 's1', messageId: 'msg_a1', contentIndex: 0, delta: { thinking: 'hmm' } },
+        { sessionId: 's1', seq: 1 },
+      );
+      vi.setSystemTime(new Date('2026-06-01T12:00:05.000Z'));
+      const answered = reduceAppEvent(
+        opened,
+        { type: 'assistantDelta', sessionId: 's1', messageId: 'msg_a1', contentIndex: 1, delta: { text: 'answer' } },
+        { sessionId: 's1', seq: 2 },
+      );
+      expect(thinkingPart(answered, 0).durationMs).toBe(5000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('closes an earlier thinking part when a new thinking part opens', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const first = reduceAppEvent(
+        assistantState(),
+        { type: 'assistantDelta', sessionId: 's1', messageId: 'msg_a1', contentIndex: 0, delta: { thinking: 'one' } },
+        { sessionId: 's1', seq: 1 },
+      );
+      vi.setSystemTime(new Date('2026-06-01T12:00:02.000Z'));
+      const second = reduceAppEvent(
+        first,
+        { type: 'assistantDelta', sessionId: 's1', messageId: 'msg_a1', contentIndex: 1, delta: { thinking: 'two' } },
+        { sessionId: 's1', seq: 2 },
+      );
+      expect(thinkingPart(second, 0).durationMs).toBe(2000);
+      expect(thinkingPart(second, 1).startedAt).toBe('2026-06-01T12:00:02.000Z');
+      expect(thinkingPart(second, 1).durationMs).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('messageUpdated preserves stamps and closes the last part once settled', () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-06-01T12:00:00.000Z'));
+      const opened = reduceAppEvent(
+        assistantState(),
+        { type: 'assistantDelta', sessionId: 's1', messageId: 'msg_a1', contentIndex: 0, delta: { thinking: 'hmm' } },
+        { sessionId: 's1', seq: 1 },
+      );
+      // Mid-stream full-content replace (e.g. a tool slot appended upstream):
+      // the projector's copy carries no stamps, and a still-last thinking part
+      // stays open while the message is pending.
+      vi.setSystemTime(new Date('2026-06-01T12:00:02.000Z'));
+      const replaced = reduceAppEvent(
+        opened,
+        {
+          type: 'messageUpdated',
+          sessionId: 's1',
+          messageId: 'msg_a1',
+          content: [{ type: 'thinking', thinking: 'hmm' }],
+          status: 'pending',
+        },
+        { sessionId: 's1', seq: 2 },
+      );
+      expect(thinkingPart(replaced, 0).startedAt).toBe('2026-06-01T12:00:00.000Z');
+      expect(thinkingPart(replaced, 0).durationMs).toBeUndefined();
+
+      vi.setSystemTime(new Date('2026-06-01T12:00:07.000Z'));
+      const settled = reduceAppEvent(
+        replaced,
+        {
+          type: 'messageUpdated',
+          sessionId: 's1',
+          messageId: 'msg_a1',
+          content: [{ type: 'thinking', thinking: 'hmm' }],
+          status: 'completed',
+          durationMs: 8000,
+        },
+        { sessionId: 's1', seq: 3 },
+      );
+      expect(thinkingPart(settled, 0).durationMs).toBe(7000);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('history-loaded thinking parts stay untimed', () => {
+    const state = {
+      ...assistantState(),
+      messagesBySession: {
+        s1: [
+          {
+            id: 'msg_a1',
+            sessionId: 's1',
+            role: 'assistant',
+            content: [{ type: 'thinking', thinking: 'old' }],
+            createdAt: '2026-06-01T12:00:00.000Z',
+          } satisfies AppMessage,
+        ],
+      },
+    };
+    const next = reduceAppEvent(
+      state,
+      {
+        type: 'messageUpdated',
+        sessionId: 's1',
+        messageId: 'msg_a1',
+        content: [{ type: 'thinking', thinking: 'old' }],
+        status: 'completed',
+      },
+      { sessionId: 's1', seq: 1 },
+    );
+    const part = thinkingPart(next, 0);
+    expect(part.startedAt).toBeUndefined();
+    expect(part.durationMs).toBeUndefined();
+  });
+});

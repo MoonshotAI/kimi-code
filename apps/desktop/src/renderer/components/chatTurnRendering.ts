@@ -36,7 +36,7 @@ export type ToolStackItem = {
 };
 
 export type AssistantRenderBlock =
-  | { kind: 'thinking'; thinking: string; sourceIndex: number }
+  | { kind: 'thinking'; thinking: string; startedAt?: string; durationMs?: number; sourceIndex: number }
   | { kind: 'text'; text: string; sourceIndex: number }
   | { kind: 'tool'; tool: ToolStackItem['tool']; sourceIndex: number }
   | { kind: 'tool-stack'; tools: ToolStackItem[] };
@@ -80,7 +80,13 @@ export function assistantRenderBlocks(turn: ChatTurn): AssistantRenderBlock[] {
 
     flushToolRun();
     if (block.kind === 'thinking') {
-      rendered.push({ kind: 'thinking', thinking: block.thinking, sourceIndex });
+      rendered.push({
+        kind: 'thinking',
+        thinking: block.thinking,
+        startedAt: block.startedAt,
+        durationMs: block.durationMs,
+        sourceIndex,
+      });
     } else if (block.kind === 'text') {
       rendered.push({ kind: 'text', text: block.text, sourceIndex });
     }

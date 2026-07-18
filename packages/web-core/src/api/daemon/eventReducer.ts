@@ -48,6 +48,26 @@ const MAX_BACKGROUND_OUTPUT_LINES = 40;
 const PLACEHOLDER_SUBAGENT_DESCRIPTION = 'Sub Agent';
 
 // ---------------------------------------------------------------------------
+// Thinking-part timing (client-side only)
+// ---------------------------------------------------------------------------
+// The daemon streams thinking deltas without any timing, so the renderer
+// measures it: a part is stamped `startedAt` when it opens and `durationMs`
+// when the stream moves past it (a later part opens, or the message settles).
+// History-loaded and snapshot-restored parts stay untimed — nothing is
+// fabricated for content we never watched stream.
+
+/** Stamp `durationMs` on every open thinking part before `before` (all parts
+ *  when omitted). Idempotent. */
+function closeThinkingParts(content: AppMessageContent[], nowMs: number, before = content.length): void {
+  for (let i = 0; i < before; i++) {
+    const part = content[i]!;
+    if (part.type === 'thinking' && part.startedAt !== undefined && part.durationMs === undefined) {
+      content[i] = { ...part, durationMs: Math.max(0, nowMs - Date.parse(part.startedAt)) };
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
@@ -558,9 +578,26 @@ export function reduceAppEvent(
       const msgs = next.messagesBySession[sid] ?? [];
       next.messagesBySession[sid] = msgs.map((m) => {
         if (m.id !== event.messageId) return m;
+        // Preserve renderer-stamped thinking timing across full-content
+        // replaces: the projector's copy carries no stamps, so merge ours back
+        // by index (type-matched).
+        const content = event.content.map((part, i) => {
+          const prev = m.content[i];
+          if (part.type === 'thinking' && prev?.type === 'thinking') {
+            return { ...part, startedAt: prev.startedAt, durationMs: prev.durationMs };
+          }
+          return part;
+        });
+        const nowMs = Date.now();
+        // A thinking part with content after it can no longer be streaming;
+        // once the message settles, neither can the last one.
+        closeThinkingParts(content, nowMs, content.length - 1);
+        if (event.status !== 'pending' || event.durationMs !== undefined) {
+          closeThinkingParts(content, nowMs);
+        }
         return {
           ...m,
-          content: event.content,
+          content,
           durationMs: event.durationMs ?? m.durationMs,
         };
       });
@@ -575,6 +612,7 @@ export function reduceAppEvent(
         if (m.id !== event.messageId) return m;
         const content = [...m.content];
         const idx = event.contentIndex;
+        const isNewSlot = content.length <= idx;
         // Ensure the slot exists
         while (content.length <= idx) {
           content.push({ type: 'text', text: '' });
@@ -582,10 +620,12 @@ export function reduceAppEvent(
         const existing = content[idx]!;
         let patched: AppMessageContent;
         if (event.delta.text !== undefined) {
-          if (existing.type === 'text') {
+          if (existing.type === 'text' && !isNewSlot) {
             patched = { type: 'text', text: existing.text + event.delta.text };
           } else {
             patched = { type: 'text', text: event.delta.text };
+            // A new part opened — any earlier open thinking part is done.
+            closeThinkingParts(content, Date.now(), idx);
           }
         } else if (event.delta.thinking !== undefined) {
           if (existing.type === 'thinking') {
@@ -593,9 +633,16 @@ export function reduceAppEvent(
               type: 'thinking',
               thinking: existing.thinking + event.delta.thinking,
               signature: existing.signature,
+              startedAt: existing.startedAt,
+              durationMs: existing.durationMs,
             };
           } else {
-            patched = { type: 'thinking', thinking: event.delta.thinking };
+            patched = {
+              type: 'thinking',
+              thinking: event.delta.thinking,
+              startedAt: new Date().toISOString(),
+            };
+            closeThinkingParts(content, Date.now(), idx);
           }
         } else {
           patched = existing;
