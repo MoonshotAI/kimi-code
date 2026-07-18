@@ -180,13 +180,21 @@ pub async fn native_write(
 /// @param replace_all - If true, replace all occurrences. Default false.
 /// @returns EditResult with success, error, and replacements count.
 #[napi]
-pub fn native_edit(
+pub async fn native_edit(
     path: String,
     old_string: String,
     new_string: String,
     replace_all: Option<bool>,
 ) -> EditResult {
-    let result = edit::edit_file(&path, &old_string, &new_string, replace_all.unwrap_or(false));
+    let result = tokio::task::spawn_blocking(move || {
+        edit::edit_file(&path, &old_string, &new_string, replace_all.unwrap_or(false))
+    })
+    .await
+    .unwrap_or_else(|e| EditResult {
+        success: false,
+        replacements: 0,
+        error: Some(format!("edit panicked: {e}")),
+    });
     if result.error.is_none() {
         crate::file_cache::FILE_CACHE.invalidate(&path);
     }
