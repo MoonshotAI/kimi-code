@@ -134,10 +134,10 @@ describe('AgentTranscriptProjector', () => {
         frame: { kind: 'text', frameId: 't0.1.f1', role: 'assistant', text: 'Hello ' },
       },
     ]);
-    const projector = new AgentTranscriptProjector(
-      'main',
-      (turnId, stepId) => tx.getTurn(turnId)?.steps.find((s) => s.stepId === stepId)?.frames,
-    );
+    const projector = new AgentTranscriptProjector('main', {
+      stepFrames: (turnId, stepId) =>
+        tx.getTurn(turnId)?.steps.find((s) => s.stepId === stepId)?.frames,
+    });
 
     // The live stream resumes: no empty upsert, the append continues at the
     // seeded offset.
@@ -154,6 +154,60 @@ describe('AgentTranscriptProjector', () => {
     const next = projector.map(ev({ type: 'thinking.delta', turnId: 0, delta: 'hmm' }));
     const created = next.find((op): op is FrameUpsertOp => op.op === 'frame.upsert');
     expect(created?.frame.frameId).toBe('t0.1.f2');
+  });
+
+  it('adopts a backfilled tool frame when the result arrives after a mid-bind attach', () => {
+    const tx = new AgentTranscript('main');
+    // The backfill seeded the running tool call (from the persisted assistant
+    // toolCalls) before the projector observed any event.
+    tx.apply([
+      {
+        op: 'turn.upsert',
+        turn: { kind: 'turn', turnId: 't0', ordinal: 0, state: 'running', origin: { kind: 'user' } },
+      },
+      {
+        op: 'step.upsert',
+        turnId: 't0',
+        step: { kind: 'step', stepId: 't0.1', turnId: 't0', ordinal: 1, state: 'running' },
+      },
+      {
+        op: 'frame.upsert',
+        turnId: 't0',
+        stepId: 't0.1',
+        frame: {
+          kind: 'tool',
+          frameId: 't0.1.call_1',
+          toolCallId: 'call_1',
+          name: 'Bash',
+          state: 'running',
+          input: { command: 'ls' },
+        },
+      },
+    ]);
+    const projector = new AgentTranscriptProjector('main', {
+      toolFrame: (toolCallId) => {
+        for (const item of tx.getItems()) {
+          if (item.kind !== 'turn') continue;
+          for (const step of item.steps) {
+            for (const frame of step.frames) {
+              if (frame.kind === 'tool' && frame.toolCallId === toolCallId) {
+                return { turnId: item.turnId, stepId: step.stepId, frame };
+              }
+            }
+          }
+        }
+        return undefined;
+      },
+    });
+
+    // The projector never saw tool.call.started — without adoption the result
+    // is dropped and the seeded frame stays output-less.
+    const ops = projector.map(ev({ type: 'tool.result', toolCallId: 'call_1', output: 'file.txt' }));
+    expect(ops).toHaveLength(1);
+    tx.apply(ops);
+    const turn = turnOps('t0', tx.getItems());
+    const tool = turn.steps[0]?.frames.find((frame) => frame.kind === 'tool');
+    expect(tool).toMatchObject({ toolCallId: 'call_1', state: 'done', output: 'file.txt' });
   });
 
   it('snapshotToOps anchors standalone items so backfill keeps history order against live turns', () => {

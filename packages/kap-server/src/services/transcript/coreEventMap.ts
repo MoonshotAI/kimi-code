@@ -72,13 +72,25 @@ export type ProjectorFrameLookup = (
   stepId: string,
 ) => readonly TranscriptFrame[] | undefined;
 
+/**
+ * Locate a tool frame by its toolCallId across the producer store. Used for
+ * mid-bind result adoption — see `adoptToolFrame`.
+ */
+export type ProjectorToolFrameLookup = (toolCallId: string) => ToolFrameRecord | undefined;
+
+/** Optional producer-store lookups that let the projector adopt seeded state. */
+export interface ProjectorLookups {
+  readonly stepFrames?: ProjectorFrameLookup;
+  readonly toolFrame?: ProjectorToolFrameLookup;
+}
+
 interface OpenTextFrame {
   readonly frameId: string;
   offset: number;
   text: string;
 }
 
-interface ToolFrameRecord {
+export interface ToolFrameRecord {
   readonly turnId: string;
   readonly stepId: string;
   readonly frame: ToolCallFrame;
@@ -109,7 +121,7 @@ export class AgentTranscriptProjector {
 
   constructor(
     readonly agentId: string,
-    private readonly frameLookup?: ProjectorFrameLookup,
+    private readonly lookups?: ProjectorLookups,
   ) {}
 
   map(event: DomainEvent): TranscriptOperation[] {
@@ -345,7 +357,7 @@ export class AgentTranscriptProjector {
     stepId: string,
     kind: 'assistant' | 'thinking',
   ): OpenTextFrame | undefined {
-    const frames = this.frameLookup?.(turnId, stepId);
+    const frames = this.lookups?.stepFrames?.(turnId, stepId);
     if (frames === undefined || frames.length === 0) return undefined;
     for (const frame of frames) {
       const match = /\.f(\d+)$/.exec(frame.frameId);
@@ -439,7 +451,7 @@ export class AgentTranscriptProjector {
     output: unknown;
     isError?: boolean;
   }): TranscriptOperation[] {
-    const hit = this.toolFrames.get(event.toolCallId);
+    const hit = this.toolFrames.get(event.toolCallId) ?? this.adoptToolFrame(event.toolCallId);
     if (hit === undefined) return [];
     const isError = event.isError === true;
     const frame: ToolCallFrame = {
@@ -450,6 +462,20 @@ export class AgentTranscriptProjector {
     };
     this.toolFrames.set(event.toolCallId, { ...hit, frame });
     return [{ op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame }];
+  }
+
+  /**
+   * Mid-bind adoption: the transcript may have attached after `tool.call.started`
+   * (the backfill seeded the frame from the persisted assistant toolCalls) but
+   * before `tool.result`. This projector's map is empty then and the result
+   * would be dropped; adopt the seeded frame so the result lands where a live
+   * observer put it.
+   */
+  private adoptToolFrame(toolCallId: string): ToolFrameRecord | undefined {
+    const hit = this.lookups?.toolFrame?.(toolCallId);
+    if (hit === undefined) return undefined;
+    this.toolFrames.set(toolCallId, hit);
+    return hit;
   }
 
   // ---------------------------------------------------------------- tasks

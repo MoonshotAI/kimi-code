@@ -83,14 +83,29 @@ export function bindSessionTranscript(
   const projectorFor = (agentId: string): AgentTranscriptProjector => {
     let projector = projectors.get(agentId);
     if (projector === undefined) {
-      // The frame lookup lets the projector adopt stream frames the history
-      // backfill seeded into the store (mid-stream attach) instead of
-      // clobbering them with empty upserts + offset-0 appends.
-      projector = new AgentTranscriptProjector(
-        agentId,
-        (turnId, stepId) =>
+      // The lookups let the projector adopt state the history backfill seeded
+      // into the store before the projector existed (mid-stream/mid-bind
+      // attach): stream frames continue id + offset, tool frames take their
+      // results, instead of clobbering the seeded state or dropping events.
+      projector = new AgentTranscriptProjector(agentId, {
+        stepFrames: (turnId, stepId) =>
           store.getAgent(agentId)?.getTurn(turnId)?.steps.find((s) => s.stepId === stepId)?.frames,
-      );
+        toolFrame: (toolCallId) => {
+          const transcript = store.getAgent(agentId);
+          if (transcript === undefined) return undefined;
+          for (const item of transcript.getItems()) {
+            if (item.kind !== 'turn') continue;
+            for (const step of item.steps) {
+              for (const frame of step.frames) {
+                if (frame.kind === 'tool' && frame.toolCallId === toolCallId) {
+                  return { turnId: item.turnId, stepId: step.stepId, frame };
+                }
+              }
+            }
+          }
+          return undefined;
+        },
+      });
       projectors.set(agentId, projector);
     }
     return projector;

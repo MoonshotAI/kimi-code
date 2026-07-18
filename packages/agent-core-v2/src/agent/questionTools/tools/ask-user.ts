@@ -14,6 +14,7 @@ import { Error2 } from '#/_base/errors/errors';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { isAbortError } from '#/_base/utils/abort';
 import { IAgentTaskService } from '#/agent/task/task';
+import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
 import type { QuestionAnsweredEvent, QuestionDismissedEvent } from '#/app/telemetry/events';
 import type {
@@ -135,6 +136,7 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
     @ISessionQuestionService private readonly question: ISessionQuestionService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentTaskService private readonly tasks: IAgentTaskService,
+    @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
   ) {
     this.description = `${DESCRIPTION}- Set background=true when you can keep working without the answer. This starts a background question task and returns a task_id immediately. The answer arrives automatically in a later turn — you do not need to poll, sleep, or check on it. Continue with other work; never fabricate or predict the answer.`;
     this.parameters = toInputJsonSchema(this.inputSchema());
@@ -241,7 +243,9 @@ export class AskUserQuestionTool implements BuiltinTool<AskUserQuestionInput> {
             multiSelect: q.multi_select,
           })),
         },
-        { signal },
+        // Record the owning agent so question events/frames route to this
+        // agent's surfaces (a subagent's question must not land on 'main').
+        { signal, agentId: this.scopeContext.agentId },
       );
 
       const normalized = normalizeQuestionResult(result);

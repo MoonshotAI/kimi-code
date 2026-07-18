@@ -51,7 +51,15 @@ export interface QuestionRequest {
 export interface ISessionQuestionService {
   readonly _serviceBrand: undefined;
 
-  request(req: QuestionRequest, options?: { signal?: AbortSignal }): Promise<QuestionResult>;
+  /**
+   * `agentId` records the owning agent on the interaction origin (questions
+   * asked from a subagent's tools); consumers route pending/resolved events
+   * and transcript frames by it. Absent = the main agent.
+   */
+  request(
+    req: QuestionRequest,
+    options?: { signal?: AbortSignal; agentId?: string },
+  ): Promise<QuestionResult>;
   enqueue(req: QuestionRequest): QuestionRequest & { readonly id: string };
   answer(id: string, result: QuestionResult): void;
   dismiss(id: string): void;

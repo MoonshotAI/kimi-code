@@ -19,6 +19,7 @@ import {
   IEventBus,
   ISessionInteractionService,
   ISessionLifecycleService,
+  ISessionQuestionService,
   IModelResolver,
   type ContextMessage,
   type DomainEvent,
@@ -555,6 +556,61 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
       },
       { timeout: 5000, interval: 50 },
     );
+  });
+
+  it('routes a subagent question to the subagent transcript, not main', async () => {
+    const id = await createSession();
+    await ensureMainAgent(id);
+    const session = server!.core.accessor.get(ISessionLifecycleService).get(id);
+    const sub = await session!.accessor.get(IAgentLifecycleService).create({ agentId: 'sub-1' });
+
+    // Bind the transcript (main + any agent appearing later).
+    await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+
+    const subBus = sub.accessor.get(IEventBus);
+    subBus.publish(
+      serverEvent({ type: 'turn.started', turnId: 0, origin: { kind: 'task', taskId: 'task-1' } }),
+    );
+    subBus.publish(serverEvent({ type: 'turn.step.started', turnId: 0, step: 1 }));
+    subBus.publish(
+      serverEvent({
+        type: 'tool.call.started',
+        turnId: 0,
+        toolCallId: 'call_q',
+        name: 'AskUserQuestion',
+        args: {},
+      }),
+    );
+
+    // The question carries its owning agent on the interaction origin (see
+    // ISessionQuestionService.request's agentId option).
+    const questions = session!.accessor.get(ISessionQuestionService);
+    const pending = questions.request(
+      {
+        turnId: 0,
+        toolCallId: 'call_q',
+        questions: [{ question: 'Pick one?', options: [{ label: 'A' }, { label: 'B' }] }],
+      },
+      { agentId: 'sub-1' },
+    );
+
+    const subBody = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=sub-1`);
+    expect(subBody.body.data.pending_interactions).toEqual(['call_q']);
+    const subFrames = (subBody.body.data.items[0] as TurnWire).steps[0]!.frames;
+    expect(subFrames).toContainEqual(
+      expect.objectContaining({
+        kind: 'interaction',
+        interactionKind: 'question',
+        toolCallId: 'call_q',
+        state: 'pending',
+      }),
+    );
+
+    const mainBody = await getJson<TranscriptWire>(`/api/v1/sessions/${id}/transcript?agent_id=main`);
+    expect(mainBody.body.data.pending_interactions).toEqual([]);
+
+    questions.dismiss('call_q');
+    await pending;
   });
 
   it('rejects before_turn + after_turn together with 40001', async () => {
