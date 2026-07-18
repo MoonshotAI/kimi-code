@@ -11,3 +11,4 @@ Perform exact replacements in existing files.
 - A write lock serializes same-file edits in response order, but serialization does not make stale `old_string` valid.
 - For pure CRLF files, Read shows LF; use LF in `old_string` and `new_string`, and Edit writes CRLF back.
 - For mixed endings or lone carriage returns, Read shows carriage returns as \r; include actual \r escapes in those positions.
+- Backslash encoding: when old_string contains backslashes (e.g. Rust `\n`, JSON `\\`, regex `\d`), copy the exact characters from the Read output. Do NOT add extra escaping — the file contains literal backslash characters, not escape sequences.

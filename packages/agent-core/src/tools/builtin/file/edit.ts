@@ -55,6 +55,76 @@ function replaceOnceLiteral(content: string, oldString: string, newString: strin
   return content.slice(0, index) + newString + content.slice(index + oldString.length);
 }
 
+/**
+ * Apply a backslash encoding transformation to detect whether a
+ * different encoding would match the file content. Used for detection
+ * only — the actual replacement uses the original args.
+ */
+function applyBackslashFix(
+  input: string,
+  variant: 'collapse-only' | 'escape' | 'unescape-seq-first',
+): string {
+  if (variant === 'collapse-only') {
+    // Only collapse doubled backslashes — no escape sequence processing.
+    // Handles: LLM sent \\\\n (two backslashes + n) but file has \n (one backslash + n).
+    return input.replaceAll('\\\\', '\\');
+  }
+  if (variant === 'escape') {
+    // Replace real newlines with backslash-n.
+    // Handles: LLM sent \n (real newline) but file has \\n (two backslashes + n).
+    return input
+      .replaceAll('\n', '\\n')
+      .replaceAll('\t', '\\t')
+      .replaceAll('\r', '\\r');
+  }
+  // unescape-seq-first: translate escape sequences first, then collapse.
+  // Handles: LLM sent \n (real newline) but file has \n (backslash + n).
+  return input
+    .replaceAll('\\n', '\n')
+    .replaceAll('\\t', '\t')
+    .replaceAll('\\r', '\r')
+    .replaceAll('\\\\', '\\');
+}
+
+function findBackslashAdjustedMatch(
+  content: string,
+  oldString: string,
+): { adjusted: string; variant: string } | undefined {
+  // Try all variants and return the first that matches the file content.
+  const candidates: Array<{ adjusted: string; variant: string }> = [
+    { adjusted: applyBackslashFix(oldString, 'collapse-only'), variant: 'collapse-only' },
+    { adjusted: applyBackslashFix(oldString, 'escape'), variant: 'escape' },
+    { adjusted: applyBackslashFix(oldString, 'unescape-seq-first'), variant: 'unescape-seq-first' },
+  ];
+  for (const c of candidates) {
+    if (c.adjusted !== oldString && content.includes(c.adjusted)) {
+      return c;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Build a short diagnostic snippet showing the first divergence between
+ * `oldString` and the file content, helpful when old_string is not found.
+ */
+function buildNotFoundHint(content: string, oldString: string, _filePath: string): string {
+  const lines = content.split('\n');
+  const firstLine = oldString.split('\n')[0] ?? '';
+  if (firstLine.length === 0) return '';
+
+  // Find the closest matching line in the file content.
+  const candidates = lines.filter((l) => l.includes(firstLine.slice(0, 20)));
+  if (candidates.length === 0) {
+    return `The file does not contain a line matching the start of old_string: "${truncate(firstLine, 60)}"`;
+  }
+  return `Closest match in file: "${truncate(candidates[0]!, 80)}"`;
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 3) + '...';
+}
+
 export class EditTool implements BuiltinTool<EditInput> {
   readonly name = 'Edit' as const;
   readonly description = EDIT_DESCRIPTION;
@@ -71,6 +141,18 @@ export class EditTool implements BuiltinTool<EditInput> {
       workspace: this.workspace,
       operation: 'write',
     });
+
+    // Reject no-op edits before any file I/O.
+    if (args.old_string === args.new_string) {
+      return {
+        isError: true,
+        output: 'No changes to make: old_string and new_string are exactly the same.',
+      };
+    }
+
+    // No file read here — resolveExecution runs BEFORE the authorization
+    // hook in tool-call.ts. Reading the file here would bypass permission
+    // checks. The backslash fallback is applied in execution() after auth.
     return {
       accesses: ToolAccesses.readWriteFile(path),
       description: `Editing ${args.path}`,
@@ -93,18 +175,29 @@ export class EditTool implements BuiltinTool<EditInput> {
   }
 
   private async execution(args: EditInput, safePath: string): Promise<ExecutableToolResult> {
-    if (args.old_string === args.new_string) {
-      return {
-        isError: true,
-        output: 'No changes to make: old_string and new_string are exactly the same.',
-      };
-    }
-
     try {
       const raw = await this.kaos.readText(safePath);
       const modelView = toModelTextView(raw);
       const content = modelView.text;
       const replaceAll = args.replace_all ?? false;
+
+      // If old_string is not found, check if a backslash encoding mismatch
+      // is the cause. Instead of silently adjusting (which would mismatch
+      // the approval display), return a diagnostic error so the LLM can
+      // resend with the correct encoding.
+      if (!content.includes(args.old_string)) {
+        const adjusted = findBackslashAdjustedMatch(content, args.old_string);
+        if (adjusted !== undefined) {
+          const hint = buildNotFoundHint(content, args.old_string, args.path);
+          return {
+            isError: true,
+            output:
+              `old_string not found in ${args.path}. ${hint}\n` +
+              `The file content differs in backslash encoding (detected: ${adjusted.variant}). ` +
+              `Use the Read Tool to view the exact file content and resend old_string matching the literal characters shown.`,
+          };
+        }
+      }
 
       if (!replaceAll) {
         let count = 0;
@@ -117,7 +210,8 @@ export class EditTool implements BuiltinTool<EditInput> {
         }
 
         if (count === 0) {
-          return { isError: true, output: `old_string not found in ${args.path}, the file contents may be out of date. Please use the Read Tool to reload the content.
+          const hint = buildNotFoundHint(content, args.old_string, args.path);
+          return { isError: true, output: `old_string not found in ${args.path}. ${hint}\nThe file contents may be out of date. Please use the Read Tool to reload the content.
 ` };
         }
         if (count > 1) {
@@ -140,7 +234,8 @@ export class EditTool implements BuiltinTool<EditInput> {
       const parts = content.split(args.old_string);
       const replacementCount = parts.length - 1;
       if (replacementCount === 0) {
-        return { isError: true, output: `old_string not found in ${args.path}, the file contents may be out of date. Please use the Read Tool to reload the content.
+        const hint = buildNotFoundHint(content, args.old_string, args.path);
+        return { isError: true, output: `old_string not found in ${args.path}. ${hint}\nThe file contents may be out of date. Please use the Read Tool to reload the content.
 ` };
       }
 
