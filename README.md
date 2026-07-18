@@ -9,6 +9,20 @@ Kimi Code 客户端仓库：桌面端（`apps/desktop`）+ Web UI（`apps/web`�
 - **kimi-code 是 CLI / server / agent 的主仓库**，以 submodule 钉在本仓库根目录，其 `packages/*` 通过 pnpm workspace 直接以源码链接进来——desktop 的 Electron 主进程会把其中的 server（`kap-server`、`agent-core-v2` 等）打包为内嵌 server。
 - **web 产物分发**：`pnpm sync:web`（`scripts/sync-web-to-kimi-code.mjs`）把 `apps/web/dist` 拷贝到一个 kimi-code checkout 的 `apps/kimi-code/dist-web`，用 `KIMI_CODE_REPO` 指定目标 checkout（必传）。
 
+## 下载
+
+桌面端最新安装包（CDN 固定入口，永远指向最新版本）：
+
+| 平台 | 链接 |
+| --- | --- |
+| macOS · Apple Silicon | [KimiCode-mac-arm64.dmg](https://code.kimi.com/kimi-code/desktop/download/KimiCode-mac-arm64.dmg) |
+| macOS · Intel | [KimiCode-mac-x64.dmg](https://code.kimi.com/kimi-code/desktop/download/KimiCode-mac-x64.dmg) |
+| Windows | [KimiCode-win-x64.exe](https://code.kimi.com/kimi-code/desktop/download/KimiCode-win-x64.exe) |
+| Linux · AppImage | [KimiCode-linux-x86_64.AppImage](https://code.kimi.com/kimi-code/desktop/download/KimiCode-linux-x86_64.AppImage) |
+| Linux · deb（Debian / Ubuntu） | [KimiCode-linux-amd64.deb](https://code.kimi.com/kimi-code/desktop/download/KimiCode-linux-amd64.deb) |
+
+历史版本与完整产物见 [GitHub Releases](https://github.com/MoonshotAI/kimi-code-app/releases)。
+
 ## 快速开始
 
 ```bash
