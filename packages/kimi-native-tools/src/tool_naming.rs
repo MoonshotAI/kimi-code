@@ -20,6 +20,10 @@ pub fn sanitize_mcp_name_part(part: &str) -> String {
     for &b in part.as_bytes() {
         let safe = b.is_ascii_alphanumeric() || b == b'_' || b == b'-';
         if safe {
+            if b == b'_' && prev_underscore {
+                // Skip consecutive underscores.
+                continue;
+            }
             out.push(b as char);
             prev_underscore = b == b'_';
         } else {

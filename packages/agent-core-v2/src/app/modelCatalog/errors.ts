@@ -2,6 +2,7 @@
  * `modelCatalog` domain error codes — provider/model catalog lookup failures.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 
 export const ModelCatalogErrors = {
@@ -11,16 +12,16 @@ export const ModelCatalogErrors = {
   },
   info: {
     'provider.not_found': {
-      title: 'Provider not found',
+      title: t('v2Errors.providerNotFound'),
       retryable: false,
       public: true,
-      action: 'Check the provider id or configure the provider first.',
+      action: t('v2Errors.providerNotFoundAction'),
     },
     'model.not_found': {
-      title: 'Model not found',
+      title: t('v2Errors.modelNotFound'),
       retryable: false,
       public: true,
-      action: 'Check the model alias or configure the model first.',
+      action: t('v2Errors.modelNotFoundAction'),
     },
   },
 } as const satisfies ErrorDomain;

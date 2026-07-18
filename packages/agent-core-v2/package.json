@@ -60,6 +60,7 @@
     "@google/genai": "^1.49.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@moonshot-ai/kimi-code-oauth": "workspace:^",
+    "@moonshot-ai/kimi-i18n": "workspace:^",
     "@moonshot-ai/kimi-native-tools": "workspace:^",
     "@moonshot-ai/minidb": "workspace:^",
     "@moonshot-ai/protocol": "workspace:^",

@@ -11,6 +11,7 @@
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 export const WireErrors = {
   codes: {
@@ -21,25 +22,25 @@ export const WireErrors = {
   },
   info: {
     'wire.duplicate_op': {
-      title: 'Duplicate wire op type',
+      title: t('v2Errors.wireDuplicateOp'),
       retryable: false,
       public: true,
-      action: 'Two ops registered the same type; rename one. This is a build-time bug.',
+      action: t('v2Errors.wireDuplicateOpAction'),
     },
     'wire.cycle': {
-      title: 'Wire dispatch cycle',
+      title: t('v2Errors.wireCycle'),
       retryable: false,
       public: true,
-      action: 'An onChange handler re-dispatches endlessly; break the op cycle.',
+      action: t('v2Errors.wireCycleAction'),
     },
     'wire.unknown_record': {
-      title: 'Unknown wire record',
+      title: t('v2Errors.wireUnknownRecord'),
       retryable: false,
       public: true,
-      action: 'The record was written by a newer version; upgrade or drop it.',
+      action: t('v2Errors.wireUnknownRecordAction'),
     },
     'records.write_failed': {
-      title: 'Wire journal write failed',
+      title: t('v2Errors.wireWriteFailed'),
       retryable: false,
       public: true,
     },

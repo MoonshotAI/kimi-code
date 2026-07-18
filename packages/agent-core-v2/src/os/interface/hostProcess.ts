@@ -11,6 +11,7 @@
 
 import type { Readable, Writable } from 'node:stream';
 
+import { t } from '@moonshot-ai/kimi-i18n';
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, type Error2Options } from '#/_base/errors/errors';
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
@@ -58,13 +59,13 @@ export const OsProcessErrors = {
   },
   info: {
     'os.process.spawn_failed': {
-      title: 'Failed to spawn process',
+      title: t('v2Errors.processSpawnFailed'),
       retryable: false,
       public: true,
-      action: 'Check that the command exists and is executable.',
+      action: t('v2Errors.processSpawnFailedAction'),
     },
     'os.process.kill_failed': {
-      title: 'Failed to kill process',
+      title: t('v2Errors.processKillFailed'),
       retryable: false,
       public: true,
     },

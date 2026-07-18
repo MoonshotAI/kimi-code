@@ -3,6 +3,7 @@
  */
 
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 export const GoalErrors = {
   codes: {
@@ -17,52 +18,52 @@ export const GoalErrors = {
   },
   info: {
     'goal.already_exists': {
-      title: 'A goal is already active',
+      title: t('v2Errors.goalAlreadyExists'),
       retryable: false,
       public: true,
-      action: 'Use `/goal replace <objective>` to replace the current goal.',
+      action: t('v2Errors.goalAlreadyExistsAction'),
     },
     'goal.not_found': {
-      title: 'No goal found',
+      title: t('v2Errors.goalNotFound'),
       retryable: false,
       public: true,
-      action: 'Start a goal with `/goal <objective>` first.',
+      action: t('v2Errors.goalNotFoundAction'),
     },
     'goal.objective_empty': {
-      title: 'Goal objective is empty',
+      title: t('v2Errors.goalObjectiveEmpty'),
       retryable: false,
       public: true,
-      action: 'Provide a non-empty objective.',
+      action: t('v2Errors.goalObjectiveEmptyAction'),
     },
     'goal.objective_too_long': {
-      title: 'Goal objective is too long',
+      title: t('v2Errors.goalObjectiveTooLong'),
       retryable: false,
       public: true,
-      action: 'Keep the objective under 4000 characters; reference long details by file path.',
+      action: t('v2Errors.goalObjectiveTooLongAction'),
     },
     'goal.status_invalid': {
-      title: 'Invalid goal status transition',
+      title: t('v2Errors.goalStatusInvalid'),
       retryable: false,
       public: true,
-      action: 'Only an active goal can be paused; resume a blocked goal with `/goal resume`.',
+      action: t('v2Errors.goalStatusInvalidAction'),
     },
     'goal.metadata_reserved': {
-      title: 'Goal metadata is reserved',
+      title: t('v2Errors.goalMetadataReserved'),
       retryable: false,
       public: true,
-      action: 'Do not write metadata.custom.goal directly; use the goal lifecycle methods.',
+      action: t('v2Errors.goalMetadataReservedAction'),
     },
     'goal.not_resumable': {
-      title: 'Goal is not resumable',
+      title: t('v2Errors.goalNotResumable'),
       retryable: false,
       public: true,
-      action: 'Only paused or blocked goals can be resumed.',
+      action: t('v2Errors.goalNotResumableAction'),
     },
     'goal.unsupported_agent': {
-      title: 'Goals are unavailable for subagents',
+      title: t('v2Errors.goalUnsupportedAgent'),
       retryable: false,
       public: true,
-      action: 'Run goal lifecycle commands on the main agent.',
+      action: t('v2Errors.goalUnsupportedAgentAction'),
     },
   },
 } as const satisfies ErrorDomain;

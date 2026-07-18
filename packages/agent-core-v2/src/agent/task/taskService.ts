@@ -30,6 +30,8 @@
 import { randomBytes } from 'node:crypto';
 import { join } from 'pathe';
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import { InstantiationType } from '#/_base/di/extensions';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
 
@@ -835,7 +837,7 @@ export class AgentTaskService extends Disposable implements IAgentTaskService {
     if (maxRunningTasks === undefined) return;
     if (!detached) return;
     if (this.activeTaskCount() < maxRunningTasks) return;
-    throw new Error('Too many background tasks are already running.');
+    throw new Error(t('v2Errors.tooManyBackgroundTasks'));
   }
 
   private activeTaskCount(): number {

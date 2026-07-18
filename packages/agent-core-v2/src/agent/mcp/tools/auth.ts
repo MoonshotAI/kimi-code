@@ -34,6 +34,7 @@ import {
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { AlreadyAuthorizedError, type McpOAuthService } from '#/agent/mcp/oauth/service';
 import { qualifyMcpToolName } from '#/agent/mcp/tool-naming';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 /**
  * `ToolUpdate.customKind` emitted by the MCP auth tool when the OAuth
@@ -51,21 +52,9 @@ const DEFAULT_AUTH_TIMEOUT_MS = 15 * 60 * 1000;
 const AUTH_TOOL_TOOL_NAME = 'authenticate';
 
 const DESCRIPTION_TEMPLATE = (serverName: string): string =>
-  `Authenticate with MCP server "${serverName}" via OAuth.
-
-This server requires an OAuth login that has not yet been completed. ` +
-  `Calling this tool starts the authorization flow:
-
-  1. The tool prints an authorization URL.
-  2. **You must show that URL to the user verbatim** and ask them to open it
-     in a browser, sign in, and approve the kimi-code client.
-  3. The tool blocks (up to 15 minutes) until the browser redirects back to
-     the local callback listener.
-  4. On success, kimi-code reconnects the MCP server and the real tools
-     replace this synthetic tool.
-
-Take no arguments. Treat the URL as sensitive — do not modify it or strip
-query parameters.`;
+  t('v2Mcp.authToolDescription', { serverName }) +
+  '\n\n' +
+  t('v2Mcp.authToolDescriptionBlock', { timeoutMinutes: String(DEFAULT_AUTH_TIMEOUT_MS / 60_000) });
 
 export interface CreateMcpAuthToolOptions {
   readonly serverName: string;
@@ -84,23 +73,21 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     const { signal, onUpdate } = ctx;
     signal.throwIfAborted();
 
-    onUpdate?.({ kind: 'status', text: `Discovering OAuth metadata for ${serverName}…` });
+    onUpdate?.({ kind: 'status', text: t('v2Mcp.discoveringOAuth', { serverName }) });
 
     let flow: Awaited<ReturnType<McpOAuthService['beginAuthorization']>>;
     try {
       flow = await oauthService.beginAuthorization(serverName, serverUrl);
     } catch (error) {
       if (error instanceof AlreadyAuthorizedError) {
-        onUpdate?.({ kind: 'status', text: `Already authorized; reconnecting ${serverName}…` });
+        onUpdate?.({ kind: 'status', text: t('v2Mcp.alreadyAuthorized', { serverName }) });
         try {
           await reconnect(signal);
         } catch (reconnectError) {
           return errorResult(serverName, reconnectError);
         }
         return {
-          output:
-            `MCP server "${serverName}" already had valid OAuth credentials. ` +
-            `Reconnected; real tools are available now.`,
+          output: t('v2Mcp.authorizedReconnected', { serverName }),
         };
       }
       return errorResult(serverName, error);
@@ -119,10 +106,10 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     onUpdate?.({
       kind: 'status',
       text:
-        `Open this URL in your browser to authorize "${serverName}":\n` +
-        `\n${urlText}\n\n` +
-        `Waiting for the OAuth callback (timeout 15 min). ` +
-        `If you cancel, call this tool again to restart the flow.`,
+        t('v2Mcp.openUrl', { serverName }) +
+        `\n\n${urlText}\n\n` +
+        t('v2Mcp.waitingForCallback') +
+        t('v2Mcp.authTimeoutSuffix', { timeoutMinutes: '15' }),
     });
 
     try {
@@ -131,7 +118,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
       return errorResult(serverName, error, urlText);
     }
 
-    onUpdate?.({ kind: 'status', text: `Authorized — reconnecting ${serverName}…` });
+    onUpdate?.({ kind: 'status', text: t('v2Mcp.authorizedReconnecting', { serverName }) });
     try {
       await reconnect(signal);
     } catch (error) {
@@ -139,9 +126,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     }
 
     return {
-      output:
-        `MCP server "${serverName}" authenticated successfully. ` +
-        `The real MCP tools have replaced this synthetic authenticate tool.`,
+      output: t('v2Mcp.authenticated', { serverName }),
     };
   };
 
@@ -151,7 +136,7 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
     parameters,
     resolveExecution: () => {
       return {
-        description: `Authenticating ${serverName}`,
+        description: t('v2Mcp.authToolDescription', { serverName }),
         approvalRule: name,
         execute,
       };
@@ -167,10 +152,10 @@ function errorResult(
   const message = error instanceof Error ? error.message : String(error);
   const suffix =
     authorizationUrl !== undefined
-      ? `\n\nAuthorization URL (still valid if the listener has not timed out): ${authorizationUrl}`
+      ? t('v2Mcp.authErrorUrlSuffix', { authorizationUrl })
       : '';
   return {
     isError: true,
-    output: `OAuth flow for MCP server "${serverName}" did not complete: ${message}${suffix}`,
+    output: t('v2Mcp.oauthFailed', { serverName, message }) + suffix,
   };
 }

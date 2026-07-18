@@ -65,6 +65,7 @@
         ./packages/acp-adapter
         ./packages/agent-core
         ./packages/agent-core-v2
+        ./packages/i18n
         ./packages/kap-server
         ./packages/kaos
         ./packages/kimi-native-tools
@@ -92,6 +93,7 @@
         "@moonshot-ai/acp-adapter"
         "@moonshot-ai/agent-core"
         "@moonshot-ai/agent-core-v2"
+        "@moonshot-ai/kimi-i18n"
         "@moonshot-ai/kap-server"
         "@moonshot-ai/kaos"
         "@moonshot-ai/kosong"

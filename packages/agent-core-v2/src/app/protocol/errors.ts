@@ -8,6 +8,7 @@
  * as a re-exported alias so existing call sites don't have to migrate.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
 import { CoreErrors, registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
 import { Error2, isError2 } from '#/_base/errors/errors';
 import {
@@ -38,37 +39,37 @@ export const ProtocolErrors = {
   ],
   info: {
     'provider.rate_limit': {
-      title: 'Provider rate limit',
+      title: t('v2Errors.providerRateLimit'),
       retryable: true,
       public: true,
-      action: 'Retry after the provider rate limit resets.',
+      action: t('v2Errors.providerRateLimitAction'),
     },
     'provider.filtered': {
-      title: 'Provider filtered response',
+      title: t('v2Errors.providerFiltered'),
       retryable: false,
       public: true,
-      action: 'Revise the prompt or model configuration to avoid provider safety filtering.',
+      action: t('v2Errors.providerFilteredAction'),
     },
     'provider.auth_error': {
-      title: 'Provider authentication failed',
+      title: t('v2Errors.providerAuthError'),
       retryable: false,
       public: true,
-      action: 'Check provider credentials and authentication configuration.',
+      action: t('v2Errors.providerAuthErrorAction'),
     },
     'provider.overloaded': {
-      title: 'Provider overloaded',
+      title: t('v2Errors.providerOverloaded'),
       retryable: true,
       public: true,
-      action: 'Retry after the provider recovers from overload.',
+      action: t('v2Errors.providerOverloadedAction'),
     },
     'context.overflow': {
-      title: 'Context overflow',
+      title: t('v2Errors.contextOverflow'),
       retryable: true,
       public: true,
-      action: 'Compact the conversation or retry with fewer tokens.',
+      action: t('v2Errors.contextOverflowAction'),
     },
   },
-} as const satisfies ErrorDomain;
+} satisfies ErrorDomain;
 
 export const ChatProviderErrors = ProtocolErrors;
 

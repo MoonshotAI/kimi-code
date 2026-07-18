@@ -12,6 +12,7 @@ import { z } from 'zod';
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { registerErrorDomain, type ErrorDomain } from '#/_base/errors/codes';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { Error2 } from '#/_base/errors/errors';
 import { isoDateTimeSchema } from '#/_base/utils/isoDateTime';
 
@@ -61,16 +62,16 @@ export const FileErrors = {
   },
   info: {
     'file.not_found': {
-      title: 'File not found',
+      title: t('v2Errors.fileNotFound'),
       retryable: false,
       public: true,
-      action: 'Check the file_id or upload the file again.',
+      action: t('v2Errors.fileNotFoundAction'),
     },
     'file.too_large': {
-      title: 'Upload too large',
+      title: t('v2Errors.fileTooLarge'),
       retryable: false,
       public: true,
-      action: 'Upload a smaller file (limit is 50 MiB).',
+      action: t('v2Errors.fileTooLargeAction'),
     },
   },
 } as const satisfies ErrorDomain;
@@ -89,13 +90,13 @@ export class FileError extends Error2 {
 }
 
 export function fileNotFoundError(fileId: string): FileError {
-  return new FileError(FileErrors.codes.FILE_NOT_FOUND, `file not found: ${fileId}`, { fileId });
+  return new FileError(FileErrors.codes.FILE_NOT_FOUND, t('v2Model.fileNotFound', { fileId }), { fileId });
 }
 
 export function fileTooLargeError(seen: number, limit: number): FileError {
   return new FileError(
     FileErrors.codes.FILE_TOO_LARGE,
-    `upload size ${seen} bytes exceeds limit ${limit} bytes`,
+    t('v2Model.fileTooLarge', { seen: String(seen), limit: String(limit) }),
     { seen, limit },
   );
 }

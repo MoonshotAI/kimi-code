@@ -16,6 +16,7 @@
  */
 
 import { parseKimiCodeCustomHeaders } from '@moonshot-ai/kimi-code-oauth';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { InstantiationType } from '#/_base/di/extensions';
 import { Disposable } from '#/_base/di/lifecycle';
 import { LifecycleScope, registerScopedService } from '#/_base/di/scope';
@@ -81,7 +82,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     if (configuredModel === undefined) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
-        `Model "${id}" is not configured in config.toml.`,
+        t('v2Errors.modelConfigInvalid'),
       );
     }
     const routingModel = effectiveModelConfig(configuredModel);
@@ -110,13 +111,13 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     if (wireName === undefined) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
-        `Model "${id}" must define a wire-facing name in config.toml.`,
+        t('v2Errors.modelConfigInvalid'),
       );
     }
     if (model.maxContextSize === undefined) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
-        `Model "${id}" must define a positive max_context_size in config.toml.`,
+        t('v2Errors.modelConfigInvalid'),
       );
     }
 
@@ -218,7 +219,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       if (providerConfig === undefined) {
         throw new Error2(
           ErrorCodes.CONFIG_INVALID,
-          `Provider "${providerId}" referenced by model "${id}" is not configured.`,
+          t('v2Errors.providerNotFound'),
         );
       }
       const baseUrl =
@@ -235,7 +236,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     if (modelBaseUrl === undefined) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
-        `Model "${id}" must set either providerId or baseUrl in config.toml.`,
+        t('v2Errors.modelConfigInvalid'),
       );
     }
     const originName = deriveProviderId(modelBaseUrl);
@@ -255,7 +256,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
     if (explicit === undefined) {
       throw new Error2(
         ErrorCodes.CONFIG_INVALID,
-        `Model "${id}" must declare a wire protocol (config: models.<id>.protocol).`,
+        t('v2Errors.modelConfigInvalid'),
       );
     }
     return explicit;
@@ -272,7 +273,7 @@ export class ModelResolverService extends Disposable implements IModelResolver {
       const loginRequired = (cause?: unknown): Error2 =>
         new Error2(
           ErrorCodes.AUTH_LOGIN_REQUIRED,
-          `OAuth provider "${providerKey}" requires login before it can be used.`,
+          t('v2Auth.loginRequired', { providerKey }),
           cause === undefined ? undefined : { cause },
         );
       return {

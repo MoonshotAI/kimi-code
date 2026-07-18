@@ -12,6 +12,8 @@
  * hand-maintained list to keep in sync.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 export interface ErrorInfo {
   readonly title: string;
   readonly retryable: boolean;
@@ -70,16 +72,16 @@ export const CoreErrors = {
   },
   info: {
     internal: {
-      title: 'Internal error',
+      title: t('v2Errors.internal'),
       retryable: false,
       public: true,
-      action: 'Inspect logs or report the issue with diagnostics.',
+      action: t('v2Errors.internal'),
     },
     not_implemented: {
-      title: 'Not implemented',
+      title: t('v2Errors.notImplemented'),
       retryable: false,
       public: true,
-      action: 'This feature is not implemented yet.',
+      action: t('v2Errors.notImplemented'),
     },
   },
 } as const satisfies ErrorDomain;

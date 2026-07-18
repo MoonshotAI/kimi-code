@@ -16,6 +16,8 @@
 
 import { z } from 'zod';
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import type { IAgentScopeHandle } from '#/_base/di/scope';
 import {
   isAbortError,
@@ -218,7 +220,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   ): Promise<SubagentHandle> {
     const requester = this.lifecycle.get(this.callerAgentId);
     if (requester === undefined) {
-      throw new Error(`Caller agent "${this.callerAgentId}" does not exist`);
+      throw new Error(t('v2Errors.callerAgentNotFound', { agentId: this.callerAgentId }));
     }
 
     const resumeAgentId = args.resume?.trim();
@@ -230,7 +232,7 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
     if (isResume) {
       const target = this.lifecycle.get(resumeAgentId);
       if (target === undefined) {
-        throw new Error(`Agent instance "${resumeAgentId}" does not exist`);
+        throw new Error(t('v2Errors.subagentNotFound', { agentId: resumeAgentId }));
       }
       await this.ensureOwnedIdleSubagent(resumeAgentId, target);
       this.realignChildModel(target);
@@ -243,11 +245,11 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
         : DEFAULT_PROFILE_NAME;
       const profile = this.catalog.get(requestedProfileName);
       if (profile === undefined) {
-        throw new Error(`Unknown agent type: "${requestedProfileName}"`);
+        throw new Error(t('v2Errors.unknownAgentType', { type: requestedProfileName }));
       }
       const own = this.profile.data();
       if (own.modelAlias === undefined) {
-        throw new Error('Caller agent has no model bound');
+        throw new Error(t('v2Errors.callerAgentNoModel'));
       }
       const created = await this.lifecycle.create({
         binding: {
@@ -305,20 +307,20 @@ export class AgentTool implements BuiltinTool<AgentToolInput> {
   ): Promise<void> {
     const meta = (await this.sessionMetadata.read()).agents?.[agentId];
     if (!isSubagentMeta(meta)) {
-      throw new Error(`Agent instance "${agentId}" is not a subagent`);
+      throw new Error(t('v2Errors.subagentNotSubagent', { agentId }));
     }
     if (subagentParentAgentId(meta) !== this.callerAgentId) {
-      throw new Error(`Agent instance "${agentId}" does not belong to this parent agent`);
+      throw new Error(t('v2Errors.subagentWrongParent', { agentId }));
     }
     if (target.accessor.get(IAgentLoopService).status().state === 'running') {
-      throw new Error(`Agent instance "${agentId}" is already running and cannot run concurrently`);
+      throw new Error(t('v2Errors.subagentAlreadyRunning', { agentId }));
     }
   }
 
   private realignChildModel(target: IAgentScopeHandle): void {
     const modelAlias = this.profile.data().modelAlias;
     if (modelAlias === undefined) {
-      throw new Error('Caller agent has no model bound');
+      throw new Error(t('v2Errors.callerAgentNoModel'));
     }
     target.accessor.get(IAgentProfileService).update({ modelAlias });
   }

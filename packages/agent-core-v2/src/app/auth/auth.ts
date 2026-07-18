@@ -10,6 +10,8 @@
  * prompt auth-readiness gate. App-scoped — shared across the application.
  */
 
+import { t } from '@moonshot-ai/kimi-i18n';
+
 import type {
   BearerTokenProvider,
   KimiOAuthLoginOptions,
@@ -81,7 +83,7 @@ export class AuthProvisioningRequiredError extends Error2 {
   constructor() {
     super(
       AuthErrors.codes.AUTH_PROVISIONING_REQUIRED,
-      'no provider configured; complete onboarding via /login or the providers endpoint',
+      t('v2Auth.noProvider'),
       { name: 'AuthProvisioningRequiredError' },
     );
   }
@@ -93,7 +95,7 @@ export class AuthTokenMissingError extends Error2 {
   constructor(providerId: string) {
     super(
       AuthErrors.codes.AUTH_TOKEN_MISSING,
-      `provider ${providerId} has no credential configured`,
+      t('v2Auth.loginRequired', { providerKey: providerId }),
       { details: { provider_id: providerId }, name: 'AuthTokenMissingError' },
     );
     this.providerId = providerId;
@@ -110,9 +112,7 @@ export class AuthModelNotResolvedError extends Error2 {
     if (providerId !== undefined) details['provider_id'] = providerId;
     super(
       AuthErrors.codes.AUTH_MODEL_NOT_RESOLVED,
-      modelId === undefined
-        ? 'no default model configured'
-        : `model ${modelId} does not resolve to a configured provider`,
+      t('v2Errors.authModelNotResolved'),
       {
         details: Object.keys(details).length === 0 ? undefined : details,
         name: 'AuthModelNotResolvedError',

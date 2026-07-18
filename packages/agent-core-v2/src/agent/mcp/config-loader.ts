@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, normalize, resolve } from 'pathe';
 import { resolveKimiHome } from '#/app/bootstrap/bootstrap';
 import { McpServerConfigSchema, type McpServerConfig } from './config-schema';
 import { ErrorCodes, Error2 } from '#/errors';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { z } from 'zod';
 
 const McpJsonFileSchema = z.object({
@@ -117,7 +118,7 @@ async function readMcpJson(
     text = await readFile(filePath, 'utf-8');
   } catch (error: unknown) {
     if (isFileNotFound(error)) return {};
-    throw new Error2(ErrorCodes.CONFIG_INVALID, `Failed to read ${filePath}: ${describeError(error)}`, {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, t('v2Errors.mcpFileReadFailed', { filePath, error: String(error) }), {
       cause: error,
     });
   }
@@ -128,7 +129,7 @@ async function readMcpJson(
   try {
     data = JSON.parse(text);
   } catch (error: unknown) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, `Invalid JSON in ${filePath}: ${describeError(error)}`, {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, t('v2Errors.mcpJsonParseFailed', { filePath, error: String(error) }), {
       cause: error,
     });
   }
@@ -136,7 +137,7 @@ async function readMcpJson(
   try {
     return normalizeMcpServers(McpJsonFileSchema.parse(data).mcpServers, options);
   } catch (error: unknown) {
-    throw new Error2(ErrorCodes.CONFIG_INVALID, `Invalid MCP server config in ${filePath}: ${describeError(error)}`, {
+    throw new Error2(ErrorCodes.CONFIG_INVALID, t('v2Errors.mcpSchemaInvalid', { filePath, error: String(error) }), {
       cause: error,
     });
   }
@@ -176,8 +177,4 @@ function isPathMissing(error: unknown): boolean {
 function getErrorCode(error: unknown): unknown {
   if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
   return (error as { code: unknown }).code;
-}
-
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

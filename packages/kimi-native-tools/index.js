@@ -71,6 +71,7 @@ const GLOB_MAX_MATCHES = binding.GLOB_MAX_MATCHES;
 const GREP_DEFAULT_HEAD_LIMIT = binding.GREP_DEFAULT_HEAD_LIMIT;
 const BASH_DEFAULT_TIMEOUT = binding.BASH_DEFAULT_TIMEOUT;
 const BASH_MAX_TIMEOUT = binding.BASH_MAX_TIMEOUT;
+const nativeIsSensitiveFileBytes = binding.nativeIsSensitiveFileBytes;
 
 // ============================================================================
 // Read tool
@@ -284,6 +285,21 @@ function nativeSniffImageDimensions(data) {
 }
 
 /**
+ * Detect file type from path and header bytes.
+ *
+ * Uses file extension first, then falls back to magic-byte sniffing.
+ *
+ * @param {string} path - File path (used for extension-based detection).
+ * @param {Buffer|Uint8Array} header - First bytes of the file content (up to 512 bytes).
+ * @returns {{ kind: string, mimeType: string }}
+ */
+function nativeDetectFileType(path, header) {
+  const r = binding.nativeDetectFileType(path, new Uint8Array(header));
+  // napi-rs: struct fields arrive as snake_case; normalize to camelCase.
+  return r ? { kind: r.kind, mimeType: r.mime_type ?? r.mimeType } : { kind: 'unknown', mimeType: '' };
+}
+
+/**
  * Check if a path points to a credentials-bearing file.
  *
  * Converts the JS string to a Latin1 byte buffer via `Buffer.from(path,
@@ -398,23 +414,6 @@ function nativeComputeCompactCount(messages, config, isManual) {
  */
 function nativeReduceCompactOnOverflow(messages, config) {
   return binding.nativeReduceCompactOnOverflow(messages, config);
-}
-
-/**
- * Resolve the effective `maxOutputSize` for a compaction call.
- *
- * Mirrors `defaultCompactionCap` in `compaction/full.ts`:
- * 1. If `maxOutputSize` is set and positive, the caller wins.
- * 2. Otherwise, when `maxContextTokens > 0`, use the lesser of
- *    `maxContextTokens` and `DEFAULT_COMPACTION_MAX_COMPLETION_TOKENS` (128k).
- * 3. When the context window is unknown, return `null`.
- *
- * @param {number} maxContextTokens - The model's known max context tokens (0 = unknown).
- * @param {number | null} maxOutputSize - Caller-provided override, or `null` for default.
- * @returns {number | null} The effective cap, or `null` if unset.
- */
-function nativeResolveCompactionMaxCompletionTokens(maxContextTokens, maxOutputSize) {
-  return binding.nativeResolveCompactionMaxCompletionTokens(maxContextTokens, maxOutputSize);
 }
 
 // ============================================================================
@@ -662,6 +661,71 @@ function nativeMcpStdioIsAlive(handle) {
 }
 
 // ============================================================================
+// XML / HTML escaping
+// ============================================================================
+
+/**
+ * Escape all XML-significant characters: & < > "
+ * @param {string} text - Input text to escape.
+ * @returns {string} Escaped text.
+ */
+function nativeEscapeXml(text) {
+  return binding.nativeEscapeXml(text);
+}
+
+/**
+ * Escape XML attribute boundary characters only: & "
+ * @param {string} text - Input text to escape.
+ * @returns {string} Escaped text.
+ */
+function nativeEscapeXmlAttr(text) {
+  return binding.nativeEscapeXmlAttr(text);
+}
+
+/**
+ * Escape tag delimiters only: < > (Markdown-safe, preserves & and ")
+ * @param {string} text - Input text to escape.
+ * @returns {string} Escaped text.
+ */
+function nativeEscapeXmlTags(text) {
+  return binding.nativeEscapeXmlTags(text);
+}
+
+// ============================================================================
+// MCP tool name sanitization
+// ============================================================================
+
+/**
+ * Sanitize a string for use as part of an MCP tool name.
+ * Replaces non-safe characters with `_` and collapses runs of `_`.
+ * @param {string} part - String to sanitize.
+ * @returns {string} Sanitized string.
+ */
+function nativeSanitizeMcpNamePart(part) {
+  return binding.nativeSanitizeMcpNamePart(part);
+}
+
+/**
+ * Check if a tool name starts with the MCP prefix (`mcp__`).
+ * @param {string} name - Tool name to check.
+ * @returns {boolean}
+ */
+function nativeIsMcpToolName(name) {
+  return binding.nativeIsMcpToolName(name);
+}
+
+/**
+ * Produce the qualified MCP tool name: `mcp__<server>__<tool>`.
+ * Truncates with a deterministic 8-char FNV-1a hash suffix if > 64 chars.
+ * @param {string} serverName - Server name.
+ * @param {string} toolName - Tool name.
+ * @returns {string} Qualified tool name.
+ */
+function nativeQualifyMcpToolName(serverName, toolName) {
+  return binding.nativeQualifyMcpToolName(serverName, toolName);
+}
+
+// ============================================================================
 // Goal — state machine, accounting, steering
 // ============================================================================
 
@@ -716,7 +780,9 @@ module.exports = {
   nativeGlobMatchesAny,
   nativeListDirectory,
   nativeSniffImageDimensions,
+  nativeDetectFileType,
   nativeIsSensitiveFile,
+  nativeIsSensitiveFileBytes,
   nativeEstimateTokens,
   nativeEstimateTokensBatch,
   nativeTruncateTextToTokens,
@@ -726,7 +792,6 @@ module.exports = {
   // Compaction
   nativeComputeCompactCount,
   nativeReduceCompactOnOverflow,
-  nativeResolveCompactionMaxCompletionTokens,
 
   // Tool access conflict
   nativeToolAccessesConflict,
@@ -750,6 +815,16 @@ module.exports = {
   nativeMcpStdioClose,
   nativeMcpStdioStderrSnapshot,
   nativeMcpStdioIsAlive,
+
+  // XML / HTML escaping
+  nativeEscapeXml,
+  nativeEscapeXmlAttr,
+  nativeEscapeXmlTags,
+
+  // MCP tool name sanitization
+  nativeSanitizeMcpNamePart,
+  nativeIsMcpToolName,
+  nativeQualifyMcpToolName,
 
   // Constants
   READ_MAX_LINES,

@@ -37,6 +37,7 @@ import { inputTotal, type TokenUsage } from '#/app/llmProtocol/usage';
 import { IEventBus } from '#/app/event/eventBus';
 import type { CompactionFailedEvent, CompactionFinishedEvent } from '#/app/telemetry/events';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
+import { t } from '@moonshot-ai/kimi-i18n';
 import { ErrorCodes, Error2, isCodedError, isError2, toKimiErrorPayload, unwrapErrorCause } from "#/errors";
 import { IWireService } from '#/wire/wire';
 import compactionInstructionTemplate from './compaction-instruction.md?raw';
@@ -270,12 +271,12 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
   private validateCompactionStart(source: CompactionBeginData['source']): number {
     const history = this.context.get();
     if (history.length === 0) {
-      throw new Error2(ErrorCodes.COMPACTION_UNABLE, 'No messages to compact in current history.');
+      throw new Error2(ErrorCodes.COMPACTION_UNABLE, t('v2Errors.compactionNoMessages'));
     }
     if (source === 'manual' && this.loopService.status().state !== 'idle') {
       throw new Error2(
         ErrorCodes.COMPACTION_UNABLE,
-        'Cannot compact while a turn is active. Wait for it to finish, then retry.',
+        t('v2Errors.compactionActiveTurn'),
       );
     }
     return estimateTokensForMessages(history);
@@ -368,7 +369,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     if (this.consecutiveOverflowCompactions <= maxAttempts) return;
     throw new Error2(
       ErrorCodes.CONTEXT_OVERFLOW,
-      `Compaction failed to bring the context under the model window after ${String(maxAttempts)} attempts.`,
+      t('v2Errors.compactionOverflowFailed', { attempts: this.consecutiveOverflowCompactions }),
       { cause: error instanceof Error ? error : undefined },
     );
   }
@@ -411,7 +412,7 @@ export class AgentFullCompactionService extends Disposable implements IAgentFull
     const maxCompactions = this.strategy.maxCompactionPerTurn;
     if (this.compactionCountInTurn >= maxCompactions) {
       if (throwOnLimit) {
-        throw new Error2(ErrorCodes.CONTEXT_OVERFLOW, `Compaction limit exceeded (${String(maxCompactions)})`, {
+        throw new Error2(ErrorCodes.CONTEXT_OVERFLOW, t('v2Errors.compactionLimitExceeded', { limit: maxCompactions }), {
           details: { maxCompactions },
         });
       }

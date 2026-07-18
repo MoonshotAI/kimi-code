@@ -23,6 +23,7 @@ import type { UnexpectedCloseReason } from './client-shared';
 import { StdioMcpClient } from './client-stdio';
 import type { McpOAuthService } from '#/agent/mcp/oauth/service';
 import { assertMcpInputSchema, type MCPClient, type MCPToolDefinition } from './types';
+import { t } from '@moonshot-ai/kimi-i18n';
 
 export type McpServerStatus = 'pending' | 'connected' | 'failed' | 'disabled' | 'needs-auth' | 'pending-approval';
 
@@ -232,7 +233,7 @@ export class McpConnectionManager {
         attemptId: 0,
         status: disabled ? 'disabled' : requiresApproval ? 'pending-approval' : 'pending',
         error: requiresApproval
-          ? `stdio server "${name}" is configured in <repoRoot>/.mcp.json and requires explicit approval; run /mcp-config approve ${name} to trust and start it`
+          ? t('v2Mcp.requiresOAuth', { name })
           : undefined,
       };
       this.entries.set(name, entry);
@@ -252,12 +253,12 @@ export class McpConnectionManager {
   async approveServer(name: string): Promise<void> {
     const entry = this.entries.get(name);
     if (entry === undefined) {
-      throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, `Unknown MCP server: ${name}`);
+      throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, t('errors.mcpServerNotFound'));
     }
     if (entry.status !== 'pending-approval') {
       throw new Error2(
         ErrorCodes.MCP_SERVER_DISABLED,
-        `MCP server "${name}" is not pending approval (status: ${entry.status})`,
+        t('errors.mcpServerDisabled'),
       );
     }
     entry.status = 'pending';
@@ -270,10 +271,10 @@ export class McpConnectionManager {
   async reconnect(name: string): Promise<void> {
     const entry = this.entries.get(name);
     if (entry === undefined) {
-      throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, `Unknown MCP server: ${name}`);
+      throw new Error2(ErrorCodes.MCP_SERVER_NOT_FOUND, t('errors.mcpServerNotFound'));
     }
     if (entry.config.enabled === false) {
-      throw new Error2(ErrorCodes.MCP_SERVER_DISABLED, `MCP server is disabled: ${name}`);
+      throw new Error2(ErrorCodes.MCP_SERVER_DISABLED, t('errors.mcpServerDisabled'));
     }
     const attemptId = this.beginConnectAttempt(entry);
     await this.closeClient(entry);
@@ -391,7 +392,7 @@ export class McpConnectionManager {
           await this.closeRuntimeClient(client);
         }
         entry.status = 'needs-auth';
-        entry.error = `${entry.name} requires OAuth — run /mcp-config login ${entry.name}`;
+        entry.error = t('v2Mcp.requiresOAuth', { name: entry.name });
         entry.tools = undefined;
         entry.rawTools = undefined;
         entry.enabledNames = undefined;
@@ -586,7 +587,7 @@ function formatStartupError(error: unknown, client: RuntimeMcpClient | undefined
 }
 
 function formatUnexpectedCloseError(name: string, reason: UnexpectedCloseReason): string {
-  const parts = [`MCP server "${name}" closed unexpectedly`];
+  const parts = [t('v2Errors.internal')];
   if (reason.error !== undefined) {
     parts.push(reason.error.message);
   }
@@ -620,7 +621,7 @@ async function withTimeout<T>(
           // Suppress — timeout cleanup must not prevent the rejection
           // from settling the outer promise.
         }
-        reject(new Error(`Timed out after ${timeoutMs}ms`, { cause: capturedError }));
+        reject(new Error(t('v2Errors.internal'), { cause: capturedError }));
       }, timeoutMs);
       promise.then(resolve, (error) => {
         // Capture before rejecting so the timeout branch above can
