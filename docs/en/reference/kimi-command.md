@@ -120,7 +120,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `server` (run and manage the local REST/WebSocket/web service), `web` (open the web UI; runs the server in the foreground by default), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -140,80 +140,47 @@ Switch Kimi Code CLI to ACP (Agent Client Protocol) mode, communicating with an 
 kimi acp
 ```
 
-### `kimi server`
+### `kimi web`
 
-Run, install, and manage the local Kimi server — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin. The parent command is split into an on-demand entrypoint (`run`) and an OS-managed service lifecycle (`install`, `uninstall`, `start`, `stop`, `restart`, `status`). `kimi server run` ensures a single background daemon is running and returns once it is healthy; pass `--foreground` to keep the server attached to the current terminal instead.
+Run the local Kimi server in the foreground of the current terminal — a single process that exposes the REST + WebSocket API and serves the web UI from the same origin — and open the web UI in the default browser once it is ready. The command stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM` (e.g. `Ctrl-C`).
 
 When the server is running, `GET /openapi.json` returns the REST OpenAPI document and `GET /asyncapi.json` returns the local WebSocket AsyncAPI document.
 
 ```sh
-kimi server run                # start or reuse a background daemon
-kimi server run --foreground   # run attached to the current terminal
-kimi server install            # register with launchd / systemd / schtasks
-kimi server start              # start the OS-managed service
-kimi server status             # snapshot of installed/running state
+kimi web                 # run the server in the foreground and open the browser
+kimi web --no-open       # don't open the browser
+kimi web --port 58628    # pick a specific bind port
 ```
 
-#### `kimi server run`
+Multiple instances can share one home directory: each registers itself under `~/.kimi-code/server/instances/`, and a busy port is retried with `port + 1` (58628, 58629, …).
 
 | Option | Description |
 | --- | --- |
-| `--port <port>` | Bind port; defaults to `58627` |
+| `--port <port>` | Bind port; defaults to `58627`; a busy port is retried with `+1` |
+| `--host [host]` | Bind host; omit for `127.0.0.1` (this machine only), pass a bare `--host` for `0.0.0.0` (all interfaces) |
+| `--allowed-host <host...>` | Extra Host header values allowed through the DNS-rebinding check; repeatable or comma-separated |
 | `--log-level <level>` | Enable server logs at the selected level; omitted by default |
 | `--debug-endpoints` | Mount `/api/v1/debug/*` routes (off by default) |
-| `--keep-alive` | Keep the server running instead of exiting after 60s with no connected clients; implied by `--host` / `--allowed-host` and always on with `--foreground` |
 | `--dangerous-bypass-auth` | Disable bearer-token auth on all REST and WebSocket routes so the web UI connects without a token; only for trusted networks or behind an authenticating proxy |
-| `--foreground` | Run in the foreground instead of spawning a background daemon |
-| `--open` | Open the web UI in the default browser once the server is healthy |
+| `--no-open` | Do not open the browser once the server is ready |
 
-`kimi server run` binds to local loopback only. By default it spawns a single background daemon (reused across runs) and exits once the daemon is healthy; the daemon shuts itself down after the last web client disconnects. Pass `--keep-alive` to keep it running past the idle timeout, or `--foreground` to run the server in the current process instead — it then stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM`.
+`kimi web` binds to local loopback only by default and prints the bearer token in the startup banner; the web UI authenticates automatically via the `#token=` URL fragment.
 
 ::: danger
-`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and run `kimi server kill` to stop the server when you are done.
+`--dangerous-bypass-auth` disables authentication entirely. Anyone who can reach the port gets full access to your sessions, filesystem, and shell. Only use it on a trusted network or behind your own authenticating reverse proxy, and run `kimi web kill` to stop the server when you are done.
 :::
 
-#### `kimi server install`
+#### `kimi web kill [server-id]`
 
-Register the server as an OS-managed service so it starts at login and restarts after a crash. The backend picks itself based on the running platform:
+Stop a running server instance: first tries `POST /api/v1/shutdown` for a graceful exit, then signals the instance pid with SIGTERM, escalating to SIGKILL when needed. With multiple instances sharing the home directory, `[server-id]` picks the target; without it the longest-running instance is stopped, and an unknown id errors with the live instance ids listed.
 
-- **macOS**: writes a LaunchAgent plist to `~/Library/LaunchAgents/ai.moonshot.kimi-server.plist` and bootstraps it via `launchctl bootstrap gui/<uid>`.
-- **Linux**: writes a `--user` systemd unit to `~/.config/systemd/user/kimi-server.service` and runs `systemctl --user enable --now`.
-- **Windows**: registers a scheduled task named `KimiServer` via `schtasks /Create /XML`.
+#### `kimi web ps`
 
-| Option | Description |
-| --- | --- |
-| `--port <port>` | Bind port the supervised server uses; defaults to `58627` |
-| `--log-level <level>` | Log level recorded in the generated unit |
-| `--force` | Replace an existing install instead of failing |
-| `--json` | Output JSON instead of a human-readable line |
+List the clients currently connected to each instance (from `GET /api/v1/connections`), grouped by server id; `--json` prints the raw data nested per instance.
 
-The loopback host, chosen port, and log level are recorded to `~/.kimi-code/server/install.json` so `kimi server status` can report them even when the service is stopped.
+#### `kimi web rotate-token`
 
-#### Lifecycle subcommands
-
-| Command | Description |
-| --- | --- |
-| `kimi server uninstall` | Stop and remove the OS service definition. Idempotent. |
-| `kimi server start` | Start the OS-managed service. Errors if not installed. |
-| `kimi server stop` | Stop the OS-managed service. |
-| `kimi server restart` | Restart the OS-managed service. |
-| `kimi server status` | Print installed / running / pid / port / log-path. `--json` for automation. |
-
-#### `kimi web`
-
-Opens Kimi's graphical session in the browser as an alternative to the terminal TUI.
-
-`kimi web` runs a local Kimi server in the foreground — the command stays attached to the terminal and the server stops when you press `Ctrl-C` — and opens the web UI in the default browser once the server is healthy. If a server is already running, it is reused: the command prints its address, opens the browser, and returns instead of binding a new port. Pass `--background` to start a background daemon and release the terminal immediately; the daemon shuts itself down after the last web client disconnects.
-
-The reused server keeps running whatever version started it — after an upgrade, an older server is reused as-is and the output points out the version mismatch. Run `kimi server kill` once after upgrading to restart on the new version.
-
-```sh
-kimi web                 # run the server in the foreground and open the browser (reuses a running one)
-kimi web --background    # start a background daemon, open the browser, and release the terminal
-kimi web --no-open       # don't open the browser; keep the server attached to the terminal
-```
-
-Stop a foreground server with `Ctrl-C` and a background one with `kimi server kill`; when multiple instances share the home directory, `kimi server kill <server-id>` stops only that instance (the default is the longest-running one). List active connections with `kimi server ps`, grouped per instance; `--port`, `--log-level`, `--foreground`, and the other flags match `kimi server run`; `--background` is only available on `kimi web`.
+Generate a new persistent bearer token (written to `~/.kimi-code/server.token`); the previous token stops working immediately. The token is shared by the whole home directory, so every running instance picks the new one up on its next auth check — no restart needed.
 
 ### `kimi doctor`
 

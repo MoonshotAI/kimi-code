@@ -1,5 +1,5 @@
 /**
- * `kimi server kill [serverId]` — terminate a running server.
+ * `kimi web kill [serverId]` — terminate a running server.
  *
  * Combines two independent mechanisms so the server dies even if one path
  * fails:
@@ -22,8 +22,7 @@ import { listLiveServerInstances, type ServerInstanceInfo } from '@moonshot-ai/k
 
 import { getDataDir } from '#/utils/paths';
 
-import { instanceConnectHost } from './daemon';
-import { authHeaders, serverOrigin, tryResolveServerToken } from './shared';
+import { authHeaders, instanceConnectHost, serverOrigin, tryResolveServerToken } from './shared';
 
 /** How long to wait for the graceful API shutdown request. */
 const API_TIMEOUT_MS = 2000;

@@ -1,5 +1,5 @@
 /**
- * `kimi server ps` — list clients currently connected to the running servers.
+ * `kimi web ps` — list clients currently connected to the running servers.
  *
  * Talks to every live server over HTTP (`GET /api/v1/connections`) using the
  * instance registry (`~/.kimi-code/server/instances/`) to discover origins,
@@ -15,8 +15,7 @@ import { listLiveServerInstances, type ServerInstanceInfo } from '@moonshot-ai/k
 
 import { getDataDir } from '#/utils/paths';
 
-import { instanceConnectHost } from './daemon';
-import { authHeaders, isServerHealthy, resolveServerToken, serverOrigin } from './shared';
+import { authHeaders, instanceConnectHost, isServerHealthy, resolveServerToken, serverOrigin } from './shared';
 
 /** Wire shape of a single connection returned by `GET /api/v1/connections`. */
 interface ConnectionInfo {
@@ -65,7 +64,7 @@ async function handlePsCommand(opts: { json?: boolean }): Promise<void> {
   const instances = await listLiveServerInstances();
   if (instances.length === 0) {
     throw new Error(
-      'No running Kimi server. Start one with `kimi server run` or `kimi web`.',
+      'No running Kimi server. Start one with `kimi web`.',
     );
   }
 

@@ -1,5 +1,5 @@
 ---
-"@moonshot-ai/kimi-code": patch
+"@moonshot-ai/kimi-code": minor
 ---
 
-Multiple servers can now share one Kimi home directory by default: a second `kimi server run` or `kimi web` starts on the next free port instead of failing. `kimi server kill <server-id>` stops a specific instance (default: the longest-running one), and `kimi server ps` lists connected clients grouped by server.
+Replace the `kimi server` command tree with `kimi web`: it runs the local server in the foreground (the background daemon and OS-service lifecycle commands are removed), and multiple servers can now share one home directory, each taking the next free port. Use `kimi web kill [server-id]` to stop an instance, `kimi web ps` to list connected clients per server, and `kimi web rotate-token` to rotate the token.

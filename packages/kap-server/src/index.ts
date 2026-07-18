@@ -16,14 +16,6 @@ export type {
   ServerLogger,
   ServerLogLevel,
 } from './services/pinoLoggerService';
-export { resolveServiceManager, ServiceUnavailableError, ServiceUnsupportedError } from './svc';
-export type {
-  InstallArgs,
-  InstallResult,
-  LifecycleResult,
-  ServiceManager,
-  ServiceStatus,
-} from './svc';
 export {
   createInstanceRegistry,
   listLiveServerInstances,

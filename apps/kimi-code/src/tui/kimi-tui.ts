@@ -356,13 +356,6 @@ export class KimiTUI {
   /** URL opened in the browser just before exit (e.g. by `/web`); printed by onExit. */
   public exitOpenUrl: string | undefined;
 
-  /**
-   * Task that takes over the process after the TUI shuts down, instead of
-   * exiting (`/web` foreground mode: the server keeps this terminal attached
-   * until Ctrl+C). Set via {@link setExitForegroundTask}.
-   */
-  public exitForegroundTask: ((exitCode: number) => Promise<void>) | undefined;
-
   track(event: string, properties?: Parameters<KimiHarness['track']>[1]): void {
     this.harness.track(event, properties);
   }
@@ -1439,10 +1432,6 @@ export class KimiTUI {
 
   setExitOpenUrl(url: string): void {
     this.exitOpenUrl = url;
-  }
-
-  setExitForegroundTask(task: (exitCode: number) => Promise<void>): void {
-    this.exitForegroundTask = task;
   }
 
   async getStartupMcpMs(): Promise<number> {

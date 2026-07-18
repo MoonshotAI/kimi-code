@@ -393,8 +393,7 @@ export const BUILTIN_SLASH_COMMANDS = [
   {
     name: 'web',
     aliases: [],
-    description:
-      'Open the current session in the Web UI (server runs in the foreground; --background to daemonize)',
+    description: 'Open the current session in the Web UI and exit the terminal',
     priority: 40,
     availability: 'always',
   },

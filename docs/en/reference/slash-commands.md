@@ -40,7 +40,6 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/export-debug-zip` | — | Export the current session as a debug ZIP archive (same behavior as [`kimi export`](./kimi-command.md#kimi-export)) | No |
 | `/copy` | — | Copy the last assistant message to the clipboard | No |
 | `/add-dir [<path>]` | — | Add an extra workspace directory to the current session. Run without a path (or with `list`) to list configured directories. When adding, choose whether to remember the directory for the project in `.kimi-code/local.toml` | No |
-| `/web [--background]` | — | Open the current session in the Web UI. By default the TUI exits and the server keeps running in the foreground on the same terminal (stop it with `Ctrl-C`); `--background` starts or reuses a background daemon and releases the terminal instead. See [`kimi web`](./kimi-command.md#kimi-web) | Yes |
 
 ## Modes & Run Control
 

@@ -1,42 +1,40 @@
-import chalk from 'chalk';
+import { getLiveServerInstance } from '@moonshot-ai/kap-server';
 
-import { splitTokenFragment } from '#/cli/sub/server/access-urls';
-import { ensureDaemon, findReusableDaemon } from '#/cli/sub/server/daemon';
-import { formatReadyBanner, startServerForeground } from '#/cli/sub/server/run';
-import { parseServerOptions, tryResolveServerToken } from '#/cli/sub/server/shared';
-import { getVersion } from '#/cli/version';
-import { darkColors } from '#/tui/theme/colors';
+import {
+  instanceConnectHost,
+  isServerHealthy,
+  serverOrigin,
+  tryResolveServerToken,
+} from '#/cli/sub/web/shared';
 import { openUrl } from '#/utils/open-url';
 import { getDataDir } from '#/utils/paths';
 
 import { ChoicePickerComponent } from '../components/dialogs/choice-picker';
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
-import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 
 const WEB_CONFIRM = 'confirm';
 const WEB_CANCEL = 'cancel';
-const WEB_BACKGROUND_FLAG = '--background';
+
+/** How long to wait for the running server to answer `/healthz`. */
+const HEALTH_TIMEOUT_MS = 1500;
 
 /**
  * `/web` — hand the current session off to the browser.
  *
- * Default (foreground): the TUI shuts down and the Kimi server takes over this
- * terminal in the foreground (`Ctrl+C` stops it), with the browser opened to
- * the active session. `/web --background` instead ensures the background
- * daemon is up, opens the browser, and releases the terminal — equivalent to
- * `kimi web --background`. A server that is already running is reused in both
- * modes. A confirmation step spells out the consequences and only proceeds
- * when the user presses Enter on Continue.
+ * Connects to the running Kimi server (the longest-running live instance from
+ * the registry — servers are foreground-only, so one must already be running,
+ * e.g. via `kimi web` in another terminal), deep-links the active session, and
+ * then shuts down this terminal UI. A confirmation step spells out the
+ * consequences and only proceeds when the user presses Enter on Continue.
  */
-export async function handleWebCommand(host: SlashCommandHost, args: string): Promise<void> {
+export async function handleWebCommand(host: SlashCommandHost): Promise<void> {
   const session = host.session;
   if (session === undefined) {
     host.showError(NO_ACTIVE_SESSION_MESSAGE);
     return;
   }
   const sessionId = session.id;
-  const background = args.split(/\s+/).includes(WEB_BACKGROUND_FLAG);
 
   const confirmed = await new Promise<boolean>((resolve) => {
     const picker = new ChoicePickerComponent({
@@ -46,9 +44,8 @@ export async function handleWebCommand(host: SlashCommandHost, args: string): Pr
         {
           value: WEB_CONFIRM,
           label: 'Continue',
-          description: background
-            ? 'Start the Kimi server (background daemon if needed), open this session in your default browser, and exit the terminal UI.'
-            : 'Start the Kimi server in the foreground (this terminal stays attached; Ctrl+C stops it), open this session in your default browser, and exit the terminal UI.',
+          description:
+            'Open this session in your default browser (connects to the running Kimi server) and exit the terminal UI.',
         },
         {
           value: WEB_CANCEL,
@@ -68,104 +65,23 @@ export async function handleWebCommand(host: SlashCommandHost, args: string): Pr
   host.restoreEditor();
   if (!confirmed) return;
 
-  host.showStatus('Starting Kimi server and opening web UI…');
-
-  if (background) {
-    let origin: string;
-    let hostVersion: string | undefined;
-    try {
-      ({ origin, hostVersion } = await ensureDaemon({}));
-    } catch (error) {
-      host.showError(`Failed to start server: ${formatErrorMessage(error)}`);
-      return;
-    }
-    // Resolve the persistent token only after the daemon is up: a fresh server
-    // writes `server.token` on first boot, so reading it beforehand would miss
-    // first-time starts and the browser would hit the auth gate. Best-effort:
-    // fall back to the plain URL (and skip the token line) when unresolvable.
-    showServerVersionHint(host, hostVersion);
-    await openAndExit(host, sessionId, origin, tryResolveServerToken(getDataDir()));
+  const instance = await getLiveServerInstance();
+  if (instance === undefined) {
+    host.showError('No running Kimi server. Start one with `kimi web` in another terminal first.');
+    return;
+  }
+  const origin = serverOrigin(instanceConnectHost(instance), instance.port);
+  if (!(await isServerHealthy(origin, HEALTH_TIMEOUT_MS))) {
+    host.showError(`Kimi server at ${origin} is not responding.`);
     return;
   }
 
-  // Foreground by default. A server that is already running can serve the web
-  // UI right away — reuse it instead of failing to bind its port.
-  let reused: { origin: string; hostVersion?: string } | undefined;
-  try {
-    reused = await findReusableDaemon();
-  } catch (error) {
-    host.showError(`Failed to probe the running server: ${formatErrorMessage(error)}`);
-    return;
-  }
-  if (reused !== undefined) {
-    showServerVersionHint(host, reused.hostVersion);
-    await openAndExit(host, sessionId, reused.origin, tryResolveServerToken(getDataDir()));
-    return;
-  }
-
-  // No server is running: shut the TUI down and let the Kimi server take over
-  // this terminal in the foreground (the registered task runs after teardown,
-  // where `process.exit` would normally happen). The deep link is opened from
-  // the ready hook, once the server is actually listening, and the terminal
-  // shows the same ready banner as `kimi web` plus the session deep link.
-  host.setExitForegroundTask(async () => {
-    const runOptions = { ...parseServerOptions({}), keepAlive: true };
-    try {
-      await startServerForeground(runOptions, {
-        onReady: (origin) => {
-          // Resolve the token here (after the server is listening) for the
-          // same first-boot reason as the daemon path above.
-          const token = tryResolveServerToken(getDataDir());
-          const url = webSessionUrl(origin, sessionId, token);
-          process.stdout.write(
-            formatReadyBanner(origin, runOptions.host, { token, foreground: true }),
-          );
-          process.stdout.write(`\n  ${sessionLine(url)}\n`);
-          openUrl(url);
-        },
-      });
-    } catch (error) {
-      process.stderr.write(`Failed to start server: ${formatErrorMessage(error)}\n`);
-      process.exit(1);
-    }
-  });
-  await host.stop();
-}
-
-/** Styled `Session:` line for the foreground handoff; the token fragment is
- * dimmed like in the ready banner so the host/path stands out. */
-function sessionLine(url: string): string {
-  const label = (text: string): string => chalk.bold.hex(darkColors.textDim)(text);
-  const accent = (text: string): string => chalk.hex(darkColors.accent)(text);
-  const dim = (text: string): string => chalk.hex(darkColors.textDim)(text);
-  const [base, frag] = splitTokenFragment(url);
-  return `${label('Session:  ')}${accent(base)}${frag === '' ? '' : dim(frag)}`;
-}
-
-/**
- * Warn when the reused server was started by a different CLI version: it keeps
- * serving its own bundled web UI/API until restarted. Mirrors the banner hint
- * printed by `kimi web`.
- */
-function showServerVersionHint(host: SlashCommandHost, hostVersion: string | undefined): void {
-  if (hostVersion === undefined || hostVersion === getVersion()) return;
-  host.showStatus(
-    `Running server is version ${hostVersion}, this CLI is ${getVersion()} — restart with kimi server kill to pick up the new version.`,
-    'warning',
-  );
-}
-
-/**
- * Open the session deep link in the browser, record it for the exit hints,
- * and shut the TUI down. Used when the server is already running out of
- * process (reused or freshly-spawned daemon), so exit frees the terminal.
- */
-function openAndExit(
-  host: SlashCommandHost,
-  sessionId: string,
-  origin: string,
-  token: string | undefined,
-): Promise<void> {
+  // Resolve the persistent token so the opened browser auto-authenticates via
+  // the `#token=` fragment — matching the `kimi web` command. Show the URL
+  // and token in green under the status line so they can be copied before the
+  // terminal exits. Best-effort: an older/never-started server has no token
+  // file, so we fall back to the plain URL and skip the token line.
+  const token = tryResolveServerToken(getDataDir());
   const url = webSessionUrl(origin, sessionId, token);
   host.showStatus(`open ${url}`, 'success');
   if (token !== undefined) {
@@ -173,7 +89,7 @@ function openAndExit(
   }
   openUrl(url);
   host.setExitOpenUrl(url);
-  return host.stop();
+  await host.stop();
 }
 
 /**
