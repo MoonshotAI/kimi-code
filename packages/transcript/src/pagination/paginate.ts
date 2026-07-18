@@ -75,13 +75,22 @@ function splitSegments(items: readonly TranscriptItem[]): Segment[] {
 }
 
 function page(segments: readonly Segment[], pageSize: number, direction: 'older' | 'newer'): TurnPage {
+  // The leading non-turn unit is not a turn slot: pages are counted in turn
+  // segments, and the unit rides along only with the page that reaches the
+  // first turn (the oldest page).
+  const head = segments[0]?.turnId === undefined ? segments[0] : undefined;
+  const turnSegments = head !== undefined ? segments.slice(1) : segments;
   if (direction === 'older') {
-    const selected = segments.slice(-pageSize);
-    const hasMore = segments.length > selected.length && selected.length > 0;
-    return { items: flatten(selected), hasMore };
+    const selected = turnSegments.slice(-pageSize);
+    const reachesFirstTurn = selected.length === turnSegments.length;
+    const hasMore = turnSegments.length > selected.length && selected.length > 0;
+    return {
+      items: flatten([...(reachesFirstTurn && head !== undefined ? [head] : []), ...selected]),
+      hasMore,
+    };
   }
-  const selected = segments.slice(0, pageSize);
-  const hasMore = segments.length > selected.length && selected.length > 0;
+  const selected = turnSegments.slice(0, pageSize);
+  const hasMore = turnSegments.length > selected.length && selected.length > 0;
   return { items: flatten(selected), hasMore };
 }
 

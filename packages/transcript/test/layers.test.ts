@@ -162,6 +162,22 @@ describe('paginateTurns', () => {
     expect(page.items.map(idLabel)).toEqual(['t4', 'm4', 't5', 'm5']);
     expect(page.hasMore).toBe(false);
   });
+
+  it('keeps head non-turn items with the newest page when turns exactly fill it', () => {
+    // Head unit + exactly pageSize turns: the unit is not a turn slot — the
+    // newest page carries it and reports nothing older (a segment-counted
+    // page would drop it and hallucinate an older marker-only page).
+    const page = paginateTurns(items, { pageSize: 5 });
+    expect(page.items[0]).toEqual({ kind: 'marker', markerId: 'm0', marker: 'goal' });
+    expect(page.items.map(idLabel)).toEqual(['m0', 't1', 'm1', 't2', 'm2', 't3', 'm3', 't4', 'm4', 't5', 'm5']);
+    expect(page.hasMore).toBe(false);
+  });
+
+  it('returns a marker-only timeline as one page with nothing older', () => {
+    const only = paginateTurns([{ kind: 'marker', markerId: 'm0', marker: 'goal' }], { pageSize: 3 });
+    expect(only.items.map(idLabel)).toEqual(['m0']);
+    expect(only.hasMore).toBe(false);
+  });
 });
 
 describe('ViewRegistry', () => {
