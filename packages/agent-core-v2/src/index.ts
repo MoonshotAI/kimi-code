@@ -166,6 +166,8 @@ export * from '#/app/flag/flagService';
 
 import '#/app/multiServer/flag';
 export * from '#/app/multiServer/flag';
+import '#/tool/subagentModelSelection/flag';
+export * from '#/tool/subagentModelSelection/flag';
 
 export * from '#/agent/activityView/activityView';
 import '#/agent/activityView/activityViewService';

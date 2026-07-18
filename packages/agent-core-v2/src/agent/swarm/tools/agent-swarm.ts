@@ -20,10 +20,25 @@ import {
 import { registerTool } from '#/agent/toolRegistry/toolContribution';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { IModelService } from '#/app/model/model';
+import { IModelResolver } from '#/app/model/modelResolver';
 import { ISessionSwarmService, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
 import { resolveSubagentTimeoutMs } from '#/session/subagent/configSection';
+import { IAgentProfileService } from '#/agent/profile/profile';
+import {
+  filterResolvableSubagentModels,
+  formatSubagentModelDirectory,
+  isSelectableSubagentModelAlias,
+  normalizeSubagentModelAlias,
+  parametersWithSubagentModelSelection,
+  subagentApprovalAgentName,
+  SUBAGENT_MODEL_UNAVAILABLE_MESSAGE,
+  subagentModelUnavailableError,
+} from '#/tool/subagentModelSelection/modelDirectory';
+import { SUBAGENT_MODEL_SELECTION_FLAG_ID } from '#/tool/subagentModelSelection/flag';
 import AGENT_SWARM_DESCRIPTION from './agent-swarm.md?raw';
 
 const DEFAULT_SUBAGENT_TYPE = 'coder';
@@ -44,6 +59,13 @@ export const AgentSwarmToolInputSchema = z
       .optional()
       .describe(
         'Subagent type used for every new subagent spawned from items; defaults to coder when omitted. Resumed subagents always keep their original type, so passing subagent_type together with resume_agent_ids is allowed — it only affects the item-based spawns.',
+      ),
+    model: z
+      .string()
+      .min(1)
+      .optional()
+      .describe(
+        'Configured model alias used for every subagent in this swarm. Omit to inherit the caller model. See the available model directory in this tool description.',
       ),
     prompt_template: z
       .string()
@@ -99,42 +121,113 @@ interface SwarmRunResult {
 
 export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
   readonly name = 'AgentSwarm' as const;
-  readonly description = AGENT_SWARM_DESCRIPTION;
-  readonly parameters: Record<string, unknown> = toInputJsonSchema(AgentSwarmToolInputSchema);
 
   private readonly callerAgentId: string;
+  private readonly modelSelectionParameters: Record<string, unknown>;
+  private readonly defaultParameters: Record<string, unknown>;
 
   constructor(
     @ISessionSwarmService private readonly swarmService: ISessionSwarmService,
     @IAgentScopeContext scopeContext: IAgentScopeContext,
     @IAgentSwarmService private readonly swarmMode: IAgentSwarmService,
     @IConfigService private readonly config: IConfigService,
+    @IModelService private readonly models: IModelService,
+    @IAgentProfileService private readonly profile: IAgentProfileService,
+    @IModelResolver private readonly modelResolver: IModelResolver,
+    @IFlagService private readonly flags: IFlagService,
   ) {
     this.callerAgentId = scopeContext.agentId;
+    this.modelSelectionParameters = toInputJsonSchema(AgentSwarmToolInputSchema);
+    this.defaultParameters = parametersWithSubagentModelSelection(
+      this.modelSelectionParameters,
+      false,
+    );
+  }
+
+  get parameters(): Record<string, unknown> {
+    return this.modelSelectionEnabled()
+      ? this.modelSelectionParameters
+      : this.defaultParameters;
+  }
+
+  private modelSelectionEnabled(): boolean {
+    return this.flags.enabled(SUBAGENT_MODEL_SELECTION_FLAG_ID);
+  }
+
+  get description(): string {
+    if (!this.modelSelectionEnabled()) return AGENT_SWARM_DESCRIPTION;
+    const directory = formatSubagentModelDirectory({
+      models: filterResolvableSubagentModels(this.models.list(), (alias) =>
+        this.modelResolver.resolve(alias),
+      ),
+      currentModel: this.profile.data().modelAlias,
+    });
+    return `${AGENT_SWARM_DESCRIPTION}\n\n${directory}`;
   }
 
   resolveExecution(args: AgentSwarmToolInput): ToolExecution {
+    const modelSelectionEnabled = this.modelSelectionEnabled();
+    if (args.model !== undefined && !modelSelectionEnabled) {
+      return {
+        output:
+          'Subagent model selection is disabled. Enable the subagent-model-selection experimental feature to use model.',
+        isError: true,
+      };
+    }
+    let modelAlias = normalizeSubagentModelAlias(args.model);
+    if (modelSelectionEnabled) modelAlias ??= this.profile.data().modelAlias;
+    if (modelSelectionEnabled && modelAlias !== undefined) {
+      try {
+        if (args.model !== undefined) {
+          const selectableModels = filterResolvableSubagentModels(
+            this.models.list(),
+            (alias) => this.modelResolver.resolve(alias),
+          );
+          if (!isSelectableSubagentModelAlias(selectableModels, modelAlias)) {
+            throw new Error('Requested model alias is not in the exposed directory');
+          }
+        }
+        this.modelResolver.resolve(modelAlias);
+      } catch {
+        return { output: SUBAGENT_MODEL_UNAVAILABLE_MESSAGE, isError: true };
+      }
+    }
     const agentCount = (args.items?.length ?? 0) + Object.keys(args.resume_agent_ids ?? {}).length;
+    const agentName = subagentApprovalAgentName(
+      `swarm (${agentCount} subagents)`,
+      modelAlias,
+    );
     return {
       accesses: ToolAccesses.all(),
       description: `Launching agent swarm: ${args.description}`,
       display: {
         kind: 'agent_call',
-        agent_name: `swarm (${agentCount} subagents)`,
+        agent_name: agentName,
         prompt: args.description,
       },
       approvalRule: this.name,
-      execute: (ctx) => this.execution(args, ctx),
+      execute: (ctx) => this.execution(args, ctx, modelSelectionEnabled, modelAlias),
     };
   }
 
   private async execution(
     args: AgentSwarmToolInput,
     context: ExecutableToolContext,
+    modelSelectionEnabled: boolean,
+    approvedModelAlias?: string,
   ): Promise<ExecutableToolResult> {
     try {
-      this.swarmMode.enter('tool');
-      const result = await this.runSwarm(args, context.signal, context.toolCallId);
+      if (args.model !== undefined && !modelSelectionEnabled) {
+        throw new Error(
+          'Subagent model selection is disabled. Enable the subagent-model-selection experimental feature to use model.',
+        );
+      }
+      const result = await this.runSwarm(
+        args,
+        context.signal,
+        context.toolCallId,
+        modelSelectionEnabled ? approvedModelAlias : undefined,
+      );
       return {
         output: result,
       };
@@ -150,9 +243,19 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     args: AgentSwarmToolInput,
     signal: AbortSignal,
     toolCallId: string,
+    approvedModelAlias?: string,
   ): Promise<string> {
     const profileName = normalizeOptionalString(args.subagent_type) ?? DEFAULT_SUBAGENT_TYPE;
     const timeoutMs = resolveSubagentTimeoutMs(this.config);
+    const modelAlias = approvedModelAlias ?? this.profile.data().modelAlias;
+    if (modelAlias === undefined) {
+      throw new Error('Caller agent has no model bound');
+    }
+    try {
+      this.modelResolver.resolve(modelAlias);
+    } catch (error) {
+      throw subagentModelUnavailableError(error);
+    }
     const specs = await createAgentSwarmSpecs(args, (agentId) =>
       this.swarmService.getSwarmItem({ callerAgentId: this.callerAgentId, agentId }),
     );
@@ -164,6 +267,7 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
         parentToolCallId: toolCallId,
         prompt: spec.prompt,
         description: childDescription(args.description, spec.index, descriptionName),
+        modelAlias,
         swarmIndex: spec.index,
         runInBackground: false,
         swarmItem: spec.item,
@@ -185,6 +289,10 @@ export class AgentSwarmTool implements BuiltinTool<AgentSwarmToolInput> {
     const results = await this.swarmService.run({
       callerAgentId: this.callerAgentId,
       tasks,
+      onValidated: () => {
+        signal.throwIfAborted();
+        this.swarmMode.enter('tool');
+      },
     });
     return renderSwarmResults(
       results.map(({ task, ...result }) => ({ spec: task.data as AgentSwarmSpec, ...result })),

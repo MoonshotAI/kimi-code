@@ -22,6 +22,25 @@ Each dispatch is presented in the terminal as an approval request (unless it mat
 
 Sub-agents support running in the background: results are automatically returned to the main Agent upon completion, with no manual polling needed. You can also call back an existing sub-agent instance to continue the same task.
 
+Choosing a model for delegated work is experimental and disabled by default. Enable it persistently in `config.toml`:
+
+```toml
+[experimental]
+subagent-model-selection = true
+```
+
+To enable it only for the current process, set the dedicated environment variable instead:
+
+```sh
+export KIMI_CODE_EXPERIMENTAL_SUBAGENT_MODEL_SELECTION=1
+```
+
+When enabled, the `Agent` and `AgentSwarm` tool schemas (the argument definitions shown to the model) gain an optional `model` parameter. The calling Agent sees a directory built from the model aliases in your configuration and may choose an alias that better fits the delegated task. `Agent` applies the selected alias to the new or resumed sub-agent; `AgentSwarm` applies one alias to every new and resumed sub-agent in the batch. If `model` is omitted, delegated work uses the calling Agent's current model, and resumed sub-agents are realigned to that model.
+
+The directory exposes up to 64 ASCII-safe model aliases plus a restricted set of non-sensitive metadata: known capabilities, context/output limits, and only the fixed thinking-effort values `off`, `on`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Other aliases and metadata values are omitted rather than rewritten, so every displayed alias remains an exact configuration key. The directory never includes display names, API keys, base URLs, custom headers, provider identifiers, provider wire model names, or `passthrough` configuration.
+
+Enabling this experiment allows the calling Agent to choose any alias shown in that directory without a separate model-specific confirmation. When an `Agent` or `AgentSwarm` call still requires approval, the effective model alias is included in the approval label and is frozen for that approved execution. After changing `config.toml`, run `/reload`; the existing session then updates the collaboration tool schemas immediately. Starting a new session works too. Because providers and models can differ in price, context-window size, and capabilities, check the relevant provider's pricing and limits before delegating large batches.
+
 ## Context Isolation and Resource Cost
 
 Each sub-agent has a fully independent context window. It can only see the task description explicitly passed by the main Agent and cannot see the main Agent's conversation history. The sub-agent's own intermediate reasoning and tool call records do not flow back; only the final result appears in the main Agent's context.

@@ -32,6 +32,15 @@ export const FLAG_DEFINITIONS = [
     default: false,
     surface: 'core',
   },
+  {
+    id: 'subagent-model-selection',
+    title: 'Subagent model selection',
+    description:
+      'Expose configured model aliases to collaboration tools and allow Agent and AgentSwarm to select a model for delegated work.',
+    env: 'KIMI_CODE_EXPERIMENTAL_SUBAGENT_MODEL_SELECTION',
+    default: false,
+    surface: 'core',
+  },
 ] as const satisfies readonly FlagDefinitionInput[];
 
 /** Literal union of registered flag ids. */

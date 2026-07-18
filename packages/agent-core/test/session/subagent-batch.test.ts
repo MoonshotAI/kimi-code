@@ -1,3 +1,9 @@
+/**
+ * Subagent batch scheduling contract: bounded launch order, retries, cancellation, and option flow.
+ * Uses a fake launcher boundary with controlled completions and a documented fake clock.
+ * Run with: pnpm -C packages/agent-core test -- test/session/subagent-batch.test.ts
+ */
+
 import { createControlledPromise } from '@antfu/utils';
 import { APIProviderRateLimitError } from '@moonshot-ai/kosong';
 import { describe, expect, it, vi } from 'vitest';
@@ -102,6 +108,52 @@ describe('SubagentBatch scheduling contract', () => {
 
       controller.abort();
       await expect(running).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('preserves the model alias when a rate-limited task retries the same agent', async () => {
+    vi.useFakeTimers();
+    try {
+      const { runBatch, attempts } = createMockBatchRunner();
+      const running = runBatch(
+        [
+          { ...queuedTask(1), modelAlias: 'deepseek-v4-flash' },
+          { ...queuedTask(2), modelAlias: 'deepseek-v4-flash' },
+        ],
+        { signal },
+      );
+
+      await vi.advanceTimersByTimeAsync(0);
+      attempts.forEach((attempt) => {
+        attempt.markReady();
+      });
+      attempts[0]!.outcome.resolve({ type: 'rate_limited', agentId: 'agent-1' });
+      await vi.advanceTimersByTimeAsync(0);
+      attempts[1]!.outcome.resolve({
+        task: attempts[1]!.task,
+        agentId: 'agent-2',
+        status: 'completed',
+        result: 'completed 2',
+      });
+
+      await vi.advanceTimersByTimeAsync(3000);
+      expect(attempts[2]).toMatchObject({
+        retryAgentId: 'agent-1',
+        modelAlias: 'deepseek-v4-flash',
+      });
+
+      attempts[2]!.outcome.resolve({
+        task: attempts[2]!.task,
+        agentId: 'agent-1',
+        status: 'completed',
+        result: 'completed 1',
+      });
+      await expect(running).resolves.toMatchObject([
+        { task: { data: 1 }, status: 'completed' },
+        { task: { data: 2 }, status: 'completed' },
+      ]);
     } finally {
       vi.useRealTimers();
     }
@@ -747,6 +799,7 @@ type MockAttemptOutcome<T> =
 type MockAttemptRecord = {
   readonly task: QueuedSubagentTask<number>;
   readonly retryAgentId?: string;
+  readonly modelAlias?: string;
   readonly markReady: () => void;
   readonly outcome: ReturnType<typeof createControlledPromise<MockAttemptOutcome<number>>>;
 };
@@ -785,6 +838,7 @@ function createMockBatchRunner(
     attempts.push({
       task: task as unknown as QueuedSubagentTask<number>,
       retryAgentId,
+      modelAlias: runOptions.modelAlias,
       markReady,
       outcome: outcome as unknown as MockAttemptRecord['outcome'],
     });

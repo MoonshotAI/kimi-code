@@ -26,6 +26,8 @@ import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus } from '#/app/event/eventBus';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { applyProfilePromptPrefix } from '#/app/agentProfileCatalog/promptPrefix';
+import { IModelResolver } from '#/app/model/modelResolver';
+import { subagentModelUnavailableError } from '#/tool/subagentModelSelection/modelDirectory';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
 import {
   isSubagentMeta,
@@ -82,6 +84,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     @ISessionMetadata private readonly metadata: ISessionMetadata,
     @ISessionProcessRunner private readonly processRunner: ISessionProcessRunner,
     @ILogService private readonly log: ILogService,
+    @IModelResolver private readonly modelResolver: IModelResolver,
   ) {}
 
   async getSwarmItem(args: {
@@ -94,12 +97,46 @@ export class SessionSwarmService implements ISessionSwarmService {
     return subagentSwarmItem(meta);
   }
 
-  run<T>(args: SessionSwarmRunArgs<T>): Promise<readonly SessionSwarmRunResult<T>[]> {
+  async run<T>(args: SessionSwarmRunArgs<T>): Promise<readonly SessionSwarmRunResult<T>[]> {
     const { callerAgentId, tasks } = args;
+    if (tasks.length === 0) return [];
+    const caller = this.requireHandle(callerAgentId, 'Caller agent');
+    const validatedAliases = new Set<string>();
+    const preparedTasks: SessionSwarmTask<T>[] = tasks.map((task) => {
+      const modelAlias = this.resolveChildModel(caller, task.modelAlias);
+      if (!validatedAliases.has(modelAlias)) {
+        this.ensureModelAvailable(modelAlias);
+        validatedAliases.add(modelAlias);
+      }
+      return { ...task, modelAlias };
+    });
+    if (preparedTasks.every((task) => task.signal?.aborted === true)) {
+      preparedTasks[0]?.signal?.throwIfAborted();
+    }
+    const resumeTasks = preparedTasks.filter((task) => task.kind === 'resume');
+    const agentMetadata =
+      resumeTasks.length === 0 ? undefined : (await this.metadata.read()).agents;
+    const profileValidity = new Map<string, boolean>();
+    const hasRunnableTask = preparedTasks.some((task) => {
+      if (task.signal?.aborted === true) return false;
+      if (task.kind === 'spawn') {
+        let valid = profileValidity.get(task.profileName);
+        if (valid === undefined) {
+          valid = this.catalog.get(task.profileName) !== undefined;
+          profileValidity.set(task.profileName, valid);
+        }
+        return valid;
+      }
+      const meta = agentMetadata?.[task.resumeAgentId];
+      if (!isSubagentMeta(meta) || subagentParentAgentId(meta) !== callerAgentId) return false;
+      const child = this.lifecycle.get(task.resumeAgentId);
+      return child !== undefined && child.accessor.get(IAgentLoopService).status().state !== 'running';
+    });
+    if (hasRunnableTask) args.onValidated?.();
     const controller = new AbortController();
     this.inFlight.set(callerAgentId, controller);
     const unlinks: Array<() => void> = [];
-    const linkedTasks: SessionSwarmTask<T>[] = tasks.map((task) => {
+    const linkedTasks: SessionSwarmTask<T>[] = preparedTasks.map((task) => {
       if (task.signal !== undefined) unlinks.push(linkAbortSignal(task.signal, controller));
       return { ...task, signal: controller.signal };
     });
@@ -140,13 +177,12 @@ export class SessionSwarmService implements ISessionSwarmService {
       throw new Error(`Unknown agent type: "${options.profileName}"`);
     }
     const callerData = caller.accessor.get(IAgentProfileService).data();
-    if (callerData.modelAlias === undefined) {
-      throw new Error('Caller agent has no model bound');
-    }
+    const modelAlias = this.resolveChildModel(caller, options.modelAlias);
+    this.ensureModelAvailable(modelAlias);
     const child = await this.lifecycle.create({
       binding: {
         profile: profile.name,
-        model: callerData.modelAlias,
+        model: modelAlias,
         thinking: callerData.thinkingLevel,
         cwd: callerData.cwd,
       },
@@ -188,7 +224,7 @@ export class SessionSwarmService implements ISessionSwarmService {
     const caller = this.requireHandle(callerAgentId, 'Caller agent');
     const child = this.requireHandle(agentId, 'Agent instance');
     this.requireIdleSubagent(agentId, child);
-    this.realignChildModel(caller, child);
+    this.realignChildModel(caller, child, options.modelAlias);
     const profileName =
       child.accessor.get(IAgentProfileService).data().profileName ?? RESUMED_PROFILE_FALLBACK;
     if (!retryTurn) {
@@ -237,12 +273,30 @@ export class SessionSwarmService implements ISessionSwarmService {
     return handle;
   }
 
-  private realignChildModel(caller: IAgentScopeHandle, child: IAgentScopeHandle): void {
-    const modelAlias = caller.accessor.get(IAgentProfileService).data().modelAlias;
-    if (modelAlias === undefined) {
-      throw new Error('Caller agent has no model bound');
-    }
+  private realignChildModel(
+    caller: IAgentScopeHandle,
+    child: IAgentScopeHandle,
+    requestedModelAlias?: string,
+  ): void {
+    const modelAlias = this.resolveChildModel(caller, requestedModelAlias);
+    this.ensureModelAvailable(modelAlias);
     child.accessor.get(IAgentProfileService).update({ modelAlias });
+  }
+
+  private resolveChildModel(caller: IAgentScopeHandle, requestedModelAlias?: string): string {
+    const modelAlias =
+      requestedModelAlias ?? caller.accessor.get(IAgentProfileService).data().modelAlias;
+    if (modelAlias === undefined) throw new Error('Caller agent has no model bound');
+    return modelAlias;
+  }
+
+  private ensureModelAvailable(modelAlias: string): void {
+    try {
+      this.modelResolver.resolve(modelAlias);
+    } catch (error) {
+      this.log.warn('subagent swarm model validation failed', { modelAlias, error });
+      throw subagentModelUnavailableError(error);
+    }
   }
 
   private requireIdleSubagent(agentId: string, child: IAgentScopeHandle): void {

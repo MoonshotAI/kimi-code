@@ -1,3 +1,10 @@
+/**
+ * Scenario: AgentSwarm collaboration behavior, including optional subagent model selection.
+ * Responsibilities: validates tool exposure and forwards one resolved model alias to every swarm task.
+ * Wiring: real tool formatting/task construction with stubbed swarm, model, profile, and flag boundaries.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 test -- test/agent/swarm/swarm.test.ts
+ */
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 
@@ -7,7 +14,12 @@ import { TestInstantiationService } from '#/_base/di/test';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import { DEFAULT_SUBAGENT_TIMEOUT_MS } from '#/session/subagent/configSection';
 import { IAgentLifecycleService } from '#/session/agentLifecycle/agentLifecycle';
-import { ISessionSwarmService, type SessionSwarmRunResult, type SessionSwarmTask } from '#/session/swarm/sessionSwarm';
+import {
+  ISessionSwarmService,
+  type SessionSwarmRunArgs,
+  type SessionSwarmRunResult,
+  type SessionSwarmTask,
+} from '#/session/swarm/sessionSwarm';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { AgentSystemReminderService } from '#/agent/systemReminder/systemReminderService';
 import { IAgentSwarmService } from '#/agent/swarm/swarm';
@@ -19,6 +31,10 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolRegistryService } from '#/agent/toolRegistry/toolRegistryService';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { IConfigService } from '#/app/config/config';
+import { IFlagService } from '#/app/flag/flag';
+import { type ModelConfig, IModelService } from '#/app/model/model';
+import { IModelResolver } from '#/app/model/modelResolver';
+import { IAgentProfileService } from '#/agent/profile/profile';
 import { AppendLogStore } from '#/persistence/backends/node-fs/appendLogStore';
 import { InMemoryStorageService } from '#/persistence/backends/memory/inMemoryStorageService';
 import { IAppendLogStore } from '#/persistence/interface/appendLogStore';
@@ -31,6 +47,7 @@ import { stubContextMemory } from '../contextMemory/stubs';
 import { executeTool } from '../../tools/fixtures/execute-tool';
 import { registerTestAgentWire, restoreTestAgentWire, testWireScope } from '../../wire/stubs';
 import { stubLoopWithHooks } from '../loop/stubs';
+import { stubFlag } from '../../app/flag/stubs';
 
 const signal = new AbortController().signal;
 
@@ -50,8 +67,17 @@ function mockSwarmHost({
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   readonly getSwarmItem?: (...args: any[]) => any;
 } = {}) {
+  const validatingRun = vi.fn(async (args: SessionSwarmRunArgs<unknown>) => {
+    args.onValidated?.();
+    return await run(args);
+  });
   return {
-    swarmService: { _serviceBrand: undefined, getSwarmItem, run, cancel: vi.fn() },
+    swarmService: {
+      _serviceBrand: undefined,
+      getSwarmItem,
+      run: validatingRun,
+      cancel: vi.fn(),
+    },
     callerAgentId: 'main',
   };
 }
@@ -65,6 +91,65 @@ function stubConfig(timeoutMs?: number): IConfigService {
     _serviceBrand: undefined,
     get: () => (timeoutMs === undefined ? undefined : { timeoutMs }),
   } as unknown as IConfigService;
+}
+
+interface AgentSwarmToolRigOptions {
+  readonly timeoutMs?: number;
+  readonly modelSelectionEnabled?: boolean | (() => boolean);
+  readonly models?: Record<string, ModelConfig>;
+  readonly currentModel?: string | (() => string);
+  readonly resolveModel?: (alias: string) => unknown;
+  readonly swarmMode?: ReturnType<typeof mockSwarmMode>;
+}
+
+function agentSwarmToolRig(
+  host: ReturnType<typeof mockSwarmHost> = mockSwarmHost(),
+  options: AgentSwarmToolRigOptions = {},
+) {
+  const models = options.models ?? {
+    'main-model': {
+      name: 'wire-main',
+      displayName: 'Main model',
+      capabilities: ['thinking', 'tool_use'],
+      maxContextSize: 131_072,
+    },
+  };
+  const currentModel = options.currentModel ?? 'main-model';
+  const resolve = vi.fn(
+    options.resolveModel ??
+      ((alias: string) => {
+        if (models[alias] === undefined) throw new Error(`Unknown model alias: ${alias}`);
+        return {};
+      }),
+  );
+  const modelService = {
+    _serviceBrand: undefined,
+    list: () => models,
+  } as unknown as IModelService;
+  const profile = {
+    _serviceBrand: undefined,
+    data: () => ({
+      modelAlias: typeof currentModel === 'function' ? currentModel() : currentModel,
+    }),
+  } as unknown as IAgentProfileService;
+  const resolver = {
+    _serviceBrand: undefined,
+    resolve,
+    findByName: () => [],
+  } as unknown as IModelResolver;
+  const swarmMode = options.swarmMode ?? mockSwarmMode();
+  const flags: IFlagService = stubFlag(options.modelSelectionEnabled ?? false);
+  const tool = new AgentSwarmTool(
+    host.swarmService,
+    makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }),
+    swarmMode,
+    stubConfig(options.timeoutMs),
+    modelService,
+    profile,
+    resolver,
+    flags,
+  );
+  return { tool, resolve, swarmMode };
 }
 
 describe('AgentSwarmService', () => {
@@ -190,7 +275,7 @@ describe('AgentSwarmTool', () => {
       ]),
     });
     const swarmMode = mockSwarmMode();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), swarmMode, stubConfig());
+    const { tool } = agentSwarmToolRig(host, { swarmMode });
     const input = {
       description: 'Review files',
       prompt_template: 'Review {{item}}',
@@ -248,6 +333,7 @@ describe('AgentSwarmTool', () => {
         parentToolCallId: 'call_swarm',
         prompt: 'Review src/a.ts',
         description: 'Review files #1 (explore)',
+        modelAlias: 'main-model',
         swarmIndex: 1,
         swarmItem: 'src/a.ts',
         runInBackground: false,
@@ -266,6 +352,7 @@ describe('AgentSwarmTool', () => {
         parentToolCallId: 'call_swarm',
         prompt: 'Review src/b.ts',
         description: 'Review files #2 (explore)',
+        modelAlias: 'main-model',
         swarmIndex: 2,
         swarmItem: 'src/b.ts',
         runInBackground: false,
@@ -287,7 +374,7 @@ describe('AgentSwarmTool', () => {
 
   it('does not expose permission rule argument matching', () => {
     const host = mockSwarmHost();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig());
+    const { tool } = agentSwarmToolRig(host);
     const execution = tool.resolveExecution({
       description: 'Review files',
       prompt_template: 'Review {{item}}',
@@ -302,10 +389,280 @@ describe('AgentSwarmTool', () => {
 
   it('description states the enforced input requirements', () => {
     const host = mockSwarmHost();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig());
+    const { tool } = agentSwarmToolRig(host);
     expect(tool.description).toContain('at least 2');
     expect(tool.description).toContain('{{item}}');
     expect(tool.description.toLowerCase()).toContain('distinct');
+  });
+
+  it('omits the model parameter when model selection is disabled', () => {
+    const { tool } = agentSwarmToolRig();
+
+    expect(tool.parameters['properties']).not.toHaveProperty('model');
+  });
+
+  it('omits the model directory when model selection is disabled', () => {
+    const { tool } = agentSwarmToolRig(undefined, {
+      models: {
+        'private-model-alias': { name: 'wire-private-model' },
+      },
+      currentModel: 'private-model-alias',
+    });
+
+    expect(tool.description).not.toContain('Available configured models for subagents');
+    expect(tool.description).not.toContain('private-model-alias');
+  });
+
+  it('exposes the model parameter when model selection is enabled', () => {
+    const { tool } = agentSwarmToolRig(undefined, { modelSelectionEnabled: true });
+
+    expect(tool.parameters['properties']).toMatchObject({
+      model: {
+        type: 'string',
+        description: expect.stringContaining('Configured model alias'),
+      },
+    });
+  });
+
+  it('updates the model schema and directory when the feature flag changes live', () => {
+    let enabled = false;
+    const { tool } = agentSwarmToolRig(undefined, {
+      modelSelectionEnabled: () => enabled,
+    });
+
+    expect(tool.parameters['properties']).not.toHaveProperty('model');
+    expect(tool.description).not.toContain('"main-model"');
+
+    enabled = true;
+    expect(tool.parameters['properties']).toHaveProperty('model');
+    expect(tool.description).toContain('"main-model"');
+
+    enabled = false;
+    expect(tool.parameters['properties']).not.toHaveProperty('model');
+    expect(tool.description).not.toContain('"main-model"');
+  });
+
+  it('renders a live sanitized model directory when model selection is enabled', () => {
+    const unsafeAlias = 'unsafe\u202Ealias';
+    const models: Record<string, ModelConfig> = {
+      'main-model': {
+        name: 'wire-main-secret',
+        baseUrl: 'https://private.example.test/v1',
+        apiKey: 'SUPER_SECRET_API_KEY',
+        displayName: 'Main model',
+        capabilities: ['thinking', 'tool_use', 'ignore_prior_instructions'],
+        maxContextSize: 131_072,
+      },
+      'invalid-model': { name: 'wire-invalid-secret' },
+      [unsafeAlias]: { name: 'wire-unsafe-secret' },
+    };
+    const { tool } = agentSwarmToolRig(undefined, {
+      modelSelectionEnabled: true,
+      models,
+      resolveModel: (alias) => {
+        if (alias === 'invalid-model') throw new Error('invalid model configuration');
+        return {};
+      },
+    });
+
+    models['late-model'] = { name: 'wire-late-secret', displayName: 'Late model' };
+
+    expect(tool.description).toContain('Available configured models for subagents');
+    expect(tool.description).toContain('"main-model"');
+    expect(tool.description).not.toContain('name="Main model"');
+    expect(tool.description).toContain('capabilities=["thinking","tool_use"]');
+    expect(tool.description).toContain('current=true');
+    expect(tool.description).toContain('"late-model"');
+    expect(tool.description).not.toContain('invalid-model');
+    expect(tool.description).not.toContain('ignore_prior_instructions');
+    expect(tool.description).not.toContain(unsafeAlias);
+    expect(tool.description).not.toContain('wire-main-secret');
+    expect(tool.description).not.toContain('private.example.test');
+    expect(tool.description).not.toContain('SUPER_SECRET_API_KEY');
+  });
+
+  it('rejects a configured alias beyond the exposed model-directory limit', async () => {
+    const models = Object.fromEntries(
+      Array.from({ length: 65 }, (_, index) => [
+        `model-${String(index).padStart(3, '0')}`,
+        { name: `wire-${String(index)}` },
+      ]),
+    );
+    const host = mockSwarmHost();
+    const { tool } = agentSwarmToolRig(host, {
+      modelSelectionEnabled: true,
+      models,
+      currentModel: 'model-000',
+    });
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        model: 'model-064',
+      }),
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      output:
+        'Selected subagent model is unavailable. Refresh the model directory and choose an exact listed alias.',
+    });
+    expect(host.swarmService.run).not.toHaveBeenCalled();
+  });
+
+  it('preserves one explicit model alias exactly across spawned and resumed tasks', async () => {
+    const host = mockSwarmHost();
+    const { tool, resolve } = agentSwarmToolRig(host, {
+      modelSelectionEnabled: true,
+      models: {
+        'main-model': { name: 'wire-main' },
+        'Child.Model/fast': { name: 'wire-child' },
+      },
+    });
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Continue and review',
+        model: 'Child.Model/fast',
+        prompt_template: 'Review {{item}}',
+        items: ['src/new.ts'],
+        resume_agent_ids: { 'agent-old-1': 'Continue previous review' },
+      }),
+    );
+
+    expect(resolve).toHaveBeenCalledWith('Child.Model/fast');
+    expect(host.swarmService.run).toHaveBeenCalledWith({
+      callerAgentId: 'main',
+      onValidated: expect.any(Function),
+      tasks: [
+        expect.objectContaining({
+          kind: 'resume',
+          resumeAgentId: 'agent-old-1',
+          modelAlias: 'Child.Model/fast',
+        }),
+        expect.objectContaining({
+          kind: 'spawn',
+          modelAlias: 'Child.Model/fast',
+        }),
+      ],
+    });
+    expect(result.isError).toBeUndefined();
+  });
+
+  it('shows and executes the inherited model approved before live config changes', async () => {
+    let enabled = true;
+    let currentModel = 'model-a';
+    const host = mockSwarmHost();
+    const { tool } = agentSwarmToolRig(host, {
+      modelSelectionEnabled: () => enabled,
+      currentModel: () => currentModel,
+      models: {
+        'model-a': { name: 'wire-a' },
+        'model-b': { name: 'wire-b' },
+      },
+    });
+
+    const execution = tool.resolveExecution({
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.display).toMatchObject({
+      kind: 'agent_call',
+      agent_name: 'swarm (2 subagents) · model model-a',
+    });
+
+    currentModel = 'model-b';
+    enabled = false;
+    await execution.execute({ turnId: 0, toolCallId: 'call_swarm', signal });
+
+    expect(host.swarmService.run).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tasks: [
+          expect.objectContaining({ modelAlias: 'model-a' }),
+          expect.objectContaining({ modelAlias: 'model-a' }),
+        ],
+      }),
+    );
+  });
+
+  it('does not enter swarm mode after the tool call is cancelled', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const host = mockSwarmHost();
+    const swarmMode = mockSwarmMode();
+    const { tool } = agentSwarmToolRig(host, { swarmMode });
+
+    const result = await executeTool(tool, {
+        ...context({
+          description: 'Review files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts'],
+        }),
+        signal: controller.signal,
+      });
+
+    expect(result).toMatchObject({ isError: true, output: 'This operation was aborted' });
+    expect(swarmMode.enter).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid explicit model before dispatching the swarm', async () => {
+    const host = mockSwarmHost();
+    const { tool, swarmMode } = agentSwarmToolRig(host, { modelSelectionEnabled: true });
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        model: 'missing-model',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+      }),
+    );
+
+    expect(result).toMatchObject({
+      output:
+        'Selected subagent model is unavailable. Refresh the model directory and choose an exact listed alias.',
+      isError: true,
+    });
+    expect(host.swarmService.run).not.toHaveBeenCalled();
+    expect(swarmMode.enter).not.toHaveBeenCalled();
+  });
+
+  it('redacts resolver details when the approved model disappears before dispatch', async () => {
+    let unavailable = false;
+    const host = mockSwarmHost();
+    const { tool } = agentSwarmToolRig(host, {
+      modelSelectionEnabled: true,
+      resolveModel: () => {
+        if (unavailable) throw new Error('private provider endpoint and SECRET_API_KEY');
+        return {};
+      },
+    });
+    const execution = tool.resolveExecution({
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+      model: 'main-model',
+    });
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    unavailable = true;
+
+    const result = await execution.execute({ turnId: 0, toolCallId: 'call_swarm', signal });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output:
+        'Selected subagent model is unavailable. Refresh the model directory and choose an exact listed alias.',
+    });
+    expect(result.output).not.toContain('SECRET_API_KEY');
+    expect(result.output).not.toContain('private provider endpoint');
+    expect(host.swarmService.run).not.toHaveBeenCalled();
   });
 
   it('rejects invalid launch shapes at execution time', async () => {
@@ -354,13 +711,14 @@ describe('AgentSwarmTool', () => {
 
     for (const testCase of cases) {
       const host = mockSwarmHost();
-      const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig());
+      const { tool, swarmMode } = agentSwarmToolRig(host);
 
       const result = await executeTool(tool, context(testCase.input));
 
       expect(result.output).toBe(testCase.output);
       expect(result.isError).toBe(true);
       expect(host.swarmService.run).not.toHaveBeenCalled();
+      expect(swarmMode.enter).not.toHaveBeenCalled();
     }
   });
 
@@ -387,7 +745,7 @@ describe('AgentSwarmTool', () => {
       async ({ agentId }: { readonly agentId: string }) => persistedItems[agentId],
     );
     const host = mockSwarmHost({ run, getSwarmItem });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig());
+    const { tool } = agentSwarmToolRig(host);
     const input = {
       description: 'Finish review',
       subagent_type: 'explore',
@@ -431,6 +789,7 @@ describe('AgentSwarmTool', () => {
         parentToolCallId: 'call_swarm',
         prompt: 'Continue previous review A',
         description: 'Finish review #1 (resume)',
+        modelAlias: 'main-model',
         swarmIndex: 1,
         swarmItem: 'src/old-a.ts',
         runInBackground: false,
@@ -451,6 +810,7 @@ describe('AgentSwarmTool', () => {
         parentToolCallId: 'call_swarm',
         prompt: 'Continue previous review B',
         description: 'Finish review #2 (resume)',
+        modelAlias: 'main-model',
         swarmIndex: 2,
         swarmItem: 'src/old-b.ts',
         runInBackground: false,
@@ -470,6 +830,7 @@ describe('AgentSwarmTool', () => {
         parentToolCallId: 'call_swarm',
         prompt: 'Review src/new.ts',
         description: 'Finish review #3 (explore)',
+        modelAlias: 'main-model',
         swarmIndex: 3,
         swarmItem: 'src/new.ts',
         runInBackground: false,
@@ -507,7 +868,7 @@ describe('AgentSwarmTool', () => {
     );
     const getSwarmItem = vi.fn(async () => 'src/old-a.ts');
     const host = mockSwarmHost({ run, getSwarmItem });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig());
+    const { tool } = agentSwarmToolRig(host);
     const input = {
       description: 'Resume review',
       resume_agent_ids: {
@@ -535,6 +896,7 @@ describe('AgentSwarmTool', () => {
         parentToolCallId: 'call_swarm',
         prompt: 'Continue previous review A',
         description: 'Resume review #1 (resume)',
+        modelAlias: 'main-model',
         swarmIndex: 1,
         swarmItem: 'src/old-a.ts',
         runInBackground: false,
@@ -570,7 +932,7 @@ describe('AgentSwarmTool', () => {
         },
       ]),
     });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig());
+    const { tool } = agentSwarmToolRig(host);
 
     const result = await executeTool(
       tool,
@@ -596,7 +958,7 @@ describe('AgentSwarmTool', () => {
 
   it('passes the configured subagent timeout to swarm tasks', async () => {
     const host = mockSwarmHost();
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig(5_000));
+    const { tool } = agentSwarmToolRig(host, { timeoutMs: 5_000 });
 
     await executeTool(
       tool,
@@ -632,7 +994,7 @@ describe('AgentSwarmTool', () => {
         },
       ]),
     });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig());
+    const { tool } = agentSwarmToolRig(host);
 
     const result = await executeTool(
       tool,
@@ -679,7 +1041,7 @@ describe('AgentSwarmTool', () => {
         },
       ]),
     });
-    const tool = new AgentSwarmTool(host.swarmService, makeAgentScopeContext({ agentId: host.callerAgentId, agentScope: '' }), mockSwarmMode(), stubConfig());
+    const { tool } = agentSwarmToolRig(host);
 
     const result = await executeTool(
       tool,

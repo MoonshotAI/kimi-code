@@ -1,3 +1,10 @@
+/**
+ * Scenario: Builtin tool contracts, including optional Agent subagent model selection.
+ * Responsibilities: verifies LLM-facing schemas/descriptions and observable execution effects.
+ * Wiring: real DI-resolved tools with lifecycle, model, and flag boundaries stubbed per scenario.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 test -- test/tool/tool.test.ts
+ */
+
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -44,6 +51,9 @@ import {
   type RunAgentOptions,
 } from '#/session/subagent/subagent';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
+import { IFlagService } from '#/app/flag/flag';
+import { type ModelConfig, IModelService } from '#/app/model/model';
+import { IModelResolver } from '#/app/model/modelResolver';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionCronService } from '#/session/cron/sessionCronService';
 import { ISessionMetadata, type AgentMeta } from '#/session/sessionMetadata/sessionMetadata';
@@ -56,6 +66,7 @@ import type { IProcess, ISessionProcessRunner } from '#/session/process/processR
 import { IWireService } from '#/wire/wire';
 import { createFakeProcessRunner } from '../tools/fixtures/fake-exec';
 import {
+  appService,
   configServices,
   createCommandRunner,
   createTestAgent,
@@ -68,6 +79,7 @@ import {
   type TestAgentOptions,
   type TestAgentServiceOverride,
 } from '../harness';
+import { stubFlag } from '../app/flag/stubs';
 import { executeTool } from '../tools/fixtures/execute-tool';
 
 const signal = new AbortController().signal;
@@ -362,6 +374,27 @@ function subagentMeta(parentAgentId = 'main'): AgentMeta {
   };
 }
 
+function modelServiceStub(models: Record<string, ModelConfig>): IModelService {
+  return {
+    _serviceBrand: undefined,
+    onDidChangeModels: Event.None as IModelService['onDidChangeModels'],
+    get: (id) => models[id],
+    list: () => models,
+    set: async () => {},
+    delete: async () => {},
+  };
+}
+
+function modelResolverStub(
+  resolve: IModelResolver['resolve'] = () => ({}) as ReturnType<IModelResolver['resolve']>,
+): IModelResolver {
+  return {
+    _serviceBrand: undefined,
+    resolve,
+    findByName: () => [],
+  };
+}
+
 describe('AgentToolInputSchema', () => {
   it('accepts the snake_case background parameter', () => {
     const parsed = AgentToolInputSchema.parse({
@@ -402,11 +435,10 @@ describe('AgentToolInputSchema', () => {
     expect((properties['resume']?.description ?? '').toLowerCase()).toContain('subagent_type');
   });
 
-  it('does not expose timeout or model parameters in the JSON schema', () => {
+  it('keeps timeout outside the tool input schema', () => {
     const properties = agentSchemaProperties();
 
     expect(properties).not.toHaveProperty('timeout');
-    expect(properties).not.toHaveProperty('model');
   });
 
   it('normalizes the default subagent type into tool args', () => {
@@ -430,6 +462,150 @@ describe('AgentToolInputSchema', () => {
         resume: 'agent-existing',
       }).subagent_type,
     ).toBeUndefined();
+  });
+});
+
+describe('Agent tool model-selection exposure', () => {
+  let ctx: TestAgentContext | undefined;
+
+  afterEach(async () => {
+    await ctx?.dispose();
+    ctx = undefined;
+  });
+
+  it('omits the model parameter when model selection is disabled', () => {
+    ctx = createTestAgent(appService(IFlagService, stubFlag(false)));
+
+    expect(agentTool(ctx).parameters['properties']).not.toHaveProperty('model');
+  });
+
+  it('omits the model directory when model selection is disabled', () => {
+    ctx = createTestAgent(
+      appService(IFlagService, stubFlag(false)),
+      appService(
+        IModelService,
+        modelServiceStub({
+          'private-model-alias': {
+            name: 'wire-private-model',
+            apiKey: 'SUPER_SECRET_API_KEY',
+          },
+        }),
+      ),
+    );
+
+    expect(agentTool(ctx).description).not.toContain('Available configured models for subagents');
+    expect(agentTool(ctx).description).not.toContain('private-model-alias');
+    expect(agentTool(ctx).description).not.toContain('SUPER_SECRET_API_KEY');
+  });
+
+  it('exposes the model parameter when model selection is enabled', () => {
+    ctx = createTestAgent(appService(IFlagService, stubFlag(true)));
+
+    expect(agentTool(ctx).parameters['properties']).toMatchObject({
+      model: {
+        type: 'string',
+        description: expect.stringContaining('Configured model alias'),
+      },
+    });
+  });
+
+  it('updates the model schema and directory when the feature flag changes live', () => {
+    let enabled = false;
+    ctx = createTestAgent(
+      appService(IFlagService, stubFlag(() => enabled)),
+      appService(
+        IModelService,
+        modelServiceStub({ 'child-model': { name: 'wire-child', maxContextSize: 128_000 } }),
+      ),
+      appService(
+        IModelResolver,
+        modelResolverStub(() => ({}) as ReturnType<IModelResolver['resolve']>),
+      ),
+    );
+
+    expect(agentTool(ctx).parameters['properties']).not.toHaveProperty('model');
+    expect(agentTool(ctx).description).not.toContain('"child-model"');
+
+    enabled = true;
+    expect(agentTool(ctx).parameters['properties']).toHaveProperty('model');
+    expect(agentTool(ctx).description).toContain('"child-model"');
+
+    enabled = false;
+    expect(agentTool(ctx).parameters['properties']).not.toHaveProperty('model');
+    expect(agentTool(ctx).description).not.toContain('"child-model"');
+  });
+
+  it('bounds the model directory exposed in the tool description', () => {
+    const models = Object.fromEntries(
+      Array.from({ length: 70 }, (_, index) => [
+        `model-${String(index)}`,
+        { name: `wire-${String(index)}`, maxContextSize: 128_000 },
+      ]),
+    );
+    ctx = createTestAgent(
+      appService(IFlagService, stubFlag(true)),
+      appService(IModelService, modelServiceStub(models)),
+      appService(
+        IModelResolver,
+        modelResolverStub(() => ({}) as ReturnType<IModelResolver['resolve']>),
+      ),
+    );
+
+    expect(
+      agentTool(ctx).description.split('\n').filter((line) => line.startsWith('- "model-')),
+    ).toHaveLength(64);
+    expect(agentTool(ctx).description).toContain('6 additional aliases were omitted');
+  });
+
+  it('renders a live sanitized model directory when model selection is enabled', () => {
+    const unsafeAlias = 'unsafe\u202Ealias';
+    const invisibleAlias = 'unsafe\uFE0Falias';
+    const models: Record<string, ModelConfig> = {
+      'main-model': {
+        name: 'wire-main-secret',
+        baseUrl: 'https://private.example.test/v1',
+        apiKey: 'SUPER_SECRET_API_KEY',
+        displayName: 'Main model',
+        capabilities: ['thinking', 'tool_use', 'ignore_prior_instructions'],
+        supportEfforts: ['low', 'ignore_previous_instructions', 'sk-test-secret'],
+        defaultEffort: 'reveal_all_secrets',
+        maxContextSize: 131_072,
+      },
+      'invalid-model': { name: 'wire-invalid-secret' },
+      [unsafeAlias]: { name: 'wire-unsafe-secret' },
+      [invisibleAlias]: { name: 'wire-invisible-secret' },
+    };
+    const resolveModel = vi.fn((alias: string) => {
+      if (alias === 'invalid-model') throw new Error('invalid model configuration');
+      return {} as ReturnType<IModelResolver['resolve']>;
+    });
+    ctx = createTestAgent(
+      appService(IFlagService, stubFlag(true)),
+      appService(IModelService, modelServiceStub(models)),
+      appService(IModelResolver, modelResolverStub(resolveModel)),
+    );
+    ctx.get(IAgentProfileService).update({ modelAlias: 'main-model' });
+    models['late-model'] = { name: 'wire-late-secret', displayName: 'Late model' };
+
+    const description = agentTool(ctx).description;
+
+    expect(description).toContain('Available configured models for subagents');
+    expect(description).toContain('"main-model"');
+    expect(description).not.toContain('name="Main model"');
+    expect(description).toContain('capabilities=["thinking","tool_use"]');
+    expect(description).toContain('current=true');
+    expect(description).toContain('"late-model"');
+    expect(description).not.toContain('invalid-model');
+    expect(description).not.toContain('ignore_prior_instructions');
+    expect(description).toContain('thinking=["low"]');
+    expect(description).not.toContain('ignore_previous_instructions');
+    expect(description).not.toContain('sk-test-secret');
+    expect(description).not.toContain('reveal_all_secrets');
+    expect(description).not.toContain(unsafeAlias);
+    expect(description).not.toContain(invisibleAlias);
+    expect(description).not.toContain('wire-main-secret');
+    expect(description).not.toContain('private.example.test');
+    expect(description).not.toContain('SUPER_SECRET_API_KEY');
   });
 });
 
@@ -507,6 +683,7 @@ describe('Agent tool execution contract', () => {
       sessionService(IAgentLifecycleService, lifecycle),
       sessionService(ISessionSubagentService, lifecycle),
       sessionService(ISessionCronService, cronStub),
+      appService(IModelResolver, modelResolverStub()),
       ...extra,
     );
     lifecycle.addHandle('main', 'agent');
@@ -588,6 +765,209 @@ describe('Agent tool execution contract', () => {
     expect(result.output).toContain('agent_id: agent-child');
     expect(result.output).toContain('actual_subagent_type: explore');
     expect(result.output).toContain('child result');
+  });
+
+  it('preserves an explicitly selected model alias exactly when spawning', async () => {
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const resolveModel = vi.fn(
+      (_alias: string) => ({}) as ReturnType<IModelResolver['resolve']>,
+    );
+    const context = createAgentToolContext(
+      lifecycle,
+      appService(IFlagService, stubFlag(true)),
+      appService(
+        IModelService,
+        modelServiceStub({
+          'mock-model': { name: 'wire-main' },
+          'Child.Model/fast': { name: 'wire-child' },
+        }),
+      ),
+      appService(IModelResolver, modelResolverStub(resolveModel)),
+    );
+
+    await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      model: 'Child.Model/fast',
+    });
+
+    expect(resolveModel).toHaveBeenCalledWith('Child.Model/fast');
+    expect(lifecycle.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ model: 'Child.Model/fast' }),
+      }),
+    );
+  });
+
+  it('shows and executes the inherited model approved before live config changes', async () => {
+    let enabled = true;
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const context = createAgentToolContext(
+      lifecycle,
+      appService(IFlagService, stubFlag(() => enabled)),
+      appService(IModelResolver, modelResolverStub()),
+    );
+    context.get(IAgentProfileService).update({ modelAlias: 'model-a' });
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.display).toMatchObject({
+      kind: 'agent_call',
+      agent_name: 'coder · model model-a',
+    });
+
+    context.get(IAgentProfileService).update({ modelAlias: 'model-b' });
+    enabled = false;
+    await execution.execute({ turnId: 0, toolCallId: 'call_agent', signal });
+
+    expect(lifecycle.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ model: 'model-a' }),
+      }),
+    );
+  });
+
+  it('rejects an explicit alias that cannot be shown safely to the model', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const resolveModel = vi.fn(
+      (_alias: string) => ({}) as ReturnType<IModelResolver['resolve']>,
+    );
+    const context = createAgentToolContext(
+      lifecycle,
+      appService(IFlagService, stubFlag(true)),
+      appService(IModelResolver, modelResolverStub(resolveModel)),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      model: ' unsafe-model ',
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: expect.stringContaining('safely displayable configured model alias'),
+    });
+    expect(resolveModel).not.toHaveBeenCalledWith(' unsafe-model ');
+    expect(lifecycle.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects an invalid spawn model before creating a subagent', async () => {
+    const lifecycle = createAgentLifecycleStub();
+    const resolveModel = vi.fn((_alias: string) => {
+      throw new Error('Unknown model alias: invalid-model');
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      appService(IFlagService, stubFlag(true)),
+      appService(IModelResolver, modelResolverStub(resolveModel)),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      model: 'invalid-model',
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output:
+        'subagent error: Selected subagent model is unavailable. Refresh the model directory and choose an exact listed alias.',
+    });
+    expect(lifecycle.create).not.toHaveBeenCalled();
+  });
+
+  it('rejects a configured alias beyond the exposed model-directory limit', async () => {
+    const models = Object.fromEntries(
+      Array.from({ length: 65 }, (_, index) => [
+        `model-${String(index).padStart(3, '0')}`,
+        { name: `wire-${String(index)}` },
+      ]),
+    );
+    const lifecycle = createAgentLifecycleStub();
+    const context = createAgentToolContext(
+      lifecycle,
+      appService(IFlagService, stubFlag(true)),
+      appService(IModelService, modelServiceStub(models)),
+      appService(IModelResolver, modelResolverStub()),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Investigate',
+      description: 'Find cause',
+      model: 'model-064',
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output:
+        'subagent error: Selected subagent model is unavailable. Refresh the model directory and choose an exact listed alias.',
+    });
+    expect(lifecycle.create).not.toHaveBeenCalled();
+  });
+
+  it('redacts resolver details when the approved model disappears before launch', async () => {
+    let unavailable = false;
+    const lifecycle = createAgentLifecycleStub({ createAgentIds: ['agent-child'] });
+    const resolveModel = vi.fn((_alias: string) => {
+      if (unavailable) throw new Error('private provider endpoint and SECRET_API_KEY');
+      return {} as ReturnType<IModelResolver['resolve']>;
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      appService(IFlagService, stubFlag(true)),
+      appService(
+        IModelService,
+        modelServiceStub({
+          'mock-model': { name: 'wire-main' },
+          'child-model': { name: 'wire-child' },
+        }),
+      ),
+      appService(IModelResolver, modelResolverStub(resolveModel)),
+    );
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+      model: 'child-model',
+    });
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    unavailable = true;
+
+    const result = await execution.execute({ turnId: 0, toolCallId: 'call_agent', signal });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output:
+        'subagent error: Selected subagent model is unavailable. Refresh the model directory and choose an exact listed alias.',
+    });
+    expect(result.output).not.toContain('SECRET_API_KEY');
+    expect(result.output).not.toContain('private provider endpoint');
+    expect(lifecycle.create).not.toHaveBeenCalled();
+  });
+
+  it('hides an unsafe inherited alias in the approval display', async () => {
+    const unsafeAlias = 'unsafe\u202Ealias';
+    const context = createAgentToolContext(
+      createAgentLifecycleStub(),
+      appService(IFlagService, stubFlag(true)),
+      appService(IModelResolver, modelResolverStub()),
+    );
+    context.get(IAgentProfileService).update({ modelAlias: unsafeAlias });
+
+    const execution = await agentTool(context).resolveExecution({
+      prompt: 'Investigate',
+      description: 'Find cause',
+    });
+    if (execution.isError === true) throw new Error('expected runnable execution');
+
+    expect(execution.display).toMatchObject({
+      agent_name: 'coder · model inherited (alias hidden)',
+    });
+    expect(JSON.stringify(execution.display)).not.toContain(unsafeAlias);
   });
 
   it('mirrors v1-compatible subagent lifecycle event fields', async () => {
@@ -864,6 +1244,92 @@ describe('Agent tool execution contract', () => {
       { kind: 'prompt', prompt: 'Continue' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it('binds an explicitly selected model when resuming a subagent', async () => {
+    const targetProfile = {
+      _serviceBrand: undefined,
+      data: () => ({ profileName: 'explore', modelAlias: 'stale-model' }),
+      update: vi.fn(),
+      isToolActive: () => false,
+    } as unknown as IAgentProfileService;
+    const lifecycle = createAgentLifecycleStub();
+    const resolveModel = vi.fn(
+      (_alias: string) => ({}) as ReturnType<IModelResolver['resolve']>,
+    );
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+      ),
+      appService(IFlagService, stubFlag(true)),
+      appService(
+        IModelService,
+        modelServiceStub({
+          'mock-model': { name: 'wire-main' },
+          'child-model': { name: 'wire-child' },
+        }),
+      ),
+      appService(IModelResolver, modelResolverStub(resolveModel)),
+    );
+    lifecycle.addHandle(
+      'agent-existing',
+      'explore',
+      new Map([[IAgentProfileService, targetProfile]]),
+    );
+
+    await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+      model: 'child-model',
+    });
+
+    expect(resolveModel).toHaveBeenCalledWith('child-model');
+    expect(targetProfile.update).toHaveBeenCalledWith({ modelAlias: 'child-model' });
+  });
+
+  it('rejects an invalid resume model before updating the child profile', async () => {
+    const targetProfile = {
+      _serviceBrand: undefined,
+      data: () => ({ profileName: 'explore', modelAlias: 'stale-model' }),
+      update: vi.fn(),
+      isToolActive: () => false,
+    } as unknown as IAgentProfileService;
+    const lifecycle = createAgentLifecycleStub();
+    const resolveModel = vi.fn((_alias: string) => {
+      throw new Error('Unknown model alias: invalid-model');
+    });
+    const context = createAgentToolContext(
+      lifecycle,
+      sessionService(
+        ISessionMetadata,
+        sessionMetadataStub({ 'agent-existing': subagentMeta() }),
+      ),
+      appService(IFlagService, stubFlag(true)),
+      appService(IModelResolver, modelResolverStub(resolveModel)),
+    );
+    lifecycle.addHandle(
+      'agent-existing',
+      'explore',
+      new Map([[IAgentProfileService, targetProfile]]),
+    );
+
+    const result = await executeAgentTool(context, {
+      prompt: 'Continue',
+      description: 'Continue work',
+      resume: 'agent-existing',
+      model: 'invalid-model',
+    });
+
+    expect(result).toMatchObject({
+      isError: true,
+      output:
+        'subagent error: Selected subagent model is unavailable. Refresh the model directory and choose an exact listed alias.',
+    });
+    expect(targetProfile.update).not.toHaveBeenCalled();
+    expect(lifecycle.run).not.toHaveBeenCalled();
   });
 
   it('registers background subagents with the task manager', async () => {
@@ -1407,15 +1873,15 @@ describe('AgentSwarmToolInputSchema', () => {
     ).toBe(true);
   });
 
-  it('exposes subagent_type and resume_agent_ids parameters', () => {
+  it('exposes model, subagent_type, and resume_agent_ids parameters', () => {
     const properties = agentSwarmSchemaProperties<{ description?: string }>();
 
+    expect(properties['model']?.description).toContain('Configured model alias');
     expect(properties['subagent_type']?.description).toContain('defaults to coder');
     expect(properties['resume_agent_ids']?.description).toContain('Map of existing subagent');
     expect(Object.keys(properties).at(-1)).toBe('resume_agent_ids');
     expect(properties).not.toHaveProperty('run_in_background');
     expect(properties).not.toHaveProperty('timeout');
-    expect(properties).not.toHaveProperty('model');
   });
 });
 
@@ -1464,6 +1930,7 @@ describe('AgentSwarm tool execution contract', () => {
       async (
         args: SessionSwarmRunArgs<unknown>,
       ): Promise<readonly SessionSwarmRunResult<unknown>[]> => {
+        args.onValidated?.();
         return args.tasks.map((task, index) => ({
           task,
           agentId: `agent-explore-${String(index + 1)}`,
@@ -1494,6 +1961,7 @@ describe('AgentSwarm tool execution contract', () => {
 
     expect(runSwarm).toHaveBeenCalledWith({
       callerAgentId: 'main',
+      onValidated: expect.any(Function),
       tasks: [
         {
           kind: 'spawn',
@@ -1502,6 +1970,7 @@ describe('AgentSwarm tool execution contract', () => {
           parentToolCallId: 'call_swarm',
           prompt: 'Review src/a.ts',
           description: 'Review files #1 (explore)',
+          modelAlias: 'mock-model',
           swarmIndex: 1,
           swarmItem: 'src/a.ts',
           runInBackground: false,
@@ -1515,6 +1984,7 @@ describe('AgentSwarm tool execution contract', () => {
           parentToolCallId: 'call_swarm',
           prompt: 'Review src/b.ts',
           description: 'Review files #2 (explore)',
+          modelAlias: 'mock-model',
           swarmIndex: 2,
           swarmItem: 'src/b.ts',
           runInBackground: false,
@@ -1545,6 +2015,7 @@ describe('AgentSwarm tool execution contract', () => {
       async (
         args: SessionSwarmRunArgs<unknown>,
       ): Promise<readonly SessionSwarmRunResult<unknown>[]> => {
+        args.onValidated?.();
         return args.tasks.map((task, index) => ({
           task,
           agentId: task.kind === 'resume' ? task.resumeAgentId : `agent-new-${String(index + 1)}`,
@@ -1587,6 +2058,7 @@ describe('AgentSwarm tool execution contract', () => {
     });
     expect(runSwarm).toHaveBeenCalledWith({
       callerAgentId: 'main',
+      onValidated: expect.any(Function),
       tasks: [
         {
           kind: 'resume',
@@ -1601,6 +2073,7 @@ describe('AgentSwarm tool execution contract', () => {
           parentToolCallId: 'call_swarm',
           prompt: 'Continue previous review A',
           description: 'Finish review #1 (resume)',
+          modelAlias: 'mock-model',
           swarmIndex: 1,
           swarmItem: 'src/old-a.ts',
           runInBackground: false,
@@ -1621,6 +2094,7 @@ describe('AgentSwarm tool execution contract', () => {
           parentToolCallId: 'call_swarm',
           prompt: 'Continue previous review B',
           description: 'Finish review #2 (resume)',
+          modelAlias: 'mock-model',
           swarmIndex: 2,
           swarmItem: 'src/old-b.ts',
           runInBackground: false,
@@ -1640,6 +2114,7 @@ describe('AgentSwarm tool execution contract', () => {
           parentToolCallId: 'call_swarm',
           prompt: 'Review src/new.ts',
           description: 'Finish review #3 (explore)',
+          modelAlias: 'mock-model',
           swarmIndex: 3,
           swarmItem: 'src/new.ts',
           runInBackground: false,

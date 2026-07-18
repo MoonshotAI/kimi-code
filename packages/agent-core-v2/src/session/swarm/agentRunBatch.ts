@@ -21,6 +21,7 @@ export interface AgentRunAttemptOptions {
   readonly parentToolCallUuid?: string;
   readonly prompt: string;
   readonly description: string;
+  readonly modelAlias?: string;
   readonly swarmIndex?: number;
   readonly runInBackground: boolean;
   readonly signal: AbortSignal;
@@ -281,6 +282,7 @@ export class AgentRunBatch<T> {
       parentToolCallUuid: task.parentToolCallUuid,
       prompt: task.prompt,
       description: task.description,
+      modelAlias: task.modelAlias,
       swarmIndex: task.swarmIndex,
       runInBackground: task.runInBackground,
       signal: attempt.controller.signal,
@@ -648,5 +650,4 @@ export function resolveSwarmMaxConcurrency(
   }
   return value;
 }
-
 

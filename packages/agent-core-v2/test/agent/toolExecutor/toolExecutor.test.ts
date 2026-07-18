@@ -282,6 +282,47 @@ describe('AgentToolExecutorService', () => {
     });
   });
 
+  it('recompiles validation when a live tool switches parameter schemas', async () => {
+    const defaultParameters = {
+      type: 'object',
+      properties: {},
+      additionalProperties: false,
+    };
+    const modelParameters = {
+      type: 'object',
+      properties: { model: { type: 'string' } },
+      required: ['model'],
+      additionalProperties: false,
+    };
+    let modelEnabled = false;
+    const tool = new TestTool('mutable-schema');
+    Object.defineProperty(tool, 'parameters', {
+      configurable: true,
+      get: () => (modelEnabled ? modelParameters : defaultParameters),
+    });
+    registry.register(tool);
+
+    await execute([toolCall('call_off_1', 'mutable-schema', {})]);
+
+    modelEnabled = true;
+    await execute([
+      toolCall('call_on', 'mutable-schema', { model: 'child-model' }),
+    ]);
+
+    modelEnabled = false;
+    const results = await execute([
+      toolCall('call_off_2', 'mutable-schema', { model: 'child-model' }),
+    ]);
+
+    expect(tool.calls.map(({ args }) => args)).toEqual([{}, { model: 'child-model' }]);
+    expect(results).toEqual([
+      expect.objectContaining({
+        output: expect.stringContaining('Invalid args for tool "mutable-schema"'),
+        isError: true,
+      }),
+    ]);
+  });
+
   it('routes malformed JSON args through schema validation', async () => {
     const tool = new TestTool('strict', {
       parameters: {

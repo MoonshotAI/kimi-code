@@ -1,3 +1,10 @@
+/**
+ * Scenario: Session swarm scheduling and child-agent execution contracts.
+ * Responsibilities: verifies batching, metadata compatibility, model inheritance, and retries.
+ * Wiring: real DI-resolved SessionSwarmService with lifecycle, subagent, and model boundaries stubbed.
+ * Run: pnpm --filter @moonshot-ai/agent-core-v2 test -- test/session/swarm/sessionSwarm.test.ts
+ */
+
 import { createControlledPromise } from '@antfu/utils';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -15,6 +22,8 @@ import { IAgentUserToolService } from '#/agent/userTool/userTool';
 import { IEventBus, type DomainEvent } from '#/app/event/eventBus';
 import { IAgentProfileCatalogService } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { APIProviderRateLimitError } from '#/app/llmProtocol/errors';
+import { IModelResolver } from '#/app/model/modelResolver';
+import { SUBAGENT_MODEL_UNAVAILABLE_MESSAGE } from '#/tool/subagentModelSelection/modelDirectory';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import {
   IAgentLifecycleService,
@@ -842,6 +851,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   let subagents: ISessionSubagentService;
   let createAgent: ReturnType<typeof vi.fn>;
   let runAgent: ReturnType<typeof vi.fn>;
+  let resolveModel: ReturnType<typeof vi.fn<IModelResolver['resolve']>>;
   let eventBus: IEventBus;
 
   beforeEach(() => {
@@ -854,10 +864,19 @@ describe('SessionSwarmService metadata compatibility', () => {
     subagents = subagentStub();
     createAgent = lifecycle.create as ReturnType<typeof vi.fn>;
     runAgent = subagents.run as ReturnType<typeof vi.fn>;
+    resolveModel = vi.fn((alias: string) => {
+      if (alias === 'invalid-model') throw new Error('Unknown model alias: invalid-model');
+      return {} as ReturnType<IModelResolver['resolve']>;
+    });
     handles.set('main', agentHandle('main', lifecycle, eventBus));
 
     ix.stub(IAgentLifecycleService, lifecycle);
     ix.stub(ISessionSubagentService, subagents);
+    ix.stub(IModelResolver, {
+      _serviceBrand: undefined,
+      resolve: resolveModel,
+      findByName: () => [],
+    });
     ix.stub(IAgentProfileCatalogService, {
       _serviceBrand: undefined,
       get: (name: string) =>
@@ -977,28 +996,51 @@ describe('SessionSwarmService metadata compatibility', () => {
   it('persists caller ownership and swarm item labels on spawned children', async () => {
     const service = ix.get(ISessionSwarmService);
 
-    await expect(
-      service.run({
-        callerAgentId: 'main',
-        tasks: [spawnSessionTask('src/a.ts')],
-      }),
-    ).resolves.toMatchObject([
-      {
-        agentId: 'agent-new',
-        status: 'completed',
-        result: 'child summary',
-      },
-    ]);
+    await service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/a.ts')],
+    });
 
     expect(createAgent).toHaveBeenCalledWith(
       expect.objectContaining({
-        binding: {
-          profile: 'coder',
-          model: 'kimi-test',
-          thinking: 'medium',
-          cwd: '/repo',
-        },
         labels: { parentAgentId: 'main', swarmItem: 'src/a.ts' },
+      }),
+    );
+  });
+
+  it('inherits the caller model when a spawn task omits modelAlias', async () => {
+    const service = ix.get(ISessionSwarmService);
+
+    await service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/a.ts')],
+    });
+
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ model: 'kimi-test' }),
+      }),
+    );
+  });
+
+  it('binds an explicitly selected model when spawning a swarm child', async () => {
+    const service = ix.get(ISessionSwarmService);
+    const onValidated = vi.fn();
+
+    await service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/a.ts', 'child-model')],
+      onValidated,
+    });
+
+    expect(onValidated).toHaveBeenCalledOnce();
+    expect(onValidated.mock.invocationCallOrder[0]).toBeLessThan(
+      createAgent.mock.invocationCallOrder[0]!,
+    );
+    expect(resolveModel).toHaveBeenCalledWith('child-model');
+    expect(createAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ model: 'child-model' }),
       }),
     );
   });
@@ -1045,11 +1087,13 @@ describe('SessionSwarmService metadata compatibility', () => {
     };
     handles.set('other-child', agentHandle('other-child', lifecycle, eventBusStub()));
     const service = ix.get(ISessionSwarmService);
+    const onValidated = vi.fn();
 
     await expect(
       service.run({
         callerAgentId: 'main',
         tasks: [resumeSessionTask('other-child')],
+        onValidated,
       }),
     ).resolves.toMatchObject([
       {
@@ -1058,10 +1102,52 @@ describe('SessionSwarmService metadata compatibility', () => {
         error: 'Agent instance "other-child" does not belong to this parent agent',
       },
     ]);
+    expect(onValidated).not.toHaveBeenCalled();
     expect(runAgent).not.toHaveBeenCalled();
   });
 
-  it('realigns resumed children to the caller current model', async () => {
+  it('does not validate swarm mode when every spawn task has an unknown profile', async () => {
+    const service = ix.get(ISessionSwarmService);
+    const onValidated = vi.fn();
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [{ ...spawnSessionTask('src/a.ts'), profileName: 'missing' }],
+        onValidated,
+      }),
+    ).resolves.toMatchObject([
+      {
+        status: 'failed',
+        state: 'not_started',
+        error: 'Unknown agent type: "missing"',
+      },
+    ]);
+
+    expect(onValidated).not.toHaveBeenCalled();
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not validate swarm mode or launch a pre-aborted task', async () => {
+    const service = ix.get(ISessionSwarmService);
+    const onValidated = vi.fn();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [{ ...spawnSessionTask('src/a.ts'), signal: controller.signal }],
+        onValidated,
+      }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(onValidated).not.toHaveBeenCalled();
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('inherits the caller model when a resume task omits modelAlias', async () => {
     agents['agent-existing'] = {
       labels: { parentAgentId: 'main' },
     };
@@ -1085,6 +1171,133 @@ describe('SessionSwarmService metadata compatibility', () => {
       { kind: 'prompt', prompt: 'Continue' },
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it('binds an explicitly selected model when resuming a swarm child', async () => {
+    agents['agent-existing'] = {
+      labels: { parentAgentId: 'main' },
+    };
+    const child = agentHandle('agent-existing', lifecycle, eventBus, {
+      profileName: 'explore',
+      modelAlias: 'stale-model',
+    });
+    handles.set('agent-existing', child);
+    const service = ix.get(ISessionSwarmService);
+
+    await service.run({
+      callerAgentId: 'main',
+      tasks: [resumeSessionTask('agent-existing', 'child-model')],
+    });
+
+    expect(resolveModel).toHaveBeenCalledWith('child-model');
+    expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('child-model');
+  });
+
+  it('rejects a batch containing an invalid model before starting any task', async () => {
+    const service = ix.get(ISessionSwarmService);
+    const onValidated = vi.fn();
+
+    await expect(
+      service.run({
+        callerAgentId: 'main',
+        tasks: [
+          spawnSessionTask('src/valid.ts', 'child-model'),
+          spawnSessionTask('src/invalid.ts', 'invalid-model'),
+        ],
+        onValidated,
+      }),
+    ).rejects.toThrow(SUBAGENT_MODEL_UNAVAILABLE_MESSAGE);
+
+    expect(onValidated).not.toHaveBeenCalled();
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('redacts resolver details when a validated model disappears before launch', async () => {
+    let unavailable = false;
+    resolveModel.mockImplementation((_alias: string) => {
+      if (unavailable) {
+        throw new Error('private provider endpoint and SECRET_API_KEY');
+      }
+      return {} as ReturnType<IModelResolver['resolve']>;
+    });
+    const service = ix.get(ISessionSwarmService);
+
+    const results = await service.run({
+      callerAgentId: 'main',
+      tasks: [spawnSessionTask('src/a.ts', 'child-model')],
+      onValidated: () => {
+        unavailable = true;
+      },
+    });
+
+    expect(results).toMatchObject([
+      {
+        status: 'failed',
+        state: 'not_started',
+        error: SUBAGENT_MODEL_UNAVAILABLE_MESSAGE,
+      },
+    ]);
+    expect(results[0]?.error).not.toContain('SECRET_API_KEY');
+    expect(results[0]?.error).not.toContain('private provider endpoint');
+    expect(createAgent).not.toHaveBeenCalled();
+    expect(runAgent).not.toHaveBeenCalled();
+  });
+
+  it('preserves an explicit model alias when a rate-limited child retries', async () => {
+    vi.useFakeTimers();
+    try {
+      agents['agent-retry'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      agents['agent-blocker'] = {
+        labels: { parentAgentId: 'main' },
+      };
+      const child = agentHandle('agent-retry', lifecycle, eventBus, {
+        profileName: 'explore',
+        modelAlias: 'stale-model',
+      });
+      handles.set('agent-retry', child);
+      handles.set('agent-blocker', agentHandle('agent-blocker', lifecycle, eventBus));
+      const rateLimited = createControlledPromise<{ summary: string }>();
+      const blocker = createControlledPromise<{ summary: string }>();
+      let runCount = 0;
+      runAgent.mockImplementation((agentId, _request, options) => {
+        options?.onReady?.();
+        if (agentId !== 'agent-retry') {
+          return { agentId, turn: {} as never, completion: blocker };
+        }
+        runCount += 1;
+        return {
+          agentId,
+          turn: {} as never,
+          completion:
+            runCount === 1
+              ? rateLimited
+              : Promise.resolve({ summary: 'recovered summary' }),
+        };
+      });
+      const service = ix.get(ISessionSwarmService);
+
+      const running = service.run({
+        callerAgentId: 'main',
+        tasks: [
+          resumeSessionTask('agent-retry', 'child-model'),
+          resumeSessionTask('agent-blocker'),
+        ],
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      rateLimited.reject(new APIProviderRateLimitError('Rate limited'));
+      await vi.advanceTimersByTimeAsync(0);
+      blocker.resolve({ summary: 'blocker summary' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await running;
+
+      expect(runAgent.mock.calls.filter(([agentId]) => agentId === 'agent-retry')).toHaveLength(2);
+      expect(child.accessor.get(IAgentProfileService).data().modelAlias).toBe('child-model');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('does not emit spawned again when a rate-limited child retries', async () => {
@@ -1186,7 +1399,7 @@ describe('SessionSwarmService metadata compatibility', () => {
   });
 });
 
-function spawnSessionTask(swarmItem?: string): SessionSwarmTask {
+function spawnSessionTask(swarmItem?: string, modelAlias?: string): SessionSwarmTask {
   return {
     kind: 'spawn',
     data: {},
@@ -1194,13 +1407,14 @@ function spawnSessionTask(swarmItem?: string): SessionSwarmTask {
     parentToolCallId: 'call_swarm',
     prompt: 'Review the file',
     description: 'Review #1 (coder)',
+    modelAlias,
     swarmIndex: 1,
     swarmItem,
     runInBackground: false,
   };
 }
 
-function resumeSessionTask(agentId: string): SessionSwarmTask {
+function resumeSessionTask(agentId: string, modelAlias?: string): SessionSwarmTask {
   return {
     kind: 'resume',
     data: {},
@@ -1208,6 +1422,7 @@ function resumeSessionTask(agentId: string): SessionSwarmTask {
     parentToolCallId: 'call_swarm',
     prompt: 'Continue',
     description: 'Resume #1 (resume)',
+    modelAlias,
     swarmIndex: 1,
     runInBackground: false,
     resumeAgentId: agentId,

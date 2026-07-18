@@ -701,6 +701,13 @@ export class ToolManager {
       this.enabledTools.has('TaskOutput') &&
       this.enabledTools.has('TaskStop');
     const goalToolsEnabled = this.agent.type === 'main';
+    const subagentModelSelectionEnabled = (): boolean =>
+      this.agent.experimentalFlags.enabled('subagent-model-selection');
+    const resolveSubagentModelAlias = (requestedModelAlias?: string): string | undefined => {
+      const modelAlias = requestedModelAlias ?? this.agent.config.modelAlias;
+      if (modelAlias !== undefined) this.agent.modelProvider?.resolveProviderConfig(modelAlias);
+      return modelAlias;
+    };
     this.builtinTools = new Map(
       [
         new b.ReadTool(kaos, workspace),
@@ -756,6 +763,12 @@ export class ToolManager {
               allowBackground,
               log: this.agent.log,
               subagentTimeoutMs: resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+              modelDirectory: () => ({
+                models: this.agent.modelProvider?.listModelAliases?.(),
+                currentModel: this.agent.config.modelAlias,
+              }),
+              modelSelectionEnabled: subagentModelSelectionEnabled,
+              resolveModelAlias: resolveSubagentModelAlias,
             },
           ),
         this.agent.subagentHost &&
@@ -763,6 +776,12 @@ export class ToolManager {
             this.agent.subagentHost,
             this.agent.swarmMode,
             resolveSubagentTimeoutMs(this.agent.kimiConfig?.subagent?.timeoutMs),
+            () => ({
+              models: this.agent.modelProvider?.listModelAliases?.(),
+              currentModel: this.agent.config.modelAlias,
+            }),
+            subagentModelSelectionEnabled,
+            resolveSubagentModelAlias,
           ),
         toolServices?.webSearcher && new b.WebSearchTool(toolServices.webSearcher),
         toolServices?.urlFetcher && new b.FetchURLTool(toolServices.urlFetcher),

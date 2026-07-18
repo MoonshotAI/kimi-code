@@ -18,6 +18,7 @@ type SessionSwarmTaskBase<T> = {
   readonly parentToolCallUuid?: string;
   readonly prompt: string;
   readonly description: string;
+  readonly modelAlias?: string;
   readonly swarmIndex?: number;
   readonly swarmItem?: string;
   readonly runInBackground: boolean;
@@ -40,6 +41,7 @@ export type SessionSwarmTask<T = unknown> = SessionSwarmSpawnTask<T> | SessionSw
 export interface SessionSwarmRunArgs<T = unknown> {
   readonly callerAgentId: string;
   readonly tasks: readonly SessionSwarmTask<T>[];
+  readonly onValidated?: () => void;
 }
 
 export interface SessionSwarmRunResult<T = unknown> {

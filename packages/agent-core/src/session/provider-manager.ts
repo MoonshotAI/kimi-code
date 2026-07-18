@@ -49,6 +49,7 @@ type AuthorizedRequest = <T>(
 
 export interface ModelProvider {
   readonly defaultModel?: string;
+  listModelAliases?(): Readonly<Record<string, ModelAlias>>;
   resolveProviderConfig(model: string): ResolvedRuntimeProvider;
   resolveAuth?(model: string, options?: { readonly log?: Logger }): AuthorizedRequest | undefined;
 }
@@ -86,6 +87,19 @@ export class ProviderManager implements ModelProvider {
   private get config(): KimiConfig {
     const { config } = this.options;
     return typeof config === 'function' ? config() : config;
+  }
+
+  listModelAliases(): Readonly<Record<string, ModelAlias>> {
+    return Object.fromEntries(
+      Object.entries(this.config.models ?? {}).filter(([alias]) => {
+        try {
+          this.resolveProviderConfig(alias);
+          return true;
+        } catch {
+          return false;
+        }
+      }),
+    );
   }
 
   resolveProviderConfig(model: string): ResolvedRuntimeProvider {

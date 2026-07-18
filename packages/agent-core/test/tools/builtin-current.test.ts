@@ -76,12 +76,21 @@ function context<Input>(args: Input, toolCallId = 'call_1') {
 function mockSubagentHost<T extends Partial<SessionSubagentHost>>(
   host: T,
 ): T & SessionSubagentHost {
+  const providedRunQueued = host.runQueued?.bind(host);
   return {
     spawn: vi.fn(),
     resume: vi.fn(),
-    runQueued: vi.fn(),
     getSwarmItem: vi.fn(),
     ...host,
+    runQueued: vi.fn(
+      async (
+        tasks: Parameters<SessionSubagentHost['runQueued']>[0],
+        options: Parameters<SessionSubagentHost['runQueued']>[1],
+      ) => {
+        options?.onValidated?.();
+        return (await providedRunQueued?.(tasks, options)) ?? [];
+      },
+    ),
   } as unknown as T & SessionSubagentHost;
 }
 
@@ -424,6 +433,7 @@ describe('current builtin collaboration tools', () => {
           timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
         },
       ],
+      expect.objectContaining({ onValidated: expect.any(Function) }),
     );
     expect(result.output).toBe([
       '<agent_swarm_result>',
@@ -433,6 +443,200 @@ describe('current builtin collaboration tools', () => {
       '</agent_swarm_result>',
     ].join('\n'));
     expect(result.isError).toBeUndefined();
+  });
+
+  it('AgentSwarm rejects an explicit model when model selection is disabled', async () => {
+    const host = mockSubagentHost({ runQueued: vi.fn() });
+    const swarmMode = mockSwarmMode();
+    const tool = new AgentSwarmTool(host, swarmMode);
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        model: 'deepseek-v4-flash',
+      }),
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      output: expect.stringContaining('Subagent model selection is disabled'),
+    });
+    expect(host.runQueued).not.toHaveBeenCalled();
+    expect(swarmMode.enter).not.toHaveBeenCalled();
+  });
+
+  it('AgentSwarm updates its model schema when the feature flag changes live', () => {
+    let enabled = false;
+    const tool = new AgentSwarmTool(
+      mockSubagentHost({}),
+      mockSwarmMode(),
+      undefined,
+      () => ({
+        models: {
+          'child-model': {
+            provider: 'test',
+            model: 'wire-child',
+            maxContextSize: 128_000,
+          },
+        },
+      }),
+      () => enabled,
+    );
+
+    expect(tool.parameters['properties']).not.toHaveProperty('model');
+    enabled = true;
+    expect(tool.parameters['properties']).toHaveProperty('model');
+    expect(tool.description).toContain('"child-model"');
+    enabled = false;
+    expect(tool.parameters['properties']).not.toHaveProperty('model');
+  });
+
+  it('AgentSwarm rejects a configured alias beyond the exposed directory limit', async () => {
+    const models = Object.fromEntries(
+      Array.from({ length: 65 }, (_, index) => [
+        `model-${String(index).padStart(3, '0')}`,
+        {
+          provider: 'test',
+          model: `wire-${String(index)}`,
+          maxContextSize: 128_000,
+        },
+      ]),
+    );
+    const host = mockSubagentHost({ runQueued: vi.fn() });
+    const resolveModelAlias = vi.fn((alias?: string) => alias);
+    const tool = new AgentSwarmTool(
+      host,
+      mockSwarmMode(),
+      undefined,
+      () => ({ models }),
+      true,
+      resolveModelAlias,
+    );
+
+    const result = await executeTool(
+      tool,
+      context({
+        description: 'Review files',
+        prompt_template: 'Review {{item}}',
+        items: ['src/a.ts', 'src/b.ts'],
+        model: 'model-064',
+      }),
+    );
+
+    expect(result).toMatchObject({
+      isError: true,
+      output:
+        'Selected subagent model is unavailable. Refresh the model directory and choose an exact listed alias.',
+    });
+    expect(resolveModelAlias).not.toHaveBeenCalled();
+    expect(host.runQueued).not.toHaveBeenCalled();
+  });
+
+  it('AgentSwarm preserves one explicit model alias exactly across the batch', async () => {
+    const runQueued = vi.fn(
+      async <T>(
+        tasks: readonly QueuedSubagentTask<T>[],
+      ): Promise<Array<QueuedSubagentRunResult<T>>> =>
+        tasks.map((task, index) => ({
+          task,
+          agentId: task.kind === 'resume' ? task.resumeAgentId : `agent-new-${String(index + 1)}`,
+          status: 'completed' as const,
+          result: `result ${String(index + 1)}`,
+        })),
+    );
+    const host = mockSubagentHost({
+      runQueued: runQueued as unknown as SessionSubagentHost['runQueued'],
+    });
+    const tool = new AgentSwarmTool(host, mockSwarmMode(), undefined, undefined, true);
+
+    await executeTool(
+      tool,
+      context(
+        {
+          description: 'Finish review',
+          prompt_template: 'Review {{item}}',
+          items: ['src/new.ts'],
+          resume_agent_ids: { 'agent-existing': 'Continue previous review' },
+          model: 'DeepSeek-v4/flash',
+        },
+        'call_swarm',
+      ),
+    );
+
+    const tasks = runQueued.mock.calls[0]?.[0];
+    expect(tasks).toMatchObject([
+      {
+        kind: 'resume',
+        resumeAgentId: 'agent-existing',
+        modelAlias: 'DeepSeek-v4/flash',
+      },
+      {
+        kind: 'spawn',
+        modelAlias: 'DeepSeek-v4/flash',
+      },
+    ]);
+  });
+
+  it('AgentSwarm shows and executes the inherited model approved before live config changes', async () => {
+    let enabled = true;
+    let currentModel = 'model-a';
+    const host = mockSubagentHost({
+      runQueued: vi.fn(async () => []),
+    });
+    const tool = new AgentSwarmTool(
+      host,
+      mockSwarmMode(),
+      undefined,
+      undefined,
+      () => enabled,
+      (requestedModelAlias) => requestedModelAlias ?? currentModel,
+    );
+
+    const execution = tool.resolveExecution({
+      description: 'Review files',
+      prompt_template: 'Review {{item}}',
+      items: ['src/a.ts', 'src/b.ts'],
+    });
+    if (execution.isError === true) throw new Error('expected runnable execution');
+    expect(execution.display).toMatchObject({
+      kind: 'agent_call',
+      agent_name: 'swarm (2 subagents) · model model-a',
+    });
+
+    currentModel = 'model-b';
+    enabled = false;
+    await execution.execute({ turnId: '0', toolCallId: 'call_swarm', signal });
+
+    expect(host.runQueued).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({ modelAlias: 'model-a' }),
+        expect.objectContaining({ modelAlias: 'model-a' }),
+      ],
+      expect.objectContaining({ onValidated: expect.any(Function) }),
+    );
+  });
+
+  it('AgentSwarm does not enter swarm mode after the tool call is cancelled', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const host = mockSubagentHost({});
+    const swarmMode = mockSwarmMode();
+    const tool = new AgentSwarmTool(host, swarmMode);
+
+    const result = await executeTool(tool, {
+        ...context({
+          description: 'Review files',
+          prompt_template: 'Review {{item}}',
+          items: ['src/a.ts', 'src/b.ts'],
+        }),
+        signal: controller.signal,
+      });
+
+    expect(result).toMatchObject({ isError: true, output: 'This operation was aborted' });
+    expect(swarmMode.enter).not.toHaveBeenCalled();
   });
 
   it('AgentSwarm does not expose permission rule argument matching', () => {
@@ -474,6 +678,7 @@ describe('current builtin collaboration tools', () => {
     expect(result.output).toBe('AgentSwarm supports at most 128 subagents.');
     expect(result.isError).toBe(true);
     expect(host.runQueued).not.toHaveBeenCalled();
+    expect(swarmMode.enter).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -513,6 +718,7 @@ describe('current builtin collaboration tools', () => {
     expect(result.output).toBe(output);
     expect(result.isError).toBe(true);
     expect(host.runQueued).not.toHaveBeenCalled();
+    expect(swarmMode.enter).not.toHaveBeenCalled();
   });
 
   it('AgentSwarm resumes mapped agents before spawning item subagents', async () => {
@@ -632,6 +838,7 @@ describe('current builtin collaboration tools', () => {
           timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
         },
       ],
+      expect.objectContaining({ onValidated: expect.any(Function) }),
     );
     expect(result.output).toBe([
       '<agent_swarm_result>',
@@ -677,28 +884,31 @@ describe('current builtin collaboration tools', () => {
     const result = await executeTool(tool, context(input, 'call_swarm'));
 
     expect(host.runQueued).toHaveBeenCalledTimes(1);
-    expect(host.runQueued).toHaveBeenCalledWith([
-      {
-        kind: 'resume',
-        data: {
+    expect(host.runQueued).toHaveBeenCalledWith(
+      [
+        {
           kind: 'resume',
-          index: 1,
-          agentId: 'agent-old-1',
-          item: 'src/old-a.ts',
+          data: {
+            kind: 'resume',
+            index: 1,
+            agentId: 'agent-old-1',
+            item: 'src/old-a.ts',
+            prompt: 'Continue previous review A',
+          },
+          profileName: 'subagent',
+          parentToolCallId: 'call_swarm',
           prompt: 'Continue previous review A',
+          description: 'Resume review #1 (resume)',
+          swarmIndex: 1,
+          swarmItem: 'src/old-a.ts',
+          runInBackground: false,
+          resumeAgentId: 'agent-old-1',
+          signal,
+          timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
         },
-        profileName: 'subagent',
-        parentToolCallId: 'call_swarm',
-        prompt: 'Continue previous review A',
-        description: 'Resume review #1 (resume)',
-        swarmIndex: 1,
-        swarmItem: 'src/old-a.ts',
-        runInBackground: false,
-        resumeAgentId: 'agent-old-1',
-        signal,
-        timeout: DEFAULT_SUBAGENT_TIMEOUT_MS,
-      },
-    ]);
+      ],
+      expect.objectContaining({ onValidated: expect.any(Function) }),
+    );
     expect(result.output).toBe([
       '<agent_swarm_result>',
       '<summary>completed: 1</summary>',

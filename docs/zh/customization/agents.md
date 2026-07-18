@@ -22,6 +22,25 @@ Kimi Code CLI 内置三种子 Agent，开箱即用，分别面向不同任务形
 
 子 Agent 支持在后台运行：完成后结果自动回到主 Agent，无需手动轮询。也可以唤回已有的子 Agent 实例继续推进同一任务。
 
+为委派任务选择模型是一项默认关闭的实验功能。如需持久启用，在 `config.toml` 中写入：
+
+```toml
+[experimental]
+subagent-model-selection = true
+```
+
+如果只想为当前进程启用，也可以改用专用环境变量：
+
+```sh
+export KIMI_CODE_EXPERIMENTAL_SUBAGENT_MODEL_SELECTION=1
+```
+
+启用后，`Agent` 和 `AgentSwarm` 工具的参数定义会增加可选的 `model`。调用方 Agent 会看到一个根据配置中模型别名生成的目录，并可选择更适合委派任务的别名。`Agent` 会把所选别名应用到新建或恢复的子 Agent；`AgentSwarm` 则会让整个 batch 中新建和恢复的所有子 Agent 共用同一个别名。省略 `model` 时，委派任务使用调用方 Agent 的当前模型，恢复的子 Agent 也会重新对齐到该模型。
+
+这个目录最多展示 64 个 ASCII 安全的模型别名，以及一组受限的非敏感信息：已知能力、上下文/输出上限，以及固定集合中的 Thinking 强度 `off`、`on`、`minimal`、`low`、`medium`、`high`、`xhigh` 和 `max`。其他别名和元数据值会被整条省略而不是改写，因此每个已展示的别名仍是精确的配置键。目录不会包含显示名称、API 密钥、base URL、自定义 HTTP header、供应商标识、供应商侧模型名或 `passthrough` 配置。
+
+启用这项实验功能，即表示允许调用方 Agent 在不进行额外的按模型确认的情况下，选择目录中展示的任意别名。如果 `Agent` 或 `AgentSwarm` 调用仍需审批，审批标签会显示有效模型别名，并将它固定给本次已审批的执行。修改 `config.toml` 后运行 `/reload`，当前会话中的协作工具参数定义会立即更新；新建会话也可以。不同供应商和模型的价格、上下文窗口与能力可能不同；在大批量委派前，请先查看对应供应商的计费与限制。
+
 ## 上下文隔离与资源开销
 
 每个子 Agent 拥有完全独立的上下文窗口，只能看到主 Agent 显式传入的任务描述，看不到主 Agent 的对话历史。子 Agent 自己的中间思考和工具调用记录不会回流，只有最终结果会出现在主 Agent 的上下文里。

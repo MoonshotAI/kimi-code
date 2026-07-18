@@ -1,3 +1,9 @@
+/**
+ * Session subagent host contract: child lifecycle, configuration inheritance, resume, and batching.
+ * Uses real Agent instances with a fake in-process Session boundary; network generation is scripted.
+ * Run with: pnpm -C packages/agent-core test -- test/session/subagent-host.test.ts
+ */
+
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'pathe';
@@ -15,6 +21,7 @@ import { collectGitContext } from '../../src/session/git-context';
 import {
   DEFAULT_SUBAGENT_TIMEOUT_MS,
   SessionSubagentHost,
+  SUBAGENT_MODEL_UNAVAILABLE_MESSAGE,
   formatSubagentTimeoutDescription,
   resolveSubagentTimeoutMs,
   type QueuedSubagentTask,
@@ -370,6 +377,31 @@ describe('SessionSubagentHost', () => {
     ]);
   });
 
+  it('inherits the parent model when spawn omits a model alias', async () => {
+    const parent = testAgent();
+    parent.configure();
+
+    const child = testAgent();
+    const summary =
+      'Completed the delegated work with the inherited parent model and returned enough concrete implementation and verification detail for the parent to continue without repeating the investigation. '.repeat(
+        2,
+      );
+    child.mockNextResponse({ type: 'text', text: summary });
+    const host = new SessionSubagentHost(fakeSession(parent.agent, child.agent), 'main');
+
+    const handle = await host.spawn({
+      profileName: 'coder',
+      parentToolCallId: 'call_agent',
+      prompt: 'Implement the fix',
+      description: 'Fix bug',
+      runInBackground: false,
+      signal,
+    });
+    await handle.completion;
+
+    expect(child.agent.config.modelAlias).toBe('mock-model');
+  });
+
   it('inherits active parent user tools when spawning a subagent', async () => {
     const parent = testAgent();
     parent.configure();
@@ -503,6 +535,62 @@ describe('SessionSubagentHost', () => {
       }),
     ).rejects.toThrow('Subagent profile "missing" was not found');
     expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown model alias before creating a child agent', async () => {
+    const parent = testAgent();
+    parent.configure();
+    const createAgent = vi.fn();
+    const host = new SessionSubagentHost(
+      {
+        agents: new Map([['main', parent.agent]]),
+        ensureAgentResumed: vi.fn(async () => parent.agent),
+        createAgent,
+      } as never,
+      'main',
+    );
+
+    await expect(
+      host.spawn({
+        profileName: 'coder',
+        parentToolCallId: 'call_agent',
+        prompt: 'Find the cause',
+        description: 'Find cause',
+        modelAlias: 'missing-model',
+        runInBackground: false,
+        signal,
+      }),
+    ).rejects.toThrow(SUBAGENT_MODEL_UNAVAILABLE_MESSAGE);
+    expect(createAgent).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown resume model before restoring the persisted child', async () => {
+    const parent = testAgent();
+    parent.configure();
+    const child = testAgent({ type: 'sub' });
+    const session = fakeSession(parent.agent, child.agent, {
+      'agent-0': {
+        homedir: '/tmp/kimi-session/agents/agent-0',
+        type: 'sub',
+        parentAgentId: 'main',
+      },
+    });
+    session.agents.delete('agent-0');
+    const host = new SessionSubagentHost(session as never, 'main');
+
+    await expect(
+      host.resume('agent-0', {
+        parentToolCallId: 'call_agent',
+        prompt: 'Continue',
+        description: 'Continue work',
+        modelAlias: 'missing-model',
+        runInBackground: false,
+        signal,
+      }),
+    ).rejects.toThrow(SUBAGENT_MODEL_UNAVAILABLE_MESSAGE);
+
+    expect(session.ensureAgentResumed).toHaveBeenCalledTimes(1);
+    expect(session.ensureAgentResumed).toHaveBeenCalledWith('main');
   });
 
   it('rejects unavailable subagent profiles even when a same-named fork label exists', async () => {
@@ -1018,9 +1106,11 @@ describe('SessionSubagentHost', () => {
     const metadataAgents: Session['metadata']['agents'] = {};
     const session = fakeSession(parent.agent, child.agent, metadataAgents);
     const host = new SessionSubagentHost(session, 'main');
+    const onValidated = vi.fn();
+    const createAgent = vi.mocked(session.createAgent);
 
     await expect(
-      host.runQueued([{ ...queuedTask(1), swarmItem: 'src/a.ts', signal }]),
+      host.runQueued([{ ...queuedTask(1), swarmItem: 'src/a.ts', signal }], { onValidated }),
     ).resolves.toMatchObject([
       {
         agentId: 'agent-0',
@@ -1029,12 +1119,16 @@ describe('SessionSubagentHost', () => {
       },
     ]);
 
-    expect(session.createAgent).toHaveBeenCalledWith(
+    expect(createAgent).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({
         parentAgentId: 'main',
         swarmItem: 'src/a.ts',
       }),
+    );
+    expect(onValidated).toHaveBeenCalledOnce();
+    expect(onValidated.mock.invocationCallOrder[0]).toBeLessThan(
+      createAgent.mock.invocationCallOrder[0]!,
     );
     expect(metadataAgents['agent-0']).toMatchObject({
       type: 'sub',
@@ -1062,6 +1156,65 @@ describe('SessionSubagentHost', () => {
         }),
       }),
     );
+  });
+
+  it('does not validate swarm mode when every queued task has an unknown profile', async () => {
+    const parent = testAgent();
+    parent.configure();
+    const session = fakeSession(parent.agent, testAgent({ type: 'sub' }).agent);
+    const host = new SessionSubagentHost(session, 'main');
+    const onValidated = vi.fn();
+
+    await expect(
+      host.runQueued([{ ...queuedTask(1), profileName: 'missing', signal }], { onValidated }),
+    ).resolves.toMatchObject([
+      {
+        status: 'failed',
+        state: 'not_started',
+        error: 'Subagent profile "missing" was not found',
+      },
+    ]);
+
+    expect(onValidated).not.toHaveBeenCalled();
+    expect(session.createAgent).not.toHaveBeenCalled();
+  });
+
+  it('redacts an unavailable queued model before validating or launching the batch', async () => {
+    const parent = testAgent();
+    parent.configure();
+    const session = fakeSession(parent.agent, testAgent({ type: 'sub' }).agent);
+    const host = new SessionSubagentHost(session, 'main');
+    const onValidated = vi.fn();
+
+    const error = await host
+      .runQueued(
+        [{ ...queuedTask(1), modelAlias: 'SECRET_API_KEY', signal }],
+        { onValidated },
+      )
+      .catch((cause: unknown) => cause);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toBe(SUBAGENT_MODEL_UNAVAILABLE_MESSAGE);
+    expect((error as Error).message).not.toContain('SECRET_API_KEY');
+    expect(onValidated).not.toHaveBeenCalled();
+    expect(session.createAgent).not.toHaveBeenCalled();
+  });
+
+  it('does not validate swarm mode or launch a pre-aborted queued task', async () => {
+    const parent = testAgent();
+    parent.configure();
+    const session = fakeSession(parent.agent, testAgent({ type: 'sub' }).agent);
+    const host = new SessionSubagentHost(session, 'main');
+    const onValidated = vi.fn();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      host.runQueued([{ ...queuedTask(1), signal: controller.signal }], { onValidated }),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(onValidated).not.toHaveBeenCalled();
+    expect(session.createAgent).not.toHaveBeenCalled();
   });
 
   it('retries a rate-limited child turn without appending the original prompt again', async () => {
