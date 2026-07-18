@@ -1258,6 +1258,84 @@ describe('useWorkspaceState — session list loading', () => {
     expect(deps.pushOperationFailure).toHaveBeenCalledWith('load', error);
   });
 
+  function createAutoSelectRig(
+    sessions: AppSession[],
+    isSessionHiddenFromList?: (s: AppSession) => boolean,
+  ) {
+    const state = createState();
+    state.sessions = [];
+    state.activeSessionId = null;
+    const deps = {
+      ...createDeps(),
+      isSessionHiddenFromList,
+      modelProvider: { loadModels: vi.fn().mockResolvedValue(undefined) },
+      initialized: ref(false),
+      connectIssue: ref<string | null>(null),
+      setActiveSessionId: vi.fn((id: string | undefined) => {
+        state.activeSessionId = id ?? null;
+      }),
+      setSessions: vi.fn((next: AppSession[]) => {
+        state.sessions = next;
+      }),
+      workspaceIdForSession: vi.fn(
+        (session: { workspaceId?: string; cwd: string }) =>
+          state.workspaces.find((item) => item.root === session.cwd)?.id ??
+          session.workspaceId ??
+          session.cwd,
+      ),
+    } as unknown as UseWorkspaceStateDeps;
+    return { state, workspaceState: useWorkspaceState(state, deps) };
+  }
+
+  it('fresh-load auto-select skips sessions hidden from the sidebar list', async () => {
+    const acp = {
+      ...createSession(),
+      id: 'sess_acp',
+      source: 'acp',
+      updatedAt: '2026-01-03T00:00:00.000Z',
+    };
+    const human = {
+      ...createSession(),
+      id: 'sess_human',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    };
+    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_ws', '/workspace', 'Workspace')]);
+    apiMock.listSessions.mockResolvedValue({ items: [acp, human], hasMore: false });
+    const { state, workspaceState } = createAutoSelectRig(
+      [acp, human],
+      (s) => s.source === 'acp',
+    );
+
+    await workspaceState.load();
+
+    // The ACP session is the most recent, but hidden — the user must land on
+    // the session the sidebar actually renders.
+    expect(state.activeSessionId).toBe('sess_human');
+  });
+
+  it('fresh-load auto-selects nothing when every loaded session is hidden', async () => {
+    const acp = { ...createSession(), id: 'sess_acp', source: 'acp' };
+    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_ws', '/workspace', 'Workspace')]);
+    apiMock.listSessions.mockResolvedValue({ items: [acp], hasMore: false });
+    const { state, workspaceState } = createAutoSelectRig([acp], (s) => s.source === 'acp');
+
+    await workspaceState.load();
+
+    expect(state.activeSessionId).toBeNull();
+  });
+
+  it('fresh-load auto-select keeps picking the most recent session when nothing is hidden', async () => {
+    const first = { ...createSession(), id: 'sess_new', updatedAt: '2026-01-03T00:00:00.000Z' };
+    const second = { ...createSession(), id: 'sess_old', updatedAt: '2026-01-02T00:00:00.000Z' };
+    apiMock.listWorkspaces.mockResolvedValue([workspace('wd_ws', '/workspace', 'Workspace')]);
+    apiMock.listSessions.mockResolvedValue({ items: [first, second], hasMore: false });
+    const { state, workspaceState } = createAutoSelectRig([first, second]);
+
+    await workspaceState.load();
+
+    expect(state.activeSessionId).toBe('sess_new');
+  });
+
   it('keeps failed workspace sessions while replacing a successful shared-root workspace', async () => {
     const error = new Error('legacy workspace unavailable');
     const cached = {

@@ -245,6 +245,13 @@ export interface UseWorkspaceStateDeps {
   mergedWorkspaces: ComputedRef<AppWorkspace[]>;
   /** Sidebar-facing workspaces in the user's (dragged) display order. */
   workspacesView: ComputedRef<WorkspaceView[]>;
+  /**
+   * Sessions hidden from the sidebar list by preference (e.g. ACP-created
+   * sessions when `hideAcpSessions` is on). Fresh-load auto-selection skips
+   * these so the user never lands on a session the sidebar does not render.
+   * Defaults to "nothing hidden" when the facade does not wire a preference.
+   */
+  isSessionHiddenFromList?: (session: AppSession) => boolean;
   status: ComputedRef<ConversationStatus>;
   workspaceIdForSession: (s: { workspaceId?: string; cwd: string }) => string;
   savePermissionToStorage: (mode: PermissionMode) => void;
@@ -295,6 +302,7 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
     persistSessionProfile,
     mergedWorkspaces,
     workspacesView,
+    isSessionHiddenFromList = () => false,
     status,
     workspaceIdForSession,
     savePermissionToStorage,
@@ -878,7 +886,9 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
       // First load: pick the workspace of the most-recent session, unless the
       // user already has a persisted active workspace that still exists.
-      const mostRecent = sessions[0];
+      // Sessions hidden from the sidebar (e.g. ACP-created) are skipped — the
+      // user should not land on a session the sidebar does not render.
+      const mostRecent = sessions.find((s) => !isSessionHiddenFromList(s));
       const persisted = rawState.activeWorkspaceId;
       const persistedStillExists =
         persisted !== null && mergedWorkspaces.value.some((w) => w.id === persisted);
@@ -903,8 +913,13 @@ export function useWorkspaceState(rawState: ExtendedState, deps: UseWorkspaceSta
 
       // Auto-select first session if none selected (also the fallback for a dead
       // deep link — 'replace' rewrites the URL to the session actually shown).
+      // Skip sessions hidden from the sidebar; when everything is hidden there
+      // is simply nothing to auto-select.
       if (!rawState.activeSessionId && sessions.length > 0) {
-        await selectSession(sessions[0]!.id, { urlMode: 'replace' });
+        const firstVisible = sessions.find((s) => !isSessionHiddenFromList(s));
+        if (firstVisible) {
+          await selectSession(firstVisible.id, { urlMode: 'replace' });
+        }
       }
     } catch (err) {
       traceStatus = 'failed';

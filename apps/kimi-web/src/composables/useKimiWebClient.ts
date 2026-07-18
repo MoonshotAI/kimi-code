@@ -2693,6 +2693,7 @@ const workspaceState = useWorkspaceState(rawState, {
   persistSessionProfile,
   mergedWorkspaces,
   workspacesView,
+  isSessionHiddenFromList: (s: AppSession) => hideAcpSessions.value && isAcpSession(s),
   status,
   workspaceIdForSession,
   savePermissionToStorage,
