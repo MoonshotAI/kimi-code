@@ -164,6 +164,15 @@ interface SessionState {
   transcriptStream?: TranscriptStream;
   /** Connections whose transcript baseline reset has landed — the ops fan-out is gated on it. */
   readonly transcriptSeeded: Set<BroadcastTarget>;
+  /** Resets deferred until the connection's cursor replay completes (ordering: backlog before baseline). */
+  readonly deferredTranscriptSeeds: Map<
+    BroadcastTarget,
+    {
+      readonly spec: TranscriptGradeSpec;
+      readonly prevGrades?: TranscriptGradeSpec;
+      readonly prevFilter?: AgentFilter;
+    }
+  >;
 }
 
 /** The aggregate-relevant slice of one agent's activity state. */
@@ -239,6 +248,7 @@ export class SessionEventBroadcaster {
     target: BroadcastTarget,
     filter?: AgentFilter,
     transcriptGrades?: TranscriptGradeSpec,
+    opts?: { deferTranscriptReset?: boolean },
   ): Promise<boolean> {
     const state = await this.ensureState(sessionId);
     if (state === undefined) return false;
@@ -249,16 +259,42 @@ export class SessionEventBroadcaster {
       // subscriber must not receive deltas against an empty (or stale)
       // baseline while its seed is still being read.
       state.transcriptSeeded.delete(target);
-      await this.subscribeTranscript(
-        state,
-        target,
-        transcriptGrades,
-        prev?.transcriptGrades,
-        prev?.agentFilter,
-      );
-      if (state.targets.has(target)) state.transcriptSeeded.add(target);
+      if (opts?.deferTranscriptReset === true) {
+        // The baseline rides `flushTranscriptSeed` (after the caller's cursor
+        // replay), so the reset's seq always follows the replayed backlog.
+        state.deferredTranscriptSeeds.set(target, {
+          spec: transcriptGrades,
+          prevGrades: prev?.transcriptGrades,
+          prevFilter: prev?.agentFilter,
+        });
+      } else {
+        state.deferredTranscriptSeeds.delete(target);
+        await this.subscribeTranscript(
+          state,
+          target,
+          transcriptGrades,
+          prev?.transcriptGrades,
+          prev?.agentFilter,
+        );
+        if (state.targets.has(target)) state.transcriptSeeded.add(target);
+      }
     }
     return true;
+  }
+
+  /**
+   * Send the transcript baseline deferred by `subscribe(deferTranscriptReset)`
+   * — callers run it after their cursor replay so the reset never lands ahead
+   * of the replayed (lower-seq) backlog.
+   */
+  async flushTranscriptSeed(sessionId: string, target: BroadcastTarget): Promise<void> {
+    const state = this.sessions.get(sessionId);
+    if (state === undefined) return;
+    const deferred = state.deferredTranscriptSeeds.get(target);
+    if (deferred === undefined) return;
+    state.deferredTranscriptSeeds.delete(target);
+    await this.subscribeTranscript(state, target, deferred.spec, deferred.prevGrades, deferred.prevFilter);
+    if (state.targets.has(target)) state.transcriptSeeded.add(target);
   }
 
   unsubscribe(sessionId: string, target: BroadcastTarget): void {
@@ -266,6 +302,7 @@ export class SessionEventBroadcaster {
     if (state === undefined) return;
     state.targets.delete(target);
     state.transcriptSeeded.delete(target);
+    state.deferredTranscriptSeeds.delete(target);
   }
 
   // ---------------------------------------------------------------------------
@@ -596,6 +633,7 @@ export class SessionEventBroadcaster {
       lifecycleDisposables: [],
       knownInteractions: new Map(),
       transcriptSeeded: new Set(),
+      deferredTranscriptSeeds: new Map(),
     };
     this.sessions.set(sessionId, state);
     try {
@@ -647,6 +685,7 @@ export class SessionEventBroadcaster {
       lifecycleDisposables: [],
       knownInteractions: new Map(),
       transcriptSeeded: new Set(),
+      deferredTranscriptSeeds: new Map(),
     };
     this.sessions.set(GLOBAL_SESSION_ID, state);
     return state;

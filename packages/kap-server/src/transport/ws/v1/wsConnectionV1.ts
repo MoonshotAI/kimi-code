@@ -239,16 +239,21 @@ export class WsConnectionV1 implements BroadcastTarget {
     for (const sid of sessionIds) {
       const filter = agentFilter?.[sid];
       const grades = transcript?.[sid];
-      const ok = await this.broadcaster.subscribe(sid, this, filter, grades);
+      const cursor = cursors?.[sid];
+      // With a cursor the transcript baseline defers until after the replay —
+      // its seq must follow the replayed backlog, never precede it.
+      const ok = await this.broadcaster.subscribe(sid, this, filter, grades, {
+        deferTranscriptReset: cursor !== undefined,
+      });
       if (!ok) {
         notFound.push(sid);
         continue;
       }
       this.subscriptions.set(sid, { agentFilter: filter, transcriptGrades: grades });
       accepted.push(sid);
-      const cursor = cursors?.[sid];
       if (cursor !== undefined) {
         await this.replay(sid, cursor, filter, resyncRequired, serverCursors);
+        await this.broadcaster.flushTranscriptSeed(sid, this);
       } else {
         const cur = await this.broadcaster.getCursor(sid);
         serverCursors[sid] = cur;
@@ -320,7 +325,10 @@ export class WsConnectionV1 implements BroadcastTarget {
     resyncRequired: string[],
     serverCursors: Record<string, { seq: number; epoch?: string }>,
   ): Promise<void> {
-    const ok = await this.broadcaster.subscribe(sid, this, filter, transcriptGrades);
+    // Same ordering rule as onSubscribe: baseline after the cursor replay.
+    const ok = await this.broadcaster.subscribe(sid, this, filter, transcriptGrades, {
+      deferTranscriptReset: cursor !== undefined,
+    });
     if (!ok) {
       resyncRequired.push(sid);
       return;
@@ -329,6 +337,7 @@ export class WsConnectionV1 implements BroadcastTarget {
     accepted.push(sid);
     if (cursor !== undefined) {
       await this.replay(sid, cursor, filter, resyncRequired, serverCursors);
+      await this.broadcaster.flushTranscriptSeed(sid, this);
     } else {
       const cur = await this.broadcaster.getCursor(sid);
       serverCursors[sid] = cur;

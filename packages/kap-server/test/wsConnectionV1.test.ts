@@ -295,6 +295,59 @@ describe('WsConnectionV1 transcript subscriptions', () => {
     conn.close();
   });
 
+  it('sends the transcript baseline after the cursor replay, not before it', async () => {
+    const socket = new FakeSocket();
+    const backlog = [durable('turn.started', 's1', 3), durable('assistant.delta', 's1', 4)];
+    const broadcaster = {
+      subscribe: async (
+        _sid: string,
+        target: { send: (e: unknown) => void },
+        _filter: unknown,
+        _grades: unknown,
+        opts?: { deferTranscriptReset?: boolean },
+      ) => {
+        if (opts?.deferTranscriptReset !== true) {
+          target.send({ type: 'transcript.reset', seq: 10, session_id: 's1', payload: {} });
+        }
+        return true;
+      },
+      flushTranscriptSeed: async (_sid: string, target: { send: (e: unknown) => void }) => {
+        target.send({ type: 'transcript.reset', seq: 10, session_id: 's1', payload: {} });
+      },
+      unsubscribe: () => {},
+      getCursor: async () => ({ seq: 10, epoch: 'e1' }),
+      getBufferedSince: async () => ({
+        events: backlog.map((envelope) => ({ seq: envelope.seq, envelope })),
+        resyncRequired: false,
+        currentSeq: 10,
+        epoch: 'e1',
+      }),
+    } as unknown as SessionEventBroadcaster;
+    const conn = makeConn(socket, { broadcaster, flushIntervalMs: 1 });
+
+    socket.emit(
+      'message',
+      controlFrame('subscribe', {
+        session_ids: ['s1'],
+        cursors: { s1: { seq: 2, epoch: 'e1' } },
+        transcript: { s1: { '*': 'delta' } },
+      }),
+    );
+    await vi.waitFor(() => {
+      const types = socket.frames().map((f) => (f as { type: string }).type);
+      expect(types).toContain('transcript.reset');
+    });
+
+    const types = socket.frames().map((f) => (f as { type: string }).type);
+    // The replayed backlog lands first; the baseline reset follows it.
+    expect(types.slice(types.indexOf('turn.started'), types.indexOf('transcript.reset') + 1)).toEqual([
+      'turn.started',
+      'assistant.delta',
+      'transcript.reset',
+    ]);
+    conn.close();
+  });
+
   it('drops a malformed transcript field instead of widening the subscription', async () => {
     const socket = new FakeSocket();
     const { broadcaster, calls } = makeCapturingBroadcaster();
