@@ -13,12 +13,34 @@ Kimi Code 客户端仓库：桌面端（`apps/desktop`）+ Web UI（`apps/web`�
 
 桌面端最新安装包（CDN 固定入口，永远指向最新版本）：
 
+macOS · Apple Silicon
+
 ```
-macOS · Apple Silicon    https://code.kimi.com/kimi-code/desktop/download/KimiCode-mac-arm64.dmg
-macOS · Intel            https://code.kimi.com/kimi-code/desktop/download/KimiCode-mac-x64.dmg
-Windows                  https://code.kimi.com/kimi-code/desktop/download/KimiCode-win-x64.exe
-Linux · AppImage         https://code.kimi.com/kimi-code/desktop/download/KimiCode-linux-x86_64.AppImage
-Linux · deb              https://code.kimi.com/kimi-code/desktop/download/KimiCode-linux-amd64.deb
+https://code.kimi.com/kimi-code/desktop/download/KimiCode-mac-arm64.dmg
+```
+
+macOS · Intel
+
+```
+https://code.kimi.com/kimi-code/desktop/download/KimiCode-mac-x64.dmg
+```
+
+Windows
+
+```
+https://code.kimi.com/kimi-code/desktop/download/KimiCode-win-x64.exe
+```
+
+Linux · AppImage
+
+```
+https://code.kimi.com/kimi-code/desktop/download/KimiCode-linux-x86_64.AppImage
+```
+
+Linux · deb
+
+```
+https://code.kimi.com/kimi-code/desktop/download/KimiCode-linux-amd64.deb
 ```
 
 历史版本与完整产物见 [GitHub Releases](https://github.com/MoonshotAI/kimi-code-app/releases)。
@@ -69,7 +91,22 @@ pnpm dev:web       # Web UI（Vite dev server，/api/v1 代理到 127.0.0.1:5862
 - **常用检查**：`pnpm test`、`pnpm lint`、`pnpm typecheck`、`pnpm build`。
 - **UI 设计系统**：改 UI 前必读 `apps/desktop/src/renderer/views/DesignSystemView.vue`（应用内长按侧栏 logo 打开），样式只用 `style.css` 的设计 token，并在亮色 + 暗色下做视觉验证。细则见 `AGENTS.md` 的"硬约束"。
 - **本地打包并签名 macOS 包**：`pnpm package:macos`（CI 不可用时的替代，arm64；凭证与流程见 `apps/desktop/README.md` 的"打包"一节）。
-- **桌面端发版**：功能 PR 必须按 `.agents/skills/changeset/SKILL.md` 生成并提交 changeset（只选 `kimi-code-app`，早期阶段一律 patch）；合入 main 后 CI 自动开 `ci: release desktop` 版本 PR，版本 PR 合入即自动打四平台签名包并发 GitHub Release。完整流程见 `.changeset/README.md`。Release 就绪后执行 `scripts/publish-desktop-cdn.sh <version>` 同步 CDN（切换自动更新指针 + 刷新 `desktop/download/` 固定下载入口，后者供官网链接）。
+
+## 发布
+
+桌面端发版与产物分发（不发 npm）：
+
+1. **changeset**：功能 PR 按 `.agents/skills/changeset/SKILL.md` 生成 changeset（只选 `kimi-code-app`，早期一律 patch）；合入 main 后 CI 自动维护 `ci: release desktop` 版本 PR。
+2. **打包**：合并版本 PR，CI 自动打四平台签名包（macOS arm64/x64、Windows、Linux，含 `latest*.yml` 自动更新元数据）并创建 GitHub Release（tag `v<version>`）。完整流程见 `.changeset/README.md`。
+3. **CDN 分发**（本地手动，TOS 凭证限内网）：
+
+   ```bash
+   ./publish-desktop-cdn.sh            # 拉最新 Release：传产物 + 切自动更新指针 + 刷新下载入口
+   ./publish-desktop-cdn.sh 0.0.3      # 指定版本（rebuild / 补传 / 回滚切指针）
+   ./publish-desktop-cdn.sh 0.0.3 --artifacts-only   # 只传产物，先验证再切流量
+   ```
+
+   产物落在 `code.kimi.com/kimi-code/desktop/`：版本目录 `<version>/`（immutable）、自动更新指针 `latest*.yml`（no-cache）、固定下载入口 `download/`（官网链接见上方"下载"一节）。
 
 ## 目录
 

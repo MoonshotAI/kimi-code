@@ -4,9 +4,9 @@
 # 本地不留：tmp 下载 → rclone copy → rm。
 #
 # 用法：
-#   scripts/publish-desktop-cdn.sh                  # 拉最新 GH release
-#   scripts/publish-desktop-cdn.sh 0.0.3            # 指定版本（rebuild / 补传 / 回滚切指针）
-#   scripts/publish-desktop-cdn.sh 0.0.3 --artifacts-only   # 只传版本目录，不动 latest*.yml 指针与下载入口
+#   ./publish-desktop-cdn.sh                  # 拉最新 GH release
+#   ./publish-desktop-cdn.sh 0.0.3            # 指定版本（rebuild / 补传 / 回滚切指针）
+#   ./publish-desktop-cdn.sh 0.0.3 --artifacts-only   # 只传版本目录，不动 latest*.yml 指针与下载入口
 #
 # 前置依赖（只在本机手动跑，TOS 凭证限内网、不进 CI）：
 #   gh（已登录）、curl、rclone（配 `oss:` remote）+ mg-sts 凭证——配置方法见
@@ -222,7 +222,7 @@ else
   echo "✅ Published desktop ${VERSION} artifacts（指针与下载入口未动）"
   echo ""
   echo "验证 CDN 下载无误后切流量:"
-  echo "  ./publish-desktop.sh ${VERSION}"
+  echo "  ./publish-desktop-cdn.sh ${VERSION}"
 fi
 
 # trap 自动 rm -rf $TMP
