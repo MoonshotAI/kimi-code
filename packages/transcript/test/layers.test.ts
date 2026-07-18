@@ -269,6 +269,29 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(marker?.kind === 'marker' && marker.marker).toBe('compaction');
   });
 
+  it('keeps cold tool calls running until a result is persisted', () => {
+    const pending = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'run it' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [], toolCalls: [{ id: 'c1', name: 'Bash', arguments: '{}' }] },
+    ]);
+    const pendingTurn = pending.items[0];
+    if (pendingTurn?.kind !== 'turn') throw new Error('expected turn');
+    const pendingTool = pendingTurn.steps[0]?.frames.find((f) => f.kind === 'tool');
+    // No tool message yet: in-flight / approval-gated, not done.
+    expect(pendingTool?.kind === 'tool' && pendingTool.state).toBe('running');
+
+    const done = groupMessagesIntoSnapshot([
+      { role: 'user', content: [{ type: 'text', text: 'run it' }], toolCalls: [], origin: { kind: 'user' } },
+      { role: 'assistant', content: [], toolCalls: [{ id: 'c1', name: 'Bash', arguments: '{}' }] },
+      { role: 'tool', content: [{ type: 'text', text: 'done.txt' }], toolCallId: 'c1', toolCalls: [] },
+    ]);
+    const doneTurn = done.items[0];
+    if (doneTurn?.kind !== 'turn') throw new Error('expected turn');
+    const doneTool = doneTurn.steps[0]?.frames.find((f) => f.kind === 'tool');
+    expect(doneTool?.kind === 'tool' && doneTool.state).toBe('done');
+    expect(doneTool?.kind === 'tool' && doneTool.output).toBe('done.txt');
+  });
+
   it('starts a new turn for user-slash skill activations, keeps other triggers as markers only', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },

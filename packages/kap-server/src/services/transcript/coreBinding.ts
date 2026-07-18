@@ -89,6 +89,10 @@ export function bindSessionTranscript(
   const unseeded = new Map<string, Interaction>();
   /** Resolves captured before the seed ran: id → routed resolve to replay. */
   const earlyResolves = new Map<string, { agentId: string; response: unknown }>();
+  /** Agents whose pendings may announce live (their backfill+seed has run). */
+  const seededAgents = new Set<string>();
+  let seededAll = false;
+  const isSeeded = (agentId: string): boolean => seededAll || seededAgents.has(agentId);
 
   const applyOps = (agentId: string, ops: ReturnType<AgentTranscriptProjector['map']>): void => {
     if (ops.length === 0) return;
@@ -225,6 +229,8 @@ export function bindSessionTranscript(
     unseeded.set(pending.id, pending);
   }
   const seedPendingInteractions = (agentId?: string): void => {
+    if (agentId === undefined) seededAll = true;
+    else seededAgents.add(agentId);
     for (const [id, interaction] of unseeded) {
       if (agentId !== undefined && interactionAgents.get(id) !== agentId) continue;
       unseeded.delete(id);
@@ -254,7 +260,17 @@ export function bindSessionTranscript(
     interactions.onDidChangePending(() => {
       for (const pending of interactions.listPending()) {
         if (knownInteractions.has(pending.id)) continue;
+        const agentId = interactionAgentId(pending);
         knownInteractions.add(pending.id);
+        // A pending created before its owning agent was seeded (the backfill
+        // may not have replayed the referenced tool frame yet) defers like a
+        // bind-time one — announcing it now would misplace it into a
+        // synthetic step, with no later repair.
+        if (!isSeeded(agentId)) {
+          interactionAgents.set(pending.id, agentId);
+          unseeded.set(pending.id, pending);
+          continue;
+        }
         announceInteraction(pending);
       }
     }),

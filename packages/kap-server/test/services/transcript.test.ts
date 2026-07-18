@@ -1168,6 +1168,27 @@ describe('bindSessionTranscript', () => {
     binding.dispose();
   });
 
+  it('defers pendings created before their owning agent is seeded', () => {
+    const interactions = new SessionInteractionService();
+    const store = new TranscriptStore('s1');
+    const byAgent = new Map<string, TranscriptOperation[]>();
+    const binding = bindSessionTranscript(store, fakeSession(interactions), undefined, (event) => {
+      byAgent.set(event.agentId, [...(byAgent.get(event.agentId) ?? []), ...event.ops]);
+    });
+
+    // Created live, but during the backfill window (no seed has run yet):
+    // announcing now would misplace it into a synthetic step for good.
+    interactions.enqueue({ id: 'q-sub', kind: 'question', payload: {}, origin: { agentId: 'sub-1', turnId: 0 } });
+    expect(byAgent.size).toBe(0);
+
+    binding.seedPendingInteractions('main');
+    expect(byAgent.size).toBe(0);
+
+    binding.seedPendingInteractions('sub-1');
+    expect([...byAgent.keys()]).toEqual(['sub-1']);
+    binding.dispose();
+  });
+
   it('overlays the in-flight turn as running after a backfill', async () => {
     const home = await seedWireHome();
     try {

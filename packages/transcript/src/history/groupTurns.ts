@@ -168,7 +168,10 @@ export function groupMessagesIntoSnapshot(
           frameId: `${step.stepId}.${call.id}`,
           toolCallId: call.id,
           name: call.name,
-          state: 'done',
+          // The result may not be persisted yet (approval pending / tool
+          // still executing at capture time): start 'running' and let the
+          // `role === 'tool'` branch transition to done/error.
+          state: 'running',
           input: parseArguments(call.arguments),
         });
       }
