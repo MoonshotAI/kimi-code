@@ -40,7 +40,14 @@ export function createMarkdownTheme(options?: { transient?: boolean }): Markdown
     // prefix. Ordered lists arrive as "1. " / "2. " and are left
     // untouched by the leading-dash anchor.
     listBullet: (text) => chalk.hex(currentTheme.color('text'))(text.replace(/^-/, '•')),
-    bold: (text) => chalk.bold(text),
+    // Emit both the SGR bold code AND an explicit fg color from the theme's
+    // `textStrong` token. Without the color, `chalk.bold(text)` inherits
+    // whatever fg the surrounding style left set (often none / default), and
+    // most terminals then render bold as a dim/faint gray on dark backgrounds
+    // — nearly unreadable, and unresponsive to theme changes. `textStrong`
+    // is defined as "emphasised / bold text" in the palette, so this makes
+    // the token actually govern markdown bold spans. See #1872.
+    bold: (text) => chalk.bold.hex(currentTheme.color('textStrong'))(text),
     italic: (text) => chalk.italic(text),
     strikethrough: (text) => chalk.strikethrough(text),
     underline: (text) => chalk.underline(text),
