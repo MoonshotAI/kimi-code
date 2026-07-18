@@ -8,6 +8,7 @@ import type {
   ToolKind,
 } from '@agentclientprotocol/sdk';
 import type {
+  AgentStatusUpdatedEvent,
   AssistantDeltaEvent,
   ThinkingDeltaEvent,
   ToolCallDeltaEvent,
@@ -79,6 +80,35 @@ export function turnEndReasonToStopReason(
     case 'blocked':
       return 'refusal';
   }
+}
+
+/**
+ * Build an ACP `session/update` notification with a `usage_update`
+ * payload from an SDK `agent.status.updated` event.
+ *
+ * agent-core emits `agent.status.updated` whenever the context token
+ * count changes (see agent-core `context/index.ts`), carrying
+ * `contextTokens` / `maxContextTokens`. ACP's `usage_update` variant
+ * (`{ used, size }`, types.gen.d.ts `UsageUpdate`) is the wire-level
+ * counterpart, so clients can render a live context-window gauge.
+ *
+ * Returns `null` when the event does not carry a usable pair — status
+ * events also fire for plan/permission/model changes where the token
+ * fields may be absent, and a `size` of 0 would make every consumer
+ * divide by zero.
+ */
+export function statusToUsageUpdateSessionUpdate(
+  sessionId: string,
+  event: AgentStatusUpdatedEvent,
+): SessionNotification | null {
+  const used = event.contextTokens;
+  const size = event.maxContextTokens;
+  if (typeof used !== 'number' || !Number.isFinite(used) || used < 0) return null;
+  if (typeof size !== 'number' || !Number.isFinite(size) || size <= 0) return null;
+  return {
+    sessionId,
+    update: { sessionUpdate: 'usage_update', used, size },
+  };
 }
 
 /**

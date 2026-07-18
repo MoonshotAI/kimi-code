@@ -45,6 +45,7 @@ import {
   assistantDeltaToSessionUpdate,
   configOptionUpdateNotification,
   planFromDisplayBlock,
+  statusToUsageUpdateSessionUpdate,
   stringifyArgs,
   thinkingDeltaToSessionUpdate,
   toolCallDeltaToSessionUpdate,
@@ -932,6 +933,10 @@ export class AcpSession {
       // Keyed on the **SDK** `toolCallId` (not the ACP-prefixed one)
       // because the SDK delta events only carry the raw id.
       const argsByToolCall = new Map<string, { args: string }>();
+      // Last context-usage pair pushed as a wire `usage_update` this turn.
+      // Turn-scoped on purpose: a fresh turn re-sends the current value so
+      // a client that (re)connected between turns still gets a baseline.
+      let lastSentUsage: { used: number; size: number } | undefined;
       // Set of **wire-level** (turn-prefixed) tool-call ids for which
       // we have already sent the `tool_call` CREATE notification. The
       // agent-core actually emits `tool.call.delta` events BEFORE
@@ -1028,6 +1033,30 @@ export class AcpSession {
                 error: err instanceof Error ? err.message : String(err),
               });
             });
+          return;
+        }
+        if (event.type === 'agent.status.updated') {
+          if (!isFromMainAgent(event)) return;
+          const note = statusToUsageUpdateSessionUpdate(sessionId, event);
+          if (note === null) return;
+          // Status events also fire for plan/permission/model changes with
+          // an unchanged token count — only push when the pair moved, so
+          // the wire doesn't carry redundant usage_update notifications.
+          const usage = note.update as { used: number; size: number };
+          if (
+            lastSentUsage !== undefined &&
+            lastSentUsage.used === usage.used &&
+            lastSentUsage.size === usage.size
+          ) {
+            return;
+          }
+          lastSentUsage = { used: usage.used, size: usage.size };
+          conn.sessionUpdate(note).catch((err) => {
+            log.warn('acp: failed to push usage_update', {
+              sessionId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          });
           return;
         }
         if (event.type === 'tool.call.started') {
