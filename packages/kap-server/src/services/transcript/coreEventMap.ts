@@ -562,7 +562,8 @@ export class AgentTranscriptProjector {
     if (task === undefined) {
       // Seed the task so the chunk has somewhere to land (the attach missed
       // `shell.started`, and the terminal upsert would otherwise clobber the
-      // output with an empty tail).
+      // output with an empty tail) — plus its timeline taskref, exactly like
+      // `onShellStarted` emits.
       task = this.upsertTask(taskId, (prev) => ({
         taskId,
         kind: 'shell',
@@ -574,7 +575,13 @@ export class AgentTranscriptProjector {
         startedAt: prev?.startedAt ?? nowIso(),
         endedAt: prev?.endedAt,
       }));
-      ops.push({ op: 'task.upsert', task });
+      ops.push(
+        { op: 'task.upsert', task },
+        {
+          op: 'taskref.upsert',
+          item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: nowIso() },
+        },
+      );
     }
     const offset = task.outputTail.length;
     this.tasks.set(taskId, { ...task, outputTail: task.outputTail + text });
@@ -597,6 +604,7 @@ export class AgentTranscriptProjector {
     const taskId = this.shellTasks.get(event.commandId) ?? event.taskId;
     if (taskId === undefined) return [];
     this.shellTasks.set(event.commandId, taskId);
+    const hadTask = this.tasks.has(taskId);
     const task = this.upsertTask(taskId, (prev) => ({
       taskId,
       kind: prev?.kind ?? 'shell',
@@ -608,7 +616,16 @@ export class AgentTranscriptProjector {
       startedAt: prev?.startedAt ?? nowIso(),
       endedAt: nowIso(),
     }));
-    return [{ op: 'task.upsert', task }];
+    const ops: TranscriptOperation[] = [{ op: 'task.upsert', task }];
+    if (!hadTask) {
+      // The whole command was missed (only the completion arrived) — the
+      // timeline still needs the taskref to render the task.
+      ops.push({
+        op: 'taskref.upsert',
+        item: { kind: 'taskref', refId: `ref-${taskId}`, taskId, at: nowIso() },
+      });
+    }
+    return ops;
   }
 
   private upsertTask(

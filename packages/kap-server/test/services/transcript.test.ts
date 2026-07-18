@@ -499,16 +499,28 @@ describe('AgentTranscriptProjector', () => {
     const tx = new AgentTranscript('main');
 
     // Mid-command attach: no shell.started observed, but later events carry
-    // the task id — output and terminal state must still land.
+    // the task id — output and terminal state must still land, and the task
+    // needs its timeline taskref (exactly like onShellStarted emits).
     tx.apply(
       projector.map(
         ev({ type: 'shell.output', commandId: 'c1', taskId: 'task-1', update: { kind: 'stdout', text: 'hello' } }),
       ),
     );
     expect(tx.getTask('task-1')).toMatchObject({ kind: 'shell', state: 'running', outputTail: 'hello' });
+    expect(tx.getItems()).toContainEqual(expect.objectContaining({ kind: 'taskref', taskId: 'task-1' }));
 
     tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', taskId: 'task-1', isError: false })));
     expect(tx.getTask('task-1')).toMatchObject({ state: 'completed', outputTail: 'hello' });
+  });
+
+  it('emits a taskref when only shell.completed arrives for a command', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    tx.apply(projector.map(ev({ type: 'shell.completed', commandId: 'c1', taskId: 'task-1', isError: true })));
+
+    expect(tx.getTask('task-1')).toMatchObject({ kind: 'shell', state: 'failed' });
+    expect(tx.getItems()).toContainEqual(expect.objectContaining({ kind: 'taskref', taskId: 'task-1' }));
   });
 
   it('marks a foreground shell task terminal on shell.completed', () => {
