@@ -26,7 +26,7 @@ import { useAttachmentUpload, type Attachment } from '../../composables/useAttac
 import { openFileAttachment } from '../../lib/openFileAttachment';
 import type { PromptAttachment } from '../../composables/useKimiWebClient';
 import AttachmentChip from './AttachmentChip.vue';
-import { Button, ContextRing, Icon, IconButton, Spinner, Tooltip } from '@moonshot-ai/web-ui';
+import { Button, ContextRing, Icon, IconButton, SegmentedControl, Spinner, Tooltip } from '@moonshot-ai/web-ui';
 
 // ---------------------------------------------------------------------------
 // Props & emits
@@ -671,6 +671,10 @@ function thinkingSegmentLabel(segment: string): string {
   if (segment === 'off') return t('status.thinkingOff');
   return effortLabel(segment);
 }
+// Options for the shared SegmentedControl (same control as settings/mobile).
+const thinkingOptions = computed(() =>
+  thinkingSegments.value.map((seg) => ({ value: seg, label: thinkingSegmentLabel(seg) })),
+);
 
 // Plan toggle
 const planOn = computed(() => props.planMode === true);
@@ -842,6 +846,32 @@ const starredOtherModels = computed(() => {
     (m) => isStarred(m.id) && m.provider !== currentProvider.value,
   );
 });
+
+// Keyboard model for the quick-switch menu: focus the current row on open,
+// then ArrowUp / ArrowDown cycle through the rows (Esc already closes).
+const modelDropdownRef = ref<HTMLElement | null>(null);
+
+watch(dropdownOpen, async (open) => {
+  if (!open) return;
+  await nextTick();
+  const current =
+    modelDropdownRef.value?.querySelector<HTMLElement>('.md-row.is-current') ??
+    modelDropdownRef.value?.querySelector<HTMLElement>('.md-row');
+  current?.focus();
+});
+
+function onModelDropdownKeydown(event: KeyboardEvent): void {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+  const rows = Array.from(
+    modelDropdownRef.value?.querySelectorAll<HTMLElement>('.md-row:not(:disabled)') ?? [],
+  );
+  if (!rows.length) return;
+  event.preventDefault();
+  const index = rows.indexOf(document.activeElement as HTMLElement);
+  const next =
+    event.key === 'ArrowDown' ? (index + 1) % rows.length : (index - 1 + rows.length) % rows.length;
+  rows[next]?.focus();
+}
 
 function selectModel(modelId: string): void {
   emit('selectModel', modelId);
@@ -1119,20 +1149,19 @@ function selectModel(modelId: string): void {
           </Tooltip>
 
           <!-- Model pill — click to open quick-switch dropdown -->
-          <span
+          <button
             v-if="status"
+            type="button"
             class="model-pill"
             :class="{ open: dropdownOpen }"
-            role="button"
-            tabindex="0"
+            aria-haspopup="menu"
+            :aria-expanded="dropdownOpen"
             @click.stop="toggleDropdown"
-            @keydown.enter="toggleDropdown"
-            @keydown.space.prevent="toggleDropdown"
           >
-            <b>{{ status.model }}</b>
+            <span class="mp-name">{{ status.model }}</span>
             <span v-if="thinkingSuffix" class="think-suffix">{{ thinkingSuffix }}</span>
             <Icon class="cv" name="chevron-down" size="sm" />
-          </span>
+          </button>
           <Tooltip v-if="running" :text="t('composer.interruptTitle')">
             <button
               class="stop"
@@ -1155,7 +1184,15 @@ function selectModel(modelId: string): void {
         </div>
 
         <!-- Model dropdown — current provider models + controls + more -->
-        <div v-if="dropdownOpen && status" class="model-dropdown" role="menu" @click.stop>
+        <Transition name="md-pop">
+        <div
+          v-if="dropdownOpen && status"
+          ref="modelDropdownRef"
+          class="model-dropdown"
+          role="menu"
+          @click.stop
+          @keydown="onModelDropdownKeydown"
+        >
           <!-- Starred models from other providers -->
           <div v-if="starredOtherModels.length > 0" class="md-section">{{ t('status.starredModels') }}</div>
           <button
@@ -1191,39 +1228,35 @@ function selectModel(modelId: string): void {
 
           <div v-if="providerModels.length > 0" class="md-divider" />
 
-          <!-- Thinking level — segmented control. Effort models show every
-               declared level; boolean models show On/Off; unsupported shows a note. -->
-          <div class="md-thinking" :class="{ 'is-readonly': thinkingReadonly }">
+          <!-- Thinking level — the shared segmented control (same as settings
+               and the mobile sheet). Unsupported shows a note; a single fixed
+               segment degrades to a static value instead of a dead control. -->
+          <div class="md-thinking">
             <span class="md-name">{{ t('status.thinkingLabel') }}</span>
             <span
               v-if="thinkingAvailability === 'unsupported'"
               class="md-note"
             >{{ t('status.modeNotSupported') }}</span>
-            <div
-              v-else
-              class="effort-segments"
-              role="group"
-              :aria-label="t('status.thinkingLabel')"
-            >
-              <button
-                v-for="seg in thinkingSegments"
-                :key="seg"
-                type="button"
-                class="effort-seg"
-                :class="{ 'is-active': seg === activeThinkingSegment }"
-                :disabled="thinkingReadonly"
-                @click="setThinkingSegment(seg)"
-              >{{ thinkingSegmentLabel(seg) }}</button>
-            </div>
+            <SegmentedControl
+              v-else-if="thinkingSegments.length > 1"
+              :model-value="activeThinkingSegment"
+              :options="thinkingOptions"
+              size="xs"
+              @update:model-value="setThinkingSegment"
+            />
+            <span v-else class="md-note">{{ thinkingSegmentLabel(thinkingSegments[0] ?? thinkingLevel) }}</span>
           </div>
 
           <div class="md-divider" />
 
           <!-- More models → open full picker -->
           <button class="md-row md-row-more" role="menuitem" @click="closeDropdown(); emit('pickModel');">
+            <span class="md-check md-more-icon"><Icon name="list" size="sm" /></span>
             <span class="md-name">{{ t('status.moreModels') }}</span>
+            <Icon class="md-more-arrow" name="chevron-right" size="sm" />
           </button>
         </div>
+        </Transition>
       </div>
   </div>
   <!-- Full-window drop target affordance: shown while files are dragged anywhere
@@ -1646,13 +1679,18 @@ function selectModel(modelId: string): void {
   outline-offset: 2px;
 }
 
-/* Model pill */
+/* Model pill — quiet text-style trigger: transparent at rest, a neutral wash
+   on hover, and the selected fill while open; the rotating chevron carries
+   the open state. */
 .model-pill {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
-  padding: 2px 7px;
-  border-radius: 6px;
+  gap: var(--space-1);
+  height: 26px;
+  padding: 0 var(--space-2);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
   font-size: var(--ui-font-size);
   line-height: var(--leading-normal);
   color: var(--dim);
@@ -1660,7 +1698,10 @@ function selectModel(modelId: string): void {
   font-weight: var(--weight-medium);
   cursor: pointer;
   user-select: none;
-  transition: background 0.1s;
+  transition:
+    background var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
   position: relative;
   overflow: hidden;
   flex: 0 1 auto;
@@ -1672,11 +1713,18 @@ function selectModel(modelId: string): void {
   color: var(--color-text);
 }
 .model-pill.open {
-  background: var(--color-accent-soft);
+  background: var(--color-selected);
 }
-.model-pill b {
+.model-pill:active {
+  transform: scale(0.97);
+}
+.model-pill:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
+.model-pill .mp-name {
   flex: 0 1 auto;
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1685,16 +1733,22 @@ function selectModel(modelId: string): void {
 }
 .model-pill .think-suffix {
   color: var(--color-accent);
-  font-weight: 500;
+  font-weight: var(--weight-medium);
   flex-shrink: 0;
 }
 .model-pill .cv {
   color: var(--faint);
   flex: none;
+  transition:
+    transform var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
 }
 .model-pill:hover .cv,
 .model-pill.open .cv {
-  color: var(--color-accent-hover);
+  color: var(--dim);
+}
+.model-pill.open .cv {
+  transform: rotate(180deg);
 }
 
 /* Model dropdown — anchored to the toolbar right edge */
@@ -1708,19 +1762,37 @@ function selectModel(modelId: string): void {
   border: 1px solid var(--color-line);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-sm);
-  padding: 5px;
+  padding: var(--space-1);
   display: flex;
   flex-direction: column;
   gap: 1px;
   font-family: var(--font-ui);
+  transform-origin: bottom right;
+}
+
+/* Popover enter/exit — grows out of the trigger corner; exit slightly faster. */
+.md-pop-enter-active {
+  transition:
+    opacity var(--duration-base) var(--ease-out),
+    transform var(--duration-base) var(--ease-out);
+}
+.md-pop-leave-active {
+  transition:
+    opacity var(--duration-fast) var(--ease-out),
+    transform var(--duration-fast) var(--ease-out);
+}
+.md-pop-enter-from,
+.md-pop-leave-to {
+  opacity: 0;
+  transform: scale(0.97) translateY(2px);
 }
 
 .md-section {
-  padding: 4px 7px 2px;
+  padding: 4px 9px 2px;
   font-size: var(--text-xs);
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: 0;
+  letter-spacing: 0.04em;
   font-weight: var(--weight-semibold);
 }
 
@@ -1735,30 +1807,38 @@ function selectModel(modelId: string): void {
   font-family: var(--font-ui);
   font-size: var(--ui-font-size);
   color: var(--color-text);
-  padding: 5px 7px;
+  padding: 5px 9px;
   border-radius: 6px;
   text-align: left;
+  transition: background var(--duration-base) var(--ease-out);
 }
 .md-row:hover { background: var(--color-surface-sunken); }
+.md-row:focus-visible {
+  outline: none;
+  box-shadow: var(--p-focus-ring);
+}
 .md-row:disabled {
   cursor: default;
   opacity: 0.58;
 }
 .md-row:disabled:hover { background: none; }
-.md-row.is-current { color: var(--color-text); background: var(--color-accent-soft); }
-.md-row.is-on { color: var(--color-accent); }
+.md-row.is-current { background: var(--color-selected); }
 .md-note {
   margin-left: auto;
   color: var(--muted);
   font-size: var(--ui-font-size-xs);
 }
 
-.md-row-more {
-  color: var(--color-accent);
-  font-weight: 500;
+.md-row-more .md-more-icon {
+  color: var(--dim);
 }
-.md-row-more:hover {
-  background: var(--color-accent-soft);
+.md-row-more .md-more-arrow {
+  color: var(--faint);
+  flex: none;
+  transition: color var(--duration-base) var(--ease-out);
+}
+.md-row-more:hover .md-more-arrow {
+  color: var(--dim);
 }
 
 .md-check {
@@ -1795,7 +1875,7 @@ function selectModel(modelId: string): void {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 7px;
+  padding: 6px 9px;
   border-radius: var(--radius-sm);
 }
 .md-thinking .md-name {
@@ -1807,54 +1887,9 @@ function selectModel(modelId: string): void {
 .md-thinking .md-note {
   margin-left: auto;
 }
-.effort-segments {
+/* The shared SegmentedControl styles itself; the row only owns its layout. */
+.md-thinking .ui-seg {
   margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 1px;
-  padding: 2px;
-  background: var(--color-surface-sunken);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-md);
-}
-.effort-seg {
-  appearance: none;
-  border: none;
-  background: none;
-  cursor: pointer;
-  font-family: var(--font-ui);
-  font-size: var(--ui-font-size-xs);
-  line-height: 1;
-  color: var(--color-text-muted);
-  padding: 4px 9px;
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-  transition: background 0.12s, color 0.12s, box-shadow 0.12s;
-}
-.effort-seg:hover:not(:disabled):not(.is-active) {
-  background: var(--color-surface-raised);
-  color: var(--color-text);
-}
-.effort-seg:focus-visible {
-  outline: 2px solid var(--color-accent);
-  outline-offset: -2px;
-}
-.effort-seg.is-active {
-  background: var(--color-accent);
-  color: var(--color-text-on-accent);
-  box-shadow: var(--shadow-xs);
-  font-weight: 500;
-}
-.effort-seg:disabled {
-  cursor: default;
-}
-.md-thinking.is-readonly .effort-segments {
-  opacity: 0.62;
-}
-.md-thinking.is-readonly .effort-seg.is-active {
-  background: var(--color-surface-raised);
-  color: var(--color-text-muted);
-  box-shadow: none;
 }
 
 /* Permission dropdown — anchored to the toolbar left side */
@@ -2250,7 +2285,7 @@ function selectModel(modelId: string): void {
   .model-pill {
     max-width: min(52vw, 220px);
   }
-  .model-pill b {
+  .model-pill .mp-name {
     max-width: min(40vw, 170px);
   }
   .md-row {
@@ -2263,14 +2298,8 @@ function selectModel(modelId: string): void {
     flex-wrap: wrap;
     row-gap: 6px;
   }
-  .md-thinking .effort-segments {
+  .md-thinking .ui-seg {
     margin-left: 0;
-    width: 100%;
-    justify-content: space-between;
-  }
-  .md-thinking .effort-seg {
-    flex: 1;
-    padding: 5px 6px;
   }
   .pd-name {
     font-size: var(--ui-font-size);

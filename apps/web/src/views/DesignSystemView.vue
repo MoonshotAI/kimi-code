@@ -837,7 +837,7 @@ onUnmounted(() => {
 
             <!-- ===== SegmentedControl ===== -->
             <h3 class="sub">SegmentedControl</h3>
-            <p>Mutually exclusive short option groups, commonly used for 2–4 option switches such as "light / dark / follow system". Options may include a 14px registry icon or a colour swatch. A single raised indicator with a subtle shadow slides and resizes between options using the standard motion tokens.</p>
+            <p>Mutually exclusive short option groups, commonly used for 2–4 option switches such as "light / dark / follow system". Options may include a 14px registry icon or a colour swatch. A single raised indicator with a subtle shadow slides and resizes between options using the standard motion tokens. Three sizes: <code>md</code> (default, settings pages), <code>sm</code> (compact rows), and <code>xs</code> (dense menus such as the composer model dropdown — 20px items, 12px labels).</p>
             <div class="stage-wrap">
               <div class="stage-bar"><span class="st">SegmentedControl</span></div>
               <div class="stage p col">
