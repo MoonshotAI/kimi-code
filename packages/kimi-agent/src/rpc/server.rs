@@ -134,4 +134,63 @@ impl RpcServer {
         println!("{}", serde_json::to_string(&notification)?);
         Ok(())
     }
+
+    /// Send a JSON-RPC request to the host (JS side) and wait for a response.
+    ///
+    /// This is used by the LLM proxy: the Rust loop needs to call the LLM,
+    /// so it sends a `host/llm_chat` request to stdout and reads the response
+    /// from stdin.
+    ///
+    /// This is a blocking call that reads stdin directly.
+    pub fn call_host(
+        method: &str,
+        params: &impl serde::Serialize,
+    ) -> Result<serde_json::Value, String> {
+        use std::io::BufRead;
+
+        let id: u32 = fastrand::u32(1..u32::MAX);
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+
+        // Write request to stdout
+        println!("{}", serde_json::to_string(&request).map_err(|e| e.to_string())?);
+
+        // Read response from stdin
+        let stdin = std::io::stdin();
+        let reader = std::io::BufReader::new(stdin.lock());
+
+        for line in reader.lines() {
+            let line = line.map_err(|e| e.to_string())?;
+            let trimmed = line.trim().to_string();
+            if trimmed.is_empty() {
+                continue;
+            }
+
+            let parsed: serde_json::Value =
+                serde_json::from_str(&trimmed).map_err(|e| format!("Parse error: {e}"))?;
+
+            // Look for a response with matching id
+            if let Some(resp_id) = parsed.get("id") {
+                if resp_id == id {
+                    if let Some(error) = parsed.get("error") {
+                        return Err(error
+                            .get("message")
+                            .and_then(|m| m.as_str())
+                            .unwrap_or("unknown error")
+                            .to_string());
+                    }
+                    return Ok(parsed
+                        .get("result")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null));
+                }
+            }
+        }
+
+        Err("stdin closed".to_string())
+    }
 }

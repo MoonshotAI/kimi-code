@@ -15,15 +15,11 @@ import { appRoot } from '../../scripts/native/paths.mjs';
 
 // ── Types matching the Rust agent protocol ─────────────────────────────────
 
-interface RpcRequest {
+interface RpcMessage {
   jsonrpc: '2.0';
-  id: number;
-  method: string;
-  params: unknown;
-}
-
-interface RpcResponse {
-  id: number;
+  id?: unknown;
+  method?: string;
+  params?: unknown;
   result?: unknown;
   error?: { code: number; message: string; data?: unknown };
 }
@@ -43,6 +39,19 @@ interface RunTurnResult {
   usage: { input_tokens: number; output_tokens: number; total_tokens: number };
 }
 
+interface LlmChatRequest {
+  system_prompt: string;
+  model_name: string;
+  messages: { role: string; content: string }[];
+  tools: { name: string; description: string; input_schema: unknown }[];
+}
+
+interface LlmChatResponse {
+  tool_calls: { id: string; name: string; arguments: unknown }[];
+  finish_reason?: string;
+  usage: { input_tokens: number; output_tokens: number; total_tokens: number };
+}
+
 // ── Agent process manager ──────────────────────────────────────────────────
 
 class AgentProcess {
@@ -52,10 +61,13 @@ class AgentProcess {
   private buffer = '';
   private ready = false;
 
-  /**
-   * Find the kimi-agent binary.
-   * Checks the same locations as 03-inject.mjs checks for kimi-build.
-   */
+  /** Callback for handling host/llm_chat requests from the Rust side. */
+  private llmChatHandler: ((req: LlmChatRequest) => Promise<LlmChatResponse>) | null = null;
+
+  setLlmChatHandler(handler: (req: LlmChatRequest) => Promise<LlmChatResponse>) {
+    this.llmChatHandler = handler;
+  }
+
   private static findBinary(): string | null {
     const ext = process.platform === 'win32' ? '.exe' : '';
     const candidates = [
@@ -75,10 +87,6 @@ class AgentProcess {
     return null;
   }
 
-  /**
-   * Start the agent process. Returns true if successful, false if the binary
-   * is not available.
-   */
   start(): boolean {
     const binaryPath = AgentProcess.findBinary();
     if (!binaryPath) {
@@ -91,22 +99,18 @@ class AgentProcess {
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
-      // Read stdout for responses
       this.process.stdout!.on('data', (data: Buffer) => {
         this.buffer += data.toString();
         this.processBuffer();
       });
 
-      // Read stderr for diagnostics
       this.process.stderr!.on('data', (data: Buffer) => {
         console.error(`[kimi-agent] ${data.toString().trim()}`);
       });
 
-      // Handle process exit
       this.process.on('exit', (code) => {
         console.warn(`[kimi-agent] Process exited with code ${code}`);
         this.process = null;
-        // Reject all pending requests
         for (const [id, { reject }] of this.pending) {
           reject(new Error(`Agent process exited with code ${code}`));
           this.pending.delete(id);
@@ -121,12 +125,8 @@ class AgentProcess {
     }
   }
 
-  /**
-   * Process buffered stdout data, extracting complete JSON-RPC responses.
-   */
   private processBuffer() {
     const lines = this.buffer.split('\n');
-    // Keep the last incomplete line in the buffer
     this.buffer = lines.pop() || '';
 
     for (const line of lines) {
@@ -134,42 +134,81 @@ class AgentProcess {
       if (!trimmed) continue;
 
       try {
-        const response = JSON.parse(trimmed) as RpcResponse;
-        const pending = this.pending.get(response.id);
-        if (pending) {
-          if (response.error) {
-            pending.reject(new Error(response.error.message));
+        const msg = JSON.parse(trimmed) as RpcMessage;
+
+        // Case 1: Response to a pending request
+        if (msg.id !== undefined && this.pending.has(msg.id as number)) {
+          const pending = this.pending.get(msg.id as number)!;
+          if (msg.error) {
+            pending.reject(new Error(msg.error.message));
           } else {
-            pending.resolve(response.result);
+            pending.resolve(msg.result);
           }
-          this.pending.delete(response.id);
+          this.pending.delete(msg.id as number);
+          continue;
+        }
+
+        // Case 2: Request from Rust side (has method + params)
+        if (msg.id !== undefined && msg.method && msg.params !== undefined) {
+          this.handleHostRequest(msg).catch((err) => {
+            console.error('[kimi-agent] Failed to handle host request:', err);
+          });
         }
       } catch {
-        // Ignore malformed JSON
+        // ignore malformed JSON
       }
     }
   }
 
-  /**
-   * Send a JSON-RPC request and wait for the response.
-   */
+  private async handleHostRequest(msg: RpcMessage) {
+    if (msg.method === 'host/llm_chat') {
+      if (this.llmChatHandler) {
+        try {
+          const result = await this.llmChatHandler(msg.params as LlmChatRequest);
+          const response = JSON.stringify({
+            jsonrpc: '2.0',
+            id: msg.id,
+            result,
+          });
+          this.process!.stdin!.write(response + '\n');
+        } catch (err) {
+          const response = JSON.stringify({
+            jsonrpc: '2.0',
+            id: msg.id,
+            error: { code: -32603, message: err instanceof Error ? err.message : String(err) },
+          });
+          this.process!.stdin!.write(response + '\n');
+        }
+      } else {
+        const response = JSON.stringify({
+          jsonrpc: '2.0',
+          id: msg.id,
+          error: { code: -32000, message: 'No LLM chat handler registered' },
+        });
+        this.process!.stdin!.write(response + '\n');
+      }
+    } else {
+      const response = JSON.stringify({
+        jsonrpc: '2.0',
+        id: msg.id,
+        error: { code: -32601, message: `Unknown method: ${msg.method}` },
+      });
+      this.process!.stdin!.write(response + '\n');
+    }
+  }
+
   async request(method: string, params: unknown): Promise<unknown> {
     if (!this.process || !this.ready) {
       throw new Error('Agent process is not running');
     }
-
     const id = this.nextId++;
-    const request: RpcRequest = { jsonrpc: '2.0', id, method, params };
-
+    const request = { jsonrpc: '2.0' as const, id, method, params };
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
       this.process!.stdin!.write(JSON.stringify(request) + '\n');
     });
   }
 
-  /**
-   * Stop the agent process.
-   */
   stop() {
     if (this.process) {
       this.process.kill();
@@ -184,9 +223,6 @@ class AgentProcess {
 let agentProcess: AgentProcess | null = null;
 let fallbackToJs = false;
 
-/**
- * Get or create the agent process singleton.
- */
 function getAgent(): AgentProcess | null {
   if (fallbackToJs) return null;
   if (!agentProcess) {
@@ -202,16 +238,15 @@ function getAgent(): AgentProcess | null {
 
 // ── Public API ─────────────────────────────────────────────────────────────
 
-/**
- * Run a turn using the Rust agent engine (or fall back to JS).
- *
- * @returns The turn result, or null if the Rust engine is not available
- *          (caller should use the JS implementation instead).
- */
-export async function runTurnRust(params: RunTurnParams): Promise<RunTurnResult | null> {
+export async function runTurnRust(
+  params: RunTurnParams,
+  llmChatHandler?: (req: LlmChatRequest) => Promise<LlmChatResponse>,
+): Promise<RunTurnResult | null> {
   const agent = getAgent();
-  if (!agent) {
-    return null; // Fall back to JS
+  if (!agent) return null;
+
+  if (llmChatHandler) {
+    agent.setLlmChatHandler(llmChatHandler);
   }
 
   try {
@@ -219,20 +254,14 @@ export async function runTurnRust(params: RunTurnParams): Promise<RunTurnResult 
     return result as RunTurnResult;
   } catch (err) {
     console.error('[kimi-agent] RPC call failed:', err);
-    return null; // Fall back to JS
+    return null;
   }
 }
 
-/**
- * Check if the Rust agent engine is available.
- */
 export function isRustEngineAvailable(): boolean {
   return AgentProcess.findBinary() !== null;
 }
 
-/**
- * Clean up the agent process.
- */
 export function shutdownRustEngine() {
   if (agentProcess) {
     agentProcess.stop();

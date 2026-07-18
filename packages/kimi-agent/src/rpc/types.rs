@@ -71,6 +71,9 @@ pub mod methods {
 
     /// Shutdown the agent process.
     pub const SHUTDOWN: &str = "agent/shutdown";
+
+    /// LLM chat request (Rust → JS host proxy).
+    pub const HOST_LLM_CHAT: &str = "host/llm_chat";
 }
 
 // ── RunTurn request/response types ─────────────────────────────────────────
@@ -108,6 +111,40 @@ pub struct RunTurnResult {
     pub stop_reason: String,
     pub steps: u32,
     pub usage: TokenUsage,
+}
+
+// ── LLM proxy types (Rust → JS host) ───────────────────────────────────────
+
+/// Parameters for the host/llm_chat RPC call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmChatRequest {
+    pub system_prompt: String,
+    pub model_name: String,
+    pub messages: Vec<LlmChatMessage>,
+    pub tools: Vec<ToolDef>,
+}
+
+/// A message in the LLM chat request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmChatMessage {
+    pub role: String,
+    pub content: String,
+}
+
+/// Response from the host/llm_chat RPC call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmChatResponse {
+    pub tool_calls: Vec<LlmToolCall>,
+    pub finish_reason: Option<String>,
+    pub usage: TokenUsage,
+}
+
+/// A tool call from the LLM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LlmToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
 }
 
 /// Token usage tracking.
